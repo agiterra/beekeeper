@@ -311,8 +311,19 @@ fn team_yml(name: &str, lead: &str, roles: &[&Template]) -> String {
          schema: {TEAM_SCHEMA}\nname: {}\nversion: {SEED_TEAM_VERSION}\nlead: {lead}\nroles:\n",
         yaml_string(name)
     );
+    // Explicit grants (spec § 4.11): the lead drafts, commits and adopts the
+    // project's plans; every other role reads them. Written out so the file
+    // says what the host will do rather than leaving it to a default.
     for template in roles {
-        out.push_str(&format!("  {}: {{}}\n", template.name));
+        let access = if template.name == lead {
+            "write"
+        } else {
+            "read"
+        };
+        out.push_str(&format!(
+            "  {}: {{ workspace: {{ agents_repo: {access} }} }}\n",
+            template.name
+        ));
     }
     // One default agent per role (spec § 4.11): the host mints the
     // identities when the project is created; these are the names it uses
@@ -500,9 +511,15 @@ mod tests {
             team.roles.keys().cloned().collect::<Vec<_>>(),
             vec!["builder", "lead"]
         );
+        // Run11 (ledger 272, defect 3): a seeded lead got no agents clone and
+        // improvised one. The seeded lead writes its plans; others read.
         assert_eq!(
             team.role("lead").workspace.agents_repo,
-            AgentsRepoAccess::None
+            Some(AgentsRepoAccess::Write)
+        );
+        assert_eq!(
+            team.role("builder").workspace.agents_repo,
+            Some(AgentsRepoAccess::Read)
         );
         let agents: Vec<(&str, &str, bool)> = team
             .agents

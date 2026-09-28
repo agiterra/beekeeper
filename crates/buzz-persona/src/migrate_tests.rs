@@ -193,11 +193,11 @@ fn every_role_may_read_the_agents_repository_and_the_lead_may_write() {
     assert_eq!(team.lead.as_deref(), Some("lead"));
     assert_eq!(
         team.role("lead").workspace.agents_repo,
-        AgentsRepoAccess::Write
+        Some(AgentsRepoAccess::Write)
     );
     assert_eq!(
         team.role("builder").workspace.agents_repo,
-        AgentsRepoAccess::Read
+        Some(AgentsRepoAccess::Read)
     );
     let agents: BTreeMap<&str, &str> = team
         .agents

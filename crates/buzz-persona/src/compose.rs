@@ -696,7 +696,9 @@ fn load_draft(source: &RoleSource) -> Result<RoleDraft, ComposeError> {
                 skills,
                 pack_id,
                 pack_version,
-                agents_repo: entry.workspace.agents_repo,
+                agents_repo: team
+                    .as_ref()
+                    .map_or(AgentsRepoAccess::None, |t| t.agents_access(role)),
             })
         }
     }
@@ -1757,12 +1759,13 @@ mod tests {
             Some("claude"),
             "the role file's own frontmatter wins over the advisory value"
         );
-        assert_eq!(builder.agents_repo, AgentsRepoAccess::None);
+        // Omitted: the project default, so the builder reads its own plans.
+        assert_eq!(builder.agents_repo, AgentsRepoAccess::Read);
         // A role the manifest does not list still composes from its file.
         write(&root.join("roles").join("verifier.md"), "Verify.\n");
         let verifier = compose_flat(&root, "verifier", &catalog).unwrap();
         assert_eq!(verifier.pack_id, "project:tank-loop");
-        assert_eq!(verifier.agents_repo, AgentsRepoAccess::None);
+        assert_eq!(verifier.agents_repo, AgentsRepoAccess::Read);
         // The caller's pack id overrides the manifest's; the version does not
         // fall back to the placeholder when the manifest has one.
         let overridden = compose_role(

@@ -71,7 +71,9 @@ pub enum AgentLifetime {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentsRepoAccess {
-    /// No clone beside the worktree and no briefing paragraph (the default).
+    /// No clone beside the worktree and no briefing paragraph: an explicit
+    /// restriction. An omitted setting is not this; see
+    /// [`TeamManifest::agents_access`].
     #[default]
     None,
     /// A clone the seat may read; its write fence keeps it read-only.
@@ -85,10 +87,12 @@ pub enum AgentsRepoAccess {
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct TeamWorkspace {
     /// Whether a seat in this role gets the project's agents repository
-    /// beside its worktree, and whether it may write there. Default
-    /// `none`. A role whose job is to keep plans or evolve roles opts in.
-    #[serde(default)]
-    pub agents_repo: AgentsRepoAccess,
+    /// beside its worktree, and whether it may write there. Omitted means
+    /// the project default ([`TeamManifest::agents_access`]): the lead may
+    /// write its plans, every other role reads them. An explicit `none`
+    /// is kept as a restriction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents_repo: Option<AgentsRepoAccess>,
 }
 
 /// One role's manifest entry.
@@ -177,6 +181,21 @@ impl TeamManifest {
     /// The manifest's entry for `role`, or the default when it lists none.
     pub fn role(&self, role: &str) -> TeamRole {
         self.roles.get(role).cloned().unwrap_or_default()
+    }
+
+    /// The agents-repository access a seat in `role` gets: the role's
+    /// explicit setting (`none` included), else the project default — `write`
+    /// for the lead, who drafts, commits and adopts the plan, and `read` for
+    /// every other role, which works from it. A project's own requirements
+    /// are never hidden from its own seats by omission.
+    pub fn agents_access(&self, role: &str) -> AgentsRepoAccess {
+        self.role(role).workspace.agents_repo.unwrap_or_else(|| {
+            if self.lead.as_deref() == Some(role) {
+                AgentsRepoAccess::Write
+            } else {
+                AgentsRepoAccess::Read
+            }
+        })
     }
 
     /// The role file for `role`, relative to the flat root.
@@ -376,6 +395,34 @@ agents:
         parse_team_yml(text, Path::new("agents/team.yml"))
     }
 
+    /// An omitted `agents_repo` is the project default — the lead writes,
+    /// every other role reads — and an explicit `none` stays a restriction.
+    #[test]
+    fn an_omitted_grant_is_the_project_default_and_an_explicit_none_is_kept() {
+        let team = parse(GOOD).expect("parses");
+        assert_eq!(team.role("builder").workspace.agents_repo, None);
+        assert_eq!(team.agents_access("builder"), AgentsRepoAccess::Read);
+        assert_eq!(
+            team.agents_access("project-manager"),
+            AgentsRepoAccess::Write
+        );
+        let lead_omitted = GOOD.replace("    workspace: { agents_repo: write }\n", "");
+        assert_eq!(
+            parse(&lead_omitted)
+                .expect("parses")
+                .agents_access("project-manager"),
+            AgentsRepoAccess::Write
+        );
+        let restricted = GOOD.replace(
+            "  builder: {}",
+            "  builder: { workspace: { agents_repo: none } }",
+        );
+        assert_eq!(
+            parse(&restricted).expect("parses").agents_access("builder"),
+            AgentsRepoAccess::None
+        );
+    }
+
     #[test]
     fn a_good_manifest_parses_with_defaults_where_it_is_silent() {
         let team = parse(GOOD).unwrap();
@@ -383,11 +430,17 @@ agents:
         assert_eq!(team.version, "0.3.0");
         assert_eq!(team.lead.as_deref(), Some("project-manager"));
         assert_eq!(
-            team.role("project-manager").workspace.agents_repo,
+            team.role("project-manager")
+                .workspace
+                .agents_repo
+                .unwrap_or_default(),
             AgentsRepoAccess::Write
         );
         assert_eq!(
-            team.role("builder").workspace.agents_repo,
+            team.role("builder")
+                .workspace
+                .agents_repo
+                .unwrap_or_default(),
             AgentsRepoAccess::None
         );
         assert_eq!(team.role_file("builder"), "roles/builder.md");
