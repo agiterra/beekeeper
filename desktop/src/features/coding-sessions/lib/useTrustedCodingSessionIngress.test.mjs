@@ -401,8 +401,10 @@ test("pinned mode reads the provider the command names, not this machine's allow
   // Subscribed for the command's own provider, and not delayed by a config it
   // does not read.
   assert.equal(result.current.authorityErrorMessage, null);
-  assert.equal(historyCalls.length, 1);
-  assert.deepEqual(historyCalls[0].authors, [foreignPubkey]);
+  assert.equal(historyCalls.length, 3, "one history read per kind");
+  for (const call of historyCalls) {
+    assert.deepEqual(call.authors, [foreignPubkey]);
+  }
   assert.equal(liveSubscriptions.length, 1);
   assert.deepEqual(liveSubscriptions[0].filter.authors, [foreignPubkey]);
 

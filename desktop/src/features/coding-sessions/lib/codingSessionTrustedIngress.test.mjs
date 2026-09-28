@@ -419,8 +419,12 @@ test("one native filter covers history and live, author-governed and channel-sco
       AUTHORITY,
       1000,
     ),
-    [nativeFilter],
-    "no second broad filter survives: kind-9 is not a coding-session transport",
+    [
+      { ...nativeFilter, kinds: [KIND_CODING_SESSION_METADATA] },
+      { ...nativeFilter, kinds: [KIND_CODING_SESSION_LIFECYCLE_RECEIPT] },
+      { ...nativeFilter, kinds: [KIND_CODING_SESSION_TRANSCRIPT] },
+    ],
+    "one filter per coding-session kind, each with its own limit; no kind-9 filter (not a coding-session transport)",
   );
   assert.deepEqual(
     buildTrustedCodingSessionIngressLiveFilter(["channel-1"], AUTHORITY),
@@ -1146,6 +1150,30 @@ test("raw retention is bounded, dropping the oldest events first", () => {
   assert.deepEqual(
     retained.map((event) => event.id),
     events.slice(overflow).map((event) => event.id),
+  );
+});
+
+test("raw retention evicts by created_at, not by ingestion order", () => {
+  const bound = 3;
+  const store = new TrustedCodingSessionIngressStore(bound);
+  const at = (seq, offset) =>
+    transcriptEvent(transcript({ eventSeq: seq }), {
+      createdAt: 1_800_000_000 + offset,
+    });
+  // Newest first, as a history page follows live events, then an OLDER page.
+  const newest = [at(5, 50), at(4, 40), at(3, 30)];
+  const olderPage = [at(1, 10), at(2, 20)];
+  store.ingestRelayEvents(newest, [CHANNEL_ID], AUTHORITY);
+  store.ingestRelayEvents(olderPage, [CHANNEL_ID], AUTHORITY);
+  const retained = store.retainedRawEvents({
+    channelId: CHANNEL_ID,
+    targetKey: buildCodingSessionTargetKey(OTHER_TARGET),
+    signerPubkey: PROVIDER_PUBKEY,
+  });
+  assert.deepEqual(
+    retained.map((event) => event.id),
+    [newest[2], newest[1], newest[0]].map((event) => event.id),
+    "the late older page is what gets evicted, never the newest events",
   );
 });
 
