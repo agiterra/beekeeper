@@ -104,6 +104,7 @@ export function ChannelScreen({
     getChannelReadAt,
     getMessageReadAt,
     markMessageRead,
+    markThreadRead,
     setContextParentResolver,
     openBrowseChannels,
     openCreateChannel,
@@ -454,6 +455,7 @@ export function ChannelScreen({
     getMessageReadAt,
     markChannelUnread,
     markMessageRead,
+    markThreadRead,
     isThreadMuted,
     readStateVersion,
   });
