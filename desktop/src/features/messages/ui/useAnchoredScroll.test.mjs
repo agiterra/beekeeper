@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   getPinnedCenterDrift,
+  isUpwardScrollKey,
   settleProgrammaticBottomPin,
+  shouldHoldBottomPin,
   shouldIgnorePinnedCenterScroll,
   shouldSettleForSplitPanel,
   shouldSettleVirtualizedBottom,
@@ -166,4 +168,38 @@ test("pinned center real user scroll releases the anchor", () => {
     }),
     false,
   );
+});
+
+test("a bottom pin holds through a scroll event the reader did not cause", () => {
+  const hold = (overrides) =>
+    shouldHoldBottomPin({
+      holdEnabled: true,
+      nextAtBottom: false,
+      readerScrolledUp: false,
+      wasAtBottom: true,
+      ...overrides,
+    });
+  assert.equal(hold({}), true, "late virtualizer scroll event re-pins");
+  assert.equal(hold({ readerScrolledUp: true }), false, "reader releases");
+  assert.equal(hold({ holdEnabled: false }), false, "opt-in only");
+  assert.equal(hold({ wasAtBottom: false }), false, "mid-history untouched");
+  assert.equal(hold({ nextAtBottom: true }), false, "still at bottom");
+});
+
+test("only keys that scroll toward older content count as reader input", () => {
+  const key = (value, extra = {}) =>
+    isUpwardScrollKey({
+      key: value,
+      shiftKey: false,
+      targetIsEditable: false,
+      ...extra,
+    });
+  assert.equal(key("PageUp"), true);
+  assert.equal(key("ArrowUp"), true);
+  assert.equal(key("Home"), true);
+  assert.equal(key(" ", { shiftKey: true }), true);
+  assert.equal(key(" "), false);
+  assert.equal(key("PageDown"), false);
+  assert.equal(key("End"), false);
+  assert.equal(key("ArrowUp", { targetIsEditable: true }), false);
 });
