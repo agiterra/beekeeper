@@ -76,6 +76,10 @@ pub(crate) struct WorkBriefRequest<'a> {
     pub cwd: Option<PathBuf>,
     /// (f), resolved by the caller from its own session record.
     pub runtime: RuntimeFacts,
+    /// What the host prepared for this execution (branch, agents clone and
+    /// access), from the session record; `None` for an execution prepared
+    /// before bindings carried them, which falls back to what is on disk.
+    pub binding: Option<crate::execution_scope::ExecutionBinding>,
 }
 
 /// Assemble and render one work brief, or `None` when this turn is not an
@@ -130,6 +134,7 @@ pub(crate) async fn collect_work_brief(request: WorkBriefRequest<'_>) -> Option<
         state_dir: request.state_dir.to_path_buf(),
         session_id: request.session_id.to_owned(),
         runtime: request.runtime.clone(),
+        binding: request.binding.clone(),
     };
     Some(
         assemble_brief_text(
@@ -172,6 +177,9 @@ pub(crate) struct BriefContext<'a> {
     pub session_id: String,
     /// (f), resolved by the caller from its own session record.
     pub runtime: RuntimeFacts,
+    /// What the host prepared for this execution (branch, agents clone and
+    /// access); `None` falls back to what is on disk.
+    pub binding: Option<crate::execution_scope::ExecutionBinding>,
 }
 
 /// The two reads the brief makes after the verified snapshot.
@@ -269,8 +277,11 @@ pub(crate) async fn assemble_brief_text(
     );
     let (contract, goal_ref, goal_first_line) = contract_for(context, reads).await;
     let decisions = answered_decisions(team_events, context.operation_id);
-    let permissions = agents_grant(context.cwd.as_deref(), context.role);
-    let report_ref = report_under_review(
+    let permissions = match &context.binding {
+        Some(binding) => prepared_agents_grant(binding),
+        None => agents_grant(context.cwd.as_deref(), context.role),
+    };
+    let reviewed = report_under_review(
         team_events,
         included_reports,
         assignment.base_sha.as_deref(),
@@ -285,7 +296,11 @@ pub(crate) async fn assemble_brief_text(
             role: context.role.to_owned(),
             objective: assignment.objective.clone(),
             brief: assignment.brief.clone(),
-            branch: assignment.branch.clone(),
+            branch: context
+                .binding
+                .as_ref()
+                .and_then(|binding| binding.branch.clone()),
+            assignment_branch: assignment.branch.clone(),
             base_sha: assignment.base_sha.clone(),
             file_ownership: assignment.file_ownership.clone(),
             acceptance_steps: assignment.acceptance_steps.clone(),
@@ -298,7 +313,8 @@ pub(crate) async fn assemble_brief_text(
             genesis_ref: context.genesis_ref.clone(),
             assignment_ref: context.operation_id.to_owned(),
             role: context.role.to_owned(),
-            report_ref,
+            report_ref: reviewed.as_ref().map(|(id, _)| id.clone()),
+            verdict_assignment_ref: reviewed.and_then(|(_, assignment)| assignment),
         },
         contract,
         decisions: DecisionFacts {
@@ -372,7 +388,7 @@ fn agents_grant(cwd: Option<&Path>, role: &str) -> PermissionFacts {
         };
     };
     let access = match buzz_persona::team::load_team(&clone) {
-        Ok(Some(manifest)) => match manifest.role(role).workspace.agents_repo {
+        Ok(Some(manifest)) => match manifest.agents_access(role) {
             buzz_persona::team::AgentsRepoAccess::Write => "write",
             buzz_persona::team::AgentsRepoAccess::Read => "read",
             buzz_persona::team::AgentsRepoAccess::None => "read",
@@ -386,6 +402,25 @@ fn agents_grant(cwd: Option<&Path>, role: &str) -> PermissionFacts {
         agents_access: access.to_owned(),
         agents_path: Some(clone.display().to_string()),
         may_push,
+    }
+}
+
+/// (e), from what the host prepared: the agents clone the execution was
+/// granted and whether it may write there. No grant means no clone, stated as
+/// such — never a guess from what happens to be on disk.
+fn prepared_agents_grant(binding: &crate::execution_scope::ExecutionBinding) -> PermissionFacts {
+    PermissionFacts {
+        agents_access: match (&binding.agents, binding.agents_writable) {
+            (Some(_), true) => "write",
+            (Some(_), false) => "read",
+            (None, _) => "none",
+        }
+        .to_owned(),
+        agents_path: binding
+            .agents
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        may_push: true,
     }
 }
 
@@ -717,7 +752,7 @@ fn report_under_review(
     included: &std::collections::BTreeSet<String>,
     base_sha: Option<&str>,
     role: &str,
-) -> Option<String> {
+) -> Option<(String, Option<String>)> {
     if !role.eq_ignore_ascii_case("verifier") {
         return None;
     }
@@ -735,7 +770,12 @@ fn report_under_review(
             .head_sha
             .as_deref()
             .is_some_and(|head| head.eq_ignore_ascii_case(&base))
-            .then_some(id)
+            .then(|| {
+                (
+                    id,
+                    Some(report.assignment_ref.clone()).filter(|r| !r.is_empty()),
+                )
+            })
     });
     let first = matches.next()?;
     // Two included reports claiming the same head is not a fact about which

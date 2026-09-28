@@ -8706,6 +8706,7 @@ impl Provider {
         };
         let project_ref = record.project_ref.clone();
         let recorded_cwd = record.cwd.clone();
+        let binding = record.execution_binding.clone();
         let rest = self.rest_client.clone()?;
         let relay_self = self.relay_self.clone()?;
         let cwd = gate_cwd::resolve(
@@ -8729,6 +8730,7 @@ impl Provider {
             session_id: &target.session_id,
             cwd,
             runtime,
+            binding,
         })
         .await
     }

@@ -657,7 +657,10 @@ fn assignment_example(role: &str, base_sha: Option<&str>) -> CodingSessionTeamAs
         brief: "the complete instructions: what to do, the constraints that bind it, and what \
                 evidence the report must carry"
             .to_owned(),
-        branch: Some("work/example-topic-branch".to_owned()),
+        // The host allocates each seat's worktree branch; an assignment names
+        // a branch only when the work must land on a particular remote name,
+        // which the seat then pushes to with `HEAD:refs/heads/<name>`.
+        branch: None,
         base_sha: base_sha.map(str::to_owned),
         file_ownership: vec!["crates/example-crate/src/".to_owned()],
         acceptance_steps: vec!["cargo test -p example-crate".to_owned()],
@@ -669,7 +672,7 @@ fn report_example() -> CodingSessionTeamReport {
     CodingSessionTeamReport {
         assignment_ref: PLACEHOLDER_EVENT_ID.to_owned(),
         summary: "one sentence saying what the work produced".to_owned(),
-        branch: Some("work/example-topic-branch".to_owned()),
+        branch: Some("session-example-builder-1".to_owned()),
         base_sha: Some(PLACEHOLDER_SHA.to_owned()),
         head_sha: Some(PLACEHOLDER_SHA.to_owned()),
         files: vec!["crates/example-crate/src/lib.rs".to_owned()],

@@ -82,6 +82,7 @@ fn builder_inputs() -> WorkBriefInputs {
             objective: "Teach the host to hand a seat its work".into(),
             brief: "Own work_brief.rs alone. Do not touch pending_completion.rs.".into(),
             branch: Some("work/lane-209".into()),
+            assignment_branch: None,
             base_sha: Some("b".repeat(40)),
             file_ownership: vec!["crates/buzz-session-provider/src/work_brief.rs".into()],
             acceptance_steps: vec![
@@ -98,6 +99,7 @@ fn builder_inputs() -> WorkBriefInputs {
             assignment_ref: "a".repeat(64),
             role: "builder".into(),
             report_ref: None,
+            verdict_assignment_ref: None,
         },
         contract: ContractFacts::Declared {
             declaration_ref: "d".repeat(64),
@@ -166,7 +168,7 @@ fn a_builder_under_a_declaration_gets_both_criteria_verbatim_with_provenance() {
         text.contains("crates/buzz-session-provider/src/work_brief.rs"),
         "{text}"
     );
-    assert!(text.contains("Branch: work/lane-209"), "{text}");
+    assert!(text.contains("Branch: `work/lane-209`"), "{text}");
     // (b) — real flags only, and never one the CLI does not define.
     for flag in REPORT_FLAGS {
         assert!(text.contains(flag), "section (b) must spell {flag}: {text}");
@@ -224,6 +226,7 @@ fn a_verifier_is_given_its_verdict_line_its_report_and_the_established_commit() 
     inputs.assignment.role = "verifier".into();
     inputs.commands.role = "verifier".into();
     inputs.commands.report_ref = Some("9".repeat(64));
+    inputs.commands.verdict_assignment_ref = Some("e".repeat(64));
     inputs.assignment.establishment = InputEstablishment::Established {
         commit: "b".repeat(40),
     };
@@ -255,7 +258,67 @@ fn a_verifier_whose_report_could_not_be_resolved_is_told_so_rather_than_given_a_
     inputs.commands.report_ref = None;
     let text = assemble_work_brief(&inputs).render();
     assert!(
-        text.contains("could not resolve which report it is about"),
+        text.contains("could not resolve which report this verification is about"),
+        "{text}"
+    );
+    // No id is offered for the verdict: the seat's own assignment is named
+    // only as the one its settlement report keeps.
+    assert!(
+        !text.contains(&format!(
+            "verdict body's `assignmentRef` is {}",
+            "a".repeat(64)
+        )),
+        "{text}"
+    );
+}
+
+/// Run11 (ledger 272, defect 4): the brief told the verifier to put its own
+/// assignment in the verdict. The CLI and the fold both refuse that; the
+/// verdict must name the reviewed report's assignment.
+#[test]
+fn a_verdict_names_the_reviewed_reports_assignment_never_the_verifiers_own() {
+    let mut inputs = builder_inputs();
+    let own = "a".repeat(64);
+    let reviewed = "e".repeat(64);
+    inputs.assignment.role = "verifier".into();
+    inputs.commands.role = "verifier".into();
+    inputs.commands.report_ref = Some("9".repeat(64));
+    inputs.commands.verdict_assignment_ref = Some(reviewed.clone());
+    let text = assemble_work_brief(&inputs).render();
+    assert!(
+        text.contains(&format!("its `assignmentRef` is {reviewed}")),
+        "{text}"
+    );
+    assert!(
+        !text.contains(&format!("verdict body's `assignmentRef` is {own}")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("The report body's `assignmentRef` is {own}")),
+        "the settlement report keeps the verifier's own duty: {text}"
+    );
+}
+
+/// Run11 (ledger 272, defect 1): the assignment named `work/lapbook-cli`,
+/// the host had cut the builder's worktree on its own branch, and the brief
+/// printed only the first. The brief names the branch the seat can commit to
+/// and turns the assignment's name into a push target.
+#[test]
+fn the_brief_names_the_allocated_branch_and_pushes_to_the_assignments_name() {
+    let mut inputs = builder_inputs();
+    inputs.assignment.branch = Some("coding-session-builder-1".into());
+    inputs.assignment.assignment_branch = Some("work/lapbook-cli".into());
+    let text = assemble_work_brief(&inputs).render();
+    assert!(
+        text.contains("Branch: `coding-session-builder-1`, allocated to this worktree by the host"),
+        "{text}"
+    );
+    assert!(
+        text.contains("git push origin HEAD:refs/heads/work/lapbook-cli"),
+        "{text}"
+    );
+    assert!(
+        text.contains("creating or switching local branches is refused"),
         "{text}"
     );
 }

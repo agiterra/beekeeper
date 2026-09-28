@@ -197,6 +197,7 @@ fn context(state_dir: &Path) -> BriefContext<'static> {
             compose_app_version: None,
             compose_digest: None,
         },
+        binding: None,
     }
 }
 
@@ -457,4 +458,59 @@ async fn a_bundle_copy_that_cannot_be_written_never_costs_the_turn_its_brief() {
 
     assert!(text.contains("Build the kettle CLI"), "{text}");
     assert!(blocked.is_file(), "the blocking file was not disturbed");
+}
+
+/// Run11 (ledger 272, defect 4): the verdict's `assignmentRef` is the
+/// reviewed report's own assignment, read from that report — the report
+/// whose `headSha` is the verifier's base — never the verifier's duty.
+#[test]
+fn the_reviewed_reports_assignment_is_read_from_the_report_itself() {
+    use buzz_core::coding_session_team_transaction::{
+        CodingSessionTeamReport, CodingSessionTeamTransactionBody,
+    };
+    use buzz_sdk::coding_session_team_transaction::{
+        build_coding_session_team_transaction, coding_session_team_transaction_payload,
+    };
+    let builder_assignment = "b".repeat(64);
+    let head = "c".repeat(40);
+    let payload = coding_session_team_transaction_payload(
+        SESSION.to_owned(),
+        GENESIS.to_owned(),
+        None,
+        None,
+        CodingSessionTeamTransactionBody::Report(CodingSessionTeamReport {
+            assignment_ref: builder_assignment.clone(),
+            summary: "Built".into(),
+            branch: Some("coding-session-builder-1".into()),
+            base_sha: None,
+            head_sha: Some(head.clone()),
+            files: Vec::new(),
+            tests: Vec::new(),
+            red_before_green: None,
+            deviations: Vec::new(),
+            residuals: Vec::new(),
+            anomalies: Vec::new(),
+        }),
+    );
+    let report = build_coding_session_team_transaction(CHANNEL, payload)
+        .expect("the record builds")
+        .sign_with_keys(&nostr::Keys::generate())
+        .expect("the record signs");
+    let included = std::iter::once(report.id.to_hex()).collect();
+    let reviewed = super::report_under_review(
+        std::slice::from_ref(&report),
+        &included,
+        Some(&head),
+        "verifier",
+    );
+    assert_eq!(
+        reviewed,
+        Some((report.id.to_hex(), Some(builder_assignment))),
+        "the verdict names the builder's assignment, from the report"
+    );
+    assert_eq!(
+        super::report_under_review(&[report], &included, Some(&head), "builder"),
+        None,
+        "only a verifier rules on a report"
+    );
 }

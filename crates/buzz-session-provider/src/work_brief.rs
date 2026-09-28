@@ -144,8 +144,12 @@ pub struct AssignmentFacts {
     pub objective: String,
     /// The lead's own framing, verbatim, bounded at render time.
     pub brief: String,
-    /// The topic branch, when the assignment named one.
+    /// The branch this seat's worktree is on, as the host pinned it when it
+    /// prepared the execution — the one branch the seat can commit to.
     pub branch: Option<String>,
+    /// The branch the assignment's text named, when it named one. Shown only
+    /// when it differs from `branch`, as the remote name to push to.
+    pub assignment_branch: Option<String>,
     /// The exact commit the work is about, when the assignment named one.
     pub base_sha: Option<String>,
     /// Exclusive paths this assignment owns.
@@ -173,6 +177,9 @@ pub struct CommandFacts {
     pub role: String,
     /// The report a verifier is ruling on, when the host could resolve one.
     pub report_ref: Option<String>,
+    /// That report's own `assignmentRef` — the builder's assignment a
+    /// verdict rules on, distinct from this seat's own `assignment_ref`.
+    pub verdict_assignment_ref: Option<String>,
 }
 
 /// One criterion, excerpted from the plan blob read at the declaration's
@@ -455,11 +462,27 @@ fn render_owed(facts: &AssignmentFacts) -> String {
             facts.file_ownership.join(", ")
         );
     }
-    match &facts.branch {
-        Some(branch) => {
-            let _ = write!(out, "\n\nBranch: {branch}");
+    match (&facts.branch, &facts.assignment_branch) {
+        (Some(branch), Some(named)) if named != branch => {
+            let _ = write!(
+                out,
+                "\n\nBranch: `{branch}`, allocated to this worktree by the host; commit there \
+                 (creating or switching local branches is refused). The assignment names \
+                 `{named}` as the remote branch: publish with `git push origin \
+                 HEAD:refs/heads/{named}`."
+            );
         }
-        None => out.push_str("\n\nBranch: the assignment named none; stay on the branch this worktree is already on."),
+        (Some(branch), _) => {
+            let _ = write!(
+                out,
+                "\n\nBranch: `{branch}`, allocated to this worktree by the host; commit there \
+                 and publish with `git push origin {branch}`."
+            );
+        }
+        (None, Some(named)) => {
+            let _ = write!(out, "\n\nBranch: {named}");
+        }
+        (None, None) => out.push_str("\n\nBranch: the assignment named none; stay on the branch this worktree is already on."),
     }
     if let Some(worktree) = &facts.worktree {
         let _ = write!(out, "\nWorktree: {worktree}");
@@ -507,6 +530,7 @@ fn render_commands(facts: &CommandFacts) -> String {
         assignment_ref,
         role,
         report_ref,
+        verdict_assignment_ref,
     } = facts;
     let mut out = String::from(WorkBriefSection::Commands.heading());
     out.push_str(
@@ -526,21 +550,23 @@ fn render_commands(facts: &CommandFacts) -> String {
              --channel {channel} --session-ref {session_ref} --genesis {genesis_ref} \
              --body - --wake-to lead"
         );
-        match report_ref {
-            Some(report) => {
+        match (report_ref, verdict_assignment_ref) {
+            (Some(report), Some(reviewed)) => {
                 let _ = write!(
                     out,
-                    "\n\nThe verdict body's `assignmentRef` is {assignment_ref} and its \
-                     `reportRef` is {report} — the report whose `headSha` is this \
-                     assignment's base."
+                    "\n\nThe verdict body's `reportRef` is {report} — the report whose \
+                     `headSha` is this assignment's base — and its `assignmentRef` is \
+                     {reviewed}, that report's own assignment. Your settlement report (above) \
+                     keeps your own assignment, {assignment_ref}."
                 );
             }
-            None => {
+            _ => {
                 let _ = write!(
                     out,
-                    "\n\nThe verdict body's `assignmentRef` is {assignment_ref}. This host could \
-                     not resolve which report it is about; read the session's reports and name \
-                     the one you ruled on in `reportRef`."
+                    "\n\nThis host could not resolve which report this verification is about; \
+                     read the session's reports, name the one you ruled on in `reportRef`, and \
+                     give the verdict that report's own `assignmentRef` (not your assignment, \
+                     {assignment_ref}, which your settlement report keeps)."
                 );
             }
         }
