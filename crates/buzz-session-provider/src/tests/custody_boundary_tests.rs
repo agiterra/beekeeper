@@ -145,6 +145,33 @@ fn queued_store(
 
 /// Start a live session whose initial turn stalls, and return the provider and
 /// the session id once that turn is genuinely open.
+/// The next event the caller's assertion is actually about.
+///
+/// [`SessionEvent::WorktreeObserved`] is the one event on this queue that no
+/// actor produces: the provider spawns a bounded `git` probe and the result
+/// rides the same inbox, so its position relative to an actor's answer is
+/// nondeterministic by construction (see the type's own documentation). Three
+/// tests in this module took `next_session_event()` once and asserted on its
+/// shape, so under load they failed against an observation they never meant to
+/// see — `the actor must name why` quoting a `WorktreeObserved` (ledger 288).
+/// Observations are folded here exactly as the provider loop folds them, and
+/// skipped; the first event that is not one is returned.
+async fn next_decisive_event(provider: &mut Provider, what: &str) -> SessionEvent {
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
+            .await
+            .expect(what)
+            .expect("event");
+        if matches!(event, SessionEvent::WorktreeObserved { .. }) {
+            provider
+                .handle_session_event(event)
+                .expect("fold the observation");
+            continue;
+        }
+        return event;
+    }
+}
+
 async fn provider_with_a_running_turn(
     dir: &Path,
     state: &Path,
@@ -160,10 +187,7 @@ async fn provider_with_a_running_turn(
         .handle_command_event(channel_id, &create)
         .await
         .expect("handle");
-    let started = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
-        .await
-        .expect("the actor starts its initial turn")
-        .expect("event");
+    let started = next_decisive_event(&mut provider, "the actor starts its initial turn").await;
     provider.handle_session_event(started).expect("record");
     pump_available(&mut provider).await;
     let session_id = provider
@@ -343,10 +367,7 @@ async fn a_turn_refused_at_the_dequeue_is_discharged_with_a_visible_answer() {
         .expect("handle");
     // The actor first asks whether the wake is still owed (ledger 266); the
     // provider answers, and only then does the custody check run.
-    let admission = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
-        .await
-        .expect("the actor asks for wake admission")
-        .expect("event");
+    let admission = next_decisive_event(&mut provider, "the actor asks for wake admission").await;
     assert!(
         matches!(&admission, SessionEvent::WakeTurnAdmissionRequested { .. }),
         "{admission:?}"
@@ -355,10 +376,7 @@ async fn a_turn_refused_at_the_dequeue_is_discharged_with_a_visible_answer() {
         .handle_session_event(admission)
         .expect("admission answered");
     // The actor dequeues, refuses, and tells the provider.
-    let dropped = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
-        .await
-        .expect("the actor reports the refusal")
-        .expect("event");
+    let dropped = next_decisive_event(&mut provider, "the actor reports the refusal").await;
     assert!(
         matches!(
             &dropped,
@@ -606,10 +624,7 @@ async fn a_turn_that_cannot_get_custody_is_discharged_and_never_prompted() {
         .handle_command_event(channel_id, &turn_event(channel_id, "wake-1", &target))
         .await
         .expect("handle");
-    let dropped = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
-        .await
-        .expect("the actor reports rather than running")
-        .expect("event");
+    let dropped = next_decisive_event(&mut provider, "the actor reports rather than running").await;
     assert!(
         matches!(
             &dropped,
@@ -716,10 +731,7 @@ async fn an_establishment_that_outlives_the_wait_keeps_the_tree() {
         .handle_command_event(channel_id, &turn_event(channel_id, "follow-up", &target))
         .await
         .expect("handle");
-    let dropped = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
-        .await
-        .expect("the follow-up is answered, not run")
-        .expect("event");
+    let dropped = next_decisive_event(&mut provider, "the follow-up is answered, not run").await;
     assert!(
         matches!(
             &dropped,
@@ -830,10 +842,7 @@ async fn an_aborted_actor_leaves_no_grandchild_writing_the_seats_tree() {
         )
         .await
         .expect("handle");
-    let started = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
-        .await
-        .expect("the prompt is sent")
-        .expect("event");
+    let started = next_decisive_event(&mut provider, "the prompt is sent").await;
     provider.handle_session_event(started).expect("record");
     let session_id = provider
         .state()
