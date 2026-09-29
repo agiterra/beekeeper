@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # autodeploy — deploy the newest CI-green build of a repo to its relay.
 #
-# One implementation, two relays. Everything that differs between them arrives
+# One implementation, configured per relay. Everything relay-specific arrives
 # through the environment, normally from /etc/default/<unit> via the systemd
-# unit's EnvironmentFile=:
+# unit's EnvironmentFile=. There is one relay today (the vanilla buzz relay on
+# lightyear was retired 2026-09-29):
 #
 #   AUTODEPLOY_NAME=beekeeper  REPO_ID=2  MIRROR=/srv/git/beekeeper.git
 #   INSTANCE=hive  BASE=/opt/beekeeper  IMAGE_NAME=beekeeper-relay
@@ -19,7 +20,8 @@
 #      BUZZ_IMAGE, and `run.sh restart` (compose --wait).
 #   3. On failed restart/health: restore the saved .env and restart on the
 #      previous image.
-#   4. Prune old builds, backups, .env backups, build logs and images.
+#   4. Prune old builds, backups, .env backups, build logs, images and the
+#      BuildKit cache.
 #
 # A failed attempt leaves $BASE/autodeploy-failed-<short9> in the instance so
 # the timer does not rebuild in a loop; remove the marker to retry.
@@ -28,8 +30,8 @@
 #
 # ── Four ways this has actually gone wrong ───────────────────────────────────
 #
-# REPO_ID is not optional. Woodpecker serves both repos and both use branch
-# `main`. A query filtered on branch alone returns whichever repo pushed most
+# REPO_ID is not optional. Woodpecker served two repos that both use branch
+# `main`, and its pipelines table still holds both. A query filtered on branch alone returns whichever repo pushed most
 # recently, so an unpinned deployer will happily build Beekeeper and deploy it
 # onto the vanilla relay — and it comes up *healthy*, because a relay is a
 # relay. Wrong product against the wrong schema, silently. Found live on
@@ -49,7 +51,9 @@
 #
 # Retention is a credential concern, not a disk concern. Every run leaves a
 # .env.bak-pre-<sha>, each a full copy of the relay private key. 34 of them had
-# accumulated on one host, alongside 38 SQL dumps and 51 images.
+# accumulated on one host, alongside 38 SQL dumps and 51 images. (It became a
+# disk concern too: removing images never freed BuildKit cache, which reached
+# ~94 GB on hive and ~197 GB on the buzz instance by 2026-09-29.)
 set -euo pipefail
 
 # ── configuration ────────────────────────────────────────────────────────────
@@ -68,10 +72,10 @@ set -euo pipefail
 #   BASE             deployment root inside that instance
 #   IMAGE_NAME       docker image name, tagged with <short9>
 
-# Optional — these are genuinely the same for both relays today. Container
-# names come from `name: buzz-prod` in compose.yml, which both instances share;
-# they never collide because the instances are separate, but do not "fix" this
-# by assuming the names are unique host-wide.
+# Optional. Container names come from `name: buzz-prod` in compose.yml, which
+# any relay instance built from this tree shares; they never collide because
+# the instances are separate, but do not "fix" this by assuming the names are
+# unique host-wide.
 : "${BRANCH:=main}"
 : "${RELAY_CONTAINER:=buzz-prod-relay-1}"
 : "${PG_CONTAINER:=buzz-prod-postgres-1}"
@@ -79,6 +83,7 @@ set -euo pipefail
 : "${KEEP_ENV_BACKUPS:=3}"        # .env.bak-pre-* (each holds the relay key)
 : "${KEEP_IMAGES:=5}"             # $IMAGE_NAME:*, never the running one
 : "${KEEP_BUILD_TREES:=2}"        # build-prev-*
+: "${KEEP_BUILD_CACHE:=10GB}"     # BuildKit cache ceiling (docker builder prune --keep-storage)
 
 # ── validation, before anything reaches the host ─────────────────────────────
 # This runs ahead of the lock and every incus call. An unset variable under
@@ -118,11 +123,12 @@ require PG_CONTAINER    '^[A-Za-z0-9][A-Za-z0-9_.-]*$'  'pre-deploy pg_dump'
 for var in KEEP_BACKUPS KEEP_ENV_BACKUPS KEEP_IMAGES KEEP_BUILD_TREES; do
   require "$var" '^[1-9][0-9]*$' 'a retention count of 0 would delete the artefacts a failed deploy needs for diagnosis'
 done
+require KEEP_BUILD_CACHE '^[1-9][0-9]*(MB|GB)$' 'interpolated into docker builder prune; 0 would throw away every warm layer'
 
 COMPOSE=$BASE/compose
-# Per-target scratch. Both timers fire within seconds of each other, so a
-# shared path inside the forge container would have one run rm -f'ing the
-# sqlite copy the other is mid-read.
+# Per-target scratch. With more than one relay, the timers fire within seconds
+# of each other, and a shared path inside the forge container would have one
+# run rm -f'ing the sqlite copy the other is mid-read.
 WP_SQLITE=/tmp/wp-$AUTODEPLOY_NAME.sqlite
 # LOCK_DIR is overridable so the tests stay hermetic — they would otherwise
 # leave a real lock file in the host's /tmp, and one `sudo` run would leave a
@@ -318,4 +324,7 @@ instance sh -c "
     | grep -vFx \"\$running\" \
     | xargs -r -n1 docker rmi 2>/dev/null || true
 "
-log "retention done (kept $KEEP_BACKUPS backups, $KEEP_ENV_BACKUPS env backups, $KEEP_IMAGES images)"
+# Build cache: removing images frees none of it, and every deploy adds a full
+# layer set. Cap it rather than wipe it so the next build stays incremental.
+instance sh -c "docker builder prune -f --keep-storage $KEEP_BUILD_CACHE >/dev/null" || true
+log "retention done (kept $KEEP_BACKUPS backups, $KEEP_ENV_BACKUPS env backups, $KEEP_IMAGES images, build cache <= $KEEP_BUILD_CACHE)"

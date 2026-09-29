@@ -13,7 +13,7 @@
 //! 2. `BUZZ_SOURCE_SHA` — the build-arg `Dockerfile` already declares
 //!    (`ARG`/`ENV`, consumed here at `cargo build` time) and every build path
 //!    already threads through: `.github/workflows/docker.yml` for the public
-//!    image, and `deploy/autodeploy/autodeploy` for hive/lightyear. This is
+//!    image, and `deploy/autodeploy/autodeploy` for hive. This is
 //!    the case `git` cannot answer: the relay's own `.dockerignore` excludes
 //!    `.git/`, and `deploy/autodeploy/autodeploy` builds from a `git archive`
 //!    export, which never had one.

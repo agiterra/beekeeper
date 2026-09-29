@@ -10,7 +10,7 @@ url="${2:-}"
 [ -n "$url" ] || url="$(git remote get-url "${1:-origin}" 2>/dev/null || true)"
 
 case "$url" in
-  *lightyear.agiterra.org*|*hive.agiterra.org*|*github.com/agiterra/*|*github.com:agiterra/*|"") exit 0 ;;
+  *hive.agiterra.org*|*github.com/agiterra/*|*github.com:agiterra/*|"") exit 0 ;;
 esac
 
 [ "${BUZZ_ALLOW_OUTWARD_PUSH:-}" = "1" ] && exit 0

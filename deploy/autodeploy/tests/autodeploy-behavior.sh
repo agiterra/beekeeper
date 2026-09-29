@@ -54,6 +54,7 @@ case "$args" in
   *"autodeploy-failed-"*)             exit 1 ;;   # no failure marker
   *"docker build"*)                   : >"$STUB_DIR/built" ;;
   *"State.Health.Status"*)            echo "${STUB_HEALTH-healthy}" ;;
+  *"docker builder prune"*)           : >"$STUB_DIR/cache-pruned" ;;
   # Anything else is a deploy-path side effect (tar, pg_dump, run.sh, the
   # retention globs). Record it so an unmodelled call is visible rather than
   # silently succeeding — that is how the .env read drifted out from under
@@ -87,7 +88,7 @@ base_env=(
 
 run() {  # run <extra env>... -- captures stdout+stderr, never aborts the suite
   : >"$INCUS_LOG"
-  rm -f "$tmp/built" "$tmp/mirror-triggered" "$tmp/unmodelled"
+  rm -f "$tmp/built" "$tmp/mirror-triggered" "$tmp/unmodelled" "$tmp/cache-pruned"
   set +e
   out=$(env "${base_env[@]}" "$@" "$script" 2>&1)
   rc=$?
@@ -101,7 +102,8 @@ fail() { echo "FAIL: $*" >&2; echo "--- output ---" >&2; echo "$out" >&2; exit 1
 # resulting SQL `where repo_id =  and ...` is a syntax error that yields an
 # empty row, which the "no usable pipeline row" branch would treat as a normal
 # quiet exit.
-for bad in 'REPO_ID=' 'REPO_ID=0' 'REPO_ID=abc' 'REPO_ID=1;drop' 'MIRROR=' 'INSTANCE=' 'BASE=' 'IMAGE_NAME=' 'AUTODEPLOY_NAME='; do
+for bad in 'REPO_ID=' 'REPO_ID=0' 'REPO_ID=abc' 'REPO_ID=1;drop' 'MIRROR=' 'INSTANCE=' 'BASE=' 'IMAGE_NAME=' 'AUTODEPLOY_NAME=' \
+           'KEEP_BUILD_CACHE=0GB' 'KEEP_BUILD_CACHE=10GB;rm'; do
   run "$bad"
   [[ $rc -eq 2 ]]                 || fail "$bad should exit 2, got $rc"
   grep -q "FATAL" <<<"$out"       || fail "$bad should say FATAL"
@@ -170,6 +172,8 @@ run STUB_PIPELINE_ROW="success 8888888888888888888888888888888888888888" STUB_CU
 [[ -e "$tmp/built" ]]                       || fail "happy path must build"
 grep -q "DEPLOYED" <<<"$out"                || fail "happy path must report DEPLOYED"
 grep -q "retention done" <<<"$out"          || fail "retention must run on the success path"
+grep -q "docker builder prune -f --keep-storage 10GB" "$INCUS_LOG" \
+                                             || fail "retention must cap the BuildKit cache; image removal frees none of it"
 grep -q "repo_id = 7" "$INCUS_LOG"          || fail "query must pin repo_id; log: $(head -1 "$INCUS_LOG")"
 grep -q "wp-testrelay.sqlite" "$INCUS_LOG"  || fail "scratch sqlite path must be per-target, or concurrent runs race"
 # The Dockerfile compiles this in as the relay's disclosed NIP-11
@@ -194,5 +198,6 @@ grep -qE "docker build .*--build-arg BUZZ_SOURCE_COMMIT_COUNT=([1-9][0-9]*)? " "
 run STUB_PIPELINE_ROW="success 9999999999999999999999999999999999999999" STUB_CURRENT=111111111 STUB_HEALTH=unhealthy
 [[ $rc -ne 0 ]]                             || fail "an unhealthy relay must not report success"
 grep -q "ROLLING BACK" <<<"$out"            || fail "should roll back on an unhealthy relay"
+[[ ! -e "$tmp/cache-pruned" ]]              || fail "a failed deploy must not prune the build cache"
 
 echo "autodeploy behavior tests passed"

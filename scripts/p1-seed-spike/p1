@@ -15,7 +15,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-export BUZZ_RELAY_URL="${BUZZ_RELAY_URL:-https://lightyear.agiterra.org}"
+export BUZZ_RELAY_URL="${BUZZ_RELAY_URL:-https://hive.agiterra.org}"
 BUZZ_BIN="${BUZZ_BIN:-$ROOT/target/release/buzz}"
 
 [ -x "$BUZZ_BIN" ] || {

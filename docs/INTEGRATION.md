@@ -519,17 +519,18 @@ reachable.
 ## Deploying
 
 The relay deploys itself. **One deployer script,
-`/usr/local/sbin/autodeploy`, serves two relays** — the config is what differs,
-so read the unit name before trusting any path below:
+`/usr/local/sbin/autodeploy`**, driven by a per-relay config:
 
 | Unit | Config | Repo | Branch | Instance |
 |---|---|---|---|---|
 | `beekeeper-autodeploy.timer` | `/etc/default/beekeeper-autodeploy` | `agiterra/beekeeper` (Woodpecker `repo_id=2`) | `main` | `hive` → `/opt/beekeeper` |
-| `buzz-autodeploy.timer` | `/etc/default/buzz-autodeploy` | `agiterra/buzz` (`repo_id=1`) | `integrated` | `lightyear` → `/opt/buzz` |
 
-`REPO_ID` is the load-bearing line in each: both repos push `main`, so an
-unpinned query returns whichever pushed most recently, and deploying the wrong
-one would come up *healthy*.
+The vanilla relay (`buzz-autodeploy`, `agiterra/buzz` / `repo_id=1`, the `buzz`
+instance behind lightyear.agiterra.org) was retired on 2026-09-29.
+
+`REPO_ID` is still the load-bearing line: Woodpecker's pipelines table keeps
+repo 1's `main` history, so an unpinned query could select a vanilla build, and
+deploying it would come up *healthy*.
 
 Every 5 minutes it polls Woodpecker's sqlite, and when the newest push pipeline
 for its repo and branch is green it exports the source from the forge git
@@ -616,7 +617,7 @@ Resolution (`crates/buzz-relay/build.rs` / `src/build_provenance.rs`, and see
    default `unknown`, then `ENV`) and every image-build path threads through:
    `.github/workflows/docker.yml` (`github.sha`, for the public
    `ghcr.io/block/buzz` image) and `deploy/autodeploy/autodeploy` (the full
-   `$sha` it already selects from Woodpecker, for hive/lightyear). This is the
+   `$sha` it already selects from Woodpecker, for hive). This is the
    case `git` cannot answer on its own: the relay's `.dockerignore` excludes
    `.git/`, and `deploy/autodeploy/autodeploy` builds from a `git archive`
    export, which never had one — without the build-arg, every relay built

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Contract tests for the per-relay autodeploy configs.
+# Contract tests for the per-relay autodeploy config.
 #
-# One script now serves both relays, so the configs are the only thing keeping
-# them apart. A swapped, duplicated or half-edited config would put one
-# product's build on the other's relay — and it would come up healthy, because
-# a relay is a relay. These assertions are cheap; that failure is not.
+# There is one relay today (beekeeper on hive; the vanilla buzz relay on
+# lightyear was retired 2026-09-29). Woodpecker's pipelines table still holds
+# agiterra/buzz history under repo_id 1 on branch `main`, so a config pointing
+# at the wrong repo would still select a build — and it would come up healthy,
+# because a relay is a relay. These assertions are cheap; that failure is not.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
@@ -15,48 +16,41 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 value() { grep -m1 "^$2=" "$dir/$1" | cut -d= -f2-; }
 
-# ── every config sets every required key ─────────────────────────────────────
-for cfg in buzz-autodeploy beekeeper-autodeploy; do
-  [[ -f "$dir/$cfg" ]] || fail "missing config: $cfg"
-  for key in AUTODEPLOY_NAME REPO_ID MIRROR INSTANCE BASE IMAGE_NAME; do
-    v=$(value "$cfg" "$key")
-    [[ -n "$v" ]] || fail "$cfg: $key is unset or empty"
-  done
-  # systemd parses EnvironmentFile itself — it is not a shell. `export`,
-  # command substitution and variable expansion all silently do the wrong
-  # thing, so reject them rather than discover it in production.
-  #
-  # Only assignment lines are examined: systemd ignores comments, and prose
-  # legitimately contains backticks and the like. (Checking the whole file
-  # first meant this test failed on its own explanatory comments.)
-  settings=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$dir/$cfg" || true)
-  grep -qE '^\s*export '  <<<"$settings" && fail "$cfg: 'export' — systemd is not a shell here"
-  grep -qE '\$\(|`|\$\{'  <<<"$settings" && fail "$cfg: substitution/expansion — systemd is not a shell here"
-done
+cfg=beekeeper-autodeploy
 
-# ── the two must differ everywhere it matters ────────────────────────────────
-# REPO_ID above all: Woodpecker serves both repos and both use branch `main`,
-# so an unpinned or duplicated repo_id selects whichever pushed most recently.
+# ── the config sets every required key ───────────────────────────────────────
+[[ -f "$dir/$cfg" ]] || fail "missing config: $cfg"
 for key in AUTODEPLOY_NAME REPO_ID MIRROR INSTANCE BASE IMAGE_NAME; do
-  a=$(value buzz-autodeploy "$key")
-  b=$(value beekeeper-autodeploy "$key")
-  [[ "$a" != "$b" ]] || fail "$key is identical in both configs ('$a') — they would share a target"
+  v=$(value "$cfg" "$key")
+  [[ -n "$v" ]] || fail "$cfg: $key is unset or empty"
 done
+# systemd parses EnvironmentFile itself — it is not a shell. `export`,
+# command substitution and variable expansion all silently do the wrong
+# thing, so reject them rather than discover it in production.
+#
+# Only assignment lines are examined: systemd ignores comments, and prose
+# legitimately contains backticks and the like. (Checking the whole file
+# first meant this test failed on its own explanatory comments.)
+settings=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$dir/$cfg" || true)
+grep -qE '^\s*export '  <<<"$settings" && fail "$cfg: 'export' — systemd is not a shell here"
+grep -qE '\$\(|`|\$\{'  <<<"$settings" && fail "$cfg: substitution/expansion — systemd is not a shell here"
 
-# ── the pairing must be internally consistent ────────────────────────────────
-[[ "$(value buzz-autodeploy REPO_ID)" == "1" ]]           || fail "buzz must be Woodpecker repo 1 (agiterra/buzz)"
-[[ "$(value beekeeper-autodeploy REPO_ID)" == "2" ]]      || fail "beekeeper must be Woodpecker repo 2 (agiterra/beekeeper)"
-grep -q "buzz" <<<"$(value buzz-autodeploy MIRROR)"       || fail "buzz config points at a non-buzz mirror"
-grep -q "beekeeper" <<<"$(value beekeeper-autodeploy MIRROR)" || fail "beekeeper config points at a non-beekeeper mirror"
+# ── it must point at beekeeper, not at the retired vanilla repo ──────────────
+[[ "$(value "$cfg" REPO_ID)" == "2" ]]              || fail "beekeeper must be Woodpecker repo 2 (agiterra/beekeeper); repo 1 is the retired agiterra/buzz"
+grep -q "beekeeper" <<<"$(value "$cfg" MIRROR)"     || fail "beekeeper config points at a non-beekeeper mirror"
+[[ "$(value "$cfg" INSTANCE)" == "hive" ]]          || fail "beekeeper deploys to the hive instance"
 
-# ── each unit must load its own config, and must not tolerate its absence ────
-for name in buzz beekeeper; do
-  unit="$units/$name-autodeploy.service"
-  [[ -f "$unit" ]] || fail "missing unit: $unit"
-  grep -q "^EnvironmentFile=/etc/default/$name-autodeploy$" "$unit" \
-    || fail "$name unit must load /etc/default/$name-autodeploy with no '-' prefix (a missing config must fail the unit, not run it unconfigured)"
-  grep -q "^ExecStart=/usr/local/sbin/autodeploy$" "$unit" \
-    || fail "$name unit must run the shared /usr/local/sbin/autodeploy"
+# ── the unit must load its own config, and must not tolerate its absence ─────
+unit="$units/$cfg.service"
+[[ -f "$unit" ]] || fail "missing unit: $unit"
+grep -q "^EnvironmentFile=/etc/default/$cfg$" "$unit" \
+  || fail "unit must load /etc/default/$cfg with no '-' prefix (a missing config must fail the unit, not run it unconfigured)"
+grep -q "^ExecStart=/usr/local/sbin/autodeploy$" "$unit" \
+  || fail "unit must run the shared /usr/local/sbin/autodeploy"
+
+# ── nothing left over from the retired relay ─────────────────────────────────
+for f in "$dir/buzz-autodeploy" "$units/buzz-autodeploy.service" "$units/buzz-autodeploy.timer"; do
+  [[ ! -e "$f" ]] || fail "$f belongs to the retired vanilla relay; installing it would redeploy lightyear"
 done
 
 echo "autodeploy config contract tests passed"
