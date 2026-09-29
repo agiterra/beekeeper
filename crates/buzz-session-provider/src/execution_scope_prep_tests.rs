@@ -100,22 +100,55 @@ fn login_shells_and_host_commands_keep_temporary_files_private() {
     let fx = fixture();
     let plan = prepared(prepare(&inputs(&fx, "s1", &fx.seat_a, &[], &[])));
     let temp = private_temp(&plan);
+    // A person's own startup files, owned by this test and outside every
+    // grant: the boundary denies them, as it denies a real `~/.profile`
+    // (ledger 287). A login shell may say so on stderr; what must hold is
+    // that it still runs, keeps temp private, and that the *system* profile's
+    // denied `path_helper` stays silent and changes nothing.
+    let person_home = fx.root.join("person-home");
+    std::fs::create_dir_all(&person_home).expect("fixture home");
+    for startup in [".profile", ".bash_profile", ".zprofile", ".zshrc"] {
+        std::fs::write(
+            person_home.join(startup),
+            "export FIXTURE_STARTUP_FILE_WAS_READ=1\n",
+        )
+        .expect("fixture startup file");
+    }
+    let home = person_home.display();
     for shell in ["/bin/zsh -l -c", "/bin/bash -l -c"] {
         let output = run_in(
             &plan,
             &fx.seat_a,
-            &format!("{shell} 'd=$(mktemp -d) && echo \"$d\"'"),
+            &format!(
+                "HOME='{home}' {shell} 'd=$(mktemp -d) && echo \"$d\" && command -v mktemp \
+                 && echo \"startup=${{FIXTURE_STARTUP_FILE_WAS_READ:-denied}}\"'"
+            ),
         );
         assert!(output.status.success(), "{shell}: {output:?}");
-        let made = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut lines = stdout.lines();
+        let made = PathBuf::from(lines.next().expect("mktemp output").trim())
             .canonicalize()
             .expect("created");
         assert!(made.starts_with(&temp), "{shell} created {made:?}");
+        // `path_helper` would have put `/usr/bin` ahead of the host's tool
+        // directory; the prepared `mktemp` must still be the one found.
+        let mktemp = lines.next().expect("command -v mktemp").trim();
+        assert_ne!(mktemp, "/usr/bin/mktemp", "{shell}: {stdout}");
+        assert_eq!(
+            lines.next().map(str::trim),
+            Some("startup=denied"),
+            "{shell}: the fixture's startup file lies outside every grant"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            output.stderr.is_empty(),
-            "a denied path_helper is silent to the login profile: {output:?}"
+            !stderr.contains("path_helper") && !stderr.contains("/etc/"),
+            "{shell}: the system profile's denied path_helper must be silent: {stderr}"
         );
     }
+    // And the helper itself is refused, not merely unused.
+    let output = run_in(&plan, &fx.seat_a, "/usr/libexec/path_helper -s");
+    assert!(!output.status.success(), "path_helper ran: {output:?}");
     // Tools the system search path supplies still resolve in a login shell.
     let output = run_in(
         &plan,
