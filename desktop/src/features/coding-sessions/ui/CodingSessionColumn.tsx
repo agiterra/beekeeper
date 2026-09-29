@@ -57,6 +57,13 @@ const CODING_SESSION_MISSION_CODE_BLOCK_CLASS =
  * behind them. The dock is now solid; a separate pseudo-element fades only the
  * strip immediately above it.
  */
+/**
+ * The dock's fade (`before:h-8` below), which paints over the stream just
+ * above the dock. A reserve that stops at the dock's top edge leaves the last
+ * row under the fade, so the stream reserves the dock plus this.
+ */
+export const CODING_SESSION_COMPOSER_DOCK_FADE = "2rem";
+
 export const CODING_SESSION_COMPOSER_DOCK_CLASS =
   "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-background pb-4 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-8 before:bg-linear-to-b before:from-transparent before:to-background before:content-['']";
 

@@ -1496,9 +1496,16 @@ test("B4: the Mission editor opens at one line and the reserve is the dock", asy
     };
   });
   expect(reserve, "both the column and the dock are laid out").not.toBeNull();
+  // Plus the dock's `before:h-8` fade (2rem), which paints over the stream
+  // just above the dock: a reserve that stopped at the dock's edge left the
+  // last row under the fade.
   expect(
-    Math.abs((reserve?.paddingBottom ?? 0) - (reserve?.dockHeight ?? 0)),
-    `the reserve is the dock's measured height (padding ${reserve?.paddingBottom} vs dock ${reserve?.dockHeight})`,
+    Math.abs(
+      (reserve?.paddingBottom ?? 0) -
+        (reserve?.dockHeight ?? 0) -
+        2 * rootFontSize,
+    ),
+    `the reserve is the dock's measured height plus its fade (padding ${reserve?.paddingBottom} vs dock ${reserve?.dockHeight})`,
   ).toBeLessThanOrEqual(2);
   // The reserve is a measurement, so it is never the old constant by accident.
   expect(reserve?.paddingBottom ?? 0).toBeGreaterThan(0);
@@ -1530,7 +1537,7 @@ test("B4: the Mission editor opens at one line and the reserve is the dock", asy
   ).toBeLessThanOrEqual(2);
 });
 
-test("B4: Conversation keeps min-h-24 and its literal reserve", async ({
+test("B4: Conversation keeps min-h-24, and its reserve is the dock too", async ({
   page,
 }) => {
   await openMockApp(page, {
@@ -1547,20 +1554,182 @@ test("B4: Conversation keeps min-h-24 and its literal reserve", async ({
     /\bmin-h-24\b/,
   );
   expect(classes).not.toMatch(/\bmin-h-11\b/);
-  // The reserve is the literal class, not a measurement: no inline style.
+  // Conversation used to keep the literal `pb-48` (`pb-[34rem]` while a seat
+  // worked). That literal is what Andy's 2026-09-29 screenshots show: the
+  // composer over the session's last row, and hundreds of px opening up when
+  // a reply started. One number now, in both lenses.
   const column = page
     .getByTestId("coding-session-narrative-scroll")
     .locator("[data-coding-session-column]")
     .first();
-  expect((await column.getAttribute("class")) ?? "").toMatch(
+  expect((await column.getAttribute("class")) ?? "").not.toMatch(
     /\bpb-(48|\[34rem\])/,
   );
-  expect(await column.getAttribute("style")).toBeNull();
-  // The dock carries no test id outside Mission — an attribute is bytes (I8).
-  expect(await page.getByTestId("coding-session-composer-dock").count()).toBe(
-    0,
-  );
+  const foot = await measureStreamFoot(page);
+  expect(
+    Math.abs(foot.paddingBottom - foot.dockHeight - foot.fade),
+    `the reserve is the dock plus its fade (padding ${foot.paddingBottom}, dock ${foot.dockHeight}, fade ${foot.fade})`,
+  ).toBeLessThanOrEqual(2);
 });
+
+/**
+ * Andy, 2026-09-29 (hive DM, three screenshots): in Conversation the composer
+ * covered the bottom of the session, the `Reply to … / Send to…` chips sat on
+ * the disconnected notice, and a lot of space opened when a reply started.
+ *
+ * All three were one wrong number — the literal reserve against a dock whose
+ * height moves with the disconnected notice, the active-work strip and the
+ * task rail. Read off the laid-out page, at the foot of the scroller: the last
+ * row clears the dock *and* its fade, by the same amount in every state.
+ */
+for (const builderStatus of [
+  "running",
+  "waiting_for_input",
+  "disconnected",
+] as const) {
+  test(`the stream's last row clears the dock by one constant gap (${builderStatus})`, async ({
+    page,
+  }) => {
+    await openMockApp(page, {
+      asFounder: true,
+      reducedMotion: "reduce",
+      theme: "buzz",
+      viewportWidth: 1920,
+    });
+    await seedAndOpen(page, GOVERNED_MISSION, builderStatus);
+    await waitForAnimations(page);
+    const foot = await measureStreamFoot(page);
+    expect(
+      foot.distance,
+      "a session opens at its latest content",
+    ).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs(foot.paddingBottom - foot.dockHeight - foot.fade),
+      `the reserve is the dock plus its fade (padding ${foot.paddingBottom}, dock ${foot.dockHeight}, fade ${foot.fade})`,
+    ).toBeLessThanOrEqual(2);
+    expect(
+      foot.lastRowBottom,
+      `the last row ends above the dock's fade (row ${foot.lastRowBottom}, fade top ${foot.dockTop - foot.fade})`,
+    ).toBeLessThanOrEqual(foot.dockTop - foot.fade + 2);
+  });
+}
+
+/**
+ * Andy's third screenshot: back on a session tab, the view stopped ~200 px
+ * short of the bottom. The router restores a scroller's absolute `scrollTop`,
+ * and on a remount the reserve under the stream is not yet what it was when
+ * that number was taken. The workspace keeps distance-from-bottom instead.
+ */
+test("a return to the session keeps its distance from the bottom", async ({
+  page,
+}) => {
+  await openMockApp(page, {
+    asFounder: true,
+    reducedMotion: "reduce",
+    theme: "buzz",
+    viewportWidth: 1920,
+  });
+  await seedAndOpen(page);
+  await waitForAnimations(page);
+  const scroller = page.getByTestId("coding-session-narrative-scroll");
+
+  // At the latest: back and forward land at the latest again.
+  await scroller.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await page.waitForTimeout(1_200);
+  await page.goBack();
+  await expect(
+    page.getByTestId("coding-session-umbrella-workspace"),
+  ).toHaveCount(0);
+  await page.goForward();
+  await expect(
+    page.getByTestId("coding-session-umbrella-workspace"),
+  ).toBeVisible();
+  await waitForAnimations(page);
+  await page.waitForTimeout(300);
+  expect(
+    (await measureStreamFoot(page)).distance,
+    "back at the latest after a return",
+  ).toBeLessThanOrEqual(2);
+
+  // Scrolled up by the reader: the same distance from the bottom, not the
+  // same scrollTop.
+  // Near the scroller's top: the dock overlays everything below the stream.
+  const box = await scroller.boundingBox();
+  if (!box) throw new Error("narrative scroller is not laid out");
+  await page.mouse.move(box.x + box.width / 2, box.y + 40);
+  await page.mouse.wheel(0, -160);
+  await expect
+    .poll(async () => (await measureStreamFoot(page)).distance)
+    .toBeGreaterThan(100);
+  await page.waitForTimeout(400);
+  const before = (await measureStreamFoot(page)).distance;
+  await page.goBack();
+  await expect(
+    page.getByTestId("coding-session-umbrella-workspace"),
+  ).toHaveCount(0);
+  await page.goForward();
+  await expect(
+    page.getByTestId("coding-session-umbrella-workspace"),
+  ).toBeVisible();
+  await waitForAnimations(page);
+  await page.waitForTimeout(300);
+  const after = (await measureStreamFoot(page)).distance;
+  expect(
+    Math.abs(after - before),
+    `distance from the bottom survives the return (${before} → ${after})`,
+  ).toBeLessThanOrEqual(2);
+});
+
+/**
+ * The stream's foot, read off the laid-out page — after two frames. Scroll
+ * events and ResizeObserver callbacks are delivered at the rendering step, so
+ * a read taken between React's commit and the next frame sees rows that have
+ * grown under an anchor that has not been told yet: a state no reader ever
+ * sees on screen. `waitForAnimations` awaits animations, never a frame.
+ */
+async function measureStreamFoot(page: Page) {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  const foot = await page.evaluate(() => {
+    const scroller = document.querySelector<HTMLElement>(
+      '[data-testid="coding-session-narrative-scroll"]',
+    );
+    const column = scroller?.querySelector<HTMLElement>(
+      "[data-coding-session-column]",
+    );
+    const dock = document.querySelector<HTMLElement>(
+      '[data-testid="coding-session-composer-dock"]',
+    );
+    const rows = document.querySelectorAll(
+      '[data-testid="coding-session-umbrella-timeline"] > *',
+    );
+    const last = rows[rows.length - 1];
+    if (!scroller || !column || !dock || !last) return null;
+    const rootFontSize = Number.parseFloat(
+      window.getComputedStyle(document.documentElement).fontSize,
+    );
+    return {
+      distance:
+        scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+      dockHeight: dock.getBoundingClientRect().height,
+      dockTop: dock.getBoundingClientRect().top,
+      // The dock's `before:h-8` fade, in rem-scaled px.
+      fade: 2 * rootFontSize,
+      lastRowBottom: last.getBoundingClientRect().bottom,
+      paddingBottom: Number.parseFloat(
+        window.getComputedStyle(column).paddingBottom,
+      ),
+    };
+  });
+  if (!foot) throw new Error("the stream's foot is not laid out");
+  return foot;
+}
 
 /**
  * L4.9.1 / critique A7 — the unreachable notice names the seat it is about.

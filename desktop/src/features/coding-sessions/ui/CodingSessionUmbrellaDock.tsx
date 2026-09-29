@@ -89,11 +89,10 @@ export function CodingSessionUmbrellaDock({
   return (
     <div
       className={cn(CODING_SESSION_COMPOSER_DOCK_CLASS, gutter)}
-      // Mission only, for the same reason every other item in this lane is:
-      // I8 freezes Conversation's DOM, and an attribute is bytes. The stream's
-      // reserve is measured off this element (B4), so the test that proves the
-      // reserve equals the dock needs to be able to find it.
-      data-testid={mission ? "coding-session-composer-dock" : undefined}
+      // Both lenses: the stream's reserve is measured off this element in
+      // each of them now (Conversation's literal `pb-48` was the bug), so the
+      // tests that prove the reserve equals the dock need to find it in both.
+      data-testid="coding-session-composer-dock"
       ref={dockRef}
     >
       <CodingSessionColumn

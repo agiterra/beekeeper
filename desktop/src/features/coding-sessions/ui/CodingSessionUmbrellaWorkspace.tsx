@@ -17,6 +17,7 @@ import { derivePackRefs } from "@/features/coding-sessions/lib/codingSessionPack
 import { deriveSeatBeeStamps } from "@/features/coding-sessions/lib/codingSessionSeatBee";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
 import { useCodingSessionTeamWake } from "@/features/coding-sessions/hooks/useCodingSessionTeamWake";
+import { useCodingSessionBottomAnchor } from "@/features/coding-sessions/hooks/useCodingSessionBottomAnchor";
 import {
   readCodingSessionContextLoad,
   type CodingSessionContextLoad,
@@ -49,7 +50,10 @@ import { useElementWidth } from "@/shared/hooks/use-mobile";
 import { cn } from "@/shared/lib/cn";
 import { CodingSessionUmbrellaHeaderRow } from "./CodingSessionUmbrellaHeaderRow";
 import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
-import { CodingSessionColumn } from "./CodingSessionColumn";
+import {
+  CODING_SESSION_COMPOSER_DOCK_FADE,
+  CodingSessionColumn,
+} from "./CodingSessionColumn";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { CodingSessionTaskRailSheet } from "./CodingSessionTaskRail";
@@ -186,8 +190,9 @@ export function UmbrellaCodingSessionWorkspace({
   );
   const resolveReachability = sharedResolveReachability ?? ownReachability;
   const [workspaceBodyRef, bodyWidthPx] = useElementWidth<HTMLDivElement>();
-  // B4: the stream's bottom reserve in Mission is the dock's own height, so
-  // the unreachable notice and the task dock push the reserve instead of
+  // B4: the stream's bottom reserve is the dock's own height (plus its fade)
+  // in both lenses, so the unreachable and disconnected notices, the
+  // active-work strip and the task dock push the reserve instead of
   // overlapping the last turn block.
   const [dockRef, dockHeightPx] =
     useCodingSessionElementHeight<HTMLDivElement>();
@@ -230,6 +235,10 @@ export function UmbrellaCodingSessionWorkspace({
     string | null
   >(null);
   const narrativeScrollRef = React.useRef<HTMLDivElement>(null);
+  const narrativeAnchorRef = useCodingSessionBottomAnchor(
+    narrativeScrollRef,
+    `${channelId}:${umbrella.sessionRef ?? umbrella.umbrellaKey}`,
+  );
   const workspaceActorName = useCodingSessionActorNameResolver(umbrella);
   const composerParticipants = React.useMemo(
     () => listCodingSessionUmbrellaParticipants(umbrella, workspaceActorName),
@@ -834,25 +843,21 @@ export function UmbrellaCodingSessionWorkspace({
                     gutter,
                   )}
                   data-testid="coding-session-narrative-scroll"
-                  ref={narrativeScrollRef}
+                  ref={narrativeAnchorRef}
                 >
                   <CodingSessionColumn
-                    className={cn(
-                      "min-h-full pt-7",
-                      // B4: Conversation keeps its two literal reserves exactly.
-                      // Mission measures the dock instead — see `dockHeightPx`.
-                      mission
-                        ? null
-                        : activeWorkAgents.length > 0 ||
-                            (composerTaskDock.open && !isNarrow)
-                          ? "pb-[34rem]"
-                          : "pb-48",
-                    )}
+                    className={cn("min-h-full pt-7", sessionClosed && "pb-7")}
                     expanded={narrativeExpanded}
                     mission={mission}
+                    // One number in both lenses. Conversation's literal
+                    // `pb-48` / `pb-[34rem]` put the composer over the last
+                    // row and opened ~350 px when a reply started (Andy,
+                    // 2026-09-29).
                     style={
-                      mission && dockHeightPx > 0
-                        ? { paddingBottom: `${dockHeightPx}px` }
+                      !sessionClosed && dockHeightPx > 0
+                        ? {
+                            paddingBottom: `calc(${dockHeightPx}px + ${CODING_SESSION_COMPOSER_DOCK_FADE})`,
+                          }
                         : undefined
                     }
                   >
