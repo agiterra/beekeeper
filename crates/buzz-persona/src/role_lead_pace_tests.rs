@@ -128,7 +128,7 @@ fn the_composed_lead_carries_every_work_command_shape_in_order() {
         .iter()
         .find(|include| include.reference.starts_with("beekeeper/lead@"))
         .expect("the lead includes its role template");
-    assert_eq!(lead_include.resolved.as_deref(), Some("1.2.7"));
+    assert_eq!(lead_include.resolved.as_deref(), Some("1.2.8"));
 
     let prompt = &composed.persona.prompt;
     let mut last = 0;

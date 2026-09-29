@@ -69,8 +69,8 @@ const CURRENT: [(&str, &str); 11] = [
     ("architect", "1.1.0"),
     ("builder", "1.2.0"),
     ("designer", "1.1.0"),
-    ("lead", "1.2.7"),
-    ("memory", "1.0.0"),
+    ("lead", "1.2.8"),
+    ("memory", "1.1.0"),
     ("poker", "1.1.0"),
     ("project-pulse", "1.1.0"),
     ("project-setup", "1.1.0"),
@@ -133,6 +133,15 @@ const LEAD_1_2_6_CARETS: [&str; 8] = [
 /// and hiring the verifier early is a judgment. Every earlier caret takes it.
 const LEAD_1_2_7_CARETS: [&str; 9] = [
     "^1.0.0", "^1.1.0", "^1.2.0", "^1.2.1", "^1.2.2", "^1.2.3", "^1.2.4", "^1.2.5", "^1.2.6",
+];
+
+/// Lead 1.2.8 (ledger 288, the shelfcount run): review evidence covers the
+/// revision it names, so a change the lead makes after the review is either
+/// made before it or reviewed before evidence is bound. Every earlier caret
+/// takes it.
+const LEAD_1_2_8_CARETS: [&str; 10] = [
+    "^1.0.0", "^1.1.0", "^1.2.0", "^1.2.1", "^1.2.2", "^1.2.3", "^1.2.4", "^1.2.5", "^1.2.6",
+    "^1.2.7",
 ];
 
 /// Verifier 1.2.1 (control run 6): `refuter-pass` states the assignmentRef
@@ -472,6 +481,51 @@ fn the_lead_1_2_3_template_is_byte_for_byte_what_it_shipped_as() {
     );
 }
 
+/// Lead 1.2.7 shipped to control runs 8 onwards and the shelfcount run
+/// (ledger 266, 285), so its bytes are frozen; 1.2.8 is a new directory
+/// beside it.
+#[test]
+fn the_lead_1_2_7_template_is_byte_for_byte_what_it_shipped_as() {
+    assert_eq!(
+        digest("lead", "1.2.7"),
+        "53261c5b57c6ae9afbc9fdd6cbcc4fc49041dfe59808f1bafdaa1fe564bdd7b9",
+        "lead/1.2.7 changed; a published version is immutable — add a new version instead"
+    );
+}
+
+/// Memory 1.1.0 (ledger 288, durable-work plan § 6): a memory carries its
+/// scope and revision, a changed fact supersedes the old memory, and current
+/// instructions and fresh observations outrank a recollection.
+#[test]
+fn memory_1_1_0_teaches_scope_revision_and_supersession() {
+    let memory = current_lower("memory");
+    for phrase in [
+        "scope and its revision",
+        "supersede the old memory",
+        "outrank a recollection",
+        "private to your identity",
+    ] {
+        assert!(
+            memory.contains(phrase),
+            "memory lacks {phrase:?}:\n{memory}"
+        );
+    }
+}
+
+/// Lead 1.2.8 (ledger 288): review evidence covers the revision it names.
+#[test]
+fn the_lead_is_told_review_evidence_covers_only_the_reviewed_revision() {
+    let lead = current_lower("lead");
+    assert!(
+        lead.contains("review evidence covers the revision it names"),
+        "lead lacks the review-revision rule"
+    );
+    assert!(
+        !lead.contains("every documentation edit"),
+        "the rule must not send every documentation edit back to a builder"
+    );
+}
+
 /// 1.2.2 is worth shipping only if projects already on the wire take it
 /// without editing a file. Every caret a seeded project can be carrying for
 /// the working contract — `@^1.0.0`, `@^1.1.0`, `@^1.2.0` and `@^1.2.1` — must
@@ -503,7 +557,7 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
             );
         }
     }
-    // The lead's 1.2.7 rides every earlier caret; 1.2.0 to 1.2.6 stay pins.
+    // The lead's 1.2.8 rides every earlier caret; 1.2.0 to 1.2.7 stay pins.
     for range in LEAD_1_2_1_CARETS
         .iter()
         .chain(LEAD_1_2_2_CARETS.iter())
@@ -512,6 +566,7 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
         .chain(LEAD_1_2_5_CARETS.iter())
         .chain(LEAD_1_2_6_CARETS.iter())
         .chain(LEAD_1_2_7_CARETS.iter())
+        .chain(LEAD_1_2_8_CARETS.iter())
     {
         let resolved = catalog
             .resolve("lead", &TemplateRange::parse("lead", range).expect("range"))
@@ -519,12 +574,12 @@ fn a_1_2_2_template_is_picked_up_by_every_earlier_caret_include() {
         assert!(resolved.warning.is_none(), "lead@{range}: {resolved:?}");
         assert_eq!(
             resolved.template.version.to_string(),
-            "1.2.7",
-            "lead@{range} must take 1.2.7 without anyone editing a role file"
+            "1.2.8",
+            "lead@{range} must take 1.2.8 without anyone editing a role file"
         );
     }
     for exact in [
-        "1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5", "1.2.6",
+        "1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5", "1.2.6", "1.2.7",
     ] {
         let resolved = catalog
             .resolve("lead", &TemplateRange::parse("lead", exact).expect("range"))
@@ -710,15 +765,22 @@ fn every_current_template_is_what_a_caret_range_resolves_to_and_composes() {
             "{name}/{version} has no {TEMPLATE_MD}"
         );
     }
-    // `memory` has never changed, so it ships one version and a caret range
-    // still answers with it.
+    // `memory` 1.1.0 (ledger 288) rides the `^1.0.0` every seeded project
+    // carries; an exact pin on 1.0.0 still answers with 1.0.0's bytes.
     let memory = catalog
         .resolve(
             "memory",
             &TemplateRange::parse("memory", "^1.0.0").expect("range"),
         )
         .expect("memory@^1.0.0");
-    assert_eq!(memory.template.version.to_string(), "1.0.0");
+    assert_eq!(memory.template.version.to_string(), "1.1.0");
+    let memory_pin = catalog
+        .resolve(
+            "memory",
+            &TemplateRange::parse("memory", "1.0.0").expect("range"),
+        )
+        .expect("memory@1.0.0");
+    assert_eq!(memory_pin.template.version.to_string(), "1.0.0");
 
     // Composition: seed a project from this catalog and compose every role.
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -769,9 +831,9 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
 
     let lead = std::fs::read_to_string(root.join("roles/lead.md")).expect("seeded lead");
     for expected in [
-        "![[beekeeper/lead@^1.2.7]]",
+        "![[beekeeper/lead@^1.2.8]]",
         "![[beekeeper/working-contract@^1.2.2]]",
-        "![[beekeeper/memory@^1.0.0]]",
+        "![[beekeeper/memory@^1.1.0]]",
         "![[beekeeper/project-pulse@^1.1.0]]",
     ] {
         assert!(
@@ -819,9 +881,9 @@ fn a_new_project_seeds_the_current_versions_and_an_existing_projects_caret_resol
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.0.0", "1.2.7"),
+            ("beekeeper/lead@^1.0.0", "1.2.8"),
             ("beekeeper/working-contract@^1.0.0", "1.2.2"),
-            ("beekeeper/memory@^1.0.0", "1.0.0"),
+            ("beekeeper/memory@^1.0.0", "1.1.0"),
             ("beekeeper/project-pulse@^1.0.0", "1.1.0"),
         ],
         "an existing project's caret ranges must take the minor revision"
@@ -918,9 +980,9 @@ fn a_1_2_0_role_is_picked_up_by_both_the_caret_1_0_0_and_the_caret_1_1_0_include
     assert_eq!(
         resolved,
         vec![
-            ("beekeeper/lead@^1.1.0", "1.2.7"),
+            ("beekeeper/lead@^1.1.0", "1.2.8"),
             ("beekeeper/working-contract@^1.1.0", "1.2.2"),
-            ("beekeeper/memory@^1.0.0", "1.0.0"),
+            ("beekeeper/memory@^1.0.0", "1.1.0"),
             ("beekeeper/project-pulse@^1.1.0", "1.1.0"),
         ],
         "a 1.1.0-era caret must carry the current lead"
