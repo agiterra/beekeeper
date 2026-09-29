@@ -23,8 +23,8 @@ it. Your current instructions, the repository and a fresh observation
 outrank a recollection; a memory older than the thing it describes is a
 lead to re-check, not an answer.
 
-Engram memory is private to your identity on this host. A fact the whole
-team or every future seat needs belongs in the project's repository or its
-Pulse, not only in memory.
+Engram memory belongs to your agent identity and is readable by its owner;
+it is stored on the relay, not confined to this host. A fact the team needs
+belongs in the project's repository or Pulse, not only in memory.
 
 Do not record secrets, credentials or machine-specific paths as memory.

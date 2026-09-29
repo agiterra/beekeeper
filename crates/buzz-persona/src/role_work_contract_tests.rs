@@ -503,7 +503,9 @@ fn memory_1_1_0_teaches_scope_revision_and_supersession() {
         "scope and its revision",
         "supersede the old memory",
         "outrank a recollection",
-        "private to your identity",
+        "readable by its owner",
+        "not confined to this host",
+        "repository or pulse",
     ] {
         assert!(
             memory.contains(phrase),
