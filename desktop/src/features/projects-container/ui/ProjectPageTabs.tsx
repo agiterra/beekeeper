@@ -83,7 +83,12 @@ export function ProjectPageTabs({
   return (
     <nav
       aria-label="Project sections"
-      className="mb-6 flex h-9 items-stretch gap-1 border-b border-border"
+      // The tabs never shrink, so at 250% zoom the strip is wider than the
+      // page and used to widen the whole project screen with it — every card
+      // under it then scrolled sideways to reach a tab bar nobody was
+      // reading. Scrolling it in its own box keeps the overflow where it
+      // belongs (`role-packs-project.spec.ts`, the 250% zoom matrix).
+      className="mb-6 flex h-9 min-w-0 items-stretch gap-1 overflow-x-auto border-b border-border"
       data-testid="project-page-tabs"
     >
       {searchTabs.map((tab) => {

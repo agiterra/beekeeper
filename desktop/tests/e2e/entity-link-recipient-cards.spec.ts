@@ -270,7 +270,12 @@ test("reopening the same entity link reapplies its workspace state", async ({
 
   await emitEntityLink(issueLink);
   const issueHeading = page.getByRole("heading", { name: ISSUE_SUBJECT });
-  await expect(issueHeading).toBeVisible();
+  // The link routes to the Issues tab at once; the issue itself is this
+  // test's first read of the issues list, and the panel honestly says
+  // "Loading issues…" until it answers — measured at ~8.9s here, past the
+  // default 5s. The pull-request reads above are already warm by the time
+  // they are asserted, which is why only this one needs saying.
+  await expect(issueHeading).toBeVisible({ timeout: 30_000 });
   await breadcrumb.getByRole("button", { name: "Issues", exact: true }).click();
   await expect(issueHeading).toHaveCount(0);
   await emitEntityLink(issueLink);

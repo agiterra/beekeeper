@@ -1036,32 +1036,33 @@ test.describe("crew front door", () => {
     const seatField = page.getByTestId("new-coding-session-seat");
     await expect(seatField).toBeVisible();
 
-    // Default: the role box fills from the agent's own home role.
+    // Default: the role box fills from the agent's own home role — and stays
+    // there. A new seat never relabels an agent, so the box is read-only and
+    // says why; the host refuses any other role outright
+    // (`SEAT_ROLE_NOT_PRIMARY`, `useCodingSessionSeatDraft.ts`).
+    //
+    // There used to be a mismatch case here — seating a builder as a lead and
+    // reading back which pack it would carry. It is not a stale expectation
+    // but a removed capability: nothing in this dialog can produce that state
+    // any more, so the assertion is the lock instead. An agent with no home
+    // role is the one whose role is still typed, and test 05 drives it.
     await page.getByTestId("new-coding-session-seat-agent").click();
     await page
       .getByTestId(`new-coding-session-seat-agent-${CREW_ROLES[2].pubkey}`)
       .click();
-    await expect(page.getByTestId("new-coding-session-seat-role")).toHaveValue(
-      "builder",
+    const roleBox = page.getByTestId("new-coding-session-seat-role");
+    await expect(roleBox).toHaveValue("builder");
+    await expect(roleBox).toHaveAttribute("readonly", "");
+    await expect(
+      page.getByTestId("new-coding-session-seat-role-locked"),
+    ).toHaveText(
+      "A new seat takes the agent's primary role, so this agent is seated as builder.",
     );
     await expect(
       page.getByTestId("new-coding-session-seat-role-notice"),
     ).toHaveText("Its home role.");
     await waitForAnimations(page);
     await seatField.screenshot({ path: `${SHOTS}/08-seat-home-role.png` });
-
-    // Mismatch: seating a builder as a lead must say which pack it carries —
-    // the **seat's** role, which is what the host stages (commit `6afcda2f6`
-    // changed the copy and its unit test and left this expectation behind,
-    // which is why the smoke suite has been red here since 2026-09-03).
-    await page.getByTestId("new-coding-session-seat-role").fill("lead");
-    await expect(
-      page.getByTestId("new-coding-session-seat-role-notice"),
-    ).toHaveText(
-      "Builder is a builder — seating it as lead; it will carry the lead pack.",
-    );
-    await waitForAnimations(page);
-    await seatField.screenshot({ path: `${SHOTS}/09-seat-mismatch.png` });
 
     // No pack: the agent whose home role has no pack on this computer.
     await page.getByTestId("new-coding-session-seat-agent").click();
