@@ -15,8 +15,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use buzz_session_host_core::config::HostConfig;
-use buzz_session_host_core::layout::Instance;
+use beekeeper_host_core::config::HostConfig;
+use beekeeper_host_core::layout::Instance;
 
 use crate::commission::{commission, Commissioned};
 use crate::state::ProviderChildState;
@@ -307,13 +307,13 @@ mod tests {
         // this fixture, which is the case a community switch back and forth
         // produces.
         let config_path =
-            buzz_session_host_core::layout::host_config_path(dir.path(), Instance::Production);
+            beekeeper_host_core::layout::host_config_path(dir.path(), Instance::Production);
         let mut config: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&config_path).expect("read"))
                 .expect("parse");
         let store_path =
             std::path::PathBuf::from(config["sessionProviderBaseDir"].as_str().expect("base"))
-                .join(buzz_session_host_core::record::STORE_FILE_NAME);
+                .join(beekeeper_host_core::record::STORE_FILE_NAME);
         let mut store: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&store_path).expect("read"))
                 .expect("parse");
@@ -342,7 +342,7 @@ mod tests {
         let before = wait_for_live(&control).await;
 
         let config_path =
-            buzz_session_host_core::layout::host_config_path(dir.path(), Instance::Production);
+            beekeeper_host_core::layout::host_config_path(dir.path(), Instance::Production);
         std::fs::write(&config_path, "{ not json").expect("write");
 
         let error = control.recommission().await.expect_err("must be refused");

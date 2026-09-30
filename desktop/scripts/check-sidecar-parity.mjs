@@ -33,7 +33,7 @@
  * stale-binary morning happens.
  *
  * Two sidecars are **Unix-only** and this asserts that too, in both
- * directions: `buzz-shell-host` and `buzz-host` both exit non-zero off Unix
+ * directions: `buzz-shell-host` and `beekeeper-host` both exit non-zero off Unix
  * (their `main.rs`), so `tauri.windows.conf.json` must not declare them and
  * the Windows build lines must not build them. A Windows bundle that declared
  * one would fail Tauri's compile-time `externalBin` check with a message
@@ -61,7 +61,7 @@ const PROVIDER = "buzz-session-provider";
 /**
  * Sidecars the Windows bundle does not carry.
  *
- * `buzz-shell-host` and `buzz-host` refuse to run off Unix (their `main.rs`),
+ * `buzz-shell-host` and `beekeeper-host` refuse to run off Unix (their `main.rs`),
  * so shipping them there would ship a binary that exits 1.
  * `buzz-backend-kubernetes` is a different case with the same answer: it has
  * always been gated out of `bundle-sidecars.sh` and has never been declared in
@@ -72,7 +72,11 @@ const PROVIDER = "buzz-session-provider";
  * compile-time `externalBin` check with a message naming Tauri rather than the
  * missing name.
  */
-const UNIX_ONLY = ["buzz-backend-kubernetes", "buzz-shell-host", "buzz-host"];
+const UNIX_ONLY = [
+  "buzz-backend-kubernetes",
+  "buzz-shell-host",
+  "beekeeper-host",
+];
 
 const read = (rel) => readFileSync(join(REPO, rel), "utf8");
 const sorted = (names) => [...new Set(names)].sort();

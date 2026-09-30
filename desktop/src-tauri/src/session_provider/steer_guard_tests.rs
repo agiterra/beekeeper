@@ -1,6 +1,6 @@
 //! Tests for the native-steer idle guard the host declares per runtime.
 //!
-//! The env half moved to `buzz_session_host_core::contract_tests` with
+//! The env half moved to `beekeeper_host_core::contract_tests` with
 //! `build_provider_env`. What stays here is the claim about *this host's*
 //! runtime table: only the claude row declares the guard, because only
 //! claude-agent-acp was verified to honour it.

@@ -45,9 +45,9 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager};
 
-/// Keying the per-relay record map, shared with `buzz-host` so a desktop and a
+/// Keying the per-relay record map, shared with `beekeeper-host` so a desktop and a
 /// host cannot disagree about which relay a record belongs to.
-pub(crate) use buzz_session_host_core::record::canonical_relay_key;
+pub(crate) use beekeeper_host_core::record::canonical_relay_key;
 
 pub(crate) mod commands;
 pub(crate) mod env;
@@ -96,7 +96,7 @@ pub(crate) fn provider_state_dir(
     app: &AppHandle,
     provider_pubkey: &str,
 ) -> Result<PathBuf, String> {
-    let dir = buzz_session_host_core::record::provider_state_dir_in(
+    let dir = beekeeper_host_core::record::provider_state_dir_in(
         &session_provider_base_dir(app)?,
         provider_pubkey,
     )?;
@@ -113,7 +113,7 @@ pub(crate) fn provider_state_dir(
 /// crate so the two cannot end up naming different files.
 #[allow(dead_code)] // Offered to the log viewer in a later slice.
 pub(crate) fn provider_log_path(app: &AppHandle, provider_pubkey: &str) -> Result<PathBuf, String> {
-    let path = buzz_session_host_core::record::provider_log_path_in(
+    let path = beekeeper_host_core::record::provider_log_path_in(
         &session_provider_base_dir(app)?,
         provider_pubkey,
     )?;

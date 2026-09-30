@@ -1,12 +1,12 @@
 //! `bee host` — the agent host on this machine.
 //!
 //! Local-only: this command does **not** talk to the relay. It calls
-//! `buzz-host`'s owner-only control socket, or writes the login registration
+//! `beekeeper-host`'s owner-only control socket, or writes the login registration
 //! that starts it. Both are launcher-local facts — is the host installed, is
 //! it running, what is its child doing, what did it log — and none of them can
 //! travel over the relay, which authenticates keypairs rather than machines.
 //!
-//! This is how a headless server is managed. `buzz-host` has the same
+//! This is how a headless server is managed. `beekeeper-host` has the same
 //! subcommands and is the same code underneath; `bee` carries them because
 //! `bee` is the binary that is already on an agent's `PATH`.
 
@@ -39,7 +39,7 @@ pub enum HostCmd {
     /// Register the host to start at login (macOS) or as a systemd user
     /// service (Linux).
     Install {
-        /// The host binary to register. Defaults to the `buzz-host` beside
+        /// The host binary to register. Defaults to the `beekeeper-host` beside
         /// this `bee`.
         #[arg(long)]
         program: Option<std::path::PathBuf>,
@@ -50,7 +50,7 @@ pub enum HostCmd {
     Installed,
 }
 
-/// Which instance to act on: `--dev`, else `BUZZ_HOST_INSTANCE`, else
+/// Which instance to act on: `--dev`, else `BEEKEEPER_HOST_INSTANCE`, else
 /// production.
 fn instance(dev: bool) -> Result<Instance, CliError> {
     if dev {
@@ -59,7 +59,7 @@ fn instance(dev: bool) -> Result<Instance, CliError> {
     Instance::from_env().map_err(CliError::Usage)
 }
 
-use buzz_session_host_core::layout::{self, Instance};
+use beekeeper_host_core::layout::{self, Instance};
 
 pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
     let instance = instance(dev)?;
@@ -68,8 +68,8 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
     match command {
         HostCmd::Install { program } => {
             let program = resolve_host_binary(program.as_deref())?;
-            let registration =
-                buzz_host::install::install(&home, instance, &program).map_err(CliError::Other)?;
+            let registration = beekeeper_host::install::install(&home, instance, &program)
+                .map_err(CliError::Other)?;
             print_json(&registration)?;
             for warning in &registration.warnings {
                 eprintln!("bee: {warning}");
@@ -77,15 +77,15 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
             Ok(())
         }
         HostCmd::Uninstall => {
-            buzz_host::install::uninstall(&home, instance).map_err(CliError::Other)?;
+            beekeeper_host::install::uninstall(&home, instance).map_err(CliError::Other)?;
             eprintln!(
                 "bee: removed the login registration for {}",
-                instance.namespace()
+                instance.namespace_value()
             );
             Ok(())
         }
         HostCmd::Installed => {
-            let registration = buzz_host::install::status(&home, instance);
+            let registration = beekeeper_host::install::status(&home, instance);
             print_json(&registration)?;
             for warning in &registration.warnings {
                 eprintln!("bee: {warning}");
@@ -94,7 +94,7 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
         }
         HostCmd::Logs { bytes } => {
             let socket = layout::host_socket_path(&home, instance);
-            let logs = buzz_host::client::logs(&socket, *bytes)
+            let logs = beekeeper_host::client::logs(&socket, *bytes)
                 .await
                 .map_err(|error| host_error(error, &home, instance))?;
             if logs.truncated {
@@ -105,11 +105,11 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
         }
         other => {
             let request = match other {
-                HostCmd::Status => buzz_host::protocol::Request::Status,
-                HostCmd::Start => buzz_host::protocol::Request::Start,
-                HostCmd::Stop => buzz_host::protocol::Request::Stop,
-                HostCmd::Restart => buzz_host::protocol::Request::Restart,
-                HostCmd::Bind => buzz_host::protocol::Request::Bind,
+                HostCmd::Status => beekeeper_host::protocol::Request::Status,
+                HostCmd::Start => beekeeper_host::protocol::Request::Start,
+                HostCmd::Stop => beekeeper_host::protocol::Request::Stop,
+                HostCmd::Restart => beekeeper_host::protocol::Request::Restart,
+                HostCmd::Bind => beekeeper_host::protocol::Request::Bind,
                 HostCmd::Logs { .. }
                 | HostCmd::Install { .. }
                 | HostCmd::Uninstall
@@ -117,10 +117,10 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
             };
             let socket = layout::host_socket_path(&home, instance);
             let timeout = match other {
-                HostCmd::Status => buzz_host::client::READ_TIMEOUT,
-                _ => buzz_host::client::LIFECYCLE_READ_TIMEOUT,
+                HostCmd::Status => beekeeper_host::client::READ_TIMEOUT,
+                _ => beekeeper_host::client::LIFECYCLE_READ_TIMEOUT,
             };
-            let value = buzz_host::client::call(&socket, &request, timeout)
+            let value = beekeeper_host::client::call(&socket, &request, timeout)
                 .await
                 .map_err(|error| host_error(error, &home, instance))?;
             print_json(&value)
@@ -136,19 +136,22 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
 /// consulted before the message is written. Telling somebody to start
 /// something they have not installed is worse than saying nothing.
 fn host_error(
-    error: buzz_host::client::ClientError,
+    error: beekeeper_host::client::ClientError,
     home: &std::path::Path,
     instance: Instance,
 ) -> CliError {
     let message = error.message();
-    if !matches!(error, buzz_host::client::ClientError::NotRunning { .. }) {
+    if !matches!(
+        error,
+        beekeeper_host::client::ClientError::NotRunning { .. }
+    ) {
         return CliError::Other(message);
     }
-    let registration = buzz_host::install::status(home, instance);
+    let registration = beekeeper_host::install::status(home, instance);
     CliError::Other(if registration.installed {
         format!(
             "{message} — it is registered to start at login ({}), so start it with \
-             `bee host start` after logging in, or run `buzz-host run` in a terminal to see why \
+             `bee host start` after logging in, or run `beekeeper-host run` in a terminal to see why \
              it exits",
             registration.path.display()
         )
@@ -157,7 +160,7 @@ fn host_error(
     })
 }
 
-/// The `buzz-host` this `bee` should register.
+/// The `beekeeper-host` this `bee` should register.
 ///
 /// Beside this executable first, because that is the one shipped with this
 /// build; then `PATH`. Never a bare name in the registration itself — launchd
@@ -168,7 +171,7 @@ fn resolve_host_binary(explicit: Option<&std::path::Path>) -> Result<std::path::
             CliError::Usage(format!("cannot resolve {}: {error}", explicit.display()))
         });
     }
-    let name = format!("buzz-host{}", std::env::consts::EXE_SUFFIX);
+    let name = format!("beekeeper-host{}", std::env::consts::EXE_SUFFIX);
     if let Some(beside) = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join(&name)))
@@ -191,7 +194,7 @@ fn resolve_host_binary(explicit: Option<&std::path::Path>) -> Result<std::path::
         }),
         None => Err(CliError::Usage(format!(
             "no {name} beside this bee or on PATH — build it with \
-             `cargo build --release -p buzz-host`, or name one with `--program`"
+             `cargo build --release -p beekeeper-host`, or name one with `--program`"
         ))),
     }
 }

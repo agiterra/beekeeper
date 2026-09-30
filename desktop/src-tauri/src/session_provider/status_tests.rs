@@ -1,8 +1,8 @@
 //! The honesty properties of the provider status, as tests.
 
 use super::*;
-use buzz_host::state::{LockOwnerKind, ProviderChildState, RelayConnectionState};
-use buzz_session_host_core::record::CodingSessionProviderRecord;
+use beekeeper_host::state::{LockOwnerKind, ProviderChildState, RelayConnectionState};
+use beekeeper_host_core::record::CodingSessionProviderRecord;
 
 fn record(pubkey: &str) -> CodingSessionProviderRecord {
     CodingSessionProviderRecord {
@@ -15,9 +15,9 @@ fn record(pubkey: &str) -> CodingSessionProviderRecord {
     }
 }
 
-fn host_status(pubkey: &str, provider: ProviderChildState) -> buzz_host::protocol::Status {
-    buzz_host::protocol::Status {
-        protocol_version: buzz_host::protocol::PROTOCOL_VERSION,
+fn host_status(pubkey: &str, provider: ProviderChildState) -> beekeeper_host::protocol::Status {
+    beekeeper_host::protocol::Status {
+        protocol_version: beekeeper_host::protocol::PROTOCOL_VERSION,
         host_version: "0.1.0".to_string(),
         host_pid: 1234,
         host_started_at: "2026-09-30T00:00:00Z".to_string(),
@@ -27,7 +27,7 @@ fn host_status(pubkey: &str, provider: ProviderChildState) -> buzz_host::protoco
         provider,
         provider_settings_in_force: None,
         relay_connection: RelayConnectionState::unknowable(),
-        sessions: buzz_host::sessions::SessionSnapshot {
+        sessions: beekeeper_host::sessions::SessionSnapshot {
             read_at: "2026-09-30T00:00:00Z".to_string(),
             unavailable: None,
             sessions: Vec::new(),
@@ -144,8 +144,8 @@ fn a_host_that_refuses_to_start_reports_its_reason_rather_than_not_supervised() 
     let host = AgentHost::new();
     let refusals = [
         ProviderChildState::KeyUnresolved {
-            reason: buzz_host::identity::KeyUnresolved::NotFound {
-                tried: vec!["BUZZ_HOST_PRIVATE_KEY is not set".to_string()],
+            reason: beekeeper_host::identity::KeyUnresolved::NotFound {
+                tried: vec!["BEEKEEPER_HOST_PRIVATE_KEY is not set".to_string()],
             },
         },
         ProviderChildState::GaveUp {

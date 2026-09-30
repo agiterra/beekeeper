@@ -531,7 +531,7 @@ fn transition_cannot_replace_a_validly_signed_create_or_change_the_fixed_brief()
 /// provider had been running since app launch, the founding never passed
 /// through a start path, and the host stayed off the roster.
 ///
-/// # What changed when the provider moved to `buzz-host`
+/// # What changed when the provider moved to `beekeeper-host`
 ///
 /// "The provider was already running, so no start path ran" used to be the
 /// edge case this test was written for. It is now the **normal** case: the

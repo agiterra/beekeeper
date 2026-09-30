@@ -15,8 +15,8 @@
 //! So the desktop hands the key over at commissioning and the host resolves it
 //! from its own routes, in this order:
 //!
-//! 1. `BUZZ_HOST_PRIVATE_KEY` — the server and container path.
-//! 2. `BUZZ_HOST_KEY_FILE`, or `~/.local/state/buzz[-dev]/host/provider-key`
+//! 1. `BEEKEEPER_HOST_PRIVATE_KEY` — the server and container path.
+//! 2. `BEEKEEPER_HOST_KEY_FILE`, or `~/.local/state/buzz[-dev]/host/provider-key`
 //!    — a `0600` file, the only fallback that works headless.
 //! 3. The record's own inline nsec, when the desktop left one there (a build
 //!    with no keyring backend, or a keyring outage).
@@ -32,22 +32,22 @@
 //!   has — a `0700` directory holding a durable outbox of *pre-signed events*
 //!   — so compromising that directory already allows publishing as the
 //!   provider;
-//! - `BUZZ_HOST_KEY_FILE` lets a hardened deployment point at a secrets mount
+//! - `BEEKEEPER_HOST_KEY_FILE` lets a hardened deployment point at a secrets mount
 //!   or a tmpfs file with no code change.
 
 use std::path::{Path, PathBuf};
 
-use buzz_session_host_core::layout::{Instance, KEY_FILE_VAR, PRIVATE_KEY_VAR};
-use buzz_session_host_core::record::CodingSessionProviderRecord;
+use beekeeper_host_core::layout::{Instance, KEY_FILE_VAR, PRIVATE_KEY_VAR};
+use beekeeper_host_core::record::CodingSessionProviderRecord;
 use nostr::ToBech32;
 
 /// Where a resolved key came from, for the log line and for `status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KeySource {
-    /// `BUZZ_HOST_PRIVATE_KEY`.
+    /// `BEEKEEPER_HOST_PRIVATE_KEY`.
     Environment,
-    /// A `0600` file — either `BUZZ_HOST_KEY_FILE` or the default path.
+    /// A `0600` file — either `BEEKEEPER_HOST_KEY_FILE` or the default path.
     File,
     /// The record's own inline nsec.
     Record,
@@ -128,7 +128,7 @@ impl std::fmt::Debug for ResolvedKey {
 pub fn key_file_path(home: &Path, instance: Instance) -> PathBuf {
     match std::env::var_os(KEY_FILE_VAR) {
         Some(value) if !value.is_empty() => PathBuf::from(value),
-        _ => buzz_session_host_core::layout::host_key_file_path(home, instance),
+        _ => beekeeper_host_core::layout::host_key_file_path(home, instance),
     }
 }
 
@@ -271,9 +271,8 @@ mod tests {
         assert_eq!(resolved.public_key_hex, keys.public_key().to_hex());
 
         // Route 2: the 0600 file beats the record.
-        let key_path =
-            buzz_session_host_core::layout::host_key_file_path(home, Instance::Production);
-        buzz_session_host_core::atomic_write::create_dir_all_restricted(
+        let key_path = beekeeper_host_core::layout::host_key_file_path(home, Instance::Production);
+        beekeeper_host_core::atomic_write::create_dir_all_restricted(
             key_path.parent().expect("parent"),
         )
         .expect("host dir");

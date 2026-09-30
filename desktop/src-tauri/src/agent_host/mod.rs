@@ -2,7 +2,7 @@
 //!
 //! Quitting Beekeeper used to end every coding session, because the app
 //! spawned the provider as its own child and reaped it on the way out. It no
-//! longer does either. `buzz-host` owns the provider; this module is how the
+//! longer does either. `beekeeper-host` owns the provider; this module is how the
 //! app asks it questions, tells it to start and stop, and hands it a
 //! commissioning.
 //!
@@ -37,7 +37,7 @@ pub mod seat_restage;
 
 use std::path::PathBuf;
 
-use buzz_session_host_core::layout::{self, Instance};
+use beekeeper_host_core::layout::{self, Instance};
 use tauri::AppHandle;
 
 pub(crate) use client::{AgentHost, HostReachability, HostSnapshot};
@@ -85,7 +85,7 @@ mod tests {
     fn the_instance_comes_from_the_nest_name_and_defaults_to_production() {
         // `nest_dir` falls back to the production nest in unit tests, so this
         // asserts the default rather than the dev branch; the translation
-        // itself is proved in `buzz_session_host_core::layout`.
+        // itself is proved in `beekeeper_host_core::layout`.
         assert_eq!(instance(), Instance::Production);
         assert_eq!(
             Instance::from_nest_dir_name(".beekeeper-dev"),

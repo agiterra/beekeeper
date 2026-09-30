@@ -5,11 +5,11 @@ SIDECARS=(buzz-acp buzz-agent buzz-dev-mcp git-credential-nostr bee)
 HOST=$(rustc -vV | sed -n 's|host: ||p')
 TARGET=${1:-$HOST}
 if [[ "$TARGET" != *windows* ]]; then
-    # buzz-shell-host and buzz-host both refuse to run off Unix
+    # buzz-shell-host and beekeeper-host both refuse to run off Unix
     # (crates/*/src/main.rs) and tauri.windows.conf.json declares neither, so
     # they are Unix-only here too.
-    SIDECARS+=(buzz-backend-kubernetes buzz-shell-host buzz-host)
-    BUILD_HINT="cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli -p buzz-shell-host -p buzz-host"
+    SIDECARS+=(buzz-backend-kubernetes buzz-shell-host beekeeper-host)
+    BUILD_HINT="cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli -p buzz-shell-host -p beekeeper-host"
 else
     BUILD_HINT="cargo build --release -p buzz-acp -p buzz-agent -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli"
 fi

@@ -214,7 +214,7 @@ pub(crate) fn process_has_buzz_marker(pid: u32, instance_id: &str) -> bool {
 /// Whether a running process carries `key` in its environment, with any value.
 ///
 /// This is how a process **another launcher owns** stays out of this app's
-/// sweeps. Before `buzz-host` existed, "not one of mine" and "nobody's" were
+/// sweeps. Before `beekeeper-host` existed, "not one of mine" and "nobody's" were
 /// the same set, so reaping the second was safe. They are different sets now,
 /// and a boot-time sweep that could not tell them apart would silently kill a
 /// headless host's child — the symptom being agents that die whenever somebody
@@ -539,22 +539,22 @@ mod env_block_tests {
     }
 
     /// A key test that matched a prefix would spare `BUZZ_HOSTNAME` as if it
-    /// were `BUZZ_HOST_CHILD`, so the `=` is load-bearing.
+    /// were `BEEKEEPER_HOST_CHILD`, so the `=` is load-bearing.
     #[test]
     fn a_key_match_requires_the_equals_sign() {
-        let both = block(&["BUZZ_HOST_CHILD=4242", "BUZZ_HOSTNAME=somewhere"]);
-        assert!(env_block_has_key(&both, b"BUZZ_HOST_CHILD"));
+        let both = block(&["BEEKEEPER_HOST_CHILD=4242", "BUZZ_HOSTNAME=somewhere"]);
+        assert!(env_block_has_key(&both, b"BEEKEEPER_HOST_CHILD"));
         assert!(env_block_has_key(&both, b"BUZZ_HOSTNAME"));
         assert!(
             !env_block_has_key(&both, b"BUZZ_HOST"),
             "a prefix must not match a longer key"
         );
-        assert!(!env_block_has_key(&both, b"BUZZ_HOST_CHILD_OF"));
+        assert!(!env_block_has_key(&both, b"BEEKEEPER_HOST_CHILD_OF"));
         // An empty value is still the key being present: a host that stamped
         // an empty pid still owns the child.
         assert!(env_block_has_key(
-            &block(&["BUZZ_HOST_CHILD="]),
-            b"BUZZ_HOST_CHILD"
+            &block(&["BEEKEEPER_HOST_CHILD="]),
+            b"BEEKEEPER_HOST_CHILD"
         ));
     }
 

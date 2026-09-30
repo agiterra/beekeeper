@@ -22,9 +22,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use buzz_session_host_core::config::HostConfig;
-use buzz_session_host_core::logs::{append_log_marker, now_iso};
-use buzz_session_host_core::record::CodingSessionProviderRecord;
+use beekeeper_host_core::config::HostConfig;
+use beekeeper_host_core::logs::{append_log_marker, now_iso};
+use beekeeper_host_core::record::CodingSessionProviderRecord;
 
 use crate::restart_policy::{plan_restart, ChildExit, RestartDecision};
 use crate::state::{stamp_in, ProviderChildState, RunSettings};

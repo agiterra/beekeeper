@@ -24,8 +24,8 @@
 
 use std::path::{Path, PathBuf};
 
-use buzz_session_host_core::atomic_write::atomic_write_json_restricted;
-use buzz_session_host_core::layout::host_owner_file_name;
+use beekeeper_host_core::atomic_write::atomic_write_json_restricted;
+use beekeeper_host_core::layout::host_owner_file_name;
 use serde::{Deserialize, Serialize};
 
 /// The claim a running host makes on a provider state directory.
@@ -49,7 +49,7 @@ pub fn owner_path(state_dir: &Path) -> PathBuf {
 pub fn claim(state_dir: &Path, socket: PathBuf) -> Result<HostOwner, String> {
     let owner = HostOwner {
         host_pid: std::process::id(),
-        host_started_at: buzz_session_host_core::logs::now_iso(),
+        host_started_at: beekeeper_host_core::logs::now_iso(),
         socket,
     };
     let payload = serde_json::to_vec_pretty(&owner)

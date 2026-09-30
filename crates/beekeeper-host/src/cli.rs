@@ -1,4 +1,4 @@
-//! The `buzz-host` command line.
+//! The `beekeeper-host` command line.
 //!
 //! Runs in the **foreground by default**. That deliberately inverts
 //! `buzz-shell-host`, which double-forks unconditionally: a service binary
@@ -13,8 +13,8 @@
 
 use std::sync::Arc;
 
-use buzz_session_host_core::atomic_write::create_dir_all_restricted;
-use buzz_session_host_core::layout::{self, Instance};
+use beekeeper_host_core::atomic_write::create_dir_all_restricted;
+use beekeeper_host_core::layout::{self, Instance};
 use clap::{Parser, Subcommand};
 
 use crate::commission::commission;
@@ -23,13 +23,13 @@ use crate::protocol::Request;
 
 #[derive(Parser)]
 #[command(
-    name = "buzz-host",
+    name = "beekeeper-host",
     about = "Supervise Beekeeper's background agents on this machine",
     long_about = None,
     version
 )]
 struct Cli {
-    /// Which Beekeeper instance to serve. Defaults to `BUZZ_HOST_INSTANCE`,
+    /// Which Beekeeper instance to serve. Defaults to `BEEKEEPER_HOST_INSTANCE`,
     /// then production.
     #[arg(long, global = true, value_parser = parse_instance)]
     instance: Option<Instance>,
@@ -93,7 +93,7 @@ pub fn main() -> std::process::ExitCode {
         None => match Instance::from_env() {
             Ok(instance) => instance,
             Err(error) => {
-                eprintln!("buzz-host: {error}");
+                eprintln!("beekeeper-host: {error}");
                 return std::process::ExitCode::from(2);
             }
         },
@@ -105,7 +105,7 @@ pub fn main() -> std::process::ExitCode {
             // stderr only, not stderr *and* the tracing subscriber: both go to
             // the same place here, and under systemd both land in the journal,
             // so logging it twice just makes the operator read it twice.
-            eprintln!("buzz-host: {error}");
+            eprintln!("beekeeper-host: {error}");
             std::process::ExitCode::FAILURE
         }
     }
@@ -117,8 +117,8 @@ pub fn main() -> std::process::ExitCode {
 /// agents did, and this one should carry only what the *host* decided.
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,buzz_host=info"));
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,beekeeper_host=info"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
@@ -131,7 +131,7 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
 
     // The client-side commands need no config and no identity: they ask the
     // running host. Keeping them ahead of `commission` is what makes
-    // `buzz-host status` answer "the agent host is not running" instead of
+    // `beekeeper-host status` answer "the agent host is not running" instead of
     // "this host has not been commissioned" — two different facts, and the
     // second would be a lie on a machine that is commissioned and simply not
     // running.
@@ -158,7 +158,7 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
             crate::install::uninstall(&home, instance)?;
             println!(
                 "removed the login registration for {}",
-                instance.namespace()
+                instance.namespace_value()
             );
             return Ok(());
         }
@@ -177,7 +177,13 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
 
     if matches!(command, Command::Check) {
         // Deliberately prints where the key came from, never the key.
-        println!("instance:      {}", instance.namespace());
+        // The instance *value*, not the state-directory namespace: this is
+        // what an operator writes into `BEEKEEPER_HOST_INSTANCE`, and printing
+        // "buzz" where the variable takes "production" sends somebody looking
+        // for a setting that does not exist. The directory is printed on its
+        // own line below.
+        println!("instance:      {}", instance.namespace_value());
+
         println!("relay:         {}", commissioned.config.relay_url);
         println!("provider:      {}", commissioned.config.provider_pubkey);
         println!(
@@ -255,7 +261,7 @@ fn print_registration(registration: &crate::install::Registration) {
             .unwrap_or_else(|error| format!("{{\"error\":\"{error}\"}}"))
     );
     for warning in &registration.warnings {
-        eprintln!("buzz-host: {warning}");
+        eprintln!("beekeeper-host: {warning}");
     }
 }
 

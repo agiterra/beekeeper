@@ -9,7 +9,7 @@
       "binaries/git-credential-nostr",
       "binaries/bee",
       "binaries/buzz-shell-host",
-      "binaries/buzz-host",
+      "binaries/beekeeper-host",
       "binaries/buzz-session-provider"
     ]
   }

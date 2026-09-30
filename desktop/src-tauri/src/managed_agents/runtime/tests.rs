@@ -624,7 +624,7 @@ fn codex_spawn_does_not_set_a_claude_executable() {
 // On Windows, `.cmd`/`.bat` batch shims must not be assigned to
 // `CLAUDE_CODE_EXECUTABLE` — `CreateProcess` cannot exec them directly and
 // returns EINVAL (issue #2397). The six inputs that used to be asserted here
-// are now asserted in `buzz_session_host_core::path_env`, where the predicate
+// are now asserted in `beekeeper_host_core::path_env`, where the predicate
 // lives. They moved rather than being duplicated because a second copy of a
 // predicate's tests is how the two copies come to disagree.
 

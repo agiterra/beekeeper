@@ -13515,7 +13515,7 @@ export function maybeInstallE2eTauriMocks() {
                   installed: true,
                   path: "/home/e2e/Library/LaunchAgents/io.agiterra.beekeeper.host.plist",
                   program:
-                    "/Applications/Beekeeper.app/Contents/MacOS/buzz-host",
+                    "/Applications/Beekeeper.app/Contents/MacOS/beekeeper-host",
                 },
                 providerState:
                   status.running === true

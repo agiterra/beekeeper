@@ -2,7 +2,7 @@
 //!
 //! This file replaces the in-process supervisor. The app no longer spawns the
 //! provider, no longer restarts it, and no longer stops it when it quits —
-//! `buzz-host` does all three. What is left is reading the host's answer and
+//! `beekeeper-host` does all three. What is left is reading the host's answer and
 //! reporting it without embellishment.
 //!
 //! # `running` is nullable, and that is the point
@@ -63,7 +63,7 @@ pub(crate) struct AgentHostStatus {
     pub socket: PathBuf,
     /// The host's own account of the provider child, when it answered.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider_state: Option<buzz_host::state::ProviderChildState>,
+    pub provider_state: Option<beekeeper_host::state::ProviderChildState>,
     /// Whether the host is registered to start at login, and anything wrong
     /// with that registration.
     ///
@@ -71,7 +71,7 @@ pub(crate) struct AgentHostStatus {
     /// running*: the socket's absence alone cannot distinguish them, and a
     /// surface that told somebody to start something they have not installed
     /// would be worse than silent.
-    pub autostart: buzz_host::install::Registration,
+    pub autostart: beekeeper_host::install::Registration,
     /// One line for a person, whatever happened.
     pub message: String,
 }
@@ -105,7 +105,7 @@ pub(crate) struct CodingSessionProviderStatus {
 impl CodingSessionProviderStatus {
     /// Build a status from a record and one poll of the host.
     pub(crate) fn from_snapshot(
-        record: Option<&buzz_session_host_core::record::CodingSessionProviderRecord>,
+        record: Option<&beekeeper_host_core::record::CodingSessionProviderRecord>,
         host: &AgentHost,
         snapshot: HostSnapshot,
     ) -> Self {
@@ -146,7 +146,7 @@ impl CodingSessionProviderStatus {
 
     /// The process state readiness should gate on.
     pub(crate) fn process_state(&self) -> CodingSessionProviderProcessState {
-        use buzz_host::state::ProviderChildState as Child;
+        use beekeeper_host::state::ProviderChildState as Child;
         let Some(state) = &self.host.provider_state else {
             return CodingSessionProviderProcessState::HostUnreachable {
                 reason: self.host.message.clone(),

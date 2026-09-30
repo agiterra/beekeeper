@@ -39,7 +39,7 @@ set -euo pipefail
 
 SIDECAR_PACKAGES=(
   buzz-acp buzz-agent buzz-backend-kubernetes buzz-dev-mcp
-  buzz-cli git-credential-nostr buzz-shell-host buzz-host buzz-session-provider
+  buzz-cli git-credential-nostr buzz-shell-host beekeeper-host buzz-session-provider
 )
 # The binaries those packages produce — `buzz-cli` builds `bee`. This is the
 # set `desktop/scripts/check-sidecar-parity.mjs` compares against
@@ -47,7 +47,7 @@ SIDECAR_PACKAGES=(
 # place and not the other fails that check rather than a morning.
 SIDECAR_BINARIES=(
   buzz-acp buzz-agent buzz-backend-kubernetes buzz-dev-mcp
-  bee git-credential-nostr buzz-shell-host buzz-host buzz-session-provider
+  bee git-credential-nostr buzz-shell-host beekeeper-host buzz-session-provider
 )
 
 APP_NAME="Beekeeper Dev"

@@ -86,7 +86,7 @@ const MAX_SOCKET_PATH_BYTES: usize = 100;
 pub fn bind(path: &std::path::Path) -> Result<UnixListener, String> {
     check_socket_path(path)?;
     // Create the parent when it is missing, owner-only — but **never change
-    // the permissions of a directory that already exists.** `BUZZ_HOST_SOCK`
+    // the permissions of a directory that already exists.** `BEEKEEPER_HOST_SOCK`
     // may point anywhere, including a shared directory like `/tmp`, and
     // chmod-ing an operator's directory to 0700 because a socket happens to
     // live in it is not this process's business. On this machine the attempt
@@ -97,7 +97,7 @@ pub fn bind(path: &std::path::Path) -> Result<UnixListener, String> {
     // own directory is created restricted before this is ever called.
     if let Some(parent) = path.parent() {
         if !parent.exists() {
-            buzz_session_host_core::atomic_write::create_dir_all_restricted(parent)?;
+            beekeeper_host_core::atomic_write::create_dir_all_restricted(parent)?;
         }
     }
     let _ = std::fs::remove_file(path);
@@ -120,7 +120,7 @@ fn check_socket_path(path: &std::path::Path) -> Result<(), String> {
     Err(format!(
         "the control socket path is {bytes} bytes, longer than the {MAX_SOCKET_PATH_BYTES} a Unix socket allows: {}. Set {} to a shorter path.",
         path.display(),
-        buzz_session_host_core::layout::SOCKET_VAR
+        beekeeper_host_core::layout::SOCKET_VAR
     ))
 }
 
@@ -255,7 +255,7 @@ fn encode<T: serde::Serialize>(value: &T) -> Response {
 /// The host's own start time, stamped once.
 fn host_started_at() -> &'static str {
     static STARTED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    STARTED.get_or_init(buzz_session_host_core::logs::now_iso)
+    STARTED.get_or_init(beekeeper_host_core::logs::now_iso)
 }
 
 fn status(control: &Arc<HostControl>) -> Status {
@@ -353,7 +353,7 @@ mod tests {
         let error = check_socket_path(&long).expect_err("must be refused");
         assert!(error.contains("longer than"), "{error}");
         assert!(
-            error.contains(buzz_session_host_core::layout::SOCKET_VAR),
+            error.contains(beekeeper_host_core::layout::SOCKET_VAR),
             "the message must name the way out: {error}"
         );
     }

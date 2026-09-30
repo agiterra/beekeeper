@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use buzz_host::client::{self, ClientError};
-use buzz_host::protocol::{Request, Status};
+use beekeeper_host::client::{self, ClientError};
+use beekeeper_host::protocol::{Request, Status};
 use serde::Serialize;
 
 /// Whether the host answered, and if not, which kind of silence it was.
@@ -97,7 +97,7 @@ impl AgentHost {
                 // panic over at boot: the socket path then names the failure
                 // and every call reports the host as absent, which is honest.
                 eprintln!("buzz-desktop: agent-host: {error}");
-                PathBuf::from("/nonexistent/buzz-host.sock")
+                PathBuf::from("/nonexistent/beekeeper-host.sock")
             }),
         }
     }
@@ -175,7 +175,7 @@ impl AgentHost {
         client::call(
             &self.socket,
             &request,
-            buzz_host::client::LIFECYCLE_READ_TIMEOUT,
+            beekeeper_host::client::LIFECYCLE_READ_TIMEOUT,
         )
         .await
         .map(|_| ())

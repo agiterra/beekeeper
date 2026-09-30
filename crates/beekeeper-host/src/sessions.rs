@@ -122,7 +122,7 @@ struct WireOpenTurn {
 /// response fail over a detail, which is how a client ends up showing nothing
 /// when it could have shown almost everything.
 pub fn read_sessions(state_dir: &Path) -> SessionSnapshot {
-    let read_at = buzz_session_host_core::logs::now_iso();
+    let read_at = beekeeper_host_core::logs::now_iso();
     let path = state_dir.join(STATE_FILE);
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,

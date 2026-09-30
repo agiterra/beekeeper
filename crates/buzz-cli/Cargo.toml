@@ -18,8 +18,8 @@ path = "src/main.rs"
 [dependencies]
 # `bee host` drives the agent host's control socket and writes its login
 # registration. Local-only, like `bee session`: no relay, no key.
-buzz-host = { path = "../buzz-host" }
-buzz-session-host-core = { path = "../buzz-session-host-core" }
+beekeeper-host = { path = "../beekeeper-host" }
+beekeeper-host-core = { path = "../beekeeper-host-core" }
 # CLI argument parsing — derive macros + env var support (BUZZ_API_TOKEN auto-wired)
 clap = { version = "4", features = ["derive", "env"] }
 

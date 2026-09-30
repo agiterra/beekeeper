@@ -1,6 +1,6 @@
 //! Where a launcher looks for the binaries it is about to run.
 //!
-//! Both launchers — the desktop app and `buzz-host` — must agree on this, and
+//! Both launchers — the desktop app and `beekeeper-host` — must agree on this, and
 //! for one specific reason: an installed bundle must prefer the sidecars
 //! shipped inside it over any build artifact lying around in a source
 //! checkout. Two launchers disagreeing means a bundled app running a

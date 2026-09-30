@@ -16,12 +16,12 @@
 //! ten-minute window each, until both gave up. That is a bounded, transient
 //! population (the old desktop gets replaced), so this does not try to *win*
 //! it; it tries to make it loud and to refuse the one case it can recognise:
-//! another `buzz-host` that said so in `host-owner.json`.
+//! another `beekeeper-host` that said so in `host-owner.json`.
 
 use std::path::Path;
 use std::time::Duration;
 
-use buzz_session_host_core::logs::{append_log_marker, now_iso};
+use beekeeper_host_core::logs::{append_log_marker, now_iso};
 
 use crate::state::LockOwnerKind;
 use crate::terminate::{pid_is_running, terminate_gracefully_blocking};

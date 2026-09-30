@@ -7,7 +7,7 @@
 //!
 //! This module deliberately knows nothing about keyrings. The desktop app
 //! hydrates `private_key_nsec` from its OS keyring after reading; a headless
-//! host resolves the key its own way (see `buzz-host`). Putting the shape here
+//! host resolves the key its own way (see `beekeeper-host`). Putting the shape here
 //! and the secret resolution at each end is what lets two processes agree on
 //! the file without agreeing on a secret store — the desktop has a keychain
 //! and a server does not.

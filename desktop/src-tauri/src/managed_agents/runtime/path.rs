@@ -4,14 +4,14 @@ use std::path::PathBuf;
 
 /// The pure kernel — `is_batch_shim`, `should_skip_claude_executable`,
 /// `should_use_inherited` and `compose_path_entries` — lives in
-/// `buzz_session_host_core::path_env`, because `buzz-host` composes a `PATH`
+/// `beekeeper_host_core::path_env`, because `beekeeper-host` composes a `PATH`
 /// for the same child processes. It matters *more* there: a launchd- or
 /// systemd-started process inherits a minimal `PATH` with no `node`, and the
 /// ACP adapters are npm shims with `#!/usr/bin/env node` shebangs.
 ///
 /// What stays here is [`build_augmented_path`], which is not portable: it
 /// reaches for this app's managed npm and Node directories.
-pub(crate) use buzz_session_host_core::path_env::{
+pub(crate) use beekeeper_host_core::path_env::{
     compose_path_entries, should_skip_claude_executable, should_use_inherited,
 };
 

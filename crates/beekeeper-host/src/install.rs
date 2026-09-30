@@ -39,7 +39,7 @@
 
 use std::path::{Path, PathBuf};
 
-use buzz_session_host_core::layout::{Instance, INSTANCE_VAR};
+use beekeeper_host_core::layout::{Instance, INSTANCE_VAR};
 
 /// The launchd label / systemd unit stem for an instance.
 ///
@@ -131,7 +131,7 @@ pub fn install(home: &Path, instance: Instance, program: &Path) -> Result<Regist
     }
     if !program.exists() {
         return Err(format!(
-            "there is no host binary at {} — build it with `cargo build --release -p buzz-host` \
+            "there is no host binary at {} — build it with `cargo build --release -p beekeeper-host` \
              or point at the one inside the app bundle",
             program.display()
         ));
@@ -189,7 +189,7 @@ fn program_from_registration(content: &str) -> Option<PathBuf> {
 #[cfg(target_os = "macos")]
 fn registration_contents(instance: Instance, program: &Path, home: &Path) -> String {
     let label = service_name(instance);
-    let log = buzz_session_host_core::layout::host_log_path(home, instance);
+    let log = beekeeper_host_core::layout::host_log_path(home, instance);
     // Hand-written rather than built through the `plist` crate: the file is a
     // fixed shape, a person reads and edits it, and the escaping surface is
     // one path. `RunAtLoad` with `KeepAlive: false` on purpose — see the
@@ -232,7 +232,7 @@ fn registration_contents(instance: Instance, program: &Path, home: &Path) -> Str
 
 #[cfg(not(target_os = "macos"))]
 fn registration_contents(instance: Instance, program: &Path, home: &Path) -> String {
-    let config = buzz_session_host_core::layout::host_config_path(home, instance);
+    let config = beekeeper_host_core::layout::host_config_path(home, instance);
     let graceful = crate::terminate::GRACEFUL_SHUTDOWN_TIMEOUT.as_secs()
         + crate::terminate::ESCALATION_TIMEOUT.as_secs();
     format!(
@@ -394,14 +394,18 @@ mod tests {
     #[test]
     fn the_program_must_be_absolute_and_must_exist() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let relative = install(dir.path(), Instance::Production, Path::new("buzz-host"))
-            .expect_err("relative must be refused");
+        let relative = install(
+            dir.path(),
+            Instance::Production,
+            Path::new("beekeeper-host"),
+        )
+        .expect_err("relative must be refused");
         assert!(relative.contains("absolute path"), "{relative}");
 
         let absent = install(
             dir.path(),
             Instance::Production,
-            &dir.path().join("nowhere/buzz-host"),
+            &dir.path().join("nowhere/beekeeper-host"),
         )
         .expect_err("a missing binary must be refused");
         assert!(absent.contains("there is no host binary"), "{absent}");
@@ -417,7 +421,7 @@ mod tests {
     #[test]
     fn the_program_round_trips_out_of_the_registration_it_wrote() {
         let home = Path::new("/home/agent");
-        let program = Path::new("/Applications/Beekeeper.app/Contents/MacOS/buzz-host");
+        let program = Path::new("/Applications/Beekeeper.app/Contents/MacOS/beekeeper-host");
         let contents = registration_contents(Instance::Production, program, home);
         assert_eq!(
             program_from_registration(&contents),
@@ -458,7 +462,7 @@ mod tests {
             &path,
             registration_contents(
                 Instance::Production,
-                Path::new("/Applications/Deleted.app/Contents/MacOS/buzz-host"),
+                Path::new("/Applications/Deleted.app/Contents/MacOS/beekeeper-host"),
                 dir.path(),
             ),
         )
@@ -480,7 +484,7 @@ mod tests {
     fn the_unit_waits_longer_than_the_provider_takes_to_stop() {
         let contents = registration_contents(
             Instance::Production,
-            Path::new("/usr/local/bin/buzz-host"),
+            Path::new("/usr/local/bin/beekeeper-host"),
             Path::new("/home/agent"),
         );
         let stop: u64 = contents

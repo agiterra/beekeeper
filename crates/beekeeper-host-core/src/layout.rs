@@ -4,7 +4,7 @@
 //! dev/prod namespace split is what stops them adopting each other's detached
 //! work or stealing each other's socket bind. The desktop app derives that
 //! namespace from its Tauri app-data directory name; a launchd- or
-//! systemd-started `buzz-host` has no such thing, so it is **told** which
+//! systemd-started `beekeeper-host` has no such thing, so it is **told** which
 //! instance it is (one registration per instance) rather than sniffing for it.
 //!
 //! Every path below is derived here and nowhere else. Two sides computing
@@ -34,21 +34,21 @@ pub enum Instance {
 /// deployment — an installed app, or a server running one host — is production,
 /// and a server operator should not have to set a variable to get the obvious
 /// answer.
-pub const INSTANCE_VAR: &str = "BUZZ_HOST_INSTANCE";
+pub const INSTANCE_VAR: &str = "BEEKEEPER_HOST_INSTANCE";
 
 /// The variable that overrides the control-socket path outright.
 ///
 /// For containers and tests, where `$HOME` is not where state belongs.
-pub const SOCKET_VAR: &str = "BUZZ_HOST_SOCK";
+pub const SOCKET_VAR: &str = "BEEKEEPER_HOST_SOCK";
 
 /// The variable carrying the provider nsec directly (server/container path).
-pub const PRIVATE_KEY_VAR: &str = "BUZZ_HOST_PRIVATE_KEY";
+pub const PRIVATE_KEY_VAR: &str = "BEEKEEPER_HOST_PRIVATE_KEY";
 
 /// The variable pointing at a file holding the provider nsec.
 ///
 /// This is what lets a hardened deployment put the key on a secrets mount or a
 /// tmpfs file with no code change, rather than in a `0600` file under `$HOME`.
-pub const KEY_FILE_VAR: &str = "BUZZ_HOST_KEY_FILE";
+pub const KEY_FILE_VAR: &str = "BEEKEEPER_HOST_KEY_FILE";
 
 /// The variable every child of the host carries, holding the host's pid.
 ///
@@ -56,7 +56,7 @@ pub const KEY_FILE_VAR: &str = "BUZZ_HOST_KEY_FILE";
 /// (`managed_agents::runtime::sweep`). Before the host existed, "not mine"
 /// and "nobody's" were the same set. This variable is how a host-owned child
 /// says which they are, so a desktop boot cannot silently kill it.
-pub const CHILD_MARKER_VAR: &str = "BUZZ_HOST_CHILD";
+pub const CHILD_MARKER_VAR: &str = "BEEKEEPER_HOST_CHILD";
 
 impl Instance {
     /// The state-directory namespace: `buzz` or `buzz-dev`.

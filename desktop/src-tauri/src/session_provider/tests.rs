@@ -1,8 +1,8 @@
 //! Unit tests for the desktop's half of the coding-session provider host.
 //!
 //! Everything here is `AppHandle`-free. The record-file and environment
-//! assertions moved to `buzz_session_host_core::contract_tests` along with the
-//! code they cover — that contract is now shared with `buzz-host`, and the
+//! assertions moved to `beekeeper_host_core::contract_tests` along with the
+//! code they cover — that contract is now shared with `beekeeper-host`, and the
 //! properties belong to the contract rather than to one launcher.
 //!
 //! What remains is what is genuinely the desktop's: minting an identity (which
@@ -29,7 +29,7 @@ use crate::session_provider::commands::{
 // launchers use.
 use crate::session_provider::store::CodingSessionProviderRecord;
 use crate::session_provider::trust::{append_allowed_bridge_pubkey, LOCAL_PROVIDER_LABEL};
-use buzz_session_host_core::env::{build_provider_env, ProviderEnvInputs};
+use beekeeper_host_core::env::{build_provider_env, ProviderEnvInputs};
 
 pub(super) const RELAY: &str = "wss://relay.example/";
 
@@ -184,7 +184,7 @@ fn instance_id_matches_the_provider_derivation() {
 /// The minted record, through the shared env builder.
 ///
 /// A local copy rather than an import: the version in
-/// `buzz_session_host_core::contract_tests` belongs to that crate's own tests,
+/// `beekeeper_host_core::contract_tests` belongs to that crate's own tests,
 /// and a test helper shared across a crate boundary is a dependency the
 /// contract should not carry.
 fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
@@ -206,7 +206,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
     })
 }
 
-// The restart policy and the lock-owner parsing moved to `buzz-host` with
+// The restart policy and the lock-owner parsing moved to `beekeeper-host` with
 // the supervisor: `restart_policy.rs` (which now also refuses to revive a
 // clean `exit(0)`, per `docs/remote-agents.md` § I5) and `takeover.rs`.
 // The app has no restart ladder to test — it does not start the provider.

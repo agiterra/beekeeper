@@ -1,7 +1,7 @@
 //! Provider identity records: one per relay URL, key in the OS keyring.
 //!
 //! The record *shape* is the launcher contract and lives in
-//! `buzz_session_host_core::record`, because `buzz-host` reads the same file.
+//! `beekeeper_host_core::record`, because `beekeeper-host` reads the same file.
 //! What stays here is the half that is genuinely the desktop's: hydrating each
 //! nsec out of the OS keyring on read and pushing it back in on write.
 //!
@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 
-pub(crate) use buzz_session_host_core::record::{
+pub(crate) use beekeeper_host_core::record::{
     CodingSessionProviderRecord, CodingSessionProviderStore, STORE_FILE_NAME, STORE_VERSION,
 };
 
@@ -227,7 +227,7 @@ fn store_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 ///
 /// A missing file is not an error — it is the un-provisioned steady state.
 pub(crate) fn load_provider_store(app: &AppHandle) -> Result<CodingSessionProviderStore, String> {
-    let mut store = buzz_session_host_core::record::load_provider_store_from(&store_path(app)?)?;
+    let mut store = beekeeper_host_core::record::load_provider_store_from(&store_path(app)?)?;
     hydrate_keys(&mut store);
     Ok(store)
 }

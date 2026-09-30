@@ -84,7 +84,7 @@ pub enum ProviderChildState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LockOwnerKind {
-    /// Another `buzz-host`, which said so in `host-owner.json`.
+    /// Another `beekeeper-host`, which said so in `host-owner.json`.
     AnotherHost,
     /// A provider nobody claimed — most likely a pre-upgrade desktop's child,
     /// or an orphan reparented to init.
@@ -215,7 +215,7 @@ mod tests {
             ProviderChildState::NotSupervised,
             ProviderChildState::KeyUnresolved {
                 reason: crate::identity::KeyUnresolved::NotFound {
-                    tried: vec!["BUZZ_HOST_PRIVATE_KEY is not set".to_string()],
+                    tried: vec!["BEEKEEPER_HOST_PRIVATE_KEY is not set".to_string()],
                 },
             },
             ProviderChildState::Backoff {

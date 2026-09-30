@@ -276,7 +276,7 @@ pub(super) fn strip_deleted_suffix(path: PathBuf) -> PathBuf {
 /// # Why `owned_elsewhere` exists
 ///
 /// This sweep was written when "not tracked by this app" and "owned by
-/// nobody" were the same set, so reaping the second was safe. `buzz-host`
+/// nobody" were the same set, so reaping the second was safe. `beekeeper-host`
 /// makes them different sets: it supervises children of its own, which no
 /// desktop tracks. Today those children are `buzz-session-provider` and
 /// `claude-agent-acp`, neither of which this sweep looks at — it filters on
@@ -303,10 +303,10 @@ pub fn select_untracked_bundle_harnesses(
 
 /// Processes carrying this variable belong to an agent host, not to a desktop.
 ///
-/// Named here as well as in `buzz_session_host_core::layout` so this sweep's
+/// Named here as well as in `beekeeper_host_core::layout` so this sweep's
 /// own tests can state the rule; the two must stay the same string, and the
 /// test below asserts it.
-const HOST_OWNED_CHILD_VAR: &str = "BUZZ_HOST_CHILD";
+const HOST_OWNED_CHILD_VAR: &str = "BEEKEEPER_HOST_CHILD";
 
 // ── Process-table enumeration ─────────────────────────────────────────────
 
@@ -646,7 +646,7 @@ mod tests {
     fn the_spared_variable_is_the_one_the_host_stamps() {
         assert_eq!(
             HOST_OWNED_CHILD_VAR,
-            buzz_session_host_core::layout::CHILD_MARKER_VAR
+            beekeeper_host_core::layout::CHILD_MARKER_VAR
         );
     }
 

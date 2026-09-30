@@ -606,6 +606,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
+name = "beekeeper-host"
+version = "0.1.0"
+dependencies = [
+ "beekeeper-host-core",
+ "buzz-core",
+ "chrono",
+ "clap",
+ "dirs",
+ "nix 0.31.3",
+ "nostr 0.44.7",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "beekeeper-host-core"
+version = "0.1.0"
+dependencies = [
+ "atomic-write-file",
+ "buzz-core",
+ "chrono",
+ "dirs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "url",
+]
+
+[[package]]
 name = "bip39"
 version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -980,11 +1013,11 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "beekeeper-host",
+ "beekeeper-host-core",
  "buzz-core",
- "buzz-host",
  "buzz-persona",
  "buzz-sdk",
- "buzz-session-host-core",
  "buzz-workflow",
  "buzz-ws-client",
  "bytes",
@@ -1130,25 +1163,6 @@ dependencies = [
  "tracing-subscriber",
  "windows-sys 0.61.2",
  "zeroize",
-]
-
-[[package]]
-name = "buzz-host"
-version = "0.1.0"
-dependencies = [
- "buzz-core",
- "buzz-session-host-core",
- "chrono",
- "clap",
- "dirs",
- "nix 0.31.3",
- "nostr 0.44.7",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1420,20 +1434,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "buzz-session-host-core"
-version = "0.1.0"
-dependencies = [
- "atomic-write-file",
- "buzz-core",
- "chrono",
- "dirs",
- "serde",
- "serde_json",
- "tempfile",
- "url",
 ]
 
 [[package]]

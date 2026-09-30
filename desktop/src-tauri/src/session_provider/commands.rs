@@ -6,7 +6,7 @@
 //! signed by it, so that belongs to an explicit rotation flow rather than a
 //! button.
 //!
-//! **Every one of these is now a request to `buzz-host`, not an action this
+//! **Every one of these is now a request to `beekeeper-host`, not an action this
 //! app takes.** The app writes the files the host reads and then asks over the
 //! control socket; it spawns nothing and reaps nothing. What that buys is the
 //! whole point of the split: a coding session outlives this window.

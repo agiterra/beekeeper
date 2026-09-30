@@ -223,7 +223,7 @@ pub(crate) fn known_skill_dirs() -> impl Iterator<Item = &'static str> {
     KNOWN_ACP_RUNTIMES.iter().filter_map(|p| p.skill_dir)
 }
 
-use buzz_session_host_core::command_paths::{
+use beekeeper_host_core::command_paths::{
     command_looks_like_path, executable_basename, is_executable_file,
 };
 
@@ -468,7 +468,7 @@ pub fn normalize_agent_args(command: &str, agent_args: Vec<String>) -> Vec<Strin
 }
 
 fn resolve_workspace_command(command: &str) -> Option<PathBuf> {
-    buzz_session_host_core::command_paths::resolve_workspace_command(
+    beekeeper_host_core::command_paths::resolve_workspace_command(
         command,
         &workspace_root_dir(),
         std::env::current_dir().ok().as_deref(),

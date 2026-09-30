@@ -1,5 +1,5 @@
 [package]
-name = "buzz-session-host-core"
+name = "beekeeper-host-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Shared contract between a coding-session provider's launcher and the Beekeeper desktop app: identity records, the child environment, binary discovery and the host state-dir layout."
 
 [lib]
-name = "buzz_session_host_core"
+name = "beekeeper_host_core"
 path = "src/lib.rs"
 
 [dependencies]

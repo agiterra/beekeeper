@@ -1,18 +1,18 @@
 //! Building and launching one provider process.
 //!
 //! Everything about the environment comes from
-//! `buzz_session_host_core::env`, which the desktop app uses too — that is the
+//! `beekeeper_host_core::env`, which the desktop app uses too — that is the
 //! whole point of sharing it. What this module adds is host-specific: the
 //! marker that identifies a host-owned child, and its own process group so
 //! signal escalation can reach the per-session adapters.
 
 use std::path::{Path, PathBuf};
 
-use buzz_session_host_core::config::HostConfig;
-use buzz_session_host_core::env::{build_provider_env, ProviderEnvInputs, INHERITED_KEYS_TO_CLEAR};
-use buzz_session_host_core::layout::CHILD_MARKER_VAR;
-use buzz_session_host_core::logs::{append_log_marker, now_iso, open_log_file};
-use buzz_session_host_core::record::CodingSessionProviderRecord;
+use beekeeper_host_core::config::HostConfig;
+use beekeeper_host_core::env::{build_provider_env, ProviderEnvInputs, INHERITED_KEYS_TO_CLEAR};
+use beekeeper_host_core::layout::CHILD_MARKER_VAR;
+use beekeeper_host_core::logs::{append_log_marker, now_iso, open_log_file};
+use beekeeper_host_core::record::CodingSessionProviderRecord;
 
 use crate::discovery::{augmented_path, resolve_command};
 
@@ -51,7 +51,7 @@ pub fn resolve_provider_binary(config: &HostConfig) -> Result<PathBuf, String> {
 /// adapter's own lookup finds.
 fn resolve_claude_code_executable() -> Option<PathBuf> {
     let path = resolve_command(CLAUDE_CLI_BINARY)?;
-    if buzz_session_host_core::path_env::should_skip_claude_executable(&path, cfg!(windows)) {
+    if beekeeper_host_core::path_env::should_skip_claude_executable(&path, cfg!(windows)) {
         return None;
     }
     Some(path)
@@ -113,7 +113,7 @@ pub fn spawn_provider_child(
         app_checkout: None,
         rust_log: std::env::var("RUST_LOG").ok().filter(|v| !v.is_empty()),
         emit_raw_sdk_frames: matches!(
-            std::env::var(buzz_session_host_core::env::EMIT_RAW_SDK_FRAMES_VAR)
+            std::env::var(beekeeper_host_core::env::EMIT_RAW_SDK_FRAMES_VAR)
                 .unwrap_or_default()
                 .trim()
                 .to_ascii_lowercase()
@@ -153,11 +153,11 @@ pub fn spawn_provider_child(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use buzz_session_host_core::layout::Instance;
+    use beekeeper_host_core::layout::Instance;
 
     fn config_for(state_dir: &Path) -> HostConfig {
         HostConfig {
-            version: buzz_session_host_core::config::HOST_CONFIG_VERSION,
+            version: beekeeper_host_core::config::HOST_CONFIG_VERSION,
             instance: Instance::Production,
             relay_url: "wss://hive.example.org".to_string(),
             provider_pubkey: "d".repeat(64),

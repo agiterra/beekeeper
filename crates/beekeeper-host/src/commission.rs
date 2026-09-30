@@ -12,9 +12,9 @@
 
 use std::path::Path;
 
-use buzz_session_host_core::config::HostConfig;
-use buzz_session_host_core::layout::{self, Instance};
-use buzz_session_host_core::record::{load_provider_store_from, CodingSessionProviderRecord};
+use beekeeper_host_core::config::HostConfig;
+use beekeeper_host_core::layout::{self, Instance};
+use beekeeper_host_core::record::{load_provider_store_from, CodingSessionProviderRecord};
 
 use crate::identity::{self, ResolvedKey};
 
@@ -36,7 +36,7 @@ impl Commissioned {
     /// host and the app cannot disagree about which file holds the child's
     /// output — that file is what gets pasted into a bug report.
     pub fn log_path(&self) -> std::path::PathBuf {
-        buzz_session_host_core::record::provider_log_path_in(
+        beekeeper_host_core::record::provider_log_path_in(
             &self.config.session_provider_base_dir,
             &self.config.provider_pubkey,
         )
@@ -102,11 +102,11 @@ pub(crate) fn write_test_commissioning(
     std::fs::create_dir_all(base.join(&pubkey)).expect("mkdir");
     std::fs::create_dir_all(base.join("logs")).expect("mkdir");
     std::fs::write(
-        base.join(buzz_session_host_core::record::STORE_FILE_NAME),
+        base.join(beekeeper_host_core::record::STORE_FILE_NAME),
         serde_json::json!({
             "version": 1,
             "providers": {
-                buzz_session_host_core::record::canonical_relay_key(relay): {
+                beekeeper_host_core::record::canonical_relay_key(relay): {
                     "providerPubkey": pubkey,
                     "instanceId": &pubkey[..16],
                     "createdAt": "2026-09-30T00:00:00Z",
@@ -119,7 +119,7 @@ pub(crate) fn write_test_commissioning(
     .expect("record");
 
     let host_dir = layout::host_dir(home, Instance::Production);
-    buzz_session_host_core::atomic_write::create_dir_all_restricted(&host_dir).expect("mkdir");
+    beekeeper_host_core::atomic_write::create_dir_all_restricted(&host_dir).expect("mkdir");
     let mut config = serde_json::json!({
         "version": 1,
         "instance": "production",

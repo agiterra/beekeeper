@@ -16,17 +16,17 @@
 
 use std::path::PathBuf;
 
-use buzz_host::install::{self, Registration};
-use buzz_session_host_core::layout;
+use beekeeper_host::install::{self, Registration};
+use beekeeper_host_core::layout;
 use tauri::AppHandle;
 
 /// Binary name of the agent host, as it is shipped beside the app.
-pub(crate) const HOST_BINARY: &str = "buzz-host";
+pub(crate) const HOST_BINARY: &str = "beekeeper-host";
 
 /// The host binary this build should register.
 ///
 /// Resolved through the same discovery order every other Buzz-spawned binary
-/// uses, so a bundled app registers the `buzz-host` inside its own bundle and
+/// uses, so a bundled app registers the `beekeeper-host` inside its own bundle and
 /// a dev build registers the one in `target/`. Never a bare name: launchd and
 /// systemd run with a minimal `PATH` and neither will look one up.
 pub(crate) fn resolve_host_binary() -> Option<PathBuf> {

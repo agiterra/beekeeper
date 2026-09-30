@@ -23,7 +23,7 @@ pub(crate) fn shut_down_app(app: &tauri::AppHandle, shutdown_done: &std::sync::a
             .shutdown_all();
         // The coding-session provider is deliberately **not** stopped here.
         //
-        // It is `buzz-host`'s child now, not this app's. Quitting Beekeeper
+        // It is `beekeeper-host`'s child now, not this app's. Quitting Beekeeper
         // used to be defined as "SIGINT the provider, then fan out over every
         // managed agent" — which is precisely the coupling this split removes:
         // a machine's agents should not end because a human closed a window.

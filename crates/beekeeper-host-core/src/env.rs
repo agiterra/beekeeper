@@ -9,7 +9,7 @@
 //! secret key appears nowhere in it.
 //!
 //! This lives in the shared crate because there is now more than one launcher:
-//! the desktop app and the headless `buzz-host`. Two launchers assembling the
+//! the desktop app and the headless `beekeeper-host`. Two launchers assembling the
 //! same environment two ways is how a provider comes to behave differently
 //! depending on who started it, which is exactly the class of difference
 //! nobody would think to look for.

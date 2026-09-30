@@ -10,13 +10,13 @@
 //! # Where this deliberately agrees with the desktop, and where it does not
 //!
 //! The two steps that carry a real hazard are shared, in
-//! `buzz_session_host_core`:
+//! `beekeeper_host_core`:
 //!
-//! - [`buzz_session_host_core::command_paths::resolve_workspace_command`] runs
+//! - [`beekeeper_host_core::command_paths::resolve_workspace_command`] runs
 //!   first, so an installed bundle prefers the `buzz-session-provider` shipped
 //!   inside it over a stale `target/debug` — the stale-binary hazard that
 //!   function exists for.
-//! - [`buzz_session_host_core::managed_node`] names the app-private npm and
+//! - [`beekeeper_host_core::managed_node`] names the app-private npm and
 //!   Node directories, so both launchers find the same `claude-agent-acp`.
 //!
 //! The tail — login shell, well-known directories, nvm — is host-local and
@@ -28,10 +28,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use buzz_session_host_core::command_paths::{
+use beekeeper_host_core::command_paths::{
     command_looks_like_path, executable_basename, is_executable_file, resolve_workspace_command,
 };
-use buzz_session_host_core::managed_node::{
+use beekeeper_host_core::managed_node::{
     buzz_managed_command_path, buzz_managed_node_bin_dir, buzz_managed_npm_bin_dir,
 };
 
@@ -80,7 +80,7 @@ pub fn resolve_command(command: &str) -> Option<PathBuf> {
 
 /// The repository this host was compiled in, for the dev-build case.
 ///
-/// `CARGO_MANIFEST_DIR` is `crates/buzz-host`, so the workspace root is two up.
+/// `CARGO_MANIFEST_DIR` is `crates/beekeeper-host`, so the workspace root is two up.
 fn workspace_root_dir() -> &'static Path {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
     ROOT.get_or_init(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."))
@@ -187,7 +187,7 @@ fn well_known_dirs() -> &'static [PathBuf] {
 /// hand-repointed `~/.local/bin/bee` shadowed the `bee` inside the app and a
 /// seat ran a binary the build never produced).
 pub fn augmented_path() -> Option<String> {
-    use buzz_session_host_core::path_env::{compose_path_entries, should_use_inherited};
+    use beekeeper_host_core::path_env::{compose_path_entries, should_use_inherited};
 
     let home = dirs::home_dir();
     let exe_parent = std::env::current_exe()

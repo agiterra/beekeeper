@@ -4,7 +4,7 @@
 //! `session_provider::tests`. They are the assertions a reader of the spawn
 //! path cannot make by eye: the exact `BUZZ_AUTH_TAG` shape, the record file's
 //! camelCase wire keys, and which variables are exported only when somebody
-//! actually chose a value. Every one of them now also covers `buzz-host`,
+//! actually chose a value. Every one of them now also covers `beekeeper-host`,
 //! which is the point of the move — the properties belong to the contract, not
 //! to whichever launcher happens to be reading it.
 //!

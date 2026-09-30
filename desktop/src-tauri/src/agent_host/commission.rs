@@ -35,18 +35,16 @@
 //! - it is the same protection the provider's **state directory** already has
 //!   — a `0700` directory holding a durable outbox of *pre-signed events* —
 //!   so compromising that directory already allows publishing as the provider;
-//! - `BUZZ_HOST_KEY_FILE` lets a hardened deployment point at a secrets mount
+//! - `BEEKEEPER_HOST_KEY_FILE` lets a hardened deployment point at a secrets mount
 //!   or a tmpfs file with no code change.
 //!
 //! The keychain entry is **not** deleted. It stays as the recovery path and as
 //! the thing `reset.rs` already knows how to clear.
 
-use buzz_session_host_core::atomic_write::{
-    atomic_write_json_restricted, create_dir_all_restricted,
-};
-use buzz_session_host_core::config::{HostConfig, HOST_CONFIG_VERSION};
-use buzz_session_host_core::layout;
-use buzz_session_host_core::record::{CodingSessionProviderRecord, CodingSessionProviderStore};
+use beekeeper_host_core::atomic_write::{atomic_write_json_restricted, create_dir_all_restricted};
+use beekeeper_host_core::config::{HostConfig, HOST_CONFIG_VERSION};
+use beekeeper_host_core::layout;
+use beekeeper_host_core::record::{CodingSessionProviderRecord, CodingSessionProviderStore};
 use tauri::AppHandle;
 
 /// Why the app is writing the host's config — which shapes nothing about the

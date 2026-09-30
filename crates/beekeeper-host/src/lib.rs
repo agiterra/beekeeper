@@ -21,7 +21,7 @@
 //!   reports the relay state as unknown rather than synthesising "connected"
 //!   from "the child is alive".
 //!
-//! Everything it shares with the desktop app lives in `buzz-session-host-core`.
+//! Everything it shares with the desktop app lives in `beekeeper-host-core`.
 
 //! # Platform
 //!
@@ -29,7 +29,7 @@
 //! control socket is an `AF_UNIX` socket and the login registrations are
 //! launchd and systemd. A Windows host needs named pipes and a different
 //! service manager, which is separate work. `buzz-shell-host` already has
-//! this shape, and `buzz-host` follows it — including being absent from
+//! this shape, and `beekeeper-host` follows it — including being absent from
 //! `tauri.windows.conf.json`.
 
 #[cfg(unix)]

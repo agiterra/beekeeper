@@ -5445,7 +5445,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
     // Session commands are local-only — they call the desktop session broker,
     // not the relay. No key/relay is required; when BUZZ_PRIVATE_KEY is present
     // the caller pubkey is passed to the broker for its audit log.
-    // Host commands are local-only too — they call `buzz-host`'s control
+    // Host commands are local-only too — they call `beekeeper-host`'s control
     // socket, or write a login registration. No key and no relay: a machine
     // with no identity at all still has to be able to answer "is the host
     // installed", which is the first question when nothing is working.

@@ -1,5 +1,5 @@
 [package]
-name = "buzz-host"
+name = "beekeeper-host"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,16 +17,16 @@ repository.workspace = true
 description = "Headless host for Beekeeper's background agents: supervises the coding-session provider and answers a local control socket."
 
 [[bin]]
-name = "buzz-host"
+name = "beekeeper-host"
 path = "src/main.rs"
 
 [lib]
-name = "buzz_host"
+name = "beekeeper_host"
 path = "src/lib.rs"
 
 [dependencies]
 buzz-core = { path = "../buzz-core" }
-buzz-session-host-core = { path = "../buzz-session-host-core" }
+beekeeper-host-core = { path = "../beekeeper-host-core" }
 chrono = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"

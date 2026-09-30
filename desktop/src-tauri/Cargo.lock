@@ -794,14 +794,14 @@ dependencies = [
  "audioadapter-buffers",
  "axum",
  "base64 0.22.1",
+ "beekeeper-host",
+ "beekeeper-host-core",
  "block2",
  "buzz-agent",
  "buzz-core",
- "buzz-host",
  "buzz-media",
  "buzz-persona",
  "buzz-sdk",
- "buzz-session-host-core",
  "buzz-session-provider",
  "buzz-shell-host",
  "buzz-terminal",
@@ -884,6 +884,37 @@ dependencies = [
  "windows-sys 0.61.2",
  "zeroize",
  "zip 8.6.0",
+]
+
+[[package]]
+name = "beekeeper-host"
+version = "0.1.0"
+dependencies = [
+ "beekeeper-host-core",
+ "buzz-core",
+ "chrono",
+ "clap",
+ "dirs",
+ "nix 0.31.3",
+ "nostr 0.44.7",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "beekeeper-host-core"
+version = "0.1.0"
+dependencies = [
+ "atomic-write-file",
+ "buzz-core",
+ "chrono",
+ "dirs",
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]
@@ -1282,24 +1313,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "buzz-host"
-version = "0.1.0"
-dependencies = [
- "buzz-core",
- "buzz-session-host-core",
- "chrono",
- "clap",
- "dirs",
- "nix 0.31.3",
- "nostr 0.44.7",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "buzz-media"
 version = "0.1.0"
 dependencies = [
@@ -1356,19 +1369,6 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror 2.0.18",
  "uuid",
-]
-
-[[package]]
-name = "buzz-session-host-core"
-version = "0.1.0"
-dependencies = [
- "atomic-write-file",
- "buzz-core",
- "chrono",
- "dirs",
- "serde",
- "serde_json",
- "url",
 ]
 
 [[package]]

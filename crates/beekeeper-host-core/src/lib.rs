@@ -4,7 +4,7 @@
 //! environment, holds a lock on its state directory for the life of the
 //! process, and talks to the relay itself. That makes it launchable by
 //! anything — and since 2026-09 there is more than one launcher: the desktop
-//! app, and the headless `buzz-host` that owns the provider on a machine where
+//! app, and the headless `beekeeper-host` that owns the provider on a machine where
 //! nobody is logged in.
 //!
 //! Everything both launchers must agree on lives here:
