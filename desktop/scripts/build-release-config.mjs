@@ -61,6 +61,21 @@ if (Object.hasOwn(releaseConfig.bundle, "externalBin")) {
   );
 }
 
+// Same rule, same reason, for the nested menu bar app. `bundle.macOS.files` in
+// the base config is what nests `Beekeeper Menu Bar.app` at
+// `Contents/Library/LoginItems/` during bundling; a `files` key here would
+// replace it and `null` would delete it, and the result — a login item that
+// silently stops being shipped — looks like a menu bar icon that just stopped
+// appearing after an update.
+//
+// `minimumSystemVersion` above is safe precisely because merge-patch merges
+// objects key by key: it adds to `macOS` rather than replacing it.
+if (Object.hasOwn(releaseConfig.bundle.macOS, "files")) {
+  throw new Error(
+    "Release config must not define bundle.macOS.files; the nested login item is declared in the base config",
+  );
+}
+
 console.log(`Updater enabled -> ${updaterEndpoint}`);
 
 writeFileSync(outputConfigPath, `${JSON.stringify(releaseConfig, null, 2)}\n`);

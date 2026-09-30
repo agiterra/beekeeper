@@ -200,6 +200,12 @@ BUNDLE_CONFIG="$(node -e '
 ' desktop/src-tauri/tauri.local-prod.conf.json "$APP_IDENTIFIER" "$APP_NAME")"
 
 pnpm install
+# Staged before bundling: `bundle.macOS.files` copies it from
+# `desktop/src-tauri/loginitems/` during the bundle, so it lands inside the
+# app (and, in the release pipeline, inside the DMG) rather than being copied
+# in afterwards where a signature would not cover it.
+"$BUILD_ROOT/scripts/stage-menubar.sh" --debug
+
 (cd desktop && pnpm tauri build --debug --bundles app --config "$BUNDLE_CONFIG")
 
 APP="$BUILD_ROOT/desktop/src-tauri/target/debug/bundle/macos/${APP_NAME}.app"
@@ -217,11 +223,25 @@ done
   echo "role packs missing from bundle (resources)" >&2
   exit 1
 }
+# An empty LoginItems/ passes every signature check there is: `--deep` walks
+# nested code but does not notice its absence. The nesting itself is declared
+# in the bundle config (`bundle.macOS.files`) and happens during bundling; this
+# asserts it landed.
+[[ -d "$APP/Contents/Library/LoginItems/Beekeeper Menu Bar.app" ]] || {
+  echo "the menu bar app is missing from LoginItems" >&2
+  exit 1
+}
 # Tauri leaves the bundle unsigned (per-binary linker ad-hoc signatures, no
 # CodeResources seal). Sign the whole bundle once so it verifies as a unit.
 codesign --force --deep --sign - "$APP"
 codesign --verify --deep --strict "$APP" || {
   echo "bundle signature verification failed" >&2
+  exit 1
+}
+# The nested bundle on its own, because `--deep` above reports the outer app's
+# verdict and a nested signature broken by the copy is the interesting case.
+codesign --verify --strict "$APP/Contents/Library/LoginItems/Beekeeper Menu Bar.app" || {
+  echo "the nested menu bar app's signature does not verify" >&2
   exit 1
 }
 echo "==> bundle OK: $APP"

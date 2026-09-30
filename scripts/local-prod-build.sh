@@ -97,6 +97,8 @@ chmod 755 "desktop/src-tauri/binaries/buzz-session-provider-$TARGET"
 
 # ── bundle ───────────────────────────────────────────────────────────────────
 pnpm install
+# Staged before bundling, so `bundle.macOS.files` nests it inside the app.
+./scripts/stage-menubar.sh
 (cd desktop && pnpm tauri build --target "$TARGET" --features mesh-llm --bundles app \
   --config "$PROD_ROOT/desktop/src-tauri/tauri.local-prod.conf.json")
 
@@ -106,6 +108,13 @@ APP="$PROD_ROOT/desktop/src-tauri/target/$TARGET/release/bundle/macos/Beekeeper.
 [[ -d "$APP" ]] || { echo "bundle missing: $APP" >&2; exit 1; }
 [[ -x "$APP/Contents/MacOS/buzz-session-provider" ]] \
   || { echo "buzz-session-provider missing from bundle" >&2; exit 1; }
+[[ -x "$APP/Contents/MacOS/beekeeper-host" ]] \
+  || { echo "beekeeper-host missing from bundle" >&2; exit 1; }
+# An empty LoginItems/ passes `codesign --verify --deep --strict`, which walks
+# nested code but does not notice its absence. So assert presence here: the
+# symptom otherwise is a menu bar icon that silently stops appearing.
+[[ -d "$APP/Contents/Library/LoginItems/Beekeeper Menu Bar.app" ]] \
+  || { echo "the menu bar app is missing from LoginItems" >&2; exit 1; }
 # Tauri leaves the bundle unsigned (only per-binary linker ad-hoc signatures,
 # no CodeResources seal). Ad-hoc sign the whole bundle so it verifies as a
 # unit; the signature still changes every build, hence the per-update keychain
@@ -113,6 +122,10 @@ APP="$PROD_ROOT/desktop/src-tauri/target/$TARGET/release/bundle/macos/Beekeeper.
 codesign --force --deep --sign - "$APP"
 codesign --verify --deep --strict "$APP" \
   || { echo "bundle signature verification failed" >&2; exit 1; }
+# And the nested bundle on its own, because `--deep` reports the outer app's
+# verdict: a nested signature broken by the copy would be the interesting case.
+codesign --verify --strict "$APP/Contents/Library/LoginItems/Beekeeper Menu Bar.app" \
+  || { echo "the nested menu bar app's signature does not verify" >&2; exit 1; }
 echo "==> bundle OK: $APP"
 
 # ── install ──────────────────────────────────────────────────────────────────

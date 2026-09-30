@@ -160,6 +160,13 @@ jobs:
           path: ${{ github.workspace }}/.cache/mesh-llama
           key: mesh-llama-${{ runner.os }}-metal-${{ steps.mesh_rev.outputs.rev }}
 
+      - name: Stage the menu bar app for nesting
+        # Before the Tauri build, not after: `bundle.macOS.files` copies it
+        # from `desktop/src-tauri/loginitems/` *during* bundling, so it lands
+        # inside the .app and inside the DMG. This job signs the DMG, so an
+        # app nested afterwards would not be in the artifact anyone installs.
+        run: ./scripts/stage-menubar.sh
+
       - name: Build unsigned Tauri app
         run: cd desktop && pnpm tauri build --verbose --no-sign --features mesh-llm --config src-tauri/tauri.canary.conf.json
         env:
@@ -208,9 +215,23 @@ jobs:
           EXTRACT_DIR="${RUNNER_TEMP}/signed-app-extract"
           rm -rf "$EXTRACT_DIR" && mkdir -p "$EXTRACT_DIR"
           ditto -x -k "$SIGNED_APP_ZIP" "$EXTRACT_DIR"
-          codesign --verify --deep --strict --verbose=2 "$EXTRACT_DIR/Beekeeper.app"
-          spctl --assess --type execute --verbose=4 "$EXTRACT_DIR/Beekeeper.app"
-          desktop/scripts/verify-macos-entitlements.sh "$EXTRACT_DIR/Beekeeper.app"
+          APP="$EXTRACT_DIR/Beekeeper.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
+          desktop/scripts/verify-macos-entitlements.sh "$APP"
+          # The most valuable place for this check: it runs against the app as
+          # it came back *signed*, so it proves the nested login item survived
+          # signing and notarization — not just that the bundler put it there.
+          # An empty LoginItems/ passes everything above, because `--deep`
+          # walks nested code but does not notice its absence.
+          NESTED="${APP}/Contents/Library/LoginItems/Beekeeper Menu Bar.app"
+          test -d "$NESTED" \
+            || { echo "::error::the menu bar app is missing from LoginItems"; exit 1; }
+          LSUI=$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$NESTED/Contents/Info.plist")
+          test "$LSUI" = "true" \
+            || { echo "::error::the nested menu bar app is not LSUIElement (got $LSUI)"; exit 1; }
+          codesign --verify --strict --verbose=2 "$NESTED"
+          spctl --assess --type execute --verbose=4 "$NESTED"
 
       - name: Stage signed DMG
         id: artifact

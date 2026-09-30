@@ -19,6 +19,7 @@ use clap::{Parser, Subcommand};
 
 use crate::commission::commission;
 use crate::control::HostControl;
+use crate::install::Service;
 use crate::protocol::Request;
 
 #[derive(Parser)]
@@ -182,12 +183,13 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
             };
             let program = std::fs::canonicalize(&program)
                 .map_err(|error| format!("cannot resolve {}: {error}", program.display()))?;
-            let registration = crate::install::install(&home, instance, &program)?;
+            let registration =
+                crate::install::install(Service::AgentHost, &home, instance, &program)?;
             print_registration(&registration);
             return Ok(());
         }
         Command::Uninstall => {
-            crate::install::uninstall(&home, instance)?;
+            crate::install::uninstall(Service::AgentHost, &home, instance)?;
             println!(
                 "removed the login registration for {}",
                 instance.namespace_value()
@@ -195,7 +197,7 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
             return Ok(());
         }
         Command::Installed => {
-            print_registration(&crate::install::status(&home, instance));
+            print_registration(&crate::install::status(Service::AgentHost, &home, instance));
             return Ok(());
         }
         _ => {}

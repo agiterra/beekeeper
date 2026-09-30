@@ -10,6 +10,8 @@
 //! subcommands and is the same code underneath; `bee` carries them because
 //! `bee` is the binary that is already on an agent's `PATH`.
 
+use beekeeper_host::install::Service;
+use beekeeper_host_core::layout::{self, Instance};
 use clap::Subcommand;
 
 use crate::error::CliError;
@@ -36,17 +38,25 @@ pub enum HostCmd {
     Restart,
     /// Re-read `host.json` and the identity, then restart onto the result.
     Bind,
-    /// Register the host to start at login (macOS) or as a systemd user
-    /// service (Linux).
+    /// Register the agent host to start at login (macOS) or as a systemd
+    /// user service (Linux).
+    ///
+    /// Only the host. The menu bar app is registered by Beekeeper itself,
+    /// because it is nested inside that bundle and is meaningless without a
+    /// logged-in session — which a server does not have.
     Install {
         /// The host binary to register. Defaults to the `beekeeper-host` beside
         /// this `bee`.
         #[arg(long)]
         program: Option<std::path::PathBuf>,
     },
-    /// Remove the login registration and stop the service.
+    /// Remove the login registrations and stop the services.
+    ///
+    /// Both the host and the menu bar app, so an uninstall cannot leave
+    /// launchd retrying a binary that is about to be deleted.
     Uninstall,
-    /// Print whether the host is registered to start at login.
+    /// Print whether the host and the menu bar app are registered to start at
+    /// login.
     Installed,
 }
 
@@ -59,8 +69,6 @@ fn instance(dev: bool) -> Result<Instance, CliError> {
     Instance::from_env().map_err(CliError::Usage)
 }
 
-use beekeeper_host_core::layout::{self, Instance};
-
 pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
     let instance = instance(dev)?;
     let home = layout::home_dir().map_err(CliError::Other)?;
@@ -68,8 +76,9 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
     match command {
         HostCmd::Install { program } => {
             let program = resolve_host_binary(program.as_deref())?;
-            let registration = beekeeper_host::install::install(&home, instance, &program)
-                .map_err(CliError::Other)?;
+            let registration =
+                beekeeper_host::install::install(Service::AgentHost, &home, instance, &program)
+                    .map_err(CliError::Other)?;
             print_json(&registration)?;
             for warning in &registration.warnings {
                 eprintln!("bee: {warning}");
@@ -77,17 +86,28 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
             Ok(())
         }
         HostCmd::Uninstall => {
-            beekeeper_host::install::uninstall(&home, instance).map_err(CliError::Other)?;
+            // Both, and the menu bar app's failure does not stop the host's.
+            let menubar = beekeeper_host::install::uninstall(Service::MenuBar, &home, instance);
+            beekeeper_host::install::uninstall(Service::AgentHost, &home, instance)
+                .map_err(CliError::Other)?;
+            menubar.map_err(CliError::Other)?;
             eprintln!(
-                "bee: removed the login registration for {}",
+                "bee: removed the login registrations for {}",
                 instance.namespace_value()
             );
             Ok(())
         }
         HostCmd::Installed => {
-            let registration = beekeeper_host::install::status(&home, instance);
-            print_json(&registration)?;
-            for warning in &registration.warnings {
+            // Both services, because "is this machine set up" is a question
+            // about both and reporting only one would answer it wrongly on a
+            // desktop.
+            let host = beekeeper_host::install::status(Service::AgentHost, &home, instance);
+            let menubar = beekeeper_host::install::status(Service::MenuBar, &home, instance);
+            print_json(&serde_json::json!({
+                "agentHost": host,
+                "menuBar": menubar,
+            }))?;
+            for warning in host.warnings.iter().chain(&menubar.warnings) {
                 eprintln!("bee: {warning}");
             }
             Ok(())
@@ -147,7 +167,7 @@ fn host_error(
     ) {
         return CliError::Other(message);
     }
-    let registration = beekeeper_host::install::status(home, instance);
+    let registration = beekeeper_host::install::status(Service::AgentHost, home, instance);
     CliError::Other(if registration.installed {
         format!(
             "{message} — it is registered to start at login ({}), so start it with \

@@ -11,6 +11,11 @@
       "binaries/buzz-shell-host",
       "binaries/beekeeper-host",
       "binaries/buzz-session-provider"
-    ]
+    ],
+    "macOS": {
+      "files": {
+        "Library/LoginItems/Beekeeper Menu Bar.app": "loginitems/Beekeeper Menu Bar.app"
+      }
+    }
   }
 }

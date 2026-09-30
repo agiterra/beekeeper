@@ -41,28 +41,73 @@ use std::path::{Path, PathBuf};
 
 use beekeeper_host_core::layout::{Instance, INSTANCE_VAR};
 
-/// The launchd label / systemd unit stem for an instance.
+/// Which background service a registration is for.
 ///
-/// Per instance so a dev build and a release build can both be registered on
-/// one machine without one replacing the other's registration.
-pub fn service_name(instance: Instance) -> String {
-    match instance {
-        Instance::Production => "io.agiterra.beekeeper.host".to_string(),
-        Instance::Dev => "io.agiterra.beekeeper.host.dev".to_string(),
+/// Two, and they are genuinely different things: the host runs agents and must
+/// start on a server with no GUI; the menu bar app only *shows* what the host
+/// is doing and is meaningless without a session. Registering them separately
+/// is what lets a person turn the menu bar off without turning their agents
+/// off — and what stops one uninstall taking the other with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Service {
+    /// `beekeeper-host` — supervises this machine's agents.
+    AgentHost,
+    /// `beekeeper-menubar` — shows what they are doing. macOS only.
+    MenuBar,
+}
+
+impl Service {
+    /// The argument the program is started with, if any.
+    fn args(self) -> &'static [&'static str] {
+        match self {
+            Self::AgentHost => &["run"],
+            Self::MenuBar => &[],
+        }
+    }
+
+    /// Whether this service belongs in a foreground session.
+    ///
+    /// The menu bar app draws into a logged-in user's menu bar, so it is
+    /// pointless — and on a server, harmful noise — without one. The host is
+    /// the opposite: it exists to run with nobody logged in.
+    fn needs_a_session(self) -> bool {
+        matches!(self, Self::MenuBar)
+    }
+
+    fn human_name(self) -> &'static str {
+        match self {
+            Self::AgentHost => "agent host",
+            Self::MenuBar => "menu bar app",
+        }
     }
 }
 
-/// Where the registration for `instance` lives on this platform.
-pub fn registration_path(home: &Path, instance: Instance) -> PathBuf {
+/// The launchd label / systemd unit stem for a service and instance.
+///
+/// Per instance so a dev build and a release build can both be registered on
+/// one machine without one replacing the other's registration.
+pub fn service_name(service: Service, instance: Instance) -> String {
+    let stem = match service {
+        Service::AgentHost => "io.agiterra.beekeeper.host",
+        Service::MenuBar => "io.agiterra.beekeeper.menubar",
+    };
+    match instance {
+        Instance::Production => stem.to_string(),
+        Instance::Dev => format!("{stem}.dev"),
+    }
+}
+
+/// Where the registration for a service and instance lives on this platform.
+pub fn registration_path(service: Service, home: &Path, instance: Instance) -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         home.join("Library/LaunchAgents")
-            .join(format!("{}.plist", service_name(instance)))
+            .join(format!("{}.plist", service_name(service, instance)))
     }
     #[cfg(not(target_os = "macos"))]
     {
         home.join(".config/systemd/user")
-            .join(format!("{}.service", service_name(instance)))
+            .join(format!("{}.service", service_name(service, instance)))
     }
 }
 
@@ -88,8 +133,8 @@ pub struct Registration {
 /// running": the socket's absence alone cannot distinguish them, and a client
 /// that reported one for the other would tell a person to start something they
 /// have not installed.
-pub fn status(home: &Path, instance: Instance) -> Registration {
-    let path = registration_path(home, instance);
+pub fn status(service: Service, home: &Path, instance: Instance) -> Registration {
+    let path = registration_path(service, home, instance);
     let program = std::fs::read_to_string(&path)
         .ok()
         .and_then(|content| program_from_registration(&content));
@@ -107,7 +152,9 @@ pub fn status(home: &Path, instance: Instance) -> Registration {
             )),
             _ => {}
         }
-        warnings.extend(linger_warning());
+        if !service.needs_a_session() {
+            warnings.extend(linger_warning());
+        }
     }
     Registration {
         installed: path.exists(),
@@ -122,7 +169,12 @@ pub fn status(home: &Path, instance: Instance) -> Registration {
 /// Idempotent: an existing registration is replaced. The file is written with
 /// the *absolute, resolved* path of the binary, because launchd and systemd
 /// both run with a minimal `PATH` and neither will look one up.
-pub fn install(home: &Path, instance: Instance, program: &Path) -> Result<Registration, String> {
+pub fn install(
+    service: Service,
+    home: &Path,
+    instance: Instance,
+    program: &Path,
+) -> Result<Registration, String> {
     if !program.is_absolute() {
         return Err(format!(
             "the host binary must be named by an absolute path, not {}",
@@ -131,21 +183,24 @@ pub fn install(home: &Path, instance: Instance, program: &Path) -> Result<Regist
     }
     if !program.exists() {
         return Err(format!(
-            "there is no host binary at {} — build it with `cargo build --release -p beekeeper-host` \
-             or point at the one inside the app bundle",
+            "there is no {} binary at {} — build it, or point at the one inside the app bundle",
+            service.human_name(),
             program.display()
         ));
     }
-    let path = registration_path(home, instance);
+    let path = registration_path(service, home, instance);
     let parent = path
         .parent()
         .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-    std::fs::write(&path, registration_contents(instance, program, home))
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-    activate(&path, instance)?;
-    Ok(status(home, instance))
+    std::fs::write(
+        &path,
+        registration_contents(service, instance, program, home),
+    )
+    .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    activate(service, &path, instance)?;
+    Ok(status(service, home, instance))
 }
 
 /// Remove the registration, and stop the service if it is running.
@@ -153,9 +208,9 @@ pub fn install(home: &Path, instance: Instance, program: &Path) -> Result<Regist
 /// Best-effort on the deactivation — a service that is already gone must not
 /// make an uninstall fail — but the *file* removal is reported, because a
 /// registration left behind is the failure mode this function exists for.
-pub fn uninstall(home: &Path, instance: Instance) -> Result<(), String> {
-    let path = registration_path(home, instance);
-    deactivate(&path, instance);
+pub fn uninstall(service: Service, home: &Path, instance: Instance) -> Result<(), String> {
+    let path = registration_path(service, home, instance);
+    deactivate(service, &path, instance);
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -187,8 +242,13 @@ fn program_from_registration(content: &str) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn registration_contents(instance: Instance, program: &Path, home: &Path) -> String {
-    let label = service_name(instance);
+fn registration_contents(
+    service: Service,
+    instance: Instance,
+    program: &Path,
+    home: &Path,
+) -> String {
+    let label = service_name(service, instance);
     let log = beekeeper_host_core::layout::host_log_path(home, instance);
     // Hand-written rather than built through the `plist` crate: the file is a
     // fixed shape, a person reads and edits it, and the escaping surface is
@@ -203,8 +263,7 @@ fn registration_contents(instance: Instance, program: &Path, home: &Path) -> Str
 	<string>{label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>{program}</string>
-		<string>run</string>
+		<string>{program}</string>{argv}
 	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
@@ -225,13 +284,23 @@ fn registration_contents(instance: Instance, program: &Path, home: &Path) -> Str
 </plist>
 "#,
         program = program.display(),
+        argv = service
+            .args()
+            .iter()
+            .map(|arg| format!("\n\t\t<string>{arg}</string>"))
+            .collect::<String>(),
         instance_value = instance.namespace_value(),
         log = log.display(),
     )
 }
 
 #[cfg(not(target_os = "macos"))]
-fn registration_contents(instance: Instance, program: &Path, home: &Path) -> String {
+fn registration_contents(
+    service: Service,
+    instance: Instance,
+    program: &Path,
+    home: &Path,
+) -> String {
     let config = beekeeper_host_core::layout::host_config_path(home, instance);
     let graceful = crate::terminate::GRACEFUL_SHUTDOWN_TIMEOUT.as_secs()
         + crate::terminate::ESCALATION_TIMEOUT.as_secs();
@@ -244,7 +313,7 @@ Documentation=file:{config}
 # `simple`, not `oneshot`: this is a long-running supervisor, and it runs in
 # the foreground on purpose so this unit's stop signal reaches it directly.
 Type=simple
-ExecStart={program} run
+ExecStart={program}{argv}
 Environment={INSTANCE_VAR}={instance_value}
 Restart=on-failure
 RestartSec=5
@@ -258,20 +327,28 @@ WantedBy=default.target
         namespace = instance.namespace(),
         config = config.display(),
         program = program.display(),
+        argv = service
+            .args()
+            .iter()
+            .map(|arg| format!(" {arg}"))
+            .collect::<String>(),
         instance_value = instance.namespace_value(),
         stop_timeout = graceful + 5,
     )
 }
 
 #[cfg(target_os = "macos")]
-fn activate(path: &Path, instance: Instance) -> Result<(), String> {
+fn activate(service: Service, path: &Path, instance: Instance) -> Result<(), String> {
     // Bootout first so a reinstall replaces a loaded agent rather than
     // failing with "service already loaded". A bootout of something that is
     // not loaded is an error we deliberately ignore.
     let domain = format!("gui/{}", nix::unistd::getuid().as_raw());
     run(
         "launchctl",
-        &["bootout", &format!("{domain}/{}", service_name(instance))],
+        &[
+            "bootout",
+            &format!("{domain}/{}", service_name(service, instance)),
+        ],
     )
     .ok();
     run(
@@ -289,8 +366,8 @@ fn activate(path: &Path, instance: Instance) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn activate(_path: &Path, instance: Instance) -> Result<(), String> {
-    let unit = format!("{}.service", service_name(instance));
+fn activate(service: Service, _path: &Path, instance: Instance) -> Result<(), String> {
+    let unit = format!("{}.service", service_name(service, instance));
     run("systemctl", &["--user", "daemon-reload"]).ok();
     run("systemctl", &["--user", "enable", "--now", &unit]).map_err(|error| {
         format!(
@@ -301,18 +378,21 @@ fn activate(_path: &Path, instance: Instance) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn deactivate(_path: &Path, instance: Instance) {
+fn deactivate(service: Service, _path: &Path, instance: Instance) {
     let domain = format!("gui/{}", nix::unistd::getuid().as_raw());
     run(
         "launchctl",
-        &["bootout", &format!("{domain}/{}", service_name(instance))],
+        &[
+            "bootout",
+            &format!("{domain}/{}", service_name(service, instance)),
+        ],
     )
     .ok();
 }
 
 #[cfg(not(target_os = "macos"))]
-fn deactivate(_path: &Path, instance: Instance) {
-    let unit = format!("{}.service", service_name(instance));
+fn deactivate(service: Service, _path: &Path, instance: Instance) {
+    let unit = format!("{}.service", service_name(service, instance));
     run("systemctl", &["--user", "disable", "--now", &unit]).ok();
 }
 
@@ -380,12 +460,12 @@ mod tests {
     fn dev_and_production_register_separately() {
         let home = Path::new("/home/agent");
         assert_ne!(
-            service_name(Instance::Production),
-            service_name(Instance::Dev)
+            service_name(Service::AgentHost, Instance::Production),
+            service_name(Service::AgentHost, Instance::Dev)
         );
         assert_ne!(
-            registration_path(home, Instance::Production),
-            registration_path(home, Instance::Dev)
+            registration_path(Service::AgentHost, home, Instance::Production),
+            registration_path(Service::AgentHost, home, Instance::Dev)
         );
     }
 
@@ -395,6 +475,7 @@ mod tests {
     fn the_program_must_be_absolute_and_must_exist() {
         let dir = tempfile::tempdir().expect("tempdir");
         let relative = install(
+            Service::AgentHost,
             dir.path(),
             Instance::Production,
             Path::new("beekeeper-host"),
@@ -403,14 +484,15 @@ mod tests {
         assert!(relative.contains("absolute path"), "{relative}");
 
         let absent = install(
+            Service::AgentHost,
             dir.path(),
             Instance::Production,
             &dir.path().join("nowhere/beekeeper-host"),
         )
         .expect_err("a missing binary must be refused");
-        assert!(absent.contains("there is no host binary"), "{absent}");
+        assert!(absent.contains("there is no agent host binary"), "{absent}");
         assert!(
-            !registration_path(dir.path(), Instance::Production).exists(),
+            !registration_path(Service::AgentHost, dir.path(), Instance::Production).exists(),
             "a refused install must write nothing"
         );
     }
@@ -422,7 +504,8 @@ mod tests {
     fn the_program_round_trips_out_of_the_registration_it_wrote() {
         let home = Path::new("/home/agent");
         let program = Path::new("/Applications/Beekeeper.app/Contents/MacOS/beekeeper-host");
-        let contents = registration_contents(Instance::Production, program, home);
+        let contents =
+            registration_contents(Service::AgentHost, Instance::Production, program, home);
         assert_eq!(
             program_from_registration(&contents),
             Some(program.to_path_buf())
@@ -434,14 +517,84 @@ mod tests {
             contents.contains(Instance::Production.namespace_value()),
             "{contents}"
         );
-        let dev = registration_contents(Instance::Dev, program, home);
+        let dev = registration_contents(Service::AgentHost, Instance::Dev, program, home);
         assert!(dev.contains(Instance::Dev.namespace_value()), "{dev}");
+    }
+
+    /// The two services must not collide, and must not be interchangeable:
+    /// the host takes `run` and the menu bar app takes no argument, so one
+    /// registration's program line cannot be reused for the other.
+    #[test]
+    fn the_two_services_register_separately_and_differently() {
+        let home = Path::new("/home/agent");
+        assert_ne!(
+            service_name(Service::AgentHost, Instance::Production),
+            service_name(Service::MenuBar, Instance::Production)
+        );
+        assert_ne!(
+            registration_path(Service::AgentHost, home, Instance::Production),
+            registration_path(Service::MenuBar, home, Instance::Production)
+        );
+
+        let program = Path::new("/Applications/Beekeeper.app/Contents/MacOS/beekeeper-host");
+        let host = registration_contents(Service::AgentHost, Instance::Production, program, home);
+        let menubar = registration_contents(Service::MenuBar, Instance::Production, program, home);
+        assert!(
+            host.contains("run"),
+            "the host is started with `run`: {host}"
+        );
+        assert!(
+            !menubar.contains("<string>run</string>")
+                && !menubar.contains("ExecStart={program} run"),
+            "the menu bar app takes no argument: {menubar}"
+        );
+        // Both round-trip through the parser that `status` reports from.
+        assert_eq!(
+            program_from_registration(&host),
+            Some(program.to_path_buf())
+        );
+        assert_eq!(
+            program_from_registration(&menubar),
+            Some(program.to_path_buf())
+        );
+    }
+
+    /// `loginctl enable-linger` is about services that must survive logout.
+    /// The menu bar app draws into a logged-in session, so warning about
+    /// lingering there would be advice for a problem it cannot have.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn only_the_host_warns_about_lingering() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for service in [Service::AgentHost, Service::MenuBar] {
+            let path = registration_path(service, dir.path(), Instance::Production);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            std::fs::write(
+                &path,
+                registration_contents(
+                    service,
+                    Instance::Production,
+                    Path::new("/usr/local/bin/beekeeper-host"),
+                    dir.path(),
+                ),
+            )
+            .expect("write");
+        }
+        let host = status(Service::AgentHost, dir.path(), Instance::Production);
+        let menubar = status(Service::MenuBar, dir.path(), Instance::Production);
+        assert!(menubar
+            .warnings
+            .iter()
+            .all(|warning| !warning.contains("linger")));
+        // The host's answer depends on this machine's loginctl, so this only
+        // asserts the asymmetry rather than a specific warning.
+        assert!(host.warnings.len() >= menubar.warnings.len());
     }
 
     #[test]
     fn nothing_installed_reads_as_not_installed_with_no_warnings() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let status = status(dir.path(), Instance::Production);
+        let status = status(Service::AgentHost, dir.path(), Instance::Production);
         assert!(!status.installed);
         assert_eq!(status.program, None);
         assert!(
@@ -456,18 +609,19 @@ mod tests {
     #[test]
     fn a_registration_naming_a_missing_binary_says_so() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = registration_path(dir.path(), Instance::Production);
+        let path = registration_path(Service::AgentHost, dir.path(), Instance::Production);
         std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
         std::fs::write(
             &path,
             registration_contents(
+                Service::AgentHost,
                 Instance::Production,
                 Path::new("/Applications/Deleted.app/Contents/MacOS/beekeeper-host"),
                 dir.path(),
             ),
         )
         .expect("write");
-        let status = status(dir.path(), Instance::Production);
+        let status = status(Service::AgentHost, dir.path(), Instance::Production);
         assert!(status.installed);
         assert!(status
             .warnings
@@ -483,6 +637,7 @@ mod tests {
     #[test]
     fn the_unit_waits_longer_than_the_provider_takes_to_stop() {
         let contents = registration_contents(
+            Service::AgentHost,
             Instance::Production,
             Path::new("/usr/local/bin/beekeeper-host"),
             Path::new("/home/agent"),
@@ -508,6 +663,6 @@ mod tests {
     #[test]
     fn uninstalling_nothing_succeeds() {
         let dir = tempfile::tempdir().expect("tempdir");
-        uninstall(dir.path(), Instance::Production).expect("idempotent");
+        uninstall(Service::AgentHost, dir.path(), Instance::Production).expect("idempotent");
     }
 }

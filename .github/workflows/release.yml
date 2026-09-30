@@ -134,6 +134,13 @@ jobs:
           path: ${{ github.workspace }}/.cache/mesh-llama
           key: mesh-llama-${{ runner.os }}-metal-${{ steps.mesh_rev.outputs.rev }}
 
+      - name: Stage the menu bar app for nesting
+        # Before the Tauri build, not after: `bundle.macOS.files` copies it
+        # from `desktop/src-tauri/loginitems/` *during* bundling, so it lands
+        # inside the .app and inside the DMG. This job signs the DMG, so an
+        # app nested afterwards would not be in the artifact anyone installs.
+        run: ./scripts/stage-menubar.sh
+
       - name: Build unsigned Tauri app
         run: cd desktop && pnpm tauri build --verbose --no-sign --features mesh-llm --config src-tauri/tauri.release.conf.json
         env:
@@ -209,12 +216,23 @@ jobs:
 
       - name: Verify code signature
         run: |
-          codesign --verify --deep --strict --verbose=2 \
-            desktop/src-tauri/target/release/bundle/macos/Beekeeper.app
-          spctl --assess --type execute --verbose=4 \
-            desktop/src-tauri/target/release/bundle/macos/Beekeeper.app
-          desktop/scripts/verify-macos-entitlements.sh \
-            desktop/src-tauri/target/release/bundle/macos/Beekeeper.app
+          set -euo pipefail
+          APP="desktop/src-tauri/target/release/bundle/macos/Beekeeper.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
+          desktop/scripts/verify-macos-entitlements.sh "$APP"
+          # An empty LoginItems/ passes everything above: `--deep` walks nested
+          # code but does not notice its absence, and `spctl` assesses the
+          # outer app. The symptom of a missing login item is a menu bar icon
+          # that silently stops appearing after an update, so assert it.
+          NESTED="${APP}/Contents/Library/LoginItems/Beekeeper Menu Bar.app"
+          test -d "$NESTED" \
+            || { echo "::error::the menu bar app is missing from LoginItems"; exit 1; }
+          LSUI=$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$NESTED/Contents/Info.plist")
+          test "$LSUI" = "true" \
+            || { echo "::error::the nested menu bar app is not LSUIElement (got $LSUI)"; exit 1; }
+          codesign --verify --strict --verbose=2 "$NESTED"
+          spctl --assess --type execute --verbose=4 "$NESTED"
 
       - name: Locate build artifacts
         id: artifacts
@@ -311,6 +329,13 @@ jobs:
           cargo build --release --target "$TARGET" -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli -p buzz-shell-host -p beekeeper-host
           ./scripts/bundle-sidecars.sh "$TARGET"
 
+      - name: Stage the menu bar app for nesting
+        # Before the Tauri build, not after: `bundle.macOS.files` copies it
+        # from `desktop/src-tauri/loginitems/` *during* bundling, so it lands
+        # inside the .app and inside the DMG. This job signs the DMG, so an
+        # app nested afterwards would not be in the artifact anyone installs.
+        run: ./scripts/stage-menubar.sh
+
       - name: Build unsigned Tauri app
         run: cd desktop && pnpm tauri build --verbose --no-sign --target "$TARGET" --config src-tauri/tauri.release.conf.json
         env:
@@ -382,10 +407,23 @@ jobs:
 
       - name: Verify code signature
         run: |
-          APP_DIR="desktop/src-tauri/target/${TARGET}/release/bundle/macos/Beekeeper.app"
-          codesign --verify --deep --strict --verbose=2 "$APP_DIR"
-          spctl --assess --type execute --verbose=4 "$APP_DIR"
-          desktop/scripts/verify-macos-entitlements.sh "$APP_DIR"
+          set -euo pipefail
+          APP="desktop/src-tauri/target/${TARGET}/release/bundle/macos/Beekeeper.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
+          desktop/scripts/verify-macos-entitlements.sh "$APP"
+          # An empty LoginItems/ passes everything above: `--deep` walks nested
+          # code but does not notice its absence, and `spctl` assesses the
+          # outer app. The symptom of a missing login item is a menu bar icon
+          # that silently stops appearing after an update, so assert it.
+          NESTED="${APP}/Contents/Library/LoginItems/Beekeeper Menu Bar.app"
+          test -d "$NESTED" \
+            || { echo "::error::the menu bar app is missing from LoginItems"; exit 1; }
+          LSUI=$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$NESTED/Contents/Info.plist")
+          test "$LSUI" = "true" \
+            || { echo "::error::the nested menu bar app is not LSUIElement (got $LSUI)"; exit 1; }
+          codesign --verify --strict --verbose=2 "$NESTED"
+          spctl --assess --type execute --verbose=4 "$NESTED"
 
       - name: Locate updater archive
         id: artifacts

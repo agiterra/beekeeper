@@ -16,12 +16,20 @@
 
 use std::path::PathBuf;
 
-use beekeeper_host::install::{self, Registration};
+use beekeeper_host::install::{self, Registration, Service};
 use beekeeper_host_core::layout;
 use tauri::AppHandle;
 
 /// Binary name of the agent host, as it is shipped beside the app.
 pub(crate) const HOST_BINARY: &str = "beekeeper-host";
+
+/// The menu bar app, nested inside this bundle's `LoginItems`.
+///
+/// Not a sidecar beside the executable: it is a whole `.app`, and macOS
+/// requires a login item to be a bundle. `scripts/embed-menubar.sh` puts it
+/// there before the outer app is signed, so the outer signature covers it.
+#[cfg(target_os = "macos")]
+const MENUBAR_RELATIVE_PATH: &str = "../Library/LoginItems/Beekeeper Menu Bar.app";
 
 /// The host binary this build should register.
 ///
@@ -33,10 +41,38 @@ pub(crate) fn resolve_host_binary() -> Option<PathBuf> {
     crate::managed_agents::resolve_command(HOST_BINARY)
 }
 
+/// The nested menu bar app's executable, when this build has one.
+///
+/// Resolved relative to *this* executable rather than searched for: there is
+/// exactly one right answer inside a bundle, and a `PATH` hit would be some
+/// other install's copy. `None` in a dev build, which has no bundle — so
+/// `just dev` never registers a menu bar app at login, which is what you want
+/// from a dev build.
+#[cfg(target_os = "macos")]
+pub(crate) fn resolve_menubar_binary() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let bundle = exe.parent()?.join(MENUBAR_RELATIVE_PATH);
+    // Named after the *binary*, not the product name: Tauri puts
+    // `beekeeper-menubar` in `Contents/MacOS`, and "Beekeeper Menu Bar" is
+    // only the bundle's display name. Guessing the latter is how the
+    // registration comes to name a path that does not exist — which
+    // `install` would then refuse, correctly but confusingly.
+    let binary = bundle
+        .join("Contents/MacOS/beekeeper-menubar")
+        .canonicalize()
+        .ok()?;
+    binary.is_file().then_some(binary)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn resolve_menubar_binary() -> Option<PathBuf> {
+    None
+}
+
 /// Whether this app's instance is registered to start at login.
 pub(crate) fn status() -> Registration {
     match layout::home_dir() {
-        Ok(home) => install::status(&home, super::instance()),
+        Ok(home) => install::status(Service::AgentHost, &home, super::instance()),
         Err(error) => Registration {
             installed: false,
             path: PathBuf::new(),
@@ -59,7 +95,22 @@ pub(crate) fn ensure_registered(_app: &AppHandle) -> Registration {
         return status();
     };
     let instance = super::instance();
-    let current = install::status(&home, instance);
+
+    // The menu bar app is registered too, and separately: a person may turn
+    // it off without turning their agents off, and one uninstall must not take
+    // the other with it. Its absence is not worth a warning on the host's
+    // registration — a dev build has no bundle and therefore no menu bar app,
+    // which is correct rather than broken.
+    if let Some(menubar) = resolve_menubar_binary() {
+        let current = install::status(Service::MenuBar, &home, instance);
+        if !current.installed || !current.warnings.is_empty() {
+            if let Err(error) = install::install(Service::MenuBar, &home, instance, &menubar) {
+                eprintln!("buzz-desktop: agent-host: menu bar app not registered: {error}");
+            }
+        }
+    }
+
+    let current = install::status(Service::AgentHost, &home, instance);
     // Already registered, pointing at something that exists: leave it. A
     // rewrite would be harmless but it would also bounce the agent through
     // `launchctl bootout`, and doing that on every status poll is how a host
@@ -76,10 +127,10 @@ pub(crate) fn ensure_registered(_app: &AppHandle) -> Registration {
         ));
         return registration;
     };
-    match install::install(&home, instance, &program) {
+    match install::install(Service::AgentHost, &home, instance, &program) {
         Ok(registration) => registration,
         Err(error) => {
-            let mut registration = install::status(&home, instance);
+            let mut registration = install::status(Service::AgentHost, &home, instance);
             registration.warnings.push(format!(
                 "the agent host could not be registered to start at login ({error}) — your \
                  agents will stop when you quit Beekeeper"
@@ -92,7 +143,14 @@ pub(crate) fn ensure_registered(_app: &AppHandle) -> Registration {
 /// Remove the registration. Used by the app's reset path.
 #[allow(dead_code)] // Wired into `reset.rs` in a later slice.
 pub(crate) fn unregister() -> Result<(), String> {
-    install::uninstall(&layout::home_dir()?, super::instance())
+    let home = layout::home_dir()?;
+    let instance = super::instance();
+    // Both, and the menu bar app's failure does not stop the host's: a reset
+    // that half-removed the registrations would leave launchd retrying a
+    // binary this app is about to delete.
+    let menubar = install::uninstall(Service::MenuBar, &home, instance);
+    let host = install::uninstall(Service::AgentHost, &home, instance);
+    host.and(menubar)
 }
 
 #[cfg(test)]

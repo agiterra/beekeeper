@@ -66,7 +66,12 @@ pub async fn poll(
         Ok(status) => HostView::Reachable(Box::new(status)),
         Err(error) => HostView::Unreachable {
             installed: matches!(error, ClientError::NotRunning { .. })
-                && beekeeper_host::install::status(home, instance).installed,
+                && beekeeper_host::install::status(
+                    beekeeper_host::install::Service::AgentHost,
+                    home,
+                    instance,
+                )
+                .installed,
             reason: error.message(),
         },
     }

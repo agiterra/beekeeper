@@ -90,6 +90,9 @@
           "x": 469,
           "y": 330
         }
+      },
+      "files": {
+        "Library/LoginItems/Beekeeper Menu Bar.app": "loginitems/Beekeeper Menu Bar.app"
       }
     }
   }
