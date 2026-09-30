@@ -31,6 +31,7 @@ The `bee` CLI is your primary interface. Auth env vars: `BUZZ_RELAY_URL`, `BUZZ_
 | `bee pack` | `validate`, `inspect`, `compose`, `migrate`, `clone-template` |
 | `bee packs` | `set-source`, `init`, `get-source`, `status` |
 | `bee git` | `setup`, `status`, `check` |
+| `bee host` | `status`, `logs`, `start`, `stop`, `restart`, `bind`, `install`, `uninstall`, `installed` |
 | `bee session` | `list`, `read`, `send`, `send-key`, `exec`, `request-access` |
 | `bee moderation` | `reports`, `resolve`, `ban`, `unban`, `timeout`, `untimeout`, `restricted`, `audit` |
 | `bee sessions` | `list`, `transcript`, `close`, `delete`, `doctor`, `audit`, `tools`, `export`, `grant`, `grant-seat`, `revoke-seat`, `revoke`, `roster`, `assign`, `report`, `verdict`, `acknowledge`, `complete`, `block`, `note`, `decide`, `operation`, `observe`, `worktree`, `observations`, `handover`, `policy`, `send`, `create`, `hire`, `seat-repair`, `inbox`, `status`, `catalog`, `registry`, `route`, `whoami`, `explain`, `work`, `measure` (coding sessions — see below) |
