@@ -220,6 +220,36 @@ pub fn login_autostart(
     LoginAutostart::ShouldAsk
 }
 
+/// Whether `home` is the home directory of the user this process runs as.
+///
+/// The launchd label and the `gui/$UID` domain are **not** derived from
+/// `home` — they cannot be, because they have to be stable. So a caller that
+/// passes a different home writes its file there and then bootstraps or boots
+/// out *this* user's live service, which is never what it meant.
+///
+/// Not hypothetical. `uninstalling_nothing_succeeds` passed a `tempfile::
+/// tempdir()` as `home`, and `launchctl bootout
+/// gui/$UID/io.agiterra.beekeeper.host` then terminated the real agent host —
+/// on Andy's Mac, taking its provider and coding sessions with it, every time
+/// this crate's tests ran. The plist in `~/Library/LaunchAgents` survived,
+/// because only the tempdir copy was removed, so the state left behind was a
+/// registration that read as installed with nothing loaded.
+///
+/// The guard is here rather than in the tests because the tests were not
+/// wrong to pass a fake home: writing a registration into a tree you nominate
+/// is exactly what these functions claim to do. Touching a different tree's
+/// service manager is the part that was never intended.
+fn home_is_ours(home: &Path) -> bool {
+    let Ok(ours) = layout::home_dir() else {
+        return false;
+    };
+    // Canonicalized where possible: a tempdir is `/var/folders/...` while its
+    // resolved form is `/private/var/folders/...`, and `$HOME` may itself be a
+    // symlink. A path that cannot be canonicalized is compared as given.
+    let resolve = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    resolve(&ours) == resolve(home)
+}
+
 /// Whether the service manager has this service loaded.
 ///
 /// `None` when the question could not be put — no `launchctl`/`systemctl`, or
@@ -383,7 +413,7 @@ pub fn install(
     // believes is fine, and the prompt does not fire for a grant. The service
     // never starts and every surface says it is set up. Removing the file
     // keeps the two in step, so the next poll asks again.
-    if let Err(error) = activate(service, &path, instance) {
+    if let Err(error) = activate(service, &path, instance, home) {
         let _ = std::fs::remove_file(&path);
         return Err(error);
     }
@@ -403,7 +433,7 @@ pub fn install(
 /// registration left behind is the failure mode this function exists for.
 pub fn uninstall(service: Service, home: &Path, instance: Instance) -> Result<(), String> {
     let path = registration_path(service, home, instance);
-    deactivate(service, &path, instance);
+    deactivate(service, &path, instance, home);
     // Uninstalling is the operator saying no. Recording it is what stops the
     // app proposing the registration again at the next launch — an uninstall
     // that gets quietly undone reads as the app ignoring you.
@@ -537,7 +567,12 @@ WantedBy=default.target
 }
 
 #[cfg(target_os = "macos")]
-fn activate(service: Service, path: &Path, instance: Instance) -> Result<(), String> {
+fn activate(service: Service, path: &Path, instance: Instance, home: &Path) -> Result<(), String> {
+    if !home_is_ours(home) {
+        // The file is written; the live domain is left alone. See
+        // `home_is_ours`.
+        return Ok(());
+    }
     // Bootout first so a reinstall replaces a loaded agent rather than
     // failing with "service already loaded". A bootout of something that is
     // not loaded is an error we deliberately ignore.
@@ -565,7 +600,12 @@ fn activate(service: Service, path: &Path, instance: Instance) -> Result<(), Str
 }
 
 #[cfg(not(target_os = "macos"))]
-fn activate(service: Service, _path: &Path, instance: Instance) -> Result<(), String> {
+fn activate(service: Service, _path: &Path, instance: Instance, home: &Path) -> Result<(), String> {
+    // `systemctl --user` acts on this user's manager whichever home the unit
+    // was written into — the same hazard as the launchd domain.
+    if !home_is_ours(home) {
+        return Ok(());
+    }
     let unit = format!("{}.service", service_name(service, instance));
     run("systemctl", &["--user", "daemon-reload"]).ok();
     run("systemctl", &["--user", "enable", "--now", &unit]).map_err(|error| {
@@ -577,7 +617,10 @@ fn activate(service: Service, _path: &Path, instance: Instance) -> Result<(), St
 }
 
 #[cfg(target_os = "macos")]
-fn deactivate(service: Service, _path: &Path, instance: Instance) {
+fn deactivate(service: Service, _path: &Path, instance: Instance, home: &Path) {
+    if !home_is_ours(home) {
+        return;
+    }
     let domain = format!("gui/{}", nix::unistd::getuid().as_raw());
     run(
         "launchctl",
@@ -590,7 +633,10 @@ fn deactivate(service: Service, _path: &Path, instance: Instance) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn deactivate(service: Service, _path: &Path, instance: Instance) {
+fn deactivate(service: Service, _path: &Path, instance: Instance, home: &Path) {
+    if !home_is_ours(home) {
+        return;
+    }
     let unit = format!("{}.service", service_name(service, instance));
     run("systemctl", &["--user", "disable", "--now", &unit]).ok();
 }
@@ -654,6 +700,45 @@ fn run_capture(program: &str, args: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A home that is not ours must never reach the live service manager.
+    ///
+    /// The regression test for the worst bug in this landing. `service_name`
+    /// and the `gui/$UID` domain do not depend on `home`, so every test in
+    /// this module that passed a `tempdir` was running `launchctl bootout
+    /// gui/$UID/io.agiterra.beekeeper.host` against the real machine. On
+    /// 2026-09-30 that terminated Andy's running agent host — and its provider,
+    /// and its coding sessions — three times, and left a plist on disk with
+    /// nothing loaded, which reads as installed.
+    ///
+    /// Asserted as a property of the path comparison rather than by observing
+    /// launchd: a test that could tell whether the bootout happened would have
+    /// to run one.
+    #[test]
+    fn a_home_that_is_not_ours_is_not_this_machines_service_manager() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(
+            !home_is_ours(dir.path()),
+            "a tempdir is not this user's home, so nothing in it may touch the live \
+             launchd domain"
+        );
+        assert!(
+            !home_is_ours(std::path::Path::new("/home/somebody-else")),
+            "another user's tree is not ours either"
+        );
+        // And the real one is recognised, or the guard would disable the
+        // feature outright instead of protecting it.
+        let ours = layout::home_dir().expect("a home directory");
+        assert!(home_is_ours(&ours), "our own home must still activate");
+        // Symlinked and unnormalised spellings of it too, or an install from a
+        // path with a `..` in it would silently stop registering anything.
+        assert!(home_is_ours(
+            &ours.join("..").join(
+                ours.file_name()
+                    .expect("a home directory has a final component")
+            )
+        ));
+    }
 
     /// A registration on disk that the service manager does not have loaded.
     ///
