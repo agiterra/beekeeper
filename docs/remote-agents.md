@@ -148,6 +148,47 @@ The desktop is therefore one launcher among many, and the provider protocol
 is the *desktop's* door to substrates, not the only door. §Conformance
 carries one checklist per layer.
 
+#### A launcher's own control surface {#launcher-control-surface}
+
+`beekeeper-host` is the second first-party launcher: a headless daemon that
+supervises this machine's coding-session provider, starts at login, and runs
+alone on a server. It answers an owner-only Unix socket —
+`~/.local/state/buzz[-dev]/host/host.sock`, `0600` in a `0700` directory,
+with a peer-uid check — which the desktop app, the menu bar app and `bee
+host` all use.
+
+That socket is **not** a substrate control channel, and the distinction is
+the layering above rather than a convenience. It is a *layer-1 launcher
+facility*: same machine, owner-only, and it carries only the facts the relay
+cannot carry — is the host installed, is it running, what is its child's pid,
+what did it log, start and stop. Nothing about an agent's work crosses it.
+Agent turns, steering, presence and owner-verified `!shutdown` stay on the
+relay, for a local agent exactly as for a remote one, because that is where
+they are authenticated: by keypair, never by launcher.
+
+`VISION_REMOTE_AGENTS.md`'s axiom — "after deploy, the desktop retains no
+substrate control channel" — is therefore intact. The axiom is about the
+desktop reaching *across* a deploy boundary into someone else's substrate.
+A launcher on this machine, talking to a process it started, has not crossed
+one. The test that keeps this honest: nothing the socket answers could be
+asked of a *remote* host, and nothing it carries would let the desktop
+manage one.
+
+Two obligations follow from the layering, and this launcher meets both:
+
+- **I5 binds it.** A provider that exits cleanly is not revived
+  (`crates/beekeeper-host/src/restart_policy.rs`). The desktop's former
+  in-process supervisor did revive one, which was survivable while quitting
+  the app cleared it and is not once the supervisor outlives every login
+  session.
+- **I4's boundary is its problem, not the protocol's.** The host and a
+  pre-upgrade desktop are two launchers of the same nsec, and the protocol
+  "cannot and does not promise a global singleton" across them. The
+  provider's state-directory lock is what enforces uniqueness; the host
+  additionally writes `host-owner.json` beside it and *refuses by name*
+  rather than signalling whoever holds the lock, so two launchers back off
+  instead of restarting each other's children until both give up.
+
 ## Invariants
 
 The protocol maintains five invariants. Each is stated with the mechanism

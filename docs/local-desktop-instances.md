@@ -38,6 +38,14 @@ per build. Allow it and move on. (If that ever gets annoying, a persistent
 self-signed cert set as `bundle.macOS.signingIdentity` in the delta config
 would make the ACL stick; deliberately not wired up.)
 
+That same ACL is why `beekeeper-host` is not a keychain client: a daemon
+reading this entry would prompt at login and lose its grant on the next
+rebuild. It reads a `0600` file instead, and
+[agent-host.md](agent-host.md#where-the-key-lives-and-what-that-costs) states
+what that costs. A dev build and a release build register, listen and store
+separately, so running both here does not make them fight — see the same doc's
+last section.
+
 First run ever: import your nsec, allow the keychain prompt, add the community
 relay. The worktree's `target/` dirs cost 15–25 GB; `cargo clean` in
 `buzz-prod` reclaims them between updates.

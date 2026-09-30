@@ -155,6 +155,9 @@ crates/
   buzz-audit          # Hash-chain audit log
   buzz-media          # Blossom/S3 media storage
   # Agent surface
+  beekeeper-host      # Headless daemon owning this machine's agents; starts at
+                      # login, installs on a server (docs/agent-host.md)
+  beekeeper-host-core # The launcher contract the host and the desktop share
   buzz-acp            # ACP harness bridging Buzz events to AI agents
   buzz-agent          # Minimal ACP-compliant agent (non-streaming, tool-calls-as-output)
   buzz-dev-mcp        # Developer MCP server — shell + file-edit tools

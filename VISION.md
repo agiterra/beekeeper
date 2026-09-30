@@ -34,6 +34,19 @@ One community is your entire workspace. Work, conversation, agents, automation, 
 
 *Desktop app supports all seven surfaces today.*
 
+The seven are surfaces **in a window**. There is one more that is not, and it
+is listed separately because it obeys a different rule:
+
+| Surface | Model | Default Notifications |
+|---------|-------|-----------------------|
+| 🎩 **Menu bar** | This machine's agents. Outside the app. | — |
+
+The menu bar is a separate process (`beekeeper-menubar`) reading a separate
+process (`beekeeper-host`), and neither belongs to the window. That is the
+point: it keeps telling you what your agents are doing after you quit
+Beekeeper, because they are still working. Quitting it stops nothing, and the
+menu says so on its own row. Windows and Linux have no equivalent yet.
+
 - **Stream** — Slack-like, fast. Mandatory topics → sub-replies. Zero-notification default.
 - **Forum** — Discourse-like, slow. Post → flat replies. Zero-notification default.
 - **Workflow** — Structured, traceable. Steps → approval gates. Approvals only.
