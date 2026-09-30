@@ -75,6 +75,17 @@ pub enum Request {
     /// The same operation as `bind`; a separate op because the two mean
     /// different things to whoever reads a log of them.
     AdoptIdentity,
+    /// The app contributes its managed-agent rows, under a lease.
+    ///
+    /// The host does not know about managed agents — they are the app's
+    /// children and still die with it — so the app says what they are and the
+    /// menu bar shows a complete picture. The rows expire if the app stops
+    /// saying so, which is how they vanish when it quits: see
+    /// [`crate::activity`].
+    PushActivity {
+        #[serde(default)]
+        rows: Vec<crate::activity::PushedActivity>,
+    },
 }
 
 /// What the host answers. One shape for every op, so a client's read path does
@@ -166,6 +177,16 @@ pub struct Status {
     /// The provider's live sessions, read from its own atomically-replaced
     /// snapshot, stamped with the read time.
     pub sessions: SessionSnapshot,
+    /// Managed-agent rows the app most recently pushed, still under lease.
+    ///
+    /// Empty when no app is running — which is *correct*, because those
+    /// agents died with it. `appActivityLeased` says which empty this is, so a
+    /// menu can distinguish "the app says none are running" from "no app is
+    /// running to ask".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub app_activity: Vec<crate::activity::PushedActivity>,
+    /// Whether an app is currently holding an activity lease.
+    pub app_activity_leased: bool,
     /// Facts a client must disclose rather than absorb.
     ///
     /// Ordinary, expected degradations belong here, not in `error`: a call
@@ -225,6 +246,10 @@ mod tests {
             (Request::Stop, r#"{"op":"stop"}"#),
             (Request::Start, r#"{"op":"start"}"#),
             (Request::Restart, r#"{"op":"restart"}"#),
+            (
+                Request::PushActivity { rows: Vec::new() },
+                r#"{"op":"push-activity","rows":[]}"#,
+            ),
             (Request::Bind, r#"{"op":"bind"}"#),
             (Request::AdoptIdentity, r#"{"op":"adopt-identity"}"#),
         ] {
@@ -234,6 +259,12 @@ mod tests {
                 request
             );
         }
+        // `rows` is optional too, so an app with nothing to say can send the
+        // bare op and still hold its lease.
+        assert_eq!(
+            serde_json::from_str::<Request>(r#"{"op":"push-activity"}"#).expect("decode"),
+            Request::PushActivity { rows: Vec::new() }
+        );
         // `bytes` is optional, so the simplest possible logs call works.
         assert_eq!(
             serde_json::from_str::<Request>(r#"{"op":"logs"}"#).expect("decode"),

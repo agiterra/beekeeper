@@ -33,6 +33,8 @@
 //! `tauri.windows.conf.json`.
 
 #[cfg(unix)]
+pub mod activity;
+#[cfg(unix)]
 pub mod cli;
 #[cfg(unix)]
 pub mod client;

@@ -30,6 +30,8 @@ mod migration;
 #[cfg(test)]
 mod model_tests;
 mod models;
+#[cfg(target_os = "macos")]
+mod mouse_nav;
 mod native_websocket;
 mod nostr_bind;
 pub mod nostr_convert;
@@ -51,8 +53,6 @@ mod terminal_runtime;
 #[cfg_attr(not(test), allow(dead_code))]
 mod terminal_transport;
 mod transcript_export;
-#[cfg(target_os = "macos")]
-mod tray_menu;
 mod util;
 #[cfg(target_os = "linux")]
 pub mod webkit_rendering;
@@ -66,6 +66,7 @@ use deep_link::{
     PendingNavigationDeepLinks,
 };
 use huddle::HuddlePhase;
+use initial_window::show_main_window;
 use initial_window::*;
 use managed_agents::{backfill_persona_snapshots, ensure_nest, try_regenerate_nest};
 #[cfg(all(feature = "mesh-llm", target_os = "macos"))]
@@ -77,7 +78,6 @@ use tauri::Listener;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_window_state::StateFlags;
 #[cfg(target_os = "macos")]
-use tray_menu::show_main_window;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // First, so that everything after it is on the record. The embedded ACP and
@@ -304,7 +304,12 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             {
-                tray_menu::init(&app_handle)?;
+                // No tray here any more: the menu bar is its own process, so
+                // it survives this app being quit — which is the point. Mouse
+                // back/forward used to be initialised from the tray's init
+                // for want of another macOS-native call site; it belongs to
+                // this window, so it is called directly.
+                mouse_nav::init(&app_handle);
                 macos_notifications::init(&app_handle)?;
             }
 

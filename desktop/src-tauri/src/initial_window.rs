@@ -1,4 +1,29 @@
-//! First-frame window reveal helpers.
+//! First-frame window reveal helpers, and bringing the window back.
+
+use tauri::{AppHandle, Manager, Runtime};
+
+/// Unminimise, show and focus the main window.
+///
+/// Lived in `tray_menu` while the tray was this app's, for want of another
+/// macOS-native home. Its callers are the Dock icon (`RunEvent::Reopen`) and
+/// a clicked notification — both about *this window*, which is why it moved
+/// here rather than to the menu bar app.
+pub(crate) fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if let Err(error) = window.unminimize() {
+        eprintln!("buzz-desktop: failed to restore the main window: {error}");
+        return;
+    }
+    if let Err(error) = window.show() {
+        eprintln!("buzz-desktop: failed to show the main window: {error}");
+        return;
+    }
+    if let Err(error) = window.set_focus() {
+        eprintln!("buzz-desktop: failed to focus the main window: {error}");
+    }
+}
 
 #[cfg(target_os = "macos")]
 pub(crate) const INITIAL_RENDER_READY_EVENT: &str = "initial-render-ready";

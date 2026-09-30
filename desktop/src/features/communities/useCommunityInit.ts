@@ -13,7 +13,6 @@ import {
 import { applyCommunity } from "@/shared/api/tauriWorkspace";
 import { getIdentity } from "@/shared/api/tauriIdentity";
 import { useIdentityQuery } from "@/shared/api/hooks";
-import { clearTrayAgentActivity } from "@/shared/api/trayMenu";
 import { getOverrides } from "@/shared/features";
 import { resetMediaCaches } from "@/shared/lib/mediaUrl";
 import { resetLinkPreviewMetadataCache } from "@/shared/lib/useResolvedLinkPreviews";
@@ -91,7 +90,6 @@ async function resetCommunityState({
   resetActiveAgentTurnsStore();
   resetAgentWorkingSignal();
   if (isTauri() && isMacPlatform()) {
-    void clearTrayAgentActivity();
   }
   if (resetAvatarState) {
     resetAvatarProfileSync();

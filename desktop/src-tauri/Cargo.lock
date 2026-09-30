@@ -919,6 +919,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "beekeeper-menubar"
+version = "0.1.0"
+dependencies = [
+ "beekeeper-host",
+ "beekeeper-host-core",
+ "beekeeper-tray",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tokio",
+]
+
+[[package]]
 name = "beekeeper-tray"
 version = "0.1.0"
 dependencies = [

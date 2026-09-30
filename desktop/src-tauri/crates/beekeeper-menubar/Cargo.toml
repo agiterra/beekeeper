@@ -1,0 +1,34 @@
+[package]
+name = "beekeeper-menubar"
+version = "0.1.0"
+edition = "2021"
+description = "Beekeeper's menu bar app: shows this machine's agents, separately from the desktop app and from the agents themselves."
+
+[lib]
+name = "beekeeper_menubar_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "beekeeper-menubar"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+beekeeper-tray = { path = "../beekeeper-tray" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon"] }
+tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros"] }
+
+# The host crate is Unix-only, so the whole polling half of this app is too.
+# The crate stays a workspace member on every platform and gates *inside*, so
+# the Windows and Linux desktop gates compile it as a no-op rather than
+# skipping it — a skipped crate's gate passes green-and-empty.
+[target.'cfg(unix)'.dependencies]
+beekeeper-host = { path = "../../../../crates/beekeeper-host" }
+beekeeper-host-core = { path = "../../../../crates/beekeeper-host-core" }
+
+[dev-dependencies]
+serde_json = "1"

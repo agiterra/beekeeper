@@ -171,7 +171,20 @@ impl AgentHost {
         self.lifecycle(Request::AdoptIdentity).await
     }
 
-    async fn lifecycle(&self, request: Request) -> Result<(), String> {
+    /// Tell the host which managed agents are working.
+    ///
+    /// The host cannot know: they are this app's children, and it cannot know
+    /// channel or agent *names* at all — those live on the relay, which it
+    /// deliberately does not talk to. So this app says, and the rows expire if
+    /// it stops saying, which is how they vanish when it quits.
+    pub async fn push_activity(
+        &self,
+        rows: Vec<beekeeper_host::activity::PushedActivity>,
+    ) -> Result<(), String> {
+        self.lifecycle(Request::PushActivity { rows }).await
+    }
+
+    pub(crate) async fn lifecycle(&self, request: Request) -> Result<(), String> {
         client::call(
             &self.socket,
             &request,

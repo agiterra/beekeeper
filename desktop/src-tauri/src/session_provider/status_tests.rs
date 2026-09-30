@@ -27,6 +27,8 @@ fn host_status(pubkey: &str, provider: ProviderChildState) -> beekeeper_host::pr
         provider,
         provider_settings_in_force: None,
         relay_connection: RelayConnectionState::unknowable(),
+        app_activity: Vec::new(),
+        app_activity_leased: false,
         sessions: beekeeper_host::sessions::SessionSnapshot {
             read_at: "2026-09-30T00:00:00Z".to_string(),
             unavailable: None,

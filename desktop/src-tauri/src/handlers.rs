@@ -17,12 +17,12 @@ use crate::deep_link::*;
 use crate::huddle::audio_output::*;
 use crate::huddle::reconnect::*;
 use crate::huddle::*;
+#[cfg(target_os = "macos")]
+use crate::macos_notifications;
 use crate::managed_agents::*;
 #[cfg(not(feature = "mesh-llm"))]
 use crate::mesh_llm_stubs::*;
 use crate::{archive, huddle, terminal_runtime};
-#[cfg(target_os = "macos")]
-use crate::{macos_notifications, tray_menu};
 
 /// Every `#[tauri::command]` reachable from the webview, in one place.
 pub(crate) fn invoke_handler(
@@ -421,14 +421,13 @@ pub(crate) fn invoke_handler(
         archive::purge_relay_scoped_local_stores,
         is_auto_update_supported,
         set_window_vibrancy,
-        #[cfg(target_os = "macos")]
-        tray_menu::clear_tray_agent_activity,
-        #[cfg(target_os = "macos")]
-        tray_menu::requeue_tray_actions,
-        #[cfg(target_os = "macos")]
-        tray_menu::take_tray_actions,
-        #[cfg(target_os = "macos")]
-        tray_menu::update_tray_agent_activity,
+        // The four tray commands are gone with the tray. What this app
+        // contributes now is the one thing only it knows — which managed
+        // agents are working, under which name, in which channel — and the
+        // menu bar app draws it. Unix-gated because the agent host's control
+        // socket is `AF_UNIX`.
+        #[cfg(unix)]
+        agent_host::push_agent_activity,
         #[cfg(unix)]
         create_shell_session,
         #[cfg(unix)]

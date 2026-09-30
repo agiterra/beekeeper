@@ -43,6 +43,9 @@ pub struct HostControl {
     socket_path: std::path::PathBuf,
     published: Arc<PublishedState>,
     running: Mutex<Option<Running>>,
+    /// Managed-agent rows the app contributes. Not the host's own knowledge,
+    /// and leased so it disappears with the app.
+    activity: crate::activity::ActivityStore,
 }
 
 impl HostControl {
@@ -59,6 +62,7 @@ impl HostControl {
             socket_path,
             published: Arc::new(PublishedState::default()),
             running: Mutex::new(None),
+            activity: crate::activity::ActivityStore::default(),
         }
     }
 
@@ -108,6 +112,11 @@ impl HostControl {
     /// The published child state.
     pub fn child_state(&self) -> ProviderChildState {
         self.published.child()
+    }
+
+    /// The app's leased managed-agent rows.
+    pub fn app_activity(&self) -> &crate::activity::ActivityStore {
+        &self.activity
     }
 
     /// What the running provider was started with, or `None`.

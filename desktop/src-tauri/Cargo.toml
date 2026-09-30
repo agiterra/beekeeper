@@ -3,7 +3,7 @@
 # With a bare `[workspace]` and no `members`, `cargo test/check --workspace`
 # expands to a set that excludes this crate, and its gates pass green-and-empty
 # over a real defect. Verified: Sami Arm A/D, Dawn `.scratch/armA`.
-members = ["crates/buzz-terminal", "crates/beekeeper-tray"]
+members = ["crates/buzz-terminal", "crates/beekeeper-tray", "crates/beekeeper-menubar"]
 
 [package]
 name = "beekeeper-desktop"
@@ -53,7 +53,10 @@ webkit2gtk = { version = "=2.0.2", features = ["v2_22"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = { version = "0.6", default-features = false, features = ["std"] }
 objc2 = { version = "0.6.4", default-features = false }
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSEvent", "NSHapticFeedback", "NSMenu", "NSMenuItem", "NSStatusItem", "block2"] }
+# `NSMenu`/`NSMenuItem`/`NSStatusItem` are deliberately absent: the tray is
+# the menu bar app's. `NSEvent` is mouse back/forward, `NSHapticFeedback` is
+# the trackpad.
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSEvent", "NSHapticFeedback", "block2"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSDictionary", "NSError", "NSBundle", "NSObject", "NSProcessInfo", "NSString"] }
 objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "vendored"], optional = true }
@@ -71,7 +74,7 @@ user-idle = { version = "0.6", default-features = false }
 atomic-write-file = "0.3"
 anyhow = "1"
 dirs = "6"
-tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
+tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }

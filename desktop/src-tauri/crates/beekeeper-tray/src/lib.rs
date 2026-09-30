@@ -51,7 +51,7 @@ pub const OPEN_CHANNEL_ACTIVITY_SEPARATOR: char = '|';
 pub const TRAY_MENU_MINIMUM_WIDTH: f64 = 320.0;
 
 /// A running agent and the channel it is working in.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrayAgentActivity {
     pub activity_id: String,

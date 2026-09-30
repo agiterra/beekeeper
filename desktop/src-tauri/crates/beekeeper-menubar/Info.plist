@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- An accessory app: no Dock icon, no app menu, no window. The
+	     `ActivationPolicy::Accessory` call in src/imp.rs is the other half —
+	     it covers `cargo run`, where there is no bundle to read this from. -->
+	<key>LSUIElement</key>
+	<true/>
+	<!-- Not a separately launchable app: it is nested inside Beekeeper.app's
+	     LoginItems and registered with SMAppService. Recorded here so the
+	     nesting check has something to assert. -->
+	<key>LSBackgroundOnly</key>
+	<false/>
+</dict>
+</plist>

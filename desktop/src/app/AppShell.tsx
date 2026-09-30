@@ -703,13 +703,7 @@ export function AppShell() {
 
   return (
     <PreventSleepProvider>
-      {!isHuddleRoom ? (
-        <AppShellTrayMenu
-          channels={channels}
-          goChannel={goChannel}
-          openCreateChannel={handleOpenCreateChannel}
-        />
-      ) : null}
+      {!isHuddleRoom ? <AppShellTrayMenu channels={channels} /> : null}
       <ChannelNavigationProvider channels={channels}>
         <AppShellProvider
           value={{

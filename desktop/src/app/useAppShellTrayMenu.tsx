@@ -1,41 +1,25 @@
 import type { Channel } from "@/shared/api/types";
 import { isMacPlatform } from "@/shared/lib/platform";
 
-import { useTrayMenu } from "@/app/useTrayMenu";
+import { useAgentActivityPush } from "@/app/useAgentActivityPush";
 
-/** Keeps the ticking native tray menu outside AppShell's render cycle. */
-export function AppShellTrayMenu({
-  channels,
-  goChannel,
-  openCreateChannel,
-}: {
-  channels: Channel[];
-  goChannel: (channelId: string) => Promise<unknown>;
-  openCreateChannel: () => void;
-}) {
+/**
+ * Tells the agent host which managed agents are working, so the menu bar app
+ * can list them.
+ *
+ * This used to drive a native tray menu from inside this app, which is why it
+ * sits outside `AppShell`'s render cycle: the hook re-rendered once a second
+ * to keep an elapsed label moving. It no longer ticks — the host is sent
+ * absolute start times and the menu bar app formats them — but the boundary
+ * stays, because the turn state it reads changes often and nothing in
+ * `AppShell` needs to re-render when it does.
+ */
+export function AppShellTrayMenu({ channels }: { channels: Channel[] }) {
   if (!isMacPlatform()) return null;
-  return (
-    <MacAppShellTrayMenu
-      channels={channels}
-      goChannel={goChannel}
-      openCreateChannel={openCreateChannel}
-    />
-  );
+  return <MacAppShellTrayMenu channels={channels} />;
 }
 
-function MacAppShellTrayMenu({
-  channels,
-  goChannel,
-  openCreateChannel,
-}: {
-  channels: Channel[];
-  goChannel: (channelId: string) => Promise<unknown>;
-  openCreateChannel: () => void;
-}): null {
-  useTrayMenu({
-    channels,
-    goChannel,
-    openCreateChannel,
-  });
+function MacAppShellTrayMenu({ channels }: { channels: Channel[] }): null {
+  useAgentActivityPush({ channels });
   return null;
 }

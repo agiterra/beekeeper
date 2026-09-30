@@ -94,7 +94,7 @@ define_class!(
             if &*response.actionIdentifier() == unsafe { UNNotificationDefaultActionIdentifier } {
                 if let Some(target) = target_from_response(response) {
                     queue_activation(target);
-                    crate::tray_menu::show_main_window(&self.ivars().app);
+                    crate::initial_window::show_main_window(&self.ivars().app);
                     if let Err(error) = self
                         .ivars()
                         .app

@@ -74,6 +74,24 @@ pub(crate) fn session_provider_base_dir(app: &AppHandle) -> Result<PathBuf, Stri
     crate::session_provider::session_provider_base_dir(app)
 }
 
+/// Forward this app's live managed-agent rows to the agent host.
+///
+/// Replaces `update_tray_agent_activity`, which drew a native tray from inside
+/// this app. The tray is the menu bar app's now, and this app's part is to
+/// contribute what only it knows: which managed agents are working, in which
+/// channel, under which name.
+///
+/// Failure is returned but is not interesting to the caller — on a machine
+/// with no agent host installed every push fails, which is an ordinary state
+/// and not this app's problem. The frontend logs at debug and carries on.
+#[tauri::command]
+pub async fn push_agent_activity(
+    host: tauri::State<'_, AgentHost>,
+    rows: Vec<beekeeper_host::activity::PushedActivity>,
+) -> Result<(), String> {
+    host.push_activity(rows).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

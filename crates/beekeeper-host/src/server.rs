@@ -235,6 +235,13 @@ async fn dispatch(request: Request, control: &Arc<HostControl>) -> Response {
         // Both re-read the files the app wrote. Separate ops because the two
         // mean different things in a log, and because a future version may
         // want to answer them differently.
+        // Accepted and acknowledged with what the host now holds, so a caller
+        // can tell a push that landed from one that was refused.
+        Request::PushActivity { rows } => {
+            let count = rows.len();
+            control.app_activity().push(rows);
+            Response::ok(serde_json::json!({ "accepted": count }))
+        }
         Request::Bind | Request::AdoptIdentity => match control.recommission().await {
             Ok(()) => Response::ok(serde_json::json!({
                 "relayUrl": control.config().relay_url,
@@ -277,6 +284,8 @@ fn status(control: &Arc<HostControl>) -> Status {
         provider_settings_in_force: control.settings_in_force(),
         relay_connection: RelayConnectionState::unknowable(),
         sessions,
+        app_activity: control.app_activity().current(),
+        app_activity_leased: control.app_activity().has_live_lease(),
         warnings,
     }
 }
