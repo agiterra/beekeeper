@@ -54,7 +54,26 @@ pub enum HostCmd {
     ///
     /// Both the host and the menu bar app, so an uninstall cannot leave
     /// launchd retrying a binary that is about to be deleted.
-    Uninstall,
+    ///
+    /// Records that this machine's operator does not want them, so Beekeeper
+    /// does not offer to put them back at the next launch — an uninstall that
+    /// gets quietly undone reads as the app ignoring you.
+    Uninstall {
+        /// Remove them without recording a refusal, leaving the machine as if
+        /// it had never been asked.
+        ///
+        /// The difference is "I do not want this" versus "take it off, and
+        /// forget I said anything". After `--forget`, Beekeeper's next status
+        /// poll finds nothing registered and no refusal, and asks — which is
+        /// also the only way to see the first-run prompt again on a machine
+        /// that has already answered, without deleting files by hand.
+        ///
+        /// It does not touch `host.json`, the key file, or the provider's
+        /// state directory: the identity and its durable outbox survive, and
+        /// so does every session the provider remembers.
+        #[arg(long)]
+        forget: bool,
+    },
     /// Print whether the host and the menu bar app are registered to start at
     /// login.
     Installed,
@@ -85,18 +104,32 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
             }
             Ok(())
         }
-        HostCmd::Uninstall => {
+        HostCmd::Uninstall { forget } => {
             // Both, and the menu bar app's failure does not stop the host's.
             let menubar = beekeeper_host::install::uninstall(Service::MenuBar, &home, instance);
             beekeeper_host::install::uninstall(Service::AgentHost, &home, instance)
                 .map_err(CliError::Other)?;
             menubar.map_err(CliError::Other)?;
-            eprintln!(
-                "bee: removed the login registrations for {} — recorded, so Beekeeper will not \
-                 offer to reinstall them. `bee host install`, or Settings \u{2192} Coding \
-                 sessions, turns them back on.",
-                instance.namespace_value()
-            );
+            // `uninstall` records the refusal, which is right for a person
+            // saying no. `--forget` drops it again afterwards rather than
+            // taking a different route through the removal, so the two paths
+            // cannot come apart.
+            if *forget {
+                beekeeper_host::install::allow_login(&home, instance).map_err(CliError::Other)?;
+                eprintln!(
+                    "bee: removed the login registrations for {} and forgot the refusal — \
+                     Beekeeper will ask about them again. The identity, the key file and the \
+                     provider's state directory are untouched.",
+                    instance.namespace_value()
+                );
+            } else {
+                eprintln!(
+                    "bee: removed the login registrations for {} — recorded, so Beekeeper will \
+                     not offer to reinstall them. `bee host install`, `bee host uninstall \
+                     --forget` to be asked again, or Settings \u{2192} Coding sessions.",
+                    instance.namespace_value()
+                );
+            }
             Ok(())
         }
         HostCmd::Installed => {
@@ -165,7 +198,7 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
                 HostCmd::Bind => beekeeper_host::protocol::Request::Bind,
                 HostCmd::Logs { .. }
                 | HostCmd::Install { .. }
-                | HostCmd::Uninstall
+                | HostCmd::Uninstall { .. }
                 | HostCmd::Installed => unreachable!("handled above"),
             };
             let socket = layout::host_socket_path(&home, instance);
