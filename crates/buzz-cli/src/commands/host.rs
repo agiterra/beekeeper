@@ -116,11 +116,30 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
             // identity reads `shouldAsk`, not `notApplicable`.
             let refused = beekeeper_host::install::login_refused(&home, instance);
             let login = beekeeper_host::install::login_autostart(true, &host, refused);
+            // And whether the service manager actually has them, because
+            // `installed` is "the file exists" and the two come apart: a
+            // `bootout` by hand, or replacing the app bundle under a loaded
+            // job, leaves both plists on disk with nothing running. Reading
+            // `installed: true, login: granted` off this command in that state
+            // is how a person concludes their agents will come back when they
+            // will not. `null` means the question could not be put.
+            let host_loaded = beekeeper_host::install::service_loaded(Service::AgentHost, instance);
+            let menubar_loaded =
+                beekeeper_host::install::service_loaded(Service::MenuBar, instance);
             print_json(&serde_json::json!({
                 "agentHost": host,
+                "agentHostLoaded": host_loaded,
                 "menuBar": menubar,
+                "menuBarLoaded": menubar_loaded,
                 "login": login,
             }))?;
+            if host_loaded == Some(false) && host.installed {
+                eprintln!(
+                    "bee: the agent host is registered but not loaded — open Beekeeper, which \
+                     repairs this, or run `launchctl bootstrap gui/$UID {}`",
+                    host.path.display()
+                );
+            }
             for warning in host.warnings.iter().chain(&menubar.warnings) {
                 eprintln!("bee: {warning}");
             }

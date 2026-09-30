@@ -174,9 +174,21 @@ pub struct Status {
     pub provider_settings_in_force: Option<RunSettings>,
     /// Always `unknown`, with a `why`. See [`RelayConnectionState`].
     pub relay_connection: RelayConnectionState,
-    /// The provider's live sessions, read from its own atomically-replaced
-    /// snapshot, stamped with the read time.
+    /// Every session the provider is holding, read from its own
+    /// atomically-replaced snapshot, stamped with the read time.
+    ///
+    /// Most of them are not doing anything: the provider keeps a record per
+    /// session it has attached to. Use [`turns_in_flight`](Self::turns_in_flight)
+    /// for "how many agents are working" — `sessions.sessions.len()` is a
+    /// different number and reading it as that one is a mistake this field's
+    /// old wording invited.
     pub sessions: SessionSnapshot,
+    /// How many of those sessions have a turn open.
+    ///
+    /// On the wire so that reading `bee host status` answers the question
+    /// without knowing the rule. Derived from `sessions` at the moment the
+    /// host answers, in one place, so it cannot drift from the rows beside it.
+    pub turns_in_flight: usize,
     /// Managed-agent rows the app most recently pushed, still under lease.
     ///
     /// Empty when no app is running — which is *correct*, because those

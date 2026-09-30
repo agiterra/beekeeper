@@ -74,7 +74,7 @@ fn elapsed_since(started_at_ms: i64, now_ms: i64) -> String {
 /// in kind:39000 metadata on the relay, and this process deliberately holds no
 /// relay connection. So the row says what is knowable here and clicking it
 /// opens Beekeeper, which can resolve the name.
-fn session_label(session: &beekeeper_host::sessions::LiveSession) -> String {
+fn session_label(session: &beekeeper_host::sessions::SessionRow) -> String {
     session
         .role
         .as_deref()

@@ -32,10 +32,20 @@ use serde::{Deserialize, Serialize};
 /// The provider's state file inside its state directory.
 const STATE_FILE: &str = "state.json";
 
-/// One live session, as much of it as a status display needs.
+/// One session the provider is holding, as much of it as a status display
+/// needs.
+///
+/// **Not necessarily doing anything.** The provider keeps a record per session
+/// it has attached to, so most rows here are sessions it *remembers*; the ones
+/// working are those with `turn_started_at_ms` set. This type was called
+/// `LiveSession`, and the name cost something immediately: reading
+/// `bee host status` on a real machine, 33 rows with no turn among them got
+/// read as 33 live sessions. Hence the rename, and
+/// [`SessionSnapshot::turns_in_flight`] so a caller does not have to know the
+/// rule to get the number right.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LiveSession {
+pub struct SessionRow {
     /// Producer-minted session id.
     pub session_id: String,
     /// Generation number; advances on each provider reattach.
@@ -76,8 +86,27 @@ pub struct SessionSnapshot {
     /// the provider's state" are different answers. They need different words.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable: Option<String>,
-    /// The live sessions, ordered by session id.
-    pub sessions: Vec<LiveSession>,
+    /// Every session the provider is holding, ordered by session id.
+    ///
+    /// Most of these are not working — see [`SessionRow`]. Count
+    /// [`turns_in_flight`](Self::turns_in_flight) rather than `sessions.len()`
+    /// for "how many agents are busy".
+    pub sessions: Vec<SessionRow>,
+}
+
+impl SessionSnapshot {
+    /// How many of these sessions have a turn open.
+    ///
+    /// The number a person means by "how many agents are running". Provided
+    /// here so every consumer does not re-derive it — and the one that got it
+    /// wrong was a human reading the JSON, which is exactly who a status
+    /// command is for.
+    pub fn turns_in_flight(&self) -> usize {
+        self.sessions
+            .iter()
+            .filter(|session| session.turn_started_at_ms.is_some())
+            .count()
+    }
 }
 
 /// Only the fields this reader needs, so the provider stays free to change the
@@ -156,10 +185,10 @@ pub fn read_sessions(state_dir: &Path) -> SessionSnapshot {
             }
         }
     };
-    let mut sessions: Vec<LiveSession> = wire
+    let mut sessions: Vec<SessionRow> = wire
         .sessions
         .into_iter()
-        .map(|(key, session)| LiveSession {
+        .map(|(key, session)| SessionRow {
             session_id: if session.session_id.is_empty() {
                 key
             } else {
@@ -183,6 +212,32 @@ pub fn read_sessions(state_dir: &Path) -> SessionSnapshot {
 
 #[cfg(test)]
 mod tests {
+    /// "How many sessions" and "how many agents are working" are different
+    /// numbers, and the row count is the wrong one.
+    #[test]
+    fn turns_in_flight_counts_only_the_sessions_with_a_turn_open() {
+        let row = |id: &str, started: Option<i64>| SessionRow {
+            session_id: id.to_string(),
+            generation: 1,
+            channel_id: None,
+            runtime: None,
+            actor: None,
+            role: None,
+            turn_started_at_ms: started,
+        };
+        let snapshot = SessionSnapshot {
+            read_at: "2026-09-30T00:00:00Z".to_string(),
+            unavailable: None,
+            sessions: vec![
+                row("a", None),
+                row("b", Some(1_759_000_000_000)),
+                row("c", None),
+            ],
+        };
+        assert_eq!(snapshot.sessions.len(), 3, "three sessions are remembered");
+        assert_eq!(snapshot.turns_in_flight(), 1, "one agent is working");
+    }
+
     use super::*;
 
     #[test]
@@ -264,7 +319,7 @@ mod tests {
         let json = serde_json::to_string(&SessionSnapshot {
             read_at: "2026-09-30T00:00:00Z".to_string(),
             unavailable: None,
-            sessions: vec![LiveSession {
+            sessions: vec![SessionRow {
                 session_id: "s-1".to_string(),
                 generation: 1,
                 channel_id: None,

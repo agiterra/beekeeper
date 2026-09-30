@@ -4,7 +4,7 @@
 use super::*;
 use beekeeper_host::activity::PushedActivity;
 use beekeeper_host::protocol::Warning;
-use beekeeper_host::sessions::{LiveSession, SessionSnapshot};
+use beekeeper_host::sessions::{SessionRow, SessionSnapshot};
 use beekeeper_host::state::{LockOwnerKind, RelayConnectionState};
 
 const NOW: i64 = 1_750_000_060_000;
@@ -21,6 +21,10 @@ fn status(provider: ProviderChildState) -> Box<Status> {
         provider,
         provider_settings_in_force: None,
         relay_connection: RelayConnectionState::unknowable(),
+        // Zero, and the tests that add rows set it from the rows they add:
+        // a fixture where the count disagrees with the rows would be
+        // describing a status the host cannot produce.
+        turns_in_flight: 0,
         sessions: SessionSnapshot {
             read_at: "2026-09-30T00:00:00Z".into(),
             unavailable: None,
@@ -32,6 +36,19 @@ fn status(provider: ProviderChildState) -> Box<Status> {
     })
 }
 
+/// Put rows on a status *and* keep `turns_in_flight` in step with them.
+///
+/// The host derives that count from the rows when it answers, so a fixture
+/// that sets one without the other describes a status the host cannot produce
+/// — and a menu asserted against it would be asserted against fiction.
+fn with_sessions(status: &mut Status, rows: Vec<SessionRow>) {
+    status.turns_in_flight = rows
+        .iter()
+        .filter(|row| row.turn_started_at_ms.is_some())
+        .count();
+    status.sessions.sessions = rows;
+}
+
 fn live() -> ProviderChildState {
     ProviderChildState::Live {
         pid: 4242,
@@ -39,8 +56,8 @@ fn live() -> ProviderChildState {
     }
 }
 
-fn session(id: &str, role: Option<&str>, started_at_ms: Option<i64>) -> LiveSession {
-    LiveSession {
+fn session(id: &str, role: Option<&str>, started_at_ms: Option<i64>) -> SessionRow {
+    SessionRow {
         session_id: id.into(),
         generation: 1,
         channel_id: Some("11111111-1111-1111-1111-111111111111".into()),
@@ -109,7 +126,10 @@ fn not_installed_and_not_running_are_different_sentences() {
 #[test]
 fn elapsed_is_computed_from_the_absolute_start() {
     let mut status = status(live());
-    status.sessions.sessions = vec![session("s-1", Some("lead"), Some(NOW - 192_000))];
+    with_sessions(
+        &mut status,
+        vec![session("s-1", Some("lead"), Some(NOW - 192_000))],
+    );
     let model = model(&HostView::Reachable(status), NOW);
     assert_eq!(model.running.len(), 1);
     assert_eq!(model.running[0].elapsed, "3m 12s");
@@ -123,7 +143,10 @@ fn elapsed_is_computed_from_the_absolute_start() {
 
 fn status_with_turn(started_at_ms: i64) -> Box<Status> {
     let mut status = status(live());
-    status.sessions.sessions = vec![session("s-1", Some("lead"), Some(started_at_ms))];
+    with_sessions(
+        &mut status,
+        vec![session("s-1", Some("lead"), Some(started_at_ms))],
+    );
     status
 }
 
@@ -144,10 +167,13 @@ fn a_start_in_the_future_reads_as_zero() {
 #[test]
 fn a_session_with_no_open_turn_is_not_a_row() {
     let mut status = status(live());
-    status.sessions.sessions = vec![
-        session("s-1", Some("lead"), None),
-        session("s-2", Some("builder"), Some(NOW - 1_000)),
-    ];
+    with_sessions(
+        &mut status,
+        vec![
+            session("s-1", Some("lead"), None),
+            session("s-2", Some("builder"), Some(NOW - 1_000)),
+        ],
+    );
     let model = model(&HostView::Reachable(status), NOW);
     assert_eq!(model.running.len(), 1);
     assert_eq!(model.running[0].agent_name, "builder");
@@ -160,14 +186,17 @@ fn a_session_with_no_open_turn_is_not_a_row() {
 #[test]
 fn a_session_row_names_what_is_knowable_here() {
     let mut status = status(live());
-    status.sessions.sessions = vec![
-        session("s-1", Some("lead"), Some(NOW)),
-        session("s-2", None, Some(NOW)),
-        LiveSession {
-            runtime: None,
-            ..session("s-3", None, Some(NOW))
-        },
-    ];
+    with_sessions(
+        &mut status,
+        vec![
+            session("s-1", Some("lead"), Some(NOW)),
+            session("s-2", None, Some(NOW)),
+            SessionRow {
+                runtime: None,
+                ..session("s-3", None, Some(NOW))
+            },
+        ],
+    );
     let model = model(&HostView::Reachable(status), NOW);
     let names: Vec<&str> = model
         .running
@@ -244,7 +273,7 @@ fn the_header_counts_agents_and_says_idle_for_none() {
         model(&HostView::Reachable(status.clone()), NOW).header,
         "Agent host: running · idle"
     );
-    status.sessions.sessions = vec![session("s-1", Some("lead"), Some(NOW))];
+    with_sessions(&mut status, vec![session("s-1", Some("lead"), Some(NOW))]);
     assert_eq!(
         model(&HostView::Reachable(status.clone()), NOW).header,
         "Agent host: running · 1 agent"

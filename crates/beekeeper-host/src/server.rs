@@ -283,6 +283,7 @@ fn status(control: &Arc<HostControl>) -> Status {
         provider: control.child_state(),
         provider_settings_in_force: control.settings_in_force(),
         relay_connection: RelayConnectionState::unknowable(),
+        turns_in_flight: sessions.turns_in_flight(),
         sessions,
         app_activity: control.app_activity().current(),
         app_activity_leased: control.app_activity().has_live_lease(),

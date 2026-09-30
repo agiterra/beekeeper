@@ -27,6 +27,10 @@ fn host_status(pubkey: &str, provider: ProviderChildState) -> beekeeper_host::pr
         provider,
         provider_settings_in_force: None,
         relay_connection: RelayConnectionState::unknowable(),
+        // No rows in this fixture, so no turns. The host derives this from the
+        // rows when it answers; a fixture where the two disagree describes a
+        // status the host cannot produce.
+        turns_in_flight: 0,
         app_activity: Vec::new(),
         app_activity_leased: false,
         sessions: beekeeper_host::sessions::SessionSnapshot {
