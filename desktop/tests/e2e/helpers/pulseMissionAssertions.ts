@@ -18,8 +18,11 @@ import { waitForAnimations } from "../../helpers/animations";
 const here = dirname(fileURLToPath(import.meta.url));
 
 /** Where the screenshots for this lane land. */
-export const PULSE_MISSION_SHOT_DIR =
-  "/Users/brian/Projects/beekeeper/review-2026-09-01/batch3/l9-shots";
+// These land in the repo's own `test-results/`, like every other spec's
+// shots. The absolute path this replaced was a review directory on one
+// laptop, so the whole file errored `ENOENT`/`EACCES` for anyone else and
+// the evidence it claims to produce existed on exactly one machine.
+export const PULSE_MISSION_SHOT_DIR = "test-results/pulse-missions";
 
 /** The two widths every shot is taken at. */
 export const PULSE_MISSION_VIEWPORTS = [

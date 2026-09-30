@@ -51,8 +51,11 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
  * are never evidence of it.
  */
 
-const SHOTS =
-  "/Users/brian/Projects/beekeeper/review-project-agent-hiring-e2e/screenshots";
+// These land in the repo's own `test-results/`, like every other spec's
+// shots. The absolute path this replaced was a review directory on one
+// laptop, so the whole file errored `ENOENT`/`EACCES` for anyone else and
+// the evidence it claims to produce existed on exactly one machine.
+const SHOTS = "test-results/project-agent-hiring";
 
 const FOUNDER = TEST_IDENTITIES.tyler;
 const COLLABORATOR = TEST_IDENTITIES.alice.pubkey;

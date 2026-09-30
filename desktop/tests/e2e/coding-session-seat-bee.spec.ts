@@ -75,8 +75,11 @@ import { installMockBridge } from "../helpers/bridge";
  * Playwright's — and hands back the markup it printed.
  */
 
-const SHOTS =
-  "/Users/brian/Projects/beekeeper/review-2026-09-01/batch3/l12-shots";
+// These land in the repo's own `test-results/`, like every other spec's
+// shots. The absolute path this replaced was a review directory on one
+// laptop, so the whole file errored `ENOENT`/`EACCES` for anyone else and
+// the evidence it claims to produce existed on exactly one machine.
+const SHOTS = "test-results/seat-bee";
 
 const hashes = new Map<string, string>();
 

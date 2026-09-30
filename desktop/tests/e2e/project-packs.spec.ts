@@ -17,8 +17,11 @@ import { installMockBridge } from "../helpers/bridge";
  * `project-settings-screenshots.spec.ts` does for icon/color.
  */
 
-const SHOTS =
-  "/Users/brian/Projects/beekeeper/review-2026-09-01/batch3/l23c-shots";
+// These land in the repo's own `test-results/`, like every other spec's
+// shots. The absolute path this replaced was a review directory on one
+// laptop, so the whole file errored `ENOENT`/`EACCES` for anyone else and
+// the evidence it claims to produce existed on exactly one machine.
+const SHOTS = "test-results/project-packs";
 
 const hashes = new Map<string, string>();
 
