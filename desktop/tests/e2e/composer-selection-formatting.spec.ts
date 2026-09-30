@@ -175,6 +175,14 @@ async function applyCaretFormat(
 ) {
   await page.getByRole("button", { name: "Toggle formatting" }).first().click();
   await page.getByRole("button", { name: label, exact: true }).click();
+  // Clicking the toolbar took focus off the editor, and Tiptap's `focus()`
+  // command hands it back inside a `requestAnimationFrame` — which is also
+  // where the new selection is written to the DOM. The editor's own state is
+  // already right; only the browser's caret is a frame behind. A person
+  // cannot type inside that frame, but `pressSequentially` can, and the
+  // characters then land wherever the stale DOM caret was. Waiting for the
+  // editor to hold focus again is that frame.
+  await expect(page.getByTestId("message-input")).toBeFocused();
 }
 
 for (const platform of [
