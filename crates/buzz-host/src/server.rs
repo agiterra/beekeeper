@@ -205,7 +205,7 @@ async fn dispatch(request: Request, control: &Arc<HostControl>) -> Response {
     match request {
         Request::Hello => encode(&Hello::current()),
         Request::Status => encode(&status(control)),
-        Request::Logs { bytes } => match read_log_tail(control.log_path(), bytes) {
+        Request::Logs { bytes } => match read_log_tail(&control.log_path(), bytes) {
             Ok(logs) => encode(&logs),
             Err(error) => Response::err(error),
         },
@@ -230,6 +230,16 @@ async fn dispatch(request: Request, control: &Arc<HostControl>) -> Response {
         },
         Request::Restart => match control.restart().await {
             Ok(()) => Response::ok(serde_json::json!({ "restarted": true })),
+            Err(error) => Response::err(error),
+        },
+        // Both re-read the files the app wrote. Separate ops because the two
+        // mean different things in a log, and because a future version may
+        // want to answer them differently.
+        Request::Bind | Request::AdoptIdentity => match control.recommission().await {
+            Ok(()) => Response::ok(serde_json::json!({
+                "relayUrl": control.config().relay_url,
+                "providerPubkey": control.config().provider_pubkey,
+            })),
             Err(error) => Response::err(error),
         },
     }

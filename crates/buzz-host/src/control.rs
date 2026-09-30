@@ -16,8 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use buzz_session_host_core::config::HostConfig;
-use buzz_session_host_core::record::CodingSessionProviderRecord;
+use buzz_session_host_core::layout::Instance;
 
+use crate::commission::{commission, Commissioned};
 use crate::state::ProviderChildState;
 use crate::supervisor::{PublishedState, Supervisor};
 
@@ -28,11 +29,17 @@ struct Running {
 }
 
 /// Everything the host needs to run, and the handle on what it is running.
+///
+/// The commissioning is behind a lock because it can be **re-read while the
+/// host runs**: a community switch rewrites `host.json`, and handing an
+/// identity over writes the key file. Both then ask the host to pick the
+/// change up, which is a supervisor swap rather than a process restart — the
+/// control socket stays up throughout, so a client never sees the host
+/// disappear and come back.
 pub struct HostControl {
-    config: Mutex<HostConfig>,
-    record: CodingSessionProviderRecord,
-    nsec: String,
-    log_path: std::path::PathBuf,
+    home: std::path::PathBuf,
+    instance: Instance,
+    commissioned: Mutex<Commissioned>,
     socket_path: std::path::PathBuf,
     published: Arc<PublishedState>,
     running: Mutex<Option<Running>>,
@@ -40,34 +47,62 @@ pub struct HostControl {
 
 impl HostControl {
     pub fn new(
-        config: HostConfig,
-        record: CodingSessionProviderRecord,
-        nsec: String,
-        log_path: std::path::PathBuf,
+        home: std::path::PathBuf,
+        instance: Instance,
+        commissioned: Commissioned,
         socket_path: std::path::PathBuf,
     ) -> Self {
         Self {
-            config: Mutex::new(config),
-            record,
-            nsec,
-            log_path,
+            home,
+            instance,
+            commissioned: Mutex::new(commissioned),
             socket_path,
             published: Arc::new(PublishedState::default()),
             running: Mutex::new(None),
         }
     }
 
+    fn with_commissioned<T>(&self, read: impl FnOnce(&Commissioned) -> T) -> T {
+        match self.commissioned.lock() {
+            Ok(guard) => read(&guard),
+            Err(poisoned) => read(&poisoned.into_inner()),
+        }
+    }
+
     /// The config this host is serving.
     pub fn config(&self) -> HostConfig {
-        self.config
-            .lock()
-            .map(|guard| guard.clone())
-            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
+        self.with_commissioned(|commissioned| commissioned.config.clone())
     }
 
     /// The provider log this host writes into.
-    pub fn log_path(&self) -> &std::path::Path {
-        &self.log_path
+    pub fn log_path(&self) -> std::path::PathBuf {
+        self.with_commissioned(|commissioned| commissioned.log_path())
+    }
+
+    /// Re-read `host.json`, the record store and the key, then swap the
+    /// supervisor onto the result.
+    ///
+    /// This is what `bind` (a community switch) and `adopt-identity` (a key
+    /// handed over at commissioning) both do. Two properties matter:
+    ///
+    /// - **The new commissioning is validated before the old one is
+    ///   discarded.** A `host.json` an operator broke while editing must leave
+    ///   the running provider exactly as it was, and say what is wrong — not
+    ///   stop a working provider in order to fail.
+    /// - **The child is stopped before the new one starts**, because both want
+    ///   the same state-directory lock when the identity did not change.
+    pub async fn recommission(self: &Arc<Self>) -> Result<(), String> {
+        let next = commission(&self.home, self.instance)?;
+        let was_supervising = self.is_supervising();
+        self.stop().await;
+        match self.commissioned.lock() {
+            Ok(mut guard) => *guard = next,
+            Err(poisoned) => *poisoned.into_inner() = next,
+        }
+        if was_supervising {
+            self.start()?;
+        }
+        Ok(())
     }
 
     /// The published child state.
@@ -107,15 +142,17 @@ impl HostControl {
             return Ok(false);
         }
         let stop = Arc::new(AtomicBool::new(false));
-        let supervisor = Supervisor::new(
-            self.config(),
-            self.record.clone(),
-            self.nsec.clone(),
-            self.log_path.clone(),
-            self.socket_path.clone(),
-            Arc::clone(&self.published),
-            Arc::clone(&stop),
-        );
+        let supervisor = self.with_commissioned(|commissioned| {
+            Supervisor::new(
+                commissioned.config.clone(),
+                commissioned.record.clone(),
+                commissioned.key.nsec.clone(),
+                commissioned.log_path(),
+                self.socket_path.clone(),
+                Arc::clone(&self.published),
+                Arc::clone(&stop),
+            )
+        });
         let handle = tokio::spawn(supervisor.run());
         *guard = Some(Running { stop, handle });
         Ok(true)
@@ -151,39 +188,7 @@ impl HostControl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use buzz_session_host_core::layout::Instance;
-
-    fn control(dir: &std::path::Path, provider: &std::path::Path) -> Arc<HostControl> {
-        let state_dir = dir.join("state");
-        std::fs::create_dir_all(&state_dir).expect("mkdir");
-        Arc::new(HostControl::new(
-            HostConfig {
-                version: buzz_session_host_core::config::HOST_CONFIG_VERSION,
-                instance: Instance::Production,
-                relay_url: "wss://hive.example.org".to_string(),
-                provider_pubkey: "e".repeat(64),
-                session_provider_base_dir: dir.to_path_buf(),
-                provider_state_dir: state_dir,
-                runtimes: Vec::new(),
-                max_sessions: None,
-                turn_idle_timeout_secs: None,
-                turn_budget: None,
-                provider_command: Some(provider.to_path_buf()),
-                written_at: buzz_session_host_core::logs::now_iso(),
-            },
-            CodingSessionProviderRecord {
-                provider_pubkey: "e".repeat(64),
-                instance_id: "e".repeat(16),
-                auth_tag: None,
-                created_at: buzz_session_host_core::logs::now_iso(),
-                relay_url: "wss://hive.example.org".to_string(),
-                private_key_nsec: String::new(),
-            },
-            "nsec1fake".to_string(),
-            dir.join("provider.log"),
-            dir.join("host.sock"),
-        ))
-    }
+    use crate::commission::write_test_commissioning;
 
     fn sleeping_provider(dir: &std::path::Path) -> std::path::PathBuf {
         let path = dir.join("sleepy-provider");
@@ -196,6 +201,38 @@ mod tests {
         path
     }
 
+    fn control(home: &std::path::Path) -> Arc<HostControl> {
+        let provider = sleeping_provider(home);
+        write_test_commissioning(home, "wss://hive.example.org", Some(&provider));
+        let commissioned =
+            commission(home, Instance::Production).expect("the fixture is a full commissioning");
+        Arc::new(HostControl::new(
+            home.to_path_buf(),
+            Instance::Production,
+            commissioned,
+            home.join("host.sock"),
+        ))
+    }
+
+    async fn wait_for_live(control: &Arc<HostControl>) -> u32 {
+        for _ in 0..60 {
+            if let Some(pid) = control.child_state().live_pid() {
+                return pid;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!(
+            "the supervisor never reported a live child: {:?}",
+            control.child_state()
+        );
+    }
+
+    #[test]
+    fn nothing_started_yet_is_not_supervising() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(!control(dir.path()).is_supervising());
+    }
+
     /// Two `start` calls must not produce two loops: they would fight over one
     /// state-directory lock, and the loser's restart ladder would spend itself
     /// on a lock it can never win.
@@ -203,18 +240,10 @@ mod tests {
     #[tokio::test]
     async fn starting_twice_leaves_exactly_one_loop() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let provider = sleeping_provider(dir.path());
-        let control = control(dir.path(), &provider);
+        let control = control(dir.path());
 
         assert!(control.start().expect("first start"));
-        // Let the loop reach a live child before asking again.
-        for _ in 0..40 {
-            if control.child_state().live_pid().is_some() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-        let first_pid = control.child_state().live_pid().expect("a live child");
+        let first_pid = wait_for_live(&control).await;
         assert!(
             !control.start().expect("second start"),
             "a second start must be a no-op"
@@ -235,20 +264,13 @@ mod tests {
     /// fixed the cause would still be inside the old backoff.
     #[cfg(unix)]
     #[tokio::test]
-    async fn a_restart_replaces_the_child_and_the_failure_count() {
+    async fn a_restart_replaces_the_child() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let provider = sleeping_provider(dir.path());
-        let control = control(dir.path(), &provider);
+        let control = control(dir.path());
         control.start().expect("start");
-        for _ in 0..40 {
-            if control.child_state().live_pid().is_some() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-        let before = control.child_state().live_pid().expect("a live child");
+        let before = wait_for_live(&control).await;
         control.restart().await.expect("restart");
-        for _ in 0..40 {
+        for _ in 0..60 {
             if control
                 .child_state()
                 .live_pid()
@@ -261,6 +283,71 @@ mod tests {
         let after = control.child_state().live_pid().expect("a live child");
         assert_ne!(before, after);
         assert!(!crate::terminate::pid_is_running(before));
+        control.stop().await;
+    }
+
+    /// A community switch: rewrite `host.json`, ask the host to pick it up,
+    /// and the provider comes back serving the new relay.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn recommissioning_picks_up_a_rewritten_config_and_restarts_the_child() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let control = control(dir.path());
+        control.start().expect("start");
+        let before = wait_for_live(&control).await;
+        assert_eq!(control.config().relay_url, "wss://hive.example.org");
+
+        // The app rewrites host.json for the new community. The record store
+        // must name the new relay too — it is the same identity either way in
+        // this fixture, which is the case a community switch back and forth
+        // produces.
+        let config_path =
+            buzz_session_host_core::layout::host_config_path(dir.path(), Instance::Production);
+        let mut config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).expect("read"))
+                .expect("parse");
+        let store_path =
+            std::path::PathBuf::from(config["sessionProviderBaseDir"].as_str().expect("base"))
+                .join(buzz_session_host_core::record::STORE_FILE_NAME);
+        let mut store: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&store_path).expect("read"))
+                .expect("parse");
+        let record = store["providers"]["wss://hive.example.org"].clone();
+        store["providers"] = serde_json::json!({ "wss://other.example.org": record });
+        std::fs::write(&store_path, store.to_string()).expect("write");
+        config["relayUrl"] = serde_json::json!("wss://other.example.org");
+        std::fs::write(&config_path, config.to_string()).expect("write");
+
+        control.recommission().await.expect("recommission");
+        assert_eq!(control.config().relay_url, "wss://other.example.org");
+        let after = wait_for_live(&control).await;
+        assert_ne!(after, before, "the child restarts onto the new relay");
+        control.stop().await;
+    }
+
+    /// A `host.json` somebody broke while editing must leave the running
+    /// provider exactly as it was, and say what is wrong. Stopping a working
+    /// provider in order to fail is the worst of both.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_broken_recommission_leaves_the_running_provider_alone() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let control = control(dir.path());
+        control.start().expect("start");
+        let before = wait_for_live(&control).await;
+
+        let config_path =
+            buzz_session_host_core::layout::host_config_path(dir.path(), Instance::Production);
+        std::fs::write(&config_path, "{ not json").expect("write");
+
+        let error = control.recommission().await.expect_err("must be refused");
+        assert!(error.contains("failed to parse"), "{error}");
+        assert_eq!(
+            control.child_state().live_pid(),
+            Some(before),
+            "the running child must be untouched by a failed recommission"
+        );
+        assert!(crate::terminate::pid_is_running(before));
         control.stop().await;
     }
 }

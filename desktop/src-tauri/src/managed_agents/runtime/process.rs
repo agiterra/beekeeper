@@ -142,20 +142,19 @@ pub(super) fn buzz_marker_entry(instance_id: &str) -> Vec<u8> {
     format!("BUZZ_MANAGED_AGENT={instance_id}").into_bytes()
 }
 
-/// Check if a running process is one of *our* managed agents: it must carry
-/// `BUZZ_MANAGED_AGENT=<instance_id>` in its environment, where `instance_id`
-/// is this desktop instance's id. A process stamped with a *different* instance
-/// id belongs to another live Buzz app and must never be reaped here.
+/// The null-delimited environment block of a running process, or `None`.
+///
+/// Extracted from `process_has_buzz_marker` so that more than one question can
+/// be asked of a process's environment without a second copy of this walk.
+/// The second question is [`process_has_env_key`], which is what keeps a
+/// process another launcher owns out of this app's sweeps.
 #[cfg(target_os = "macos")]
-pub(crate) fn process_has_buzz_marker(pid: u32, instance_id: &str) -> bool {
-    let marker = buzz_marker_entry(instance_id);
-    let Some(buf) = sweep::procargs2_buffer(pid) else {
-        return false;
-    };
+fn process_env_block(pid: u32) -> Option<Vec<u8>> {
+    let buf = sweep::procargs2_buffer(pid)?;
 
     // Buffer layout: [i32 argc][exec_path\0][null padding][argv\0...][env\0...]
     if buf.len() < std::mem::size_of::<libc::c_int>() {
-        return false;
+        return None;
     }
     let mut n_args: libc::c_int = 0;
     unsafe {
@@ -187,21 +186,119 @@ pub(crate) fn process_has_buzz_marker(pid: u32, instance_id: &str) -> bool {
         args_remaining -= 1;
     }
     // Remaining bytes are null-delimited environment strings.
-    buf[pos..].split(|&b| b == 0).any(|entry| entry == marker)
+    Some(buf[pos..].to_vec())
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-pub(crate) fn process_has_buzz_marker(pid: u32, instance_id: &str) -> bool {
-    let marker = buzz_marker_entry(instance_id);
-    let Ok(data) = std::fs::read(format!("/proc/{pid}/environ")) else {
-        return false;
-    };
-    data.split(|&b| b == 0).any(|entry| entry == marker)
+fn process_env_block(pid: u32) -> Option<Vec<u8>> {
+    std::fs::read(format!("/proc/{pid}/environ")).ok()
 }
 
 #[cfg(not(unix))]
-pub(crate) fn process_has_buzz_marker(_pid: u32, _instance_id: &str) -> bool {
-    false
+fn process_env_block(_pid: u32) -> Option<Vec<u8>> {
+    None
+}
+
+/// Check if a running process is one of *our* managed agents: it must carry
+/// `BUZZ_MANAGED_AGENT=<instance_id>` in its environment, where `instance_id`
+/// is this desktop instance's id. A process stamped with a *different*
+/// instance id belongs to another live Buzz app and must never be reaped here.
+pub(crate) fn process_has_buzz_marker(pid: u32, instance_id: &str) -> bool {
+    let marker = buzz_marker_entry(instance_id);
+    let Some(block) = process_env_block(pid) else {
+        return false;
+    };
+    env_block_has_entry(&block, &marker)
+}
+
+/// Whether a running process carries `key` in its environment, with any value.
+///
+/// This is how a process **another launcher owns** stays out of this app's
+/// sweeps. Before `buzz-host` existed, "not one of mine" and "nobody's" were
+/// the same set, so reaping the second was safe. They are different sets now,
+/// and a boot-time sweep that could not tell them apart would silently kill a
+/// headless host's child — the symptom being agents that die whenever somebody
+/// opens the app, which reads as anything but a sweep.
+pub(crate) fn process_has_env_key(pid: u32, key: &str) -> bool {
+    let Some(block) = process_env_block(pid) else {
+        return false;
+    };
+    env_block_has_key(&block, key.as_bytes())
+}
+
+/// Whether a null-delimited environment block holds this exact entry.
+///
+/// Pure so the byte-level matching is provable without a live process; the
+/// platform-specific half above is the part that cannot be.
+fn env_block_has_entry(block: &[u8], entry: &[u8]) -> bool {
+    block.split(|&byte| byte == 0).any(|found| found == entry)
+}
+
+/// Whether a null-delimited environment block holds `key` with any value.
+///
+/// Matches `key=` rather than a bare prefix: `BUZZ_HOST` must not match
+/// `BUZZ_HOSTNAME`, and a prefix test is exactly how that mistake gets made.
+fn env_block_has_key(block: &[u8], key: &[u8]) -> bool {
+    block
+        .split(|&byte| byte == 0)
+        .any(|entry| entry.len() > key.len() && entry.starts_with(key) && entry[key.len()] == b'=')
+}
+
+#[cfg(test)]
+mod env_block_tests {
+    use super::*;
+
+    fn block(entries: &[&str]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for entry in entries {
+            bytes.extend_from_slice(entry.as_bytes());
+            bytes.push(0);
+        }
+        bytes
+    }
+
+    #[test]
+    fn an_exact_entry_matches_and_a_different_instance_does_not() {
+        let block = block(&[
+            "PATH=/usr/bin",
+            "BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app",
+            "HOME=/home/agent",
+        ]);
+        assert!(env_block_has_entry(
+            &block,
+            b"BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app"
+        ));
+        assert!(
+            !env_block_has_entry(&block, b"BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app.dev"),
+            "another live instance's agents must never match"
+        );
+    }
+
+    /// A key test that matched a prefix would spare `BUZZ_HOSTNAME` as if it
+    /// were `BUZZ_HOST_CHILD`, so the `=` is load-bearing.
+    #[test]
+    fn a_key_match_requires_the_equals_sign() {
+        let both = block(&["BUZZ_HOST_CHILD=4242", "BUZZ_HOSTNAME=somewhere"]);
+        assert!(env_block_has_key(&both, b"BUZZ_HOST_CHILD"));
+        assert!(env_block_has_key(&both, b"BUZZ_HOSTNAME"));
+        assert!(
+            !env_block_has_key(&both, b"BUZZ_HOST"),
+            "a prefix must not match a longer key"
+        );
+        assert!(!env_block_has_key(&both, b"BUZZ_HOST_CHILD_OF"));
+        // An empty value is still the key being present: a host that stamped
+        // an empty pid still owns the child.
+        assert!(env_block_has_key(
+            &block(&["BUZZ_HOST_CHILD="]),
+            b"BUZZ_HOST_CHILD"
+        ));
+    }
+
+    #[test]
+    fn an_empty_block_matches_nothing() {
+        assert!(!env_block_has_entry(&[], b"A=1"));
+        assert!(!env_block_has_key(&[], b"A"));
+    }
 }
 
 #[cfg(unix)]

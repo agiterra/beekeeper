@@ -58,6 +58,23 @@ pub enum Request {
     Start,
     /// Stop and start the provider child.
     Restart,
+    /// Re-read `host.json` and the identity, then swap the supervisor onto
+    /// the result. This is the community switch.
+    ///
+    /// The app writes the file and then asks; the host does not take a relay
+    /// URL over the wire. That keeps one writer for `host.json` and makes the
+    /// file, not a message, the thing a headless install edits.
+    Bind,
+    /// Re-read the identity after the app has written the key file.
+    ///
+    /// **The secret never crosses this socket.** The app writes the `0600`
+    /// file and this only says "look again". A socket capture therefore
+    /// reveals nothing signable, and a future hardening of peer
+    /// authentication does not change the secret's blast radius.
+    ///
+    /// The same operation as `bind`; a separate op because the two mean
+    /// different things to whoever reads a log of them.
+    AdoptIdentity,
 }
 
 /// What the host answers. One shape for every op, so a client's read path does
@@ -199,6 +216,8 @@ mod tests {
             (Request::Stop, r#"{"op":"stop"}"#),
             (Request::Start, r#"{"op":"start"}"#),
             (Request::Restart, r#"{"op":"restart"}"#),
+            (Request::Bind, r#"{"op":"bind"}"#),
+            (Request::AdoptIdentity, r#"{"op":"adopt-identity"}"#),
         ] {
             assert_eq!(serde_json::to_string(&request).expect("encode"), wire);
             assert_eq!(

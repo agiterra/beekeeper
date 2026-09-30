@@ -14,13 +14,11 @@
 use std::sync::Arc;
 
 use buzz_session_host_core::atomic_write::create_dir_all_restricted;
-use buzz_session_host_core::config::HostConfig;
 use buzz_session_host_core::layout::{self, Instance};
-use buzz_session_host_core::record::load_provider_store_from;
 use clap::{Parser, Subcommand};
 
+use buzz_host::commission::commission;
 use buzz_host::control::HostControl;
-use buzz_host::identity;
 use buzz_host::protocol::Request;
 
 #[derive(Parser)]
@@ -60,6 +58,8 @@ enum Command {
     Start,
     /// Stop and start the provider, with a clean restart ladder.
     Restart,
+    /// Re-read `host.json` and the identity, then restart onto the result.
+    Bind,
 }
 
 fn parse_instance(value: &str) -> Result<Instance, String> {
@@ -111,54 +111,6 @@ fn init_tracing() {
         .try_init();
 }
 
-/// Everything resolved and checked, before anything is spawned.
-struct Commissioned {
-    config: HostConfig,
-    record: buzz_session_host_core::record::CodingSessionProviderRecord,
-    key: identity::ResolvedKey,
-}
-
-/// Read the config and the identity, or say exactly what is missing.
-///
-/// Every failure here is a *disclosed* one: a client asking `status` must be
-/// able to tell "no provider is commissioned" from "your key file is
-/// unreadable", because they need different words and different actions.
-fn commission(home: &std::path::Path, instance: Instance) -> Result<Commissioned, String> {
-    let config_path = layout::host_config_path(home, instance);
-    let config = HostConfig::load(&config_path)?.ok_or_else(|| {
-        format!(
-            "this host has not been commissioned: {} does not exist. Open Beekeeper and finish \
-             setting up coding sessions, or write the file yourself for a headless install.",
-            config_path.display()
-        )
-    })?;
-
-    let store = load_provider_store_from(&config.record_store_path())?;
-    let record = store.get(&config.relay_url).cloned().ok_or_else(|| {
-        format!(
-            "{} names {} but {} holds no record for that relay",
-            config_path.display(),
-            config.relay_url,
-            config.record_store_path().display()
-        )
-    })?;
-    if record.provider_pubkey != config.provider_pubkey {
-        return Err(format!(
-            "the record for {} is for a different provider than host.json names — re-commission \
-             this host from Beekeeper",
-            config.relay_url
-        ));
-    }
-
-    let key = identity::resolve_key(home, instance, &record).map_err(|error| error.message())?;
-    identity::matches_record(&key, &record).map_err(|error| error.message())?;
-    Ok(Commissioned {
-        config,
-        record,
-        key,
-    })
-}
-
 fn run(instance: Instance, command: Command) -> Result<(), String> {
     let home = layout::home_dir()?;
     let socket_path = layout::host_socket_path(&home, instance);
@@ -177,11 +129,7 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
     create_dir_all_restricted(&host_dir)?;
 
     let commissioned = commission(&home, instance)?;
-    let log_path = commissioned
-        .config
-        .session_provider_base_dir
-        .join("logs")
-        .join(format!("{}.log", commissioned.config.provider_pubkey));
+    let log_path = commissioned.log_path();
 
     if matches!(command, Command::Check) {
         // Deliberately prints where the key came from, never the key.
@@ -204,16 +152,16 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
         return Ok(());
     }
 
+    let provider_state_dir = commissioned.config.provider_state_dir.clone();
     if let Some(parent) = log_path.parent() {
         create_dir_all_restricted(parent)?;
     }
-    create_dir_all_restricted(&commissioned.config.provider_state_dir)?;
+    create_dir_all_restricted(&provider_state_dir)?;
 
     let control = Arc::new(HostControl::new(
-        commissioned.config,
-        commissioned.record,
-        commissioned.key.nsec,
-        log_path,
+        home,
+        instance,
+        commissioned,
         socket_path.clone(),
     ));
 
@@ -262,6 +210,7 @@ fn client_request(command: &Command) -> Option<Request> {
         Command::Stop => Some(Request::Stop),
         Command::Start => Some(Request::Start),
         Command::Restart => Some(Request::Restart),
+        Command::Bind => Some(Request::Bind),
         Command::Run | Command::Check => None,
     }
 }

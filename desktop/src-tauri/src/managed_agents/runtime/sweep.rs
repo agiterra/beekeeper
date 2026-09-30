@@ -260,27 +260,53 @@ pub(super) fn strip_deleted_suffix(path: PathBuf) -> PathBuf {
 }
 
 /// Pure kill-decision function: given a slice of process snapshots, the
-/// expected harness executable path, and the set of tracked pids to spare,
-/// returns the pids of processes that should be reaped.
+/// expected harness executable path, the set of tracked pids to spare, and a
+/// predicate naming processes another launcher owns, returns the pids that
+/// should be reaped.
 ///
 /// Selection criteria:
 /// - `exe_path` exactly matches `harness_exe` (same-bundle harness only).
 /// - `pid` is not in `tracked_pids` (untracked — not owned by this session).
+/// - `owned_elsewhere(pid)` is false.
 ///
 /// Children of tracked parents die when their parent's process group is
 /// signalled — this function deliberately targets only harness-level processes
 /// so we never directly kill a child of a live tracked parent.
+///
+/// # Why `owned_elsewhere` exists
+///
+/// This sweep was written when "not tracked by this app" and "owned by
+/// nobody" were the same set, so reaping the second was safe. `buzz-host`
+/// makes them different sets: it supervises children of its own, which no
+/// desktop tracks. Today those children are `buzz-session-provider` and
+/// `claude-agent-acp`, neither of which this sweep looks at — it filters on
+/// `<bundle>/buzz-acp` by name. But `session_provider/commands.rs` already
+/// resolves `buzz-acp` for the models probe, so the moment any runtime's
+/// adapter is `buzz-acp`, a desktop boot would silently kill a host-owned
+/// child. The symptom would be agents dying whenever somebody opens the app,
+/// which reads as anything but a sweep. The predicate closes that before it
+/// can happen rather than after.
 pub fn select_untracked_bundle_harnesses(
     snapshots: &[ProcessSnapshot],
     harness_exe: &Path,
     tracked_pids: &[u32],
+    owned_elsewhere: impl Fn(u32) -> bool,
 ) -> Vec<u32> {
     snapshots
         .iter()
-        .filter(|s| s.exe_path == harness_exe && !tracked_pids.contains(&s.pid))
+        .filter(|s| {
+            s.exe_path == harness_exe && !tracked_pids.contains(&s.pid) && !owned_elsewhere(s.pid)
+        })
         .map(|s| s.pid)
         .collect()
 }
+
+/// Processes carrying this variable belong to an agent host, not to a desktop.
+///
+/// Named here as well as in `buzz_session_host_core::layout` so this sweep's
+/// own tests can state the rule; the two must stay the same string, and the
+/// test below asserts it.
+const HOST_OWNED_CHILD_VAR: &str = "BUZZ_HOST_CHILD";
 
 // ── Process-table enumeration ─────────────────────────────────────────────
 
@@ -500,7 +526,9 @@ pub(crate) fn sweep_untracked_bundle_harnesses(skip_pids: &[u32]) {
         return;
     };
     let snapshots = collect_process_snapshots(HARNESS_BINARY_NAME);
-    let to_kill = select_untracked_bundle_harnesses(&snapshots, &harness_exe, skip_pids);
+    let to_kill = select_untracked_bundle_harnesses(&snapshots, &harness_exe, skip_pids, |pid| {
+        super::process::process_has_env_key(pid, HOST_OWNED_CHILD_VAR)
+    });
     if to_kill.is_empty() {
         return;
     }
@@ -569,24 +597,68 @@ mod tests {
     #[test]
     fn untracked_same_bundle_harness_is_killed() {
         let snapshots = vec![snap(1001, BUNDLE_HARNESS)];
-        let result =
-            select_untracked_bundle_harnesses(&snapshots, &PathBuf::from(BUNDLE_HARNESS), &[]);
+        let result = select_untracked_bundle_harnesses(
+            &snapshots,
+            &PathBuf::from(BUNDLE_HARNESS),
+            &[],
+            |_| false,
+        );
         assert_eq!(result, vec![1001]);
     }
 
     #[test]
     fn tracked_harness_is_spared() {
         let snapshots = vec![snap(1002, BUNDLE_HARNESS)];
-        let result =
-            select_untracked_bundle_harnesses(&snapshots, &PathBuf::from(BUNDLE_HARNESS), &[1002]);
+        let result = select_untracked_bundle_harnesses(
+            &snapshots,
+            &PathBuf::from(BUNDLE_HARNESS),
+            &[1002],
+            |_| false,
+        );
         assert!(result.is_empty());
+    }
+
+    /// A harness another launcher owns must survive a desktop boot.
+    ///
+    /// The exe path is this bundle's and no desktop tracks the pid, so every
+    /// other criterion says reap it. The only thing standing between a
+    /// host-owned child and a sweep is this predicate.
+    #[test]
+    fn a_host_owned_harness_is_spared() {
+        let snapshots = vec![snap(1101, BUNDLE_HARNESS), snap(1102, BUNDLE_HARNESS)];
+        let result = select_untracked_bundle_harnesses(
+            &snapshots,
+            &PathBuf::from(BUNDLE_HARNESS),
+            &[],
+            |pid| pid == 1101,
+        );
+        assert_eq!(
+            result,
+            vec![1102],
+            "the host-owned pid must be spared and the orphan still reaped"
+        );
+    }
+
+    /// The variable this sweep spares on and the variable the host stamps must
+    /// be the same string. They are declared in two crates, and a drift would
+    /// make the guard silently stop guarding.
+    #[test]
+    fn the_spared_variable_is_the_one_the_host_stamps() {
+        assert_eq!(
+            HOST_OWNED_CHILD_VAR,
+            buzz_session_host_core::layout::CHILD_MARKER_VAR
+        );
     }
 
     #[test]
     fn different_bundle_path_is_spared() {
         let snapshots = vec![snap(1003, DEV_HARNESS)];
-        let result =
-            select_untracked_bundle_harnesses(&snapshots, &PathBuf::from(BUNDLE_HARNESS), &[]);
+        let result = select_untracked_bundle_harnesses(
+            &snapshots,
+            &PathBuf::from(BUNDLE_HARNESS),
+            &[],
+            |_| false,
+        );
         assert!(result.is_empty());
     }
 
@@ -597,14 +669,19 @@ mod tests {
             1004,
             "/Applications/Beekeeper.app/Contents/MacOS/goose",
         )];
-        let result =
-            select_untracked_bundle_harnesses(&snapshots, &PathBuf::from(BUNDLE_HARNESS), &[]);
+        let result = select_untracked_bundle_harnesses(
+            &snapshots,
+            &PathBuf::from(BUNDLE_HARNESS),
+            &[],
+            |_| false,
+        );
         assert!(result.is_empty());
     }
 
     #[test]
     fn empty_process_list_returns_empty() {
-        let result = select_untracked_bundle_harnesses(&[], &PathBuf::from(BUNDLE_HARNESS), &[]);
+        let result =
+            select_untracked_bundle_harnesses(&[], &PathBuf::from(BUNDLE_HARNESS), &[], |_| false);
         assert!(result.is_empty());
     }
 
@@ -616,8 +693,12 @@ mod tests {
             snap(2003, DEV_HARNESS),      // different path → spared
             snap(2004, "/usr/bin/goose"), // unrelated → spared
         ];
-        let mut result =
-            select_untracked_bundle_harnesses(&snapshots, &PathBuf::from(BUNDLE_HARNESS), &[2001]);
+        let mut result = select_untracked_bundle_harnesses(
+            &snapshots,
+            &PathBuf::from(BUNDLE_HARNESS),
+            &[2001],
+            |_| false,
+        );
         result.sort();
         assert_eq!(result, vec![2002]);
     }
@@ -630,7 +711,10 @@ mod tests {
             pid: 3001,
             exe_path: strip_deleted_suffix(raw),
         }];
-        let result = select_untracked_bundle_harnesses(&snaps, &PathBuf::from(BUNDLE_HARNESS), &[]);
+        let result =
+            select_untracked_bundle_harnesses(&snaps, &PathBuf::from(BUNDLE_HARNESS), &[], |_| {
+                false
+            });
         assert_eq!(result, vec![3001]);
     }
 
