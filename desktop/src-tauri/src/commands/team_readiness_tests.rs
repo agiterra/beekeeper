@@ -11,10 +11,10 @@ use crate::session_provider::store::load_provider_readiness_store_from;
 use crate::session_provider::store::CodingSessionProviderReadinessRecord;
 use crate::session_provider::store::CodingSessionProviderReadinessStore;
 
-const PROJECT_REF: &str =
+pub(super) const PROJECT_REF: &str =
     "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:beekeeper";
 
-fn signed_auth_tag(conditions: &str) -> (String, String, String) {
+pub(super) fn signed_auth_tag(conditions: &str) -> (String, String, String) {
     let owner = nostr::Keys::generate();
     let subject = nostr::Keys::generate();
     let tag = buzz_sdk_pkg::nip_oa::compute_auth_tag(&owner, &subject.public_key(), conditions)
@@ -82,7 +82,9 @@ impl ReadinessHost for CountingHost {
 
     fn provider_process(&self, _pubkey: &str) -> CodingSessionProviderProcessState {
         self.process.set(self.process.get() + 1);
-        CodingSessionProviderProcessState::Unknown
+        CodingSessionProviderProcessState::HostUnreachable {
+            reason: "the agent host is not running".to_string(),
+        }
     }
 }
 

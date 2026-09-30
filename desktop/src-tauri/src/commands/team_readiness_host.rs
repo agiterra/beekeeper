@@ -6,17 +6,18 @@ use serde::de::IgnoredAny;
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 
+use crate::agent_host::AgentHost;
 use crate::app_state::AppState;
 use crate::coding_sessions::workdir_store::{
     load_workdir_store_readonly, CodingSessionWorkdirStore,
 };
 use crate::managed_agents::{load_managed_agent_readiness_metadata, ManagedAgentReadinessMetadata};
 use crate::session_provider::runtimes::{runtime_readiness_metadata, StrictRuntimeDiagnostic};
+use crate::session_provider::status::{
+    CodingSessionProviderProcessState, CodingSessionProviderStatus,
+};
 use crate::session_provider::store::{
     load_provider_readiness_store, CodingSessionProviderReadinessStore,
-};
-use crate::session_provider::supervisor::{
-    CodingSessionProviderProcessState, CodingSessionProviderState,
 };
 
 const MAX_READINESS_GLOBAL_CONFIG_BYTES: u64 = 4 * 1024 * 1024;
@@ -157,9 +158,30 @@ impl ReadinessHost for AppReadinessHost<'_> {
         crate::relay::relay_ws_url_with_override(&self.0.state::<AppState>())
     }
 
+    /// Ask the agent host. Blocking, because `gather` is — see
+    /// `AgentHost::snapshot_blocking`.
+    ///
+    /// The `pubkey` argument still matters: a host serving a *different*
+    /// identity is not this record running, and reporting its live child as
+    /// ours is how a launch gate passes over a provider that will never answer
+    /// for this relay.
     fn provider_process(&self, pubkey: &str) -> CodingSessionProviderProcessState {
-        self.0
-            .state::<CodingSessionProviderState>()
-            .readiness_process_state(pubkey)
+        let host = self.0.state::<AgentHost>();
+        let snapshot = host.snapshot_blocking();
+        let provider_matches = snapshot
+            .status
+            .as_ref()
+            .is_some_and(|status| status.provider_pubkey == pubkey);
+        let status = CodingSessionProviderStatus::from_snapshot(None, &host, snapshot);
+        match status.process_state() {
+            // A live child for another identity is not this one running.
+            CodingSessionProviderProcessState::Live { .. } if !provider_matches => {
+                CodingSessionProviderProcessState::HostUnreachable {
+                    reason: "the agent host is serving a different provider identity than this                              relay's record names"
+                        .to_string(),
+                }
+            }
+            other => other,
+        }
     }
 }

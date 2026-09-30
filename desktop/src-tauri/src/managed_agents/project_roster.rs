@@ -21,9 +21,9 @@
 use nostr::{Event, EventBuilder, Keys, Kind, Tag};
 use tauri::AppHandle;
 
+use crate::agent_host::AgentHost;
 use crate::app_state::AppState;
 use crate::managed_agents::project_agent_association::normalize_project_ref;
-use crate::session_provider::{supervisor, CodingSessionProviderState};
 use buzz_core_pkg::kind::{
     is_valid_project_role, KIND_PROJECT, KIND_PROJECT_MEMBERS, KIND_PROJECT_PUT_MEMBER,
     KIND_PROJECT_REMOVE_MEMBER, PROJECT_ROLE_COLLABORATOR, PROJECT_ROLE_OWNER,
@@ -298,32 +298,42 @@ pub(crate) fn roster_write_refusal(
 /// neither can start a provider without admitting the host (run 7 wired the
 /// repair into one and missed the other).
 ///
-/// Returns what `ensure_running` returns. The admission's result is one of
-/// four named states, always logged; a host that is not admitted is not an
-/// error here, because the launch's own verification says what the seat
-/// could not read.
+/// Returns whether the agent host reports the provider live. The admission's
+/// result is one of four named states, always logged; a host that is not
+/// admitted is not an error here, because the launch's own verification says
+/// what the seat could not read.
+///
+/// The admission runs **whether or not this call started anything**. A
+/// provider that has been running since before this app launched never passes
+/// through a start path, which is exactly how run 8 (2026-09-25) left the host
+/// off the roster — and with the provider now outliving the app entirely, that
+/// is the *normal* case rather than an edge one.
 pub(crate) async fn ensure_host_serving_project(
     app: &AppHandle,
     state: &AppState,
-    provider: &CodingSessionProviderState,
+    host: &AgentHost,
     keys: &Keys,
     project_ref: &str,
     provider_pubkey: &str,
     relay_url: &str,
 ) -> Result<bool, String> {
-    let running = supervisor::ensure_running(app, provider, relay_url)?;
-    if running {
-        crate::managed_agents::project_admission::admit_host_for_session(
-            app,
-            state,
-            keys,
-            project_ref,
-            relay_url,
-            Some(provider_pubkey),
-        )
-        .await;
+    if let Err(error) = host.start().await {
+        eprintln!("buzz-desktop: agent-host: could not start the provider: {error}");
     }
-    Ok(running)
+    crate::managed_agents::project_admission::admit_host_for_session(
+        app,
+        state,
+        keys,
+        project_ref,
+        relay_url,
+        Some(provider_pubkey),
+    )
+    .await;
+    Ok(host
+        .snapshot()
+        .await
+        .running(provider_pubkey)
+        .unwrap_or(false))
 }
 
 /// What [`ensure_project_agents_on_roster`] did.

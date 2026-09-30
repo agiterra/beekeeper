@@ -174,6 +174,18 @@ pub fn provider_state_dir_in(base: &Path, provider_pubkey: &str) -> Result<PathB
     Ok(base.join(provider_pubkey))
 }
 
+/// The supervised child's log file, beside the record store.
+///
+/// Derived here because two processes name this file: the host writes it and
+/// the app offers it to a person. Two derivations would eventually point at
+/// two paths, and the symptom is a log viewer that is always empty.
+pub fn provider_log_path_in(base: &Path, provider_pubkey: &str) -> Result<PathBuf, String> {
+    if !is_lowercase_hex_pubkey(provider_pubkey) {
+        return Err("provider pubkey must be 64-character lowercase hex".to_string());
+    }
+    Ok(base.join("logs").join(format!("{provider_pubkey}.log")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +210,16 @@ mod tests {
         assert!(!is_lowercase_hex_pubkey("../etc"));
         assert!(!is_lowercase_hex_pubkey(&"a".repeat(63)));
         assert!(provider_state_dir_in(Path::new("/tmp"), "../etc").is_err());
+    }
+
+    #[test]
+    fn the_log_path_is_derived_in_one_place_for_both_processes() {
+        assert_eq!(
+            provider_log_path_in(Path::new("/data/session-provider"), &"a".repeat(64))
+                .expect("valid pubkey"),
+            Path::new("/data/session-provider/logs").join(format!("{}.log", "a".repeat(64)))
+        );
+        assert!(provider_log_path_in(Path::new("/data"), "../etc").is_err());
     }
 
     #[test]

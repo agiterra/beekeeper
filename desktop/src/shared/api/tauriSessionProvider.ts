@@ -1,22 +1,75 @@
 import { invokeTauri } from "@/shared/api/tauri";
 
 /**
+ * Whether the agent host answered, and which silence it was if not.
+ *
+ * Three states rather than a boolean, because a UI that could not tell them
+ * apart would print the same words for "you have not installed this", "it is
+ * installed and stopped" and "it is wedged" — and at most one would be true.
+ *
+ * Mirrors the Rust `HostReachability` enum in
+ * `desktop/src-tauri/src/agent_host/client.rs`.
+ */
+export type AgentHostReachability =
+  | { state: "reachable" }
+  /** Nothing is listening on `socket`. */
+  | { state: "absent"; socket: string }
+  /** It accepted a connection and then said nothing usable. */
+  | { state: "unresponsive"; reason: string };
+
+/**
+ * What this app knows about the agent host itself.
+ *
+ * Mirrors the Rust `AgentHostStatus` struct in
+ * `desktop/src-tauri/src/session_provider/status.rs`.
+ */
+export type AgentHostStatus = {
+  reachability: AgentHostReachability;
+  /** The control socket this app looked at, so a person can check it. */
+  socket: string;
+  /**
+   * The host's own account of the provider child, when it answered — a tagged
+   * union whose `state` is one of `notSupervised`, `keyUnresolved`, `backoff`,
+   * `live`, `gaveUp` or `lockHeldElsewhere`.
+   *
+   * Deliberately not narrowed here: the honest rendering path is `message`,
+   * which the host writes for a person. Switch on `state` only to choose an
+   * action, never to decide whether something is wrong.
+   */
+  providerState?: { state: string } & Record<string, unknown>;
+  /** One line for a person, whatever happened. Never empty. */
+  message: string;
+};
+
+/**
  * Host status of the first-party coding-session provider, for the active
  * community relay.
  *
  * Mirrors the Rust `CodingSessionProviderStatus` struct in
- * `desktop/src-tauri/src/session_provider/supervisor.rs`.
+ * `desktop/src-tauri/src/session_provider/status.rs`.
  */
 export type CodingSessionProviderStatus = {
   /** A provider identity has been minted for this relay. */
   provisioned: boolean;
   /**
-   * The desktop is supervising a provider process right now.
+   * Whether the provisioned provider is running — **`null` when the agent
+   * host could not be reached, so this is not known.**
    *
-   * True while a restart backoff is in flight too: the supervisor owns that
+   * It used to be a plain boolean meaning "this desktop is supervising it",
+   * which is a different claim from "a provider is running" and read
+   * identically in the UI. The provider now outlives this app, so the app can
+   * genuinely fail to find out.
+   *
+   * `true` while a restart backoff is in flight too: the host owns that
    * transient gap, so a caller should not react to it.
+   *
+   * **Treat `null` as unknown, never as `false`.** Rendering a calm "stopped"
+   * over a host nobody could ask is the same class of bug as a crash — prefer
+   * `host.message`, which says what actually happened.
    */
-  running: boolean;
+  running: boolean | null;
+  /** The agent host. Always present, so a surface cannot forget to ask. */
+  host: AgentHostStatus;
   /** Provider identity pubkey. Absent until provisioned. */
   providerPubkey?: string;
   /** Stable `cs-target` instance id. Absent until provisioned. */

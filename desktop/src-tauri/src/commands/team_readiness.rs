@@ -16,7 +16,7 @@ use crate::app_state::KEYCHAIN_UNAVAILABLE;
 use crate::coding_sessions::workdir_store::CodingSessionWorkdirStore;
 use crate::managed_agents::ManagedAgentReadinessMetadata;
 use crate::session_provider::runtimes::StrictRuntimeDiagnostic;
-use crate::session_provider::supervisor::CodingSessionProviderProcessState;
+use crate::session_provider::status::CodingSessionProviderProcessState;
 
 const SCHEMA_VERSION: u32 = 3;
 #[path = "team_readiness_git.rs"]
@@ -563,18 +563,28 @@ fn collect_provider(
             gathered.facts.push(TeamReadinessFact::blocked(
                 "provider",
                 "PROVIDER_NOT_RUNNING",
-                "The provider is not supervised",
+                "The agent host is running but no provider is",
                 "Use Prepare to start it.",
             ));
         }
-        CodingSessionProviderProcessState::Unknown => {
-            gathered.provider.process = "unknown".into();
+        // **Blocked, never Ready and never unknown.** The agent host did not
+        // answer, or answered that it will not start a provider — so nothing
+        // about this machine's readiness is known, and a launch gate that let
+        // that through would seat a team against a provider that may not
+        // exist. `unknown` would do exactly that, because the gate treats
+        // unknowns as passable.
+        //
+        // The remediation is the host's own words rather than a generic
+        // "use Prepare": the causes are different (not installed, not running,
+        // no identity, another host owns the lock) and so are the fixes.
+        CodingSessionProviderProcessState::HostUnreachable { reason } => {
+            gathered.provider.process = "host_unreachable".into();
             gathered.provider.key_state = Some(TeamReadinessKeyState::Unverified);
-            gathered.facts.push(TeamReadinessFact::unknown(
+            gathered.facts.push(TeamReadinessFact::blocked(
                 "provider",
-                "PROVIDER_PROCESS_UNKNOWN",
-                "Provider process state is unknown",
-                "Restart Beekeeper and retry.",
+                "PROVIDER_HOST_UNREACHABLE",
+                "The agent host could not answer for the provider",
+                &reason,
             ));
         }
     }
@@ -873,6 +883,9 @@ pub async fn team_readiness(
     Ok(response)
 }
 
+#[cfg(test)]
+#[path = "team_readiness_host_tests.rs"]
+mod host_tests;
 #[cfg(test)]
 #[path = "team_readiness_tests.rs"]
 mod tests;

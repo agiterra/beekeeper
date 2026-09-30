@@ -244,63 +244,6 @@ fn env_block_has_key(block: &[u8], key: &[u8]) -> bool {
         .any(|entry| entry.len() > key.len() && entry.starts_with(key) && entry[key.len()] == b'=')
 }
 
-#[cfg(test)]
-mod env_block_tests {
-    use super::*;
-
-    fn block(entries: &[&str]) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        for entry in entries {
-            bytes.extend_from_slice(entry.as_bytes());
-            bytes.push(0);
-        }
-        bytes
-    }
-
-    #[test]
-    fn an_exact_entry_matches_and_a_different_instance_does_not() {
-        let block = block(&[
-            "PATH=/usr/bin",
-            "BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app",
-            "HOME=/home/agent",
-        ]);
-        assert!(env_block_has_entry(
-            &block,
-            b"BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app"
-        ));
-        assert!(
-            !env_block_has_entry(&block, b"BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app.dev"),
-            "another live instance's agents must never match"
-        );
-    }
-
-    /// A key test that matched a prefix would spare `BUZZ_HOSTNAME` as if it
-    /// were `BUZZ_HOST_CHILD`, so the `=` is load-bearing.
-    #[test]
-    fn a_key_match_requires_the_equals_sign() {
-        let both = block(&["BUZZ_HOST_CHILD=4242", "BUZZ_HOSTNAME=somewhere"]);
-        assert!(env_block_has_key(&both, b"BUZZ_HOST_CHILD"));
-        assert!(env_block_has_key(&both, b"BUZZ_HOSTNAME"));
-        assert!(
-            !env_block_has_key(&both, b"BUZZ_HOST"),
-            "a prefix must not match a longer key"
-        );
-        assert!(!env_block_has_key(&both, b"BUZZ_HOST_CHILD_OF"));
-        // An empty value is still the key being present: a host that stamped
-        // an empty pid still owns the child.
-        assert!(env_block_has_key(
-            &block(&["BUZZ_HOST_CHILD="]),
-            b"BUZZ_HOST_CHILD"
-        ));
-    }
-
-    #[test]
-    fn an_empty_block_matches_nothing() {
-        assert!(!env_block_has_entry(&[], b"A=1"));
-        assert!(!env_block_has_key(&[], b"A"));
-    }
-}
-
 #[cfg(unix)]
 fn signal_process_group_or_leader(pid: u32, signal: i32, action: &str) -> Result<(), String> {
     let pgid = -(pid as i32);
@@ -563,4 +506,61 @@ pub(crate) fn terminate_untracked_pair_runtime(
         process_is_running,
         super::super::remove_agent_runtime_receipt_path,
     )
+}
+
+#[cfg(test)]
+mod env_block_tests {
+    use super::*;
+
+    fn block(entries: &[&str]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for entry in entries {
+            bytes.extend_from_slice(entry.as_bytes());
+            bytes.push(0);
+        }
+        bytes
+    }
+
+    #[test]
+    fn an_exact_entry_matches_and_a_different_instance_does_not() {
+        let block = block(&[
+            "PATH=/usr/bin",
+            "BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app",
+            "HOME=/home/agent",
+        ]);
+        assert!(env_block_has_entry(
+            &block,
+            b"BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app"
+        ));
+        assert!(
+            !env_block_has_entry(&block, b"BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app.dev"),
+            "another live instance's agents must never match"
+        );
+    }
+
+    /// A key test that matched a prefix would spare `BUZZ_HOSTNAME` as if it
+    /// were `BUZZ_HOST_CHILD`, so the `=` is load-bearing.
+    #[test]
+    fn a_key_match_requires_the_equals_sign() {
+        let both = block(&["BUZZ_HOST_CHILD=4242", "BUZZ_HOSTNAME=somewhere"]);
+        assert!(env_block_has_key(&both, b"BUZZ_HOST_CHILD"));
+        assert!(env_block_has_key(&both, b"BUZZ_HOSTNAME"));
+        assert!(
+            !env_block_has_key(&both, b"BUZZ_HOST"),
+            "a prefix must not match a longer key"
+        );
+        assert!(!env_block_has_key(&both, b"BUZZ_HOST_CHILD_OF"));
+        // An empty value is still the key being present: a host that stamped
+        // an empty pid still owns the child.
+        assert!(env_block_has_key(
+            &block(&["BUZZ_HOST_CHILD="]),
+            b"BUZZ_HOST_CHILD"
+        ));
+    }
+
+    #[test]
+    fn an_empty_block_matches_nothing() {
+        assert!(!env_block_has_entry(&[], b"A=1"));
+        assert!(!env_block_has_key(&[], b"A"));
+    }
 }

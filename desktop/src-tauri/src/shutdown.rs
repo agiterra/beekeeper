@@ -21,10 +21,18 @@ pub(crate) fn shut_down_app(app: &tauri::AppHandle, shutdown_done: &std::sync::a
         prevent_sleep::release(&app.state::<AppState>().prevent_sleep);
         app.state::<crate::terminal_runtime::TerminalSessions>()
             .shutdown_all();
-        // Before the managed-agent fan-out: the provider is stopped with SIGINT
-        // so its durable outbox flushes, which needs the relay connection the
-        // agent teardown does not touch but a hurried exit would.
-        crate::session_provider::shutdown_coding_session_provider(app);
+        // The coding-session provider is deliberately **not** stopped here.
+        //
+        // It is `buzz-host`'s child now, not this app's. Quitting Beekeeper
+        // used to be defined as "SIGINT the provider, then fan out over every
+        // managed agent" — which is precisely the coupling this split removes:
+        // a machine's agents should not end because a human closed a window.
+        // Stopping the provider is an explicit act now, over the host's
+        // control socket.
+        //
+        // Managed agents (`buzz-acp`) are still this app's children and still
+        // die with it. That is a known, deliberate limit of this landing; the
+        // release notes say so.
         if let Err(error) = shutdown_managed_agents(app) {
             eprintln!("buzz-desktop: failed to stop managed agents: {error}");
         }
@@ -48,7 +56,7 @@ pub(crate) fn install_signal_handler(
         if !shutdown_done.swap(true, Ordering::SeqCst) {
             app.state::<crate::terminal_runtime::TerminalSessions>()
                 .shutdown_all();
-            crate::session_provider::shutdown_coding_session_provider(&app);
+            // Same rule as `shut_down_app`: the provider is not ours to stop.
             let _ = shutdown_managed_agents(&app);
             #[cfg(feature = "mesh-llm")]
             shutdown_mesh_runtime(&app);

@@ -27,7 +27,7 @@ use buzz_session_host_core::logs::{append_log_marker, now_iso};
 use buzz_session_host_core::record::CodingSessionProviderRecord;
 
 use crate::restart_policy::{plan_restart, ChildExit, RestartDecision};
-use crate::state::{stamp_in, ProviderChildState};
+use crate::state::{stamp_in, ProviderChildState, RunSettings};
 use crate::takeover::{take_over_stale_provider, Takeover};
 use crate::terminate::terminate_gracefully_async;
 
@@ -42,6 +42,10 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 #[derive(Default)]
 pub struct PublishedState {
     child: Mutex<Option<ProviderChildState>>,
+    in_force: Mutex<Option<RunSettings>>,
+    /// What the most recent spawn was configured with. Becomes `in_force` when
+    /// that spawn is published as `Live`.
+    spawn_settings: Mutex<Option<RunSettings>>,
 }
 
 impl PublishedState {
@@ -58,9 +62,40 @@ impl PublishedState {
             .unwrap_or(ProviderChildState::NotSupervised)
     }
 
+    /// The settings the running provider was started with, if one is running.
+    ///
+    /// `None` means nothing is running, which is a different answer from
+    /// "running on the provider's own defaults". Collapsing the two would have
+    /// a settings panel claim a ceiling is enforced when nothing is enforcing
+    /// anything.
+    pub fn in_force(&self) -> Option<RunSettings> {
+        self.in_force.lock().ok().and_then(|guard| *guard)
+    }
+
+    /// Publish a child state, and the settings in force alongside it.
+    ///
+    /// The two are set together, in one place, deliberately: "what is in
+    /// force" is meaningful only while a child is live, and every other state
+    /// must clear it. Two separate publishers would eventually leave a stale
+    /// ceiling on display over a stopped provider, and nothing about the
+    /// display would look wrong.
     fn publish(&self, state: ProviderChildState) {
+        let settings = match &state {
+            ProviderChildState::Live { .. } => self.spawn_settings.lock().ok().and_then(|g| *g),
+            _ => None,
+        };
+        if let Ok(mut guard) = self.in_force.lock() {
+            *guard = settings;
+        }
         if let Ok(mut guard) = self.child.lock() {
             *guard = Some(state);
+        }
+    }
+
+    /// Record what the next spawn was configured with, before it is published.
+    fn record_spawn_settings(&self, settings: RunSettings) {
+        if let Ok(mut guard) = self.spawn_settings.lock() {
+            *guard = Some(settings);
         }
     }
 }
@@ -188,6 +223,13 @@ impl Supervisor {
             };
 
             let pid = child.id();
+            // Recorded from the config *this* spawn read: what is in force is
+            // what the running process was started with, not what is stored.
+            self.published.record_spawn_settings(RunSettings {
+                max_sessions: self.config.max_sessions,
+                turn_idle_timeout_secs: self.config.turn_idle_timeout_secs,
+                turn_budget: self.config.turn_budget,
+            });
             self.published.publish(ProviderChildState::Live {
                 pid,
                 started_at: now_iso(),
@@ -325,5 +367,49 @@ mod tests {
             started_at: "2026-09-30T00:00:02Z".to_string(),
         });
         assert_eq!(published.child().live_pid(), Some(42));
+    }
+
+    /// "In force" is meaningful only while a child is live. Every other state
+    /// must clear it, or a settings panel ends up showing a ceiling over a
+    /// stopped provider and nothing about the display looks wrong.
+    #[test]
+    fn the_settings_in_force_are_cleared_by_every_state_but_live() {
+        let published = PublishedState::default();
+        assert_eq!(
+            published.in_force(),
+            None,
+            "nothing running, nothing in force"
+        );
+
+        let settings = RunSettings {
+            max_sessions: Some(4),
+            turn_idle_timeout_secs: Some(900),
+            turn_budget: Some(0),
+        };
+        published.record_spawn_settings(settings);
+        published.publish(ProviderChildState::Live {
+            pid: 42,
+            started_at: "2026-09-30T00:00:02Z".to_string(),
+        });
+        assert_eq!(published.in_force(), Some(settings));
+        // `Some(0)` is "unlimited", a choice, and survives as one rather than
+        // collapsing into "unset".
+        assert_eq!(published.in_force().and_then(|s| s.turn_budget), Some(0));
+
+        for state in [
+            ProviderChildState::Backoff {
+                failures: 1,
+                next_at: "2026-09-30T00:00:04Z".to_string(),
+            },
+            ProviderChildState::GaveUp {
+                failures: 5,
+                at: "2026-09-30T00:10:00Z".to_string(),
+            },
+            ProviderChildState::NotSupervised,
+        ] {
+            published.record_spawn_settings(settings);
+            published.publish(state.clone());
+            assert_eq!(published.in_force(), None, "{state:?}");
+        }
     }
 }

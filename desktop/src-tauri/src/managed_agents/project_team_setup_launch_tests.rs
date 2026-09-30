@@ -529,14 +529,19 @@ fn transition_cannot_replace_a_validly_signed_create_or_change_the_fixed_brief()
 /// Run 7 (2026-09-24) wired the roster repair into one of two
 /// provider-starting call sites; run 8 (2026-09-25) had both, but the
 /// provider had been running since app launch, the founding never passed
-/// through a start path, and the host stayed off the roster. So:
+/// through a start path, and the host stayed off the roster.
 ///
-/// - every production `ensure_running(` call outside `supervisor` is either
-///   `ensure_host_serving_project` (which admits the named project) or is
-///   followed by `reconcile_saved_project_admissions` (which admits every
-///   project this computer has a saved association with);
-/// - `supervisor::start_provider_if_provisioned` (app launch, community
-///   switch) reconciles too;
+/// # What changed when the provider moved to `buzz-host`
+///
+/// "The provider was already running, so no start path ran" used to be the
+/// edge case this test was written for. It is now the **normal** case: the
+/// provider outlives the app, so most launches find it already up. The
+/// invariant therefore tightened rather than relaxed — admission can no
+/// longer be conditional on having started something:
+///
+/// - every production `host.start(` outside the client is immediately
+///   followed by an admission, unconditionally;
+/// - `ensure_host_serving_project` admits whatever the start returned;
 /// - the create flow admits before it publishes, whatever the provider's
 ///   state, and project creation pre-provisions;
 /// - there is one implementation: the pre-266 `ensure_host_on_private_roster`
@@ -579,14 +584,17 @@ fn every_provider_start_routes_through_the_roster_repair_helper() {
     // Production code only: stop at the first `#[cfg(test)]`.
     let production = |text: &str| text.split("#[cfg(test)]").next().unwrap_or("").to_string();
 
-    // Who calls `ensure_running(` in production, and how often.
+    // Who asks the agent host to start a provider, in production, and how
+    // often. `agent_host/client.rs` is the client itself and is excluded — it
+    // *is* `host.start(`.
     let mut callers: Vec<(String, usize)> = sources
         .iter()
+        .filter(|(path, _)| path != "agent_host/client.rs")
         .map(|(path, text)| {
-            let body = production(text);
-            let calls = body.matches("ensure_running(").count()
-                - body.matches("fn ensure_running(").count();
-            (path.clone(), calls)
+            (
+                path.clone(),
+                production(text).matches("host.start(").count(),
+            )
         })
         .filter(|(_, calls)| *calls > 0)
         .collect();
@@ -595,38 +603,60 @@ fn every_provider_start_routes_through_the_roster_repair_helper() {
         callers,
         vec![
             ("managed_agents/project_roster.rs".to_string(), 1),
-            ("session_provider/commands.rs".to_string(), 2),
-            ("session_provider/supervisor.rs".to_string(), 1),
+            ("session_provider/commands.rs".to_string(), 1),
         ],
         "a new provider start must admit the host: route it through \
          project_roster::ensure_host_serving_project or follow it with \
          project_admission::reconcile_saved_project_admissions"
     );
+
+    // In `commands.rs` the start and the reconcile live in one helper, so the
+    // reconcile cannot be forgotten at a call site.
     let commands = production(source("session_provider/commands.rs"));
-    assert_eq!(
-        commands
-            .matches("project_admission::reconcile_saved_project_admissions(")
-            .count(),
-        2,
-        "both provider commands reconcile saved associations after a start"
-    );
-    let supervisor = production(source("session_provider/supervisor.rs"));
-    let launch_start = supervisor
-        .split("fn start_provider_if_provisioned(")
+    let helper = commands
+        .split("async fn ensure_host_running(")
         .nth(1)
-        .expect("start_provider_if_provisioned exists");
+        .expect("ensure_host_running exists")
+        .split("\n}\n")
+        .next()
+        .unwrap_or("");
     assert!(
-        launch_start
-            .split("\n}\n")
-            .next()
-            .unwrap_or("")
-            .contains("project_admission::reconcile_saved_project_admissions("),
-        "a provider started at app launch reconciles its saved projects"
+        helper.contains("host.start(")
+            && helper.contains("project_admission::reconcile_saved_project_admissions("),
+        "the start and the admission belong in one helper so no call site can \
+         start without admitting"
     );
-    let roster = production(source("managed_agents/project_roster.rs"));
+    // The precise property, checked precisely: the reconcile sits at the
+    // function's own indentation, so it is not nested inside a conditional on
+    // the start's result. A substring search cannot tell those apart, and
+    // "conditional on the start" is the exact mistake run 8 made.
     assert!(
-        roster.contains("project_admission::admit_host_for_session("),
+        helper.lines().any(|line| line
+            == "    crate::managed_agents::project_admission::reconcile_saved_project_admissions(app, relay_url);"
+            || line == "    crate::managed_agents::project_admission::reconcile_saved_project_admissions("),
+        "the admission must sit at the helper's own indentation, not inside a \
+         conditional on the start succeeding: a provider that was already \
+         running never starts, and with the provider outliving this app that \
+         is now the normal case. Found:\n{helper}"
+    );
+
+    // And `ensure_host_serving_project` admits unconditionally too.
+    let roster = production(source("managed_agents/project_roster.rs"));
+    let serving = roster
+        .split("pub(crate) async fn ensure_host_serving_project(")
+        .nth(1)
+        .expect("ensure_host_serving_project exists")
+        .split("\n}\n")
+        .next()
+        .unwrap_or("");
+    assert!(
+        serving.contains("project_admission::admit_host_for_session("),
         "ensure_host_serving_project is a thin wrapper of the seam"
+    );
+    assert!(
+        !serving.contains("if running {"),
+        "the admission is no longer gated on having started something: the \
+         provider outlives this app, so most launches find it already up"
     );
     assert!(
         production(source("managed_agents/project_verify_setup.rs"))

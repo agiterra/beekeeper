@@ -274,6 +274,7 @@ fn status(control: &Arc<HostControl>) -> Status {
         provider_pubkey: config.provider_pubkey.clone(),
         provider_state_dir: config.provider_state_dir.clone(),
         provider: control.child_state(),
+        provider_settings_in_force: control.settings_in_force(),
         relay_connection: RelayConnectionState::unknowable(),
         sessions,
         warnings,

@@ -110,6 +110,11 @@ impl HostControl {
         self.published.child()
     }
 
+    /// What the running provider was started with, or `None`.
+    pub fn settings_in_force(&self) -> Option<crate::state::RunSettings> {
+        self.published.in_force()
+    }
+
     /// Whether a supervision loop is running right now.
     ///
     /// Distinct from "a child is live": a loop inside a backoff window is

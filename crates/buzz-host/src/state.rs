@@ -143,6 +143,26 @@ impl ProviderChildState {
     }
 }
 
+/// The settings the **running** provider was started with.
+///
+/// Published separately from the child state because these belong to the
+/// supervisor's run rather than to the process: the child reads every one of
+/// them from its environment at startup, so what a supervisor started with is
+/// what is *in force* until the provider next restarts — which is not
+/// necessarily what is stored. A surface that showed the stored value alone
+/// would claim a ceiling nothing is enforcing.
+///
+/// `None` in any field means "the provider's own default". `Some(0)` for
+/// `max_sessions` and `turn_budget` means unlimited, which is a choice and
+/// must survive as one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunSettings {
+    pub max_sessions: Option<usize>,
+    pub turn_idle_timeout_secs: Option<u64>,
+    pub turn_budget: Option<u64>,
+}
+
 /// What the host can honestly say about the provider's relay connection.
 ///
 /// **Always `Unknown` in v1**, and that is a design consequence rather than an

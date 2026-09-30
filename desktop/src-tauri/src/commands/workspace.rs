@@ -331,16 +331,31 @@ pub async fn apply_workspace(
         });
     }
 
-    // Bind the coding-session provider to the workspace relay. This runs here
-    // rather than in `setup` for the same reason managed-agent restore does:
-    // during setup the relay override is not yet installed, so the provider
-    // would attach to the fallback relay and answer commands for the wrong
-    // community. Off the command path because stopping a previously bound
-    // provider escalates through a signal timeout.
+    // Bind the agent host to the workspace relay. This runs here rather than
+    // in `setup` for the same reason managed-agent restore does: during setup
+    // the relay override is not yet installed, so the provider would attach to
+    // the fallback relay and answer commands for the wrong community.
+    //
+    // No longer `spawn_blocking`: the old comment said "off the command path
+    // because stopping a previously bound provider escalates through a signal
+    // timeout", and there is no signal timeout here any more. Rewriting
+    // `host.json` and asking the host to re-read it is a file write and a
+    // socket round trip, and the host does its own escalation out of this
+    // app's way.
     let provider_app = restore_app.clone();
     let provider_relay = crate::relay::relay_ws_url_with_override(&state);
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::session_provider::start_provider_if_provisioned(&provider_app, &provider_relay);
+    tauri::async_runtime::spawn(async move {
+        let host = provider_app.state::<crate::agent_host::AgentHost>();
+        match crate::agent_host::commission::rebind_host(&provider_app, &host, &provider_relay)
+            .await
+        {
+            // Nothing provisioned for this relay is the ordinary
+            // un-commissioned state, not a failure.
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("buzz-desktop: agent-host: failed to bind {provider_relay}: {error}")
+            }
+        }
     });
 
     Ok(())

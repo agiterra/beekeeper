@@ -15,7 +15,7 @@ use buzz_core_pkg::coding_session_runtime::{CliEnvVar, RuntimeDescriptor, SteerI
 use crate::managed_agents::{
     known_acp_runtime_exact, probe_auth_status, resolve_command, AuthStatus,
 };
-use crate::session_provider::supervisor::resolve_claude_code_executable;
+use crate::session_provider::status::resolve_claude_code_executable;
 
 /// One row of the host runtime table.
 struct HostRuntime {

@@ -36,10 +36,14 @@ impl Commissioned {
     /// host and the app cannot disagree about which file holds the child's
     /// output — that file is what gets pasted into a bug report.
     pub fn log_path(&self) -> std::path::PathBuf {
-        self.config
-            .session_provider_base_dir
-            .join("logs")
-            .join(format!("{}.log", self.config.provider_pubkey))
+        buzz_session_host_core::record::provider_log_path_in(
+            &self.config.session_provider_base_dir,
+            &self.config.provider_pubkey,
+        )
+        // The pubkey was validated by `HostConfig::validate` before this
+        // struct existed, so the only way here is a base directory, which the
+        // fallback keeps usable rather than losing the log entirely.
+        .unwrap_or_else(|_| self.config.session_provider_base_dir.join("provider.log"))
     }
 }
 

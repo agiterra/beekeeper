@@ -797,6 +797,7 @@ dependencies = [
  "block2",
  "buzz-agent",
  "buzz-core",
+ "buzz-host",
  "buzz-media",
  "buzz-persona",
  "buzz-sdk",
@@ -1278,6 +1279,24 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+]
+
+[[package]]
+name = "buzz-host"
+version = "0.1.0"
+dependencies = [
+ "buzz-core",
+ "buzz-session-host-core",
+ "chrono",
+ "clap",
+ "dirs",
+ "nix 0.31.3",
+ "nostr 0.44.7",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -6582,6 +6601,7 @@ dependencies = [
  "cfg-if 1.0.4",
  "cfg_aliases 0.2.1",
  "libc",
+ "memoffset",
 ]
 
 [[package]]

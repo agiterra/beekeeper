@@ -4,8 +4,9 @@
 use super::{
     actor, authoring, context, read_draft, verify_context, ProjectTeamSetupDraft, SetupError,
 };
+use crate::agent_host::AgentHost;
 use crate::app_state::AppState;
-use crate::session_provider::{commands, store, CodingSessionProviderState};
+use crate::session_provider::{commands, store};
 use buzz_core_pkg::coding_session_command::CodingSessionTarget;
 use buzz_core_pkg::coding_session_identity::ProviderInstanceAlias;
 use buzz_core_pkg::coding_session_lifecycle_command::{
@@ -215,7 +216,7 @@ pub async fn project_team_setup_get_launch(
 pub async fn project_team_setup_start_authoring(
     app: AppHandle,
     state: State<'_, AppState>,
-    provider: State<'_, CodingSessionProviderState>,
+    host: State<'_, AgentHost>,
     project_ref: String,
     setup_id: String,
     expected_relay_url: String,
@@ -311,7 +312,7 @@ pub async fn project_team_setup_start_authoring(
     if !crate::managed_agents::project_roster::ensure_host_serving_project(
         &app,
         &state,
-        &provider,
+        &host,
         &keys,
         &draft.project_ref,
         &saved.choice.provider_pubkey,

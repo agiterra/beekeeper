@@ -1,24 +1,30 @@
-//! Tauri surface for the coding-session provider host.
+//! Tauri surface for the coding-session provider.
 //!
-//! Four commands, deliberately narrow: read status, provision (which also seeds
-//! trust and starts), ensure running, stop. There is no "delete" — retiring an
-//! identity would strand every transcript already signed by it, so that belongs
-//! to an explicit rotation flow rather than a button.
+//! Deliberately narrow: read status, provision (which also seeds trust,
+//! commissions the agent host and starts), ensure running, stop. There is no
+//! "delete" — retiring an identity would strand every transcript already
+//! signed by it, so that belongs to an explicit rotation flow rather than a
+//! button.
+//!
+//! **Every one of these is now a request to `buzz-host`, not an action this
+//! app takes.** The app writes the files the host reads and then asks over the
+//! control socket; it spawns nothing and reaps nothing. What that buys is the
+//! whole point of the split: a coding session outlives this window.
 
 use std::collections::BTreeMap;
 
 use nostr::ToBech32;
 use tauri::{AppHandle, State};
 
+use crate::agent_host::{commission, AgentHost};
 use crate::app_state::AppState;
 use crate::coding_sessions::workdir_store::remateralize_provider_projects_view;
 use crate::relay::relay_ws_url_with_override;
+use crate::session_provider::status::{
+    provider_status, resolve_claude_code_executable, CodingSessionProviderStatus,
+};
 use crate::session_provider::store::{
     load_provider_store, save_provider_store, CodingSessionProviderRecord,
-};
-use crate::session_provider::supervisor::{
-    ensure_running, provider_status, resolve_claude_code_executable, stop_provider,
-    CodingSessionProviderState, CodingSessionProviderStatus,
 };
 use crate::session_provider::trust;
 use crate::util::now_iso;
@@ -48,16 +54,19 @@ pub(crate) struct CodingSessionProviderModels {
     pub allowed_models: Vec<String>,
 }
 
-/// Whether a provider identity exists for the active relay, and whether the
-/// desktop is currently supervising it.
+/// Whether a provider identity exists for the active relay, and what the agent
+/// host says about it.
+///
+/// No longer "whether this desktop is supervising it": that was a different
+/// claim from "a provider is running" and read identically in the UI.
 #[tauri::command]
 pub async fn coding_session_provider_status(
     app: AppHandle,
     state: State<'_, AppState>,
-    provider: State<'_, CodingSessionProviderState>,
+    host: State<'_, AgentHost>,
 ) -> Result<CodingSessionProviderStatus, String> {
     let relay_url = relay_ws_url_with_override(&state);
-    provider_status(&app, &provider, &relay_url)
+    provider_status(&app, &host, &relay_url).await
 }
 
 /// The session-capacity setting, and what the running provider is enforcing.
@@ -91,23 +100,34 @@ pub struct CodingSessionCapacitySettings {
 }
 
 /// Read the stored ceiling alongside what is actually in force.
+///
+/// The "running" half comes from the host, which knows what it started the
+/// child with. It is `None` whenever nothing is running *or* the host could
+/// not be reached — both of which mean "no ceiling is being enforced", which
+/// is the honest answer and the one the panel already renders.
 #[tauri::command]
 pub async fn coding_session_capacity_settings(
     app: AppHandle,
-    provider: State<'_, CodingSessionProviderState>,
+    host: State<'_, AgentHost>,
 ) -> Result<CodingSessionCapacitySettings, String> {
     let store = crate::session_provider::store::load_provider_store(&app)?;
+    let in_force = host
+        .snapshot()
+        .await
+        .status
+        .and_then(|status| status.provider_settings_in_force);
     Ok(CodingSessionCapacitySettings {
         max_sessions: store.max_sessions,
         default_max_sessions: buzz_session_provider_pkg::config::DEFAULT_MAX_SESSIONS,
-        running_max_sessions: provider.running_max_sessions(),
+        running_max_sessions: in_force.and_then(|settings| settings.max_sessions),
         turn_idle_timeout_secs: store.turn_idle_timeout_secs,
         default_turn_idle_timeout_secs:
             buzz_session_provider_pkg::config::DEFAULT_IDLE_TIMEOUT_SECS,
-        running_turn_idle_timeout_secs: provider.running_turn_idle_timeout_secs(),
+        running_turn_idle_timeout_secs: in_force
+            .and_then(|settings| settings.turn_idle_timeout_secs),
         turn_budget: store.turn_budget,
         default_turn_budget: buzz_session_provider_pkg::config::DEFAULT_TURN_BUDGET,
-        running_turn_budget: provider.running_turn_budget(),
+        running_turn_budget: in_force.and_then(|settings| settings.turn_budget),
     })
 }
 
@@ -116,13 +136,13 @@ pub async fn coding_session_capacity_settings(
 #[tauri::command]
 pub async fn set_coding_session_capacity(
     app: AppHandle,
-    provider: State<'_, CodingSessionProviderState>,
+    host: State<'_, AgentHost>,
     max_sessions: Option<usize>,
 ) -> Result<CodingSessionCapacitySettings, String> {
     let mut store = crate::session_provider::store::load_provider_store(&app)?;
     store.max_sessions = max_sessions;
     crate::session_provider::store::save_provider_store(&app, &store)?;
-    coding_session_capacity_settings(app, provider).await
+    coding_session_capacity_settings(app, host).await
 }
 
 /// Store a new per-turn silence budget. `None` restores the provider default.
@@ -134,7 +154,7 @@ pub async fn set_coding_session_capacity(
 #[tauri::command]
 pub async fn set_coding_session_turn_idle_timeout(
     app: AppHandle,
-    provider: State<'_, CodingSessionProviderState>,
+    host: State<'_, AgentHost>,
     turn_idle_timeout_secs: Option<u64>,
 ) -> Result<CodingSessionCapacitySettings, String> {
     if turn_idle_timeout_secs == Some(0) {
@@ -145,7 +165,7 @@ pub async fn set_coding_session_turn_idle_timeout(
     let mut store = crate::session_provider::store::load_provider_store(&app)?;
     store.turn_idle_timeout_secs = turn_idle_timeout_secs;
     crate::session_provider::store::save_provider_store(&app, &store)?;
-    coding_session_capacity_settings(app, provider).await
+    coding_session_capacity_settings(app, host).await
 }
 
 /// Store a new crew turn budget. `None` restores the provider default;
@@ -159,13 +179,13 @@ pub async fn set_coding_session_turn_idle_timeout(
 #[tauri::command]
 pub async fn set_coding_session_turn_budget(
     app: AppHandle,
-    provider: State<'_, CodingSessionProviderState>,
+    host: State<'_, AgentHost>,
     turn_budget: Option<u64>,
 ) -> Result<CodingSessionCapacitySettings, String> {
     let mut store = crate::session_provider::store::load_provider_store(&app)?;
     store.turn_budget = turn_budget;
     crate::session_provider::store::save_provider_store(&app, &store)?;
-    coding_session_capacity_settings(app, provider).await
+    coding_session_capacity_settings(app, host).await
 }
 
 /// Probe one runtime's model surface.
@@ -261,25 +281,37 @@ pub(crate) fn coding_session_provider_models_from_response(
 pub async fn provision_coding_session_provider(
     app: AppHandle,
     state: State<'_, AppState>,
-    provider: State<'_, CodingSessionProviderState>,
+    host: State<'_, AgentHost>,
     expected_relay_url: Option<String>,
 ) -> Result<CodingSessionProviderStatus, String> {
-    let _provision_guard = PROVISION_LOCK
-        .lock()
-        .map_err(|_| "coding-session provider provisioning lock is poisoned".to_string())?;
-    // Resolve after taking the lock: another provisioning call may have waited
-    // here while the person switched communities. An explicit caller pin never
-    // falls through to whichever relay happens to be active now.
-    let relay_url = provider_command_relay(&state, expected_relay_url.as_deref())?;
-    let mut store = load_provider_store(&app)?;
-    if store.get(&relay_url).is_none() {
-        let owner_keys = state.signing_keys()?;
-        let record = mint_provider_record(&owner_keys, &relay_url)?;
-        store.upsert(&relay_url, record);
-        save_provider_store(&app, &store)?;
-    }
+    let relay_url = {
+        let _provision_guard = PROVISION_LOCK
+            .lock()
+            .map_err(|_| "coding-session provider provisioning lock is poisoned".to_string())?;
+        // Resolve after taking the lock: another provisioning call may have
+        // waited here while the person switched communities. An explicit
+        // caller pin never falls through to whichever relay happens to be
+        // active now.
+        let relay_url = provider_command_relay(&state, expected_relay_url.as_deref())?;
+        let mut store = load_provider_store(&app)?;
+        if store.get(&relay_url).is_none() {
+            let owner_keys = state.signing_keys()?;
+            let record = mint_provider_record(&owner_keys, &relay_url)?;
+            store.upsert(&relay_url, record);
+            save_provider_store(&app, &store)?;
+        }
+        if store.get(&relay_url).is_none() {
+            return Err("failed to provision a coding-session provider identity".to_string());
+        }
+        relay_url
+    };
+    // The guard is released before the `await`s below on purpose: a
+    // `std::sync::Mutex` held across an await point would block the executor
+    // thread, and everything it protects — the load-mint-save sequence — is
+    // already done.
 
-    let Some(record) = store.get(&relay_url) else {
+    let store = load_provider_store(&app)?;
+    let Some(record) = store.get(&relay_url).cloned() else {
         return Err("failed to provision a coding-session provider identity".to_string());
     };
     // Trust seeding is part of provisioning, not a side effect of starting: a
@@ -293,12 +325,38 @@ pub async fn provision_coding_session_provider(
         eprintln!("buzz-desktop: failed to materialize coding-session projects view: {error}");
     }
 
-    if ensure_running(&app, &provider, &relay_url)? {
-        crate::managed_agents::project_admission::reconcile_saved_project_admissions(
-            &app, &relay_url,
-        );
+    // Hand the identity to the agent host: write `host.json` and the 0600 key
+    // file, then ask it to look. This is the moment "after Beekeeper is
+    // installed and commissioned" refers to.
+    commission::commission_host(
+        &app,
+        &host,
+        &relay_url,
+        &record,
+        &store,
+        commission::Commissioning::FirstIdentity,
+    )
+    .await?;
+    ensure_host_running(&app, &host, &relay_url).await;
+    provider_status(&app, &host, &relay_url).await
+}
+
+/// Ask the host to start the provider, then repair this machine's roster
+/// standing for every project it has a saved association with (ledger 266).
+///
+/// The admission half is not optional and not conditional on the start
+/// succeeding: a provider that has been running since before this app launched
+/// never passes through a start path at all, which is exactly how run 8
+/// (2026-09-25) left the host off the roster. Reconciling on every attempt is
+/// what makes that unreachable.
+async fn ensure_host_running(app: &AppHandle, host: &AgentHost, relay_url: &str) {
+    if let Err(error) = host.start().await {
+        // Disclosed, not fatal: the status this returns to carries the
+        // reachability, and the surface renders it. Failing the whole command
+        // would hide a provisioning that did succeed.
+        eprintln!("buzz-desktop: agent-host: could not start the provider: {error}");
     }
-    provider_status(&app, &provider, &relay_url)
+    crate::managed_agents::project_admission::reconcile_saved_project_admissions(app, relay_url);
 }
 
 /// Start the provisioned provider if it is not already supervised, then
@@ -308,16 +366,18 @@ pub async fn provision_coding_session_provider(
 pub async fn ensure_coding_session_provider_running(
     app: AppHandle,
     state: State<'_, AppState>,
-    provider: State<'_, CodingSessionProviderState>,
+    host: State<'_, AgentHost>,
     expected_relay_url: Option<String>,
 ) -> Result<CodingSessionProviderStatus, String> {
     let relay_url = provider_command_relay(&state, expected_relay_url.as_deref())?;
-    if ensure_running(&app, &provider, &relay_url)? {
-        crate::managed_agents::project_admission::reconcile_saved_project_admissions(
-            &app, &relay_url,
-        );
+    // Re-assert the commissioning first: the host may have been installed,
+    // reinstalled or pointed at another community since this identity was
+    // provisioned, and `host.json` is the only thing that tells it which.
+    if let Err(error) = commission::rebind_host(&app, &host, &relay_url).await {
+        eprintln!("buzz-desktop: agent-host: could not rebind: {error}");
     }
-    provider_status(&app, &provider, &relay_url)
+    ensure_host_running(&app, &host, &relay_url).await;
+    provider_status(&app, &host, &relay_url).await
 }
 
 /// Resolve an optional caller-owned relay pin without ever redirecting it to a
@@ -350,17 +410,22 @@ pub(crate) fn provider_command_relay_for_active(
     Ok(expected.to_string())
 }
 
-/// Stop the supervised provider. The record and its state directory survive, so
-/// a later start resumes the same identity and outbox.
+/// Ask the host to stop the provider. The record and its state directory
+/// survive, so a later start resumes the same identity and outbox.
+///
+/// This is now the *only* way a person stops a provider from this app —
+/// quitting Beekeeper no longer does it, which is the point.
 #[tauri::command]
 pub async fn stop_coding_session_provider(
     app: AppHandle,
     state: State<'_, AppState>,
-    provider: State<'_, CodingSessionProviderState>,
+    host: State<'_, AgentHost>,
 ) -> Result<CodingSessionProviderStatus, String> {
     let relay_url = relay_ws_url_with_override(&state);
-    stop_provider(&provider);
-    provider_status(&app, &provider, &relay_url)
+    // A failure here is reported, not swallowed: "stop" is a request a person
+    // made, and a stop that did not happen must not read as one that did.
+    host.stop().await?;
+    provider_status(&app, &host, &relay_url).await
 }
 
 /// Generate a provider keypair and attest it with the owner key.

@@ -52,18 +52,14 @@ pub(crate) use buzz_session_host_core::record::canonical_relay_key;
 pub(crate) mod commands;
 pub(crate) mod env;
 pub(crate) mod runtimes;
+pub(crate) mod status;
 pub(crate) mod store;
-pub(crate) mod supervisor;
 pub(crate) mod trust;
 
 #[cfg(test)]
 mod steer_guard_tests;
 #[cfg(test)]
 mod tests;
-
-pub(crate) use supervisor::{
-    shutdown_coding_session_provider, start_provider_if_provisioned, CodingSessionProviderState,
-};
 
 /// Root directory for every coding-session provider artifact.
 ///
@@ -110,12 +106,20 @@ pub(crate) fn provider_state_dir(
 }
 
 /// Log file for the supervised child, alongside the record store.
+///
+/// The **host** writes this file now; the app creates the directory at
+/// commissioning so the host's first spawn has somewhere to write, and knows
+/// the path so it can offer the log to a person. Derived through the shared
+/// crate so the two cannot end up naming different files.
+#[allow(dead_code)] // Offered to the log viewer in a later slice.
 pub(crate) fn provider_log_path(app: &AppHandle, provider_pubkey: &str) -> Result<PathBuf, String> {
-    if !crate::managed_agents::is_lowercase_hex_pubkey(provider_pubkey) {
-        return Err("provider pubkey must be 64-character lowercase hex".to_string());
+    let path = buzz_session_host_core::record::provider_log_path_in(
+        &session_provider_base_dir(app)?,
+        provider_pubkey,
+    )?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|error| format!("failed to create session-provider logs dir: {error}"))?;
     }
-    let dir = session_provider_base_dir(app)?.join("logs");
-    std::fs::create_dir_all(&dir)
-        .map_err(|error| format!("failed to create session-provider logs dir: {error}"))?;
-    Ok(dir.join(format!("{provider_pubkey}.log")))
+    Ok(path)
 }

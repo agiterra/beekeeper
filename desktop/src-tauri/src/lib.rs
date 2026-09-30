@@ -1,4 +1,5 @@
 #![recursion_limit = "256"] // Deep Tauri command futures exceed the default layout query depth.
+mod agent_host;
 mod app_menu;
 mod app_state;
 mod archive;
@@ -283,7 +284,10 @@ pub fn run() {
         .manage(BuilderlabLogin::default())
         .manage(commands::pairing::PairingHandle::new())
         .manage(terminal_runtime::TerminalSessions::default())
-        .manage(session_provider::CodingSessionProviderState::default())
+        // The app is a client of the agent host, not its owner: this holds
+        // the control socket path and nothing else. There is no supervisor
+        // state to manage any more, which is the point of the split.
+        .manage(agent_host::AgentHost::new())
         .setup(move |app| {
             let app_handle = app.handle().clone();
             // Where this desktop bounds its own Git in project workspaces

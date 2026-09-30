@@ -24,9 +24,7 @@ use crate::managed_agents::{
     crew_roles, load_managed_agents, load_personas, load_teams, save_managed_agents, save_personas,
     save_teams,
 };
-use crate::session_provider::{
-    commands as provider_commands, store as provider_store, CodingSessionProviderState,
-};
+use crate::session_provider::{commands as provider_commands, store as provider_store};
 use buzz_core_pkg::coding_session_genesis::CodingSessionGenesisPayload;
 use buzz_core_pkg::coding_session_identity::ProviderInstanceAlias;
 use buzz_core_pkg::coding_session_lifecycle_command::{

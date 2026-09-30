@@ -128,6 +128,11 @@ buzz_session_provider_pkg = { package = "buzz-session-provider", path = "../../c
 # environment two ways is how a provider comes to behave differently depending
 # on who started it.
 buzz_session_host_core = { package = "buzz-session-host-core", path = "../../crates/buzz-session-host-core" }
+# The app is a *client* of the agent host: it links the host crate for the
+# control protocol and its typed client, never to supervise anything. The
+# supervising half of that crate is its binary, which the app ships as a
+# sidecar and does not call into.
+buzz_host = { package = "buzz-host", path = "../../crates/buzz-host" }
 portable-pty = "0.9"
 # Built-in shell sessions keep a rendered mirror of each PTY byte stream so
 # agents can read a clean screen instead of raw ANSI scrollback.

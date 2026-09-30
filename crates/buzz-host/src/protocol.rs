@@ -28,7 +28,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::sessions::SessionSnapshot;
-use crate::state::{ProviderChildState, RelayConnectionState};
+use crate::state::{ProviderChildState, RelayConnectionState, RunSettings};
 
 /// The wire version. Bumped on any change a v1 client could misread.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -152,6 +152,15 @@ pub struct Status {
     pub provider_state_dir: std::path::PathBuf,
     /// The supervised child, with its reason.
     pub provider: ProviderChildState,
+    /// What the **running** provider was started with, or `None` when nothing
+    /// is running.
+    ///
+    /// Distinct from the stored settings, which the app holds: the child reads
+    /// its limits from the environment at startup, so a change takes effect at
+    /// the next start and never mid-flight. A surface showing only the stored
+    /// value would name a ceiling nothing is enforcing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_settings_in_force: Option<RunSettings>,
     /// Always `unknown`, with a `why`. See [`RelayConnectionState`].
     pub relay_connection: RelayConnectionState,
     /// The provider's live sessions, read from its own atomically-replaced

@@ -14,7 +14,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use nostr::ToBech32;
 
@@ -25,13 +24,12 @@ use crate::session_provider::commands::{
     coding_session_provider_models_from_response, mint_provider_record,
     provider_command_relay_for_active,
 };
-use crate::session_provider::env::{build_provider_env, ProviderEnvInputs};
+// Imported from the shared crate directly: the app no longer builds this map
+// for real, and these tests assert its *minting* against the one builder both
+// launchers use.
 use crate::session_provider::store::CodingSessionProviderRecord;
-use crate::session_provider::supervisor::{
-    parse_lock_owner_pid, plan_restart, RestartDecision, BASE_RESTART_DELAY,
-    MAX_RESTARTS_PER_WINDOW, MAX_RESTART_DELAY, RESTART_WINDOW,
-};
 use crate::session_provider::trust::{append_allowed_bridge_pubkey, LOCAL_PROVIDER_LABEL};
+use buzz_session_host_core::env::{build_provider_env, ProviderEnvInputs};
 
 pub(super) const RELAY: &str = "wss://relay.example/";
 
@@ -208,67 +206,10 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
     })
 }
 
-// ── restart policy ───────────────────────────────────────────────────────────
-
-fn delay_of(decision: RestartDecision) -> Duration {
-    match decision {
-        RestartDecision::Retry { delay, .. } => delay,
-        RestartDecision::GiveUp => panic!("expected a retry"),
-    }
-}
-
-#[test]
-fn backoff_doubles_from_the_base_delay() {
-    let fresh = Duration::from_secs(1);
-    assert_eq!(delay_of(plan_restart(0, fresh)), BASE_RESTART_DELAY);
-    assert_eq!(delay_of(plan_restart(1, fresh)), BASE_RESTART_DELAY * 2);
-    assert_eq!(delay_of(plan_restart(2, fresh)), BASE_RESTART_DELAY * 4);
-    assert_eq!(delay_of(plan_restart(3, fresh)), BASE_RESTART_DELAY * 8);
-}
-
-#[test]
-fn backoff_is_capped() {
-    let fresh = Duration::from_secs(1);
-    for failures in 0..MAX_RESTARTS_PER_WINDOW {
-        assert!(delay_of(plan_restart(failures, fresh)) <= MAX_RESTART_DELAY);
-    }
-}
-
-#[test]
-fn supervision_gives_up_after_the_window_budget() {
-    let fresh = Duration::from_secs(1);
-    assert_eq!(
-        plan_restart(MAX_RESTARTS_PER_WINDOW, fresh),
-        RestartDecision::GiveUp
-    );
-}
-
-/// An aged-out window is what stops a provider that crashes once a day from
-/// eventually being abandoned.
-#[test]
-fn an_expired_window_resets_the_failure_count() {
-    let expired = RESTART_WINDOW + Duration::from_secs(1);
-    assert_eq!(
-        plan_restart(MAX_RESTARTS_PER_WINDOW, expired),
-        RestartDecision::Retry {
-            delay: BASE_RESTART_DELAY,
-            failures: 1,
-        }
-    );
-}
-
-/// Lock-file contents that are not exactly one plausible pid must never
-/// become a kill target: the takeover path signals whatever pid this returns.
-#[test]
-fn lock_owner_pid_parsing_rejects_garbage_and_system_pids() {
-    assert_eq!(parse_lock_owner_pid("4242\n"), Some(4242));
-    assert_eq!(parse_lock_owner_pid("  4242  "), Some(4242));
-    assert_eq!(parse_lock_owner_pid(""), None);
-    assert_eq!(parse_lock_owner_pid("not-a-pid"), None);
-    assert_eq!(parse_lock_owner_pid("-7"), None);
-    assert_eq!(parse_lock_owner_pid("0"), None, "never signal pid 0");
-    assert_eq!(parse_lock_owner_pid("1"), None, "never signal launchd/init");
-}
+// The restart policy and the lock-owner parsing moved to `buzz-host` with
+// the supervisor: `restart_policy.rs` (which now also refuses to revive a
+// clean `exit(0)`, per `docs/remote-agents.md` § I5) and `takeover.rs`.
+// The app has no restart ladder to test — it does not start the provider.
 
 // ── trust seeding ────────────────────────────────────────────────────────────
 

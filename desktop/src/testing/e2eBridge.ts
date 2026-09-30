@@ -330,7 +330,22 @@ type E2eConfig = {
      */
     codingSessionProviderStatus?: {
       provisioned: boolean;
-      running: boolean;
+      /**
+       * `null` models an agent host that could not be reached — which is the
+       * state a spec needs in order to assert that a surface says so instead
+       * of drawing a calm "stopped". A spec that omits `host` gets a reachable
+       * one, because that is the ordinary case.
+       */
+      running: boolean | null;
+      host?: {
+        reachability:
+          | { state: "reachable" }
+          | { state: "absent"; socket: string }
+          | { state: "unresponsive"; reason: string };
+        socket: string;
+        providerState?: { state: string } & Record<string, unknown>;
+        message: string;
+      };
       providerPubkey?: string;
       instanceId?: string;
     };
@@ -13472,7 +13487,30 @@ export function maybeInstallE2eTauriMocks() {
         if (!status) {
           throw new Error(`Unsupported mocked Tauri command: ${command}`);
         }
-        return status;
+        // `host` is required on the wire, so a spec that only sets
+        // `provisioned`/`running` still gets a well-formed status rather than
+        // one the UI has to defend against. The default is a reachable host
+        // whose child state matches `running`, so the mock cannot describe a
+        // combination the real host could not produce.
+        return {
+          ...status,
+          host: status.host ?? {
+            reachability: { state: "reachable" as const },
+            socket: "/home/e2e/.local/state/buzz/host/host.sock",
+            providerState:
+              status.running === true
+                ? {
+                    state: "live",
+                    pid: 4242,
+                    startedAt: "2026-09-30T00:00:00Z",
+                  }
+                : { state: "notSupervised" },
+            message:
+              status.running === true
+                ? "the provider is running as pid 4242"
+                : "no provider is commissioned on this machine",
+          },
+        };
       }
       // L11 (worktree lifecycle) — mocked host record of the trees it cut.
       case "list_coding_session_seat_worktrees": {

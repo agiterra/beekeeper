@@ -3,6 +3,7 @@
 //! observes the retained local activation operation.
 
 use super::*;
+use crate::agent_host::AgentHost;
 use crate::commands::project_git_exec::build_git_auth_config_for_keys;
 use crate::managed_agents::{project_agent_association as association, ManagedAgentRecord};
 use nostr::nips::nip44;
@@ -626,7 +627,7 @@ pub async fn project_team_setup_install_adopted_roles(
 pub async fn project_team_setup_start_lead(
     app: AppHandle,
     state: State<'_, AppState>,
-    provider: State<'_, CodingSessionProviderState>,
+    host: State<'_, AgentHost>,
     setup_id: String,
     project_ref: String,
     expected_relay_url: String,
@@ -833,7 +834,7 @@ pub async fn project_team_setup_start_lead(
     if !crate::managed_agents::project_roster::ensure_host_serving_project(
         &app,
         &state,
-        &provider,
+        &host,
         &keys,
         &draft.project_ref,
         provider_pubkey,
