@@ -36,9 +36,12 @@ pub use buzz_core::coding_session_catalog::{
     to_canonical_json, Catalog, CatalogModel, CatalogProject, CatalogProvider, CATALOG_SCHEMA,
     MAX_ALLOWED_MODELS, MAX_CATALOG_CONTENT_BYTES, MAX_PROJECTS, MAX_PROVIDERS,
 };
+use buzz_core::coding_session_catalog::{
+    MAX_EFFORT_BYTES, MAX_MODEL_DESCRIPTION_BYTES, MAX_MODEL_EFFORTS, MAX_MODEL_NAME_BYTES,
+};
 
 use crate::commands::ProjectsFile;
-use crate::config::Config;
+use crate::config::{Config, ModelDetail};
 use crate::context_window::{context_window_for_model, model_family_for_model};
 use crate::payload::Capabilities;
 
@@ -71,18 +74,51 @@ fn vendor_for_runtime(runtime: &str, driver: &str) -> Option<&'static str> {
 ///
 /// Every field is a fact from a named source or it is absent: the window comes
 /// from [`context_window_for_model`], the family from
-/// [`model_family_for_model`], and the vendor from the runtime that can only
-/// serve one. Nothing is inferred from the spelling of an id, because a reader
-/// cannot tell an inferred fact from a measured one — the whole reason the
-/// context-window table refuses to guess.
-fn describe_model(id: &str, runtime: &str, driver: &str) -> CatalogModel {
-    CatalogModel {
+/// [`model_family_for_model`], the vendor from the runtime that can only
+/// serve one, and the name, description, efforts, fast mode and rank from the
+/// adapter's own discovery answer ([`ModelDetail`]). Nothing is inferred from
+/// the spelling of an id, because a reader cannot tell an inferred fact from a
+/// measured one — the whole reason the context-window table refuses to guess.
+fn describe_model(
+    id: &str,
+    runtime: &str,
+    driver: &str,
+    detail: Option<&ModelDetail>,
+) -> CatalogModel {
+    let mut model = CatalogModel {
         context_window: context_window_for_model(id),
         family: model_family_for_model(id).map(str::to_owned),
         vendor: vendor_for_runtime(runtime, driver).map(str::to_owned),
         deprecated: None,
         ..CatalogModel::new(id)
+    };
+    let Some(detail) = detail else {
+        return model;
+    };
+    // Out-of-bounds text is dropped whole, never truncated: a clipped name
+    // presented as the runtime's word would be a word it never said.
+    let within = |text: &Option<String>, max: usize| {
+        text.as_ref()
+            .filter(|text| !text.trim().is_empty() && text.len() <= max)
+            .cloned()
+    };
+    model.name = within(&detail.name, MAX_MODEL_NAME_BYTES);
+    model.description = within(&detail.description, MAX_MODEL_DESCRIPTION_BYTES);
+    model.rank = detail.rank;
+    if let Some(controls) = &detail.controls {
+        // All or nothing: a subset would claim the missing values are refused.
+        let publishable = controls.efforts.len() <= MAX_MODEL_EFFORTS
+            && controls.efforts.iter().enumerate().all(|(slot, effort)| {
+                !effort.trim().is_empty()
+                    && effort.len() <= MAX_EFFORT_BYTES
+                    && !controls.efforts[..slot].contains(effort)
+            });
+        if publishable {
+            model.efforts = controls.efforts.clone();
+        }
+        model.fast_mode = controls.fast_mode.then_some(true);
     }
+    model
 }
 
 /// The revision-independent body, digested to decide whether a bump is due.
@@ -115,9 +151,17 @@ pub fn build(config: &Config, projects_file: &ProjectsFile, revision: u64) -> Ca
             allowed_models.insert(0, descriptor.default_model.clone());
             // Sparse by construction: an id this host knows nothing about
             // contributes no row, so the table never implies knowledge.
+            let details = config.model_details.get(&descriptor.instance_ref);
             let models: Vec<CatalogModel> = allowed_models
                 .iter()
-                .map(|model| describe_model(model, &descriptor.runtime, &descriptor.driver))
+                .map(|model| {
+                    describe_model(
+                        model,
+                        &descriptor.runtime,
+                        &descriptor.driver,
+                        details.and_then(|details| details.get(model)),
+                    )
+                })
                 .filter(|model| !model.is_bare())
                 .collect();
             CatalogProvider {
@@ -277,6 +321,7 @@ mod tests {
             redaction_retention: crate::redaction_vault::RetentionPolicy::default(),
             command_horizon: Duration::from_secs(86_400),
             runtime_profile_override: None,
+            model_details: Default::default(),
         }
     }
 
@@ -497,6 +542,103 @@ mod tests {
             .models
             .iter()
             .all(|model| model.deprecated.is_none()));
+
+        let json = to_canonical_json(&catalog).expect("serialize");
+        let reparsed =
+            buzz_core::coding_session_catalog::parse_catalog(&json).expect("canonical reader");
+        assert_eq!(reparsed, catalog);
+    }
+
+    /// What the adapter said about its models at discovery is published on
+    /// their rows; ids it did not describe keep the older facts only, and the
+    /// offer itself does not move.
+    #[test]
+    fn discovered_names_efforts_and_fast_mode_are_published_per_model() {
+        use crate::config::{ModelControls, ModelDetail};
+        let mut codex = claude_descriptor(
+            "gpt-5.6-sol",
+            &["gpt-5.6-sol[high]", "gpt-5.6-terra", "gpt-5.6-luna"],
+        );
+        codex.instance_ref = "codex-primary".into();
+        codex.driver = "codex-acp".into();
+        codex.runtime = "codex".into();
+        let mut config = config_with_runtimes(vec![codex]);
+        config.model_details.insert(
+            "codex-primary".into(),
+            BTreeMap::from([
+                (
+                    "gpt-5.6-sol".to_owned(),
+                    ModelDetail {
+                        name: Some("GPT-5.6 Sol".into()),
+                        description: Some("Frontier reasoning".into()),
+                        rank: Some(1),
+                        controls: Some(ModelControls {
+                            efforts: vec!["low".into(), "high".into(), "ultra".into()],
+                            fast_mode: true,
+                        }),
+                    },
+                ),
+                (
+                    "gpt-5.6-terra".to_owned(),
+                    ModelDetail {
+                        name: Some("n".repeat(MAX_MODEL_NAME_BYTES + 1)),
+                        description: None,
+                        rank: Some(0),
+                        // Measured: no effort control, no fast mode.
+                        controls: Some(ModelControls::default()),
+                    },
+                ),
+                (
+                    "gpt-5.6-luna".to_owned(),
+                    ModelDetail {
+                        name: Some("GPT-5.6 Luna".into()),
+                        description: None,
+                        rank: Some(2),
+                        controls: Some(ModelControls {
+                            efforts: (0..=MAX_MODEL_EFFORTS).map(|i| format!("e{i}")).collect(),
+                            fast_mode: false,
+                        }),
+                    },
+                ),
+            ]),
+        );
+        let catalog = build(&config, &ProjectsFile::default(), 1);
+        let provider = &catalog.providers[0];
+        assert_eq!(
+            provider.allowed_models,
+            vec![
+                "gpt-5.6-sol",
+                "gpt-5.6-luna",
+                "gpt-5.6-sol[high]",
+                "gpt-5.6-terra"
+            ]
+        );
+        let row = |id: &str| {
+            provider
+                .models
+                .iter()
+                .find(|model| model.id == id)
+                .unwrap_or_else(|| panic!("row for {id}"))
+        };
+        let sol = row("gpt-5.6-sol");
+        assert_eq!(sol.name.as_deref(), Some("GPT-5.6 Sol"));
+        assert_eq!(sol.description.as_deref(), Some("Frontier reasoning"));
+        assert_eq!(sol.efforts, vec!["low", "high", "ultra"]);
+        assert_eq!(sol.fast_mode, Some(true));
+        assert_eq!(sol.rank, Some(1));
+        assert_eq!(sol.context_window, Some(400_000));
+        // Oversized text is dropped whole, and false fast mode is omitted.
+        let terra = row("gpt-5.6-terra");
+        assert_eq!((terra.name.as_ref(), terra.fast_mode), (None, None));
+        assert!(terra.efforts.is_empty());
+        assert_eq!(terra.rank, Some(0));
+        // Too many efforts to publish: none rather than a misleading subset.
+        assert!(row("gpt-5.6-luna").efforts.is_empty());
+        // The bracketed unstable id was never described: older facts only.
+        let bracketed = row("gpt-5.6-sol[high]");
+        assert_eq!(bracketed.name, None);
+        assert_eq!(bracketed.rank, None);
+        assert_eq!(bracketed.vendor.as_deref(), Some("openai"));
 
         let json = to_canonical_json(&catalog).expect("serialize");
         let reparsed =

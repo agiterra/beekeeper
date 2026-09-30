@@ -11,6 +11,7 @@
 //! [`Config::projects_file`], is re-read per command, and never reaches signed
 //! content.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -174,6 +175,36 @@ pub struct Config {
     /// fixture that launches shell doubles, which must say so explicitly when
     /// it builds its configuration.
     pub runtime_profile_override: Option<crate::execution_scope::RuntimeProfile>,
+    /// What each runtime's adapter said about its own model option values at
+    /// startup discovery, keyed by `instance_ref` and then by model id. Empty
+    /// for a runtime that was not discovered (or whose discovery failed); the
+    /// catalog then publishes only what it knows from its own tables.
+    pub model_details: BTreeMap<String, BTreeMap<String, ModelDetail>>,
+}
+
+/// The adapter's own description of one model option value.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelDetail {
+    /// The option's `name`, as the adapter gave it.
+    pub name: Option<String>,
+    /// The option's `description`, as the adapter gave it.
+    pub description: Option<String>,
+    /// Position in the adapter's model option list, 0 first.
+    pub rank: Option<u32>,
+    /// The controls the adapter offered with this model selected, or `None`
+    /// when discovery did not measure them (budget spent, switch refused,
+    /// response without `configOptions`). `None` is "unknown", never "none".
+    pub controls: Option<ModelControls>,
+}
+
+/// The per-model controls measured by switching to a model during discovery.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelControls {
+    /// The `thought_level` option's values, in the adapter's order; empty
+    /// when the adapter offered no effort control for this model.
+    pub efforts: Vec<String>,
+    /// Whether a fast-mode switch was offered for this model.
+    pub fast_mode: bool,
 }
 
 impl Config {
@@ -297,6 +328,7 @@ impl Config {
             redaction_retention,
             command_horizon,
             runtime_profile_override: None,
+            model_details: BTreeMap::new(),
         })
     }
 

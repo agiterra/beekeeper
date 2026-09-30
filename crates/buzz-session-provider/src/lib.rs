@@ -12901,6 +12901,7 @@ mod tests {
             // prepares a full boundary around them but never reaches for a
             // real runtime's login or state.
             runtime_profile_override: Some(crate::execution_scope::RuntimeProfile::TestDouble),
+            model_details: Default::default(),
         }
     }
 

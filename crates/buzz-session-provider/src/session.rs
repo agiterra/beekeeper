@@ -2608,6 +2608,12 @@ async fn apply_model(
 ) -> Option<String> {
     let desired = desired?;
     let method = buzz_acp::acp::resolve_model_switch_method(&response.raw, desired);
+    if method.is_none() {
+        if let Some(plan) = buzz_acp::model_options::resolve_model_selection(&response.raw, desired)
+        {
+            return apply_model_selection(client, &response.session_id, desired, plan).await;
+        }
+    }
     let outcome = match method {
         Some(ModelSwitchMethod::ConfigOption {
             config_id,
@@ -2656,6 +2662,94 @@ async fn apply_model(
             None
         }
     }
+}
+
+/// Apply a selection the adapter does not advertise whole: its advertised
+/// base model, then each modifier against the controls the adapter returns
+/// *for that model*.
+///
+/// `[fast]` turns the fast-mode switch on; any other token is applied only
+/// when it is one of that model's reasoning-effort values. A token that is
+/// neither is not guessed at — it is logged with what was on offer, exactly
+/// as an unofferable model is — and left out of the returned selection, so
+/// what the session records is what was applied (`opus[1m][fast]` for a
+/// request of `opus[1m][ultra][fast]` on a model without `ultra`).
+async fn apply_model_selection(
+    client: &mut AcpClient,
+    session_id: &str,
+    desired: &str,
+    plan: buzz_acp::model_options::ModelSelectionPlan,
+) -> Option<String> {
+    use buzz_acp::model_options::{
+        config_option_id, config_option_values, extract_fast_mode_option,
+        extract_thought_level_option, fast_mode_on_value, FAST_MODIFIER,
+    };
+    let mut controls = match client
+        .session_set_config_option(session_id, &plan.config_id, &plan.base)
+        .await
+    {
+        Ok(controls) => controls,
+        Err(error) => {
+            tracing::warn!(
+                target: "csp::session",
+                "model switch to {} (for {desired}) failed: {error}",
+                plan.base
+            );
+            return None;
+        }
+    };
+    let mut applied = plan.base.clone();
+    for token in &plan.modifiers {
+        let (option, value) = if token == FAST_MODIFIER {
+            let option = extract_fast_mode_option(&controls);
+            (option, option.and_then(fast_mode_on_value))
+        } else {
+            let option = extract_thought_level_option(&controls);
+            let offered = option.is_some_and(|option| {
+                config_option_values(option)
+                    .iter()
+                    .any(|value| value == token)
+            });
+            (
+                option,
+                offered.then(|| serde_json::Value::String(token.clone())),
+            )
+        };
+        let target = option.and_then(|option| config_option_id(option).map(str::to_owned));
+        let (Some(config_id), Some(value)) = (target, value) else {
+            let offered: Vec<String> = extract_thought_level_option(&controls)
+                .map(config_option_values)
+                .unwrap_or_default();
+            tracing::warn!(
+                target: "csp::session",
+                offered_efforts = ?offered,
+                fast_mode = extract_fast_mode_option(&controls).is_some(),
+                "agent does not offer [{token}] with model {} — not applied",
+                plan.base
+            );
+            continue;
+        };
+        match client
+            .session_set_config_value(session_id, &config_id, value)
+            .await
+        {
+            Ok(fresh) => {
+                applied.push_str(&format!("[{token}]"));
+                // A later token is judged against what the adapter now says.
+                if buzz_acp::model_options::has_config_options(&fresh) {
+                    controls = fresh;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "csp::session",
+                    "setting [{token}] on model {} failed: {error}",
+                    plan.base
+                );
+            }
+        }
+    }
+    Some(applied)
 }
 
 /// Map an ACP startup failure onto a receipt error code.
@@ -4671,7 +4765,7 @@ while IFS= read -r line; do
     *'"method":"session/new"'*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"fresh-context-session"%s}}\n' "$id" "${MCP_TEST_MODELS:-}" ;;
     *'"method":"session/set_config_option"'*|*'"method":"session/set_model"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
+      printf '{"jsonrpc":"2.0","id":%s,"result":{%s}}\n' "$id" "${MCP_TEST_SET_RESULT:-}" ;;
     *'"method":"session/prompt"'*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
   esac
@@ -6758,6 +6852,124 @@ done
         let startup = manager.create(create).await.expect("create");
         assert_eq!(startup.model.as_deref(), Some("gpt-5.6-sol"));
         manager.shutdown("s1");
+    }
+
+    /// Runs a create asking for `selection` against an adapter whose model
+    /// switch answers with `set_result`, and returns what the session
+    /// recorded plus every `session/set_config_option` it sent.
+    async fn select_model(
+        selection: &str,
+        set_result: &str,
+    ) -> (Option<String>, Vec<serde_json::Value>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "selection-agent", MCP_RECORDING_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let mut create = request(agent, dir.path());
+        create.model = Some(selection.into());
+        let log_path = dir.path().join("selection.requests");
+        create.agent_env = vec![
+            (
+                "MCP_TEST_LOG".to_owned(),
+                log_path.to_string_lossy().into_owned(),
+            ),
+            (
+                "MCP_TEST_MODELS".to_owned(),
+                r#","configOptions":[{"category":"model","id":"model","currentValue":"default","options":[{"value":"default"},{"value":"opus[1m]"},{"value":"haiku"}]}],"models":{"availableModels":[{"modelId":"gpt-5.6-sol[high]"}]}"#
+                    .to_owned(),
+            ),
+            ("MCP_TEST_SET_RESULT".to_owned(), set_result.to_owned()),
+        ];
+        let startup = manager.create(create).await.expect("create");
+        manager.shutdown("s1");
+        let sets = std::fs::read_to_string(&log_path)
+            .expect("read ACP request log")
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|request| {
+                request["method"] == "session/set_config_option"
+                    || request["method"] == "session/set_model"
+            })
+            .map(|request| request["params"].clone())
+            .collect();
+        (startup.model, sets)
+    }
+
+    const OPUS_CONTROLS: &str = r#""configOptions":[{"category":"model","id":"model","currentValue":"opus[1m]"},{"category":"thought_level","id":"effort","type":"select","options":[{"value":"default"},{"value":"low"},{"value":"high"},{"value":"max"}]},{"category":"model_config","id":"fast","type":"select","currentValue":"off","options":[{"value":"on"},{"value":"off"}]}]"#;
+
+    /// `opus[1m][high][fast]`: the model is switched to its advertised base,
+    /// then effort and fast mode are set from what the adapter returned for
+    /// that model — and the whole applied selection is what is recorded.
+    #[tokio::test]
+    async fn a_selection_applies_its_base_model_then_effort_then_fast_mode() {
+        let (model, sets) = select_model("opus[1m][high][fast]", OPUS_CONTROLS).await;
+        assert_eq!(model.as_deref(), Some("opus[1m][high][fast]"));
+        let sent: Vec<(String, serde_json::Value)> = sets
+            .iter()
+            .map(|p| {
+                (
+                    p["configId"].as_str().unwrap_or("").to_owned(),
+                    p["value"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            sent,
+            vec![
+                ("model".to_owned(), serde_json::json!("opus[1m]")),
+                ("effort".to_owned(), serde_json::json!("high")),
+                ("fast".to_owned(), serde_json::json!("on")),
+            ]
+        );
+    }
+
+    /// A native boolean fast-mode switch is sent a boolean.
+    #[tokio::test]
+    async fn a_boolean_fast_mode_switch_is_sent_true() {
+        let (model, sets) = select_model(
+            "haiku[fast]",
+            r#""configOptions":[{"category":"model_config","id":"fast-mode","type":"boolean","currentValue":false}]"#,
+        )
+        .await;
+        assert_eq!(model.as_deref(), Some("haiku[fast]"));
+        assert_eq!(sets[1]["configId"], "fast-mode");
+        assert_eq!(sets[1]["value"], serde_json::json!(true));
+    }
+
+    /// An effort the selected model does not offer is not guessed at: it is
+    /// skipped, and the recorded selection says only what was applied.
+    #[tokio::test]
+    async fn an_unoffered_modifier_is_disclosed_by_leaving_it_out() {
+        let (model, sets) = select_model("opus[1m][ultra][fast]", OPUS_CONTROLS).await;
+        assert_eq!(model.as_deref(), Some("opus[1m][fast]"));
+        assert_eq!(sets.len(), 2, "{sets:?}");
+
+        // A model that answers with no controls at all: the base still applies.
+        let (model, sets) = select_model("haiku[high]", "").await;
+        assert_eq!(model.as_deref(), Some("haiku"));
+        assert_eq!(sets.len(), 1);
+    }
+
+    /// Ids the adapter advertises whole keep today's path exactly: a context
+    /// token is part of the id, and Codex's bracketed unstable id goes through
+    /// `session/set_model` untouched.
+    #[tokio::test]
+    async fn advertised_bracketed_ids_are_applied_whole() {
+        let (model, sets) = select_model("opus[1m]", OPUS_CONTROLS).await;
+        assert_eq!(model.as_deref(), Some("opus[1m]"));
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0]["value"], "opus[1m]");
+
+        let (model, sets) = select_model("gpt-5.6-sol[high]", "").await;
+        assert_eq!(model.as_deref(), Some("gpt-5.6-sol[high]"));
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0]["modelId"], "gpt-5.6-sol[high]");
+
+        // Brackets over a model nobody advertises: today's unofferable path,
+        // reporting the adapter's own current model.
+        let (model, sets) = select_model("sonnet[high]", OPUS_CONTROLS).await;
+        assert_eq!(model.as_deref(), Some("default"));
+        assert!(sets.is_empty());
     }
 
     /// A watermark is not an age. The bootstrap must tell the agent to read the

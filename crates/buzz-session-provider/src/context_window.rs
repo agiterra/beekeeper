@@ -36,7 +36,9 @@ pub(crate) fn context_window_for_model(model: &str) -> Option<u64> {
     /// Id prefixes, for families whose members share a window.
     const PREFIX: &[(&str, u64)] = &[("gpt-5.6-", 400_000)];
 
-    let model = model.trim();
+    // Selection modifiers (`[high]`, `[fast]`) do not change the window or
+    // the family; a context token (`[1m]`) does and is kept.
+    let model = crate::price_table::model_identity(model);
     if model.is_empty() || model == "default" {
         return None;
     }
@@ -71,7 +73,9 @@ pub(crate) fn model_family_for_model(model: &str) -> Option<&'static str> {
     /// Id prefixes whose members share a family.
     const PREFIX: &[(&str, &str)] = &[("gpt-5.6-", "gpt-5.6")];
 
-    let model = model.trim();
+    // Selection modifiers (`[high]`, `[fast]`) do not change the window or
+    // the family; a context token (`[1m]`) does and is kept.
+    let model = crate::price_table::model_identity(model);
     // `default` names a choice rather than a model, exactly as it does for the
     // window: the family behind it changes with the runtime's catalog.
     if model.is_empty() || model == "default" {
@@ -111,6 +115,20 @@ mod tests {
     fn the_codex_family_matches_by_prefix() {
         assert_eq!(context_window_for_model("gpt-5.6-sol"), Some(400_000));
         assert_eq!(context_window_for_model("gpt-5.6-codex"), Some(400_000));
+    }
+
+    /// A selection's effort and fast-mode modifiers change neither the
+    /// window nor the family; its context token does.
+    #[test]
+    fn selection_modifiers_keep_the_models_window_and_family() {
+        use super::model_family_for_model;
+        assert_eq!(
+            context_window_for_model("opus[1m][high][fast]"),
+            Some(1_000_000)
+        );
+        assert_eq!(context_window_for_model("haiku[fast]"), Some(200_000));
+        assert_eq!(context_window_for_model("default[high]"), None);
+        assert_eq!(model_family_for_model("opus[1m][max]"), Some("opus"));
     }
 
     /// `default` names a choice, not a model: the window behind it is whatever

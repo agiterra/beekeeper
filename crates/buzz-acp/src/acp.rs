@@ -2020,6 +2020,18 @@ impl AcpClient {
         config_id: &str,
         value: &str,
     ) -> Result<serde_json::Value, AcpError> {
+        self.session_set_config_value(session_id, config_id, serde_json::Value::from(value))
+            .await
+    }
+
+    /// Send `session/set_config_option` with any JSON value — a native
+    /// boolean for a `type: "boolean"` option, a string for a select.
+    pub async fn session_set_config_value(
+        &mut self,
+        session_id: &str,
+        config_id: &str,
+        value: serde_json::Value,
+    ) -> Result<serde_json::Value, AcpError> {
         let params = serde_json::json!({
             "sessionId": session_id,
             "configId": config_id,

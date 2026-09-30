@@ -11,6 +11,7 @@ mod engram_fetch;
 pub mod exec_boundary;
 pub mod exec_env;
 mod filter;
+pub mod model_options;
 pub mod observer;
 mod pool;
 mod pool_lifecycle;

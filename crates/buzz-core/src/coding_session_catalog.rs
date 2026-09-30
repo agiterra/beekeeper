@@ -684,9 +684,12 @@ mod tests {
             .expect("a name is a fact");
     }
 
+    /// One way a test breaks a model row.
+    type BreakModel = fn(&mut CatalogModel);
+
     #[test]
     fn a_blank_name_a_repeated_effort_or_a_false_fast_mode_is_refused() {
-        let cases: [(&str, fn(&mut CatalogModel)); 5] = [
+        let cases: [(&str, BreakModel); 5] = [
             ("blank name", |m| m.name = Some("  ".into())),
             ("oversized description", |m| {
                 m.description = Some("x".repeat(MAX_MODEL_DESCRIPTION_BYTES + 1))
