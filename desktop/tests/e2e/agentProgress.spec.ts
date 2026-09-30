@@ -600,9 +600,17 @@ test("every coordination state renders, each from the evidence that proves it", 
   // The activity line is the locally-held transcript, decoded — not a
   // placeholder. A fixture that stopped decoding would otherwise pass with the
   // panel's honest "could not read this item" text in its place.
+  //
+  // It needs a timeout of its own because it arrives on a different read than
+  // the lane above it. The lane is the coordination fetch, which answers in
+  // about a second; the activity line is the local shelf, whose history is
+  // fenced behind a live subscription that waits out its readiness timeout
+  // with no relay behind the mock bridge. Measured here at ~9.9s, twice the
+  // default 5s expect timeout, and the row honestly says it has no activity
+  // until then.
   await expect(
     reachable.getByTestId("agent-progress-lane-activity"),
-  ).toHaveText("\u25b8 Bash");
+  ).toHaveText("\u25b8 Bash", { timeout: 30_000 });
   await captureLocator(page, reachable, "01-reachable");
 
   // Unverified — a *recent* claim of `running` with nothing to prove it. The

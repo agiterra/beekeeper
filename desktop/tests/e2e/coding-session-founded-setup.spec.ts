@@ -102,6 +102,12 @@ function foundedSetupInvokeInitScript(config: {
       persona_id: agent.personaId,
       runtime: null,
       team_id: input.teamId,
+      // Eligibility to lead or be benched is the durable association and
+      // nothing else (`shared/lib/projectAgentAssociation.ts`): in a project
+      // session, an agent this project does not own is counted under the
+      // picker, never offered in it. A fixture that left this null put three
+      // agents on the computer and none in the list.
+      project_ref: input.projectRef ?? null,
       home_role: agent.role,
       has_role_pack: agent.hasRolePack,
       relay_url: "ws://localhost:3000",
@@ -668,9 +674,14 @@ test.describe("the founded page is the form", () => {
       page.getByTestId("new-coding-session-lead-identity"),
     ).toContainText("Keystone · a1a1a1a1…a1a1");
 
-    // Bench the builder, and set one policy field so a 44245 goes out.
+    // An untouched bench is every eligible identity, not none
+    // (`newCodingSessionBenchSelection`), so benching the builder alone means
+    // unticking the verifier. Also set one policy field so a 44245 goes out.
+    await expect(
+      page.getByTestId(`new-coding-session-bench-identity-${ROLES[1].pubkey}`),
+    ).toBeChecked();
     await page
-      .getByTestId(`new-coding-session-bench-identity-${ROLES[1].pubkey}`)
+      .getByTestId(`new-coding-session-bench-identity-${ROLES[2].pubkey}`)
       .click();
     await page.getByTestId("new-coding-session-policy").click();
     await page
@@ -810,12 +821,21 @@ test.describe("the founded page is the form", () => {
     // The mock's signed-event log carries no ids, so the targets are pinned
     // by count and shape: the genesis and the prompt, nothing else, and no
     // address or channel tag — the whole-session shape the relay admits.
+    // Beside them the tombstone carries the session's reference in a `d`, the
+    // single-letter tag that makes "was this session deleted?" answerable at
+    // all (`deleteCodingSession`, ledger 135(f)); kind 5 is regular, so a `d`
+    // does not address it.
     const named = deletion.tags
       .filter((tag) => tag[0] === "e")
       .map((tag) => tag[1]);
     expect(named).toHaveLength(2);
     for (const id of named) expect(id).toMatch(/^[0-9a-f]{64}$/);
-    expect(deletion.tags.every((tag) => tag[0] === "e")).toBe(true);
+    expect(deletion.tags.filter((tag) => tag[0] === "d")).toEqual([
+      ["d", sessionRef],
+    ]);
+    expect(deletion.tags.every((tag) => tag[0] === "e" || tag[0] === "d")).toBe(
+      true,
+    );
     expect(deletion.content).toBe(`Delete session ${sessionRef}`);
     const kinds = await signedKinds(page);
     expect(kinds).not.toContain(44230);
@@ -877,8 +897,16 @@ test("Team to Solo discards hidden readiness blockers and launches without an ag
   await page
     .getByTestId("new-coding-session-lead-select")
     .selectOption(ROLES[0].pubkey);
+  // An untouched bench is every eligible identity, and it is recomputed from
+  // whoever is eligible *now* — so an agent that disappears from the computer
+  // silently leaves an untouched bench, and nothing is hidden to blocker
+  // over. Unticking the verifier makes the bench an explicit list, which is
+  // what `benchIdentities` keeps naming once the builder goes away.
+  await expect(
+    page.getByTestId(`new-coding-session-bench-identity-${ROLES[1].pubkey}`),
+  ).toBeChecked();
   await page
-    .getByTestId(`new-coding-session-bench-identity-${ROLES[1].pubkey}`)
+    .getByTestId(`new-coding-session-bench-identity-${ROLES[2].pubkey}`)
     .click();
   await page.getByTestId("coding-session-use-roles-toggle").click();
   await expect(

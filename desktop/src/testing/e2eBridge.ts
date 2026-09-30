@@ -11172,18 +11172,25 @@ function sendToMockSocket(
       return;
     }
 
-    // A whole-session deletion (NIP-09 kind:5 with only `e` tags, no `h`):
-    // the relay derives its channel from the first target and soft-deletes
-    // every named row, so later reads omit them. Modelled the same way —
-    // the named events leave the channel's store, the deletion is recorded
-    // there — because without this arm a founded session's Discard is
-    // refused with "Missing channel tag.", which reads like a product bug.
+    // A whole-session deletion (NIP-09 kind:5 targeting events by `e`, no
+    // `h`): the relay derives its channel from the first target and
+    // soft-deletes every named row, so later reads omit them. Modelled the
+    // same way — the named events leave the channel's store, the deletion is
+    // recorded there — because without this arm a founded session's Discard
+    // is refused with "Missing channel tag.", which reads like a product bug.
+    //
+    // The tombstone also carries the session's reference in a `d`
+    // (`deleteCodingSession`, ledger 135(f)), which is not a target: matching
+    // on `e` tags *only* stopped matching the day that tag was added, and
+    // Discard started failing here as if the product had broken.
     if (
       event.kind === KIND_DELETION &&
-      event.tags.length > 0 &&
-      event.tags.every((tag) => tag[0] === "e")
+      event.tags.some((tag) => tag[0] === "e") &&
+      event.tags.every((tag) => tag[0] === "e" || tag[0] === "d")
     ) {
-      const targetIds = new Set(event.tags.map((tag) => tag[1] ?? ""));
+      const targetIds = new Set(
+        event.tags.filter((tag) => tag[0] === "e").map((tag) => tag[1] ?? ""),
+      );
       let homeChannelId: string | null = null;
       for (const channel of mockChannels) {
         const store = getMockMessageStore(channel.id);
