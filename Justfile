@@ -679,6 +679,20 @@ test-handover: _ensure-services
     cargo build -p buzz-cli --bin bee -p buzz-relay --bin buzz-relay -p buzz-session-provider --bin buzz-session-provider -p git-credential-nostr --bin git-credential-nostr
     ./scripts/handover-acceptance.sh
 
+# Composes a real `beekeeper-host`, a real `buzz-session-provider` as its
+# child, a real control socket and a second host competing for the same state
+# directory. Needs no relay, no Postgres and no Redis — the provider is pointed
+# at an unreachable URL on purpose, which is what lets this observe supervision
+# without a database.
+#
+# See scripts/host-acceptance.sh for what each step proves and, named at the
+# top, what it does not: no transcript items reaching a relay, no desktop app
+# quitting, no login-time start, no real model.
+#
+# Agent-host lifecycle composition: supervision, takeover refusal, the ladder
+test-host:
+    ./scripts/host-acceptance.sh
+
 # Run unit tests only (no infra needed)
 test-unit:
     #!/usr/bin/env bash

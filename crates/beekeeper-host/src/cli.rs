@@ -115,10 +115,42 @@ pub fn main() -> std::process::ExitCode {
 ///
 /// Quiet on purpose: the provider's log is where a person looks for what the
 /// agents did, and this one should carry only what the *host* decided.
+///
+/// # Why `beekeeper_host=info` is added rather than only defaulted
+///
+/// An unrelated `RUST_LOG` must not blind the service. This repo's own `.env`
+/// sets a relay-focused filter
+/// (`buzz_relay=debug,buzz_db=debug,…`), and `just` loads it — so anything
+/// launched from a `just` recipe, or from a shell that sourced it, got a host
+/// whose own log was **completely empty**: no "provider started", no
+/// "restarting", no "stopped". The host's log is an operator's only window
+/// into what it decided, and a silent one looks exactly like a host that
+/// decided nothing.
+///
+/// So the directive is *appended* unless the operator named
+/// `beekeeper_host` themselves. `RUST_LOG=beekeeper_host=warn` still turns
+/// these lines down; a filter about other crates no longer turns them off.
+///
+/// Found by `scripts/host-acceptance.sh`, which asserts on these lines and so
+/// noticed they were missing.
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,beekeeper_host=info"));
+    const OWN_DIRECTIVE: &str = "beekeeper_host=info";
+    let filter = match std::env::var("RUST_LOG") {
+        Ok(value) if !value.trim().is_empty() => {
+            let mut filter = EnvFilter::new(value.clone());
+            if !value.contains("beekeeper_host") {
+                match OWN_DIRECTIVE.parse() {
+                    Ok(directive) => filter = filter.add_directive(directive),
+                    // Unreachable for a literal, and not worth failing a
+                    // start over: the operator's own filter still applies.
+                    Err(error) => eprintln!("beekeeper-host: {error}"),
+                }
+            }
+            filter
+        }
+        _ => EnvFilter::new(format!("info,{OWN_DIRECTIVE}")),
+    };
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
