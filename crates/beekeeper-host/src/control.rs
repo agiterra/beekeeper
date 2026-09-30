@@ -97,6 +97,30 @@ impl HostControl {
     ///   the same state-directory lock when the identity did not change.
     pub async fn recommission(self: &Arc<Self>) -> Result<(), String> {
         let next = commission(&self.home, self.instance)?;
+        // Nothing the child depends on has changed: leave it alone.
+        //
+        // This used to stop and start unconditionally, and the desktop calls
+        // `bind` on every workspace activation — so *opening Beekeeper*
+        // restarted the provider and killed whatever turn was in flight. The
+        // landing's whole claim is that these agents are not tied to the app's
+        // lifetime; interrupting them on launch instead of on quit is the same
+        // defect wearing a different hat. Seen on Andy's Mac: the host started
+        // a provider at login and a second one seven seconds later, when he
+        // opened the app.
+        //
+        // The stored value is still refreshed, so `KeySource` and anything else
+        // non-behavioural stays current for the next log line.
+        let unchanged = match self.commissioned.lock() {
+            Ok(guard) => guard.child_inputs_match(&next),
+            Err(poisoned) => poisoned.into_inner().child_inputs_match(&next),
+        };
+        if unchanged {
+            match self.commissioned.lock() {
+                Ok(mut guard) => *guard = next,
+                Err(poisoned) => *poisoned.into_inner() = next,
+            }
+            return Ok(());
+        }
         let was_supervising = self.is_supervising();
         self.stop().await;
         match self.commissioned.lock() {

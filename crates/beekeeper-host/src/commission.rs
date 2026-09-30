@@ -30,6 +30,37 @@ pub struct Commissioned {
 }
 
 impl Commissioned {
+    /// Whether a fresh commissioning would hand the child the same inputs.
+    ///
+    /// The child's interface is the env map `spawn` builds, and that map comes
+    /// from the config, the record, and the resolved secret. So those are what
+    /// is compared — and an answer of `true` means there is nothing a restart
+    /// would achieve.
+    ///
+    /// **Compared with care in two places.** The *resolved* nsec rather than
+    /// the record's inline copy, because `spawn` overwrites that field and it
+    /// legitimately differs between a keyring read and a key-file read without
+    /// the effective key changing. And not [`KeySource`] at all: which route
+    /// answered is worth a log line and is never a reason to interrupt a
+    /// running agent.
+    ///
+    /// Deliberately conservative in the other direction — any config change at
+    /// all counts, including one the child might not care about. A needless
+    /// restart is a bounded cost; missing a real one hands the provider a stale
+    /// relay or a stale ceiling and is unbounded.
+    pub fn child_inputs_match(&self, other: &Self) -> bool {
+        self.config == other.config
+            && self.key.nsec == other.key.nsec
+            && self.record_identity() == other.record_identity()
+    }
+
+    /// The record with its inline secret blanked, for comparison only.
+    fn record_identity(&self) -> CodingSessionProviderRecord {
+        let mut record = self.record.clone();
+        record.private_key_nsec = String::new();
+        record
+    }
+
     /// The provider log this commissioning writes into.
     ///
     /// Derived from the config's base directory rather than passed in, so the
@@ -168,6 +199,59 @@ mod tests {
         assert!(commissioned
             .log_path()
             .ends_with(format!("logs/{}.log", keys.public_key().to_hex())));
+    }
+
+    /// Re-reading an unchanged commissioning must not look like a change.
+    ///
+    /// The desktop calls `bind` on every workspace activation, and
+    /// `recommission` restarts the child whenever this says the inputs differ.
+    /// If a plain re-read counted as a change, opening Beekeeper would kill
+    /// whatever turn was in flight — which is what it did.
+    #[test]
+    fn re_reading_the_same_commissioning_is_not_a_change() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_commissioning(dir.path(), "wss://hive.example.org");
+        let first = commission(dir.path(), Instance::Production).expect("first read");
+        let second = commission(dir.path(), Instance::Production).expect("second read");
+        assert!(
+            first.child_inputs_match(&second),
+            "two reads of one commissioning must not restart a running agent"
+        );
+
+        // The record's inline secret is the field `spawn` overwrites, so it
+        // differing must not count — a keyring read and a key-file read of the
+        // same identity legitimately disagree about it.
+        let mut inline = second;
+        inline.record.private_key_nsec = "nsec1somethingelse".to_string();
+        assert!(
+            first.child_inputs_match(&inline),
+            "the inline copy is not the key the child is given"
+        );
+    }
+
+    /// And a real change still restarts, or a community switch would silently
+    /// leave the provider on the old relay.
+    #[test]
+    fn a_different_relay_is_a_change() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_commissioning(dir.path(), "wss://hive.example.org");
+        let before = commission(dir.path(), Instance::Production).expect("read");
+
+        let mut after = commission(dir.path(), Instance::Production).expect("read");
+        after.config.relay_url = "wss://elsewhere.example.org".to_string();
+        assert!(
+            !before.child_inputs_match(&after),
+            "a relay change must reach the child"
+        );
+
+        // As does a rotated key, which is the case where *not* restarting
+        // would leave the provider signing with an identity nobody expects.
+        let mut rotated = commission(dir.path(), Instance::Production).expect("read");
+        rotated.key.nsec = "nsec1adifferentkeyentirely".to_string();
+        assert!(
+            !before.child_inputs_match(&rotated),
+            "a new key must reach the child"
+        );
     }
 
     /// A config naming a relay the record store knows nothing about must say
