@@ -685,6 +685,22 @@ function _governedMissionWithTerminal(
           dispositionEventId,
           acknowledgementEventId,
           settled: state === "completed",
+          // The `completed` branch above publishes an `approve-with-notes`
+          // disposition that asks for a follow-up note, plus the builder's
+          // acknowledgement of it, so the chain settles by that receipt and
+          // never by `approving_disposition_without_ask` — the ask is what
+          // rules that rule out. The `blocked` branch publishes neither, so
+          // the fold is still awaiting the lead's ruling on a filed report
+          // (`coding_session_team_transaction_fold_settlement.rs:408-463`).
+          settledBy: state === "completed" ? "acknowledgement" : null,
+          awaiting:
+            state === "completed"
+              ? null
+              : {
+                  link: "disposition",
+                  owedByRole: "lead",
+                  owedByActor: null,
+                },
         },
       ],
       canonicalTerminal: { eventId: terminal.id, type: `mission.${state}` },

@@ -130,9 +130,17 @@ export async function assertConversationAndMissionLenses(
     // on a person is the most actionable row the rail carries, so it is above
     // Team for the same reason Team is above Changes.
     "Decisions",
+    // `Settlement` and `Work coverage` are listed here because the Inspector
+    // renders them, not because this list grew an opinion: both sections have
+    // shipped for a while and this assertion had not been reached since,
+    // because the mocked fold decoded as malformed and the check above it
+    // failed first. Settlement sits with the state plane it answers for, and
+    // Work coverage under the Files it measures.
+    "Settlement",
     "Team",
     "Changes",
     "Files",
+    "Work coverage",
     "Structured tests",
     "Accepted plan",
     "Seat-reported plans",
@@ -480,6 +488,14 @@ export function buildGovernedMissionApprovalPhases(
   const lifecycle = completed.events.filter(
     (event) => event.kind !== transactionKind,
   );
+  // The assignment names its own assignee, so the awaited receipt is owed by
+  // the party the signed event names rather than by a constant this helper
+  // would have to keep in step with the fixture.
+  const assignee = (
+    JSON.parse(assignment.content) as {
+      body: { assigneeActor: string; assigneeRole: string };
+    }
+  ).body;
   const response = (events: RelayEvent[], settled: boolean) => {
     const inputEventIds = events.map((event) => event.id).sort();
     return {
@@ -489,10 +505,30 @@ export function buildGovernedMissionApprovalPhases(
       assignments: [
         {
           assignmentEventId: assignment.id,
-          governedReportEventId: settled ? report.id : null,
-          dispositionEventId: settled ? disposition.id : null,
+          // The report and the ruling are on this chain in BOTH phases: the
+          // `awaiting` phase publishes all three transactions and withholds
+          // only the receipt. Tying these two ids to `settled` had the fold
+          // deny having seen events it was folding in the same breath, which
+          // is not a thing the adapter can say.
+          governedReportEventId: report.id,
+          dispositionEventId: disposition.id,
           acknowledgementEventId: settled ? acknowledgement.id : null,
           settled,
+          // This fixture's disposition is `approve-with-notes` carrying a
+          // non-blank `requiredAction`, so `approving_disposition_asks_nothing`
+          // is false and nothing but the assignee's own receipt settles the
+          // chain — `settledBy` is `acknowledgement`, never the without-ask
+          // rule (`coding_session_team_transaction_fold_settlement.rs:82-90`,
+          // `:307-350`). Until it arrives, `awaiting_link` names the
+          // acknowledgement and the assignee that owes it (`:408-463`).
+          settledBy: settled ? "acknowledgement" : null,
+          awaiting: settled
+            ? null
+            : {
+                link: "acknowledgement",
+                owedByRole: assignee.assigneeRole,
+                owedByActor: assignee.assigneeActor,
+              },
         },
       ],
       canonicalTerminal: null,
