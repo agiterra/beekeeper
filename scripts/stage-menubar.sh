@@ -95,6 +95,27 @@ if [[ "$DESKTOP_VERSION" != "$MENUBAR_VERSION" ]]; then
     exit 1
 fi
 
+# ── the frontend stub must be in the checkout ────────────────────────────────
+# Checked here, before Tauri is invoked, because Tauri's own message for this
+# is actively misleading: "Unable to find your web assets, did you forget to
+# build your web app?" — there is no web app to build, and never will be. The
+# directory holds one tracked HTML file that nothing loads.
+#
+# This is not hypothetical. It lived in `dist/` first, `desktop/.gitignore`
+# ignores `dist`, and so it was never committed: the worktree that wrote it
+# built fine and every fresh checkout — CI included — could not build this
+# crate at all. Exactly the shape of ledger 296.
+FRONTEND=$(python3 -c \
+    'import json,sys;print(json.load(open(sys.argv[1]))["build"]["frontendDist"])' \
+    "$MENUBAR_DIR/tauri.conf.json")
+if [[ ! -f "$MENUBAR_DIR/$FRONTEND/index.html" ]]; then
+    echo "refusing to stage: $MENUBAR_DIR/$FRONTEND/index.html is missing." >&2
+    echo "It is a tracked stub, not build output — nothing generates it. If this" >&2
+    echo "is a clean checkout, the file is being ignored: check" >&2
+    echo "\`git check-ignore -v $MENUBAR_DIR/$FRONTEND/index.html\`." >&2
+    exit 1
+fi
+
 # ── build ────────────────────────────────────────────────────────────────────
 (cd "$MENUBAR_DIR" && "$TAURI" build "${BUILD_ARGS[@]}" --bundles app)
 BUILT="desktop/src-tauri/target/$PROFILE/bundle/macos/$BUNDLE_NAME"
