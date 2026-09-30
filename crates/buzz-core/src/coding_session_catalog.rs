@@ -48,6 +48,14 @@ pub const MAX_PROJECTS: usize = 512;
 pub const MAX_CATALOG_CONTENT_BYTES: usize = 256 * 1024;
 /// NIP-CSPC bound on any single reference string, in bytes.
 pub const MAX_REFERENCE_BYTES: usize = 2 * 1024;
+/// NIP-CSPC bound on `models[].name`, in bytes.
+pub const MAX_MODEL_NAME_BYTES: usize = 128;
+/// NIP-CSPC bound on `models[].description`, in bytes.
+pub const MAX_MODEL_DESCRIPTION_BYTES: usize = 512;
+/// NIP-CSPC bound on `models[].efforts[]`.
+pub const MAX_MODEL_EFFORTS: usize = 16;
+/// NIP-CSPC bound on one `models[].efforts[]` value, in bytes.
+pub const MAX_EFFORT_BYTES: usize = 32;
 
 /// One catalog advertisement.
 ///
@@ -128,6 +136,29 @@ pub struct CatalogModel {
     /// "nobody said", which is not the same as `Some(false)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deprecated: Option<bool>,
+    /// The runtime's own display name for this id (`Opus 5.5`), exactly as
+    /// the adapter's model option names it. Absent when the adapter named
+    /// nothing; a reader must not synthesise one from the id's spelling and
+    /// present it as the runtime's word.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The runtime's one-line description of this id, as the adapter gave it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The reasoning-effort values the runtime accepts while this id is
+    /// selected, in the adapter's order (its `thought_level` option). Empty,
+    /// and omitted, when the adapter offers no effort control for this id —
+    /// which is itself a fact the publisher measured, never a default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub efforts: Vec<String>,
+    /// `true` when the runtime offers a fast-mode switch while this id is
+    /// selected. Absent when it offers none or nobody measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_mode: Option<bool>,
+    /// This id's position in the adapter's own model list (0 first), for
+    /// display order: `allowedModels` is sorted, the runtime's list is not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<u32>,
 }
 
 impl CatalogModel {
@@ -142,6 +173,11 @@ impl CatalogModel {
             family: None,
             vendor: None,
             deprecated: None,
+            name: None,
+            description: None,
+            efforts: Vec::new(),
+            fast_mode: None,
+            rank: None,
         }
     }
 
@@ -154,6 +190,11 @@ impl CatalogModel {
             && self.family.is_none()
             && self.vendor.is_none()
             && self.deprecated.is_none()
+            && self.name.is_none()
+            && self.description.is_none()
+            && self.efforts.is_empty()
+            && self.fast_mode.is_none()
+            && self.rank.is_none()
     }
 }
 
@@ -359,6 +400,39 @@ fn check_models(index: usize, provider: &CatalogProvider) -> Result<(), CatalogP
                     "providers[{index}].models[{position}].vendor is blank or oversized"
                 )));
             }
+        }
+        let bounded = |value: &str, max: usize| !value.trim().is_empty() && value.len() <= max;
+        if let Some(name) = &model.name {
+            if !bounded(name, MAX_MODEL_NAME_BYTES) {
+                return Err(CatalogParseError::NotCanonical(format!(
+                    "providers[{index}].models[{position}].name is blank or oversized"
+                )));
+            }
+        }
+        if let Some(description) = &model.description {
+            if !bounded(description, MAX_MODEL_DESCRIPTION_BYTES) {
+                return Err(CatalogParseError::NotCanonical(format!(
+                    "providers[{index}].models[{position}].description is blank or oversized"
+                )));
+            }
+        }
+        if model.efforts.len() > MAX_MODEL_EFFORTS {
+            return Err(CatalogParseError::NotCanonical(format!(
+                "providers[{index}].models[{position}].efforts holds {} values; at most {MAX_MODEL_EFFORTS}",
+                model.efforts.len()
+            )));
+        }
+        for (slot, effort) in model.efforts.iter().enumerate() {
+            if !bounded(effort, MAX_EFFORT_BYTES) || model.efforts[..slot].contains(effort) {
+                return Err(CatalogParseError::NotCanonical(format!(
+                    "providers[{index}].models[{position}].efforts[{slot}] is blank, oversized or repeated"
+                )));
+            }
+        }
+        if model.fast_mode == Some(false) {
+            return Err(CatalogParseError::NotCanonical(format!(
+                "providers[{index}].models[{position}].fastMode is false; omit it instead"
+            )));
         }
         if model.context_window == Some(0) {
             return Err(CatalogParseError::NotCanonical(format!(
@@ -577,6 +651,68 @@ mod tests {
     }
 
     /// A zero window is not a small window; it is a measurement nobody made.
+    fn runtime_described(id: &str) -> CatalogModel {
+        CatalogModel {
+            name: Some("Opus 5.5".into()),
+            description: Some("For complex work and everyday tasks".into()),
+            efforts: vec!["default".into(), "low".into(), "high".into()],
+            fast_mode: Some(true),
+            rank: Some(1),
+            ..CatalogModel::new(id)
+        }
+    }
+
+    /// The runtime's own words about a model ride after the older facts, in
+    /// declaration order, and survive a parse byte for byte.
+    #[test]
+    fn a_runtimes_names_efforts_and_fast_mode_serialize_after_the_older_facts() {
+        let mut model = runtime_described("opus[1m]");
+        model.context_window = Some(1_000_000);
+        let json = serde_json::to_string(&catalog(vec![model])).expect("serialize");
+        assert!(
+            json.contains(r#"{"id":"opus[1m]","contextWindow":1000000,"name":"Opus 5.5","description":"For complex work and everyday tasks","efforts":["default","low","high"],"fastMode":true,"rank":1}"#),
+            "{json}"
+        );
+        let parsed = parse_catalog(&json).expect("canonical");
+        assert_eq!(parsed.providers[0].models[0].efforts.len(), 3);
+        // A name alone is a fact: the row stands.
+        let named = CatalogModel {
+            name: Some("Haiku 4.5".into()),
+            ..CatalogModel::new("haiku")
+        };
+        parse_catalog(&serde_json::to_string(&catalog(vec![named])).expect("ser"))
+            .expect("a name is a fact");
+    }
+
+    #[test]
+    fn a_blank_name_a_repeated_effort_or_a_false_fast_mode_is_refused() {
+        let cases: [(&str, fn(&mut CatalogModel)); 5] = [
+            ("blank name", |m| m.name = Some("  ".into())),
+            ("oversized description", |m| {
+                m.description = Some("x".repeat(MAX_MODEL_DESCRIPTION_BYTES + 1))
+            }),
+            ("repeated effort", |m| {
+                m.efforts = vec!["low".into(), "low".into()]
+            }),
+            ("too many efforts", |m| {
+                m.efforts = (0..=MAX_MODEL_EFFORTS).map(|i| format!("e{i}")).collect()
+            }),
+            ("false fast mode", |m| m.fast_mode = Some(false)),
+        ];
+        for (case, break_it) in cases {
+            let mut model = runtime_described("opus[1m]");
+            break_it(&mut model);
+            let json = serde_json::to_string(&catalog(vec![model])).expect("serialize");
+            assert!(
+                matches!(
+                    parse_catalog(&json),
+                    Err(CatalogParseError::NotCanonical(_))
+                ),
+                "{case}: {json}"
+            );
+        }
+    }
+
     #[test]
     fn a_zero_context_window_is_refused_rather_than_published_as_a_number() {
         let zero = CatalogModel {

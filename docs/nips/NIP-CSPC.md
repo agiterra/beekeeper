@@ -100,6 +100,28 @@ Canonical form is what makes `cspc-key` (below) meaningful: two providers
 advertising the same capabilities produce the same bytes, and any difference in
 bytes is a real difference in what is being offered.
 
+### Per-model rows (optional)
+
+`providers[].models[]` describes ids already in `allowedModels`, in that
+order, and only when something is known about them. Every key is optional
+and omitted rather than guessed; a row that states nothing beyond its `id` is
+refused. Keys, in this order:
+
+| Key | Meaning |
+| --- | --- |
+| `contextWindow` | tokens, when the driver states it or a recorded figure exists |
+| `family` | model family, when recorded rather than inferred |
+| `vendor` | `anthropic`, `openai`, … when the runtime serves exactly one |
+| `deprecated` | `true` when the publisher was told the id is going away |
+| `name` | the runtime's own display name (≤ 128 bytes) |
+| `description` | the runtime's own one-line description (≤ 512 bytes) |
+| `efforts` | reasoning-effort values the runtime accepts with this id selected, in its order (≤ 16, each ≤ 32 bytes, no repeats) |
+| `fastMode` | `true` when the runtime offers a fast-mode switch with this id; never `false` |
+| `rank` | the id's position in the runtime's own model list, for display order |
+
+A reader that predates a key refuses the whole catalog, so a new key ships
+with every strict reader in the same landing.
+
 ### Tags
 
 Exactly these four two-field tags, in this order:
