@@ -711,3 +711,85 @@ test("a model row outside the offer, out of order, or empty is refused", () => {
     );
   }
 });
+
+/**
+ * The runtime's own words about a model — its name, description, reasoning
+ * efforts, fast-mode switch and list position — ride after the older facts in
+ * the order `buzz-core` serialises them, and are checked the way it checks
+ * them (NIP-CSPC § Per-model rows).
+ */
+test("a model row carries the runtime's name, efforts, fast mode and rank", () => {
+  const described = catalog({
+    providers: [
+      provider({
+        models: [
+          {
+            id: "claude-opus-5",
+            contextWindow: 1000000,
+            name: "Opus 5",
+            description: "Previous-generation Opus",
+            efforts: ["default", "low", "high", "ultra"],
+            fastMode: true,
+            rank: 6,
+          },
+          // A name alone is a fact: the row stands.
+          { id: "claude-sonnet-4-6", name: "Sonnet 4.6" },
+        ],
+      }),
+    ],
+  });
+  assert.deepEqual(
+    parseCodingSessionProviderCatalog(JSON.stringify(described)),
+    described,
+  );
+  // Rank zero is a position, not an absence.
+  const first = catalog({
+    providers: [provider({ models: [{ id: "claude-opus-5", rank: 0 }] })],
+  });
+  assert.deepEqual(
+    parseCodingSessionProviderCatalog(JSON.stringify(first)),
+    first,
+  );
+});
+
+test("a runtime fact that is blank, oversized, repeated, false or out of order is refused", () => {
+  const row = (facts) =>
+    catalog({
+      providers: [provider({ models: [{ id: "claude-opus-5", ...facts }] })],
+    });
+  for (const [label, invalid] of [
+    ["blank name", row({ name: "  " })],
+    ["oversized name", row({ name: "x".repeat(129) })],
+    ["oversized description", row({ description: "x".repeat(513) })],
+    ["empty efforts", row({ efforts: [] })],
+    ["repeated effort", row({ efforts: ["low", "low"] })],
+    ["blank effort", row({ efforts: ["low", " "] })],
+    ["oversized effort", row({ efforts: ["x".repeat(33)] })],
+    [
+      "too many efforts",
+      row({ efforts: Array.from({ length: 17 }, (_, i) => `e${i}`) }),
+    ],
+    ["non-string effort", row({ efforts: [3] })],
+    ["false fast mode", row({ fastMode: false })],
+    ["negative rank", row({ rank: -1 })],
+    ["fractional rank", row({ rank: 1.5 })],
+    ["rank beyond u32", row({ rank: 2 ** 32 })],
+    ["string rank", row({ rank: "1" })],
+    // `name` sits before `efforts`, exactly as the Rust struct serialises.
+    ["key order", row({ efforts: ["low"], name: "Opus 5" })],
+    ["fastMode before efforts", row({ fastMode: true, efforts: ["low"] })],
+    ["unknown key", row({ name: "Opus 5", speed: "fast" })],
+  ]) {
+    assert.equal(
+      parseCodingSessionProviderCatalog(JSON.stringify(invalid)),
+      null,
+      label,
+    );
+  }
+  // A 128-byte name and a 32-byte effort are on the line, not over it.
+  const edge = row({ name: "x".repeat(128), efforts: ["y".repeat(32)] });
+  assert.deepEqual(
+    parseCodingSessionProviderCatalog(JSON.stringify(edge)),
+    edge,
+  );
+});

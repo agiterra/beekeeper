@@ -2,8 +2,10 @@ import { ChevronDown } from "lucide-react";
 
 import {
   codingSessionContextLabel,
+  codingSessionEffortLabel,
   codingSessionTraitsSummary,
 } from "@/features/coding-sessions/lib/codingSessionModelDisplay";
+import { CODING_SESSION_DEFAULT_EFFORT } from "@/features/coding-sessions/lib/codingSessionModelOptions";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import {
@@ -18,6 +20,8 @@ import {
 
 /** The value a control uses for "whatever the adapter does by default". */
 const ADAPTER_DEFAULT = "__adapter_default__";
+const FAST_ON = "on";
+const FAST_OFF = "off";
 
 /**
  * How hard the model thinks, and how much it can hold — the second decision.
@@ -32,15 +36,25 @@ const ADAPTER_DEFAULT = "__adapter_default__";
  * empty section would imply a choice exists. "Adapter default" appears only
  * where the adapter also publishes the bare id, because for a model published
  * only at named values it would name an id the provider would refuse.
+ *
+ * When the catalog row reports the runtime's own efforts (`runtimeEfforts`),
+ * the section reads "Reasoning" and lists them in the runtime's order, its own
+ * `default` value shown as "Default" where the runtime placed it; a runtime
+ * that names no default gets "Runtime default" for the no-token choice. Fast
+ * mode is an On/Off choice shown only when the row reports the switch.
  */
 export function CodingSessionTraitsPicker({
   className,
   context,
   contexts,
   disabled = false,
+  fast = false,
+  fastModeOffered = false,
   hasBareModel,
   onContextChange,
+  onFastChange,
   onThinkingChange,
+  runtimeEfforts = false,
   thinking,
   thinkingLevels,
 }: {
@@ -48,15 +62,39 @@ export function CodingSessionTraitsPicker({
   context: string | null;
   contexts: readonly string[];
   disabled?: boolean;
+  /** Fast mode is on in the current selection. */
+  fast?: boolean;
+  /** The selected model's row reports a fast-mode switch. */
+  fastModeOffered?: boolean;
   hasBareModel: boolean;
   onContextChange: (context: string | null) => void;
+  onFastChange?: (fast: boolean) => void;
   onThinkingChange: (thinking: string | null) => void;
+  /** `thinkingLevels` are the runtime's own reported efforts. */
+  runtimeEfforts?: boolean;
   thinking: string | null;
   thinkingLevels: readonly string[];
 }) {
-  if (thinkingLevels.length === 0 && contexts.length === 0) return null;
+  const showFast = fastModeOffered && onFastChange !== undefined;
+  if (thinkingLevels.length === 0 && contexts.length === 0 && !showFast) {
+    return null;
+  }
+  const runtimeNamesDefault =
+    runtimeEfforts && thinkingLevels.includes(CODING_SESSION_DEFAULT_EFFORT);
+  const defaultLabel = runtimeEfforts
+    ? runtimeNamesDefault
+      ? codingSessionEffortLabel(CODING_SESSION_DEFAULT_EFFORT)
+      : "Runtime default"
+    : "Adapter default";
+  const traits = codingSessionTraitsSummary({ thinking, context, fast });
   const summary =
-    codingSessionTraitsSummary({ thinking, context }) ?? "Adapter default";
+    runtimeEfforts && thinkingLevels.length > 0 && thinking === null
+      ? [defaultLabel, traits].filter(Boolean).join(" · ")
+      : thinkingLevels.length === 0 && contexts.length === 0
+        ? fast
+          ? "Fast"
+          : "Fast off"
+        : (traits ?? defaultLabel);
 
   return (
     <DropdownMenu>
@@ -76,7 +114,7 @@ export function CodingSessionTraitsPicker({
         {thinkingLevels.length > 0 ? (
           <>
             <DropdownMenuLabel className="text-2xs text-muted-foreground">
-              Thinking
+              {runtimeEfforts ? "Reasoning" : "Thinking"}
             </DropdownMenuLabel>
             <DropdownMenuRadioGroup
               onValueChange={(value) =>
@@ -84,23 +122,28 @@ export function CodingSessionTraitsPicker({
               }
               value={thinking ?? ADAPTER_DEFAULT}
             >
-              {hasBareModel ? (
+              {hasBareModel && !runtimeNamesDefault ? (
                 <DropdownMenuRadioItem
                   data-testid="coding-session-thinking-option"
                   value={ADAPTER_DEFAULT}
                 >
-                  Adapter default
+                  {defaultLabel}
                 </DropdownMenuRadioItem>
               ) : null}
-              {thinkingLevels.map((level) => (
-                <DropdownMenuRadioItem
-                  data-testid="coding-session-thinking-option"
-                  key={level}
-                  value={level}
-                >
-                  {level}
-                </DropdownMenuRadioItem>
-              ))}
+              {thinkingLevels.map((level) => {
+                const isDefault =
+                  runtimeEfforts && level === CODING_SESSION_DEFAULT_EFFORT;
+                return (
+                  <DropdownMenuRadioItem
+                    data-model-default={isDefault ? "true" : undefined}
+                    data-testid="coding-session-thinking-option"
+                    key={level}
+                    value={isDefault ? ADAPTER_DEFAULT : level}
+                  >
+                    {codingSessionEffortLabel(level)}
+                  </DropdownMenuRadioItem>
+                );
+              })}
             </DropdownMenuRadioGroup>
           </>
         ) : null}
@@ -135,6 +178,33 @@ export function CodingSessionTraitsPicker({
                   {codingSessionContextLabel(window)}
                 </DropdownMenuRadioItem>
               ))}
+            </DropdownMenuRadioGroup>
+          </>
+        ) : null}
+        {showFast ? (
+          <>
+            {thinkingLevels.length > 0 || contexts.length > 0 ? (
+              <DropdownMenuSeparator />
+            ) : null}
+            <DropdownMenuLabel className="text-2xs text-muted-foreground">
+              Fast mode
+            </DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              onValueChange={(value) => onFastChange?.(value === FAST_ON)}
+              value={fast ? FAST_ON : FAST_OFF}
+            >
+              <DropdownMenuRadioItem
+                data-testid="coding-session-fast-option"
+                value={FAST_OFF}
+              >
+                Off
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem
+                data-testid="coding-session-fast-option"
+                value={FAST_ON}
+              >
+                On
+              </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
           </>
         ) : null}

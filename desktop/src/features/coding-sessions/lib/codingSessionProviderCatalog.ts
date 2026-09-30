@@ -19,6 +19,7 @@ import { KIND_CODING_SESSION_PROVIDER_CATALOG } from "@/shared/constants/kinds";
 import { hasValidSignature } from "@/shared/lib/authors";
 import type { CodingSessionIngressAuthority } from "./codingSessionIngressAuthority";
 import { encodeStructuredKey } from "./codingSessionKeys";
+import { runtimeModelFactsAreCanonical } from "./codingSessionProviderCatalogModelFacts";
 
 export const CODING_SESSION_PROVIDER_CATALOG_SCHEMA =
   "buzz-coding-session-provider-catalog/v1" as const;
@@ -64,6 +65,19 @@ export type CodingSessionProviderCatalogModel = {
   family?: string;
   vendor?: string;
   deprecated?: boolean;
+  /** The runtime's own display name (`Opus 5.5`); never synthesised. */
+  name?: string;
+  /** The runtime's own one-line description of the id. */
+  description?: string;
+  /**
+   * Reasoning-effort values the runtime accepts with this id selected, in the
+   * adapter's order. Absent when the runtime offers no effort control.
+   */
+  efforts?: string[];
+  /** `true` when the runtime offers a fast-mode switch; never `false`. */
+  fastMode?: true;
+  /** Position in the runtime's own model list (0 first), for display order. */
+  rank?: number;
 };
 
 export type CodingSessionProviderCatalogProvider = {
@@ -721,7 +735,17 @@ function parseCatalogModels(
       !hasOrderedKeySubsequence(
         raw,
         ["id"],
-        ["contextWindow", "family", "vendor", "deprecated"],
+        [
+          "contextWindow",
+          "family",
+          "vendor",
+          "deprecated",
+          "name",
+          "description",
+          "efforts",
+          "fastMode",
+          "rank",
+        ],
       ) ||
       // A row that adds no fact beyond the id is a second way to encode one
       // offer; `allowedModels` already named it.
@@ -747,6 +771,7 @@ function parseCatalogModels(
     ) {
       return null;
     }
+    if (!runtimeModelFactsAreCanonical(raw)) return null;
     const offset = allowedModels.indexOf(raw.id, cursor);
     if (offset < 0) return null;
     cursor = offset + 1;
@@ -760,6 +785,15 @@ function parseCatalogModels(
       ...(Object.hasOwn(raw, "deprecated")
         ? { deprecated: raw.deprecated as boolean }
         : {}),
+      ...(Object.hasOwn(raw, "name") ? { name: raw.name as string } : {}),
+      ...(Object.hasOwn(raw, "description")
+        ? { description: raw.description as string }
+        : {}),
+      ...(Object.hasOwn(raw, "efforts")
+        ? { efforts: [...(raw.efforts as string[])] }
+        : {}),
+      ...(Object.hasOwn(raw, "fastMode") ? { fastMode: true as const } : {}),
+      ...(Object.hasOwn(raw, "rank") ? { rank: raw.rank as number } : {}),
     });
   }
   return models;

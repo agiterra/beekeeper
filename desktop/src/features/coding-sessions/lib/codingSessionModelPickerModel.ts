@@ -14,6 +14,7 @@ import {
   codingSessionModelChoices,
   splitCodingSessionModelId,
 } from "./codingSessionModelChoice";
+import type { CodingSessionModelDetail } from "./codingSessionModelOptions";
 
 /** The favourites rail entry, which belongs to no single provider. */
 export const CODING_SESSION_MODEL_FAVORITES_RAIL = "favorites" as const;
@@ -25,8 +26,13 @@ export type CodingSessionModelPickerProvider = {
   runtime: string;
   /** Human provider label ("Claude Code · Primary"). */
   label: string;
-  /** Base models this provider offers, adapter order. */
+  /** Base models this provider offers, in the order the list shows them. */
   models: string[];
+  /**
+   * The runtime's own name, description and rank per base model, from the
+   * catalog's per-model rows. Absent for a provider whose catalog has none.
+   */
+  details?: ReadonlyMap<string, CodingSessionModelDetail>;
   /** Whether a session may actually be created against it right now. */
   ready: boolean;
   /** Why it is not ready, when it is not. */
@@ -41,6 +47,10 @@ export type CodingSessionModelPickerRow = {
   runtime: string;
   providerLabel: string;
   model: string;
+  /** The runtime's display name, or null when it named none. */
+  name: string | null;
+  /** The runtime's one-line description, or null. */
+  description: string | null;
   favorite: boolean;
   ready: boolean;
   unavailableNote: string | null;
@@ -80,7 +90,8 @@ export function scoreCodingSessionModelRow(
   row: Pick<
     CodingSessionModelPickerRow,
     "model" | "providerLabel" | "runtime" | "favorite"
-  >,
+  > &
+    Partial<Pick<CodingSessionModelPickerRow, "name">>,
   query: string,
 ): number | null {
   const tokens = normalize(query).split(" ").filter(Boolean);
@@ -89,18 +100,20 @@ export function scoreCodingSessionModelRow(
   // it was starred. Pins collect on the Favorites rail; they do not reorder
   // the provider's own list.
   if (tokens.length === 0) return 0;
-  const fields = [
-    normalize(row.model),
-    normalize(row.providerLabel),
-    normalize(row.runtime),
+  // The runtime's name ranks with the id: "opus 5.5" must find `opus`.
+  const fields: [string, number][] = [
+    [normalize(row.model), 0],
+    [normalize(row.providerLabel), 10],
+    [normalize(row.runtime), 20],
+    [normalize(row.name ?? ""), 0],
   ];
   let total = 0;
   for (const token of tokens) {
     let best: number | null = null;
-    for (const [index, field] of fields.entries()) {
+    for (const [field, weight] of fields) {
       const at = field.indexOf(token);
       if (at < 0) continue;
-      const score = index * 10 + (at === 0 ? 0 : 5);
+      const score = weight + (at === 0 ? 0 : 5);
       best = best === null ? score : Math.min(best, score);
     }
     if (best === null) return null;
@@ -137,6 +150,8 @@ export function codingSessionModelPickerRows(input: {
         runtime: provider.runtime,
         providerLabel: provider.label,
         model,
+        name: provider.details?.get(model)?.name ?? null,
+        description: provider.details?.get(model)?.description ?? null,
         favorite: input.favorites.has(
           codingSessionModelFavoriteKey(provider.selectionKey, model),
         ),

@@ -82,24 +82,50 @@ export function codingSessionModelDisplayName(model: string): string {
   }, "");
 }
 
+/**
+ * The title a model row or trigger shows: the runtime's own name when its
+ * catalog row gives one, and the derived name above only when it does not.
+ * The runtime's word is never second-guessed or re-cased.
+ */
+export function codingSessionModelTitle(
+  model: string,
+  name: string | null | undefined,
+): string {
+  const trimmed = name?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : codingSessionModelDisplayName(model);
+}
+
+/** Effort words people read, where the wire token is an abbreviation. */
+const EFFORT_LABELS = new Map<string, string>([
+  ["default", "Default"],
+  ["xhigh", "Extra high"],
+]);
+
+/** `high` → `High`, `xhigh` → `Extra high`, `default` → `Default`. */
+export function codingSessionEffortLabel(effort: string): string {
+  return EFFORT_LABELS.get(effort.toLowerCase()) ?? titleToken(effort);
+}
+
 /** `1m` → `1M`, `200k` → `200K`: a window, printed the way people write it. */
 export function codingSessionContextLabel(context: string): string {
   return context.toUpperCase();
 }
 
 /**
- * The summary a traits control shows when it is closed: `High · 1M`.
+ * The summary a traits control shows when it is closed: `High · 1M · Fast`.
  *
- * Null when the model carries neither dimension, so a surface can hide the
+ * Null when the model carries no dimension, so a surface can hide the
  * control instead of showing an empty one.
  */
 export function codingSessionTraitsSummary(input: {
   thinking: string | null;
   context: string | null;
+  fast?: boolean;
 }): string | null {
   const parts = [
-    input.thinking === null ? null : titleToken(input.thinking),
+    input.thinking === null ? null : codingSessionEffortLabel(input.thinking),
     input.context === null ? null : codingSessionContextLabel(input.context),
+    input.fast === true ? "Fast" : null,
   ].filter((part): part is string => part !== null);
   return parts.length === 0 ? null : parts.join(" · ");
 }

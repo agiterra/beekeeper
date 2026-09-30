@@ -28,6 +28,7 @@ export type CodingSessionThinkingLevel =
   (typeof CODING_SESSION_THINKING_LEVELS)[number];
 
 const THINKING = new Set<string>(CODING_SESSION_THINKING_LEVELS);
+const NO_EXTRA_THINKING: ReadonlySet<string> = new Set();
 
 /** `1m`, `200k`, `128k` — a context window, not a thinking level. */
 const CONTEXT_PATTERN = /^\d+(?:\.\d+)?[km]$/i;
@@ -42,7 +43,15 @@ export type CodingSessionModelId = {
   context: string | null;
 };
 
-export function splitCodingSessionModelId(id: string): CodingSessionModelId {
+/**
+ * `extraThinking` names effort values a runtime reported for its models
+ * (catalog `models[].efforts`, e.g. `ultra`) beyond the enumerated set, so a
+ * published `gpt-6-sol[ultra]` decodes as a level rather than a model.
+ */
+export function splitCodingSessionModelId(
+  id: string,
+  extraThinking: ReadonlySet<string> = NO_EXTRA_THINKING,
+): CodingSessionModelId {
   let rest = id;
   let thinking: string | null = null;
   let context: string | null = null;
@@ -52,7 +61,10 @@ export function splitCodingSessionModelId(id: string): CodingSessionModelId {
     if (open <= 0 || !rest.endsWith("]")) break;
     const tail = rest.slice(open + 1, -1);
     const lowered = tail.toLowerCase();
-    if (thinking === null && THINKING.has(lowered)) {
+    if (
+      thinking === null &&
+      (THINKING.has(lowered) || extraThinking.has(tail))
+    ) {
       thinking = tail;
     } else if (context === null && CONTEXT_PATTERN.test(tail)) {
       context = tail;
@@ -93,13 +105,17 @@ export type CodingSessionModelChoices = {
 /** Fold an adapter's flat `allowedModels` into the decisions it encodes. */
 export function codingSessionModelChoices(
   allowedModels: readonly string[],
+  extraThinking: ReadonlySet<string> = NO_EXTRA_THINKING,
 ): CodingSessionModelChoices {
   const models: string[] = [];
   const thinkingByModel = new Map<string, string[]>();
   const contextByModel = new Map<string, string[]>();
   const bareModels = new Set<string>();
   for (const id of allowedModels) {
-    const { model, thinking, context } = splitCodingSessionModelId(id);
+    const { model, thinking, context } = splitCodingSessionModelId(
+      id,
+      extraThinking,
+    );
     if (!thinkingByModel.has(model)) {
       models.push(model);
       thinkingByModel.set(model, []);

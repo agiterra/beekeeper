@@ -1,18 +1,19 @@
 import * as React from "react";
 
 import {
-  codingSessionModelChoices,
-  joinCodingSessionModelId,
-  resolveCodingSessionContext,
-  resolveCodingSessionThinking,
-  splitCodingSessionModelId,
-} from "@/features/coding-sessions/lib/codingSessionModelChoice";
-import {
   readCodingSessionModelFavorites,
   toggleCodingSessionModelFavorite,
   writeCodingSessionModelFavorites,
 } from "@/features/coding-sessions/lib/codingSessionModelFavorites";
-import { codingSessionProviderBaseModels } from "@/features/coding-sessions/lib/codingSessionModelPickerModel";
+import {
+  type CodingSessionModelOffer,
+  codingSessionModelOptions,
+  codingSessionOfferChoices,
+  codingSessionProviderPickerModels,
+  joinCodingSessionModelSelection,
+  resolveCodingSessionModelPick,
+  splitCodingSessionModelSelection,
+} from "@/features/coding-sessions/lib/codingSessionModelOptions";
 import { formatCodingSessionRuntimeLabel } from "../lib/codingSessionLabels";
 import {
   resolveCodingSessionSeatIdentityModel,
@@ -29,6 +30,9 @@ import { CodingSessionModelPicker } from "./CodingSessionModelPicker";
 import { CodingSessionRuntimeConnect } from "./CodingSessionRuntimeConnect";
 import { CodingSessionTraitsPicker } from "./CodingSessionTraitsPicker";
 import type { CodingSessionCreateModelCatalog } from "./useNewCodingSessionCreate";
+
+/** A target with no provider offers nothing, and says so with an empty list. */
+const NO_MODEL_OFFER: CodingSessionModelOffer = { allowedModels: [] };
 
 /**
  * Which provider runs the session, on which model, with how much thinking.
@@ -63,16 +67,23 @@ export function NewCodingSessionProviderPicker({
   selectedTarget: NewCodingSessionTarget | null;
   targets: readonly NewCodingSessionTarget[];
 }) {
-  const models = selectedTarget?.provider.allowedModels ?? [];
+  const offer: CodingSessionModelOffer =
+    selectedTarget?.provider ?? NO_MODEL_OFFER;
   // One control per decision. Codex encodes reasoning effort in the model id,
   // so live discovery (§2 item 39) turned four models into thirty rows (§2
-  // item 45); the picker lists models and this list supplies the levels.
+  // item 45); the picker lists models and the options control supplies the
+  // levels — the runtime's own efforts and fast mode where its catalog rows
+  // report them, the bracketed variants' levels where they do not.
   const choices = React.useMemo(
-    () => codingSessionModelChoices(models),
-    [models],
+    () => codingSessionOfferChoices(offer),
+    [offer],
   );
-  const selected = splitCodingSessionModelId(model ?? "");
-  const thinkingLevels = choices.thinkingByModel.get(selected.model) ?? [];
+  const selected = splitCodingSessionModelSelection(model ?? "", offer);
+  const options = codingSessionModelOptions(
+    offer,
+    selected.model,
+    selected.context,
+  );
   const [favorites, setFavorites] = React.useState<ReadonlySet<string>>(
     readCodingSessionModelFavorites,
   );
@@ -88,13 +99,13 @@ export function NewCodingSessionProviderPicker({
   const pickerProviders = React.useMemo(
     () =>
       targets.map((target) => ({
+        ...codingSessionProviderPickerModels(target.provider),
         selectionKey: target.selectionKey,
         runtime: target.provider.runtime,
         label: formatCodingSessionProviderLabel({
           runtime: target.provider.runtime,
           providerInstanceRef: target.provider.providerInstanceRef,
         }),
-        models: codingSessionProviderBaseModels(target.provider.allowedModels),
         ready: isNewCodingSessionTargetReady(target),
         unavailableNote:
           target.availability?.state === "needs_auth"
@@ -143,33 +154,17 @@ export function NewCodingSessionProviderPicker({
       const target = targets.find(
         (candidate) => candidate.selectionKey === pick.selectionKey,
       );
-      const nextChoices = codingSessionModelChoices(
-        target?.provider.allowedModels ?? [],
-      );
+      // An effort, window or fast mode the new model does not offer is reset
+      // here rather than carried into an id the provider would refuse.
       onModelChange(
-        joinCodingSessionModelId(
-          pick.model,
-          resolveCodingSessionThinking(
-            nextChoices,
-            pick.model,
-            selected.thinking,
-          ),
-          resolveCodingSessionContext(
-            nextChoices,
-            pick.model,
-            selected.context,
-          ),
-        ),
+        resolveCodingSessionModelPick({
+          offer: target?.provider ?? NO_MODEL_OFFER,
+          model: pick.model,
+          previous: selected,
+        }),
       );
     },
-    [
-      onModelChange,
-      onTargetChange,
-      selected.context,
-      selected.thinking,
-      selectedTarget,
-      targets,
-    ],
+    [onModelChange, onTargetChange, selected, selectedTarget, targets],
   );
   return (
     <div className="flex flex-col gap-3 sm:flex-row">
@@ -202,34 +197,39 @@ export function NewCodingSessionProviderPicker({
       </div>
       <div className="flex shrink-0 flex-col gap-2">
         <span className="text-xs font-medium text-muted-foreground">
-          Thinking
+          Options
         </span>
         <CodingSessionTraitsPicker
           className="min-w-36"
           context={selected.context}
           contexts={choices.contextByModel.get(selected.model) ?? []}
           disabled={disabled}
-          hasBareModel={choices.bareModels.has(selected.model)}
+          fast={selected.fast}
+          fastModeOffered={options.fastMode}
+          hasBareModel={options.defaultOption !== "none"}
           onContextChange={(context) =>
+            // A window is a different id, whose row may offer other efforts.
             onModelChange(
-              joinCodingSessionModelId(
-                selected.model,
-                selected.thinking,
-                context,
-              ),
+              resolveCodingSessionModelPick({
+                offer,
+                model: selected.model,
+                previous: { ...selected, context },
+              }),
             )
           }
-          onThinkingChange={(thinking) =>
+          onFastChange={(fast) =>
             onModelChange(
-              joinCodingSessionModelId(
-                selected.model,
-                thinking,
-                selected.context,
-              ),
+              joinCodingSessionModelSelection({ ...selected, fast }),
             )
           }
-          thinking={selected.thinking}
-          thinkingLevels={thinkingLevels}
+          onThinkingChange={(effort) =>
+            onModelChange(
+              joinCodingSessionModelSelection({ ...selected, effort }),
+            )
+          }
+          runtimeEfforts={options.source === "runtime"}
+          thinking={selected.effort}
+          thinkingLevels={options.levels}
         />
       </div>
       <div className="flex shrink-0 flex-col gap-2">

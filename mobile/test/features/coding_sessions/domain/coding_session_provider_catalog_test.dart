@@ -189,6 +189,55 @@ void main() {
       );
     });
 
+    // NIP-CSPC § Per-model rows: the runtime's own name, description,
+    // efforts, fast mode and rank ride after the older facts, in that order.
+    String withModels(String rows) =>
+        '{"schema":"buzz-coding-session-provider-catalog/v1","revision":1,'
+        '"providers":[{"providerInstanceRef":"p","driver":"d",'
+        '"runtime":"r","defaultModel":"m","allowedModels":["m","a"],'
+        '"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,'
+        '"threadSteer":false,"context":false,"diff":false,"plan":false},'
+        '"models":[$rows]}]}';
+
+    test('a model row carries the runtime\'s name, efforts and fast mode', () {
+      final content = withModels(
+        '{"id":"m","contextWindow":1000000,"name":"Opus 5.5",'
+        '"description":"For complex work","efforts":["default","low","high"],'
+        '"fastMode":true,"rank":0},{"id":"a","name":"Haiku 4.5"}',
+      );
+      final decoded = decodeCodingSessionProviderCatalog(
+        signedCatalog(content: content, revision: 1),
+      );
+      expect(decoded.value, isNotNull, reason: '${decoded.reason}');
+    });
+
+    test('a runtime fact that is blank, repeated, false or misordered is '
+        'refused', () {
+      for (final row in [
+        '{"id":"m","name":"  "}',
+        '{"id":"m","name":"${'x' * 129}"}',
+        '{"id":"m","description":"${'x' * 513}"}',
+        '{"id":"m","efforts":[]}',
+        '{"id":"m","efforts":["low","low"]}',
+        '{"id":"m","efforts":["${'x' * 33}"]}',
+        '{"id":"m","efforts":[${List.generate(17, (i) => '"e$i"').join(',')}]}',
+        '{"id":"m","fastMode":false}',
+        '{"id":"m","rank":-1}',
+        '{"id":"m","rank":1.5}',
+        '{"id":"m","rank":4294967296}',
+        '{"id":"m","efforts":["low"],"name":"Opus"}',
+        '{"id":"m","fastMode":true,"efforts":["low"]}',
+      ]) {
+        expect(
+          decodeCodingSessionProviderCatalog(
+            signedCatalog(content: withModels(row), revision: 1),
+          ).reason,
+          CodingSessionDecodeReason.malformedPayload,
+          reason: row,
+        );
+      }
+    });
+
     test('the tag envelope is exact', () {
       final wrongVersion = signedCatalog(
         tags: [

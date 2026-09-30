@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   codingSessionContextLabel,
+  codingSessionEffortLabel,
   codingSessionModelDisplayName,
+  codingSessionModelTitle,
   codingSessionTraitsSummary,
 } from "./codingSessionModelDisplay.ts";
 
@@ -59,5 +61,33 @@ test("traits summarise the way people write them, or not at all", () => {
     codingSessionTraitsSummary({ thinking: null, context: null }),
     null,
     "a model with neither dimension must be able to hide the control",
+  );
+});
+
+// "Claude Fable 5 1" was the derived name for `claude-fable-5-1`; the runtime
+// calls it "Fable 5.1", and when its catalog row says so that is the title.
+test("the runtime's own name wins, and the derived name is only the fallback", () => {
+  assert.equal(
+    codingSessionModelTitle("claude-fable-5-1", "Fable 5.1"),
+    "Fable 5.1",
+  );
+  assert.equal(
+    codingSessionModelTitle("default", "Default (recommended)"),
+    "Default (recommended)",
+  );
+  assert.equal(
+    codingSessionModelTitle("claude-fable-5-1", null),
+    "Claude Fable 5 1",
+  );
+  assert.equal(codingSessionModelTitle("gpt-5.6-terra", "  "), "GPT-5.6 Terra");
+});
+
+test("efforts and fast mode summarise the way people write them", () => {
+  assert.equal(codingSessionEffortLabel("xhigh"), "Extra high");
+  assert.equal(codingSessionEffortLabel("default"), "Default");
+  assert.equal(codingSessionEffortLabel("ultra"), "Ultra");
+  assert.equal(
+    codingSessionTraitsSummary({ thinking: "max", context: null, fast: true }),
+    "Max · Fast",
   );
 });

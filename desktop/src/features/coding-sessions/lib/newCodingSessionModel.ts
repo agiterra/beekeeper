@@ -5,6 +5,7 @@ import type {
 } from "@/shared/api/tauriSessionProvider";
 
 import { formatCodingSessionRuntimeLabel } from "./codingSessionLabels";
+import { isCodingSessionModelSelectionOffered } from "./codingSessionModelOptions";
 import type {
   CodingSessionProviderCatalogProvider,
   TrustedCodingSessionProviderCatalog,
@@ -340,6 +341,14 @@ export function resolveSelectedNewCodingSessionTarget(input: {
   return selectInitialNewCodingSessionTarget(input.targets);
 }
 
+/**
+ * The model this create runs, or `null` when the pick is not on offer.
+ *
+ * An explicit pick is kept when it is an `allowedModels` id, or a composed
+ * `<id>[<effort>][fast]` whose tokens that id's catalog row offers
+ * ({@link isCodingSessionModelSelectionOffered}); anything else — a stale
+ * catalog, an effort the row never named — is refused rather than sent.
+ */
 export function resolveSelectedNewCodingSessionModel(input: {
   provider: CodingSessionProviderCatalogProvider | null;
   selectedModel: string | null;
@@ -347,7 +356,10 @@ export function resolveSelectedNewCodingSessionModel(input: {
 }): string | null {
   if (!input.provider) return null;
   if (!input.selectionExplicit) return input.provider.defaultModel;
-  return input.provider.allowedModels.includes(input.selectedModel ?? "")
+  return isCodingSessionModelSelectionOffered(
+    input.provider,
+    input.selectedModel ?? "",
+  )
     ? input.selectedModel
     : null;
 }

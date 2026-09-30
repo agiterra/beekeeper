@@ -42,6 +42,13 @@ const _maxCatalogContentBytes = 256 * 1024;
 const _maxReferenceBytes = 2 * 1024;
 const _maxProviders = 32;
 const _maxModels = 64;
+// NIP-CSPC § Per-model rows: the runtime's own words about a model.
+const _maxModelNameBytes = 128;
+const _maxModelDescriptionBytes = 512;
+const _maxModelEfforts = 16;
+const _maxEffortBytes = 32;
+// `rank` is a `u32` on the Rust side.
+const _maxModelRank = 0xffffffff;
 const _maxProjects = 512;
 
 /// What a catalog says one provider instance can do.
@@ -394,7 +401,17 @@ bool _describedModelsAreCanonical(Object? value, List<String> allowed) {
     if (!hasRequiredAndOptionalKeys(
           row,
           const ['id'],
-          const ['contextWindow', 'family', 'vendor', 'deprecated'],
+          const [
+            'contextWindow',
+            'family',
+            'vendor',
+            'deprecated',
+            'name',
+            'description',
+            'efforts',
+            'fastMode',
+            'rank',
+          ],
         ) ||
         row.length < 2 ||
         !_nonblank(row['id'])) {
@@ -412,6 +429,38 @@ bool _describedModelsAreCanonical(Object? value, List<String> allowed) {
     if (row.containsKey('deprecated') && row['deprecated'] is! bool) {
       return false;
     }
+    if (!_runtimeModelFactsAreCanonical(row)) return false;
+  }
+  return true;
+}
+
+/// Name, description, efforts, fast mode and rank, checked as `buzz-core`'s
+/// `check_models` checks them (desktop `runtimeModelFactsAreCanonical`). An
+/// empty `efforts` or a `false` fast mode is refused: the producer omits both.
+bool _runtimeModelFactsAreCanonical(Map<String, dynamic> row) {
+  if (row.containsKey('name') &&
+      !boundedNonempty(row['name'], _maxModelNameBytes)) {
+    return false;
+  }
+  if (row.containsKey('description') &&
+      !boundedNonempty(row['description'], _maxModelDescriptionBytes)) {
+    return false;
+  }
+  if (row.containsKey('efforts')) {
+    final efforts = row['efforts'];
+    if (efforts is! List ||
+        efforts.isEmpty ||
+        efforts.length > _maxModelEfforts ||
+        efforts.toSet().length != efforts.length ||
+        !efforts.every((effort) => boundedNonempty(effort, _maxEffortBytes))) {
+      return false;
+    }
+  }
+  if (row.containsKey('fastMode') && row['fastMode'] != true) return false;
+  final rank = row['rank'];
+  if (row.containsKey('rank') &&
+      (rank is! int || rank < 0 || rank > _maxModelRank)) {
+    return false;
   }
   return true;
 }
@@ -505,6 +554,11 @@ Map<String, Object?> _canonicalCatalog(Map<String, dynamic> payload) =>
                       'family',
                       'vendor',
                       'deprecated',
+                      'name',
+                      'description',
+                      'efforts',
+                      'fastMode',
+                      'rank',
                     ], const {}),
                 ],
               },

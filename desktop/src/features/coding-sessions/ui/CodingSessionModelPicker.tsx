@@ -1,7 +1,7 @@
 import { Bot, Check, Search, Sparkles, Star, Terminal } from "lucide-react";
 import * as React from "react";
 
-import { codingSessionModelDisplayName } from "@/features/coding-sessions/lib/codingSessionModelDisplay";
+import { codingSessionModelTitle } from "@/features/coding-sessions/lib/codingSessionModelDisplay";
 import {
   CODING_SESSION_MODEL_FAVORITES_RAIL,
   codingSessionModelFavoriteKey,
@@ -29,8 +29,11 @@ import {
  * put the two models someone actually uses one keystroke away, and search
  * makes a long list navigable instead of scrollable.
  *
- * Reasoning effort is deliberately **not** here: it is a separate decision
- * about the same model, and folding it in is what produced thirty rows.
+ * Reasoning effort and fast mode are deliberately **not** here: they are
+ * separate decisions about the same model (CodingSessionTraitsPicker), and
+ * folding them in is what produced thirty rows. Where the runtime names its
+ * models (catalog rows), a row reads the runtime's name and description, and
+ * the list follows the runtime's own order.
  */
 
 /**
@@ -208,8 +211,14 @@ export function CodingSessionModelPicker({
   const selectedProvider =
     providers.find((provider) => provider.selectionKey === selectionKey) ??
     null;
-  // The glyph already says whose model this is, so the trigger says which.
-  const triggerLabel = codingSessionModelDisplayName(model ?? "");
+  // The glyph already says whose model this is, so the trigger says which —
+  // in the runtime's own words when its catalog row names the model.
+  const triggerLabel = codingSessionModelTitle(
+    model ?? "",
+    model === null
+      ? null
+      : (selectedProvider?.details?.get(model)?.name ?? null),
+  );
 
   return (
     <Popover
@@ -300,14 +309,14 @@ export function CodingSessionModelPicker({
               const isSelected =
                 row.selectionKey === selectionKey && row.model === model;
               // Inside one provider's rail the provider name is on every row
-              // and tells nobody anything; the id it stands for does. In
-              // Favourites, where providers mix, the opposite is true.
+              // and tells nobody anything; the runtime's own description does,
+              // and failing that the id. In Favourites, where providers mix,
+              // the provider is the missing fact.
               const secondary =
                 rail === CODING_SESSION_MODEL_FAVORITES_RAIL
                   ? row.providerLabel
-                  : row.model === ""
-                    ? "the adapter chooses"
-                    : row.model;
+                  : (row.description ??
+                    (row.model === "" ? "the adapter chooses" : row.model));
               return (
                 <div
                   className={cn(
@@ -339,8 +348,11 @@ export function CodingSessionModelPicker({
                     onMouseEnter={() => setActive(index)}
                     type="button"
                   >
-                    <span className="w-full truncate text-sm">
-                      {codingSessionModelDisplayName(row.model)}
+                    <span
+                      className="w-full truncate text-sm"
+                      title={row.model === "" ? undefined : row.model}
+                    >
+                      {codingSessionModelTitle(row.model, row.name)}
                     </span>
                     <span className="flex w-full items-center gap-1 truncate text-2xs text-muted-foreground">
                       {rail === CODING_SESSION_MODEL_FAVORITES_RAIL ? (

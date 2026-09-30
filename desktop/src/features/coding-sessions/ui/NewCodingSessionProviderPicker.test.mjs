@@ -348,3 +348,66 @@ test("the record-update action names both ids and writes only on click", () => {
     "",
   );
 });
+
+/** A Claude target whose catalog carries the runtime's own model rows. */
+function describedClaude() {
+  const efforts = ["default", "low", "high", "max"];
+  const base = target(["default", "claude-fable-5-1", "haiku", "opus"]);
+  return {
+    ...base,
+    selectionKey: "local:claude-primary",
+    provider: {
+      ...base.provider,
+      runtime: "claude",
+      providerInstanceRef: "claude-primary",
+      models: [
+        {
+          id: "default",
+          name: "Default (recommended)",
+          description: "Opus 5.5",
+          efforts,
+          rank: 0,
+        },
+        { id: "claude-fable-5-1", name: "Fable 5.1", efforts, rank: 2 },
+        { id: "haiku", name: "Haiku 4.5", rank: 3 },
+        { id: "opus", name: "Opus 5.5", efforts, fastMode: true, rank: 1 },
+      ],
+    },
+  };
+}
+
+test("the trigger names the model in the runtime's own words", () => {
+  const claude = describedClaude();
+  const markup = render({
+    model: "claude-fable-5-1",
+    targets: [claude],
+    selectedTarget: claude,
+  });
+  assert.match(markup, />Fable 5\.1</);
+  assert.doesNotMatch(markup, /Claude Fable 5 1/);
+});
+
+test("the options control reads Reasoning and Fast mode from the row", () => {
+  const claude = describedClaude();
+  const chosen = render({
+    model: "opus[high][fast]",
+    targets: [claude],
+    selectedTarget: claude,
+  });
+  assert.match(chosen, />Opus 5\.5</);
+  assert.match(chosen, />High · Fast</);
+  // No effort chosen: the runtime's own default, named as it names it.
+  const plain = render({
+    model: "opus",
+    targets: [claude],
+    selectedTarget: claude,
+  });
+  assert.match(plain, />Default</);
+  // A model whose row reports neither efforts nor fast mode has no control.
+  const haiku = render({
+    model: "haiku",
+    targets: [claude],
+    selectedTarget: claude,
+  });
+  assert.doesNotMatch(haiku, /data-testid="coding-session-traits-picker"/);
+});

@@ -203,6 +203,33 @@ test("model falls back to the provider default until it is chosen explicitly", (
   );
 });
 
+test("a composed pick is kept only when the model's row offers its tokens", () => {
+  const described = {
+    ...provider(),
+    allowedModels: ["sonnet", "haiku", "opus"],
+    models: [
+      { id: "haiku", name: "Haiku 4.5" },
+      {
+        id: "opus",
+        name: "Opus 5.5",
+        efforts: ["default", "low", "high"],
+        fastMode: true,
+      },
+    ],
+  };
+  const pick = (selectedModel) =>
+    resolveSelectedNewCodingSessionModel({
+      provider: described,
+      selectedModel,
+      selectionExplicit: true,
+    });
+  assert.equal(pick("opus[high][fast]"), "opus[high][fast]");
+  assert.equal(pick("opus[fast]"), "opus[fast]");
+  assert.equal(pick("opus[max]"), null, "an effort the row never named");
+  assert.equal(pick("haiku[high]"), null, "a model with no efforts");
+  assert.equal(pick("sonnet[fast]"), null, "no row, no fast mode");
+});
+
 test("this computer's runtime is a target before it has published anything", () => {
   const target = localCodingSessionProviderTarget({
     channelId: "channel-a",

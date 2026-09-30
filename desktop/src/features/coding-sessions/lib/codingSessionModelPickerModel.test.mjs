@@ -230,3 +230,44 @@ test("a provider with no catalog models still has a row that explains itself", (
   assert.equal(found[0].ready, false);
   assert.equal(found[0].unavailableNote, "sign-in needed");
 });
+
+test("a row carries the runtime's name and description, and search finds it by name", () => {
+  const named = {
+    ...CLAUDE,
+    models: ["default", "opus", "claude-fable-5-1"],
+    details: new Map([
+      [
+        "default",
+        { name: "Default (recommended)", description: "Opus 5.5", rank: 0 },
+      ],
+      ["opus", { name: "Opus 5.5", description: null, rank: 1 }],
+      ["claude-fable-5-1", { name: "Fable 5.1", description: null, rank: 2 }],
+    ]),
+  };
+  const found = codingSessionModelPickerRows({
+    providers: [named],
+    favorites: NO_FAVORITES,
+    rail: named.selectionKey,
+    query: "",
+  });
+  assert.deepEqual(
+    found.map((row) => [row.model, row.name, row.description]),
+    [
+      ["default", "Default (recommended)", "Opus 5.5"],
+      ["opus", "Opus 5.5", null],
+      ["claude-fable-5-1", "Fable 5.1", null],
+    ],
+  );
+  const searched = codingSessionModelPickerRows({
+    providers: [named],
+    favorites: NO_FAVORITES,
+    rail: named.selectionKey,
+    query: "fable 5.1",
+  });
+  assert.deepEqual(
+    searched.map((row) => row.model),
+    ["claude-fable-5-1"],
+  );
+  // A provider with no rows has no names, and says nothing it was not told.
+  assert.equal(rows()[0].name, null);
+});
