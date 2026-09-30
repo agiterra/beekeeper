@@ -134,7 +134,7 @@ pub(crate) fn ensure_registered(_app: &AppHandle) -> Registration {
     // which is correct rather than broken.
     if let Some(menubar) = resolve_menubar_binary() {
         let current = install::status(Service::MenuBar, &home, instance);
-        if !current.installed || !current.warnings.is_empty() {
+        if current.needs_rewrite() {
             if let Err(error) = install::install(Service::MenuBar, &home, instance, &menubar) {
                 eprintln!("buzz-desktop: agent-host: menu bar app not registered: {error}");
             }
@@ -146,7 +146,12 @@ pub(crate) fn ensure_registered(_app: &AppHandle) -> Registration {
     // rewrite would be harmless but it would also bounce the agent through
     // `launchctl bootout`, and doing that on every status poll is how a host
     // comes to restart every few seconds.
-    if current.installed && current.warnings.is_empty() {
+    //
+    // The question is `needs_rewrite`, not "are there warnings": a warning is
+    // something to disclose, and a permanent one — a Linux user who does not
+    // linger — would otherwise re-register on every poll forever. See
+    // `Registration::needs_rewrite`.
+    if !current.needs_rewrite() {
         return current;
     }
     let Some(program) = resolve_host_binary() else {

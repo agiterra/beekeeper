@@ -127,6 +127,32 @@ pub struct Registration {
     pub warnings: Vec<String>,
 }
 
+impl Registration {
+    /// Whether the registration file should be written again.
+    ///
+    /// Deliberately **not** "does it carry warnings". A warning is something an
+    /// operator must be told; it is not evidence that the file is wrong, and
+    /// rewriting cannot always clear one. [`linger_warning`] is the case that
+    /// proves it: `loginctl show-user` says nothing about this unit, so a Linux
+    /// user who has not run `enable-linger` — or any container, where the answer
+    /// is unreadable — carries that warning permanently. A caller that
+    /// rewrote on "any warning" would then `systemctl --user disable --now` and
+    /// re-enable on every status poll, stopping and starting the host every few
+    /// seconds and taking every coding session with it. Which is the failure
+    /// the poll's own comment was written to prevent, arrived at from the other
+    /// side.
+    ///
+    /// True only for the two states a rewrite actually fixes: no file at all,
+    /// and a file that does not name a program that exists.
+    pub fn needs_rewrite(&self) -> bool {
+        !self.installed
+            || self
+                .program
+                .as_ref()
+                .is_none_or(|program| !program.exists())
+    }
+}
+
 /// Whether this instance is registered to start at login.
 ///
 /// This is the *other half* of telling "not installed" from "installed but not
@@ -455,6 +481,54 @@ fn run_capture(program: &str, args: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A permanent advisory warning must not make a registration look wrong.
+    ///
+    /// `loginctl show-user` says nothing about this unit, so a Linux user who
+    /// has not run `enable-linger` carries that warning for good. Before this
+    /// was a distinct question, the desktop's poll re-registered on "any
+    /// warning" — which on such a machine would `systemctl --user disable
+    /// --now` and re-enable every few seconds, restarting the host and ending
+    /// every coding session with it, forever.
+    #[test]
+    fn a_linger_warning_does_not_ask_for_a_rewrite() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let program = dir.path().join("beekeeper-host");
+        std::fs::write(&program, b"#!/bin/sh\n").expect("write program");
+        let advisory = Registration {
+            installed: true,
+            path: dir.path().join("io.agiterra.beekeeper.host.plist"),
+            program: Some(program),
+            warnings: vec![
+                "this user does not linger, so the agent host will stop when you log out — run \
+                 `loginctl enable-linger $USER`"
+                    .to_string(),
+            ],
+        };
+        assert!(
+            !advisory.needs_rewrite(),
+            "a warning is a thing to disclose, not evidence the file is wrong"
+        );
+        // And the two states a rewrite does fix still ask for one.
+        assert!(Registration {
+            installed: false,
+            ..advisory.clone()
+        }
+        .needs_rewrite());
+        assert!(Registration {
+            program: None,
+            ..advisory.clone()
+        }
+        .needs_rewrite());
+        assert!(
+            Registration {
+                program: Some(dir.path().join("gone")),
+                ..advisory
+            }
+            .needs_rewrite(),
+            "a registration naming a binary that no longer exists must be rewritten"
+        );
+    }
 
     #[test]
     fn dev_and_production_register_separately() {
