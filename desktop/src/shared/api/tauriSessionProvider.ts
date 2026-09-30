@@ -23,6 +23,26 @@ export type AgentHostReachability =
  * Mirrors the Rust `AgentHostStatus` struct in
  * `desktop/src-tauri/src/session_provider/status.rs`.
  */
+/**
+ * What to do about registering the agent host to start at login.
+ *
+ * Computed in Rust (`beekeeper_host::install::login_autostart`) and sent, not
+ * re-derived here. The rule has four rows, and writing it in two languages is
+ * how a surface comes to offer to install something that is already installed.
+ *
+ * - `notApplicable` — no provider identity on this relay; nothing to register.
+ * - `granted` — registered. The app repairs it silently across updates and
+ *   never asks again.
+ * - `declined` — this machine's operator said no. Show what it costs and offer
+ *   the way back; never re-propose it on its own.
+ * - `shouldAsk` — nothing registered and nobody has said no. Ask.
+ */
+export type LoginAutostart =
+  | "notApplicable"
+  | "granted"
+  | "declined"
+  | "shouldAsk";
+
 export type AgentHostStatus = {
   reachability: AgentHostReachability;
   /** The control socket this app looked at, so a person can check it. */
@@ -55,6 +75,15 @@ export type AgentHostStatus = {
     program?: string;
     warnings?: string[];
   };
+  /**
+   * What to do about that registration.
+   *
+   * Registering a daemon that runs at every login is a machine-level change,
+   * so the app asks rather than helping itself — this is the answer to render
+   * a question from, and `granted` is the only state in which the app repairs
+   * the registration on its own.
+   */
+  login: LoginAutostart;
   /** One line for a person, whatever happened. Never empty. */
   message: string;
 };
@@ -324,6 +353,36 @@ export async function ensureCodingSessionProviderRunning(
   return invokeTauri<CodingSessionProviderStatus>(
     "ensure_coding_session_provider_running",
     expectedRelayUrl === undefined ? undefined : { expectedRelayUrl },
+  );
+}
+
+/**
+ * Register the agent host, and the menu bar app, to start at login.
+ *
+ * The answer to the question `status.host.login === "shouldAsk"` poses, and
+ * also the way back from `declined` — installing clears the recorded refusal,
+ * so changing your mind in settings is one click and not a file to find.
+ *
+ * Resolves with the whole status: a registration that could not be written
+ * comes back as `host.autostart.warnings`, not as a rejected promise, because
+ * a surface needs to say what happened rather than show a toast and forget.
+ */
+export async function installAgentHostAutostart(): Promise<CodingSessionProviderStatus> {
+  return invokeTauri<CodingSessionProviderStatus>(
+    "install_agent_host_autostart",
+  );
+}
+
+/**
+ * Record that this machine's operator does not want the host at login.
+ *
+ * Removes both registrations and remembers the answer. It does **not** stop a
+ * provider that is running — declining the login registration is a statement
+ * about the next login, not a request to end anything now.
+ */
+export async function declineAgentHostAutostart(): Promise<CodingSessionProviderStatus> {
+  return invokeTauri<CodingSessionProviderStatus>(
+    "decline_agent_host_autostart",
   );
 }
 

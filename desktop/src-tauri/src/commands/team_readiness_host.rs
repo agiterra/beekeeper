@@ -172,17 +172,17 @@ impl ReadinessHost for AppReadinessHost<'_> {
             .status
             .as_ref()
             .is_some_and(|status| status.provider_pubkey == pubkey);
-        // The real registration, not a stand-in. This path only reads
-        // `process_state()`, which never looks at the registration — but a
-        // fabricated "not installed" sitting in a status struct is the kind of
-        // value that gets believed the moment somebody widens what this
+        // The real registration and the real decision, not stand-ins. This
+        // path only reads `process_state()`, which never looks at either — but
+        // a fabricated "not installed" sitting in a status struct is the kind
+        // of value that gets believed the moment somebody widens what this
         // function returns. Reading it costs one plist stat.
-        let status = CodingSessionProviderStatus::from_snapshot(
-            None,
-            &host,
-            snapshot,
-            crate::agent_host::autostart::status(),
-        );
+        //
+        // `provisioned: false` because this constructor is handed no record;
+        // readiness resolves the identity itself, in its caller.
+        let (login, autostart) = crate::agent_host::autostart::decide(false);
+        let status =
+            CodingSessionProviderStatus::from_snapshot(None, &host, snapshot, autostart, login);
         match status.process_state() {
             // A live child for another identity is not this one running.
             CodingSessionProviderProcessState::Live { .. } if !provider_matches => {

@@ -479,6 +479,8 @@ pub(crate) fn invoke_handler(
         // registers these in lib.rs's inline list; on the assembly that list
         // lives here (glue adaptation).
         session_provider::commands::coding_session_provider_status,
+        session_provider::commands::install_agent_host_autostart,
+        session_provider::commands::decline_agent_host_autostart,
         session_provider::commands::coding_session_capacity_settings,
         session_provider::commands::set_coding_session_capacity,
         session_provider::commands::set_coding_session_turn_idle_timeout,

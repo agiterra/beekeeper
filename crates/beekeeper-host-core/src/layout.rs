@@ -168,6 +168,17 @@ pub fn host_key_file_path(home: &Path, instance: Instance) -> PathBuf {
     host_dir(home, instance).join("provider-key")
 }
 
+/// Where the operator's refusal to register the host at login is recorded.
+///
+/// Only the *refusal*. A grant is observable — the launchd plist or systemd
+/// unit either exists or it does not — so recording one would create a second
+/// source of truth that can disagree with the filesystem, and the two would
+/// then have to be reconciled by something. The absence of both this file and
+/// a registration is what "nobody has been asked yet" means.
+pub fn login_refusal_path(home: &Path, instance: Instance) -> PathBuf {
+    host_dir(home, instance).join("login-refused.json")
+}
+
 /// The host's own log, distinct from the supervised provider's.
 pub fn host_log_path(home: &Path, instance: Instance) -> PathBuf {
     host_dir(home, instance).join("host.log")

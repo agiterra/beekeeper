@@ -103,6 +103,7 @@ import { SidebarProvider } from "@/shared/ui/sidebar";
 import { RelayConnectionOverlay } from "@/app/RelayConnectionOverlay";
 import { useSidebarRelayConnectionCard } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
 import { useRelayBuildDrift } from "@/features/settings/hooks/useRelayBuildDrift";
+import { AgentHostInstallPrompt } from "@/app/AgentHostInstallPrompt";
 import { AppShellTrayMenu } from "@/app/useAppShellTrayMenu";
 import { AppProfilePanelProvider } from "@/app/AppProfilePanelProvider";
 import { LazySettingsScreen } from "@/app/LazySettingsScreen";
@@ -704,6 +705,11 @@ export function AppShell() {
   return (
     <PreventSleepProvider>
       {!isHuddleRoom ? <AppShellTrayMenu channels={channels} /> : null}
+      {/* Asks once whether this computer should run its agents in the
+          background. Renders nothing unless the answer is genuinely unknown —
+          see `AgentHostInstallPrompt`. Not in a huddle room, where a modal
+          would land over a live call. */}
+      {!isHuddleRoom ? <AgentHostInstallPrompt /> : null}
       <ChannelNavigationProvider channels={channels}>
         <AppShellProvider
           value={{

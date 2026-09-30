@@ -72,6 +72,15 @@ pub(crate) struct AgentHostStatus {
     /// surface that told somebody to start something they have not installed
     /// would be worse than silent.
     pub autostart: beekeeper_host::install::Registration,
+    /// What to do about that registration — computed here rather than in the
+    /// frontend.
+    ///
+    /// The rule has four rows and the surface needs the answer, not the
+    /// inputs. Re-deriving it in TypeScript would put the same rule in two
+    /// languages, which is how a "granted" and a "should ask" come to be shown
+    /// at once. `granted` covers a registration that exists even if a refusal
+    /// was recorded before it, because the filesystem is the grant.
+    pub login: beekeeper_host::install::LoginAutostart,
     /// One line for a person, whatever happened.
     pub message: String,
 }
@@ -112,6 +121,7 @@ impl CodingSessionProviderStatus {
         host: &AgentHost,
         snapshot: HostSnapshot,
         autostart: beekeeper_host::install::Registration,
+        login: beekeeper_host::install::LoginAutostart,
     ) -> Self {
         let running = match record {
             Some(record) => snapshot.running(&record.provider_pubkey),
@@ -133,6 +143,7 @@ impl CodingSessionProviderStatus {
                 socket: host.socket().to_path_buf(),
                 provider_state: snapshot.status.map(|status| status.provider),
                 autostart,
+                login,
                 message: snapshot.message,
             },
             provider_pubkey: record.map(|record| record.provider_pubkey.clone()),
@@ -185,24 +196,14 @@ pub(crate) async fn provider_status(
     let snapshot = host.snapshot().await;
     let record = store.get(relay_url);
 
-    // Re-assert the login registration, for the same reason the two blocks
-    // below re-assert trust and seats: the app no longer starts anything, so
-    // the poll is the only thing that runs often enough to keep a property
-    // true. Specifically it is what repairs a machine commissioned by an
-    // *older* build, whose `provision_coding_session_provider` will never run
-    // again — see `autostart::poll_action`. `install` runs `launchctl
-    // bootstrap`, so this also starts the host the first time, rather than
-    // only arranging for the next login.
-    let autostart = match crate::agent_host::autostart::poll_action(record.is_some()) {
-        crate::agent_host::autostart::PollAction::Reassert => {
-            crate::agent_host::autostart::ensure_registered(app)
-        }
-        crate::agent_host::autostart::PollAction::ReadOnly => {
-            crate::agent_host::autostart::status()
-        }
-    };
+    // Repair the login registration if there is one, and otherwise report
+    // whether to ask for it. The poll does not install: see
+    // `autostart::poll_action` for why a machine-level change is a person's
+    // answer and not an app's initiative.
+    let (login, autostart) = login_registration(app, record.is_some());
 
-    let status = CodingSessionProviderStatus::from_snapshot(record, host, snapshot, autostart);
+    let status =
+        CodingSessionProviderStatus::from_snapshot(record, host, snapshot, autostart, login);
 
     // Re-assert the render gate whenever the host names an identity.
     //
@@ -235,6 +236,30 @@ pub(crate) async fn provider_status(
         }
     }
     Ok(status)
+}
+
+/// The login decision, plus the registration it was read from, repairing an
+/// existing registration on the way past.
+///
+/// `Repair` rewrites only when [`beekeeper_host::install::Registration::needs_rewrite`]
+/// says the file is missing or names a program that is gone, so a poll every
+/// few seconds does not bounce the service through `launchctl bootout`.
+fn login_registration(
+    app: &tauri::AppHandle,
+    provisioned: bool,
+) -> (
+    beekeeper_host::install::LoginAutostart,
+    beekeeper_host::install::Registration,
+) {
+    use crate::agent_host::autostart::{self, PollAction};
+
+    let (decision, registration) = autostart::decide(provisioned);
+    match autostart::poll_action(decision) {
+        PollAction::Repair if registration.needs_rewrite() => {
+            (decision, autostart::ensure_registered(app))
+        }
+        PollAction::Repair | PollAction::Ask | PollAction::Leave => (decision, registration),
+    }
 }
 
 /// The provider state directory, as the *host* reported it.

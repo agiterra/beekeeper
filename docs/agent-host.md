@@ -45,9 +45,30 @@ catalog. Synthesising "connected" from "the child is alive" would be a guess.
 
 ## On a Mac
 
-Nothing to do. Beekeeper registers the host — and the menu bar app — the first
-time you finish setting up coding sessions, and re-asserts the registration on
-every status poll so an updated app repairs itself.
+**Beekeeper asks; it does not help itself.** Something that starts at every
+login, forever, is a change to your machine, so the first time the app finds a
+commissioned provider and no registration it puts the question: *Keep your
+agents running?* Saying yes installs two login items from inside the bundle —
+the agent host and the menu bar icon — and starts them immediately, without a
+logout.
+
+Saying no is recorded, in `~/.local/state/buzz[-dev]/host/login-refused.json`,
+and nothing asks again. **Settings → Coding sessions → Running when Beekeeper
+is closed** is where the answer lives afterwards, in both directions.
+
+Only the refusal is stored. A grant is the registration itself, so there is no
+second copy of "they said yes" to fall out of step with the plist — and after
+you have said yes once, an app update that moves the binary the registration
+names is repaired silently rather than re-proposed. `bee host uninstall`
+records the refusal too, so an uninstall from a terminal is not undone by the
+next launch.
+
+**Owed:** the app's reset path does not clear `~/.local/state/buzz[-dev]/host/`
+at all — not `host.json`, not `provider-key`, and not the refusal — so a reset
+machine keeps whatever it had, including a "no" nobody can see. The code that
+would do it exists (`agent_host::autostart::unregister`, which clears the
+refusal rather than recording one, precisely because a reset is not a
+refusal); wiring it into `reset.rs` is a separate change.
 
 To check:
 

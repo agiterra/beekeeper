@@ -1,10 +1,14 @@
 //! Making the agent host start at login.
 //!
-//! "After Beekeeper is installed and commissioned" is the trigger, and
-//! commissioning is `provision_coding_session_provider` succeeding. So the
-//! registration is written there — and re-asserted on every status poll, so an
-//! app that was updated (or whose registration somebody removed) repairs
-//! itself instead of quietly never starting the host again.
+//! A daemon that starts at every login is a machine-level change, so a person
+//! is *asked* — the poll reports the question (see [`poll_action`]) and a
+//! surface puts it to them. What the poll does on its own is narrower: it
+//! repairs a registration that already exists, so an app that was updated, or
+//! whose registration somebody moved, does not quietly stop starting the host
+//! for a person who already said yes.
+//!
+//! On a headless machine there is nobody to ask, and `bee host install` is the
+//! whole story.
 //!
 //! # A failed registration must not read as success
 //!
@@ -16,7 +20,7 @@
 
 use std::path::PathBuf;
 
-use beekeeper_host::install::{self, Registration, Service};
+use beekeeper_host::install::{self, LoginAutostart, Registration, Service};
 use beekeeper_host_core::layout;
 use tauri::AppHandle;
 
@@ -73,31 +77,73 @@ pub(crate) fn resolve_menubar_binary() -> Option<PathBuf> {
 /// What a status poll should do about the login registration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PollAction {
-    /// Write the registration if it is missing, then read it back.
-    Reassert,
-    /// Read it and change nothing.
-    ReadOnly,
+    /// Registered already: rewrite it only if it has drifted, and never ask.
+    Repair,
+    /// Nothing registered and nobody has said no. Report the question; the
+    /// person answers it, not the poll.
+    Ask,
+    /// Nothing to do. No identity here, or the operator declined.
+    Leave,
 }
 
-/// Decide from whether this relay has a provider identity.
+/// Decide from the three facts that determine it.
 ///
-/// The trigger this module's header names — "installed and commissioned" — is
-/// `provision_coding_session_provider` succeeding, and for a while that was
-/// the *only* caller of [`ensure_registered`]. A machine commissioned by an
-/// older build never runs that command again, so its registration would never
-/// be written at all: the host would never start at login, and the only sign
-/// would be `bee host installed` reporting both services absent while
-/// `host.json` and the key file sat there freshly written. That is what
-/// happened on the first install onto such a machine.
+/// **The poll does not install.** It did, briefly, and that was wrong in a way
+/// worth recording: a launchd agent that runs a daemon at every login, forever,
+/// is a machine-level change, and helping yourself to it because somebody
+/// opened an app is not a thing to do quietly. It also meant nothing ever told
+/// a person the agent host existed.
 ///
-/// `ReadOnly` when nothing is provisioned, so merely opening the app does not
-/// plant a LaunchAgent for a host with no identity to serve.
-pub(crate) fn poll_action(provisioned: bool) -> PollAction {
-    if provisioned {
-        PollAction::Reassert
-    } else {
-        PollAction::ReadOnly
+/// It does still *repair*, because a person who has already said yes must not
+/// be asked again every time an update moves the binary the registration
+/// names. `Granted` is read off the filesystem rather than from a stored
+/// grant — see `beekeeper_host::install::login_autostart`.
+///
+/// The trigger this module's header used to name — commissioning — is not
+/// enough on its own: a machine commissioned by an *older* build never runs
+/// that command again, so it would never be asked at all. That is what
+/// happened on the first install of this branch onto such a machine, where
+/// `bee host installed` reported both services absent while `host.json` and
+/// the key file sat there freshly written.
+pub(crate) fn poll_action(decision: LoginAutostart) -> PollAction {
+    match decision {
+        LoginAutostart::Granted => PollAction::Repair,
+        LoginAutostart::ShouldAsk => PollAction::Ask,
+        LoginAutostart::NotApplicable | LoginAutostart::Declined => PollAction::Leave,
     }
+}
+
+/// The login decision for this instance, and the registration it was read
+/// from.
+///
+/// One function so the two can never be read a moment apart and disagree.
+pub(crate) fn decide(provisioned: bool) -> (LoginAutostart, Registration) {
+    let registration = status();
+    let refused = match layout::home_dir() {
+        Ok(home) => install::login_refused(&home, super::instance()),
+        // Without a home directory there is nowhere to have recorded a
+        // refusal, and `status()` above has already put the real problem in
+        // the registration's warnings.
+        Err(_) => false,
+    };
+    let decision = install::login_autostart(provisioned, &registration, refused);
+    (decision, registration)
+}
+
+/// Record that the operator does not want the host registered at login.
+///
+/// The disclosure of what it costs them is the surface's job; this only makes
+/// the answer stick, so nothing proposes it again.
+pub(crate) fn decline() -> Result<Registration, String> {
+    let home = layout::home_dir()?;
+    let instance = super::instance();
+    install::refuse_login(&home, instance)?;
+    // Both services, for the same reason `unregister` removes both: a menu bar
+    // icon for a host that will not start is worse than neither.
+    let menubar = install::uninstall(Service::MenuBar, &home, instance);
+    let host = install::uninstall(Service::AgentHost, &home, instance);
+    host.and(menubar)?;
+    Ok(status())
 }
 
 /// Whether this app's instance is registered to start at login.
@@ -115,6 +161,10 @@ pub(crate) fn status() -> Registration {
 
 /// Register the host to start at login, unless it already is and still points
 /// at a binary that exists.
+///
+/// Called when a person asks for it, and by the poll only to *repair* a
+/// registration that already exists. `install` clears any recorded refusal,
+/// because asking for the registration supersedes having declined it once.
 ///
 /// Returns the registration as read back afterwards, warnings included. Never
 /// an `Err`: a commissioning must not fail because a login registration could
@@ -177,6 +227,13 @@ pub(crate) fn ensure_registered(_app: &AppHandle) -> Registration {
 }
 
 /// Remove the registration. Used by the app's reset path.
+///
+/// **Not the same as [`decline`], and the difference is the refusal.**
+/// `install::uninstall` records one, because a person running `bee host
+/// uninstall` is saying no and must not be asked again. A reset is not saying
+/// no — it is erasing what this machine remembers — so the refusal is cleared
+/// afterwards. Leaving it would mean a reset machine is silently never offered
+/// background agents again, with nothing anywhere to explain why.
 #[allow(dead_code)] // Wired into `reset.rs` in a later slice.
 pub(crate) fn unregister() -> Result<(), String> {
     let home = layout::home_dir()?;
@@ -186,28 +243,29 @@ pub(crate) fn unregister() -> Result<(), String> {
     // binary this app is about to delete.
     let menubar = install::uninstall(Service::MenuBar, &home, instance);
     let host = install::uninstall(Service::AgentHost, &home, instance);
-    host.and(menubar)
+    let cleared = install::allow_login(&home, instance);
+    host.and(menubar).and(cleared)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The upgrade case: an app whose provider was commissioned by an older
-    /// build must still end up registered. Its commissioning command never
-    /// runs again, so the poll is the only thing left that can write the
-    /// registration — and for the first install of this branch onto such a
-    /// machine, it did not.
+    /// The poll repairs, and does not install. The distinction is the whole
+    /// consent model: a registration that exists was asked for once and must
+    /// keep working across updates without asking again, and one that does
+    /// not exist is a question for a person.
     #[test]
-    fn a_relay_with_an_identity_reasserts_the_registration_on_every_poll() {
-        assert_eq!(poll_action(true), PollAction::Reassert);
-    }
-
-    /// And an app nobody has finished setting up does not plant a LaunchAgent
-    /// for a host with no identity to serve.
-    #[test]
-    fn a_relay_with_no_identity_only_reads_the_registration() {
-        assert_eq!(poll_action(false), PollAction::ReadOnly);
+    fn the_poll_repairs_a_grant_and_asks_for_everything_else() {
+        assert_eq!(poll_action(LoginAutostart::Granted), PollAction::Repair);
+        assert_eq!(poll_action(LoginAutostart::ShouldAsk), PollAction::Ask);
+        // Declined is not a question and not a repair. Re-proposing it every
+        // poll would be the app arguing with the person using it.
+        assert_eq!(poll_action(LoginAutostart::Declined), PollAction::Leave);
+        assert_eq!(
+            poll_action(LoginAutostart::NotApplicable),
+            PollAction::Leave
+        );
     }
 
     /// Nothing registered and no binary to register must produce a *warning*,

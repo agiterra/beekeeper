@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { AgentHostAutostartCard } from "@/features/coding-sessions/ui/AgentHostAutostartCard";
 import { CodingSessionCapacityCard } from "@/features/coding-sessions/ui/CodingSessionCapacityCard";
 import { CodingSessionNamingCard } from "@/features/coding-sessions/ui/CodingSessionNamingCard";
 import {
@@ -27,6 +28,13 @@ import {
 export function CodingSessionsSettingsPanel() {
   return (
     <SettingsOptionGroupList>
+      <SettingsOptionGroup
+        data-testid="settings-agent-host"
+        description="Your coding sessions run in a background agent host, not in this window. With it installed they keep going when you quit Beekeeper and start again when you log in; without it they end with the app. A menu bar icon shows what is running either way."
+        title="Running when Beekeeper is closed"
+      >
+        <AgentHostAutostartCard />
+      </SettingsOptionGroup>
       <SettingsOptionGroup
         data-testid="settings-coding-sessions"
         description="How many coding sessions this computer will run at once, how long one turn may go silent, and how many turns a team session may take before its agents are refused. Each live session is an agent process here — these limits are Beekeeper's own, not your model provider's."

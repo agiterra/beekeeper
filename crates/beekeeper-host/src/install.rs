@@ -39,7 +39,8 @@
 
 use std::path::{Path, PathBuf};
 
-use beekeeper_host_core::layout::{Instance, INSTANCE_VAR};
+use beekeeper_host_core::layout::{self, Instance, INSTANCE_VAR};
+use beekeeper_host_core::logs::now_iso;
 
 /// Which background service a registration is for.
 ///
@@ -153,6 +154,92 @@ impl Registration {
     }
 }
 
+/// What a GUI should do about registering the host at login.
+///
+/// Shipped to the frontend rather than recomputed there. The rule has four
+/// rows and re-deriving them in another language is how the two come to
+/// disagree — the same mistake the tray's subtitle indices made when the
+/// layout existed twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LoginAutostart {
+    /// There is no provider identity here, so there is nothing to register
+    /// and nothing to ask about.
+    NotApplicable,
+    /// Registered. Repair it silently if it has drifted — the operator
+    /// already said yes, and asking again on every update is nagging.
+    Granted,
+    /// The operator said no. Disclose what it costs them and never ask again;
+    /// the settings surface is where they can change their mind.
+    Declined,
+    /// Nothing registered and nobody has said no. Ask.
+    ShouldAsk,
+}
+
+/// Decide, from the three facts that determine it.
+///
+/// A daemon that runs at every login, forever, is a machine-level change, and
+/// doing it because somebody opened an app is not something to help yourself
+/// to. But a person who already said yes must not be asked again each time the
+/// app updates and the registration needs rewriting — so `Granted` repairs
+/// silently and only a *missing* registration is a question.
+pub fn login_autostart(
+    provisioned: bool,
+    registration: &Registration,
+    refused: bool,
+) -> LoginAutostart {
+    if !provisioned {
+        return LoginAutostart::NotApplicable;
+    }
+    if registration.installed {
+        return LoginAutostart::Granted;
+    }
+    if refused {
+        return LoginAutostart::Declined;
+    }
+    LoginAutostart::ShouldAsk
+}
+
+/// Whether the operator has refused to have the host registered at login.
+pub fn login_refused(home: &Path, instance: Instance) -> bool {
+    layout::login_refusal_path(home, instance).exists()
+}
+
+/// Record the refusal, so nothing asks again.
+///
+/// Written by the GUI when a person declines and by `bee host uninstall`,
+/// which is the same statement made from a terminal. Without that second
+/// caller an explicit uninstall would be re-proposed at the next launch, which
+/// reads as the app ignoring you.
+pub fn refuse_login(home: &Path, instance: Instance) -> Result<(), String> {
+    let path = layout::login_refusal_path(home, instance);
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    // The timestamp is for a human reading the directory, not for logic: the
+    // file's *existence* is the whole meaning, so nothing parses this.
+    std::fs::write(
+        &path,
+        format!(
+            "{{\n  \"version\": 1,\n  \"refusedAt\": \"{}\"\n}}\n",
+            now_iso()
+        ),
+    )
+    .map_err(|error| format!("failed to write {}: {error}", path.display()))
+}
+
+/// Forget a refusal, because the operator has now asked for the registration.
+pub fn allow_login(home: &Path, instance: Instance) -> Result<(), String> {
+    let path = layout::login_refusal_path(home, instance);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("failed to remove {}: {error}", path.display())),
+    }
+}
+
 /// Whether this instance is registered to start at login.
 ///
 /// This is the *other half* of telling "not installed" from "installed but not
@@ -226,6 +313,12 @@ pub fn install(
     )
     .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
     activate(service, &path, instance)?;
+    // Installing is the operator asking for this, which supersedes any earlier
+    // refusal. Best-effort: a stale refusal file must not fail an install that
+    // worked, and `login_autostart` reads `installed` first anyway.
+    if let Err(error) = allow_login(home, instance) {
+        eprintln!("beekeeper-host: could not clear the login refusal: {error}");
+    }
     Ok(status(service, home, instance))
 }
 
@@ -237,6 +330,12 @@ pub fn install(
 pub fn uninstall(service: Service, home: &Path, instance: Instance) -> Result<(), String> {
     let path = registration_path(service, home, instance);
     deactivate(service, &path, instance);
+    // Uninstalling is the operator saying no. Recording it is what stops the
+    // app proposing the registration again at the next launch — an uninstall
+    // that gets quietly undone reads as the app ignoring you.
+    if let Err(error) = refuse_login(home, instance) {
+        eprintln!("beekeeper-host: could not record the login refusal: {error}");
+    }
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -528,6 +627,89 @@ mod tests {
             .needs_rewrite(),
             "a registration naming a binary that no longer exists must be rewritten"
         );
+    }
+
+    /// The four rows of the rule, as the one place they are written down.
+    #[test]
+    fn the_login_decision_has_four_distinguishable_answers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let program = dir.path().join("beekeeper-host");
+        std::fs::write(&program, b"#!/bin/sh\n").expect("write program");
+        let registered = Registration {
+            installed: true,
+            path: dir.path().join("host.plist"),
+            program: Some(program),
+            warnings: Vec::new(),
+        };
+        let absent = Registration {
+            installed: false,
+            ..registered.clone()
+        };
+
+        // No identity: nothing to register, so nothing to ask.
+        assert_eq!(
+            login_autostart(false, &absent, false),
+            LoginAutostart::NotApplicable
+        );
+        // Registered: repair silently, never ask again. Including when a
+        // refusal was recorded earlier and then superseded by an install —
+        // `installed` is read first precisely so the filesystem wins over a
+        // stale note about what somebody once wanted.
+        assert_eq!(
+            login_autostart(true, &registered, false),
+            LoginAutostart::Granted
+        );
+        assert_eq!(
+            login_autostart(true, &registered, true),
+            LoginAutostart::Granted
+        );
+        // Said no: disclose, do not ask.
+        assert_eq!(
+            login_autostart(true, &absent, true),
+            LoginAutostart::Declined
+        );
+        // Nothing registered, nobody asked: ask.
+        assert_eq!(
+            login_autostart(true, &absent, false),
+            LoginAutostart::ShouldAsk
+        );
+    }
+
+    /// An uninstall is the operator saying no, and it has to stick: without
+    /// the recorded refusal the app would propose the registration again at
+    /// the next launch, which reads as the app ignoring you.
+    #[test]
+    fn uninstalling_records_the_refusal_and_installing_clears_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let program = home.join("beekeeper-host");
+        std::fs::write(&program, b"#!/bin/sh\n").expect("write program");
+
+        assert!(
+            !login_refused(home, Instance::Production),
+            "a fresh machine has refused nothing"
+        );
+
+        uninstall(Service::AgentHost, home, Instance::Production).expect("uninstall");
+        assert!(
+            login_refused(home, Instance::Production),
+            "uninstalling records the refusal"
+        );
+        assert_eq!(
+            login_autostart(
+                true,
+                &status(Service::AgentHost, home, Instance::Production),
+                login_refused(home, Instance::Production)
+            ),
+            LoginAutostart::Declined
+        );
+
+        // And it is per instance, so declining for a dev build says nothing
+        // about the release build on the same machine.
+        assert!(!login_refused(home, Instance::Dev));
+
+        allow_login(home, Instance::Production).expect("allow");
+        assert!(!login_refused(home, Instance::Production));
     }
 
     #[test]

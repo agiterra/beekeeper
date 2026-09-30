@@ -92,7 +92,9 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
                 .map_err(CliError::Other)?;
             menubar.map_err(CliError::Other)?;
             eprintln!(
-                "bee: removed the login registrations for {}",
+                "bee: removed the login registrations for {} — recorded, so Beekeeper will not \
+                 offer to reinstall them. `bee host install`, or Settings \u{2192} Coding \
+                 sessions, turns them back on.",
                 instance.namespace_value()
             );
             Ok(())
@@ -103,9 +105,21 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
             // desktop.
             let host = beekeeper_host::install::status(Service::AgentHost, &home, instance);
             let menubar = beekeeper_host::install::status(Service::MenuBar, &home, instance);
+            // `installed: false` on its own does not say whether the app will
+            // offer to fix it, and that is the question somebody runs this to
+            // answer. `declined` and `shouldAsk` look identical without it —
+            // and the first means the app will stay quiet on purpose.
+            //
+            // `provisioned: true` is assumed here rather than read: this
+            // command is about the *registration*, and whether a relay has an
+            // identity is `bee host status`'s question. So a machine with no
+            // identity reads `shouldAsk`, not `notApplicable`.
+            let refused = beekeeper_host::install::login_refused(&home, instance);
+            let login = beekeeper_host::install::login_autostart(true, &host, refused);
             print_json(&serde_json::json!({
                 "agentHost": host,
                 "menuBar": menubar,
+                "login": login,
             }))?;
             for warning in host.warnings.iter().chain(&menubar.warnings) {
                 eprintln!("bee: {warning}");

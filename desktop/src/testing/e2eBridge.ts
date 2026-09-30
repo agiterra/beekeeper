@@ -350,6 +350,7 @@ type E2eConfig = {
           program?: string;
           warnings?: string[];
         };
+        login?: "notApplicable" | "granted" | "declined" | "shouldAsk";
         message: string;
       };
       providerPubkey?: string;
@@ -13488,7 +13489,14 @@ export function maybeInstallE2eTauriMocks() {
       // like any unsupported command so failure-path specs keep working.
       case "coding_session_provider_status":
       case "provision_coding_session_provider":
-      case "ensure_coding_session_provider_running": {
+      case "ensure_coding_session_provider_running":
+      // Both return the whole status, exactly as the real commands do. A spec
+      // that wants to see the *result* of installing or declining sets
+      // `mock.codingSessionProviderStatus.host.login` to what it should
+      // become; the bridge does not simulate the registration itself, because
+      // there is no launchd here to be right about.
+      case "install_agent_host_autostart":
+      case "decline_agent_host_autostart": {
         const status = activeConfig?.mock?.codingSessionProviderStatus;
         if (!status) {
           throw new Error(`Unsupported mocked Tauri command: ${command}`);
@@ -13506,6 +13514,11 @@ export function maybeInstallE2eTauriMocks() {
                   installed: true,
                   path: "/home/e2e/Library/LaunchAgents/io.agiterra.beekeeper.host.plist",
                 },
+                // Consistent with `installed` above by construction: Rust
+                // derives `login` from the registration, so a mock claiming
+                // "registered" and "should ask" at once would describe a
+                // status the real backend cannot produce.
+                login: "granted" as const,
                 ...status.host,
               }
             : {
@@ -13517,6 +13530,7 @@ export function maybeInstallE2eTauriMocks() {
                   program:
                     "/Applications/Beekeeper.app/Contents/MacOS/beekeeper-host",
                 },
+                login: "granted" as const,
                 providerState:
                   status.running === true
                     ? {

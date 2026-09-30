@@ -69,6 +69,48 @@ pub async fn coding_session_provider_status(
     provider_status(&app, &host, &relay_url).await
 }
 
+/// Register the agent host — and the menu bar app — to start at login.
+///
+/// The answer to the question `status.host.login == "shouldAsk"` asks. Also
+/// the way back from a refusal, because `install` clears it: a person who
+/// changes their mind in settings must not have to find a file.
+///
+/// Returns the whole status rather than just the registration, so the surface
+/// that called this re-renders from one answer instead of stitching two
+/// together.
+#[tauri::command]
+pub async fn install_agent_host_autostart(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    host: State<'_, AgentHost>,
+) -> Result<CodingSessionProviderStatus, String> {
+    let relay_url = relay_ws_url_with_override(&state);
+    // Warnings are not an error: a registration that could not be written
+    // travels in `status.host.autostart.warnings`, and failing the command
+    // would leave the surface with nothing to show but a toast.
+    let registration = crate::agent_host::autostart::ensure_registered(&app);
+    for warning in &registration.warnings {
+        eprintln!("buzz-desktop: agent-host: {warning}");
+    }
+    provider_status(&app, &host, &relay_url).await
+}
+
+/// Record that this machine's operator does not want the host at login.
+///
+/// Removes both registrations and remembers the answer, so nothing proposes it
+/// again. The provider keeps running if it is running — declining the *login*
+/// registration is not a request to stop anything now.
+#[tauri::command]
+pub async fn decline_agent_host_autostart(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    host: State<'_, AgentHost>,
+) -> Result<CodingSessionProviderStatus, String> {
+    let relay_url = relay_ws_url_with_override(&state);
+    crate::agent_host::autostart::decline()?;
+    provider_status(&app, &host, &relay_url).await
+}
+
 /// The session-capacity setting, and what the running provider is enforcing.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

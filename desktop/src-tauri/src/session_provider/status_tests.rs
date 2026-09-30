@@ -81,6 +81,7 @@ fn running_is_null_when_the_host_could_not_be_reached() {
         &host,
         absent(),
         unregistered(),
+        beekeeper_host::install::LoginAutostart::ShouldAsk,
     );
     assert_eq!(status.running, None);
     assert!(status.provisioned, "the record still exists on disk");
@@ -112,6 +113,7 @@ fn a_live_child_for_this_identity_is_running_and_another_identity_is_not() {
         &host,
         reachable(&ours, live.clone()),
         unregistered(),
+        beekeeper_host::install::LoginAutostart::ShouldAsk,
     );
     assert_eq!(status.running, Some(true));
     assert_eq!(
@@ -125,6 +127,7 @@ fn a_live_child_for_this_identity_is_running_and_another_identity_is_not() {
         &host,
         reachable(&theirs, live),
         unregistered(),
+        beekeeper_host::install::LoginAutostart::ShouldAsk,
     );
     assert_eq!(
         status.running,
@@ -144,13 +147,21 @@ fn nothing_provisioned_is_false_when_the_host_answered_and_null_when_it_did_not(
             None,
             &host,
             reachable(&pubkey, ProviderChildState::NotSupervised),
-            unregistered()
+            unregistered(),
+            beekeeper_host::install::LoginAutostart::ShouldAsk,
         )
         .running,
         Some(false)
     );
     assert_eq!(
-        CodingSessionProviderStatus::from_snapshot(None, &host, absent(), unregistered()).running,
+        CodingSessionProviderStatus::from_snapshot(
+            None,
+            &host,
+            absent(),
+            unregistered(),
+            beekeeper_host::install::LoginAutostart::ShouldAsk
+        )
+        .running,
         None
     );
 }
@@ -185,6 +196,7 @@ fn a_host_that_refuses_to_start_reports_its_reason_rather_than_not_supervised() 
             &host,
             reachable(&pubkey, refusal.clone()),
             unregistered(),
+            beekeeper_host::install::LoginAutostart::ShouldAsk,
         );
         assert_eq!(status.running, Some(false), "{refusal:?}");
         match status.process_state() {
@@ -217,6 +229,7 @@ fn a_backoff_stays_a_backoff() {
             },
         ),
         unregistered(),
+        beekeeper_host::install::LoginAutostart::ShouldAsk,
     );
     assert_eq!(status.running, Some(false));
     assert_eq!(
@@ -240,6 +253,7 @@ fn an_unreachable_host_is_not_the_same_process_state_as_a_stopped_provider() {
         &host,
         absent(),
         unregistered(),
+        beekeeper_host::install::LoginAutostart::ShouldAsk,
     )
     .process_state();
     let stopped = CodingSessionProviderStatus::from_snapshot(
@@ -247,6 +261,7 @@ fn an_unreachable_host_is_not_the_same_process_state_as_a_stopped_provider() {
         &host,
         reachable(&pubkey, ProviderChildState::NotSupervised),
         unregistered(),
+        beekeeper_host::install::LoginAutostart::ShouldAsk,
     )
     .process_state();
     assert_ne!(unreachable, stopped);
