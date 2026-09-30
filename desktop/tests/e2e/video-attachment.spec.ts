@@ -1,6 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
+import { clickSettlingMenuItem } from "../helpers/menus";
 import { expectCornerRadiusPx, expectSmoothCorners } from "../helpers/css";
 import { openInboxTab } from "../helpers/dashboard";
 
@@ -468,12 +469,14 @@ test("video upload previews use poster frames and inline videos open review mode
       reviewVideo.evaluate((video) => (video as HTMLVideoElement).playbackRate),
     )
     .toBe(1.5);
-  await reviewSpeedButton.click();
-  await page
-    .getByTestId("video-review-speed-menu")
-    .getByRole("button", { name: "0.25x", exact: true })
-    .click();
-  await expect(reviewSpeedButton).toHaveText("0.25x");
+  await clickSettlingMenuItem({
+    page,
+    trigger: reviewSpeedButton,
+    item: page
+      .getByTestId("video-review-speed-menu")
+      .getByRole("button", { name: "0.25x", exact: true }),
+    verify: () => expect(reviewSpeedButton).toHaveText("0.25x"),
+  });
   await expect
     .poll(() =>
       reviewVideo.evaluate((video) => (video as HTMLVideoElement).playbackRate),

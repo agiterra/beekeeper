@@ -1,6 +1,6 @@
 import { type Page, expect, test } from "@playwright/test";
 
-import { waitForAnimations } from "../helpers/animations";
+import { clickSettlingMenuItem } from "../helpers/menus";
 
 import {
   KIND_HUDDLE_ENDED,
@@ -1537,14 +1537,15 @@ test("create channel exposes templates when the library is empty", async ({
 
   const templateControl = page.getByTestId("create-channel-template");
   await expect(templateControl).toHaveText("None");
-  await templateControl.click();
-  await page
-    .getByRole("menuitem", { name: "Create new channel template…" })
-    .click();
-
-  await expect(
-    page.getByText("Create template", { exact: true }),
-  ).toBeVisible();
+  await clickSettlingMenuItem({
+    page,
+    trigger: templateControl,
+    item: page.getByRole("menuitem", {
+      name: "Create new channel template…",
+    }),
+    verify: () =>
+      expect(page.getByText("Create template", { exact: true })).toBeVisible(),
+  });
   await page.locator("#template-name").fill("Weekly planning");
   await page.locator("#template-description").fill("Plan the next week.");
   await page.getByRole("button", { name: "Create", exact: true }).click();
@@ -1566,8 +1567,11 @@ test("create ephemeral stream shows sidebar and header affordances", async ({
   await page
     .getByTestId("create-channel-description")
     .fill("Auto-cleaned test stream");
-  await page.getByTestId("create-channel-channel-type").click();
-  await page.getByLabel("Temporary channel").click();
+  // Through the helper, not the raw two clicks: this is the spec the helper's
+  // own measurement came from (5 failures in 15 runs), and this caller was
+  // still open-coding the pair. It was one of the two failures in a full
+  // smoke run, with the call log the helper describes word for word.
+  await selectTemporaryChannelType(page);
   const channelTypeContainer = page.getByTestId(
     "create-channel-channel-type-container",
   );
@@ -1638,13 +1642,12 @@ async function selectTemporaryChannelType(
   page: import("@playwright/test").Page,
 ) {
   const trigger = page.getByTestId("create-channel-channel-type");
-  const option = page.getByLabel("Temporary channel");
-  await expect(async () => {
-    if ((await option.count()) === 0) await trigger.click();
-    await waitForAnimations(page);
-    await option.click({ timeout: 5_000 });
-    await expect(trigger).toContainText("Temporary");
-  }).toPass({ timeout: 20_000 });
+  await clickSettlingMenuItem({
+    page,
+    trigger,
+    item: page.getByLabel("Temporary channel"),
+    verify: () => expect(trigger).toContainText("Temporary"),
+  });
 }
 
 test("ephemeral countdown refreshes when switching channels after a clock jump", async ({
