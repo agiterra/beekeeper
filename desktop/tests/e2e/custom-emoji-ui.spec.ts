@@ -43,7 +43,15 @@ test("settings card splits My emoji from read-only Community emoji", async ({
   // The mock identity owns :buzz: (removable); :narf: belongs to another
   // member (read-only, no trash button).
   const card = page.getByTestId("settings-custom-emoji");
-  await expect(card.getByTestId("custom-emoji-mine")).toContainText(":buzz:");
+  // The palette is a relay read asked for while boot is still reading, and
+  // the client admits 17 read frames per 5-second window on purpose
+  // (`relaySendBudget.ts`: half the relay's per-key burst, less the write
+  // reserve). So it waits a window or two — measured at ~9.3s here, past the
+  // default 5s — and the card honestly says "Loading…" meanwhile. Asked for
+  // once boot has settled, the same read answers in 3ms.
+  await expect(card.getByTestId("custom-emoji-mine")).toContainText(":buzz:", {
+    timeout: 30_000,
+  });
   const mine = card.getByTestId("custom-emoji-mine");
   await expect(
     mine.getByRole("button", { name: "Remove :buzz:" }),

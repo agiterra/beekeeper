@@ -602,12 +602,14 @@ test("every coordination state renders, each from the evidence that proves it", 
   // panel's honest "could not read this item" text in its place.
   //
   // It needs a timeout of its own because it arrives on a different read than
-  // the lane above it. The lane is the coordination fetch, which answers in
-  // about a second; the activity line is the local shelf, whose history is
-  // fenced behind a live subscription that waits out its readiness timeout
-  // with no relay behind the mock bridge. Measured here at ~9.9s, twice the
-  // default 5s expect timeout, and the row honestly says it has no activity
-  // until then.
+  // the lane above it. The lane is the coordination fetch; the activity line
+  // is the local shelf, whose history is fenced behind a live subscription
+  // and then queues behind everything boot is already reading — the client
+  // admits 17 read frames per 5-second window on purpose
+  // (`relaySendBudget.ts`: half the relay's per-key burst, less the write
+  // reserve), so a read asked for during boot waits a window or two.
+  // Measured here at ~9.9s, twice the default 5s, and the row honestly says
+  // it has no activity until then.
   await expect(
     reachable.getByTestId("agent-progress-lane-activity"),
   ).toHaveText("\u25b8 Bash", { timeout: 30_000 });
