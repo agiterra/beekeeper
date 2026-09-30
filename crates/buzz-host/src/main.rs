@@ -11,7 +11,6 @@
 //! rather than minting a replacement — a new key would strand every event the
 //! real one signed.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use buzz_session_host_core::atomic_write::create_dir_all_restricted;
@@ -20,9 +19,9 @@ use buzz_session_host_core::layout::{self, Instance};
 use buzz_session_host_core::record::load_provider_store_from;
 use clap::{Parser, Subcommand};
 
+use buzz_host::control::HostControl;
 use buzz_host::identity;
-use buzz_host::state::ProviderChildState;
-use buzz_host::supervisor::{PublishedState, Supervisor};
+use buzz_host::protocol::Request;
 
 #[derive(Parser)]
 #[command(
@@ -47,6 +46,20 @@ enum Command {
     Run,
     /// Print what this host would do, and exit. Reads no secrets aloud.
     Check,
+    /// Ask the running host for its status, as JSON.
+    Status,
+    /// Print a bounded tail of the supervised provider's log.
+    Logs {
+        /// Bytes from the end of the file.
+        #[arg(long)]
+        bytes: Option<u64>,
+    },
+    /// Stop the provider. The host keeps running and keeps answering.
+    Stop,
+    /// Start the provider if it is not running.
+    Start,
+    /// Stop and start the provider, with a clean restart ladder.
+    Restart,
 }
 
 fn parse_instance(value: &str) -> Result<Instance, String> {
@@ -148,6 +161,18 @@ fn commission(home: &std::path::Path, instance: Instance) -> Result<Commissioned
 
 fn run(instance: Instance, command: Command) -> Result<(), String> {
     let home = layout::home_dir()?;
+    let socket_path = layout::host_socket_path(&home, instance);
+
+    // The client-side commands need no config and no identity: they ask the
+    // running host. Keeping them ahead of `commission` is what makes
+    // `buzz-host status` answer "the agent host is not running" instead of
+    // "this host has not been commissioned" — two different facts, and the
+    // second would be a lie on a machine that is commissioned and simply not
+    // running.
+    if let Some(request) = client_request(&command) {
+        return talk_to_host(&socket_path, request);
+    }
+
     let host_dir = layout::host_dir(&home, instance);
     create_dir_all_restricted(&host_dir)?;
 
@@ -168,10 +193,7 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
             commissioned.config.provider_state_dir.display()
         );
         println!("provider log:  {}", log_path.display());
-        println!(
-            "socket:        {}",
-            layout::host_socket_path(&home, instance).display()
-        );
+        println!("socket:        {}", socket_path.display());
         println!("key from:      {:?}", commissioned.key.source);
         println!(
             "provider bin:  {}",
@@ -187,44 +209,99 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
     }
     create_dir_all_restricted(&commissioned.config.provider_state_dir)?;
 
-    let published = Arc::new(PublishedState::default());
-    let stop = Arc::new(AtomicBool::new(false));
-    let socket_path = layout::host_socket_path(&home, instance);
+    let control = Arc::new(HostControl::new(
+        commissioned.config,
+        commissioned.record,
+        commissioned.key.nsec,
+        log_path,
+        socket_path.clone(),
+    ));
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|error| format!("failed to start the async runtime: {error}"))?;
 
-    runtime.block_on(async {
-        let supervisor = Supervisor::new(
-            commissioned.config,
-            commissioned.record,
-            commissioned.key.nsec,
-            log_path,
-            socket_path,
-            Arc::clone(&published),
-            Arc::clone(&stop),
-        );
-        let supervising = tokio::spawn(supervisor.run());
+    // Bind before supervising, and fail the process if it cannot bind. A host
+    // with no control socket is indistinguishable from no host at all —
+    // nothing could ask it for its status and nothing could stop it — so
+    // starting agents behind an unbindable socket would produce exactly the
+    // dishonest state this whole design exists to prevent. Under launchd or
+    // systemd the exit is visible; a silent carry-on would not be.
+    let listener = runtime.block_on(async { buzz_host::server::bind(&socket_path) })?;
 
-        // SIGTERM as well as Ctrl-C: systemd and launchd both stop a service
-        // with SIGTERM, and a host that only handled Ctrl-C would be killed
-        // outright — taking the provider's outbox flush with it.
+    runtime.block_on(async {
+        control.start()?;
+
+        // Served for as long as the host runs, including after the provider
+        // has stopped or given up: those are states a client must be able to
+        // read and act on.
+        let serving = tokio::spawn(buzz_host::server::serve(
+            Arc::clone(&control),
+            listener,
+            socket_path.clone(),
+        ));
+
         wait_for_shutdown_signal().await;
         tracing::info!("shutdown requested; stopping the provider");
-        stop.store(true, Ordering::Release);
-        let _ = supervising.await;
-    });
+        control.stop().await;
+        serving.abort();
+        let _ = std::fs::remove_file(&socket_path);
+        Ok::<(), String>(())
+    })?;
 
-    // Say what state it ended in rather than exiting silently.
-    match published.child() {
-        ProviderChildState::NotSupervised => tracing::info!("stopped"),
-        other => tracing::info!("stopped: {}", other.message()),
-    }
+    tracing::info!("stopped: {}", control.child_state().message());
     Ok(())
 }
 
+/// The request a client-side subcommand sends, or `None` for the server ones.
+fn client_request(command: &Command) -> Option<Request> {
+    match command {
+        Command::Status => Some(Request::Status),
+        Command::Logs { bytes } => Some(Request::Logs { bytes: *bytes }),
+        Command::Stop => Some(Request::Stop),
+        Command::Start => Some(Request::Start),
+        Command::Restart => Some(Request::Restart),
+        Command::Run | Command::Check => None,
+    }
+}
+
+/// Send one request to a running host and print what it said.
+fn talk_to_host(socket: &std::path::Path, request: Request) -> Result<(), String> {
+    let lifecycle = matches!(request, Request::Stop | Request::Start | Request::Restart);
+    let timeout = if lifecycle {
+        buzz_host::client::LIFECYCLE_READ_TIMEOUT
+    } else {
+        buzz_host::client::READ_TIMEOUT
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("failed to start the async runtime: {error}"))?;
+    let result = runtime.block_on(buzz_host::client::call(socket, &request, timeout));
+    match (result, &request) {
+        // A log tail is text a person reads, so it is printed as text. Every
+        // other answer is JSON, so it can be piped.
+        (Ok(value), Request::Logs { .. }) => {
+            let logs: buzz_host::protocol::Logs = serde_json::from_value(value)
+                .map_err(|error| format!("the host's answer was not understood: {error}"))?;
+            if logs.truncated {
+                eprintln!("(showing the tail of {})", logs.path.display());
+            }
+            print!("{}", logs.text);
+            Ok(())
+        }
+        (Ok(value), _) => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&value)
+                    .map_err(|error| format!("failed to render the answer: {error}"))?
+            );
+            Ok(())
+        }
+        (Err(error), _) => Err(error.message()),
+    }
+}
 #[cfg(unix)]
 async fn wait_for_shutdown_signal() {
     use tokio::signal::unix::{signal, SignalKind};

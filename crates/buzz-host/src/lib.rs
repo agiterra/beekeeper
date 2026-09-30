@@ -23,10 +23,15 @@
 //!
 //! Everything it shares with the desktop app lives in `buzz-session-host-core`.
 
+pub mod client;
+pub mod control;
 pub mod discovery;
 pub mod identity;
 pub mod owner;
+pub mod protocol;
 pub mod restart_policy;
+pub mod server;
+pub mod sessions;
 pub mod spawn;
 pub mod state;
 pub mod supervisor;
