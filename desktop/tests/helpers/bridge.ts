@@ -166,6 +166,18 @@ type MockBridgeOptions = {
   codingSessionTeamFoldResponse?: Record<string, unknown>;
   /** Canonical buzz-core adapter response for the session-policy fold. */
   codingSessionPolicyFoldResponse?: Record<string, unknown>;
+  /**
+   * Canonical buzz-core adapter response for the session-observation fold.
+   *
+   * The bridge has read this since the fold existed and
+   * `codingSessionObservationAssertions.ts` has been passing it, but it was
+   * never declared here — nothing typechecks `desktop/tests`, so an option
+   * this type does not know about is passed without a word. Unset, the
+   * Inspector's gate rows read "mock session-observation fold response is
+   * not configured", which is a refusal a spec can easily mistake for the
+   * surface being quiet.
+   */
+  codingSessionObservationFoldResponse?: Record<string, unknown>;
   /** Native-like huddle state seeded from authoritative role-bearing membership. */
   huddle?: MockHuddleSeed;
   /** Builderlab account returned by hosted-community onboarding. Null/omitted = signed out. */

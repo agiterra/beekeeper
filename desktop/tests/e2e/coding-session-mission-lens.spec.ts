@@ -1392,6 +1392,23 @@ function leadSeatEvents(): RelayEvent[] {
   ];
 }
 
+/**
+ * The governed mission with a lead seat, and nothing else added.
+ *
+ * A team of three is the shape item 9 is about, and the lead seat is what
+ * makes it three. Splitting it out from the wake fixture below matters for
+ * more than tidiness: the wake and its receipt are signed after every
+ * transaction in the fixture, so a stream pinned to its live edge opens past
+ * the causality rows — which is the right thing for a wake to do and the
+ * wrong thing to ask "is the team state on screen with no clicks?" against.
+ */
+function governedMissionWithLeadSeat(): typeof GOVERNED_MISSION {
+  return {
+    events: [...GOVERNED_MISSION.events, ...leadSeatEvents()],
+    foldResponse: GOVERNED_MISSION.foldResponse,
+  };
+}
+
 function governedMissionWithProviderQueuedWake(): typeof GOVERNED_MISSION {
   const base = GOVERNED_MISSION;
   const report = base.events.find(
@@ -1425,7 +1442,7 @@ function governedMissionWithProviderQueuedWake(): typeof GOVERNED_MISSION {
     semanticKey: codingSessionReceiptSemanticKey,
   });
   return {
-    events: [...base.events, ...leadSeatEvents(), wake, queued],
+    events: [...governedMissionWithLeadSeat().events, wake, queued],
     foldResponse: base.foldResponse,
   };
 }
@@ -1503,7 +1520,7 @@ test("item 9: Mission - Live shows the whole team state with no clicks", async (
   // 1400x900 with the rail open, the shape Brian named. Everything after the
   // lens switch is reading, not driving.
   await page.setViewportSize({ width: 1400, height: 900 });
-  const governed = governedMissionWithProviderQueuedWake();
+  const governed = governedMissionWithLeadSeat();
   await openMockApp(page, {
     asFounder: true,
     foldResponse: governed.foldResponse,

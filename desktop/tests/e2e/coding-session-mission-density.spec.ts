@@ -1430,11 +1430,24 @@ test("the Inspector carries the goal reader and the open holds at every width", 
   await openMission(page, 1920);
   const inspector = page.getByTestId("coding-session-mission-inspector");
   await expect(inspector).toBeVisible();
-  // A3: nothing on this surface claims the wire is silent about tests. This
-  // fixture publishes a signed test report, so the refusal is not on screen —
-  // what is asserted here is that the sentence L1 falsified is gone from the
-  // build. The four-state empty copy itself is proved in
+  // A3: nothing on this surface claims the wire is silent about tests. What
+  // is asserted here is that the sentence L1 falsified is gone from the
+  // build; the four-state empty copy itself is proved in
   // `CodingSessionMissionInspector.test.mjs`.
+  //
+  // This comment used to say the fixture publishes a signed test report and
+  // that no refusal is therefore on screen. Neither half was true: the
+  // fixture configures no observation fold, so the gate rows carry the mock's
+  // own refusal instead, and the two absences below were holding over a
+  // different sentence than the one they were written for. Naming that
+  // refusal here means the day it changes, this test says so rather than
+  // going on passing for a reason nobody checked.
+  const gateRows = inspector
+    .locator("section", { hasText: "Structured tests" })
+    .first();
+  await expect(gateRows).toContainText(
+    "mock session-observation fold response is not configured",
+  );
   await expect(inspector).not.toContainText(
     "Nothing on the wire reports tests",
   );
