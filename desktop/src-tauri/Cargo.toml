@@ -3,7 +3,7 @@
 # With a bare `[workspace]` and no `members`, `cargo test/check --workspace`
 # expands to a set that excludes this crate, and its gates pass green-and-empty
 # over a real defect. Verified: Sami Arm A/D, Dawn `.scratch/armA`.
-members = ["crates/buzz-terminal"]
+members = ["crates/buzz-terminal", "crates/beekeeper-tray"]
 
 [package]
 name = "beekeeper-desktop"
@@ -108,6 +108,8 @@ buzz_sdk_pkg = { package = "buzz-sdk", path = "../../crates/buzz-sdk" }
 buzz_agent_pkg = { package = "buzz-agent", path = "../../crates/buzz-agent" }
 buzz_voice_pkg = { package = "buzz-voice", path = "../../crates/buzz-voice" }
 buzz_terminal = { package = "buzz-terminal", path = "crates/buzz-terminal" }
+# The tray rows, shared with the standalone menu bar app.
+beekeeper_tray = { package = "beekeeper-tray", path = "crates/beekeeper-tray" }
 buzz-shell-host = { path = "../../crates/buzz-shell-host" }
 # The publication compiler for `actions.yml`, and nothing else. A criterion
 # proved by an action is covered only when the run's definition hash equals

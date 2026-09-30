@@ -796,6 +796,7 @@ dependencies = [
  "base64 0.22.1",
  "beekeeper-host",
  "beekeeper-host-core",
+ "beekeeper-tray",
  "block2",
  "buzz-agent",
  "buzz-core",
@@ -915,6 +916,17 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "beekeeper-tray"
+version = "0.1.0"
+dependencies = [
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "serde",
+ "tauri",
 ]
 
 [[package]]

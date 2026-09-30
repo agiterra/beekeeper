@@ -403,7 +403,11 @@ desktop-tauri-clippy: _ensure-sidecar-stubs
 
 # Check the desktop Tauri Rust crate compiles
 desktop-tauri-check: _ensure-sidecar-stubs
-    cargo check --manifest-path {{desktop_tauri_manifest}}
+    # `--workspace`, like the clippy and test gates beside it. Without it this
+    # checks only the root package plus whatever it depends on — so a member
+    # crate nothing depends on, such as the standalone menu bar app, would be
+    # skipped and its gate would pass green-and-empty over a real defect.
+    cargo check --manifest-path {{desktop_tauri_manifest}} --workspace
 
 # Run desktop Tauri Rust unit tests
 desktop-tauri-test: _ensure-sidecar-stubs

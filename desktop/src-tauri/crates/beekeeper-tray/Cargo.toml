@@ -1,0 +1,21 @@
+[package]
+name = "beekeeper-tray"
+version = "0.1.0"
+edition = "2021"
+# Shared by the desktop app and the standalone menu bar app. Two processes draw
+# a menu from the same rows, and the point of sharing is that they cannot drift
+# into rendering the same machine two different ways.
+description = "The Beekeeper tray menu: rows, labels and the native subtitle pass."
+
+[lib]
+name = "beekeeper_tray"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", default-features = false, features = ["tray-icon"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6.4", default-features = false }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSMenu", "NSMenuItem", "NSStatusItem"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSObject", "NSProcessInfo", "NSString"] }
