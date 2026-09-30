@@ -38,6 +38,18 @@ fn host_status(pubkey: &str, provider: ProviderChildState) -> beekeeper_host::pr
     }
 }
 
+/// A registration the poll did not write. These tests exercise the status
+/// *shape*, not the launchd side effect, so they hand in a fixed answer —
+/// which is the reason `from_snapshot` takes it as an argument.
+fn unregistered() -> beekeeper_host::install::Registration {
+    beekeeper_host::install::Registration {
+        installed: false,
+        path: std::path::PathBuf::from("/home/agent/Library/LaunchAgents/host.plist"),
+        program: None,
+        warnings: Vec::new(),
+    }
+}
+
 fn reachable(pubkey: &str, provider: ProviderChildState) -> HostSnapshot {
     let status = host_status(pubkey, provider);
     HostSnapshot {
@@ -64,8 +76,12 @@ fn absent() -> HostSnapshot {
 fn running_is_null_when_the_host_could_not_be_reached() {
     let pubkey = "a".repeat(64);
     let host = AgentHost::new();
-    let status =
-        CodingSessionProviderStatus::from_snapshot(Some(&record(&pubkey)), &host, absent());
+    let status = CodingSessionProviderStatus::from_snapshot(
+        Some(&record(&pubkey)),
+        &host,
+        absent(),
+        unregistered(),
+    );
     assert_eq!(status.running, None);
     assert!(status.provisioned, "the record still exists on disk");
     assert!(!status.host.reachability.is_reachable());
@@ -95,6 +111,7 @@ fn a_live_child_for_this_identity_is_running_and_another_identity_is_not() {
         Some(&record(&ours)),
         &host,
         reachable(&ours, live.clone()),
+        unregistered(),
     );
     assert_eq!(status.running, Some(true));
     assert_eq!(
@@ -107,6 +124,7 @@ fn a_live_child_for_this_identity_is_running_and_another_identity_is_not() {
         Some(&record(&ours)),
         &host,
         reachable(&theirs, live),
+        unregistered(),
     );
     assert_eq!(
         status.running,
@@ -125,13 +143,14 @@ fn nothing_provisioned_is_false_when_the_host_answered_and_null_when_it_did_not(
         CodingSessionProviderStatus::from_snapshot(
             None,
             &host,
-            reachable(&pubkey, ProviderChildState::NotSupervised)
+            reachable(&pubkey, ProviderChildState::NotSupervised),
+            unregistered()
         )
         .running,
         Some(false)
     );
     assert_eq!(
-        CodingSessionProviderStatus::from_snapshot(None, &host, absent()).running,
+        CodingSessionProviderStatus::from_snapshot(None, &host, absent(), unregistered()).running,
         None
     );
 }
@@ -165,6 +184,7 @@ fn a_host_that_refuses_to_start_reports_its_reason_rather_than_not_supervised() 
             Some(&record(&pubkey)),
             &host,
             reachable(&pubkey, refusal.clone()),
+            unregistered(),
         );
         assert_eq!(status.running, Some(false), "{refusal:?}");
         match status.process_state() {
@@ -196,6 +216,7 @@ fn a_backoff_stays_a_backoff() {
                 next_at: "2026-09-30T00:00:08Z".to_string(),
             },
         ),
+        unregistered(),
     );
     assert_eq!(status.running, Some(false));
     assert_eq!(
@@ -214,13 +235,18 @@ fn a_backoff_stays_a_backoff() {
 fn an_unreachable_host_is_not_the_same_process_state_as_a_stopped_provider() {
     let pubkey = "a".repeat(64);
     let host = AgentHost::new();
-    let unreachable =
-        CodingSessionProviderStatus::from_snapshot(Some(&record(&pubkey)), &host, absent())
-            .process_state();
+    let unreachable = CodingSessionProviderStatus::from_snapshot(
+        Some(&record(&pubkey)),
+        &host,
+        absent(),
+        unregistered(),
+    )
+    .process_state();
     let stopped = CodingSessionProviderStatus::from_snapshot(
         Some(&record(&pubkey)),
         &host,
         reachable(&pubkey, ProviderChildState::NotSupervised),
+        unregistered(),
     )
     .process_state();
     assert_ne!(unreachable, stopped);

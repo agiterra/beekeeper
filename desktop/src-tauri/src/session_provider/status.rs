@@ -104,10 +104,14 @@ pub(crate) struct CodingSessionProviderStatus {
 
 impl CodingSessionProviderStatus {
     /// Build a status from a record and one poll of the host.
+    /// `autostart` is passed in rather than read here: writing a launchd
+    /// registration is a side effect, and it belongs at the poll (see
+    /// [`provider_status`]) rather than inside a constructor the tests call.
     pub(crate) fn from_snapshot(
         record: Option<&beekeeper_host_core::record::CodingSessionProviderRecord>,
         host: &AgentHost,
         snapshot: HostSnapshot,
+        autostart: beekeeper_host::install::Registration,
     ) -> Self {
         let running = match record {
             Some(record) => snapshot.running(&record.provider_pubkey),
@@ -128,7 +132,7 @@ impl CodingSessionProviderStatus {
                 reachability: snapshot.reachability,
                 socket: host.socket().to_path_buf(),
                 provider_state: snapshot.status.map(|status| status.provider),
-                autostart: crate::agent_host::autostart::status(),
+                autostart,
                 message: snapshot.message,
             },
             provider_pubkey: record.map(|record| record.provider_pubkey.clone()),
@@ -179,7 +183,26 @@ pub(crate) async fn provider_status(
 ) -> Result<CodingSessionProviderStatus, String> {
     let store = crate::session_provider::store::load_provider_store(app)?;
     let snapshot = host.snapshot().await;
-    let status = CodingSessionProviderStatus::from_snapshot(store.get(relay_url), host, snapshot);
+    let record = store.get(relay_url);
+
+    // Re-assert the login registration, for the same reason the two blocks
+    // below re-assert trust and seats: the app no longer starts anything, so
+    // the poll is the only thing that runs often enough to keep a property
+    // true. Specifically it is what repairs a machine commissioned by an
+    // *older* build, whose `provision_coding_session_provider` will never run
+    // again — see `autostart::poll_action`. `install` runs `launchctl
+    // bootstrap`, so this also starts the host the first time, rather than
+    // only arranging for the next login.
+    let autostart = match crate::agent_host::autostart::poll_action(record.is_some()) {
+        crate::agent_host::autostart::PollAction::Reassert => {
+            crate::agent_host::autostart::ensure_registered(app)
+        }
+        crate::agent_host::autostart::PollAction::ReadOnly => {
+            crate::agent_host::autostart::status()
+        }
+    };
+
+    let status = CodingSessionProviderStatus::from_snapshot(record, host, snapshot, autostart);
 
     // Re-assert the render gate whenever the host names an identity.
     //

@@ -26,8 +26,9 @@ pub(crate) const HOST_BINARY: &str = "beekeeper-host";
 /// The menu bar app, nested inside this bundle's `LoginItems`.
 ///
 /// Not a sidecar beside the executable: it is a whole `.app`, and macOS
-/// requires a login item to be a bundle. `scripts/embed-menubar.sh` puts it
-/// there before the outer app is signed, so the outer signature covers it.
+/// requires a login item to be a bundle. `scripts/stage-menubar.sh` builds it
+/// and `bundle.macOS.files` copies it in *during* bundling, so it is inside
+/// the `.app` before anything signs it and the outer signature covers it.
 #[cfg(target_os = "macos")]
 const MENUBAR_RELATIVE_PATH: &str = "../Library/LoginItems/Beekeeper Menu Bar.app";
 
@@ -67,6 +68,36 @@ pub(crate) fn resolve_menubar_binary() -> Option<PathBuf> {
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn resolve_menubar_binary() -> Option<PathBuf> {
     None
+}
+
+/// What a status poll should do about the login registration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PollAction {
+    /// Write the registration if it is missing, then read it back.
+    Reassert,
+    /// Read it and change nothing.
+    ReadOnly,
+}
+
+/// Decide from whether this relay has a provider identity.
+///
+/// The trigger this module's header names — "installed and commissioned" — is
+/// `provision_coding_session_provider` succeeding, and for a while that was
+/// the *only* caller of [`ensure_registered`]. A machine commissioned by an
+/// older build never runs that command again, so its registration would never
+/// be written at all: the host would never start at login, and the only sign
+/// would be `bee host installed` reporting both services absent while
+/// `host.json` and the key file sat there freshly written. That is what
+/// happened on the first install onto such a machine.
+///
+/// `ReadOnly` when nothing is provisioned, so merely opening the app does not
+/// plant a LaunchAgent for a host with no identity to serve.
+pub(crate) fn poll_action(provisioned: bool) -> PollAction {
+    if provisioned {
+        PollAction::Reassert
+    } else {
+        PollAction::ReadOnly
+    }
 }
 
 /// Whether this app's instance is registered to start at login.
@@ -156,6 +187,23 @@ pub(crate) fn unregister() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The upgrade case: an app whose provider was commissioned by an older
+    /// build must still end up registered. Its commissioning command never
+    /// runs again, so the poll is the only thing left that can write the
+    /// registration — and for the first install of this branch onto such a
+    /// machine, it did not.
+    #[test]
+    fn a_relay_with_an_identity_reasserts_the_registration_on_every_poll() {
+        assert_eq!(poll_action(true), PollAction::Reassert);
+    }
+
+    /// And an app nobody has finished setting up does not plant a LaunchAgent
+    /// for a host with no identity to serve.
+    #[test]
+    fn a_relay_with_no_identity_only_reads_the_registration() {
+        assert_eq!(poll_action(false), PollAction::ReadOnly);
+    }
 
     /// Nothing registered and no binary to register must produce a *warning*,
     /// not a silent success. This is the state that would otherwise have a
