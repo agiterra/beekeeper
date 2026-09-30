@@ -465,6 +465,20 @@ function governedMissionEvents(
           dispositionEventId: null,
           acknowledgementEventId: null,
           settled: false,
+          // `settledBy`/`awaiting` are the rest of the settlement the decoder
+          // requires (`isSettlement`), and they are not free choices:
+          // `buzz-core`'s `awaiting_link` answers exactly this chain — a
+          // report is filed and no approving disposition rules it — with
+          // `disposition`, owed by the `lead`, naming no actor
+          // (`coding_session_team_transaction_fold_settlement.rs:450-457`).
+          // `settledBy` is null exactly when `settled` is false, and
+          // `awaiting` is null exactly when it is true.
+          settledBy: null,
+          awaiting: {
+            link: "disposition",
+            owedByRole: "lead",
+            owedByActor: null,
+          },
         },
       ],
       // Required by the adapter and the TS decoder as of this batch: reports
@@ -511,6 +525,9 @@ function governedMissionEvents(
         : decisionRequest && !decisionAnswer
           ? { requestId: decisionRequest.id, heldOn: "founder" }
           : null,
+      // Required by the decoder's `hasExactFields` (ledger 183(a)/(b)); `null`
+      // because this fixture publishes no `mission.completed`.
+      pendingCompletion: null,
       canonicalTerminal: null,
     },
   };

@@ -699,7 +699,17 @@ export function founderActMission(
           governedReportEventId: report.id,
           dispositionEventId: disposition.id,
           acknowledgementEventId: null,
-          settled: false,
+          settled: true,
+          // This chain is settled, and not by choice: the disposition above
+          // is `decision: "approve"` with `requiredAction: null`, which is
+          // exactly `approving_disposition_asks_nothing`, so `buzz-core`
+          // settles it with no acknowledgement owed
+          // (`coding_session_team_transaction_fold_settlement.rs:336-350`).
+          // `settledBy` is non-null exactly when `settled` is true, and
+          // `awaiting` is null exactly then — the decoder's `isSettlement`
+          // requires both keys either way.
+          settledBy: "approving_disposition_without_ask",
+          awaiting: null,
         },
       ],
       unseatedReports: [],
@@ -728,6 +738,9 @@ export function founderActMission(
         },
       ],
       waitingOnDecision: { requestId: founderRequest.id, heldOn: "founder" },
+      // Required by the decoder's `hasExactFields` (ledger 183(a)/(b)); `null`
+      // because this fixture publishes no `mission.completed`.
+      pendingCompletion: null,
       canonicalTerminal: null,
     },
     ids: {
