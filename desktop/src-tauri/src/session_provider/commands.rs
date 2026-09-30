@@ -337,6 +337,16 @@ pub async fn provision_coding_session_provider(
         commission::Commissioning::FirstIdentity,
     )
     .await?;
+
+    // "After Beekeeper is installed and commissioned" — this is that moment.
+    // Never fatal, always disclosed: the registration is read back and travels
+    // in `status.host.autostart`, because a commissioning that succeeded while
+    // the registration silently did not is how a person comes to believe their
+    // agents survive a reboot when they do not.
+    for warning in &crate::agent_host::autostart::ensure_registered(&app).warnings {
+        eprintln!("buzz-desktop: agent-host: {warning}");
+    }
+
     ensure_host_running(&app, &host, &relay_url).await;
     provider_status(&app, &host, &relay_url).await
 }

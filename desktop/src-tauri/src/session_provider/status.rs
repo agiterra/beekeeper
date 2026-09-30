@@ -64,6 +64,14 @@ pub(crate) struct AgentHostStatus {
     /// The host's own account of the provider child, when it answered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_state: Option<buzz_host::state::ProviderChildState>,
+    /// Whether the host is registered to start at login, and anything wrong
+    /// with that registration.
+    ///
+    /// The other half of telling *not installed* from *installed but not
+    /// running*: the socket's absence alone cannot distinguish them, and a
+    /// surface that told somebody to start something they have not installed
+    /// would be worse than silent.
+    pub autostart: buzz_host::install::Registration,
     /// One line for a person, whatever happened.
     pub message: String,
 }
@@ -120,6 +128,7 @@ impl CodingSessionProviderStatus {
                 reachability: snapshot.reachability,
                 socket: host.socket().to_path_buf(),
                 provider_state: snapshot.status.map(|status| status.provider),
+                autostart: crate::agent_host::autostart::status(),
                 message: snapshot.message,
             },
             provider_pubkey: record.map(|record| record.provider_pubkey.clone()),

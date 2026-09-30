@@ -344,6 +344,12 @@ type E2eConfig = {
           | { state: "unresponsive"; reason: string };
         socket: string;
         providerState?: { state: string } & Record<string, unknown>;
+        autostart?: {
+          installed: boolean;
+          path: string;
+          program?: string;
+          warnings?: string[];
+        };
         message: string;
       };
       providerPubkey?: string;
@@ -13494,22 +13500,36 @@ export function maybeInstallE2eTauriMocks() {
         // combination the real host could not produce.
         return {
           ...status,
-          host: status.host ?? {
-            reachability: { state: "reachable" as const },
-            socket: "/home/e2e/.local/state/buzz/host/host.sock",
-            providerState:
-              status.running === true
-                ? {
-                    state: "live",
-                    pid: 4242,
-                    startedAt: "2026-09-30T00:00:00Z",
-                  }
-                : { state: "notSupervised" },
-            message:
-              status.running === true
-                ? "the provider is running as pid 4242"
-                : "no provider is commissioned on this machine",
-          },
+          host: status.host
+            ? {
+                autostart: {
+                  installed: true,
+                  path: "/home/e2e/Library/LaunchAgents/io.agiterra.beekeeper.host.plist",
+                },
+                ...status.host,
+              }
+            : {
+                reachability: { state: "reachable" as const },
+                socket: "/home/e2e/.local/state/buzz/host/host.sock",
+                autostart: {
+                  installed: true,
+                  path: "/home/e2e/Library/LaunchAgents/io.agiterra.beekeeper.host.plist",
+                  program:
+                    "/Applications/Beekeeper.app/Contents/MacOS/buzz-host",
+                },
+                providerState:
+                  status.running === true
+                    ? {
+                        state: "live",
+                        pid: 4242,
+                        startedAt: "2026-09-30T00:00:00Z",
+                      }
+                    : { state: "notSupervised" },
+                message:
+                  status.running === true
+                    ? "the provider is running as pid 4242"
+                    : "no provider is commissioned on this machine",
+              },
         };
       }
       // L11 (worktree lifecycle) — mocked host record of the trees it cut.

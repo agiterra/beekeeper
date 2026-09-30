@@ -178,6 +178,41 @@ install-git-credentials relay="":
     echo
     cargo run --quiet -p buzz-cli -- --relay "$RELAY" git status
 
+# There is no other standalone install path for `bee` or `buzz-host`: the
+# desktop app ships them as sidecars inside its bundle, which is no use on a
+# server and no use to a shell. `bee host install` then registers the host to
+# start at login (macOS) or as a systemd user service (Linux) — and it needs an
+# absolute path to a binary that will still be there, which is what this gives.
+#
+# Install `bee` and `buzz-host` where your shell and launchd can find them
+install-bee:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{justfile_directory()}}/bin:$PATH"
+    # --root is load-bearing: hermit pins CARGO_HOME to
+    # {{justfile_directory()}}/.hermit/rust, so a bare `cargo install` lands the
+    # binaries inside the repo, off PATH, and a `hermit clean` deletes them —
+    # taking the login registration's target with them. Install somewhere the
+    # user's shell already looks. (Same reasoning as install-git-credentials.)
+    INSTALL_ROOT="${CARGO_INSTALL_ROOT:-$HOME/.local}"
+    cargo install --quiet --path crates/buzz-cli --root "$INSTALL_ROOT"
+    cargo install --quiet --path crates/buzz-host --root "$INSTALL_ROOT"
+    echo "Installed $INSTALL_ROOT/bin/bee"
+    echo "Installed $INSTALL_ROOT/bin/buzz-host"
+    if ! command -v bee >/dev/null 2>&1; then
+        echo
+        echo "note: $INSTALL_ROOT/bin is not on PATH — add it, or call the binaries by path."
+    fi
+    echo
+    echo "Next, on a machine that should run agents without a desktop app:"
+    echo "  bee host install          # register it to start at login"
+    echo "  bee host installed        # confirm, and hear about anything missing"
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        echo
+        echo "On a server, also: loginctl enable-linger \"$USER\""
+        echo "Without lingering the host stops the moment you log out."
+    fi
+
 # Tail all service logs
 logs *ARGS:
     docker compose logs -f {{ARGS}}

@@ -37,6 +37,24 @@ export type AgentHostStatus = {
    * action, never to decide whether something is wrong.
    */
   providerState?: { state: string } & Record<string, unknown>;
+  /**
+   * Whether the host is registered to start at login, and anything wrong with
+   * that registration.
+   *
+   * The other half of telling *not installed* from *installed but not
+   * running*: the socket's absence alone cannot distinguish them. Telling
+   * somebody to start something they have not installed is worse than silent.
+   *
+   * `warnings` is the honest channel — a registration that exists but names a
+   * binary that is gone is `installed: true` with a warning, because that is
+   * exactly what a deleted-and-reinstalled app leaves behind.
+   */
+  autostart: {
+    installed: boolean;
+    path: string;
+    program?: string;
+    warnings?: string[];
+  };
   /** One line for a person, whatever happened. Never empty. */
   message: string;
 };

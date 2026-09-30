@@ -67,6 +67,19 @@ impl Instance {
         }
     }
 
+    /// The value [`INSTANCE_VAR`] carries for this instance.
+    ///
+    /// Distinct from [`Self::namespace`] on purpose, even though they are the
+    /// same strings today: one is a directory name and the other is a wire
+    /// value that `from_env` must accept. Tying them together would make a
+    /// rename of either silently change the other.
+    pub fn namespace_value(self) -> &'static str {
+        match self {
+            Self::Production => "production",
+            Self::Dev => "dev",
+        }
+    }
+
     /// The nest directory name this instance owns.
     pub fn nest_dir_name(self) -> &'static str {
         match self {
@@ -195,6 +208,24 @@ mod tests {
             host_dir(home, Instance::Dev),
             Path::new("/home/agent/.local/state/buzz-dev/host")
         );
+    }
+
+    /// Whatever `namespace_value` writes, `from_env` must read back — these
+    /// are the two halves of one round trip through a launchd plist or a
+    /// systemd unit, and a drift is a host on the wrong socket.
+    #[test]
+    fn the_instance_written_into_a_unit_file_reads_back() {
+        for instance in [Instance::Production, Instance::Dev] {
+            std::env::set_var(INSTANCE_VAR, instance.namespace_value());
+            assert_eq!(Instance::from_env().expect("round trip"), instance);
+        }
+        std::env::set_var(INSTANCE_VAR, "nonsense");
+        assert!(
+            Instance::from_env().is_err(),
+            "an operator typo must not be read as production"
+        );
+        std::env::remove_var(INSTANCE_VAR);
+        assert_eq!(Instance::from_env().expect("default"), Instance::Production);
     }
 
     #[test]

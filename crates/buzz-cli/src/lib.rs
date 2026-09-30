@@ -349,6 +349,10 @@ enum Cmd {
     /// (local, no relay connection needed)
     #[command(subcommand)]
     Git(GitCmd),
+    /// This machine's agent host: its status, its logs, and whether it starts
+    /// at login (local; via the host's own control socket)
+    #[command(subcommand)]
+    Host(commands::host::HostCmd),
     /// Read and drive interactive sessions on this machine (local; via the
     /// desktop session broker, gated by per-session agent consent)
     #[command(subcommand)]
@@ -5441,6 +5445,14 @@ async fn run(cli: Cli) -> Result<(), CliError> {
     // Session commands are local-only — they call the desktop session broker,
     // not the relay. No key/relay is required; when BUZZ_PRIVATE_KEY is present
     // the caller pubkey is passed to the broker for its audit log.
+    // Host commands are local-only too — they call `buzz-host`'s control
+    // socket, or write a login registration. No key and no relay: a machine
+    // with no identity at all still has to be able to answer "is the host
+    // installed", which is the first question when nothing is working.
+    if let Cmd::Host(ref sub) = cli.command {
+        return commands::host::dispatch(sub, false).await;
+    }
+
     if let Cmd::Session(ref sub) = cli.command {
         let caller = cli
             .private_key
@@ -5611,7 +5623,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Packs(sub) => commands::packs_cli::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
         Cmd::Git(_) => unreachable!("handled above"),
-        Cmd::Session(_) => unreachable!("handled above"),
+        Cmd::Host(_) | Cmd::Session(_) => unreachable!("handled above"),
     }
 }
 
@@ -6266,6 +6278,7 @@ mod tests {
             "events",
             "feed",
             "git",
+            "host",
             "issues",
             "media",
             "mem",

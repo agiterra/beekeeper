@@ -17,6 +17,7 @@ pub mod events;
 pub mod feed;
 pub mod git_setup;
 pub mod git_verdict_scope;
+pub mod host;
 pub mod issues;
 pub mod mem;
 pub mod messages;

@@ -28,6 +28,7 @@ pub mod commission;
 pub mod control;
 pub mod discovery;
 pub mod identity;
+pub mod install;
 pub mod owner;
 pub mod protocol;
 pub mod restart_policy;

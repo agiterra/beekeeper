@@ -30,6 +30,7 @@
 //! a `0600` key file. **The secret never crosses the socket**: the app writes
 //! the file and the socket call only says "look again".
 
+pub mod autostart;
 pub mod client;
 pub mod commission;
 pub mod seat_restage;

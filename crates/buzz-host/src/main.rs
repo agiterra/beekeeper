@@ -60,6 +60,20 @@ enum Command {
     Restart,
     /// Re-read `host.json` and the identity, then restart onto the result.
     Bind,
+    /// Register this host to start at login (macOS) or as a systemd user
+    /// service (Linux).
+    Install {
+        /// The host binary to register. Defaults to this executable.
+        #[arg(long)]
+        program: Option<std::path::PathBuf>,
+    },
+    /// Remove the login registration and stop the service.
+    Uninstall,
+    /// Print whether this host is registered to start at login.
+    ///
+    /// Distinct from `status`, which asks a *running* host: the two together
+    /// are what tell "not installed" from "installed but not running".
+    Installed,
 }
 
 fn parse_instance(value: &str) -> Result<Instance, String> {
@@ -123,6 +137,36 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
     // running.
     if let Some(request) = client_request(&command) {
         return talk_to_host(&socket_path, request);
+    }
+
+    // Registration commands need no config and no identity either: installing
+    // the service is what a person does *before* commissioning on a server.
+    match &command {
+        Command::Install { program } => {
+            let program = match program {
+                Some(program) => program.clone(),
+                None => std::env::current_exe()
+                    .map_err(|error| format!("cannot resolve this executable: {error}"))?,
+            };
+            let program = std::fs::canonicalize(&program)
+                .map_err(|error| format!("cannot resolve {}: {error}", program.display()))?;
+            let registration = buzz_host::install::install(&home, instance, &program)?;
+            print_registration(&registration);
+            return Ok(());
+        }
+        Command::Uninstall => {
+            buzz_host::install::uninstall(&home, instance)?;
+            println!(
+                "removed the login registration for {}",
+                instance.namespace()
+            );
+            return Ok(());
+        }
+        Command::Installed => {
+            print_registration(&buzz_host::install::status(&home, instance));
+            return Ok(());
+        }
+        _ => {}
     }
 
     let host_dir = layout::host_dir(&home, instance);
@@ -202,6 +246,19 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
     Ok(())
 }
 
+/// Print a registration, with its warnings on stderr so a pipe gets only the
+/// facts and a person still sees the problems.
+fn print_registration(registration: &buzz_host::install::Registration) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(registration)
+            .unwrap_or_else(|error| format!("{{\"error\":\"{error}\"}}"))
+    );
+    for warning in &registration.warnings {
+        eprintln!("buzz-host: {warning}");
+    }
+}
+
 /// The request a client-side subcommand sends, or `None` for the server ones.
 fn client_request(command: &Command) -> Option<Request> {
     match command {
@@ -211,7 +268,11 @@ fn client_request(command: &Command) -> Option<Request> {
         Command::Start => Some(Request::Start),
         Command::Restart => Some(Request::Restart),
         Command::Bind => Some(Request::Bind),
-        Command::Run | Command::Check => None,
+        Command::Run
+        | Command::Check
+        | Command::Install { .. }
+        | Command::Uninstall
+        | Command::Installed => None,
     }
 }
 
