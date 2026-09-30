@@ -360,7 +360,7 @@ _ensure-sidecar-stubs:
     mkdir -p desktop/src-tauri/binaries
     SIDECARS=(buzz-acp buzz-agent buzz-dev-mcp git-credential-nostr bee)
     if [[ "$TARGET" != *windows* ]]; then
-        SIDECARS+=(buzz-backend-kubernetes buzz-shell-host)
+        SIDECARS+=(buzz-backend-kubernetes buzz-shell-host buzz-host)
     fi
     for bin in "${SIDECARS[@]}"; do
         touch "desktop/src-tauri/binaries/${bin}-${TARGET}"
@@ -463,6 +463,7 @@ desktop-release-build target="aarch64-apple-darwin":
     touch "desktop/src-tauri/binaries/bee-$TARGET"
     if [[ "$TARGET" != *windows* ]]; then
         touch "desktop/src-tauri/binaries/buzz-shell-host-$TARGET"
+        touch "desktop/src-tauri/binaries/buzz-host-$TARGET"
     fi
     pnpm install
     cd {{desktop_dir}} && pnpm tauri build --features mesh-llm --target {{target}}
@@ -870,7 +871,7 @@ dev *ARGS: bootstrap _ensure-sidecar-stubs _ensure-migrations
             fi
         done
     fi
-    cargo build -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-shell-host -p buzz-relay
+    cargo build -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-shell-host -p buzz-host -p buzz-relay
     # Docker Desktop's forwarded MinIO port can stall under the deployment
     # probe's 32 concurrent writers. Keep the gate enabled in local dev, using
     # the bounded profile already used by the relay test launcher.
@@ -914,10 +915,10 @@ desktop-standalone *ARGS: _ensure-sidecar-stubs
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
-    cargo build -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-shell-host -p buzz-session-provider
+    cargo build -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-shell-host -p buzz-host -p buzz-session-provider
     TARGET=$(rustc -vV | sed -n 's|host: ||p')
     TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).target_directory")
-    for bin in buzz-acp buzz-agent buzz-backend-kubernetes buzz-dev-mcp git-credential-nostr bee buzz-shell-host; do
+    for bin in buzz-acp buzz-agent buzz-backend-kubernetes buzz-dev-mcp git-credential-nostr bee buzz-shell-host buzz-host; do
         cp "${TARGET_DIR}/debug/${bin}" "desktop/src-tauri/binaries/${bin}-${TARGET}"
         chmod +x "desktop/src-tauri/binaries/${bin}-${TARGET}"
     done
@@ -959,7 +960,7 @@ staging *ARGS: bootstrap _ensure-sidecar-stubs
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
     pnpm install  # unconditional: staging must always start with a clean dep tree
-    cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-shell-host
+    cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-shell-host -p buzz-host
     FEATURES=()
     if [[ -n "{{mesh}}" ]]; then
         FEATURES=(--features mesh-llm)
@@ -994,7 +995,7 @@ production *ARGS: bootstrap _ensure-sidecar-stubs
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
     pnpm install  # unconditional: production must always start with a clean dep tree
-    cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-shell-host
+    cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-shell-host -p buzz-host
     FEATURES=()
     if [[ -n "{{mesh}}" ]]; then
         FEATURES=(--features mesh-llm)
@@ -1249,7 +1250,12 @@ _release-pr lane version:
             TAG_PREFIX="v"
             CHANGELOG="CHANGELOG.md"
             ADD_FILES=(desktop/package.json desktop/src-tauri/tauri.conf.json desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock pnpm-lock.yaml CHANGELOG.md)
-            LOG_PATHS=(desktop/ crates/buzz-core/ crates/buzz-persona/ crates/buzz-sdk/ crates/buzz-agent/)
+            # Every crate whose changes ship inside the desktop bundle. Five
+            # bundled crates were already missing from this list; the two new
+            # ones are added rather than joining them, because a host change
+            # that never appears in the changelog is a change nobody reviewing
+            # the release can see.
+            LOG_PATHS=(desktop/ crates/buzz-core/ crates/buzz-persona/ crates/buzz-sdk/ crates/buzz-agent/ crates/buzz-host/ crates/buzz-session-host-core/)
             ARTIFACT="Beekeeper Desktop" ;;
         relay)
             BRANCH_PREFIX="relay-release"

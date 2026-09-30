@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The sidecar set is declared in four places. This asserts they are one set.
+ * The sidecar set is declared in nine places. This asserts they are one set.
  *
  * `tauri.conf.json`'s `externalBin` is what the bundle *declares*; the refresh
  * recipes are what actually gets built and copied next to the app. When those
@@ -22,6 +22,23 @@
  * copying it into `binaries/`, since `tauri dev` does not bundle. A name that
  * appears in neither list is the failure this catches.
  *
+ * The three artifacts added on 2026-09-30 are the ones that had already
+ * drifted, unwatched, and broke every macOS and Linux release and canary
+ * build: `scripts/bundle-sidecars.sh` required a `buzz-shell-host` that not
+ * one of the eight CI "Build sidecars" steps built, and no root-workspace
+ * crate depended on it either (ledger 295). The two locally-exercised paths
+ * were correct, which is exactly why nobody hit it — the checked lists were
+ * right and the unchecked ones were wrong. Adding artifacts to a set of
+ * already-drifting unchecked lists without closing them is how the next
+ * stale-binary morning happens.
+ *
+ * Two sidecars are **Unix-only** and this asserts that too, in both
+ * directions: `buzz-shell-host` and `buzz-host` both exit non-zero off Unix
+ * (their `main.rs`), so `tauri.windows.conf.json` must not declare them and
+ * the Windows build lines must not build them. A Windows bundle that declared
+ * one would fail Tauri's compile-time `externalBin` check with a message
+ * naming Tauri rather than the missing name.
+ *
  * Run: node desktop/scripts/check-sidecar-parity.mjs  (also `pnpm check:sidecars`)
  */
 
@@ -40,6 +57,22 @@ const binaryOf = (pkg) => BINARY_OF[pkg] ?? pkg;
 
 /** The one sidecar the base bundle config deliberately does not declare. */
 const PROVIDER = "buzz-session-provider";
+
+/**
+ * Sidecars the Windows bundle does not carry.
+ *
+ * `buzz-shell-host` and `buzz-host` refuse to run off Unix (their `main.rs`),
+ * so shipping them there would ship a binary that exits 1.
+ * `buzz-backend-kubernetes` is a different case with the same answer: it has
+ * always been gated out of `bundle-sidecars.sh` and has never been declared in
+ * `tauri.windows.conf.json`. Adding this check is what surfaced that it was
+ * only ever an unwritten convention.
+ *
+ * Declaring one of these in the Windows bundle would fail Tauri's
+ * compile-time `externalBin` check with a message naming Tauri rather than the
+ * missing name.
+ */
+const UNIX_ONLY = ["buzz-backend-kubernetes", "buzz-shell-host", "buzz-host"];
 
 const read = (rel) => readFileSync(join(REPO, rel), "utf8");
 const sorted = (names) => [...new Set(names)].sort();
@@ -175,6 +208,108 @@ compare(
   stubbed,
   declared, // the provider is not in the base config, so it needs no stub
 );
+
+// 5. `scripts/bundle-sidecars.sh` — the script every CI "Build sidecars" step
+//    runs. It hard-fails when a listed binary is missing from `target/`, so
+//    its list is the one that decides whether a release builds at all.
+const bundleScript = read("scripts/bundle-sidecars.sh");
+const bundleUnix = sorted([
+  ...(bundleScript.match(/^SIDECARS=\(([^)]*)\)/m)?.[1] ?? "")
+    .split(/\s+/)
+    .filter((word) => /^[\w-]+$/.test(word)),
+  ...[...bundleScript.matchAll(/SIDECARS\+=\(([^)]*)\)/g)].flatMap((match) =>
+    match[1].split(/\s+/).filter((word) => /^[\w-]+$/.test(word)),
+  ),
+]);
+compare(
+  "scripts/bundle-sidecars.sh copies a different set than the bundle declares:",
+  bundleUnix,
+  declared,
+);
+
+// 6. The Windows bundle. Its `externalBin` is the declared set minus the
+//    Unix-only binaries — asserted from both sides, so a Unix-only sidecar
+//    cannot be declared there and a portable one cannot be forgotten.
+compare(
+  "desktop/src-tauri/tauri.windows.conf.json externalBin != the declared set minus the Unix-only sidecars:",
+  externalBinNames("desktop/src-tauri/tauri.windows.conf.json"),
+  sorted(declared.filter((name) => !UNIX_ONLY.includes(name))),
+);
+
+// 7. Every CI step that runs `bundle-sidecars.sh` must first build what that
+//    script requires. This is the check whose absence broke every macOS and
+//    Linux build: the script's list and the `cargo build` line above it were
+//    free to disagree, and did.
+const CI_WORKFLOWS = [
+  ".github/workflows/release.yml",
+  ".github/workflows/linux-canary.yml",
+  ".github/workflows/macos-intel-canary.yml",
+  ".github/workflows/signed-macos-canary.yml",
+  ".github/workflows/windows-canary.yml",
+];
+const packageOf = Object.fromEntries(
+  Object.entries(BINARY_OF).map(([pkg, bin]) => [bin, pkg]),
+);
+/** The cargo packages that produce a set of binary names. */
+const packagesFor = (names) =>
+  sorted(names.map((name) => packageOf[name] ?? name));
+
+let ciSteps = 0;
+for (const workflow of CI_WORKFLOWS) {
+  const text = read(workflow);
+  const lines = text.split("\n");
+  lines.forEach((line, index) => {
+    if (!line.includes("bundle-sidecars.sh")) return;
+    ciSteps += 1;
+    // The `cargo build` that feeds it is the nearest one above, inside the
+    // same step. Ten lines is generous for the shapes in these workflows and
+    // narrow enough not to reach into a neighbouring step.
+    const build = lines
+      .slice(Math.max(0, index - 10), index)
+      .reverse()
+      .find((candidate) => candidate.includes("cargo build --release"));
+    const where = `${workflow}:${index + 1}`;
+    if (!build) {
+      fail(
+        `${where}: runs bundle-sidecars.sh with no 'cargo build --release' above it`,
+      );
+      return;
+    }
+    // Which platform this step runs on comes from its **job**, not from the
+    // build line: `release.yml`'s Windows job takes its target from an env
+    // var, so its `cargo build` reads identically to the macOS one. The
+    // nearest `runs-on:` above is the job's.
+    const runsOn = lines
+      .slice(0, index)
+      .reverse()
+      .find((candidate) => /^\s*runs-on:/.test(candidate));
+    if (!runsOn) {
+      fail(
+        `${where}: no 'runs-on:' above it, so its platform cannot be determined`,
+      );
+      return;
+    }
+    const windows = /windows/i.test(runsOn);
+    const wanted = packagesFor(
+      windows ? declared.filter((name) => !UNIX_ONLY.includes(name)) : declared,
+    );
+    const built = sorted(cargoPackages(build));
+    const missing = wanted.filter((pkg) => !built.includes(pkg));
+    if (missing.length > 0) {
+      fail(
+        `${where}: bundle-sidecars.sh will require ${missing.join(", ")}, which the build above it does not produce`,
+      );
+    }
+  });
+}
+// A guard on the guard: if a workflow stops calling the script, or the call
+// moves out of this checker's reach, the loop above would pass by finding
+// nothing to check.
+if (ciSteps < 8) {
+  fail(
+    `expected at least 8 CI steps calling bundle-sidecars.sh, found ${ciSteps} — a step was removed or renamed, and this check silently stopped covering it`,
+  );
+}
 
 if (failures.length > 0) {
   console.error(

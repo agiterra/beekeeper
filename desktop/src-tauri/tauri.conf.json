@@ -59,7 +59,8 @@
       "binaries/buzz-dev-mcp",
       "binaries/git-credential-nostr",
       "binaries/bee",
-      "binaries/buzz-shell-host"
+      "binaries/buzz-shell-host",
+      "binaries/buzz-host"
     ],
     "resources": {
       "../../personas/roles": "personas/roles",

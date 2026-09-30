@@ -23,19 +23,46 @@
 //!
 //! Everything it shares with the desktop app lives in `buzz-session-host-core`.
 
+//! # Platform
+//!
+//! Unix only, and the crate says so rather than failing to compile: the
+//! control socket is an `AF_UNIX` socket and the login registrations are
+//! launchd and systemd. A Windows host needs named pipes and a different
+//! service manager, which is separate work. `buzz-shell-host` already has
+//! this shape, and `buzz-host` follows it — including being absent from
+//! `tauri.windows.conf.json`.
+
+#[cfg(unix)]
+pub mod cli;
+#[cfg(unix)]
 pub mod client;
+#[cfg(unix)]
 pub mod commission;
+#[cfg(unix)]
 pub mod control;
+#[cfg(unix)]
 pub mod discovery;
+#[cfg(unix)]
 pub mod identity;
+#[cfg(unix)]
 pub mod install;
+#[cfg(unix)]
 pub mod owner;
+#[cfg(unix)]
 pub mod protocol;
+#[cfg(unix)]
 pub mod restart_policy;
+#[cfg(unix)]
 pub mod server;
+#[cfg(unix)]
 pub mod sessions;
+#[cfg(unix)]
 pub mod spawn;
+#[cfg(unix)]
 pub mod state;
+#[cfg(unix)]
 pub mod supervisor;
+#[cfg(unix)]
 pub mod takeover;
+#[cfg(unix)]
 pub mod terminate;
