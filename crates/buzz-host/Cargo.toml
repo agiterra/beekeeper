@@ -1,0 +1,46 @@
+[package]
+name = "buzz-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+# Named for the role the code already had: `session_provider/mod.rs` opened
+# with "Desktop host for the first-party coding-session provider" and `env.rs`
+# called the env map "the real interface between host and provider". This is
+# that host, with the desktop taken out of it.
+#
+# Not to be confused with `buzz-shell-host`, which hosts one PTY for one
+# built-in shell session. This hosts the machine's Beekeeper background
+# services: it owns the coding-session provider and answers a local control
+# socket about it.
+description = "Headless host for Beekeeper's background agents: supervises the coding-session provider and answers a local control socket."
+
+[[bin]]
+name = "buzz-host"
+path = "src/main.rs"
+
+[lib]
+name = "buzz_host"
+path = "src/lib.rs"
+
+[dependencies]
+buzz-core = { path = "../buzz-core" }
+buzz-session-host-core = { path = "../buzz-session-host-core" }
+chrono = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+nix = { version = "0.31", default-features = false, features = ["signal", "process"] }
+nostr = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[example]]
+name = "mint-test-identity"
+path = "examples/mint-test-identity.rs"

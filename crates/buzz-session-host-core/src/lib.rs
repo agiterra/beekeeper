@@ -15,16 +15,22 @@
 //! - [`path_env`] — the pure kernel of `PATH` composition
 //! - [`layout`] — where the host's own socket, config, key and log live
 //! - [`config`] — `host.json`, what the host serves with no desktop present
+//! - [`logs`] — the supervised child's log, so a bug report reads the same
+//! - [`managed_node`] — the app-private Node and npm shim directories
+//! - [`atomic_write`] — owner-only writes with no readable window
 //!
 //! This crate has no Tauri, no keyring and no async runtime, on purpose. The
 //! secret resolution is deliberately *not* here: the desktop has a keychain
 //! and a server does not, so each end resolves the key its own way and they
 //! agree only on the record that names it.
 
+pub mod atomic_write;
 pub mod command_paths;
 pub mod config;
 pub mod env;
 pub mod layout;
+pub mod logs;
+pub mod managed_node;
 pub mod path_env;
 pub mod record;
 

@@ -12,6 +12,7 @@ name = "buzz_session_host_core"
 path = "src/lib.rs"
 
 [dependencies]
+atomic-write-file = "0.3"
 buzz-core = { path = "../buzz-core" }
 chrono = { workspace = true }
 dirs = "6"
