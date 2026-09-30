@@ -472,6 +472,15 @@ export function declaredWorkFixture(): WireResponse {
       governedReportEventId: null,
       dispositionEventId: null,
       acknowledgementEventId: null,
+      // `decodeSettlement` takes the five fields exactly
+      // (`pulseDeclaredWorkWire.ts:418-432`), and the section refuses the
+      // whole read rather than guessing when one is absent — it was printing
+      // `response.sessions[1].assignments[0].settlement is missing settledBy`
+      // over every test in this spec. Null is the real answer: this
+      // assignment carries no report, no ruling and no receipt, so no rule
+      // settled it. The pinned fixture this object overrides has carried the
+      // field all along.
+      settledBy: null,
     },
     status: "unresolved",
   };
