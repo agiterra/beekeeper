@@ -69,9 +69,14 @@ next launch.
 written — leaves a registration that reads as granted, and then nothing
 repairs it and nothing asks, because both of those skip a grant. The host never
 starts and every surface says the machine is set up. Found in exactly that
-state on a real Mac. Two answers: a failed `install` removes the file it just
-wrote, and the poll asks `launchctl list` when the host is unreachable and the
-file looks fine — the one combination where the answer changes anything.
+state on a real Mac. Three answers: a failed `install` removes the file it just
+wrote; the poll asks `launchctl list` when the host is unreachable and the file
+looks fine; and the app repairs an unloaded registration **once per launch**,
+in `setup`, because replacing the bundle under a loaded launchd job boots both
+services out — which is what every local install does — and the repair must not
+wait for a view to be mounted and ask for a status. That path only ever
+repairs something already registered, so it is not a way around the question
+above.
 
 **Owed:** the app's reset path does not clear `~/.local/state/buzz[-dev]/host/`
 at all — not `host.json`, not `provider-key`, and not the refusal — so a reset

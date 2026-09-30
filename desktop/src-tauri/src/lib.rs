@@ -302,6 +302,12 @@ pub fn run() {
                 Ok(dir) => coding_sessions::host_git::set_state_dir(dir),
                 Err(error) => eprintln!("buzz-desktop: host Git state dir: {error}"),
             }
+            // Bring back a login registration that exists but is not loaded.
+            // Replacing this bundle under a loaded launchd job leaves exactly
+            // that, so every update needs it — and it must not wait for a view
+            // to mount and ask for a status. Repairs only; never registers
+            // something nobody agreed to.
+            agent_host::autostart::repair_at_launch(&app_handle);
             #[cfg(target_os = "macos")]
             {
                 // No tray here any more: the menu bar is its own process, so

@@ -130,13 +130,38 @@ pub(crate) fn decide(provisioned: bool) -> (LoginAutostart, Registration) {
     (decision, registration)
 }
 
-/// Whether launchd has the host's service loaded, for this instance.
+/// Repair a login registration that exists but is not loaded, once per launch.
 ///
-/// Separate from [`status`] because it asks the service manager rather than
-/// the filesystem, and costs a subprocess: only the poll's repair path calls
-/// it, and only when the host is unreachable.
-pub(crate) fn service_loaded() -> Option<bool> {
-    install::service_loaded(Service::AgentHost, super::instance())
+/// **Not on the status poll, and not in a React component.** The poll repairs
+/// too, but only when something asks it for the status — and for a while
+/// nothing did at launch, so an app whose services had been booted out (which
+/// is what replacing the bundle under a loaded job does, and therefore what
+/// every `just prod-desktop` install does) came up with no menu bar icon, no
+/// host, and every surface reporting the machine as registered. A change to
+/// this machine's services must not depend on which view happens to be
+/// mounted.
+///
+/// Only repairs; never registers something that was not registered, so this is
+/// not a way around the consent question in [`poll_action`]. A registration
+/// that exists was asked for.
+///
+/// Spawned on a thread: it runs `launchctl` twice and `setup` must not block.
+pub(crate) fn repair_at_launch(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let Ok(home) = layout::home_dir() else { return };
+        let instance = super::instance();
+        // Nothing registered means nothing to repair — and asking would be the
+        // app installing a service nobody agreed to.
+        let host = install::status(Service::AgentHost, &home, instance);
+        let menubar = install::status(Service::MenuBar, &home, instance);
+        if !host.installed && !menubar.installed {
+            return;
+        }
+        for warning in &ensure_registered(&app, Probe::both()).warnings {
+            eprintln!("buzz-desktop: agent-host: {warning}");
+        }
+    });
 }
 
 /// Record that the operator does not want the host registered at login.
@@ -180,41 +205,27 @@ pub(crate) fn status() -> Registration {
 /// not be written — the provider can still be started by hand, and the
 /// *disclosure* is what matters. The failure travels in
 /// [`Registration::warnings`].
-pub(crate) fn ensure_registered(_app: &AppHandle) -> Registration {
+pub(crate) fn ensure_registered(_app: &AppHandle, probe: Probe) -> Registration {
     let Ok(home) = layout::home_dir() else {
         return status();
     };
     let instance = super::instance();
 
-    // The menu bar app is registered too, and separately: a person may turn
-    // it off without turning their agents off, and one uninstall must not take
-    // the other with it. Its absence is not worth a warning on the host's
+    // The menu bar app is registered too, and separately: a person may turn it
+    // off without turning their agents off, and one uninstall must not take the
+    // other with it. Its absence is not worth a warning on the host's
     // registration — a dev build has no bundle and therefore no menu bar app,
     // which is correct rather than broken.
     if let Some(menubar) = resolve_menubar_binary() {
-        let current = install::status(Service::MenuBar, &home, instance);
-        if current.needs_rewrite() {
-            if let Err(error) = install::install(Service::MenuBar, &home, instance, &menubar) {
-                eprintln!("buzz-desktop: agent-host: menu bar app not registered: {error}");
-            }
+        if let Err(error) =
+            ensure_service(Service::MenuBar, &home, instance, &menubar, probe.menubar)
+        {
+            eprintln!("buzz-desktop: agent-host: menu bar app not registered: {error}");
         }
     }
 
-    let current = install::status(Service::AgentHost, &home, instance);
-    // Already registered, pointing at something that exists: leave it. A
-    // rewrite would be harmless but it would also bounce the agent through
-    // `launchctl bootout`, and doing that on every status poll is how a host
-    // comes to restart every few seconds.
-    //
-    // The question is `needs_rewrite`, not "are there warnings": a warning is
-    // something to disclose, and a permanent one — a Linux user who does not
-    // linger — would otherwise re-register on every poll forever. See
-    // `Registration::needs_rewrite`.
-    if !current.needs_rewrite() {
-        return current;
-    }
     let Some(program) = resolve_host_binary() else {
-        let mut registration = current;
+        let mut registration = install::status(Service::AgentHost, &home, instance);
         registration.warnings.push(format!(
             "{HOST_BINARY} was not found beside this app, so the agent host cannot be registered \
              to start at login — your agents will stop when you quit Beekeeper. Reinstall the \
@@ -222,7 +233,7 @@ pub(crate) fn ensure_registered(_app: &AppHandle) -> Registration {
         ));
         return registration;
     };
-    match install::install(Service::AgentHost, &home, instance, &program) {
+    match ensure_service(Service::AgentHost, &home, instance, &program, probe.host) {
         Ok(registration) => registration,
         Err(error) => {
             let mut registration = install::status(Service::AgentHost, &home, instance);
@@ -233,6 +244,73 @@ pub(crate) fn ensure_registered(_app: &AppHandle) -> Registration {
             registration
         }
     }
+}
+
+/// How hard to look before deciding a service does not need touching.
+///
+/// Asking the service manager costs a subprocess, so it is asked for
+/// deliberately: once per launch for both services, and on the status poll only
+/// for the host, only while its socket is silent.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Probe {
+    /// Consult `launchctl`/`systemctl` about the agent host.
+    pub host: bool,
+    /// Consult it about the menu bar app.
+    pub menubar: bool,
+}
+
+impl Probe {
+    /// Ask about both. Used once at launch.
+    pub(crate) fn both() -> Self {
+        Self {
+            host: true,
+            menubar: true,
+        }
+    }
+
+    /// The status poll: ask about the host only while it is unreachable, and
+    /// never about the menu bar, which the launch probe has already covered.
+    pub(crate) fn polling(host_reachable: bool) -> Self {
+        Self {
+            host: !host_reachable,
+            menubar: false,
+        }
+    }
+}
+
+/// Register one service if it needs it, and answer with what is true afterwards.
+///
+/// **The condition lives here and only here.** It used to be in two places:
+/// the caller decided a repair was needed because the service manager did not
+/// have the service loaded, and then this function re-checked with the weaker
+/// filesystem-only question, found the file present, and returned early without
+/// installing anything. The outer decision was inert, and the symptom was a
+/// menu bar icon that never came back and a host that never started, with
+/// every surface reporting the machine as registered. Exactly the two-copies-of
+/// -one-rule shape as the tray's subtitle indices (ledger 298(c)).
+fn ensure_service(
+    service: Service,
+    home: &std::path::Path,
+    instance: layout::Instance,
+    program: &std::path::Path,
+    probe: bool,
+) -> Result<Registration, String> {
+    let current = install::status(service, home, instance);
+    // `loaded` is only asked for when the cheap question found nothing and the
+    // caller said to look: an unknown answer is never treated as a negative,
+    // so a machine where the probe cannot run behaves as it did before.
+    let loaded = if probe && !current.needs_rewrite() {
+        install::service_loaded(service, instance)
+    } else {
+        None
+    };
+    // `host_reachable: false` because reachability is the *host's* signal and
+    // this function serves both services; `probe` already encodes whether the
+    // caller thinks something might be wrong.
+    if !current.needs_repair(false, loaded) {
+        return Ok(current);
+    }
+    install::install(service, home, instance, program)
 }
 
 /// Remove the registration. Used by the app's reset path.
@@ -259,6 +337,30 @@ pub(crate) fn unregister() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What each caller asks the service manager about.
+    ///
+    /// The launch repair asks about both, because replacing the app bundle
+    /// under loaded jobs boots both out and nothing else will notice. The poll
+    /// asks about the host only while its socket is silent — a reachable host
+    /// is loaded by definition — and never about the menu bar, whose only
+    /// realistic way to come unloaded is the one the launch probe covers.
+    #[test]
+    fn the_launch_probe_looks_at_both_services_and_the_poll_does_not() {
+        let launch = Probe::both();
+        assert!(launch.host && launch.menubar);
+
+        let silent = Probe::polling(false);
+        assert!(silent.host, "a silent host is worth a launchctl call");
+        assert!(!silent.menubar, "the launch probe already covered it");
+
+        let answering = Probe::polling(true);
+        assert!(
+            !answering.host,
+            "a host that answers its socket is loaded, so asking is waste"
+        );
+        assert!(!answering.menubar);
+    }
 
     /// The poll repairs, and does not install. The distinction is the whole
     /// consent model: a registration that exists was asked for once and must

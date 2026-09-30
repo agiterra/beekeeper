@@ -88,7 +88,11 @@ pub async fn install_agent_host_autostart(
     // Warnings are not an error: a registration that could not be written
     // travels in `status.host.autostart.warnings`, and failing the command
     // would leave the surface with nothing to show but a toast.
-    let registration = crate::agent_host::autostart::ensure_registered(&app);
+    let registration = crate::agent_host::autostart::ensure_registered(
+        &app,
+        // A person asked, so look properly rather than cheaply.
+        crate::agent_host::autostart::Probe::both(),
+    );
     for warning in &registration.warnings {
         eprintln!("buzz-desktop: agent-host: {warning}");
     }
@@ -385,7 +389,12 @@ pub async fn provision_coding_session_provider(
     // in `status.host.autostart`, because a commissioning that succeeded while
     // the registration silently did not is how a person comes to believe their
     // agents survive a reboot when they do not.
-    for warning in &crate::agent_host::autostart::ensure_registered(&app).warnings {
+    for warning in &crate::agent_host::autostart::ensure_registered(
+        &app,
+        crate::agent_host::autostart::Probe::both(),
+    )
+    .warnings
+    {
         eprintln!("buzz-desktop: agent-host: {warning}");
     }
 

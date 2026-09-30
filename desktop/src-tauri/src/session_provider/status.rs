@@ -253,24 +253,20 @@ fn login_registration(
     beekeeper_host::install::LoginAutostart,
     beekeeper_host::install::Registration,
 ) {
-    use crate::agent_host::autostart::{self, PollAction};
+    use crate::agent_host::autostart::{self, PollAction, Probe};
 
     let (decision, registration) = autostart::decide(provisioned);
     if !matches!(autostart::poll_action(decision), PollAction::Repair) {
         return (decision, registration);
     }
-    // `loaded` costs a subprocess, so it is asked for only when the host is
-    // unreachable *and* the cheap checks found nothing — which is the one
-    // combination where the answer changes what happens.
-    let loaded = if host_reachable || registration.needs_rewrite() {
-        None
-    } else {
-        autostart::service_loaded()
-    };
-    if registration.needs_repair(host_reachable, loaded) {
-        return (decision, autostart::ensure_registered(app));
-    }
-    (decision, registration)
+    // The decision about *whether* a service needs touching lives in
+    // `ensure_registered`, for both services, and this caller no longer has an
+    // opinion about it. When it did, the two disagreed: this function decided a
+    // repair was needed and that one declined to do it.
+    (
+        decision,
+        autostart::ensure_registered(app, Probe::polling(host_reachable)),
+    )
 }
 
 /// The provider state directory, as the *host* reported it.
