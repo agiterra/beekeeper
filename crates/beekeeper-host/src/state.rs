@@ -105,8 +105,16 @@ impl ProviderChildState {
     /// One line a human can act on.
     pub fn message(&self) -> String {
         match self {
+            // Says only what the variant knows. It used to assert "no provider
+            // is commissioned", which is the *common* way to reach this state
+            // and not the only one: a provider that was deliberately stopped
+            // lands here too, and the host then logged "stopped: no provider is
+            // commissioned on this machine" about a provider it had just
+            // stopped. Whether an identity exists is a question `host.json` and
+            // the record store answer, not this enum.
             Self::NotSupervised => {
-                "no provider is commissioned on this machine — open Beekeeper to finish setup"
+                "the host is not running a provider — if coding sessions are not set up on this \
+                 machine yet, open Beekeeper to finish setup"
                     .to_string()
             }
             Self::KeyUnresolved { reason } => reason.message(),

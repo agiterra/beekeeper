@@ -200,7 +200,8 @@ pub(crate) async fn provider_status(
     // whether to ask for it. The poll does not install: see
     // `autostart::poll_action` for why a machine-level change is a person's
     // answer and not an app's initiative.
-    let (login, autostart) = login_registration(app, record.is_some());
+    let (login, autostart) =
+        login_registration(app, record.is_some(), snapshot.reachability.is_reachable());
 
     let status =
         CodingSessionProviderStatus::from_snapshot(record, host, snapshot, autostart, login);
@@ -247,6 +248,7 @@ pub(crate) async fn provider_status(
 fn login_registration(
     app: &tauri::AppHandle,
     provisioned: bool,
+    host_reachable: bool,
 ) -> (
     beekeeper_host::install::LoginAutostart,
     beekeeper_host::install::Registration,
@@ -254,12 +256,21 @@ fn login_registration(
     use crate::agent_host::autostart::{self, PollAction};
 
     let (decision, registration) = autostart::decide(provisioned);
-    match autostart::poll_action(decision) {
-        PollAction::Repair if registration.needs_rewrite() => {
-            (decision, autostart::ensure_registered(app))
-        }
-        PollAction::Repair | PollAction::Ask | PollAction::Leave => (decision, registration),
+    if !matches!(autostart::poll_action(decision), PollAction::Repair) {
+        return (decision, registration);
     }
+    // `loaded` costs a subprocess, so it is asked for only when the host is
+    // unreachable *and* the cheap checks found nothing — which is the one
+    // combination where the answer changes what happens.
+    let loaded = if host_reachable || registration.needs_rewrite() {
+        None
+    } else {
+        autostart::service_loaded()
+    };
+    if registration.needs_repair(host_reachable, loaded) {
+        return (decision, autostart::ensure_registered(app));
+    }
+    (decision, registration)
 }
 
 /// The provider state directory, as the *host* reported it.

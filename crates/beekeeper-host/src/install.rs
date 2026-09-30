@@ -145,6 +145,26 @@ impl Registration {
     ///
     /// True only for the two states a rewrite actually fixes: no file at all,
     /// and a file that does not name a program that exists.
+    /// Whether the registration should be rewritten *now*, given what else
+    /// is known.
+    ///
+    /// Adds the one state [`needs_rewrite`](Self::needs_rewrite) cannot see: a
+    /// file on disk that launchd or systemd does not have loaded. `installed`
+    /// means "the file exists", which is what makes it cheap and what makes it
+    /// wrong here — a `launchctl bootout` by hand, or an activation that
+    /// failed after the file was written, leaves exactly that. It reads as
+    /// granted, so nothing repairs it and nothing asks.
+    ///
+    /// Only consulted when the host is *unreachable*, because that is the only
+    /// time the answer changes anything and `loaded` costs a subprocess. A
+    /// reachable host is loaded by definition.
+    pub fn needs_repair(&self, host_reachable: bool, loaded: Option<bool>) -> bool {
+        if self.needs_rewrite() {
+            return true;
+        }
+        !host_reachable && loaded == Some(false)
+    }
+
     pub fn needs_rewrite(&self) -> bool {
         !self.installed
             || self
@@ -198,6 +218,50 @@ pub fn login_autostart(
         return LoginAutostart::Declined;
     }
     LoginAutostart::ShouldAsk
+}
+
+/// Whether the service manager has this service loaded.
+///
+/// `None` when the question could not be put — no `launchctl`/`systemctl`, or
+/// it failed for a reason that is not "no such service". An unknown answer
+/// must never be read as `false`: that would have the app tear down and
+/// rewrite a working registration on every poll.
+pub fn service_loaded(service: Service, instance: Instance) -> Option<bool> {
+    let name = service_name(service, instance);
+    #[cfg(target_os = "macos")]
+    {
+        // `launchctl list <label>` exits 0 when loaded and 113 (EDEADLK, used
+        // here as "no such process") when not. Any other status is an answer
+        // this function does not have.
+        let code = std::process::Command::new("launchctl")
+            .args(["list", &name])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .ok()?
+            .code()?;
+        match code {
+            0 => Some(true),
+            113 => Some(false),
+            _ => None,
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // `is-active` is about *running*, which a `Type=simple` unit may not be
+        // between restarts; `is-enabled` is about being wired to start, which
+        // is the same question the plist's presence answers on a Mac.
+        let output = std::process::Command::new("systemctl")
+            .args(["--user", "is-enabled", &format!("{name}.service")])
+            .output()
+            .ok()?;
+        let answer = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        match answer.as_str() {
+            "enabled" | "enabled-runtime" | "static" | "alias" | "indirect" => Some(true),
+            "disabled" | "not-found" | "masked" => Some(false),
+            _ => None,
+        }
+    }
 }
 
 /// Whether the operator has refused to have the host registered at login.
@@ -312,7 +376,17 @@ pub fn install(
         registration_contents(service, instance, program, home),
     )
     .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-    activate(service, &path, instance)?;
+    // Unwind the file if the service will not load. `installed` is "the file
+    // exists", so a registration left behind by a failed activation reads as
+    // `installed: true` and therefore `LoginAutostart::Granted` — and then
+    // nothing ever touches it again: the poll does not repair a grant it
+    // believes is fine, and the prompt does not fire for a grant. The service
+    // never starts and every surface says it is set up. Removing the file
+    // keeps the two in step, so the next poll asks again.
+    if let Err(error) = activate(service, &path, instance) {
+        let _ = std::fs::remove_file(&path);
+        return Err(error);
+    }
     // Installing is the operator asking for this, which supersedes any earlier
     // refusal. Best-effort: a stale refusal file must not fail an install that
     // worked, and `login_autostart` reads `installed` first anyway.
@@ -580,6 +654,50 @@ fn run_capture(program: &str, args: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A registration on disk that the service manager does not have loaded.
+    ///
+    /// `installed` is "the file exists", which is the whole reason this state
+    /// can happen: a `launchctl bootout` by hand, or an activation that failed
+    /// after the file was written, leaves a plist that reads as granted. Then
+    /// nothing repairs it — the poll does not touch a grant — and nothing asks
+    /// — the prompt does not fire for a grant — so the host never starts and
+    /// every surface says the machine is set up. Found on a real machine in
+    /// exactly that state.
+    #[test]
+    fn a_registration_the_service_manager_does_not_have_loaded_needs_repair() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let program = dir.path().join("beekeeper-host");
+        std::fs::write(&program, b"#!/bin/sh\n").expect("write program");
+        let registered = Registration {
+            installed: true,
+            path: dir.path().join("host.plist"),
+            program: Some(program),
+            warnings: Vec::new(),
+        };
+
+        // The file is fine, so the cheap question says nothing is wrong.
+        assert!(!registered.needs_rewrite());
+
+        // A reachable host is loaded by definition — do not go asking, and do
+        // not act on a stale answer if something did.
+        assert!(!registered.needs_repair(true, Some(false)));
+        assert!(!registered.needs_repair(true, None));
+
+        // Unreachable and not loaded: this is the trap. Repair it.
+        assert!(registered.needs_repair(false, Some(false)));
+
+        // Unreachable but loaded — the host is down for its own reasons, and
+        // rewriting the registration would bounce it for nothing.
+        assert!(!registered.needs_repair(false, Some(true)));
+
+        // Unreachable and unknown must not be read as "not loaded": that
+        // would tear down and rewrite a working registration every poll.
+        assert!(
+            !registered.needs_repair(false, None),
+            "an unknown answer is not a negative one"
+        );
+    }
 
     /// A permanent advisory warning must not make a registration look wrong.
     ///

@@ -130,6 +130,15 @@ pub(crate) fn decide(provisioned: bool) -> (LoginAutostart, Registration) {
     (decision, registration)
 }
 
+/// Whether launchd has the host's service loaded, for this instance.
+///
+/// Separate from [`status`] because it asks the service manager rather than
+/// the filesystem, and costs a subprocess: only the poll's repair path calls
+/// it, and only when the host is unreachable.
+pub(crate) fn service_loaded() -> Option<bool> {
+    install::service_loaded(Service::AgentHost, super::instance())
+}
+
 /// Record that the operator does not want the host registered at login.
 ///
 /// The disclosure of what it costs them is the surface's job; this only makes

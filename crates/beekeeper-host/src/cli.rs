@@ -274,8 +274,14 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
             socket_path.clone(),
         ));
 
-        wait_for_shutdown_signal().await;
-        tracing::info!("shutdown requested; stopping the provider");
+        let signal = wait_for_shutdown_signal().await;
+        // *Which* signal, because the sender is the question when a host stops
+        // without anybody asking it to. SIGTERM is launchd booting the job
+        // out, a `pkill`, or the system reclaiming the process; SIGINT is a
+        // terminal. "shutdown requested" on its own left a real disappearance
+        // on Andy's Mac (2026-09-30) with no way to tell those apart after
+        // the fact.
+        tracing::info!("{signal} received; stopping the provider");
         control.stop().await;
         serving.abort();
         let _ = std::fs::remove_file(&socket_path);
@@ -353,23 +359,24 @@ fn talk_to_host(socket: &std::path::Path, request: Request) -> Result<(), String
     }
 }
 #[cfg(unix)]
-async fn wait_for_shutdown_signal() {
+async fn wait_for_shutdown_signal() -> &'static str {
     use tokio::signal::unix::{signal, SignalKind};
     let mut terminate = match signal(SignalKind::terminate()) {
         Ok(stream) => stream,
         Err(error) => {
             tracing::warn!("cannot listen for SIGTERM ({error}); Ctrl-C only");
             let _ = tokio::signal::ctrl_c().await;
-            return;
+            return "SIGINT";
         }
     };
     tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
-        _ = terminate.recv() => {}
+        _ = tokio::signal::ctrl_c() => "SIGINT",
+        _ = terminate.recv() => "SIGTERM",
     }
 }
 
 #[cfg(not(unix))]
-async fn wait_for_shutdown_signal() {
+async fn wait_for_shutdown_signal() -> &'static str {
     let _ = tokio::signal::ctrl_c().await;
+    "Ctrl-C"
 }

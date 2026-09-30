@@ -63,6 +63,16 @@ names is repaired silently rather than re-proposed. `bee host uninstall`
 records the refusal too, so an uninstall from a terminal is not undone by the
 next launch.
 
+**"Registered" means the service manager has it, not that a file exists.**
+`installed` is the plist's presence, which is cheap and, on its own, wrong: a
+`launchctl bootout` by hand — or an activation that failed *after* the file was
+written — leaves a registration that reads as granted, and then nothing
+repairs it and nothing asks, because both of those skip a grant. The host never
+starts and every surface says the machine is set up. Found in exactly that
+state on a real Mac. Two answers: a failed `install` removes the file it just
+wrote, and the poll asks `launchctl list` when the host is unreachable and the
+file looks fine — the one combination where the answer changes anything.
+
 **Owed:** the app's reset path does not clear `~/.local/state/buzz[-dev]/host/`
 at all — not `host.json`, not `provider-key`, and not the refusal — so a reset
 machine keeps whatever it had, including a "no" nobody can see. The code that
