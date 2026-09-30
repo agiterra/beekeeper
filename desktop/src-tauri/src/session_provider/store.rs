@@ -1,24 +1,30 @@
 //! Provider identity records: one per relay URL, key in the OS keyring.
 //!
-//! The record is the *public* half — pubkey, instance id, NIP-OA attestation,
-//! creation stamp — and is safe to read for status display. The nsec lives in
-//! the same OS keyring service the human identity and managed agents use, under
-//! its own key namespace, and falls back to the `0o600` JSON file only on
-//! builds without a keyring backend (or during a keyring outage), exactly like
-//! `managed_agents::storage`.
+//! The record *shape* is the launcher contract and lives in
+//! `buzz_session_host_core::record`, because `buzz-host` reads the same file.
+//! What stays here is the half that is genuinely the desktop's: hydrating each
+//! nsec out of the OS keyring on read and pushing it back in on write.
+//!
+//! The nsec lives in the same OS keyring service the human identity and
+//! managed agents use, under its own key namespace, and falls back to the
+//! `0o600` JSON file only on builds without a keyring backend (or during a
+//! keyring outage), exactly like `managed_agents::storage`. A headless host
+//! has no keychain at all and resolves the key its own way — which is the
+//! whole reason the shape and the secret store are separated.
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tauri::{AppHandle, Manager};
+
+pub(crate) use buzz_session_host_core::record::{
+    CodingSessionProviderRecord, CodingSessionProviderStore, STORE_FILE_NAME, STORE_VERSION,
+};
 
 use crate::app_state::keyring_service;
 use crate::managed_agents::atomic_write_json_restricted;
 use crate::secret_store::SecretStore;
 use crate::session_provider::{canonical_relay_key, session_provider_base_dir};
-
-/// Current on-disk schema version. Bumped only on a breaking shape change.
-pub(crate) const STORE_VERSION: u32 = 1;
 
 /// Keyring key for a provider nsec, namespaced away from `"identity"` (the
 /// human) and `"agent:<pubkey>"` (managed agents), which share the service.
@@ -37,99 +43,6 @@ fn provider_secret_store() -> Option<&'static SecretStore> {
         Some(SecretStore::shared(keyring_service()))
     } else {
         None
-    }
-}
-
-/// One provisioned provider identity.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CodingSessionProviderRecord {
-    /// 64-character lowercase hex pubkey of the provider identity.
-    pub provider_pubkey: String,
-
-    /// Stable `cs-target` instance id. Derived from the pubkey prefix so it
-    /// survives restarts with no extra persistence, and matches what the
-    /// provider computes for itself when `BUZZ_CSP_INSTANCE_ID` is unset.
-    pub instance_id: String,
-
-    /// NIP-OA owner attestation, verbatim as minted: a JSON array of strings.
-    /// Handed to the child as `BUZZ_AUTH_TAG` without re-encoding.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_tag: Option<String>,
-
-    /// RFC 3339 timestamp of provisioning.
-    pub created_at: String,
-
-    /// The relay this identity was attested against, as supplied.
-    #[serde(default)]
-    pub relay_url: String,
-
-    /// Inline nsec. Empty (and omitted) whenever the keyring holds the key —
-    /// the same `skip_serializing_if` mechanism managed agents use.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub private_key_nsec: String,
-}
-
-/// The whole record file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CodingSessionProviderStore {
-    pub version: u32,
-    /// Keyed by [`canonical_relay_key`].
-    #[serde(default)]
-    pub providers: BTreeMap<String, CodingSessionProviderRecord>,
-
-    /// How many agent processes the provider may hold at once, or `None` for
-    /// the provider's own default.
-    ///
-    /// Machine-wide rather than per relay: the ceiling is about this
-    /// computer's capacity, and a person running two communities has one set
-    /// of CPUs. `Some(0)` is unlimited, matching
-    /// `buzz_session_provider::config::UNLIMITED_MAX_SESSIONS`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_sessions: Option<usize>,
-    /// How long one turn may go with no word from the agent, in seconds.
-    ///
-    /// `None` leaves the provider's own default (15 minutes). Every line the
-    /// adapter writes resets the clock, so this is a silence budget, not a
-    /// runtime budget — and a single long tool call that reports nothing until
-    /// it finishes is exactly what spends it. A turn that ran a 16-minute
-    /// build was killed as "no agent activity" (reported 2026-08-24).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn_idle_timeout_secs: Option<u64>,
-    /// How many turns one crew session (an umbrella `sessionRef`) may start
-    /// before the provider refuses further turns from anyone but its founder.
-    ///
-    /// `None` leaves the provider's own default (200). `Some(0)` removes the
-    /// budget entirely. Machine-wide for the same reason as `max_sessions`:
-    /// it bounds what this computer's agent processes will do unattended, and
-    /// a person running two communities has one machine.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn_budget: Option<u64>,
-}
-
-impl Default for CodingSessionProviderStore {
-    fn default() -> Self {
-        Self {
-            version: STORE_VERSION,
-            providers: BTreeMap::new(),
-            max_sessions: None,
-            turn_idle_timeout_secs: None,
-            turn_budget: None,
-        }
-    }
-}
-
-impl CodingSessionProviderStore {
-    /// The record provisioned for `relay_url`, if any.
-    pub(crate) fn get(&self, relay_url: &str) -> Option<&CodingSessionProviderRecord> {
-        self.providers.get(&canonical_relay_key(relay_url))
-    }
-
-    /// Insert or replace the record for `relay_url`.
-    pub(crate) fn upsert(&mut self, relay_url: &str, record: CodingSessionProviderRecord) {
-        self.providers
-            .insert(canonical_relay_key(relay_url), record);
     }
 }
 
@@ -229,7 +142,7 @@ pub(crate) fn provider_store_path_readonly(app: &AppHandle) -> Result<std::path:
         .app_data_dir()
         .map_err(|error| format!("failed to resolve app data dir: {error}"))?
         .join("session-provider")
-        .join("coding-session-provider.json"))
+        .join(STORE_FILE_NAME))
 }
 
 /// Read non-secret provider metadata from an explicit path.
@@ -307,21 +220,14 @@ pub(crate) fn load_provider_readiness_store(
 }
 
 fn store_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    Ok(session_provider_base_dir(app)?.join("coding-session-provider.json"))
+    Ok(session_provider_base_dir(app)?.join(STORE_FILE_NAME))
 }
 
 /// Read the record file, hydrating each nsec from the keyring.
 ///
 /// A missing file is not an error — it is the un-provisioned steady state.
 pub(crate) fn load_provider_store(app: &AppHandle) -> Result<CodingSessionProviderStore, String> {
-    let path = store_path(app)?;
-    if !path.exists() {
-        return Ok(CodingSessionProviderStore::default());
-    }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|error| format!("failed to read coding-session provider store: {error}"))?;
-    let mut store: CodingSessionProviderStore = serde_json::from_str(&content)
-        .map_err(|error| format!("failed to parse coding-session provider store: {error}"))?;
+    let mut store = buzz_session_host_core::record::load_provider_store_from(&store_path(app)?)?;
     hydrate_keys(&mut store);
     Ok(store)
 }

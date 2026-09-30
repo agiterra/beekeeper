@@ -1,0 +1,23 @@
+[package]
+name = "buzz-session-host-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared contract between a coding-session provider's launcher and the Beekeeper desktop app: identity records, the child environment, binary discovery and the host state-dir layout."
+
+[lib]
+name = "buzz_session_host_core"
+path = "src/lib.rs"
+
+[dependencies]
+buzz-core = { path = "../buzz-core" }
+chrono = { workspace = true }
+dirs = "6"
+serde = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

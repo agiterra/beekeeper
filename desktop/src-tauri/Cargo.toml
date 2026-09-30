@@ -122,6 +122,12 @@ buzz_workflow_pkg = { package = "buzz-workflow", path = "../../crates/buzz-workf
 # binary; duplicating those numbers here is how a settings panel comes to
 # advertise a default the sidecar stopped using.
 buzz_session_provider_pkg = { package = "buzz-session-provider", path = "../../crates/buzz-session-provider" }
+# The launcher contract the desktop shares with `buzz-host`: identity records,
+# the child environment, binary discovery, and where the host's socket lives.
+# Shared rather than duplicated because two launchers assembling the same
+# environment two ways is how a provider comes to behave differently depending
+# on who started it.
+buzz_session_host_core = { package = "buzz-session-host-core", path = "../../crates/buzz-session-host-core" }
 portable-pty = "0.9"
 # Built-in shell sessions keep a rendered mirror of each PTY byte stream so
 # agents can read a clean screen instead of raw ANSI scrollback.

@@ -800,6 +800,7 @@ dependencies = [
  "buzz-media",
  "buzz-persona",
  "buzz-sdk",
+ "buzz-session-host-core",
  "buzz-session-provider",
  "buzz-shell-host",
  "buzz-terminal",
@@ -1336,6 +1337,18 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror 2.0.18",
  "uuid",
+]
+
+[[package]]
+name = "buzz-session-host-core"
+version = "0.1.0"
+dependencies = [
+ "buzz-core",
+ "chrono",
+ "dirs",
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]

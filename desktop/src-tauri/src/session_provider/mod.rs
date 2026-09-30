@@ -45,6 +45,10 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager};
 
+/// Keying the per-relay record map, shared with `buzz-host` so a desktop and a
+/// host cannot disagree about which relay a record belongs to.
+pub(crate) use buzz_session_host_core::record::canonical_relay_key;
+
 pub(crate) mod commands;
 pub(crate) mod env;
 pub(crate) mod runtimes;
@@ -96,10 +100,10 @@ pub(crate) fn provider_state_dir(
     app: &AppHandle,
     provider_pubkey: &str,
 ) -> Result<PathBuf, String> {
-    if !crate::managed_agents::is_lowercase_hex_pubkey(provider_pubkey) {
-        return Err("provider pubkey must be 64-character lowercase hex".to_string());
-    }
-    let dir = session_provider_base_dir(app)?.join(provider_pubkey);
+    let dir = buzz_session_host_core::record::provider_state_dir_in(
+        &session_provider_base_dir(app)?,
+        provider_pubkey,
+    )?;
     std::fs::create_dir_all(&dir)
         .map_err(|error| format!("failed to create provider state dir: {error}"))?;
     Ok(dir)
@@ -114,15 +118,4 @@ pub(crate) fn provider_log_path(app: &AppHandle, provider_pubkey: &str) -> Resul
     std::fs::create_dir_all(&dir)
         .map_err(|error| format!("failed to create session-provider logs dir: {error}"))?;
     Ok(dir.join(format!("{provider_pubkey}.log")))
-}
-
-/// Canonical key for the per-relay record map.
-///
-/// Records are keyed by relay because one desktop can be pointed at several
-/// communities, and a provider identity is only meaningful against the relay
-/// whose owner attested it. Normalization is deliberately conservative — case
-/// folding plus trailing-slash removal — so an operator typing the same relay
-/// two ways does not mint two identities.
-pub(crate) fn canonical_relay_key(relay_url: &str) -> String {
-    relay_url.trim().trim_end_matches('/').to_ascii_lowercase()
 }

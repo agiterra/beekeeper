@@ -1402,6 +1402,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "buzz-session-host-core"
+version = "0.1.0"
+dependencies = [
+ "buzz-core",
+ "chrono",
+ "dirs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "url",
+]
+
+[[package]]
 name = "buzz-session-provider"
 version = "0.1.0"
 dependencies = [

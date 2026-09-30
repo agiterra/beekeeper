@@ -11,7 +11,6 @@ use crate::managed_agents::{
 };
 mod auth_preflight;
 mod auth_settlement;
-mod command_paths;
 mod presets;
 mod runtime_metadata;
 #[macro_use]
@@ -224,22 +223,12 @@ pub(crate) fn known_skill_dirs() -> impl Iterator<Item = &'static str> {
     KNOWN_ACP_RUNTIMES.iter().filter_map(|p| p.skill_dir)
 }
 
+use buzz_session_host_core::command_paths::{
+    command_looks_like_path, executable_basename, is_executable_file,
+};
+
 fn workspace_root_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn command_looks_like_path(command: &str) -> bool {
-    let path = Path::new(command);
-    path.is_absolute() || path.components().count() > 1
-}
-
-fn executable_basename(command: &str) -> String {
-    let suffix = std::env::consts::EXE_SUFFIX;
-    if suffix.is_empty() || command.ends_with(suffix) {
-        command.to_string()
-    } else {
-        format!("{command}{suffix}")
-    }
 }
 
 pub(crate) fn normalize_command_identity(command: &str) -> String {
@@ -478,28 +467,8 @@ pub fn normalize_agent_args(command: &str, agent_args: Vec<String>) -> Vec<Strin
     normalized
 }
 
-fn is_executable_file(path: &Path) -> bool {
-    let Ok(metadata) = path.metadata() else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o111 != 0
-    }
-
-    #[cfg(not(unix))]
-    {
-        true
-    }
-}
-
 fn resolve_workspace_command(command: &str) -> Option<PathBuf> {
-    command_paths::resolve_workspace_command(
+    buzz_session_host_core::command_paths::resolve_workspace_command(
         command,
         &workspace_root_dir(),
         std::env::current_dir().ok().as_deref(),
