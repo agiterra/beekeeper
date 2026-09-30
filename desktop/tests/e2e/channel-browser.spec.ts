@@ -407,6 +407,14 @@ test("Enter with no matches jumps to create", async ({ page }) => {
 
   await openChannelBrowser(page);
   await page.getByTestId("channel-browser-search").fill(channelName);
+  // Enter activates whichever row is selected, and the selection follows the
+  // filtered list. Under load the filter lands after the keystroke, so Enter
+  // opened whatever was still selected from before the search. The create
+  // row carries the query, which is the list saying it has caught up — and
+  // it is the "no matches" half of this test's own name.
+  const createRow = page.getByTestId("channel-browser-create-row");
+  await expect(createRow).toContainText(channelName);
+  await expect(page.getByTestId("browse-channel-general")).toHaveCount(0);
   await page.keyboard.press("Enter");
 
   await expect(page.getByTestId("create-channel-name")).toHaveValue(

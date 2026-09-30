@@ -114,20 +114,44 @@ test("rejects inconsistent exhaustion and cursor facts", () => {
 });
 
 test("newest refresh drops a stale tail when its boundary moves", () => {
+  const first = page(null, [event("b", 100), event("a", 95)]);
+  const loaded = appendOlderChannelWindow(
+    replaceNewestChannelWindow(emptyChannelWindowStore(), first),
+    page(first.nextCursor, [event("z", 90)], { hasMore: false }),
+  );
+  // A fixed-size page zero: the new row pushes the oldest off, so the end
+  // cursor the tail was fetched on is gone and the tail goes with it.
+  const refreshed = replaceNewestChannelWindow(
+    loaded,
+    page(null, [event("n", 110), event("b", 100)]),
+  );
+  assert.equal(refreshed.pages.length, 1);
+  assert.deepEqual(
+    flattenChannelWindowEvents(refreshed).map((item) => item.content),
+    ["b", "n"],
+  );
+});
+
+test("newest refresh keeps the tail when its boundary has not moved", () => {
   const first = page(null, [event("a", 100)]);
   const loaded = appendOlderChannelWindow(
     replaceNewestChannelWindow(emptyChannelWindowStore(), first),
     page(first.nextCursor, [event("z", 90)], { hasMore: false }),
   );
+  // The resync that follows subscribe establishment changes nothing: page
+  // zero comes back on the same end cursor, so the pages the reader paged in
+  // are still the pages that cursor leads to.
   const refreshed = replaceNewestChannelWindow(
     loaded,
     page(null, [event("n", 110), event("a", 100)]),
   );
-  assert.equal(refreshed.pages.length, 1);
+  assert.equal(refreshed.pages.length, 2);
   assert.deepEqual(
     flattenChannelWindowEvents(refreshed).map((item) => item.content),
-    ["a", "n"],
+    ["z", "a", "n"],
   );
+  // And the history boundary the tail proved survives with it.
+  assert.equal(channelWindowHasMore(refreshed), false);
 });
 
 test("live rows arriving before page zero enter the overlay", () => {

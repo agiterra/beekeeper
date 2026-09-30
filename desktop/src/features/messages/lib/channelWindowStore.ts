@@ -97,8 +97,21 @@ function assertValidPage(page: ChannelWindowPage) {
 }
 
 /**
- * Replace the authoritative chain at page zero. Its end cursor may move, so
- * retaining old tail pages would claim a cursor chain they were not fetched on.
+ * Replace the authoritative chain at page zero.
+ *
+ * The tail is kept when — and only when — page zero comes back on the same
+ * end cursor. `appendOlderChannelWindow` links every page to its predecessor
+ * by that cursor, so an unchanged one means the retained pages are still
+ * exactly the pages it leads to; a moved one means they would be claiming a
+ * chain they were never fetched on, and they go.
+ *
+ * Dropping the tail unconditionally cost a reader their place. Both resyncs
+ * funnel here, and the one that follows the live subscription being
+ * established fires seconds after a channel opens, having changed nothing —
+ * so someone who opened a channel and scrolled straight back was thrown to
+ * the live window mid-scroll, with every page they had loaded discarded
+ * (measured in `scroll-history.spec.ts` at ~10.4s after load, 35 to 37 pages
+ * at a time).
  */
 export function replaceNewestChannelWindow(
   current: ChannelWindowStore,
@@ -110,12 +123,18 @@ export function replaceNewestChannelWindow(
   assertValidPage(page);
   const ids = new Set(page.rows.map((row) => row.event.id));
   const auxIds = new Set(page.aux.map((event) => event.id));
+  const retainedTail = cursorsEqual(
+    current.pages[0]?.nextCursor ?? null,
+    page.nextCursor,
+  )
+    ? current.pages.slice(1)
+    : [];
   return {
-    pages: [page],
+    pages: [page, ...retainedTail],
     liveOverlay: current.liveOverlay.filter((event) => !ids.has(event.id)),
     liveAux: current.liveAux.filter((event) => !auxIds.has(event.id)),
     // A head refetch is the authoritative resync moment (subscribe/reconnect
-    // both funnel here): every retained page is replaced, so live summaries
+    // both funnel here): page zero is replaced outright, so live summaries
     // pinned to the old snapshot are cleared rather than diffed.
     liveSummaries: {},
   };
