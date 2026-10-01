@@ -12,7 +12,13 @@ use buzz_acp::model_options::{
 use crate::config::{Config, ModelControls, ModelDetail};
 
 /// Budget for spawning the adapter and reading its `session/new` catalog.
-const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
+///
+/// Not 10 s: the first run of a new Codex CLI in the private `CODEX_HOME`
+/// migrates its state databases and refetches its model list before it
+/// answers, and on 2026-10-01 that outlasted 10 s, so the provider published
+/// no Codex models at all. Discovery runs once per provider start; a slow
+/// adapter costs that start up to this long, a healthy one ~2 s.
+const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 /// Separate budget for switching the discovery session through each model to
 /// read its effort values and fast-mode switch. Probing every Claude model
 /// measured ~10 s; a model not reached before this runs out simply publishes
