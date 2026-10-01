@@ -263,19 +263,25 @@ if $NO_INSTALL; then
 fi
 
 # ── install ─────────────────────────────────────────────────────────────────
-# Match the bundle's MacOS directory rather than a binary name: Tauri leaves
-# CFBundleExecutable as the cargo binary name, so a productName-based pattern
-# silently passes over a running app (the bug local-prod-build.sh documents).
+# Match the bundle's own executable by path, read from its Info.plist: Tauri
+# leaves CFBundleExecutable as the cargo binary name, so a productName-based
+# pattern silently passes over a running app (the bug local-prod-build.sh
+# documents). Not the whole MacOS directory: the agent host and the provider
+# it supervises run from there too and are meant to outlive the app's quit and
+# update, so matching them made every install refuse (ledger 302(e)). They are
+# restarted onto the new bundle after it is in place, below.
 DEST="$INSTALL_DIR/${APP_NAME}.app"
 mkdir -p "$INSTALL_DIR"
-if pgrep -f "${DEST}/Contents/MacOS/" >/dev/null; then
+APP_EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${DEST}/Contents/Info.plist" 2>/dev/null || echo beekeeper-desktop)"
+APP_PATTERN="${DEST}/Contents/MacOS/${APP_EXE}"
+if pgrep -f "$APP_PATTERN" >/dev/null; then
   echo "==> quitting the running ${APP_NAME}"
-  osascript -e "quit app \"${APP_NAME}\"" 2>/dev/null || pkill -f "${DEST}/Contents/MacOS/" || true
+  osascript -e "quit app \"${APP_NAME}\"" 2>/dev/null || pkill -f "$APP_PATTERN" || true
   for _ in $(seq 1 20); do
-    pgrep -f "${DEST}/Contents/MacOS/" >/dev/null || break
+    pgrep -f "$APP_PATTERN" >/dev/null || break
     sleep 0.5
   done
-  if pgrep -f "${DEST}/Contents/MacOS/" >/dev/null; then
+  if pgrep -f "$APP_PATTERN" >/dev/null; then
     echo "${APP_NAME} did not quit — quit it, then re-run" >&2
     exit 1
   fi
@@ -287,5 +293,27 @@ if [[ -d "$DEST" ]]; then
 fi
 ditto "$APP" "$DEST"
 echo "==> installed $SHORT -> $DEST (previous kept as ${DEST}.prev)"
+# Restart this user's login items that run from the bundle just replaced —
+# the agent host and the menu bar app — so they, and the provider the host
+# supervises, run the new binaries rather than the moved-aside ones. The host
+# restores its sessions on start. A system LaunchDaemon (`--system`) needs
+# root and is left alone, said out loud.
+for plist in "$HOME"/Library/LaunchAgents/io.agiterra.beekeeper.*.plist; do
+  [[ -f "$plist" ]] || continue
+  program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist" 2>/dev/null || true)"
+  [[ "$program" == "${DEST}/"* ]] || continue
+  label="$(basename "$plist" .plist)"
+  if launchctl kickstart -k "gui/$(id -u)/${label}" 2>/dev/null; then
+    echo "==> restarted ${label} on the new bundle"
+  else
+    echo "==> ${label} is registered but not loaded; left as it is" >&2
+  fi
+done
+for plist in /Library/LaunchDaemons/io.agiterra.beekeeper.*.plist; do
+  [[ -f "$plist" ]] || continue
+  program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist" 2>/dev/null || true)"
+  [[ "$program" == "${DEST}/"* ]] || continue
+  echo "==> $(basename "$plist" .plist) runs from this bundle as a system daemon; restart it with sudo launchctl kickstart -k system/$(basename "$plist" .plist)" >&2
+done
 open -a "$DEST"
 stamp
