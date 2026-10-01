@@ -390,7 +390,41 @@ fn steer_unknown_code(reason: &UnknownReason) -> &'static str {
 /// what a particular process learned at `initialize`.
 const IMAGES_DROPPED: &str = "this execution's runtime does not accept image prompts, so the \
                               attached images were not delivered; the turn itself ran, with its \
-                              text alone";
+                              words and any text attachments intact";
+
+/// Keep the attachments this execution's runtime can take, and count the rest.
+///
+/// The gate is about images alone. A runtime that never advertised image prompts
+/// does not merely ignore an `image` block — `buzz-agent` fails the whole turn on
+/// one — so an image it cannot read has to be dropped before the turn is
+/// delivered, and the operator told with a `turn_degraded` receipt.
+///
+/// Text is never gated. It reaches the agent as a `text` block, which is what a
+/// turn already is, so every runtime takes one; and text is the kind whose
+/// content *is* the words, so dropping a pasted log because the same turn
+/// happened to carry a screenshot would lose the message for a reason that has
+/// nothing to do with it.
+///
+/// Returns `(kept, dropped)`.
+fn admissible_attachments(
+    attachments: Vec<buzz_core::coding_session_command::TurnAttachment>,
+    takes_images: bool,
+) -> (
+    Vec<buzz_core::coding_session_command::TurnAttachment>,
+    usize,
+) {
+    let requested = attachments.len();
+    let kept: Vec<_> = if takes_images {
+        attachments
+    } else {
+        attachments
+            .into_iter()
+            .filter(buzz_core::coding_session_command::TurnAttachment::is_text)
+            .collect()
+    };
+    let dropped = requested - kept.len();
+    (kept, dropped)
+}
 
 /// Entry point: read the environment and run until shutdown.
 pub async fn run() -> anyhow::Result<()> {
@@ -5720,23 +5754,17 @@ impl Provider {
                     operator_pubkey,
                     deliver,
                 );
-                // The capability gate. A runtime that never advertised image
-                // prompts does not merely ignore an image block — `buzz-agent`
-                // fails the whole turn on one — so the attachments are dropped
-                // here and the operator is told below, once the words have
-                // actually been delivered.
+                // The capability gate, which gates images only — see
+                // `admissible_attachments`. The operator is told about anything
+                // dropped below, once the words have actually been delivered.
                 let takes_images = self
                     .prompt_image
                     .get(&target.session_id)
                     .copied()
                     .unwrap_or(false);
                 let requested_attachments = attachments.len();
-                let dropped_attachments = if takes_images { 0 } else { attachments.len() };
-                let attachments = if takes_images {
-                    attachments
-                } else {
-                    Vec::new()
-                };
+                let (attachments, dropped_attachments) =
+                    admissible_attachments(attachments, takes_images);
                 (
                     command_id.clone(),
                     target,
@@ -11591,6 +11619,44 @@ fn log_ignored(what: &str, reason: &Ignored) {
 
 #[cfg(test)]
 mod tests {
+    use buzz_core::coding_session_command::TurnAttachment;
+
+    fn attachment(mime: &str) -> TurnAttachment {
+        TurnAttachment {
+            sha256: "a".repeat(64),
+            mime: mime.into(),
+            size: 1024,
+            dim: None,
+            filename: None,
+        }
+    }
+
+    /// The image capability gates images and nothing else. A runtime without it
+    /// must still receive a pasted file: the paste is the operator's words, and
+    /// the runtime can read words — that is what a turn is.
+    #[test]
+    fn the_image_capability_gate_never_drops_a_text_attachment() {
+        let mixed = vec![
+            attachment("image/png"),
+            attachment("text/plain"),
+            attachment("image/jpeg"),
+        ];
+
+        let (kept, dropped) = super::admissible_attachments(mixed.clone(), true);
+        assert_eq!(kept.len(), 3, "an image-capable runtime takes everything");
+        assert_eq!(dropped, 0);
+
+        let (kept, dropped) = super::admissible_attachments(mixed, false);
+        assert_eq!(dropped, 2, "both images are dropped");
+        assert_eq!(kept.len(), 1);
+        assert!(kept[0].is_text(), "the paste survives the image gate");
+
+        // A turn of text alone is never degraded, so no `turn_degraded` receipt
+        // is published for it — `dropped == 0` is what suppresses that.
+        let (kept, dropped) = super::admissible_attachments(vec![attachment("text/plain")], false);
+        assert_eq!((kept.len(), dropped), (1, 0));
+    }
+
     /// Spec § 4.6: a staged pack's `compose.json` becomes the seat's
     /// `composeRef`; a pack without one contributes nothing; a malformed one
     /// is disclosed as nothing rather than as a made-up composition.

@@ -1,4 +1,4 @@
-//! Fetch a turn's image attachments and render them as ACP image blocks.
+//! Fetch a turn's attachments and render them as ACP prompt blocks.
 //!
 //! The operator uploads to the relay's Blossom store and the 44220 command
 //! carries only the blob's hash; this module is the other half — it derives the
@@ -9,6 +9,14 @@
 //! Addressing by hash rather than URL is deliberate. A URL in the payload would
 //! let whoever signed the command choose where this process makes an outbound
 //! request; a hash cannot.
+//!
+//! Two kinds travel this path and the difference is not cosmetic. An **image**
+//! becomes an ACP `image` block, is bounded in pixels, and needs a runtime that
+//! advertised `promptImage`. **Text** — what a large paste in the composer
+//! becomes — becomes an ACP `text` block, is bounded in bytes, and needs no
+//! capability at all: a turn is already text. Text exists on this path for one
+//! reason: a turn's own `action.text` is capped at 12 KiB, so an arbitrarily
+//! long log, diff or stack trace can only reach the agent as a blob.
 
 use base64::Engine;
 use buzz_acp::acp::PromptBlock;
@@ -31,6 +39,15 @@ const MAX_DIM: u32 = 1568;
 const MAX_PIXELS: u64 = 64 * 1024 * 1024;
 /// Defence-in-depth cap on any single decoder allocation.
 const MAX_DECODER_ALLOC: u64 = 256 * 1024 * 1024;
+/// Hard cap on the bytes of one text attachment that reach a prompt.
+///
+/// The same ceiling the command contract validates, re-applied to the bytes
+/// actually read back, because the two are not the same claim: `size` in the
+/// payload is what the signer *said*, and the hash check proves only that the
+/// blob is the one they meant — not that it is as small as they declared. Every
+/// byte here is delivered verbatim into a context window, so this is the one
+/// bound standing between a signed command and a prompt the model cannot hold.
+const MAX_TEXT_BYTES: u64 = buzz_core::coding_session_command::MAX_TURN_TEXT_ATTACHMENT_BYTES;
 
 /// Everything the fetcher needs, captured when the session actor is built so a
 /// turn never reaches back into global state.
@@ -97,7 +114,7 @@ impl MediaFetcher {
         })
     }
 
-    /// Fetch every attachment and render it as an ACP image block.
+    /// Fetch every attachment and render it as an ACP prompt block.
     ///
     /// Attachments that cannot be fetched or decoded are skipped with a warning
     /// rather than failing the turn: the operator's words are the turn, and
@@ -107,13 +124,16 @@ impl MediaFetcher {
     /// micro-optimisation here: this runs before the turn's opening transcript
     /// item is emitted, so four sequential fetches would each add their own
     /// timeout to the delay before anyone sees the turn start.
-    pub async fn image_blocks(&self, attachments: &[TurnAttachment]) -> Vec<(String, PromptBlock)> {
+    pub async fn attachment_blocks(
+        &self,
+        attachments: &[TurnAttachment],
+    ) -> Vec<(String, PromptBlock)> {
         let mut tasks = tokio::task::JoinSet::new();
         for (index, attachment) in attachments.iter().enumerate() {
             let fetcher = self.clone();
             let attachment = attachment.clone();
             tasks.spawn(async move {
-                let result = fetcher.image_block(&attachment).await;
+                let result = fetcher.attachment_block(&attachment).await;
                 (index, attachment.sha256, result)
             });
         }
@@ -138,7 +158,27 @@ impl MediaFetcher {
         slots.into_iter().flatten().collect()
     }
 
-    async fn image_block(&self, attachment: &TurnAttachment) -> Result<PromptBlock, String> {
+    /// Read one attachment back and render it as the block its kind calls for.
+    ///
+    /// The kind is decided by the MIME the *command* declared, which the relay
+    /// has already checked against its allowlist. The bytes are then held to
+    /// that claim — text that is not UTF-8 is refused rather than lossily
+    /// coerced — so a declared kind can never make this process treat bytes as
+    /// something they are not.
+    async fn attachment_block(&self, attachment: &TurnAttachment) -> Result<PromptBlock, String> {
+        let bytes = self.fetch_blob(attachment).await?;
+        if attachment.is_text() {
+            return text_block(attachment, &bytes);
+        }
+        let (mime, encoded) = downscale_to_png(&bytes)?;
+        Ok(PromptBlock::Image {
+            mime,
+            data_base64: base64::engine::general_purpose::STANDARD.encode(encoded),
+        })
+    }
+
+    /// Fetch the blob this attachment names and prove it is the one declared.
+    async fn fetch_blob(&self, attachment: &TurnAttachment) -> Result<Vec<u8>, String> {
         let url = format!(
             "{}/media/{}.{}",
             self.base,
@@ -172,12 +212,7 @@ impl MediaFetcher {
         if hex::encode(digest) != attachment.sha256 {
             return Err("fetched bytes do not match the declared sha256".into());
         }
-
-        let (mime, encoded) = downscale_to_png(&bytes)?;
-        Ok(PromptBlock::Image {
-            mime,
-            data_base64: base64::engine::general_purpose::STANDARD.encode(encoded),
-        })
+        Ok(bytes.to_vec())
     }
 
     /// Sign a Blossom (BUD-01) `t=get` token scoped to this relay's authority.
@@ -204,6 +239,88 @@ impl MediaFetcher {
     }
 }
 
+/// Render a text attachment as the ACP `text` block the agent receives.
+///
+/// Three jobs, in this order, and each one is a refusal the caller turns into a
+/// dropped attachment the agent is then told about:
+///
+/// 1. **Bound it.** [`MAX_TEXT_BYTES`] against the bytes actually read, not the
+///    size the command declared — see that constant.
+/// 2. **Prove it is text.** Invalid UTF-8 is refused rather than replaced with
+///    `U+FFFD`: a lossy transcode would hand the agent a file that silently
+///    differs from the one the person pasted, and "this did not arrive" is a
+///    better answer than a corrupted one.
+/// 3. **Frame it.** A header naming the file, its line count and its size, then
+///    the content inside a fence long enough that nothing in the content can
+///    close it. Without a fence an agent cannot tell where a pasted log ends
+///    and the operator's next instruction begins, and a log that happens to
+///    contain a bare ``` would do exactly that.
+fn text_block(attachment: &TurnAttachment, bytes: &[u8]) -> Result<PromptBlock, String> {
+    if bytes.len() as u64 > MAX_TEXT_BYTES {
+        return Err(format!(
+            "text attachment is {} bytes, over the {MAX_TEXT_BYTES}-byte bound",
+            bytes.len()
+        ));
+    }
+    let content = std::str::from_utf8(bytes)
+        .map_err(|error| format!("text attachment is not valid UTF-8: {error}"))?;
+    let name = display_filename(attachment);
+    let lines = content.lines().count();
+    let plural = if lines == 1 { "line" } else { "lines" };
+    let fence = "`".repeat(fence_width(content));
+    Ok(PromptBlock::Text(format!(
+        "[Attached text file: {name} — {lines} {plural}, {} bytes]\n{fence}\n{}\n{fence}",
+        bytes.len(),
+        content.trim_end_matches('\n')
+    )))
+}
+
+/// The filename to show the agent, bounded and stripped of anything that could
+/// break the one-line header it sits in.
+///
+/// Operator-supplied and display-only, so it is never trusted as a path: no
+/// directory separators survive, control characters and backticks are dropped,
+/// and the whole thing is cut to a length a header can carry. An attachment
+/// with no filename is named by its blob instead of by a guess.
+fn display_filename(attachment: &TurnAttachment) -> String {
+    const MAX_NAME_CHARS: usize = 80;
+    let raw = attachment.filename.as_deref().unwrap_or("");
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, '`' | '/' | '\\'))
+        .take(MAX_NAME_CHARS)
+        .collect();
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        // By characters, not by a byte slice: the relay validates `sha256` as
+        // 64 lowercase hex, but this module must not be the one that panics if
+        // it ever sees something else.
+        let stem: String = attachment.sha256.chars().take(8).collect();
+        format!("{stem}.txt")
+    } else {
+        cleaned.to_owned()
+    }
+}
+
+/// How many backticks the fence around `content` needs.
+///
+/// One more than the longest run inside it, never fewer than three. This is the
+/// CommonMark rule for the same reason it exists there: a fence shorter than a
+/// run in the body is closed by the body.
+fn fence_width(content: &str) -> usize {
+    let mut longest = 0usize;
+    let mut run = 0usize;
+    for ch in content.chars() {
+        if ch == '`' {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    longest.saturating_add(1).max(3)
+}
+
 /// What the agent is told when an attachment did not arrive, if any did not.
 ///
 /// The prose still carries every image's `![image](…/media/<sha>.<ext>)`
@@ -220,11 +337,29 @@ impl MediaFetcher {
 /// them, and the honest answer is to ask for them again. The transcript
 /// already counts what was delivered (`begin_turn`'s `attachment_count`);
 /// this is the same fact told to the one party that has to act on it.
-pub(crate) fn undelivered_note(attached: usize, delivered: usize) -> Option<String> {
+///
+/// A dropped *text* attachment is the worse of the two cases, because the words
+/// are the content: a pasted 400-line log that did not arrive leaves the agent
+/// a one-line link where the operator believes it has the whole file. So the
+/// note names the kind rather than saying "image" over a missing paste.
+pub(crate) fn undelivered_note(attachments: &[TurnAttachment], delivered: usize) -> Option<String> {
+    let attached = attachments.len();
     let missing = attached.checked_sub(delivered).filter(|count| *count > 0)?;
+    let all_images = attachments.iter().all(TurnAttachment::is_image);
+    let all_text = attachments.iter().all(TurnAttachment::is_text);
     // The noun agrees with the total attached; the verb and the pronoun agree
     // with how many are missing. "1 of the 2 image" was the first draft.
-    let plural = if attached == 1 { "image" } else { "images" };
+    let (singular, link_kind) = match (all_images, all_text) {
+        (true, false) => ("image", "image "),
+        (false, true) => ("text attachment", ""),
+        // Mixed, or an empty list this function already returned `None` for.
+        _ => ("attachment", ""),
+    };
+    let plural = if attached == 1 {
+        singular.to_owned()
+    } else {
+        format!("{singular}s")
+    };
     let (is_are, them) = if missing == 1 {
         ("is", "it")
     } else {
@@ -232,47 +367,51 @@ pub(crate) fn undelivered_note(attached: usize, delivered: usize) -> Option<Stri
     };
     Some(format!(
         "[Attachments]\n{missing} of the {attached} {plural} attached to this message could not \
-         be read back from the relay and {is_are} not part of this turn. The markdown image link \
+         be read back from the relay and {is_are} not part of this turn. The markdown {link_kind}link \
          in the text above is not a way to get {them}: an unauthenticated request to the relay's \
-         media store answers 401, which says nothing about why the image is missing. Say the \
-         image did not reach you and ask for it again, rather than reporting a status from that \
+         media store answers 401, which says nothing about why the {singular} is missing. Say the \
+         {singular} did not reach you and ask for it again, rather than reporting a status from that \
          link as the cause."
     ))
 }
 
-/// Interleave fetched images into the prompt at the positions the operator
+/// Interleave fetched attachments into the prompt at the positions the operator
 /// wrote them.
 ///
-/// The turn text carries a markdown reference per image
-/// (`![image](…/media/<sha>.<ext>)`), which is also what makes the picture
-/// render in the transcript. Splitting on those references means the agent
-/// reads *"when I do X I see this:"*, then the screenshot, then *"but I want
-/// to see:"*, then the next one — the same order a person reading the
-/// transcript sees. Appending every image after the prose instead loses which
-/// sentence each one belongs to, which for a two-screenshot before/after turn
-/// is the entire meaning.
+/// The turn text carries one markdown reference per attachment — an image link
+/// (`![image](…/media/<sha>.png)`), which is also what makes the picture render
+/// in the transcript, or a plain link (`[pasted-text-1.txt](…/media/<sha>.txt)`)
+/// for a text file. Splitting on those references means the agent reads *"when I
+/// do X I see this:"*, then the screenshot, then *"but I want to see:"*, then
+/// the next one — the same order a person reading the transcript sees. Appending
+/// everything after the prose instead loses which sentence each one belongs to,
+/// which for a two-screenshot before/after turn is the entire meaning, and for a
+/// pasted log is the difference between "fix this" and a wall of text.
 ///
-/// Images whose reference is absent from the text are appended rather than
-/// dropped: a lost marker must not silently cost the agent a picture.
+/// Attachments whose reference is absent from the text are appended rather than
+/// dropped: a lost marker must not silently cost the agent its content.
 pub(crate) fn interleave_prompt_blocks(
     text: &str,
-    mut images: Vec<(String, PromptBlock)>,
+    mut attachments: Vec<(String, PromptBlock)>,
 ) -> Vec<PromptBlock> {
     let mut blocks = Vec::new();
     let mut rest = text;
 
-    while let Some((before, sha, after)) = split_at_image_reference(rest, &images) {
+    while let Some((before, sha, after)) = split_at_attachment_reference(rest, &attachments) {
         push_text(&mut blocks, before);
-        if let Some(index) = images.iter().position(|(candidate, _)| *candidate == sha) {
-            blocks.push(images.remove(index).1);
+        if let Some(index) = attachments
+            .iter()
+            .position(|(candidate, _)| *candidate == sha)
+        {
+            blocks.push(attachments.remove(index).1);
         }
         rest = after;
     }
     push_text(&mut blocks, rest);
 
     // Anything the prose never referenced still reaches the agent, after the
-    // words, which is where an unpositioned image belongs.
-    blocks.extend(images.into_iter().map(|(_, block)| block));
+    // words, which is where an unpositioned attachment belongs.
+    blocks.extend(attachments.into_iter().map(|(_, block)| block));
     blocks
 }
 
@@ -284,32 +423,45 @@ fn push_text(blocks: &mut Vec<PromptBlock>, text: &str) {
     }
 }
 
-/// Find the next `![...](url)` whose url names one of `images`.
+/// Find the next markdown link, image or plain, whose url names one of
+/// `attachments`.
 ///
 /// Hand-rolled rather than a regex dependency: the shape is fixed and the only
-/// thing that matters is the 64-hex blob id inside the parentheses. A
-/// reference to an image this turn did not carry is left in the prose, because
-/// rewriting text the operator signed is not this function's business.
-fn split_at_image_reference<'a>(
+/// thing that matters is the 64-hex blob id inside the parentheses. Scanning
+/// from `](` rather than from `![` is what makes one function serve both forms —
+/// an image reference is a plain one with a `!` in front, so the opening bracket
+/// is found by walking back and the `!` is swept up with it.
+///
+/// A reference to an attachment this turn did not carry is left in the prose,
+/// because rewriting text the operator signed is not this function's business.
+/// A link label containing its own `[` keeps that bracket in the prose rather
+/// than in the label — harmless, and the alternative is matching brackets in
+/// text a person wrote by hand.
+fn split_at_attachment_reference<'a>(
     text: &'a str,
-    images: &[(String, PromptBlock)],
+    attachments: &[(String, PromptBlock)],
 ) -> Option<(&'a str, String, &'a str)> {
     let mut cursor = 0usize;
-    while let Some(open) = text[cursor..].find("![") {
-        let open = cursor + open;
-        let Some(close) = text[open..].find("](").map(|offset| open + offset) else {
-            break;
-        };
+    while let Some(offset) = text[cursor..].find("](") {
+        let close = cursor + offset;
         let url_start = close + 2;
         let Some(end) = text[url_start..].find(')').map(|offset| url_start + offset) else {
             break;
         };
         let url = &text[url_start..end];
-        if let Some(sha) = images
+        if let Some(sha) = attachments
             .iter()
             .map(|(sha, _)| sha)
             .find(|sha| url.contains(sha.as_str()))
         {
+            let open = text[..close].rfind('[').unwrap_or(close);
+            // `!` is one byte, and `open` is the index of a `[`, so both of
+            // these are char boundaries.
+            let open = if text[..open].ends_with('!') {
+                open - 1
+            } else {
+                open
+            };
             return Some((&text[..open], sha.clone(), &text[end + 1..]));
         }
         cursor = end + 1;
@@ -417,17 +569,41 @@ mod tests {
         assert_eq!(plain.base, "http://127.0.0.1:3000");
     }
 
+    fn described(mime: &str, sha: char) -> TurnAttachment {
+        TurnAttachment {
+            sha256: std::iter::repeat_n(sha, 64).collect(),
+            mime: mime.into(),
+            size: 1024,
+            dim: None,
+            filename: None,
+        }
+    }
+
+    fn pngs(count: usize) -> Vec<TurnAttachment> {
+        ('a'..)
+            .take(count)
+            .map(|c| described("image/png", c))
+            .collect()
+    }
+
+    fn texts(count: usize) -> Vec<TurnAttachment> {
+        ('a'..)
+            .take(count)
+            .map(|c| described("text/plain", c))
+            .collect()
+    }
+
     /// Every attachment delivered means nothing to say; one missing means the
     /// agent is told, in the numbers, and told not to chase the link.
     #[test]
     fn an_undelivered_attachment_is_disclosed_to_the_agent() {
-        assert_eq!(undelivered_note(0, 0), None);
-        assert_eq!(undelivered_note(2, 2), None);
+        assert_eq!(undelivered_note(&[], 0), None);
+        assert_eq!(undelivered_note(&pngs(2), 2), None);
         // Cannot happen, and must not underflow into a note claiming a
         // negative number of missing images.
-        assert_eq!(undelivered_note(1, 2), None);
+        assert_eq!(undelivered_note(&pngs(1), 2), None);
 
-        let one = undelivered_note(2, 1).expect("one image is missing");
+        let one = undelivered_note(&pngs(2), 1).expect("one image is missing");
         assert!(one.starts_with("[Attachments]\n"), "{one}");
         assert!(one.contains("1 of the 2 images"), "{one}");
         assert!(one.contains("is not part of this turn"), "{one}");
@@ -438,14 +614,124 @@ mod tests {
         assert!(one.contains("ask for it again"), "{one}");
 
         // The noun agrees with the total, not with the missing count.
-        let single = undelivered_note(1, 0).expect("the only image is missing");
+        let single = undelivered_note(&pngs(1), 0).expect("the only image is missing");
         assert!(single.contains("1 of the 1 image attached"), "{single}");
         assert!(single.contains("is not part of this turn"), "{single}");
 
-        let both = undelivered_note(2, 0).expect("both images are missing");
+        let both = undelivered_note(&pngs(2), 0).expect("both images are missing");
         assert!(both.contains("2 of the 2 images"), "{both}");
         assert!(both.contains("are not part of this turn"), "{both}");
         assert!(both.contains("not a way to get them"), "{both}");
+    }
+
+    /// The note names the kind that went missing. Saying "image" over a dropped
+    /// paste would send the agent looking for a picture that was never there,
+    /// and a dropped paste is the case where the content *is* the words.
+    #[test]
+    fn the_note_names_the_kind_that_did_not_arrive() {
+        let text = undelivered_note(&texts(1), 0).expect("the paste is missing");
+        assert!(
+            text.contains("1 of the 1 text attachment attached"),
+            "{text}"
+        );
+        assert!(
+            text.contains("why the text attachment is missing"),
+            "{text}"
+        );
+        // No "image link": a text attachment is referenced by a plain link.
+        assert!(!text.contains("image"), "{text}");
+
+        let several = undelivered_note(&texts(3), 1).expect("two pastes are missing");
+        assert!(several.contains("2 of the 3 text attachments"), "{several}");
+
+        // Mixed turns fall back to the kind-neutral noun rather than picking
+        // one of the two and being wrong about the other.
+        let mixed = vec![described("image/png", 'a'), described("text/plain", 'b')];
+        let note = undelivered_note(&mixed, 0).expect("both are missing");
+        assert!(note.contains("2 of the 2 attachments"), "{note}");
+        assert!(!note.contains("image"), "{note}");
+    }
+
+    /// A text attachment arrives as a framed `text` block: a header naming the
+    /// file and its shape, then the content, fenced.
+    #[test]
+    fn a_text_attachment_becomes_a_framed_text_block() {
+        let attachment = TurnAttachment {
+            filename: Some("stack-trace.txt".into()),
+            ..described("text/plain", 'a')
+        };
+        let content = "line one\nline two\nline three\n";
+        let block = text_block(&attachment, content.as_bytes()).expect("text block");
+        let rendered = text_of(&block).expect("a text block");
+        assert!(
+            rendered
+                .starts_with("[Attached text file: stack-trace.txt — 3 lines, 29 bytes]\n```\n"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("line two"), "{rendered}");
+        assert!(rendered.ends_with("line three\n```"), "{rendered}");
+        // One line is "1 line", not "1 lines".
+        let one = text_block(&attachment, b"just this").expect("one line");
+        assert!(
+            text_of(&one).expect("text").contains("1 line, 9 bytes"),
+            "{one:?}"
+        );
+    }
+
+    /// Content carrying its own fence must not be able to close the one around
+    /// it, or everything after the paste reads as the operator's instruction.
+    #[test]
+    fn the_fence_outgrows_any_run_of_backticks_in_the_content() {
+        assert_eq!(fence_width("plain"), 3);
+        assert_eq!(fence_width("a ``` b"), 4);
+        assert_eq!(fence_width("`````"), 6);
+
+        let attachment = described("text/plain", 'a');
+        let block =
+            text_block(&attachment, b"before\n```\nnot the end\n```\nafter").expect("text block");
+        let rendered = text_of(&block).expect("text");
+        assert!(rendered.contains("````\nbefore"), "{rendered}");
+        assert!(rendered.ends_with("after\n````"), "{rendered}");
+    }
+
+    /// Two refusals, both of which become "this did not arrive" rather than a
+    /// corrupted or unbounded prompt: bytes that are not UTF-8, and bytes over
+    /// the ceiling whatever the command declared its size to be.
+    #[test]
+    fn text_that_is_not_text_or_is_too_large_is_refused() {
+        let attachment = described("text/plain", 'a');
+        let error = text_block(&attachment, &[0xff, 0xfe, 0x41]).expect_err("not utf-8");
+        assert!(error.contains("not valid UTF-8"), "{error}");
+
+        // The command said 1024 bytes; the blob is over the bound. The hash
+        // check cannot catch this, so the byte count has to.
+        let huge = vec![b'x'; (MAX_TEXT_BYTES + 1) as usize];
+        let error = text_block(&attachment, &huge).expect_err("over the bound");
+        assert!(error.contains(&MAX_TEXT_BYTES.to_string()), "{error}");
+        let at_limit = vec![b'x'; MAX_TEXT_BYTES as usize];
+        assert!(
+            text_block(&attachment, &at_limit).is_ok(),
+            "the bound is inclusive"
+        );
+    }
+
+    /// The filename is the operator's and display-only, so it never reaches the
+    /// header as a path, a control character, or something that could close the
+    /// fence. An attachment with no filename is named by its blob.
+    #[test]
+    fn the_displayed_filename_cannot_break_the_header() {
+        let named = |name: Option<&str>| {
+            display_filename(&TurnAttachment {
+                filename: name.map(str::to_owned),
+                ..described("text/plain", 'a')
+            })
+        };
+        assert_eq!(named(Some("notes.txt")), "notes.txt");
+        assert_eq!(named(Some("../../etc/passwd")), "....etcpasswd");
+        assert_eq!(named(Some("one\nline```")), "oneline");
+        assert_eq!(named(None), "aaaaaaaa.txt");
+        assert_eq!(named(Some("   ")), "aaaaaaaa.txt");
+        assert_eq!(named(Some(&"n".repeat(200))).len(), 80);
     }
 
     /// The whole read path against a real HTTP server: the URL is derived from
@@ -515,7 +801,7 @@ mod tests {
         };
 
         let blocks = fetcher
-            .image_blocks(std::slice::from_ref(&attachment))
+            .attachment_blocks(std::slice::from_ref(&attachment))
             .await;
         assert_eq!(blocks.len(), 1, "the blob should have become one block");
         assert_eq!(blocks[0].0, sha, "each block is tagged with its blob id");
@@ -561,7 +847,7 @@ mod tests {
             ..attachment
         };
         assert!(
-            fetcher.image_blocks(&[tampered]).await.is_empty(),
+            fetcher.attachment_blocks(&[tampered]).await.is_empty(),
             "a hash mismatch must drop the attachment"
         );
 
@@ -621,7 +907,7 @@ mod tests {
         };
 
         let blocks = fetcher
-            .image_blocks(&[
+            .attachment_blocks(&[
                 describe(&wide_sha, wide.len()),
                 describe(&"9".repeat(64), 10),
                 describe(&tall_sha, tall.len()),
@@ -656,6 +942,50 @@ mod tests {
             mime: "image/png".into(),
             data_base64: tag.to_owned(),
         }
+    }
+
+    /// A pasted file lands where the operator wrote it, exactly as an image
+    /// does, even though its reference is a plain link rather than an image one.
+    #[test]
+    fn a_text_reference_lands_where_the_operator_wrote_it() {
+        let a = "a".repeat(64);
+        let text =
+            format!("Here is the log:\n\n[paste.txt](http://relay/media/{a}.txt)\n\nWhat broke?");
+        let blocks = interleave_prompt_blocks(
+            &text,
+            vec![(
+                a,
+                PromptBlock::Text("[Attached text file: paste.txt]".into()),
+            )],
+        );
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(text_of(&blocks[0]), Some("Here is the log:"));
+        assert_eq!(text_of(&blocks[1]), Some("[Attached text file: paste.txt]"));
+        assert_eq!(text_of(&blocks[2]), Some("What broke?"));
+    }
+
+    /// One turn, both kinds, each at its own position — a screenshot and the log
+    /// that goes with it is the ordinary case, not an exotic one.
+    #[test]
+    fn an_image_and_a_paste_interleave_in_one_turn() {
+        let img = "a".repeat(64);
+        let txt = "b".repeat(64);
+        let text = format!(
+            "I see ![image](http://relay/media/{img}.png) and the log is [paste.txt](http://relay/media/{txt}.txt) — why?"
+        );
+        let blocks = interleave_prompt_blocks(
+            &text,
+            vec![
+                (img, image("shot")),
+                (txt, PromptBlock::Text("the log".into())),
+            ],
+        );
+        assert_eq!(blocks.len(), 5);
+        assert_eq!(text_of(&blocks[0]), Some("I see"));
+        assert_eq!(data_of(&blocks[1]), Some("shot"));
+        assert_eq!(text_of(&blocks[2]), Some("and the log is"));
+        assert_eq!(text_of(&blocks[3]), Some("the log"));
+        assert_eq!(text_of(&blocks[4]), Some("— why?"));
     }
 
     fn text_of(block: &PromptBlock) -> Option<&str> {

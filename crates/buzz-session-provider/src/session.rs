@@ -3442,11 +3442,11 @@ impl SessionActor {
         // the whole turn and a blob read racing it would have nowhere to put
         // its result. The run loop has already dropped attachments this
         // execution cannot take, so anything still here is deliverable.
-        let image_blocks = if attachments.is_empty() {
+        let attachment_blocks = if attachments.is_empty() {
             Vec::new()
         } else {
             match self.media.as_ref() {
-                Some(media) => media.image_blocks(&attachments).await,
+                Some(media) => media.attachment_blocks(&attachments).await,
                 None => {
                     tracing::warn!(
                         target: "csp::attachments",
@@ -3466,7 +3466,7 @@ impl SessionActor {
             framing
                 .as_ref()
                 .and_then(|framing| framing.sender_role.as_deref()),
-            image_blocks.len(),
+            attachment_blocks.len(),
         );
         emit_items(&self.events, &self.session_id, &turn_id, opening).await;
 
@@ -3485,16 +3485,16 @@ impl SessionActor {
         };
         // An attachment that could not be read leaves its markdown link in the
         // prose with nothing behind it. Computed before the blocks consume
-        // `image_blocks`, and appended after them, so the note names the final
-        // count the agent actually received.
+        // `attachment_blocks`, and appended after them, so the note names the
+        // final count the agent actually received.
         let undelivered =
-            crate::attachments::undelivered_note(attachments.len(), image_blocks.len());
+            crate::attachments::undelivered_note(&attachments, attachment_blocks.len());
         // Positioned by the markdown references the operator's own text carries,
         // so the agent reads the turn in the order it was written.
-        let mut blocks = if image_blocks.is_empty() {
+        let mut blocks = if attachment_blocks.is_empty() {
             vec![buzz_acp::acp::PromptBlock::Text(agent_text)]
         } else {
-            crate::attachments::interleave_prompt_blocks(&agent_text, image_blocks)
+            crate::attachments::interleave_prompt_blocks(&agent_text, attachment_blocks)
         };
         if let Some(note) = undelivered {
             blocks.push(buzz_acp::acp::PromptBlock::Text(note));
