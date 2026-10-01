@@ -10,7 +10,7 @@
 //! subcommands and is the same code underneath; `bee` carries them because
 //! `bee` is the binary that is already on an agent's `PATH`.
 
-use beekeeper_host::install::Service;
+use beekeeper_host::install::{launchd_daemon, Domain, Service};
 use beekeeper_host_core::layout::{self, Instance};
 use clap::Subcommand;
 
@@ -39,7 +39,8 @@ pub enum HostCmd {
     /// Re-read `host.json` and the identity, then restart onto the result.
     Bind,
     /// Register the agent host to start at login (macOS) or as a systemd
-    /// user service (Linux).
+    /// user service (Linux) — or, with `--system`, as a macOS LaunchDaemon
+    /// that starts at boot with nobody logged in.
     ///
     /// Only the host. The menu bar app is registered by Beekeeper itself,
     /// because it is nested inside that bundle and is meaningless without a
@@ -49,6 +50,20 @@ pub enum HostCmd {
         /// this `bee`.
         #[arg(long)]
         program: Option<std::path::PathBuf>,
+        /// Install a system LaunchDaemon instead of a login LaunchAgent, for a
+        /// Mac nobody logs in to. Needs root and `--user`. macOS only.
+        #[arg(long, requires = "user")]
+        system: bool,
+        /// The account the daemon runs as: the persona whose host this is.
+        /// Read from the password database; never defaulted.
+        #[arg(long, requires = "system")]
+        user: Option<String>,
+        /// Print the daemon's plist and exit, writing nothing. Needs no root.
+        #[arg(long, requires = "system")]
+        print: bool,
+        /// The dev instance rather than `BEEKEEPER_HOST_INSTANCE`.
+        #[arg(long)]
+        dev: bool,
     },
     /// Remove the login registrations and stop the services.
     ///
@@ -71,8 +86,18 @@ pub enum HostCmd {
         /// It does not touch `host.json`, the key file, or the provider's
         /// state directory: the identity and its durable outbox survive, and
         /// so does every session the provider remembers.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "system")]
         forget: bool,
+        /// Remove a system LaunchDaemon instead. Needs root and `--user`.
+        /// Records no refusal: nobody was asked the login question.
+        #[arg(long, requires = "user")]
+        system: bool,
+        /// The account whose daemon to remove.
+        #[arg(long, requires = "system")]
+        user: Option<String>,
+        /// The dev instance rather than `BEEKEEPER_HOST_INSTANCE`.
+        #[arg(long)]
+        dev: bool,
     },
     /// Print whether the host and the menu bar app are registered to start at
     /// login.
@@ -89,11 +114,65 @@ fn instance(dev: bool) -> Result<Instance, CliError> {
 }
 
 pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
+    let dev = dev
+        || matches!(
+            command,
+            HostCmd::Install { dev: true, .. } | HostCmd::Uninstall { dev: true, .. }
+        );
     let instance = instance(dev)?;
+
+    // System mode first, and before `$HOME` is read: under `sudo` it is root's
+    // or the operator's, never the persona's. The daemon reads the persona's
+    // home from the password database.
+    match command {
+        HostCmd::Install {
+            program,
+            system: true,
+            user: Some(user),
+            print,
+            ..
+        } => {
+            let program = resolve_host_binary(program.as_deref())?;
+            if *print {
+                let plist =
+                    launchd_daemon::render(user, instance, &program).map_err(CliError::Other)?;
+                print!("{plist}");
+                return Ok(());
+            }
+            let registration =
+                launchd_daemon::install(user, instance, &program, &launchd_daemon::rerun_command())
+                    .map_err(CliError::Other)?;
+            print_json(&registration)?;
+            for warning in &registration.warnings {
+                eprintln!("bee: {warning}");
+            }
+            eprintln!(
+                "bee: installed {} — it starts at boot as {user}. Manage it as {user} with `bee                  host status|start|stop`; restart the process with `sudo launchctl kickstart -k                  system/{}`.",
+                registration.path.display(),
+                launchd_daemon::label(user, instance)
+            );
+            return Ok(());
+        }
+        HostCmd::Uninstall {
+            system: true,
+            user: Some(user),
+            ..
+        } => {
+            launchd_daemon::uninstall(user, instance, &launchd_daemon::rerun_command())
+                .map_err(CliError::Other)?;
+            eprintln!(
+                "bee: removed the system daemon for {user} ({}). Its identity, key file and                  provider state are untouched.",
+                instance.namespace_value()
+            );
+            return Ok(());
+        }
+        _ => {}
+    }
+
     let home = layout::home_dir().map_err(CliError::Other)?;
 
     match command {
-        HostCmd::Install { program } => {
+        HostCmd::Install { program, .. } => {
             let program = resolve_host_binary(program.as_deref())?;
             let registration =
                 beekeeper_host::install::install(Service::AgentHost, &home, instance, &program)
@@ -104,7 +183,7 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
             }
             Ok(())
         }
-        HostCmd::Uninstall { forget } => {
+        HostCmd::Uninstall { forget, .. } => {
             // Both, and the menu bar app's failure does not stop the host's.
             let menubar = beekeeper_host::install::uninstall(Service::MenuBar, &home, instance);
             beekeeper_host::install::uninstall(Service::AgentHost, &home, instance)
@@ -167,11 +246,18 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
                 "login": login,
             }))?;
             if host_loaded == Some(false) && host.installed {
-                eprintln!(
-                    "bee: the agent host is registered but not loaded — open Beekeeper, which \
-                     repairs this, or run `launchctl bootstrap gui/$UID {}`",
-                    host.path.display()
-                );
+                match host.domain {
+                    Domain::User => eprintln!(
+                        "bee: the agent host is registered but not loaded — open Beekeeper, \
+                         which repairs this, or run `launchctl bootstrap gui/$UID {}`",
+                        host.path.display()
+                    ),
+                    Domain::System => eprintln!(
+                        "bee: the agent host is registered as a system daemon but launchd does \
+                         not have it loaded — run `sudo launchctl bootstrap system {}`",
+                        host.path.display()
+                    ),
+                }
             }
             for warning in host.warnings.iter().chain(&menubar.warnings) {
                 eprintln!("bee: {warning}");
@@ -234,15 +320,28 @@ fn host_error(
         return CliError::Other(message);
     }
     let registration = beekeeper_host::install::status(Service::AgentHost, home, instance);
-    CliError::Other(if registration.installed {
-        format!(
-            "{message} — it is registered to start at login ({}), so start it with \
-             `bee host start` after logging in, or run `beekeeper-host run` in a terminal to see why \
-             it exits",
+    let label = registration.label().unwrap_or_default();
+    // Not `bee host start`: that is a request *to* the host, and nothing is
+    // listening to receive it. The service manager is what starts the process.
+    CliError::Other(match (registration.installed, registration.domain) {
+        (true, Domain::User) => format!(
+            "{message} — it is registered to start at login ({}). Start it with `launchctl \
+             kickstart gui/$UID/{label}` (or `launchctl bootstrap gui/$UID {}` if it is not \
+             loaded), or run `beekeeper-host run` in a terminal to see why it exits",
+            registration.path.display(),
             registration.path.display()
-        )
-    } else {
-        format!("{message} — and it is not registered to start at login: `bee host install`")
+        ),
+        (true, Domain::System) => format!(
+            "{message} — it is registered as a system daemon ({}), so launchd should be running \
+             it. Restart it with `sudo launchctl kickstart -k system/{label}`, and read {} for why \
+             it exits",
+            registration.path.display(),
+            layout::host_log_path(home, instance).display()
+        ),
+        (false, _) => format!(
+            "{message} — and it is not registered to start: `bee host install`, or on a Mac \
+             nobody logs in to, `sudo bee host install --system --user $USER`"
+        ),
     })
 }
 
