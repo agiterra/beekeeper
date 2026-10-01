@@ -85,31 +85,40 @@ impl HostSnapshot {
 /// there is no reconnect state to go stale and nothing to invalidate when the
 /// host restarts under it.
 pub struct AgentHost {
-    socket: PathBuf,
+    socket: std::sync::OnceLock<PathBuf>,
 }
 
 impl AgentHost {
-    /// Resolve the socket for this instance once, at startup.
+    /// A handle whose socket is resolved at first use, not here.
+    ///
+    /// This is constructed while the Tauri builder is assembled, before
+    /// `setup` initializes the nest directory that decides dev versus
+    /// production. Resolving it here read the production fallback, so every
+    /// Dev app asked `~/.local/state/buzz/host/host.sock` while its host
+    /// listened under `buzz-dev` — team readiness read
+    /// `PROVIDER_HOST_UNREACHABLE` over a live provider (ledger 302(h)).
     pub fn new() -> Self {
         Self {
-            socket: super::socket_path().unwrap_or_else(|error| {
-                // A home directory this app cannot resolve is not something to
-                // panic over at boot: the socket path then names the failure
-                // and every call reports the host as absent, which is honest.
-                eprintln!("buzz-desktop: agent-host: {error}");
-                PathBuf::from("/nonexistent/beekeeper-host.sock")
-            }),
+            socket: std::sync::OnceLock::new(),
         }
     }
 
     /// Where this app looks for the host.
     pub fn socket(&self) -> &std::path::Path {
-        &self.socket
+        self.socket.get_or_init(|| {
+            super::socket_path().unwrap_or_else(|error| {
+                // A home directory this app cannot resolve is not something to
+                // panic over: the socket path then names the failure and every
+                // call reports the host as absent, which is honest.
+                eprintln!("buzz-desktop: agent-host: {error}");
+                PathBuf::from("/nonexistent/beekeeper-host.sock")
+            })
+        })
     }
 
     /// Poll the host.
     pub async fn snapshot(&self) -> HostSnapshot {
-        match client::status(&self.socket).await {
+        match client::status(self.socket()).await {
             Ok(status) => HostSnapshot {
                 reachability: HostReachability::Reachable,
                 message: status.provider.message(),
@@ -186,7 +195,7 @@ impl AgentHost {
 
     pub(crate) async fn lifecycle(&self, request: Request) -> Result<(), String> {
         client::call(
-            &self.socket,
+            self.socket(),
             &request,
             beekeeper_host::client::LIFECYCLE_READ_TIMEOUT,
         )

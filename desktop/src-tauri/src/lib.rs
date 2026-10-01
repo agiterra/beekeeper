@@ -302,18 +302,6 @@ pub fn run() {
                 Ok(dir) => coding_sessions::host_git::set_state_dir(dir),
                 Err(error) => eprintln!("buzz-desktop: host Git state dir: {error}"),
             }
-            // Bring back a login registration that exists but is not loaded.
-            // Replacing this bundle under a loaded launchd job leaves exactly
-            // that, so every update needs it — and it must not wait for a view
-            // to mount and ask for a status. Repairs only; never registers
-            // something nobody agreed to.
-            agent_host::autostart::repair_at_launch(&app_handle);
-            // Without a login registration, this app is what runs the host.
-            std::thread::spawn(|| {
-                if let Err(error) = agent_host::app_scoped::ensure_running() {
-                    eprintln!("buzz-desktop: agent-host: could not run the host for this session: {error}");
-                }
-            });
             #[cfg(target_os = "macos")]
             {
                 // No tray here any more: the menu bar is its own process, so
@@ -360,6 +348,24 @@ pub fn run() {
             } else {
                 migration::run_boot_migrations(&app_handle);
             }
+
+            // The agent host's instance (dev or production) is read from the
+            // nest directory, which the reset and migrations above initialize;
+            // before that it reads production, so on a Dev build these ran
+            // against the wrong host (ledger 302(h)).
+            //
+            // Bring back a login registration that exists but is not loaded.
+            // Replacing this bundle under a loaded launchd job leaves exactly
+            // that, so every update needs it — and it must not wait for a view
+            // to mount and ask for a status. Repairs only; never registers
+            // something nobody agreed to.
+            agent_host::autostart::repair_at_launch(&app_handle);
+            // Without a login registration, this app is what runs the host.
+            std::thread::spawn(|| {
+                if let Err(error) = agent_host::app_scoped::ensure_running() {
+                    eprintln!("buzz-desktop: agent-host: could not run the host for this session: {error}");
+                }
+            });
 
             // Resolve persisted identity key (env var → file → generate+save).
             // This is fatal — the app should not start with an ephemeral identity
