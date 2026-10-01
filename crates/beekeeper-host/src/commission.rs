@@ -49,9 +49,27 @@ impl Commissioned {
     /// restart is a bounded cost; missing a real one hands the provider a stale
     /// relay or a stale ceiling and is unbounded.
     pub fn child_inputs_match(&self, other: &Self) -> bool {
-        self.config == other.config
+        self.config_inputs() == other.config_inputs()
             && self.key.nsec == other.key.nsec
             && self.record_identity() == other.record_identity()
+    }
+
+    /// The config with `written_at` blanked, for comparison only.
+    ///
+    /// It is provenance for a human reading the file, and the app stamps it
+    /// with `now_iso()` on **every** write — so comparing it made this whole
+    /// check dead code in the one case it exists for. The first version of
+    /// this comparison did, and the proof is that the symptom never changed:
+    /// the host still started a provider at login and restarted it seven
+    /// seconds later when the app opened.
+    ///
+    /// The test that was supposed to catch that compared two *reads of one
+    /// file*, which match whatever this does. The path that happens is the app
+    /// rewriting the file, and that is what the test asserts now.
+    fn config_inputs(&self) -> beekeeper_host_core::config::HostConfig {
+        let mut config = self.config.clone();
+        config.written_at = String::new();
+        config
     }
 
     /// The record with its inline secret blanked, for comparison only.
@@ -216,6 +234,18 @@ mod tests {
         assert!(
             first.child_inputs_match(&second),
             "two reads of one commissioning must not restart a running agent"
+        );
+
+        // **The case that actually happens.** The app rewrites `host.json` on
+        // every workspace activation and stamps `writtenAt` with the current
+        // time, so a comparison that included it would report a change on
+        // every launch — which is what shipped, and what kept restarting a
+        // running provider seven seconds after login.
+        let mut restamped = commission(dir.path(), Instance::Production).expect("third read");
+        restamped.config.written_at = "2026-12-25T00:00:00Z".to_string();
+        assert!(
+            first.child_inputs_match(&restamped),
+            "a fresh `writtenAt` is provenance, not an input to the child"
         );
 
         // The record's inline secret is the field `spawn` overwrites, so it
