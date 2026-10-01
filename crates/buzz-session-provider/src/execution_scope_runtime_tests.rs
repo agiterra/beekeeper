@@ -131,7 +131,9 @@ fn the_pinned_settings_hold_scope_and_identity_privately_and_follow_no_link() {
     );
     env.scope("GIT_CONFIG_GLOBAL", "/x/control/gitconfig")
         .expect("scope");
-    env.scope("CLAUDE_CONFIG_DIR", "/x/state/claude-config")
+    let config = state.join("claude-config");
+    std::fs::create_dir(&config).expect("config");
+    env.scope("CLAUDE_CONFIG_DIR", config.to_str().expect("utf-8"))
         .expect("scope");
     env.identity("BUZZ_RELAY_URL", "wss://relay.example.invalid", &|_| true);
     env.identity("BUZZ_PRIVATE_KEY", "nsec-test-value", &|_| true);
@@ -166,6 +168,60 @@ fn the_pinned_settings_hold_scope_and_identity_privately_and_follow_no_link() {
         );
     }
     assert_eq!(value["disableClaudeAiConnectors"], true);
+}
+
+/// Every execution's private configuration offers the whole model list, so a
+/// degraded flag cache cannot hide earlier versions (ledger 302(d)), and the
+/// list replaces only its own key.
+#[cfg(unix)]
+#[test]
+fn the_private_configuration_offers_every_claude_model_and_keeps_its_other_settings() {
+    use buzz_acp::exec_env::ModelAuth;
+    let (_dir, state, _home) = scratch();
+    let config = state.join("claude-config");
+    std::fs::create_dir(&config).expect("config");
+    let user_settings = config.join("settings.json");
+    std::fs::write(
+        &user_settings,
+        r#"{"theme":"dark","availableModels":["haiku"]}"#,
+    )
+    .expect("seeded");
+    let fence = crate::agent_fence::FENCE;
+    let mut env = ResolvedEnv::baseline(
+        [("PATH".into(), "/usr/bin".into())],
+        ModelAuth::None,
+        &fence,
+        &|_| true,
+    );
+    env.scope("CLAUDE_CONFIG_DIR", config.to_str().expect("utf-8"))
+        .expect("scope");
+    write_claude_settings(&state.join("claude-settings.json"), &env).expect("written");
+
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&user_settings).expect("read"))
+            .expect("json");
+    assert_eq!(value["theme"], "dark", "another key survives");
+    let listed: Vec<&str> = value["availableModels"]
+        .as_array()
+        .expect("list")
+        .iter()
+        .map(|model| model.as_str().expect("id"))
+        .collect();
+    assert_eq!(listed, CLAUDE_MODELS);
+    for earlier in ["claude-opus-4-8", "claude-sonnet-5", "claude-opus-5"] {
+        assert!(listed.contains(&earlier), "{earlier} offered");
+    }
+
+    // A file the runtime left unreadable is replaced, not a refusal.
+    std::fs::write(&user_settings, "not json").expect("garbled");
+    write_claude_settings(&state.join("claude-settings.json"), &env).expect("rewritten");
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&user_settings).expect("read"))
+            .expect("json");
+    assert_eq!(
+        value["availableModels"].as_array().map(Vec::len),
+        Some(CLAUDE_MODELS.len())
+    );
 }
 
 /// The preflight's four outcomes, through a fixture CLI run under a real

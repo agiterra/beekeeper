@@ -380,7 +380,62 @@ pub(crate) fn write_claude_settings(path: &Path, env: &ResolvedEnv) -> Result<()
         "disableClaudeAiConnectors": true,
         "env": pinned,
     });
-    crate::execution_scope::write_host_file(path, settings.to_string().as_bytes(), true)
+    crate::execution_scope::write_host_file(path, settings.to_string().as_bytes(), true)?;
+    if let Some(config) = env.get("CLAUDE_CONFIG_DIR") {
+        write_claude_model_list(Path::new(config))?;
+    }
+    Ok(())
+}
+
+/// The Claude models every execution offers, whatever the CLI's cached
+/// feature flags say.
+///
+/// Claude Code decides which versions its model list shows from GrowthBook
+/// flags cached in `.claude.json` (`tengu_velvet_mallet_<model>`). A private
+/// configuration can cache an anonymous evaluation — every one of those flags
+/// false — and keep it: measured 2026-10-01 (Claude Code 2.1.285,
+/// claude-agent-acp 0.84.0), such a configuration listed 5 aliases where the
+/// operator's own listed 12, and stayed at 5 run after run (ledger 302(d)).
+/// The flags hide models; they do not refuse them — `claude-opus-4-8` ran in
+/// that same configuration. The adapter builds its picker from the
+/// `availableModels` allowlist in the user-tier `settings.json` when one is
+/// set, listing an entry the CLI did not surface verbatim; with this list the
+/// same configuration offered all 12.
+///
+/// The aliases follow Anthropic's newest model of each family by themselves;
+/// the pinned ids are the earlier versions a person may still choose. A new
+/// family needs an entry here. `default` is always added by the adapter.
+pub(crate) const CLAUDE_MODELS: &[&str] = &[
+    "opus",
+    "claude-fable-5-1",
+    "sonnet",
+    "haiku",
+    "claude-opus-5",
+    "claude-fable-5",
+    "claude-sonnet-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+];
+
+/// Set [`CLAUDE_MODELS`] as `availableModels` in an execution's private
+/// Claude configuration, keeping any other key the file already holds.
+///
+/// The private configuration is the runtime's own directory, so the file may
+/// hold settings the CLI wrote; a file that is not a JSON object is replaced.
+///
+/// # Errors
+/// The file could not be written.
+fn write_claude_model_list(config: &Path) -> Result<(), CreateFailure> {
+    let path = config.join("settings.json");
+    let mut settings = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    settings["availableModels"] = serde_json::json!(CLAUDE_MODELS);
+    crate::execution_scope::write_host_file(&path, settings.to_string().as_bytes(), true)
 }
 
 /// The top-level `cli_auth_credentials_store` of a Codex `config.toml`.
