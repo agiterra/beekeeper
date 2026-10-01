@@ -84,6 +84,9 @@ pub struct TranscriptTranslator {
     tools: HashMap<String, ToolMemo>,
     /// Memo for a frame that carried no `toolCallId`, rebuilt per frame.
     anonymous: ToolMemo,
+    /// Calls opened with no arguments yet, oldest first, each with its opening
+    /// frame. See [`hold_or_publish`](Self::hold_or_publish).
+    held: Vec<(String, Value)>,
 }
 
 /// What the adapter has told us about one open tool call so far.
@@ -156,6 +159,16 @@ impl ToolMemo {
         }
     }
 
+    /// Whether the adapter has said what this call acts on: its arguments, or
+    /// the files and diffs an edit carries in place of them.
+    fn has_arguments(&self) -> bool {
+        self.input
+            .as_ref()
+            .is_some_and(|input| input.as_object().is_some_and(|o| !o.is_empty()))
+            || !self.paths.is_empty()
+            || !self.changes.is_empty()
+    }
+
     /// The display name, falling back to whatever the frame in hand offers.
     fn display_name(&self, update: &Value) -> String {
         self.name.clone().unwrap_or_else(|| tool_name(update))
@@ -185,6 +198,7 @@ impl TranscriptTranslator {
             tool_calls: 0,
             tools: HashMap::new(),
             anonymous: ToolMemo::default(),
+            held: Vec::new(),
         }
     }
 
@@ -266,7 +280,9 @@ impl TranscriptTranslator {
             "agent_message_chunk" => {
                 self.text.push_str(&content_text(update.get("content")));
                 if self.text.len() >= COALESCE_FLUSH_BYTES {
-                    return self.flush_text();
+                    let mut items = self.release_held();
+                    items.extend(self.flush_text());
+                    return items;
                 }
                 Vec::new()
             }
@@ -276,7 +292,9 @@ impl TranscriptTranslator {
                 }
                 self.thoughts.push_str(&content_text(update.get("content")));
                 if self.thoughts.len() >= COALESCE_FLUSH_BYTES {
-                    return self.flush_thoughts();
+                    let mut items = self.release_held();
+                    items.extend(self.flush_thoughts());
+                    return items;
                 }
                 Vec::new()
             }
@@ -285,17 +303,22 @@ impl TranscriptTranslator {
                 // Counted here rather than at the result, because a call that
                 // never returns still consumed a call's worth of context.
                 self.tool_calls = self.tool_calls.saturating_add(1);
-                items.push(self.tool_call_item(update));
+                items.extend(self.hold_or_publish(update));
                 items
             }
             "tool_call_update" => match terminal_status(update) {
                 None => {
-                    // Publishes nothing, but is where claude-agent-acp fills in
-                    // the arguments, the `locations` and the diff blocks it had
-                    // not finished streaming when the call opened. Dropping the
-                    // frame whole is what stripped every edit payload.
-                    self.absorb(update);
-                    Vec::new()
+                    // Where claude-agent-acp fills in the arguments, the
+                    // `locations` and the diff blocks it had not finished
+                    // streaming when the call opened. Dropping the frame whole
+                    // is what stripped every edit payload. A call held for its
+                    // arguments is published now that it has them.
+                    let tool_id = string_field(update, "toolCallId").unwrap_or_default();
+                    if self.absorb(update).has_arguments() {
+                        self.release_through(&tool_id)
+                    } else {
+                        Vec::new()
+                    }
                 }
                 Some(status) => {
                     let mut items = self.flush_all();
@@ -343,7 +366,8 @@ impl TranscriptTranslator {
 
     /// Emit anything buffered without closing the turn.
     pub fn flush_all(&mut self) -> Vec<Value> {
-        let mut items = self.flush_text();
+        let mut items = self.release_held();
+        items.extend(self.flush_text());
         items.extend(self.flush_thoughts());
         items
     }
@@ -384,9 +408,58 @@ impl TranscriptTranslator {
         memo
     }
 
-    fn tool_call_item(&mut self, update: &Value) -> Value {
+    /// Publish an opening `tool_call`, or hold it until its arguments arrive.
+    ///
+    /// claude-agent-acp opens every call at the start of the model's tool-use
+    /// block, before the arguments have streamed, so the frame says only
+    /// `"Terminal"` with an empty input; the complete input follows on a
+    /// non-terminal `tool_call_update` once the block ends, before the tool
+    /// runs. Published as it came, the row a person watches reads "Run
+    /// Terminal" for as long as the command runs, and names the command only
+    /// once it is over. So a call with no arguments is held — for the length
+    /// of the streaming, not the run — and published, once, with them.
+    ///
+    /// Held calls never go missing: anything else this translator publishes
+    /// (text, a later call, a result, the end of the turn) releases them first,
+    /// in order, as they are.
+    fn hold_or_publish(&mut self, update: &Value) -> Vec<Value> {
         let tool_id = string_field(update, "toolCallId").unwrap_or_default();
-        let memo = self.absorb(update);
+        let has_arguments = self.absorb(update).has_arguments();
+        if tool_id.is_empty() || has_arguments {
+            return vec![self.render_tool_call(update)];
+        }
+        self.held.push((tool_id, update.clone()));
+        Vec::new()
+    }
+
+    /// Publish every held call, oldest first.
+    fn release_held(&mut self) -> Vec<Value> {
+        let held = std::mem::take(&mut self.held);
+        held.iter()
+            .map(|(_, frame)| self.render_tool_call(frame))
+            .collect()
+    }
+
+    /// Publish held calls up to and including `tool_id`, keeping their order.
+    fn release_through(&mut self, tool_id: &str) -> Vec<Value> {
+        let Some(position) = self.held.iter().position(|(id, _)| id == tool_id) else {
+            return Vec::new();
+        };
+        let released: Vec<_> = self.held.drain(..=position).collect();
+        released
+            .iter()
+            .map(|(_, frame)| self.render_tool_call(frame))
+            .collect()
+    }
+
+    /// The `tool_call` item for a call whose frames are already absorbed.
+    fn render_tool_call(&mut self, update: &Value) -> Value {
+        let tool_id = string_field(update, "toolCallId").unwrap_or_default();
+        let memo = if tool_id.is_empty() {
+            &mut self.anonymous
+        } else {
+            self.tools.entry(tool_id.clone()).or_default()
+        };
         let tool_name = memo.display_name(update);
         let tool_kind = memo.kind.clone();
         let input = memo.input.clone().unwrap_or_else(|| json!({}));
@@ -850,6 +923,15 @@ mod tests {
             .collect()
     }
 
+    /// The `tool_result` among `items`; a call held for its arguments is
+    /// released just ahead of it.
+    fn result_of(items: &[Value]) -> &Value {
+        items
+            .iter()
+            .find(|item| item["kind"] == "tool_result")
+            .expect("a tool_result")
+    }
+
     fn chunk(text: &str) -> Value {
         update(json!({
             "sessionUpdate": "agent_message_chunk",
@@ -1008,8 +1090,77 @@ mod tests {
     fn a_tool_call_flushes_buffered_prose_first() {
         let mut translator = TranscriptTranslator::new(true);
         translator.on_update(&chunk("thinking out loud"));
-        let items = translator.on_update(&tool_call("t1", "bash", json!({})));
+        let items = translator.on_update(&tool_call("t1", "bash", json!({ "command": "ls" })));
         assert_eq!(kinds(&items), vec!["assistant_text", "tool_call"]);
+    }
+
+    /// claude-agent-acp opens a shell call as `"Terminal"` with no command and
+    /// sends the command a moment later, before it runs. Published as it came,
+    /// the running row said "Run Terminal" for the whole run (2026-10-01). The
+    /// call is held for that moment and published once, with its command.
+    #[test]
+    fn a_call_opened_without_arguments_is_published_once_they_arrive() {
+        let mut translator = TranscriptTranslator::new(true);
+        let opened = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "Terminal",
+            "kind": "execute",
+            "status": "pending",
+            "rawInput": {},
+        })));
+        assert!(opened.is_empty(), "{opened:?}");
+
+        let filled = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "t1",
+            "title": "docker compose up -d",
+            "rawInput": { "command": "docker compose up -d" },
+        })));
+        assert_eq!(kinds(&filled), vec!["tool_call"]);
+        assert_eq!(filled[0]["tool"]["toolId"], "t1");
+        assert_eq!(filled[0]["tool"]["toolName"], "docker compose up -d");
+        assert_eq!(
+            filled[0]["tool"]["input"]["command"],
+            "docker compose up -d"
+        );
+        assert_eq!(filled[0]["tool"]["toolKind"], "execute");
+
+        // Published once: a later refinement adds nothing to the record.
+        let again = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "t1",
+            "rawInput": { "command": "docker compose up -d" },
+        })));
+        assert!(again.is_empty(), "{again:?}");
+        let done = translator.on_update(&tool_done("t1", "completed", "ok"));
+        assert_eq!(kinds(&done), vec!["tool_result"]);
+    }
+
+    /// A held call is never lost or reordered: whatever is published next — a
+    /// result, prose, another call, the end of the turn — releases it first.
+    #[test]
+    fn a_held_call_is_released_before_anything_published_after_it() {
+        let empty = || tool_call("t1", "Terminal", json!({}));
+
+        let mut by_result = TranscriptTranslator::new(true);
+        by_result.on_update(&empty());
+        let items = by_result.on_update(&tool_done("t1", "completed", "ok"));
+        assert_eq!(kinds(&items), vec!["tool_call", "tool_result"]);
+
+        let mut by_call = TranscriptTranslator::new(true);
+        by_call.on_update(&empty());
+        let items = by_call.on_update(&tool_call("t2", "read", json!({ "path": "a" })));
+        assert_eq!(kinds(&items), vec!["tool_call", "tool_call"]);
+        assert_eq!(items[0]["tool"]["toolId"], "t1");
+
+        let mut by_turn_end = TranscriptTranslator::new(true);
+        by_turn_end.on_update(&empty());
+        by_turn_end.on_update(&chunk("after"));
+        assert_eq!(
+            kinds(&by_turn_end.end_turn(result())),
+            vec!["tool_call", "assistant_text", "result"]
+        );
     }
 
     #[test]
@@ -1220,7 +1371,7 @@ mod tests {
             "completed",
             &"y".repeat(MAX_TOOL_CONTENT_BYTES * 2),
         ));
-        let content = items[0]["content"].as_str().expect("content");
+        let content = result_of(&items)["content"].as_str().expect("content");
         assert!(content.len() <= MAX_TOOL_CONTENT_BYTES);
         assert!(content.contains("…[elided "));
         assert!(content.contains("sha256:"));
@@ -1278,11 +1429,11 @@ mod tests {
             "status": "failed",
             "rawOutput": { "error": "boom" },
         })));
-        assert!(items[0]["content"]
+        assert!(result_of(&items)["content"]
             .as_str()
             .expect("content")
             .contains("boom"));
-        assert_eq!(items[0]["isError"], true);
+        assert_eq!(result_of(&items)["isError"], true);
     }
 
     #[test]
@@ -1381,7 +1532,7 @@ mod tests {
             "title": "Run the test suite",
             "kind": "execute",
             "status": "in_progress",
-            "rawInput": {},
+            "rawInput": { "command": "just test" },
         })));
         assert_eq!(call[0]["tool"]["toolName"], "Run the test suite");
         assert_eq!(call[0]["tool"]["toolKind"], "execute");
@@ -1410,11 +1561,14 @@ mod tests {
             "status": "pending",
             "rawInput": {},
         })));
-        assert_eq!(call[0]["tool"]["toolKind"], "edit");
+        assert!(
+            call.is_empty(),
+            "held until it says what it edits: {call:?}"
+        );
 
         // The arguments, the locations and the diff all arrive later, on a
-        // non-terminal update. That frame still publishes nothing of its own.
-        let quiet = translator.on_update(&update(json!({
+        // non-terminal update, which publishes the held call with them.
+        let opened = translator.on_update(&update(json!({
             "sessionUpdate": "tool_call_update",
             "toolCallId": "t1",
             "title": "Edit",
@@ -1428,7 +1582,13 @@ mod tests {
                 "newText": "const a = 2;",
             }],
         })));
-        assert!(quiet.is_empty(), "{quiet:?}");
+        assert_eq!(kinds(&opened), vec!["tool_call"]);
+        assert_eq!(opened[0]["tool"]["toolKind"], "edit");
+        assert_eq!(
+            opened[0]["tool"]["input"]["file_path"],
+            "desktop/src/App.tsx"
+        );
+        assert_eq!(opened[0]["tool"]["edit"]["paths"][0], "desktop/src/App.tsx");
 
         let done = translator.on_update(&update(json!({
             "sessionUpdate": "tool_call_update",
@@ -1496,7 +1656,7 @@ mod tests {
             "locations": [{ "path": "big.txt" }],
             "content": [{ "type": "diff", "path": "big.txt", "oldText": huge, "newText": huge }],
         })));
-        let payload = &done[0]["edit"];
+        let payload = &result_of(&done)["edit"];
         assert_eq!(payload["paths"][0], "big.txt");
         let serialized = payload.to_string();
         assert!(
@@ -1522,7 +1682,7 @@ mod tests {
             "status": "pending",
         })));
         let first = translator.on_update(&tool_done("t1", "completed", "ok"));
-        assert_eq!(first[0]["toolKind"], "edit");
+        assert_eq!(result_of(&first)["toolKind"], "edit");
         let second = translator.on_update(&tool_done("t1", "completed", "ok"));
         assert_eq!(second[0]["toolKind"], "edit");
         assert_eq!(second[0]["toolName"], "Edit");
@@ -1555,7 +1715,7 @@ mod tests {
     #[test]
     fn an_absent_acp_kind_is_never_invented() {
         let mut translator = TranscriptTranslator::new(true);
-        let call = translator.on_update(&tool_call("t1", "read_file", json!({})));
+        let call = translator.on_update(&tool_call("t1", "read_file", json!({ "path": "a" })));
         assert_eq!(call[0]["tool"]["toolName"], "read_file");
         assert!(call[0]["tool"].get("toolKind").is_none());
         let done = translator.on_update(&tool_done("t1", "completed", "ok"));
