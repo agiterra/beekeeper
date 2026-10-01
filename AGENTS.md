@@ -156,7 +156,8 @@ crates/
   buzz-media          # Blossom/S3 media storage
   # Agent surface
   beekeeper-host      # Headless daemon owning this machine's agents; starts at
-                      # login, installs on a server (docs/agent-host.md)
+                      # login, at boot on a headless Mac (`--system`), or as a
+                      # server's user unit (docs/agent-host.md)
   beekeeper-host-core # The launcher contract the host and the desktop share
   buzz-acp            # ACP harness bridging Buzz events to AI agents
   buzz-agent          # Minimal ACP-compliant agent (non-streaming, tool-calls-as-output)

@@ -1,13 +1,13 @@
 # The agent host
 
 `beekeeper-host` is the process that runs this machine's agents. It starts at
-login, survives every Beekeeper launch, quit and update, and installs on a
-server with no GUI anywhere.
+login — or at boot, on a Mac nobody logs in to — survives every Beekeeper
+launch, quit and update, and installs on a server with no GUI anywhere.
 
 Quitting Beekeeper is a window closing. It is not a shutdown.
 
 ```
-login (launchd / systemd)        login (launchd)
+login or boot (launchd/systemd)  login (launchd)
         │                               │
         ▼                               ▼
   beekeeper-host ──────────►  Beekeeper Menu Bar.app
@@ -91,6 +91,53 @@ To check:
 bee host installed     # both services, and anything wrong with either
 bee host status        # what the running host says about the provider
 ```
+
+## On a headless Mac
+
+A login item runs only while its user is logged in at the screen: launchd
+creates the `gui/$UID` domain at console login and tears it down at logout, so
+on a Mac mini nobody sits at, the host never starts after a reboot. Install it
+as a system LaunchDaemon instead, which launchd loads at boot and runs as the
+persona's own account:
+
+```bash
+# Commission the persona's host first (host.json and provider-key, as in
+# "On a server" below), then check it as that user:
+sudo -u persona -H beekeeper-host check
+
+# Install, as root. --user is required and is never guessed from $HOME or
+# SUDO_USER. --print shows the plist without root and writes nothing.
+sudo bee host install --system --user persona
+```
+
+That writes `/Library/LaunchDaemons/io.agiterra.beekeeper.host.daemon.persona.plist`
+(`.dev` appended for `--dev`), root-owned and world-readable, with `UserName`
+set to the persona, `HOME`, `USER`, `LOGNAME` and a system `PATH` taken from
+the password database, and the host's log at
+`~persona/.local/state/buzz/host/host.log` — created beforehand and owned by
+the persona. It refuses, and says why, if the host is not commissioned, if
+the persona cannot execute the binary (install it somewhere every user can
+run, not inside your own home), or if the persona already has a login
+LaunchAgent for the host — two hosts would race for one socket, so remove that
+one first.
+
+Day to day, **run everything as the persona, not as root**: `bee host status`,
+`start`, `stop`, `restart` and `logs` talk to the host's socket, which answers
+only its own uid. `bee host installed` reports the daemon as `"domain":
+"system"`, and warns if a LaunchAgent exists beside it.
+
+- **Restart the process:** `sudo launchctl kickstart -k system/io.agiterra.beekeeper.host.daemon.persona`.
+- **A crash** is restarted by launchd, at most every 30 seconds.
+- **A clean exit stays down.** The host exits cleanly on SIGTERM, so killing it
+  that way is a stop launchd respects until the next boot or kickstart.
+  `bee host stop` stops only the provider; the host keeps answering.
+- **Logout** does nothing to it — it was never in anyone's session.
+- **Reboot** starts it before anyone logs in.
+
+To remove it: `sudo bee host uninstall --system --user persona`. That boots it
+out and deletes the plist; it records no refusal, and the identity, key file
+and provider state are untouched. A plain `bee host uninstall` run as the
+persona cannot remove it, and says so rather than reporting success.
 
 ## On a server
 
