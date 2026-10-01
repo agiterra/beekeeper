@@ -359,6 +359,9 @@ export function useCodingSessionFoundedSetup(input: {
   const [worktreeName, setWorktreeName] = React.useState(
     draft?.worktreeName ?? "",
   );
+  // Full access at launch (ledger 303): off unless ticked, and offered only
+  // for this computer's own provider.
+  const [fullAccess, setFullAccess] = React.useState(false);
   const [worktreeSource, setWorktreeSource] = React.useState<string | null>(
     draft?.worktreeSource ?? null,
   );
@@ -658,6 +661,9 @@ export function useCodingSessionFoundedSetup(input: {
     setWorkdir,
     useWorktree,
     setUseWorktree,
+    fullAccess,
+    setFullAccess,
+    fullAccessOffered: selectedTarget?.isLocalProvider === true,
     worktreeName,
     setWorktreeName,
     worktreeSource,

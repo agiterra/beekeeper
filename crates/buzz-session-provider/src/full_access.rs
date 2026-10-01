@@ -71,6 +71,46 @@ pub fn granted(state_dir: &Path, session_id: &str) -> bool {
         })
 }
 
+/// Move a grant made for a create command to the session it created.
+///
+/// The person ticks full access before the session exists, so the desktop
+/// grants the create's command id (`csl-<uuid>`, known before publishing);
+/// the provider picks the session id when it handles the create, and moves
+/// the grant here before preparing it — so the agent's first start is
+/// already outside the boundary. Returns whether a grant moved.
+///
+/// # Errors
+/// The file could not be rewritten; the grant then stays on the command id,
+/// and the session runs bounded.
+pub fn transfer(state_dir: &Path, from: &str, to: &str) -> std::io::Result<bool> {
+    let path = state_dir.join(FULL_ACCESS_FILE);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(false);
+    };
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Ok(false);
+    };
+    if value.get("version").and_then(serde_json::Value::as_u64) != Some(VERSION) {
+        return Ok(false);
+    }
+    let Some(sessions) = value
+        .get_mut("sessions")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return Ok(false);
+    };
+    let before = sessions.len();
+    sessions.retain(|entry| entry.as_str() != Some(from));
+    if sessions.len() == before {
+        return Ok(false);
+    }
+    sessions.push(serde_json::Value::String(to.to_owned()));
+    let staged = state_dir.join(format!("{FULL_ACCESS_FILE}.tmp"));
+    std::fs::write(&staged, value.to_string())?;
+    std::fs::rename(&staged, &path)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,5 +135,22 @@ mod tests {
             std::fs::write(&file, bad).expect("write");
             assert!(!granted(state, "s-1"), "{bad} must grant nothing");
         }
+    }
+
+    #[test]
+    fn a_grant_on_a_create_command_moves_to_the_session_it_created() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = dir.path();
+        assert!(!transfer(state, "csl-1", "s-new").expect("no file"));
+        std::fs::write(
+            state.join(FULL_ACCESS_FILE),
+            r#"{"version":1,"sessions":["s-old","csl-1"]}"#,
+        )
+        .expect("write");
+        assert!(!transfer(state, "csl-2", "s-other").expect("not listed"));
+        assert!(transfer(state, "csl-1", "s-new").expect("moved"));
+        assert!(granted(state, "s-new"));
+        assert!(granted(state, "s-old"), "other grants are kept");
+        assert!(!granted(state, "csl-1"), "the command id no longer grants");
     }
 }

@@ -3358,6 +3358,20 @@ impl Provider {
             session_id: Uuid::new_v4().to_string(),
             generation: 1,
         };
+        // Full access ticked at creation was granted to this command's id;
+        // it moves to the session before the session is prepared (ledger 303).
+        match full_access::transfer(&self.config.state_dir, &plan.command_id, &target.session_id) {
+            Ok(true) => tracing::info!(
+                target: "csp::scope",
+                session_id = %target.session_id,
+                "full access granted at creation"
+            ),
+            Ok(false) => {}
+            Err(error) => tracing::warn!(
+                target: "csp::scope",
+                "full access granted at creation could not be applied; the session runs bounded: {error}"
+            ),
+        }
         let rehydration = self
             .prepare_rehydration_context(
                 RehydrationTarget {

@@ -54,6 +54,7 @@ import {
   type SeatedCodingSessionCreateDeps,
 } from "../lib/codingSessionSeatedCreate";
 import { ensureProviderChannelMembership } from "../lib/providerChannelMembership";
+import { setCodingSessionFullAccess } from "@/shared/api/tauriCodingSessionFullAccess";
 import type { NewCodingSessionTarget } from "../lib/newCodingSessionModel";
 
 /** Bind a launch to the exact runtime target returned by click-time preflight. */
@@ -454,6 +455,15 @@ export function useCodingSessionCrewLaunch(input: {
                 fetchPackSource: deps.seatDeps.fetchPackSource,
               },
               publish: async () => {
+                // Granted to the command id, which the provider moves to the
+                // session it creates before preparing it (ledger 303).
+                if (launchInput.fullAccess) {
+                  await setCodingSessionFullAccess({
+                    providerPubkey: providerAuthorityPubkey,
+                    sessionId: commandId,
+                    granted: true,
+                  });
+                }
                 const event = await deps.signer(
                   buildCodingSessionCreateEvent({
                     channelId,

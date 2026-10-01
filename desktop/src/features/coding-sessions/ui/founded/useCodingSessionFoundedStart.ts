@@ -82,6 +82,8 @@ export type CodingSessionFoundedStartSetup = Pick<
   | "canLaunch"
   | "candidates"
   | "draft"
+  | "fullAccess"
+  | "fullAccessOffered"
   | "hireRoster"
   | "lead"
   | "leadModel"
@@ -353,6 +355,7 @@ export function useCodingSessionFoundedStart(input: {
             },
             policySet: setup.policySet,
             workdir: checkout.length > 0 ? checkout : null,
+            fullAccess: setup.fullAccessOffered && setup.fullAccess,
             leadWorktree:
               setup.useWorktree && worktreeName.length > 0
                 ? { name: worktreeName, source: setup.worktreeSource }

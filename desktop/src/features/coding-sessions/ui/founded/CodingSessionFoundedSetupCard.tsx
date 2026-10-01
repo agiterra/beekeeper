@@ -23,6 +23,7 @@ import {
   CodingSessionLaunchSteps,
 } from "../NewCodingSessionLaunchNotes";
 import { NewCodingSessionLeadField } from "../NewCodingSessionLeadField";
+import { NewCodingSessionFullAccessField } from "../NewCodingSessionFullAccessField";
 import { NewCodingSessionPolicyField } from "../NewCodingSessionPolicyField";
 import {
   NewCodingSessionModelDisclosure,
@@ -382,6 +383,12 @@ export function CodingSessionFoundedSetupCard({
         worktreeName={setup.worktreeName}
         worktreeSource={setup.worktreeSource}
       />
+      {team && setup.fullAccessOffered ? (
+        <NewCodingSessionFullAccessField
+          checked={setup.fullAccess}
+          onCheckedChange={setup.setFullAccess}
+        />
+      ) : null}
       {setup.attempted && worktreeBlocker ? (
         <FieldError testId="new-coding-session-blocker-worktree-name">
           {worktreeBlocker.sentence}

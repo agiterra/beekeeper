@@ -312,6 +312,8 @@ export type CodingSessionCrewLaunchInput = {
    * the person named none. Host-local; never on the wire.
    */
   workdir?: string | null;
+  /** Run this launch's seats with full access to this computer (ledger 303). */
+  fullAccess?: boolean;
   /**
    * Give the lead a worktree of its own, cut from `workdir` before the create
    * is signed.
