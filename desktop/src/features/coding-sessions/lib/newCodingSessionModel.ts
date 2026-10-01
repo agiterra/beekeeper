@@ -75,6 +75,13 @@ export type NewCodingSessionTarget = {
   isLocalProvider?: boolean;
 };
 
+/** The model half of a provider offer: what a bootstrap target can borrow. */
+type CodingSessionModelOfferFields = {
+  defaultModel: string;
+  allowedModels: readonly string[];
+  models?: CodingSessionProviderCatalogProvider["models"];
+};
+
 /** Host-local knowledge that seeds and annotates the target list. */
 export type NewCodingSessionLocalProvider = {
   providerPubkey: string;
@@ -141,6 +148,10 @@ export function resolveNewCodingSessionTargets({
     }
   }
   if (channelId !== null && localProvider) {
+    const published = latestOwnPublishedProviders(
+      catalogs,
+      localProvider.providerPubkey,
+    );
     for (const runtime of localProvider.runtimes) {
       const selectionKey = encodeTargetSelectionKey(
         channelId,
@@ -154,7 +165,9 @@ export function resolveNewCodingSessionTargets({
           channelId,
           providerPubkey: localProvider.providerPubkey,
           runtime,
-          models: localProvider.modelsByInstanceRef?.get(runtime.instanceRef),
+          models:
+            published.get(runtime.instanceRef) ??
+            localProvider.modelsByInstanceRef?.get(runtime.instanceRef),
         }),
       );
     }
@@ -171,6 +184,45 @@ export function resolveNewCodingSessionTargets({
       ? byProvider
       : left.channelId.localeCompare(right.channelId);
   });
+}
+
+/**
+ * This provider's newest published word about each of its runtimes' models,
+ * from whichever channel it last published into.
+ *
+ * A channel the provider has not joined yet has no catalog of its own, and
+ * the bootstrap target used to fall back to the models command's bare ids —
+ * so a new session's picker showed `claude-fable-5-1` where every other
+ * channel showed "Fable 5.1", with no efforts and no fast mode. The provider
+ * describes its runtimes the same way in every channel; only the channel
+ * differs, so its signed description from another one is still its own.
+ */
+function latestOwnPublishedProviders(
+  catalogs: readonly TrustedCodingSessionProviderCatalog[],
+  providerPubkey: string,
+): Map<string, CodingSessionModelOfferFields> {
+  const newest = new Map<
+    string,
+    { createdAt: number; offer: CodingSessionModelOfferFields }
+  >();
+  for (const entry of catalogs) {
+    if (entry.signerPubkey !== providerPubkey) continue;
+    for (const provider of entry.catalog.providers) {
+      const held = newest.get(provider.providerInstanceRef);
+      if (held && held.createdAt >= entry.createdAt) continue;
+      newest.set(provider.providerInstanceRef, {
+        createdAt: entry.createdAt,
+        offer: {
+          defaultModel: provider.defaultModel,
+          allowedModels: provider.allowedModels,
+          ...(provider.models ? { models: provider.models } : {}),
+        },
+      });
+    }
+  }
+  return new Map(
+    [...newest].map(([instanceRef, { offer }]) => [instanceRef, offer]),
+  );
 }
 
 /** Whether the runtime behind a target can serve a session right now. */
@@ -245,7 +297,7 @@ export function localCodingSessionProviderTarget(input: {
   channelId: string;
   providerPubkey: string;
   runtime: CodingSessionProviderRuntime;
-  models?: { defaultModel: string; allowedModels: readonly string[] };
+  models?: CodingSessionModelOfferFields;
 }): NewCodingSessionTarget {
   // `instanceRef` routes a create to a catalog entry. It is not the
   // pubkey-derived `instanceId` that later appears in a session's cs-target.
@@ -267,6 +319,7 @@ export function localCodingSessionProviderTarget(input: {
         ...(input.models?.allowedModels ?? input.runtime.allowedModels ?? []),
       ],
       capabilities: { ...input.runtime.capabilities },
+      ...(input.models?.models ? { models: input.models.models } : {}),
     },
     availability: {
       state: input.runtime.authState,
