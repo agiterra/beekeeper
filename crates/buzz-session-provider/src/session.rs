@@ -1926,9 +1926,11 @@ async fn start_agent(
     // `_meta` exactly once.
     client.set_emit_raw_sdk_frames(request.emit_raw_sdk_frames);
     // The seat fence, enforced rather than only briefed: a seated execution
-    // launches with the local subagent and cross-session tools removed from
-    // its toolset. Seats only — an unseated execution's `session/new` is
-    // unchanged, and an empty list omits the key entirely.
+    // launches with the cross-session tool removed from its toolset. Task and
+    // Agent subagents stay available — their work is published attributed in
+    // this session's transcript (ledger 308). Seats only — an unseated
+    // execution's `session/new` is unchanged, and an empty list omits the key
+    // entirely.
     //
     // This is the same list `agent_fence::actor_seat_briefing` names, so the
     // briefing and the toolset cannot drift apart. claude-agent-acp honours
@@ -5225,7 +5227,7 @@ done
         let session_new = request_by_method(&log_path, "session/new");
         assert_eq!(
             session_new.pointer("/params/_meta/claudeCode/options/disallowedTools"),
-            Some(&serde_json::json!(["Task", "Agent", "SendMessage"])),
+            Some(&serde_json::json!(["SendMessage"])),
             "a seat must launch with the out-of-bounds tools denied: {session_new}"
         );
     }

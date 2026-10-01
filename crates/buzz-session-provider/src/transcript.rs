@@ -18,6 +18,19 @@
 //!   the agent reached for a tool belongs before it in the record;
 //! - **turn end** — nothing is left buffered when the turn's `result` lands.
 //!
+//! # Subagents
+//!
+//! A frame claude-agent-acp stamps with `_meta.claudeCode.parentToolUseId` was
+//! produced inside a Task/Agent subagent. It is published as the item it would
+//! be anyway, plus one top-level `parentToolId` naming the Task/Agent call that
+//! owns it, so a client can nest a subagent's work under its spawn and an old
+//! client — which ignores unknown fields — still renders every item (ledger
+//! 308). Subagent prose coalesces in its **own** buffer per owning call: a
+//! subagent's narration must never merge with the agent's or another
+//! subagent's, because once flushed as one block nothing could split it again.
+//! Those buffers flush on that subagent's next non-text item, on the owning
+//! call's terminal result, and at turn end.
+//!
 //! # Redaction
 //!
 //! NIP-CST requires the published `item` to be *deeply redacted*: no host
@@ -86,7 +99,121 @@ pub struct TranscriptTranslator {
     anonymous: ToolMemo,
     /// Calls opened with no arguments yet, oldest first, each with its opening
     /// frame. See [`hold_or_publish`](Self::hold_or_publish).
-    held: Vec<(String, Value)>,
+    held: Vec<HeldCall>,
+    /// Prose buffers for subagents, keyed by the Task/Agent call that owns
+    /// them, in the order each was opened so a turn-end flush is deterministic.
+    subagents: Vec<(String, ProseBuffers)>,
+}
+
+/// A call held back until its arguments stream in.
+///
+/// `scope` is the owning Task/Agent call for a subagent's call and `None` for
+/// the agent's own. Holding is per scope because subagents run alongside the
+/// agent and each other: if a sibling's next item released every held call,
+/// a lead's `Agent` call still streaming its arguments would be published as
+/// an empty "Task" the moment some other subagent ran a tool — exactly the
+/// argument-less row the hold exists to prevent.
+#[derive(Debug)]
+struct HeldCall {
+    id: String,
+    scope: Option<String>,
+    frame: Value,
+}
+
+/// One subagent's not-yet-flushed prose.
+#[derive(Debug, Default)]
+struct ProseBuffers {
+    text: String,
+    thoughts: String,
+}
+
+/// What the owning call's frames have said about the subagent it spawned.
+///
+/// Kept apart from the payload half of [`ToolMemo`] because it is read at the
+/// terminal result, after [`ToolMemo::shed_payload`] would have dropped the
+/// input it came from.
+#[derive(Debug, Default)]
+struct SpawnFacts {
+    /// The call is a Task/Agent spawn: the adapter named the tool `Agent` or
+    /// `Task`, or the input carried a `subagent_type`.
+    is_spawn: bool,
+    subagent_type: Option<String>,
+    /// The `model` the call's input asked for. The Agent tool's `model`
+    /// argument overrides the subagent definition's own, so when present it
+    /// is the model the subagent ran on; when absent nothing on the wire says
+    /// which model that was, and none is published.
+    model: Option<String>,
+}
+
+impl SpawnFacts {
+    fn absorb(&mut self, update: &Value) {
+        let named_spawn = [
+            update.pointer("/_meta/claudeCode/toolName"),
+            update.get("name"),
+            update.get("toolName"),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|name| matches!(name, "Agent" | "Task"));
+        let input = tool_input(update);
+        let subagent_type = string_field(&input, "subagent_type");
+        if named_spawn || subagent_type.is_some() {
+            self.is_spawn = true;
+        }
+        if subagent_type.is_some() {
+            self.subagent_type = subagent_type;
+        }
+        if self.is_spawn {
+            if let Some(model) = string_field(&input, "model") {
+                self.model = Some(model);
+            }
+        }
+    }
+
+    /// The `subagent` object for the owning call's `tool_result`, from what
+    /// was observed and nothing else; `None` when nothing was.
+    ///
+    /// The run totals are read off the terminal frame's `rawOutput` when the
+    /// adapter puts the structured Agent output there. claude-agent-acp
+    /// 0.84.0 does not for a non-AIR client (`tool-calls/renderer.js:244-252`
+    /// sends `rawOutput` only for ExitPlanMode, and the Agent reporter
+    /// renders the report text without its `<usage>` trailer,
+    /// `tool-calls/reporters/agent.js:12-31`), so today these are absent and
+    /// stay absent rather than being estimated.
+    fn object(&self, terminal: &Value) -> Option<Value> {
+        if !self.is_spawn {
+            return None;
+        }
+        let mut object = Map::new();
+        if let Some(kind) = &self.subagent_type {
+            object.insert("type".into(), json!(kind));
+        }
+        if let Some(model) = &self.model {
+            object.insert("model".into(), json!(model));
+        }
+        if let Some(output) = terminal.get("rawOutput").filter(|v| v.is_object()) {
+            for (key, aliases) in [
+                ("totalTokens", &["totalTokens", "total_tokens"][..]),
+                (
+                    "durationMs",
+                    &["totalDurationMs", "durationMs", "duration_ms"][..],
+                ),
+                (
+                    "toolUseCount",
+                    &["totalToolUseCount", "toolUseCount", "tool_uses"][..],
+                ),
+            ] {
+                if let Some(value) = aliases
+                    .iter()
+                    .find_map(|alias| output.get(*alias).and_then(Value::as_u64))
+                {
+                    object.insert(key.into(), json!(value));
+                }
+            }
+        }
+        (!object.is_empty()).then_some(Value::Object(object))
+    }
 }
 
 /// What the adapter has told us about one open tool call so far.
@@ -104,6 +231,7 @@ struct ToolMemo {
     input: Option<Value>,
     paths: Vec<String>,
     changes: Vec<ToolEditChange>,
+    spawn: SpawnFacts,
 }
 
 impl ToolMemo {
@@ -111,6 +239,7 @@ impl ToolMemo {
     /// — the adapter is correcting itself — while paths and changes accumulate,
     /// because a call can touch more than one file.
     fn absorb(&mut self, update: &Value) {
+        self.spawn.absorb(update);
         if let Some(name) =
             string_field(update, "toolName").or_else(|| string_field(update, "title"))
         {
@@ -199,6 +328,7 @@ impl TranscriptTranslator {
             tools: HashMap::new(),
             anonymous: ToolMemo::default(),
             held: Vec::new(),
+            subagents: Vec::new(),
         }
     }
 
@@ -236,6 +366,7 @@ impl TranscriptTranslator {
     ) -> Vec<Value> {
         self.text.clear();
         self.thoughts.clear();
+        self.subagents.clear();
         self.usage = None;
         self.tool_calls = 0;
         vec![crate::payload::user_prompt_item(
@@ -253,22 +384,14 @@ impl TranscriptTranslator {
         let Some(kind) = update.get("sessionUpdate").and_then(Value::as_str) else {
             return Vec::new();
         };
-        if is_subagent_attributed(update) {
+        if let Some(parent) = subagent_parent(update) {
             // Buzz declares the `subagent-transcript` client capability, so
             // claude-agent-acp stops stripping a subagent's prose and thinking
-            // and sends those frames stamped with the Task call that owns them.
-            // We want them *on the wire* — every parsed line resets the read
-            // loop's idle deadline, which is what keeps a long, quiet subagent
-            // from being killed as a stalled turn — but they must not reach the
-            // published record through this path. Folding them into the
-            // top-level buffers would interleave a subagent's narration with
-            // the agent's own with no way to tell them apart afterwards, and
-            // this record is an archive: that is corruption, not a rendering
-            // bug. Attributing them properly needs an item kind the clients can
-            // render (today an unknown `kind` degrades to "no payload content
-            // is surfaced"), so until that contract exists the honest handling
-            // is to carry the liveness and publish nothing.
-            return Vec::new();
+            // and sends those frames stamped with the Task/Agent call that owns
+            // them. They are published, attributed, rather than dropped
+            // (ledger 308): a seat may now use subagents, and work the record
+            // cannot show is work nobody can read, cite or replay.
+            return self.on_subagent_update(kind, &parent, update);
         }
         if USAGE_UPDATE_VARIANTS.contains(&kind) {
             // Only the last one per turn is published: a running counter emitted
@@ -280,7 +403,7 @@ impl TranscriptTranslator {
             "agent_message_chunk" => {
                 self.text.push_str(&content_text(update.get("content")));
                 if self.text.len() >= COALESCE_FLUSH_BYTES {
-                    let mut items = self.release_held();
+                    let mut items = self.release_held_in(None);
                     items.extend(self.flush_text());
                     return items;
                 }
@@ -292,7 +415,7 @@ impl TranscriptTranslator {
                 }
                 self.thoughts.push_str(&content_text(update.get("content")));
                 if self.thoughts.len() >= COALESCE_FLUSH_BYTES {
-                    let mut items = self.release_held();
+                    let mut items = self.release_held_in(None);
                     items.extend(self.flush_thoughts());
                     return items;
                 }
@@ -303,7 +426,7 @@ impl TranscriptTranslator {
                 // Counted here rather than at the result, because a call that
                 // never returns still consumed a call's worth of context.
                 self.tool_calls = self.tool_calls.saturating_add(1);
-                items.extend(self.hold_or_publish(update));
+                items.extend(self.hold_or_publish(update, None));
                 items
             }
             "tool_call_update" => match terminal_status(update) {
@@ -322,6 +445,7 @@ impl TranscriptTranslator {
                 }
                 Some(status) => {
                     let mut items = self.flush_all();
+                    items.extend(self.close_owned_subagent(update));
                     items.push(self.tool_result_item(update, status));
                     items
                 }
@@ -329,6 +453,83 @@ impl TranscriptTranslator {
             "plan" => {
                 let mut items = self.flush_all();
                 items.push(plan_item(update));
+                items
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Translate one frame a subagent produced, attributed to `parent`.
+    ///
+    /// The same item kinds the agent's own frames become, each stamped with
+    /// `parentToolId`. Two things differ, both on purpose:
+    ///
+    /// - prose coalesces in the subagent's own buffer, and a subagent's tool
+    ///   call or result flushes only that buffer — the agent's prose and a
+    ///   sibling subagent's are not at a narrative boundary just because this
+    ///   subagent reached for a tool;
+    /// - its calls are not counted in [`tool_calls`](Self::tool_calls), and
+    ///   its usage frames are not the turn's usage: both describe the
+    ///   subagent's own context window, not the agent's.
+    fn on_subagent_update(&mut self, kind: &str, parent: &str, update: &Value) -> Vec<Value> {
+        match kind {
+            "agent_message_chunk" => {
+                let full = {
+                    let buffers = self.subagent_buffers(parent);
+                    buffers.text.push_str(&content_text(update.get("content")));
+                    buffers.text.len() >= COALESCE_FLUSH_BYTES
+                };
+                if full {
+                    let mut items = self.release_held_in(Some(parent));
+                    items.extend(self.take_subagent_prose(parent, true, false));
+                    return items;
+                }
+                Vec::new()
+            }
+            "agent_thought_chunk" => {
+                if !self.include_thoughts {
+                    return Vec::new();
+                }
+                let full = {
+                    let buffers = self.subagent_buffers(parent);
+                    buffers
+                        .thoughts
+                        .push_str(&content_text(update.get("content")));
+                    buffers.thoughts.len() >= COALESCE_FLUSH_BYTES
+                };
+                if full {
+                    let mut items = self.release_held_in(Some(parent));
+                    items.extend(self.take_subagent_prose(parent, false, true));
+                    return items;
+                }
+                Vec::new()
+            }
+            "tool_call" => {
+                let mut items = self.flush_subagent(parent);
+                items.extend(self.hold_or_publish(update, Some(parent)));
+                items
+            }
+            "tool_call_update" => match terminal_status(update) {
+                None => {
+                    let tool_id = string_field(update, "toolCallId").unwrap_or_default();
+                    if self.absorb(update).has_arguments() {
+                        self.release_through(&tool_id)
+                    } else {
+                        Vec::new()
+                    }
+                }
+                Some(status) => {
+                    let mut items = self.flush_subagent(parent);
+                    items.extend(self.close_owned_subagent(update));
+                    items.push(self.tool_result_item(update, status));
+                    items
+                }
+            },
+            "plan" => {
+                let mut items = self.flush_subagent(parent);
+                let mut item = plan_item(update);
+                stamp_parent(&mut item, Some(parent));
+                items.push(item);
                 items
             }
             _ => Vec::new(),
@@ -349,6 +550,15 @@ impl TranscriptTranslator {
 
     pub fn close_turn(&mut self) -> Vec<Value> {
         let mut items = self.flush_all();
+        // Every subagent's buffer, oldest first, and any of its calls still
+        // held for arguments that never came: nothing a subagent said may be
+        // left unpublished when the turn closes.
+        let parents: Vec<String> = self.subagents.iter().map(|(id, _)| id.clone()).collect();
+        for parent in parents {
+            items.extend(self.flush_subagent(&parent));
+        }
+        let held = std::mem::take(&mut self.held);
+        items.extend(held.iter().map(|call| self.render_tool_call(&call.frame)));
         if let Some(usage) = self.usage.take() {
             items.push(json!({ "kind": "context_window_updated", "usage": usage }));
         }
@@ -364,9 +574,15 @@ impl TranscriptTranslator {
         items
     }
 
-    /// Emit anything buffered without closing the turn.
+    /// Emit the agent's own buffered prose and held calls without closing the
+    /// turn.
+    ///
+    /// Subagent buffers are deliberately not included: the agent reaching a
+    /// narrative boundary says nothing about where a subagent running beside
+    /// it is. They flush on their own boundaries ([`on_update`](Self::on_update))
+    /// and at [`close_turn`](Self::close_turn).
     pub fn flush_all(&mut self) -> Vec<Value> {
-        let mut items = self.release_held();
+        let mut items = self.release_held_in(None);
         items.extend(self.flush_text());
         items.extend(self.flush_thoughts());
         items
@@ -419,37 +635,120 @@ impl TranscriptTranslator {
     /// once it is over. So a call with no arguments is held — for the length
     /// of the streaming, not the run — and published, once, with them.
     ///
-    /// Held calls never go missing: anything else this translator publishes
-    /// (text, a later call, a result, the end of the turn) releases them first,
-    /// in order, as they are.
-    fn hold_or_publish(&mut self, update: &Value) -> Vec<Value> {
+    /// Held calls never go missing: anything else this translator publishes in
+    /// the same scope (text, a later call, a result) releases them first, in
+    /// order, as they are, and the end of the turn releases every scope.
+    ///
+    /// `scope` is the owning Task/Agent call for a subagent's call, `None` for
+    /// the agent's own; see [`HeldCall`] for why holding is per scope.
+    fn hold_or_publish(&mut self, update: &Value, scope: Option<&str>) -> Vec<Value> {
         let tool_id = string_field(update, "toolCallId").unwrap_or_default();
         let has_arguments = self.absorb(update).has_arguments();
         if tool_id.is_empty() || has_arguments {
             return vec![self.render_tool_call(update)];
         }
-        self.held.push((tool_id, update.clone()));
+        self.held.push(HeldCall {
+            id: tool_id,
+            scope: scope.map(str::to_owned),
+            frame: update.clone(),
+        });
         Vec::new()
     }
 
-    /// Publish every held call, oldest first.
-    fn release_held(&mut self) -> Vec<Value> {
-        let held = std::mem::take(&mut self.held);
-        held.iter()
-            .map(|(_, frame)| self.render_tool_call(frame))
+    /// Publish every call held in `scope`, oldest first, leaving other scopes'
+    /// held calls where they are.
+    fn release_held_in(&mut self, scope: Option<&str>) -> Vec<Value> {
+        let (released, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.held)
+            .into_iter()
+            .partition(|call| call.scope.as_deref() == scope);
+        self.held = kept;
+        released
+            .iter()
+            .map(|call| self.render_tool_call(&call.frame))
             .collect()
     }
 
-    /// Publish held calls up to and including `tool_id`, keeping their order.
+    /// Publish held calls of `tool_id`'s scope up to and including it, keeping
+    /// their order.
     fn release_through(&mut self, tool_id: &str) -> Vec<Value> {
-        let Some(position) = self.held.iter().position(|(id, _)| id == tool_id) else {
+        let Some(position) = self.held.iter().position(|call| call.id == tool_id) else {
             return Vec::new();
         };
-        let released: Vec<_> = self.held.drain(..=position).collect();
+        let scope = self.held[position].scope.clone();
+        let mut released = Vec::new();
+        let mut kept = Vec::new();
+        for (index, call) in std::mem::take(&mut self.held).into_iter().enumerate() {
+            if index <= position && call.scope == scope {
+                released.push(call);
+            } else {
+                kept.push(call);
+            }
+        }
+        self.held = kept;
         released
             .iter()
-            .map(|(_, frame)| self.render_tool_call(frame))
+            .map(|call| self.render_tool_call(&call.frame))
             .collect()
+    }
+
+    /// The prose buffers for the subagent owned by `parent`, opened on first
+    /// use.
+    fn subagent_buffers(&mut self, parent: &str) -> &mut ProseBuffers {
+        let index = match self.subagents.iter().position(|(id, _)| id == parent) {
+            Some(index) => index,
+            None => {
+                self.subagents
+                    .push((parent.to_owned(), ProseBuffers::default()));
+                self.subagents.len() - 1
+            }
+        };
+        &mut self.subagents[index].1
+    }
+
+    /// Take a subagent's buffered prose as attributed items.
+    fn take_subagent_prose(&mut self, parent: &str, text: bool, thoughts: bool) -> Vec<Value> {
+        let Some(index) = self.subagents.iter().position(|(id, _)| id == parent) else {
+            return Vec::new();
+        };
+        let buffers = &mut self.subagents[index].1;
+        let mut items = Vec::new();
+        if text {
+            let taken = std::mem::take(&mut buffers.text);
+            if !taken.trim().is_empty() {
+                items.push(
+                    json!({ "kind": "assistant_text", "text": taken, "parentToolId": parent }),
+                );
+            }
+        }
+        if thoughts {
+            let taken = std::mem::take(&mut buffers.thoughts);
+            if !taken.trim().is_empty() {
+                items.push(json!({ "kind": "reasoning", "text": taken, "parentToolId": parent }));
+            }
+        }
+        if buffers.text.is_empty() && buffers.thoughts.is_empty() {
+            self.subagents.remove(index);
+        }
+        items
+    }
+
+    /// Everything a subagent has pending: its held calls, then its prose.
+    fn flush_subagent(&mut self, parent: &str) -> Vec<Value> {
+        let mut items = self.release_held_in(Some(parent));
+        items.extend(self.take_subagent_prose(parent, true, true));
+        items
+    }
+
+    /// Flush the subagent `update` owns, ahead of the owning call's result.
+    ///
+    /// A no-op unless the terminal frame is for a call that spawned a
+    /// subagent with something still buffered.
+    fn close_owned_subagent(&mut self, update: &Value) -> Vec<Value> {
+        let tool_id = string_field(update, "toolCallId").unwrap_or_default();
+        if tool_id.is_empty() {
+            return Vec::new();
+        }
+        self.flush_subagent(&tool_id)
     }
 
     /// The `tool_call` item for a call whose frames are already absorbed.
@@ -480,7 +779,11 @@ impl TranscriptTranslator {
         if let Some(edit) = edit {
             tool.insert("edit".into(), edit);
         }
-        json!({ "kind": "tool_call", "tool": Value::Object(tool) })
+        let mut item = json!({ "kind": "tool_call", "tool": Value::Object(tool) });
+        // Beside `tool`, not inside it: the attribution is a fact about where
+        // the call sits in the record, not about the call.
+        stamp_parent(&mut item, subagent_parent(update).as_deref());
+        item
     }
 
     fn tool_result_item(&mut self, update: &Value, status: &str) -> Value {
@@ -493,6 +796,7 @@ impl TranscriptTranslator {
         let tool_kind = memo.kind.clone();
         let input = memo.input.clone();
         let edit = tool_edit_payload(&memo.paths, &memo.changes);
+        let subagent = memo.spawn.object(update);
         memo.shed_payload();
 
         let content = content_text(update.get("content"));
@@ -522,7 +826,19 @@ impl TranscriptTranslator {
             json!(bound_text(&content, MAX_TOOL_CONTENT_BYTES)),
         );
         item.insert("isError".into(), json!(status == "failed"));
-        Value::Object(item)
+        if let Some(subagent) = subagent {
+            item.insert("subagent".into(), subagent);
+        }
+        let mut item = Value::Object(item);
+        stamp_parent(&mut item, subagent_parent(update).as_deref());
+        item
+    }
+}
+
+/// Attribute `item` to the Task/Agent call that owns it, when one does.
+fn stamp_parent(item: &mut Value, parent: Option<&str>) {
+    if let (Some(parent), Some(object)) = (parent, item.as_object_mut()) {
+        object.insert("parentToolId".into(), json!(parent));
     }
 }
 
@@ -696,19 +1012,22 @@ fn plan_item(update: &Value) -> Value {
     json!({ "kind": "plan", "entries": entries, "text": bound_text(&text, MAX_TOOL_CONTENT_BYTES) })
 }
 
-/// Whether this update describes a subagent's work rather than the agent's own.
+/// The Task/Agent call that owns this update, when it describes a subagent's
+/// work rather than the agent's own.
 ///
 /// claude-agent-acp stamps `_meta.claudeCode.parentToolUseId` onto every frame
-/// produced inside a Task subagent, naming the tool call that spawned it, and
-/// uses the same field to decide what counts as the turn's own answer. `_meta`
-/// rides on the `update` object itself, not on the notification's `params`.
-fn is_subagent_attributed(update: &Value) -> bool {
+/// produced inside a Task/Agent subagent, naming the tool call that spawned it
+/// (`stampParentToolUseId`, `dist/acp-agent.js:483` in 0.84.0), and uses the
+/// same field to decide what counts as the turn's own answer. `_meta` rides on
+/// the `update` object itself, not on the notification's `params`. Only a
+/// present, non-empty id counts, so an adapter that sends `_meta` without one
+/// cannot silently move the agent's own work under a spawn.
+fn subagent_parent(update: &Value) -> Option<String> {
     update
-        .get("_meta")
-        .and_then(|meta| meta.get("claudeCode"))
-        .and_then(|claude| claude.get("parentToolUseId"))
+        .pointer("/_meta/claudeCode/parentToolUseId")
         .and_then(Value::as_str)
-        .is_some_and(|parent| !parent.is_empty())
+        .filter(|parent| !parent.is_empty())
+        .map(str::to_owned)
 }
 
 /// Whether a `tool_call_update` reports a terminal status.
@@ -1252,16 +1571,51 @@ mod tests {
             .is_empty());
     }
 
-    /// The regression that declaring `subagent-transcript` would otherwise
-    /// introduce.
-    ///
-    /// Before the capability, the adapter filtered a subagent's prose out
-    /// itself and this case could not arise. Now the frames arrive, and if they
-    /// fell through to the normal `agent_message_chunk` arm the subagent's
-    /// narration would be concatenated into the same buffer as the agent's own
-    /// and flushed as one indistinguishable block. The assertion is on the
-    /// *seam*: the two top-level chunks must still meet exactly, with nothing
-    /// of the subagent's between them.
+    /// A subagent-attributed `tool_call` frame, shaped as claude-agent-acp
+    /// sends it for a non-AIR client.
+    fn subagent_tool_call(parent: &str, id: &str, name: &str, input: Value) -> Value {
+        let mut frame = tool_call(id, name, input);
+        frame["_meta"]["claudeCode"]["parentToolUseId"] = json!(parent);
+        frame
+    }
+
+    fn subagent_tool_done(parent: &str, id: &str, status: &str, content: &str) -> Value {
+        let mut frame = tool_done(id, status, content);
+        frame["_meta"]["claudeCode"]["parentToolUseId"] = json!(parent);
+        frame
+    }
+
+    /// The opening frame of an `Agent` spawn, as the adapter's renderer
+    /// builds it (`tool-calls/renderer.js:52-77`, title from the Agent
+    /// reporter's `description`, kind `think`).
+    fn agent_spawn(id: &str, input: Value) -> Value {
+        update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": id,
+            "name": "Agent",
+            "title": input.get("description").and_then(Value::as_str).unwrap_or("Task"),
+            "kind": "think",
+            "status": "pending",
+            "rawInput": input,
+            "_meta": { "claudeCode": { "toolName": "Agent" } },
+        }))
+    }
+
+    fn agent_done(id: &str, status: &str, report: &str) -> Value {
+        update(json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": id,
+            "status": status,
+            "content": [{ "type": "content", "content": { "type": "text", "text": report } }],
+            "_meta": { "claudeCode": { "toolName": "Agent" } },
+        }))
+    }
+
+    /// Ledger 308: a subagent's prose is published, attributed to its spawn,
+    /// and never concatenated into the agent's own narrative. The seam
+    /// assertion still holds — the agent's two chunks meet exactly with
+    /// nothing of the subagent's between them — and the subagent's words come
+    /// out as their own item carrying `parentToolId`.
     #[test]
     fn a_subagents_prose_never_lands_in_the_agents_own_narrative() {
         let mut translator = TranscriptTranslator::new(true);
@@ -1270,27 +1624,44 @@ mod tests {
             translator
                 .on_update(&subagent_chunk("t-parent", "Reading forty files…"))
                 .is_empty(),
-            "a subagent chunk must publish nothing on its own"
+            "a subagent chunk coalesces like any other; it publishes nothing alone"
         );
+        translator.on_update(&chunk("Waiting."));
         translator.on_update(&subagent_chunk("t-parent", " and forty more."));
         let items = translator.close_turn();
 
-        assert_eq!(kinds(&items), vec!["assistant_text"]);
-        assert_eq!(
-            items[0]["text"], "I will delegate this. ",
-            "the subagent's narration leaked into the agent's own text"
-        );
+        assert_eq!(kinds(&items), vec!["assistant_text", "assistant_text"]);
+        assert_eq!(items[0]["text"], "I will delegate this. Waiting.");
+        assert!(items[0].get("parentToolId").is_none());
+        assert_eq!(items[1]["text"], "Reading forty files… and forty more.");
+        assert_eq!(items[1]["parentToolId"], "t-parent");
     }
 
-    /// Every frame kind a subagent can produce is covered, not just prose.
-    ///
-    /// A subagent's tool calls are the noisiest of these — an unguarded
-    /// `tool_call` arm would also register the child's `toolCallId` in the
-    /// pairing maps, so a later top-level result could resolve against a
-    /// subagent's call.
+    /// Two subagents running side by side keep separate buffers: one's prose
+    /// never merges with the other's.
     #[test]
-    fn subagent_attribution_is_honoured_for_every_frame_kind() {
+    fn sibling_subagents_coalesce_separately() {
         let mut translator = TranscriptTranslator::new(true);
+        translator.on_update(&subagent_chunk("spawn-a", "alpha one "));
+        translator.on_update(&subagent_chunk("spawn-b", "beta one "));
+        translator.on_update(&subagent_chunk("spawn-a", "alpha two"));
+        translator.on_update(&subagent_chunk("spawn-b", "beta two"));
+        let items = translator.close_turn();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["parentToolId"], "spawn-a");
+        assert_eq!(items[0]["text"], "alpha one alpha two");
+        assert_eq!(items[1]["parentToolId"], "spawn-b");
+        assert_eq!(items[1]["text"], "beta one beta two");
+    }
+
+    /// Every frame kind a subagent can produce is published as the item it
+    /// would be at the top level, each stamped with the owning call — never
+    /// unattributed, so nothing a subagent did can pass for the agent's own.
+    #[test]
+    fn every_subagent_frame_kind_is_published_attributed() {
+        let mut translator = TranscriptTranslator::new(true);
+        let mut published = Vec::new();
         for kind in [
             "agent_message_chunk",
             "agent_thought_chunk",
@@ -1303,19 +1674,304 @@ mod tests {
                 "toolCallId": "child-1",
                 "title": "child work",
                 "status": "completed",
-                "content": { "type": "text", "text": "child prose" },
+                "rawInput": { "path": "src/lib.rs" },
+                "content": { "type": "text", "text": format!("child {kind}") },
                 "entries": [],
             });
             frame["_meta"]["claudeCode"]["parentToolUseId"] = json!("t-parent");
-            assert!(
-                translator.on_update(&update(frame)).is_empty(),
-                "subagent-attributed `{kind}` must not be published"
+            published.extend(translator.on_update(&update(frame)));
+        }
+        published.extend(translator.close_turn());
+
+        assert_eq!(
+            kinds(&published),
+            vec![
+                "assistant_text",
+                "reasoning",
+                "tool_call",
+                "tool_result",
+                "plan"
+            ]
+        );
+        for item in &published {
+            assert_eq!(
+                item["parentToolId"], "t-parent",
+                "a subagent item went out unattributed: {item}"
             );
         }
+        let call = &published[2];
         assert!(
-            translator.close_turn().is_empty(),
-            "nothing from a subagent may survive to the turn's close"
+            call["tool"].get("parentToolId").is_none(),
+            "the attribution sits beside `tool`, not inside it"
         );
+    }
+
+    /// A subagent's buffer flushes at its own boundaries: its next tool call,
+    /// and the owning call's terminal result — ahead of that result, so the
+    /// record reads in the order the work happened.
+    #[test]
+    fn a_subagents_prose_flushes_at_its_own_call_and_at_the_spawns_result() {
+        let mut translator = TranscriptTranslator::new(false);
+        let spawn = translator.on_update(&agent_spawn(
+            "spawn-1",
+            json!({ "description": "Survey", "prompt": "look", "subagent_type": "Explore" }),
+        ));
+        assert_eq!(kinds(&spawn), vec!["tool_call"]);
+
+        translator.on_update(&subagent_chunk("spawn-1", "Looking first."));
+        let call = translator.on_update(&subagent_tool_call(
+            "spawn-1",
+            "child-1",
+            "Read",
+            json!({ "file_path": "src/lib.rs" }),
+        ));
+        assert_eq!(kinds(&call), vec!["assistant_text", "tool_call"]);
+        assert_eq!(call[0]["text"], "Looking first.");
+        assert_eq!(call[1]["parentToolId"], "spawn-1");
+
+        translator.on_update(&subagent_tool_done("spawn-1", "child-1", "completed", "ok"));
+        translator.on_update(&subagent_chunk("spawn-1", "Found it."));
+        // The agent's own prose is not a boundary for the subagent.
+        translator.on_update(&chunk("Meanwhile."));
+        let lead_call = translator.on_update(&tool_call("t2", "Bash", json!({ "command": "ls" })));
+        assert_eq!(kinds(&lead_call), vec!["assistant_text", "tool_call"]);
+        assert!(lead_call[0].get("parentToolId").is_none());
+
+        let done = translator.on_update(&agent_done("spawn-1", "completed", "report"));
+        assert_eq!(kinds(&done), vec!["assistant_text", "tool_result"]);
+        assert_eq!(done[0]["text"], "Found it.");
+        assert_eq!(done[0]["parentToolId"], "spawn-1");
+        assert!(
+            done[1].get("parentToolId").is_none(),
+            "the spawn is the agent's own call"
+        );
+        assert!(translator.close_turn().is_empty());
+    }
+
+    /// A subagent's thinking obeys `include_thoughts` exactly as the agent's
+    /// does.
+    #[test]
+    fn a_subagents_thoughts_obey_include_thoughts() {
+        let mut thought_frame = thought("pondering");
+        thought_frame["_meta"]["claudeCode"]["parentToolUseId"] = json!("spawn-1");
+
+        let mut without = TranscriptTranslator::new(false);
+        without.on_update(&thought_frame);
+        assert!(without.close_turn().is_empty());
+
+        let mut with = TranscriptTranslator::new(true);
+        with.on_update(&thought_frame);
+        let items = with.close_turn();
+        assert_eq!(kinds(&items), vec!["reasoning"]);
+        assert_eq!(items[0]["parentToolId"], "spawn-1");
+    }
+
+    /// A subagent's prose flushes at the size boundary without merging with
+    /// the agent's buffer.
+    #[test]
+    fn a_subagents_prose_flushes_at_the_size_boundary() {
+        let mut translator = TranscriptTranslator::new(false);
+        translator.on_update(&chunk("mine"));
+        let big = "x".repeat(COALESCE_FLUSH_BYTES);
+        let items = translator.on_update(&subagent_chunk("spawn-1", &big));
+        assert_eq!(kinds(&items), vec!["assistant_text"]);
+        assert_eq!(items[0]["parentToolId"], "spawn-1");
+        let rest = translator.close_turn();
+        assert_eq!(rest[0]["text"], "mine");
+    }
+
+    /// The hold for an argument-less opening frame (48124e695) works per call
+    /// and per scope: a subagent's activity does not release the agent's own
+    /// held call, which would publish an empty spawn row, and a subagent's
+    /// held call is published, attributed, once its arguments arrive.
+    #[test]
+    fn held_calls_are_released_per_scope() {
+        let mut translator = TranscriptTranslator::new(false);
+        // The agent opens a second spawn whose arguments are still streaming.
+        assert!(translator
+            .on_update(&agent_spawn("spawn-2", json!({})))
+            .is_empty());
+        // A running subagent of an earlier spawn opens a call, also without
+        // arguments yet, then does some talking.
+        assert!(translator
+            .on_update(&subagent_tool_call(
+                "spawn-1",
+                "child-1",
+                "Terminal",
+                json!({})
+            ))
+            .is_empty());
+        let other = translator.on_update(&subagent_tool_call(
+            "spawn-1",
+            "child-2",
+            "Read",
+            json!({ "file_path": "a.rs" }),
+        ));
+        // The subagent's own held call goes first; the agent's stays held.
+        assert_eq!(kinds(&other), vec!["tool_call", "tool_call"]);
+        assert_eq!(other[0]["tool"]["toolId"], "child-1");
+        assert_eq!(other[0]["parentToolId"], "spawn-1");
+        assert_eq!(other[1]["tool"]["toolId"], "child-2");
+
+        // A subagent call held, then given its arguments, publishes with them.
+        assert!(translator
+            .on_update(&subagent_tool_call(
+                "spawn-1",
+                "child-3",
+                "Terminal",
+                json!({})
+            ))
+            .is_empty());
+        let mut args = json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "child-3",
+            "rawInput": { "command": "cargo test" },
+        });
+        args["_meta"]["claudeCode"]["parentToolUseId"] = json!("spawn-1");
+        let released = translator.on_update(&args);
+        assert_eq!(kinds(&released), vec!["tool_call"]);
+        assert_eq!(released[0]["tool"]["input"]["command"], "cargo test");
+        assert_eq!(released[0]["parentToolId"], "spawn-1");
+
+        // The agent's spawn finally gets its arguments and is published whole.
+        let spawn = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "spawn-2",
+            "rawInput": { "description": "Second", "prompt": "go", "subagent_type": "general-purpose" },
+            "_meta": { "claudeCode": { "toolName": "Agent" } },
+        })));
+        assert_eq!(kinds(&spawn), vec!["tool_call"]);
+        assert_eq!(
+            spawn[0]["tool"]["input"]["subagent_type"],
+            "general-purpose"
+        );
+        assert!(spawn[0].get("parentToolId").is_none());
+    }
+
+    /// A held subagent call whose arguments never come is still published, at
+    /// turn end, attributed.
+    #[test]
+    fn a_held_subagent_call_is_released_at_turn_end() {
+        let mut translator = TranscriptTranslator::new(false);
+        translator.on_update(&subagent_tool_call(
+            "spawn-1",
+            "child-1",
+            "Terminal",
+            json!({}),
+        ));
+        let items = translator.close_turn();
+        assert_eq!(kinds(&items), vec!["tool_call"]);
+        assert_eq!(items[0]["parentToolId"], "spawn-1");
+    }
+
+    /// The owning call's result carries a `subagent` object with exactly what
+    /// was observed: the type and model from the call's input, the totals
+    /// from a structured `rawOutput` when the adapter sends one.
+    #[test]
+    fn the_spawns_result_carries_only_observed_subagent_facts() {
+        let mut translator = TranscriptTranslator::new(false);
+        translator.on_update(&agent_spawn(
+            "spawn-1",
+            json!({ "description": "Survey", "prompt": "p", "subagent_type": "Explore", "model": "haiku" }),
+        ));
+        let mut done = agent_done("spawn-1", "completed", "report");
+        done["rawOutput"] = json!({
+            "status": "completed",
+            "totalTokens": 51234,
+            "totalDurationMs": 385000,
+            "totalToolUseCount": 17,
+        });
+        let result = translator.on_update(&done);
+        assert_eq!(
+            result_of(&result)["subagent"],
+            json!({
+                "type": "Explore",
+                "model": "haiku",
+                "totalTokens": 51234,
+                "durationMs": 385000,
+                "toolUseCount": 17,
+            })
+        );
+
+        // What claude-agent-acp 0.84.0 actually sends a non-AIR client: no
+        // rawOutput, no model argument. Only the type survives.
+        translator.on_update(&agent_spawn(
+            "spawn-2",
+            json!({ "description": "Again", "prompt": "p", "subagent_type": "general-purpose" }),
+        ));
+        let result = translator.on_update(&agent_done("spawn-2", "failed", "boom"));
+        let result = result_of(&result);
+        assert_eq!(result["subagent"], json!({ "type": "general-purpose" }));
+        assert_eq!(result["isError"], true);
+
+        // A spawn with nothing observed about its subagent carries no object
+        // rather than an invented one, and an ordinary call never does.
+        translator.on_update(&agent_spawn(
+            "spawn-3",
+            json!({ "description": "Bare", "prompt": "p" }),
+        ));
+        let bare = translator.on_update(&agent_done("spawn-3", "completed", "ok"));
+        assert!(result_of(&bare).get("subagent").is_none());
+        translator.on_update(&tool_call("t9", "Read", json!({ "file_path": "a" })));
+        let plain = translator.on_update(&tool_done("t9", "completed", "ok"));
+        assert!(result_of(&plain).get("subagent").is_none());
+    }
+
+    /// A subagent's calls and usage describe the subagent's context window,
+    /// not the agent's: they neither count toward the turn's tool calls nor
+    /// replace the turn's usage snapshot.
+    #[test]
+    fn a_subagents_calls_and_usage_are_not_the_turns() {
+        let mut translator = TranscriptTranslator::new(false);
+        let _ = translator.begin_turn("go", None, None, None, 0);
+        translator.on_update(&agent_spawn(
+            "spawn-1",
+            json!({ "description": "d", "prompt": "p", "subagent_type": "Explore" }),
+        ));
+        translator.on_update(&subagent_tool_call(
+            "spawn-1",
+            "c1",
+            "Read",
+            json!({ "file_path": "a" }),
+        ));
+        translator.on_update(&subagent_tool_call(
+            "spawn-1",
+            "c2",
+            "Read",
+            json!({ "file_path": "b" }),
+        ));
+        assert_eq!(translator.tool_calls(), 1);
+
+        translator.on_update(&update(
+            json!({ "sessionUpdate": "usage_update", "used": 100 }),
+        ));
+        let mut sub_usage = json!({ "sessionUpdate": "usage_update", "used": 999 });
+        sub_usage["_meta"]["claudeCode"]["parentToolUseId"] = json!("spawn-1");
+        translator.on_update(&sub_usage);
+        let items = translator.close_turn();
+        let usage = items
+            .iter()
+            .find(|item| item["kind"] == "context_window_updated")
+            .expect("usage");
+        assert_eq!(usage["usage"]["used"], 100);
+    }
+
+    /// The attribution survives the publish seam: redaction and fitting keep
+    /// `parentToolId` and `subagent` on the item.
+    #[test]
+    fn attribution_survives_fit_item() {
+        let item = json!({
+            "kind": "tool_result",
+            "toolId": "spawn-1",
+            "toolName": "Survey",
+            "content": "report",
+            "isError": false,
+            "subagent": { "type": "Explore" },
+            "parentToolId": "toolu_01ABC",
+        });
+        let fitted = fit_item(item, 512, 32 * 1024);
+        assert_eq!(fitted["parentToolId"], "toolu_01ABC");
+        assert_eq!(fitted["subagent"]["type"], "Explore");
     }
 
     /// The guard keys on a *present, non-empty* parent id and nothing else, so

@@ -81,9 +81,20 @@ const EXEMPT: &[&str] = &[];
 /// Seats run with the operator's `HOME`, so a harness that keeps its session
 /// registry there — Claude Code's `~/.claude` is the live example — exposes
 /// tools that reach *other* sessions on this machine without going near the
-/// relay. `Task` and `Agent` spawn local subagents; `SendMessage` addresses
-/// another session directly. All three produce coordination that the
-/// provider's transcript never sees.
+/// relay. `SendMessage` addresses another session directly, and nothing said
+/// through it reaches the transcript the provider publishes, so it stays
+/// fenced.
+///
+/// `Task` and `Agent` used to be on this list for the same reason: a
+/// subagent's work arrived on the wire but the translator dropped it, so a
+/// lead that delegated to one was coordinating off the record (ledger 77).
+/// That is no longer true. Every subagent-attributed frame is now published
+/// as an ordinary transcript item carrying `parentToolId`, nested under the
+/// call that spawned it ([`crate::transcript`], ledger 308), so a subagent's
+/// reads, edits and prose are as readable, citable and replayable as the
+/// seat's own. A subagent also runs inside the seat — same working
+/// directory, same write fence, same identity — so it is the seat's work, not
+/// another session's. They are allowed.
 ///
 /// # Enforced on claude-agent-acp; a briefing on codex-acp
 ///
@@ -123,7 +134,7 @@ const EXEMPT: &[&str] = &[];
 /// [`actor_seat_briefing`] must keep naming the tools regardless: on codex it
 /// is the whole fence, and on claude a named rule beats a tool that has simply
 /// vanished without explanation.
-pub(crate) const SEAT_OUT_OF_BOUNDS_TOOLS: &[&str] = &["Task", "Agent", "SendMessage"];
+pub(crate) const SEAT_OUT_OF_BOUNDS_TOOLS: &[&str] = &["SendMessage"];
 
 /// The fence every adapter this sidecar spawns is subject to.
 pub(crate) const FENCE: EnvFence = EnvFence {
@@ -187,14 +198,20 @@ pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: 
 ///   promise the provider cannot keep.
 ///
 /// - The relay is the only channel out. A seat runs under the operator's
-///   `HOME`, so the harness's own local subagent and cross-session tools
+///   `HOME`, so the harness's own cross-session tool
 ///   ([`SEAT_OUT_OF_BOUNDS_TOOLS`]) can reach other sessions on this machine
 ///   directly — and on 2026-08-27 a lead used one to dispatch a builder, and
 ///   the two seats then talked twice outside the relay. Nothing said that way
 ///   is in the transcript the provider publishes, so it cannot be read, cited
-///   or replayed. Until the fence is enforced in the adapter's own options,
-///   this sentence is the only thing standing there, and it says so plainly
-///   rather than implying the tools are absent.
+///   or replayed. On codex this sentence is the only thing standing there,
+///   and it says so plainly rather than implying the tool is absent.
+/// - Subagents (`Task`/`Agent`) are allowed for quick research and side work,
+///   because their work is published attributed inside this seat's transcript
+///   (ledger 308). Hiring is named as the tool for what a subagent cannot
+///   give: independent checking, a different model, its own sandbox, or long
+///   parallel work. Without that line a seat would either avoid subagents it
+///   may use or reach for one where a separate seat's independence was the
+///   point.
 /// - After dispatching, end the turn. The report comes back as its own
 ///   addressed turn.
 /// - Reports arrive as turns, so polling the inbox inside a turn reads the
@@ -209,7 +226,7 @@ pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: 
 pub(crate) fn actor_seat_briefing(actor_pubkey: &str, role: &str, relay_url: &str) -> String {
     let out_of_bounds = SEAT_OUT_OF_BOUNDS_TOOLS.join(", ");
     format!(
-        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider, and you are seated in it as a Buzz agent.\n\nYou hold your own Buzz identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. Run the `bee` CLI as `$BEE` - your host chose one binary, set $BEE to its absolute path, and put its directory first on your PATH, so `$BEE` and a bare `bee` are the same build. Never a path someone typed at you, and never a path from a transcript. It speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Buzz variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nThe relay is the only channel to other seats and to the operator. Local subagent and cross-session tools - {out_of_bounds} - are out of bounds in this seat: they reach other sessions on this computer directly, and nothing said through them appears in the transcript this session publishes, so no one can read it, cite it, or replay it. Say it over the relay or it did not happen.\n\nWrite files only inside your working directory. Everything else on this computer - other projects, the operator's ~/.claude, ~/.codex, ~/.config, ~/.nostr and ~/.ssh, this app's own data, other seats' directories - is somebody else's, and the notes and memory files there are theirs, not a place to record your conclusions. Whether the host enforces that is stated separately in this briefing.\n\nAfter you dispatch work to another seat, end your turn. An addressed relay turn wakes you, so the reply arrives as a turn of its own; holding this turn open to wait for it only leaves the seat busy with nothing to say.\n\nReports arrive as turns. Do not poll `bee sessions inbox` inside a turn looking for one - you will read the same report the relay is about to hand you and count it twice.\n\nRun long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes - only an addressed relay turn wakes you, and a background job finishing is not one, so whoever is waiting on you is left watching a seat that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go."
+        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider, and you are seated in it as a Buzz agent.\n\nYou hold your own Buzz identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. Run the `bee` CLI as `$BEE` - your host chose one binary, set $BEE to its absolute path, and put its directory first on your PATH, so `$BEE` and a bare `bee` are the same build. Never a path someone typed at you, and never a path from a transcript. It speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Buzz variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nThe relay is the only channel to other seats and to the operator. Cross-session tools - {out_of_bounds} - are out of bounds in this seat: they reach other sessions on this computer directly, and nothing said through them appears in the transcript this session publishes, so no one can read it, cite it, or replay it. Say it over the relay or it did not happen.\n\nSubagents (the Task/Agent tool) are allowed for quick research and side tasks inside this seat: they run in your working directory under your rules, and their work is published in this session's transcript under the call that spawned them. Hire a seat instead (`bee sessions hire`) when the work needs independent checking, a different model, its own sandbox, or long parallel work.\n\nWrite files only inside your working directory. Everything else on this computer - other projects, the operator's ~/.claude, ~/.codex, ~/.config, ~/.nostr and ~/.ssh, this app's own data, other seats' directories - is somebody else's, and the notes and memory files there are theirs, not a place to record your conclusions. Whether the host enforces that is stated separately in this briefing.\n\nAfter you dispatch work to another seat, end your turn. An addressed relay turn wakes you, so the reply arrives as a turn of its own; holding this turn open to wait for it only leaves the seat busy with nothing to say.\n\nReports arrive as turns. Do not poll `bee sessions inbox` inside a turn looking for one - you will read the same report the relay is about to hand you and count it twice.\n\nRun long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes - only an addressed relay turn wakes you, and a background job finishing is not one, so whoever is waiting on you is left watching a seat that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go."
     )
 }
 
@@ -972,8 +989,10 @@ mod tests {
     }
 
     /// Ledger 77 (*Fence*, a): a lead dispatched a builder through a local
-    /// subagent and the two seats then talked twice outside the relay. The
-    /// briefing must name the tools rather than leave the seat to infer them.
+    /// tool and the two seats then talked twice outside the relay. The
+    /// briefing must name the tool rather than leave the seat to infer it.
+    /// Ledger 308: subagents are allowed now that their work is published
+    /// attributed, so `SendMessage` is the one tool still fenced.
     #[test]
     fn the_seat_briefing_names_the_tools_that_bypass_the_relay() {
         let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
@@ -983,12 +1002,11 @@ mod tests {
                 "the seated briefing does not name `{tool}`"
             );
         }
-        for tool in ["Task", "Agent", "SendMessage"] {
-            assert!(
-                SEAT_OUT_OF_BOUNDS_TOOLS.contains(&tool),
-                "`{tool}` is no longer named as out of bounds for a seat"
-            );
-        }
+        assert_eq!(
+            SEAT_OUT_OF_BOUNDS_TOOLS,
+            &["SendMessage"],
+            "only the cross-session tool is out of bounds for a seat"
+        );
         assert!(
             briefing.contains("The relay is the only channel to other seats"),
             "the seated briefing must say where coordination happens"
@@ -996,6 +1014,28 @@ mod tests {
         assert!(
             briefing.contains("out of bounds"),
             "the seated briefing must say the tools are forbidden, not absent"
+        );
+    }
+
+    /// Ledger 308: the seat is told subagents are allowed, what for, and when
+    /// to hire instead — and is not told they are out of bounds.
+    #[test]
+    fn the_seat_briefing_allows_subagents_and_says_when_to_hire() {
+        let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
+        assert!(briefing.contains("Subagents (the Task/Agent tool) are allowed"));
+        assert!(briefing.contains("quick research and side tasks"));
+        assert!(briefing.contains("`bee sessions hire`"));
+        for reason in [
+            "independent checking",
+            "a different model",
+            "its own sandbox",
+            "long parallel work",
+        ] {
+            assert!(briefing.contains(reason), "hire reason missing: {reason}");
+        }
+        assert!(
+            briefing.contains("Cross-session tools - SendMessage - are out of bounds"),
+            "SendMessage must still be named as out of bounds"
         );
     }
 

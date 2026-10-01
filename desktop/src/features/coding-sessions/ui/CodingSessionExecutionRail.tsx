@@ -19,7 +19,9 @@ import type {
   CodingSessionUmbrellaRecord,
   CodingSessionWorkspaceStatus,
 } from "@/features/coding-sessions/lib/codingSessionTypes";
+import type { CodingSessionSubagentPanel } from "@/features/coding-sessions/lib/codingSessionSubagents";
 import { cn } from "@/shared/lib/cn";
+import { CodingSessionSubagentsSection } from "./CodingSessionSubagentsPanel";
 
 type ExecutionRailTab = "overview" | `execution:${string}`;
 
@@ -33,6 +35,7 @@ export function CodingSessionExecutionRail({
   actorNames,
   canSteer = false,
   resolveReachability = UNKNOWN_CODING_SESSION_REACHABILITY,
+  subagents = null,
   umbrella,
 }: {
   /**
@@ -52,6 +55,11 @@ export function CodingSessionExecutionRail({
    * demotes nothing, because absence of evidence is not evidence.
    */
   resolveReachability?: CodingSessionReachabilityResolver;
+  /**
+   * The Task/Agent subagents the session's seats spawned (ledger 308), listed
+   * under the participants on the overview. Absent or empty, nothing renders.
+   */
+  subagents?: CodingSessionSubagentPanel | null;
   umbrella: CodingSessionUmbrellaRecord;
 }) {
   const participants = React.useMemo(
@@ -171,6 +179,7 @@ export function CodingSessionExecutionRail({
             executions={umbrella.executions}
             panelId={`${panelId}-overview`}
             statuses={statuses}
+            subagents={subagents}
           />
         )}
       </div>
@@ -226,12 +235,14 @@ function Overview({
   executions,
   panelId,
   statuses,
+  subagents,
 }: {
   actorNames?: CodingSessionActorNameResolver;
   canSteer: boolean;
   executions: CodingSessionExecution[];
   panelId: string;
   statuses: ReadonlyMap<string, CodingSessionWorkspaceStatus>;
+  subagents: CodingSessionSubagentPanel | null;
 }) {
   return (
     <section aria-label="Execution overview" id={panelId} role="tabpanel">
@@ -249,6 +260,11 @@ function Overview({
           />
         ))}
       </div>
+      {subagents && subagents.rows.length > 0 ? (
+        <div className="mt-4">
+          <CodingSessionSubagentsSection panel={subagents} />
+        </div>
+      ) : null}
     </section>
   );
 }

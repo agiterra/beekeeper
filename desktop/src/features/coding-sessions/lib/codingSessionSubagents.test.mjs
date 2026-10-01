@@ -1,0 +1,354 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  deriveCodingSessionSubagentPanel,
+  formatCodingSessionSubagentFooter,
+  formatCodingSessionSubagentMeta,
+  formatCodingSessionSubagentTokens,
+  partitionCodingSessionSubagentItems,
+} from "./codingSessionSubagents.ts";
+import { deriveCodingSessionTaskModel } from "./codingSessionTaskModel.ts";
+import { deriveCodingSessionTranscriptModel } from "./codingSessionTranscriptModel.ts";
+import { projectCodingSessionTranscript } from "./codingSessionTranscriptProjection.ts";
+
+const TARGET = {
+  driver: "claude-agent-acp",
+  instanceId: "0123456789abcdef",
+  sessionId: "11111111-2222-3333-4444-555555555555",
+  generation: 1,
+};
+
+/** Envelopes one second apart, all in one declared turn. */
+function project(items) {
+  return projectCodingSessionTranscript(
+    items.map((item, index) => ({
+      target: TARGET,
+      eventSeq: index + 1,
+      timestamp: 1_700_000_000_000 + index * 1_000,
+      turnId: "turn-1",
+      item,
+    })),
+    { channelId: "channel-1", generationId: "generation-1" },
+  );
+}
+
+function taskCall(toolId, description, extra = {}) {
+  return {
+    kind: "tool_call",
+    tool: {
+      toolName: description,
+      toolKind: "think",
+      toolId,
+      input: { description, prompt: "Look around", subagent_type: "Explore" },
+    },
+    ...extra,
+  };
+}
+
+function taskResult(toolId, extra = {}) {
+  return {
+    kind: "tool_result",
+    toolId,
+    toolName: "ignored",
+    content: "Found three call sites.\nDetails follow.",
+    isError: false,
+    ...extra,
+  };
+}
+
+const READ_CALL = (toolId, parentToolId) => ({
+  kind: "tool_call",
+  tool: { toolName: "Read", toolKind: "read", toolId, input: { path: "a.rs" } },
+  parentToolId,
+});
+const READ_RESULT = (toolId, parentToolId) => ({
+  kind: "tool_result",
+  toolId,
+  toolName: "Read",
+  content: "fn main() {}",
+  parentToolId,
+});
+
+function oneSubagentTurn(resultExtra = {}) {
+  return project([
+    { kind: "user_prompt", content: "Investigate" },
+    taskCall("task-1", "Map the call sites"),
+    { kind: "assistant_text", text: "Reading a.rs", parentToolId: "task-1" },
+    READ_CALL("read-1", "task-1"),
+    READ_RESULT("read-1", "task-1"),
+    taskResult("task-1", resultExtra),
+    { kind: "assistant_text", text: "The lead's own answer." },
+  ]);
+}
+
+function turnEntries(transcript, isWorking = false) {
+  const model = deriveCodingSessionTranscriptModel(transcript, { isWorking });
+  const turn = model.blocks.find((block) => block.kind === "turn");
+  assert.ok(turn, "expected one turn");
+  return turn.entries;
+}
+
+test("projection stamps parentToolId, toolCallId and only the reported subagent fields", () => {
+  const transcript = oneSubagentTurn({
+    subagent: { type: "Explore", totalTokens: 48_210, durationMs: 9_000 },
+  });
+  const call = transcript.find((item) => item.toolCallId === "task-1");
+  assert.equal(call.type, "tool");
+  assert.equal(call.parentToolId, undefined);
+  assert.deepEqual(call.subagent, {
+    type: "Explore",
+    totalTokens: 48_210,
+    durationMs: 9_000,
+  });
+  const nested = transcript.filter((item) => item.parentToolId === "task-1");
+  assert.equal(nested.length, 2, "subagent text and its paired Read card");
+  const read = nested.find((item) => item.type === "tool");
+  assert.equal(read.toolCallId, "read-1");
+  assert.equal(read.status, "completed");
+});
+
+test("projection leaves pre-ledger-308 items byte-identical", () => {
+  const [item] = project([{ kind: "assistant_text", text: "plain" }]);
+  assert.equal("parentToolId" in item, false);
+  assert.equal("subagent" in item, false);
+});
+
+test("a subagent's items nest under its call and leave the lead's reading order", () => {
+  const entries = turnEntries(oneSubagentTurn());
+  assert.deepEqual(
+    entries.map((entry) => entry.kind),
+    ["item", "subagents", "item"],
+  );
+  const [prompt, spawnEntry, lead] = entries;
+  assert.equal(prompt.item.role, "user");
+  assert.equal(lead.item.text, "The lead's own answer.");
+  assert.equal(spawnEntry.label, "Subagent Map the call sites");
+  assert.equal(spawnEntry.spawns.length, 1);
+  assert.deepEqual(
+    spawnEntry.spawns[0].children.map((child) => child.type),
+    ["message", "tool"],
+  );
+  const visibleTexts = entries.flatMap((entry) =>
+    entry.kind === "item" && entry.item.type === "message"
+      ? [entry.item.text]
+      : [],
+  );
+  assert.equal(visibleTexts.includes("Reading a.rs"), false);
+});
+
+test("an item whose owning call is absent stays visible rather than vanishing", () => {
+  const transcript = project([
+    { kind: "user_prompt", content: "Go" },
+    { kind: "assistant_text", text: "orphan", parentToolId: "missing" },
+  ]);
+  assert.equal(partitionCodingSessionSubagentItems(transcript).nested.size, 0);
+  const entries = turnEntries(transcript);
+  assert.equal(entries.at(-1).item.text, "orphan");
+});
+
+test("a running spawn reads as running; consecutive spawns group", () => {
+  const running = project([
+    { kind: "user_prompt", content: "Go" },
+    taskCall("task-1", "Survey tests"),
+  ]);
+  assert.equal(
+    turnEntries(running, true).at(-1).label,
+    "Running subagent Survey tests",
+  );
+
+  const several = project([
+    { kind: "user_prompt", content: "Go" },
+    taskCall("task-1", "One"),
+    taskCall("task-2", "Two"),
+    taskCall("task-3", "Three"),
+    { kind: "assistant_text", text: "one", parentToolId: "task-2" },
+  ]);
+  const entries = turnEntries(several, true);
+  assert.equal(entries.length, 2);
+  assert.equal(entries[1].kind, "subagents");
+  assert.equal(entries[1].label, "Kicked off 3 subagents");
+  assert.deepEqual(
+    entries[1].spawns.map((spawn) => spawn.children.length),
+    [0, 1, 0],
+  );
+});
+
+test("a spawn is recognized without the adapter's tool name", () => {
+  // claude-agent-acp titles the call with its description; an undescribed
+  // spawn falls back to the bare name.
+  const transcript = project([
+    { kind: "user_prompt", content: "Go" },
+    { kind: "tool_call", tool: { toolName: "Task", toolId: "t-0" } },
+  ]);
+  assert.equal(turnEntries(transcript, true).at(-1).kind, "subagents");
+});
+
+test("panel rows report status, counts and only the facts that were sent", () => {
+  const done = oneSubagentTurn({
+    subagent: {
+      type: "Explore",
+      model: "claude-haiku-4-5",
+      totalTokens: 48_210,
+      durationMs: 385_000,
+      toolUseCount: 7,
+    },
+  });
+  const panel = deriveCodingSessionSubagentPanel([done]);
+  assert.equal(panel.rows.length, 1);
+  const [row] = panel.rows;
+  assert.equal(row.status, "done");
+  assert.equal(row.title, "Map the call sites");
+  assert.equal(row.type, "Explore");
+  assert.equal(row.durationMs, 385_000);
+  // Counted from what was published, not the adapter's own figure.
+  assert.equal(row.toolCount, 1);
+  assert.equal(row.latest, "▸ Read");
+  assert.equal(
+    formatCodingSessionSubagentMeta(row),
+    "claude-haiku-4-5 · 48.2k tok · 1 tool",
+  );
+
+  const bare = deriveCodingSessionSubagentPanel([
+    project([
+      { kind: "user_prompt", content: "Go" },
+      taskCall("task-9", "Quiet one"),
+      taskResult("task-9", { isError: true, content: "Boom" }),
+    ]),
+  ]).rows[0];
+  assert.equal(bare.status, "failed");
+  assert.equal(bare.model, null);
+  assert.equal(bare.totalTokens, null);
+  assert.equal(bare.toolCount, null, "no nested tools and no report: unknown");
+  assert.equal(bare.durationMs, 1_000, "falls back to the envelope timestamps");
+  assert.equal(bare.latest, "Boom");
+  assert.equal(formatCodingSessionSubagentMeta(bare), "");
+});
+
+test("footer totals settled, running and only reported tokens", () => {
+  const panel = deriveCodingSessionSubagentPanel([
+    oneSubagentTurn({ subagent: { totalTokens: 1_500 } }),
+    project([
+      { kind: "user_prompt", content: "Go" },
+      taskCall("task-2", "Unreported"),
+      taskResult("task-2"),
+      taskCall("task-3", "Still going"),
+    ]),
+  ]);
+  assert.equal(panel.rows.length, 3);
+  assert.equal(panel.settled, 2);
+  assert.equal(panel.running, 1);
+  assert.equal(panel.totalTokens, 1_500);
+  assert.equal(
+    formatCodingSessionSubagentFooter(panel),
+    "2 settled · Σ 1.5k tok · 1 running",
+  );
+  const unreported = deriveCodingSessionSubagentPanel([
+    project([taskCall("t", "x"), taskResult("t")]),
+  ]);
+  assert.equal(formatCodingSessionSubagentFooter(unreported), "1 settled");
+});
+
+test("token figures stay compact", () => {
+  assert.equal(formatCodingSessionSubagentTokens(812), "812");
+  assert.equal(formatCodingSessionSubagentTokens(48_210), "48.2k");
+  assert.equal(formatCodingSessionSubagentTokens(312_000), "312k");
+  assert.equal(formatCodingSessionSubagentTokens(1_300_000), "1.3M");
+});
+
+test("a subagent's todo list does not become the session's plan", () => {
+  const transcript = project([
+    { kind: "user_prompt", content: "Go" },
+    taskCall("task-1", "Plan inside"),
+    {
+      kind: "plan",
+      entries: [{ content: "subagent step", status: "pending" }],
+      parentToolId: "task-1",
+    },
+  ]);
+  assert.equal(deriveCodingSessionTaskModel(transcript), null);
+});
+
+/** Envelopes with an explicit turn per item; `null` declares "no turn". */
+function projectTurns(pairs) {
+  return projectCodingSessionTranscript(
+    pairs.map(([turnId, item], index) => ({
+      target: TARGET,
+      eventSeq: index + 1,
+      timestamp: 1_700_000_000_000 + index * 1_000,
+      turnId,
+      item,
+    })),
+    { channelId: "channel-1", generationId: "generation-1" },
+  );
+}
+
+const TURN_RESULT = { kind: "result", subtype: "success", result: "ok" };
+
+test("an open spawn is stopped once its own turn ends", () => {
+  const transcript = projectTurns([
+    ["turn-1", { kind: "user_prompt", content: "Go" }],
+    ["turn-1", taskCall("task-1", "Never answered")],
+    ["turn-1", TURN_RESULT],
+  ]);
+  const [row] = deriveCodingSessionSubagentPanel([transcript]).rows;
+  assert.equal(row.status, "stopped");
+  assert.equal(row.latest, null);
+  const entry = turnEntries(transcript).find((e) => e.kind === "subagents");
+  assert.equal(entry.label, "Stopped subagent Never answered");
+});
+
+test("an open spawn is stopped when a later turn begins, and counts as settled", () => {
+  const transcript = projectTurns([
+    ["turn-1", { kind: "user_prompt", content: "Go" }],
+    ["turn-1", taskCall("task-1", "Abandoned")],
+    ["turn-2", { kind: "user_prompt", content: "Next" }],
+    ["turn-2", taskCall("task-2", "Current")],
+  ]);
+  const panel = deriveCodingSessionSubagentPanel([transcript]);
+  assert.deepEqual(
+    panel.rows.map((row) => row.status),
+    ["stopped", "running"],
+  );
+  assert.equal(
+    formatCodingSessionSubagentFooter(panel),
+    "1 settled · 1 running",
+  );
+});
+
+test("a steered prompt inside the same turn does not stop a spawn", () => {
+  const transcript = projectTurns([
+    ["turn-1", { kind: "user_prompt", content: "Go" }],
+    ["turn-1", taskCall("task-1", "Still going")],
+    ["turn-1", { kind: "user_prompt", content: "also", steered: true }],
+  ]);
+  assert.equal(
+    deriveCodingSessionSubagentPanel([transcript]).rows[0].status,
+    "running",
+  );
+});
+
+test("without turn identity a later prompt or terminal stops the spawn", () => {
+  const byPrompt = projectTurns([
+    [null, taskCall("task-1", "Orphaned")],
+    [null, { kind: "user_prompt", content: "Next" }],
+  ]);
+  assert.equal(byPrompt[0].turnId, undefined, "fixture carries no turn");
+  assert.equal(
+    deriveCodingSessionSubagentPanel([byPrompt]).rows[0].status,
+    "stopped",
+  );
+  const byTerminal = projectTurns([
+    [null, taskCall("task-1", "Cut off")],
+    [null, { kind: "interrupted" }],
+  ]);
+  assert.equal(
+    deriveCodingSessionSubagentPanel([byTerminal]).rows[0].status,
+    "stopped",
+  );
+  const stillOpen = projectTurns([[null, taskCall("task-1", "Live")]]);
+  assert.equal(
+    deriveCodingSessionSubagentPanel([stillOpen]).rows[0].status,
+    "running",
+  );
+});

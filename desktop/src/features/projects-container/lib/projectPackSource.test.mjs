@@ -362,7 +362,7 @@ test("v2 rejects unsafe paths and malformed refs while preserving valid defaults
   }
 });
 
-test("v2 accepts the repository root, as Rust does, and an agents repository there wins (ledger 304)", () => {
+test("v2 accepts the repository root, as Rust does, and an agents repository there wins (ledger 307)", () => {
   const v2 = (expectedSourceId) =>
     JSON.stringify({ schema: "buzz-project-pack-source/v2", expectedSourceId });
   for (const path of [".", "./", " . "]) {

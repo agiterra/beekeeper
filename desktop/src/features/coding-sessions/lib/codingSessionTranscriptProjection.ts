@@ -31,6 +31,7 @@ import {
   toolIdFromToolCall,
   toolIdFromToolResult,
 } from "./codingSessionTranscriptItems";
+import { stampCodingSessionSubagentFields as stampSubagent } from "./codingSessionSubagents";
 
 export type { CodingSessionBridgeSource, CodingSessionProjectedTranscriptItem };
 
@@ -108,7 +109,10 @@ export function projectCodingSessionTranscriptItem(
       return intermediate.item;
     }
     const ctx = withoutBatchContext(intermediate.ctx, intermediate.item);
-    return finalize(buildBaseTranscriptItem(intermediate.item, ctx), ctx);
+    return stampSubagent(
+      finalize(buildBaseTranscriptItem(intermediate.item, ctx), ctx),
+      intermediate.item,
+    );
   } catch {
     // Defense in depth. Every extraction below is already defensive
     // (typeof-guarded, never a blind cast), so this should be unreachable —
@@ -159,11 +163,16 @@ function projectCodingSessionTranscriptUnsafe(
     if (item.kind === "tool_call") {
       const plan = buildPlanFromExitPlanModeToolCall(item, entry.ctx);
       if (plan) {
-        result.push(finalize(plan, entry.ctx));
+        result.push(stampSubagent(finalize(plan, entry.ctx), item));
         continue;
       }
 
-      result.push(finalize(buildToolCallItem(item, entry.ctx), entry.ctx));
+      result.push(
+        stampSubagent(
+          finalize(buildToolCallItem(item, entry.ctx), entry.ctx),
+          item,
+        ),
+      );
       const toolId = toolIdFromToolCall(item);
       if (toolId !== null) {
         pendingToolCalls.set(toolCallPairingKey(entry.ctx.targetKey, toolId), {
@@ -184,9 +193,18 @@ function projectCodingSessionTranscriptUnsafe(
               toolCallPairingKey(entry.ctx.targetKey, toolId),
             );
       if (pending) {
-        result[pending.index] = finalize(
-          buildPairedToolResultItem(pending.item, pending.ctx, item, entry.ctx),
-          pending.ctx,
+        result[pending.index] = stampSubagent(
+          finalize(
+            buildPairedToolResultItem(
+              pending.item,
+              pending.ctx,
+              item,
+              entry.ctx,
+            ),
+            pending.ctx,
+          ),
+          pending.item,
+          item,
         );
         if (toolId !== null) {
           pendingToolCalls.delete(
@@ -195,11 +213,21 @@ function projectCodingSessionTranscriptUnsafe(
         }
         continue;
       }
-      result.push(finalize(buildToolResultItem(item, entry.ctx), entry.ctx));
+      result.push(
+        stampSubagent(
+          finalize(buildToolResultItem(item, entry.ctx), entry.ctx),
+          item,
+        ),
+      );
       continue;
     }
 
-    result.push(finalize(buildBaseTranscriptItem(item, entry.ctx), entry.ctx));
+    result.push(
+      stampSubagent(
+        finalize(buildBaseTranscriptItem(item, entry.ctx), entry.ctx),
+        item,
+      ),
+    );
   }
 
   return result;

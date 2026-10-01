@@ -45,6 +45,7 @@ import {
   CodingSessionTurnCompletion,
   CodingSessionWorking,
 } from "./CodingSessionTranscriptParts";
+import { CodingSessionSubagentEntry } from "./CodingSessionSubagentEntry";
 
 type CodingSessionTranscriptProps = {
   generationId: string;
@@ -324,7 +325,7 @@ export function estimateCodingSessionTranscriptRowSize(
   if (row.kind === "diagnostics") return 48;
   if (row.block.kind === "standalone") return 96;
   const entryEstimate = row.block.entries.reduce((height, entry) => {
-    if (entry.kind === "tool-group") return height + 36;
+    if (entry.kind !== "item") return height + 36;
     if (entry.item.type === "message") {
       return height + Math.min(320, 52 + entry.item.text.length / 3);
     }
@@ -632,6 +633,27 @@ const CodingSessionEntry = React.memo(function CodingSessionEntry({
     );
   }
 
+  if (entry.kind === "subagents") {
+    const disclosureId = `${disclosureScope}:subagents:${entry.id}`;
+    return (
+      <CodingSessionSubagentEntry
+        disclosureId={disclosureId}
+        entry={entry}
+        onOpenChange={onDisclosureOpenChange}
+        open={openDisclosures.has(disclosureId)}
+        renderChild={(item) => (
+          <CodingSessionItem
+            disclosureId={`${disclosureId}:item:${item.id}`}
+            generationId={generationId}
+            item={item}
+            onDisclosureOpenChange={onDisclosureOpenChange}
+            openDisclosures={openDisclosures}
+          />
+        )}
+      />
+    );
+  }
+
   return (
     <CodingSessionItem
       disclosureId={`${disclosureScope}:item:${entry.item.id}`}
@@ -882,7 +904,7 @@ function isFoldableWorkEntry(
   index: number,
   terminalAssistantIndex: number,
 ): boolean {
-  if (entry.kind === "tool-group") return false;
+  if (entry.kind !== "item") return false;
   if (entry.item.type === "message") {
     return entry.item.role === "assistant" && index < terminalAssistantIndex;
   }

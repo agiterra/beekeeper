@@ -8,6 +8,14 @@ import type {
 } from "@/features/agents/ui/agentSessionTypes";
 import { getToolString } from "@/features/agents/ui/agentSessionUtils";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
+import {
+  buildCodingSessionSubagentSpawn,
+  type CodingSessionSubagentPartition,
+  type CodingSessionSubagentSpawn,
+  formatCodingSessionSubagentGroupLabel,
+  isCodingSessionSubagentCall,
+  partitionCodingSessionSubagentItems,
+} from "@/features/coding-sessions/lib/codingSessionSubagents";
 import { hasRedactionMarker } from "@/shared/lib/redactionMarker";
 
 export type CodingSessionTurnCompletion = {
@@ -27,6 +35,13 @@ export type CodingSessionTranscriptEntry =
       id: string;
       label: string;
       items: Extract<TranscriptItem, { type: "tool" }>[];
+    }
+  /** Consecutive Task/Agent spawns, each carrying its subagent's own items. */
+  | {
+      kind: "subagents";
+      id: string;
+      label: string;
+      spawns: CodingSessionSubagentSpawn[];
     };
 
 export type CodingSessionTranscriptTurn = {
@@ -101,9 +116,14 @@ export function deriveCodingSessionTranscriptModel(
 ): CodingSessionTranscriptModel {
   const rawOrdered: Array<MutableTurn | TranscriptItem> = [];
   const turnsById = new Map<string, MutableTurn>();
+  // A subagent's items render under the call that spawned it, never in the
+  // lead's reading order. They still join their turn, so its changed files
+  // and start time count them.
+  const subagents = partitionCodingSessionSubagentItems(transcript);
 
   for (const item of transcript) {
     if (isSystemInitMetadata(item)) continue;
+    if (subagents.nested.has(item) && !item.turnId) continue;
 
     if (!item.turnId) {
       rawOrdered.push(item);
@@ -131,6 +151,7 @@ export function deriveCodingSessionTranscriptModel(
       const turn = deriveTurn(
         candidate,
         options.isWorking && candidate === lastTurn,
+        subagents,
       );
       if (
         turn.entries.length > 0 ||
@@ -150,7 +171,10 @@ export function deriveCodingSessionTranscriptModel(
     blocks.push({
       kind: "standalone",
       id: candidate.id,
-      entry: { kind: "item", item: candidate },
+      entry: groupAdjacentTools([candidate], subagents)[0] ?? {
+        kind: "item",
+        item: candidate,
+      },
     });
   }
 
@@ -231,6 +255,7 @@ function coalesceStandaloneSettledTurns(
 function deriveTurn(
   turn: MutableTurn,
   canBeWorking: boolean,
+  subagents: CodingSessionSubagentPartition,
 ): CodingSessionTranscriptTurn {
   const visible: TranscriptItem[] = [];
   const diagnostics: TranscriptItem[] = [];
@@ -244,6 +269,7 @@ function deriveTurn(
   let completion: CodingSessionTurnCompletion | null = null;
 
   for (const item of turn.items) {
+    if (subagents.nested.has(item)) continue;
     if (isTurnResult(item)) {
       // Structured `durationMs`/`costUsd` on the item are authoritative. The
       // regex parse remains only for already-published events whose builders
@@ -318,7 +344,7 @@ function deriveTurn(
   return {
     kind: "turn",
     id: turn.id,
-    entries: groupAdjacentTools(visible),
+    entries: groupAdjacentTools(visible, subagents),
     changedFiles: deriveCodingSessionChangedFiles(turn.items),
     diagnostics,
     completion,
@@ -504,13 +530,35 @@ function deriveTurnStartedAt(items: TranscriptItem[]): string | null {
 
 function groupAdjacentTools(
   items: TranscriptItem[],
+  subagents: CodingSessionSubagentPartition,
 ): CodingSessionTranscriptEntry[] {
   const narrativeItems = coalescePlanSnapshots(items);
   const visibleToolTail = 3;
   const entries: CodingSessionTranscriptEntry[] = [];
+  const isSpawn = (candidate: TranscriptItem | undefined) =>
+    candidate !== undefined &&
+    isCodingSessionSubagentCall(candidate, subagents);
 
   for (let index = 0; index < narrativeItems.length; index += 1) {
     const item = narrativeItems[index];
+    if (item.type === "tool" && isSpawn(item)) {
+      const spawns: CodingSessionSubagentSpawn[] = [];
+      let cursor = index;
+      while (cursor < narrativeItems.length) {
+        const call = narrativeItems[cursor];
+        if (call?.type !== "tool" || !isSpawn(call)) break;
+        spawns.push(buildCodingSessionSubagentSpawn(call, subagents));
+        cursor += 1;
+      }
+      entries.push({
+        kind: "subagents",
+        id: `subagents:${item.id}`,
+        label: formatCodingSessionSubagentGroupLabel(spawns),
+        spawns,
+      });
+      index = cursor - 1;
+      continue;
+    }
     if (
       !isCompletedSuccessfulTool(item) ||
       deriveCodingSessionTaskModel([item]) !== null
@@ -526,6 +574,7 @@ function groupAdjacentTools(
       if (
         !candidate ||
         !isCompletedSuccessfulTool(candidate) ||
+        isSpawn(candidate) ||
         deriveCodingSessionTaskModel([candidate]) !== null
       )
         break;
@@ -869,6 +918,21 @@ function transcriptEntriesEqual(
   if (!right || left.kind !== right.kind) return false;
   if (left.kind === "item" && right.kind === "item") {
     return left.item === right.item;
+  }
+  if (left.kind === "subagents" && right.kind === "subagents") {
+    return (
+      left.id === right.id &&
+      left.label === right.label &&
+      left.spawns.length === right.spawns.length &&
+      left.spawns.every((spawn, index) => {
+        const other = right.spawns[index];
+        return (
+          other !== undefined &&
+          spawn.call === other.call &&
+          arraysReferenceEqual(spawn.children, other.children)
+        );
+      })
+    );
   }
   if (left.kind !== "tool-group" || right.kind !== "tool-group") return false;
   return (

@@ -85,6 +85,8 @@ import {
 } from "./CodingSessionPendingTurns";
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
+import { CodingSessionSubagentsSurface } from "./CodingSessionSubagentsPanel";
+import { deriveCodingSessionSubagentPanel } from "@/features/coding-sessions/lib/codingSessionSubagents";
 import {
   CodingSessionSurfaceHost,
   useCodingSessionSurfaceHostState,
@@ -585,23 +587,31 @@ function ReadyCodingSessionWorkspace({
     [session.transcript],
   );
   const changedFiles = observedChanges.files;
+  const subagents = React.useMemo(
+    () => deriveCodingSessionSubagentPanel([session.transcript]),
+    [session.transcript],
+  );
   // Surfaces offered by current data: Observed changes always applies to a
-  // transcript; Agents only when the umbrella model actually provides
-  // participants (it lists one per signed execution) — never an empty tab.
+  // transcript; Agents only when there is someone to list — a participant per
+  // signed execution, or a subagent a seat spawned — never an empty tab.
   const surfaces = React.useMemo<CodingSessionSurfaceDescriptor[]>(
     () => [
-      ...(umbrella.executions.length > 0
+      ...(umbrella.executions.length > 0 || subagents.rows.length > 0
         ? [
             {
               id: "agents",
               label: "Agents",
-              count: umbrella.executions.length,
-              content: (
-                <CodingSessionExecutionRail
-                  resolveReachability={resolveReachability}
-                  umbrella={umbrella}
-                />
-              ),
+              count: umbrella.executions.length + subagents.rows.length,
+              content:
+                umbrella.executions.length > 0 ? (
+                  <CodingSessionExecutionRail
+                    resolveReachability={resolveReachability}
+                    subagents={subagents}
+                    umbrella={umbrella}
+                  />
+                ) : (
+                  <CodingSessionSubagentsSurface panel={subagents} />
+                ),
             },
           ]
         : []),
@@ -621,6 +631,7 @@ function ReadyCodingSessionWorkspace({
       changedFiles,
       observedChanges.unreportedEditCount,
       resolveReachability,
+      subagents,
       umbrella,
     ],
   );

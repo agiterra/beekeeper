@@ -64,6 +64,8 @@ export function deriveCodingSessionTaskModel(
   );
 
   for (let index = transcript.length - 1; index >= firstIndex; index -= 1) {
+    // A subagent's own todo list is its plan, not the session's (ledger 308).
+    if (transcript[index].parentToolId) continue;
     const snapshot = extractTaskSnapshot(transcript[index]);
     if (!snapshot) continue;
 

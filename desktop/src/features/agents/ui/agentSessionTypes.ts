@@ -106,6 +106,25 @@ export type TranscriptItemIdentity = {
    * one, and passing `sessionId` there silently addresses nothing.
    */
   providerSessionId?: string | null;
+  /**
+   * The `toolCallId` of the Task/Agent call whose subagent produced this item,
+   * when a coding-session provider published one (44225 `parentToolId`,
+   * ledger 308). The coding-session stream nests such items under that call
+   * instead of showing them in the lead's reading order.
+   */
+  parentToolId?: string;
+};
+
+/**
+ * What a provider reported about the subagent a Task/Agent call ran. Every
+ * field is independently absent; absent means not reported, never zero.
+ */
+export type TranscriptSubagentReport = {
+  type?: string;
+  model?: string;
+  totalTokens?: number;
+  durationMs?: number;
+  toolUseCount?: number;
 };
 
 export type TranscriptItem =
@@ -258,6 +277,13 @@ export type TranscriptItem =
        * so rather than reporting zero changes.
        */
       editPaths?: string[];
+      /**
+       * The producer's own id for this call (ACP `toolCallId`), when it sent
+       * one. It is what a subagent's items name as their `parentToolId`.
+       */
+      toolCallId?: string;
+      /** The result's subagent report, on a Task/Agent call that carried one. */
+      subagent?: TranscriptSubagentReport;
       timestamp: string;
       startedAt: string;
       completedAt: string | null;

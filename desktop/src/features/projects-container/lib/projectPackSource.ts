@@ -123,7 +123,7 @@ export function parseProjectPackSourceEvent(
       // Exactly "." names the repository root, where a project's own agents
       // repository keeps its roles (spec § 4.11) — accepted before the segment
       // check, as `validate_pack_path` does in Rust. Refusing it dropped the
-      // project's agents repository and let an older record win (ledger 304).
+      // project's agents repository and let an older record win (ledger 307).
       if (
         (path !== "." &&
           (!path ||

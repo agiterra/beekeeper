@@ -6199,7 +6199,7 @@ mod tests {
         "#;
         let mut client = spawn_script(script).await;
         client.initialize().await.expect("initialize");
-        client.set_disallowed_tools(&["Task", "Agent", "SendMessage"]);
+        client.set_disallowed_tools(&["SendMessage"]);
         let response = client
             .session_new_full("/tmp", vec![], None, None)
             .await
@@ -6207,7 +6207,7 @@ mod tests {
         let sent = &response.raw["_receivedRequest"]["params"];
         assert_eq!(
             sent.pointer("/_meta/claudeCode/options/disallowedTools"),
-            Some(&serde_json::json!(["Task", "Agent", "SendMessage"])),
+            Some(&serde_json::json!(["SendMessage"])),
             "the adapter merges this key into the SDK query: {sent}"
         );
     }

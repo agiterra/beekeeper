@@ -41,6 +41,7 @@ import { useCodingSessionMissionLand } from "@/features/coding-sessions/hooks/us
 import { useCodingSessionSessionPolicy } from "@/features/coding-sessions/hooks/useCodingSessionSessionPolicy";
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
+import { deriveCodingSessionSubagentPanel } from "@/features/coding-sessions/lib/codingSessionSubagents";
 import { shouldAutoOpenAgentsSurface } from "./CodingSessionUmbrellaWorkspaceModel";
 import { CodingSessionMissionAudit } from "./CodingSessionMissionAudit";
 import { CodingSessionMissionContext } from "./CodingSessionMissionContext";
@@ -709,6 +710,18 @@ export function useCodingSessionWorkspaceSurfaces(input: {
   resolveReachability: CodingSessionReachabilityResolver;
   umbrella: CodingSessionUmbrellaRecord;
 }): CodingSessionSurfaceDescriptor[] {
+  // Every Task/Agent spawn any execution made, across its generations.
+  const subagents = React.useMemo(
+    () =>
+      deriveCodingSessionSubagentPanel(
+        input.umbrella.executions.flatMap((execution) =>
+          [...execution.priorGenerations, execution.activeGeneration].map(
+            (record) => record.transcript,
+          ),
+        ),
+      ),
+    [input.umbrella.executions],
+  );
   return React.useMemo(
     () =>
       input.mission
@@ -717,11 +730,12 @@ export function useCodingSessionWorkspaceSurfaces(input: {
             {
               id: "agents",
               label: "Agents",
-              count: input.umbrella.executions.length,
+              count: input.umbrella.executions.length + subagents.rows.length,
               content: (
                 <CodingSessionExecutionRail
                   actorNames={input.actorNames}
                   resolveReachability={input.resolveReachability}
+                  subagents={subagents}
                   umbrella={input.umbrella}
                 />
               ),
@@ -748,6 +762,7 @@ export function useCodingSessionWorkspaceSurfaces(input: {
       input.observedChanges.unreportedEditCount,
       input.resolveReachability,
       input.umbrella,
+      subagents,
     ],
   );
 }

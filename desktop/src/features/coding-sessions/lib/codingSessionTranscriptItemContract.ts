@@ -28,6 +28,21 @@ export type CodingSessionToolEditPayloadV1 = {
 };
 
 /**
+ * The optional `subagent` object on a Task/Agent call's `tool_result`.
+ *
+ * `type` is the subagent type (`general-purpose`, `Explore`); the provider may
+ * also leave it to the call's input `subagent_type`. Every other field is
+ * present only when the adapter's frames carried it.
+ */
+export type CodingSessionSubagentReportV1 = {
+  type?: string;
+  model?: string;
+  totalTokens?: number;
+  durationMs?: number;
+  toolUseCount?: number;
+};
+
+/**
  * A `kind`-discriminated classification of the transcript entry union, or a
  * quarantine record. Unknown kinds are legal and must degrade, never throw.
  */
@@ -36,7 +51,19 @@ export type CodingSessionTranscriptItemV1 =
   | CodingSessionQuarantineItemV1
   | { kind: string; [key: string]: unknown };
 
-export type CodingSessionKnownTranscriptItemV1 = { [key: string]: unknown } & (
+export type CodingSessionKnownTranscriptItemV1 = {
+  [key: string]: unknown;
+  /**
+   * The `toolCallId` of the Task/Agent call whose subagent produced this item.
+   *
+   * Additive, on any kind (ledger 308): an item built from a
+   * subagent-attributed adapter frame is published as the kind it would be,
+   * with this one top-level field added — on a `tool_call` beside `tool`, not
+   * inside it. Absent on the lead's own items and on every item published
+   * before subagents were allowed in a seat.
+   */
+  parentToolId?: string;
+} & (
   | {
       kind: "user_prompt";
       content?: string;
@@ -109,6 +136,12 @@ export type CodingSessionKnownTranscriptItemV1 = { [key: string]: unknown } & (
       edit?: CodingSessionToolEditPayloadV1;
       content?: unknown;
       isError?: boolean;
+      /**
+       * What the adapter reported about the subagent a Task/Agent call ran,
+       * on that call's result. Every field is one the adapter actually sent;
+       * an absent field was not reported, never zero.
+       */
+      subagent?: CodingSessionSubagentReportV1;
     }
   | {
       kind: "result";
