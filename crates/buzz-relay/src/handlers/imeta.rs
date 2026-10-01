@@ -590,7 +590,8 @@ mod tests {
 
     #[test]
     fn test_imeta_octet_stream_passes() {
-        // Un-sniffable text/data files upload as octet-stream with a .bin ext.
+        // Un-sniffable non-text files upload as octet-stream with a .bin ext
+        // (UTF-8 text takes the `text/plain`/`.txt` branch of the same path).
         let tag = vec![
             "imeta".into(),
             format!("url /media/{HASH}.bin"),

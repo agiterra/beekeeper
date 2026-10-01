@@ -163,9 +163,18 @@ fn file_mime_to_ext(mime: &str) -> Option<&'static str> {
 ///   3. Magic-byte sniffing where possible.
 ///
 /// Files with no detectable signature (plain text, CSV, source code, JSON —
-/// none of which have magic bytes) are accepted as `application/octet-stream`.
-/// They are always served as downloads, so an un-sniffable file can never
-/// execute in the app.
+/// none of which have magic bytes) are classified by [`looks_like_utf8_text`]:
+/// `text/plain` when they are, `application/octet-stream` when they are not.
+/// Either way they are always served as downloads, so an un-sniffable file can
+/// never execute in the app, and the two differ only in what the sidecar says
+/// the bytes are.
+///
+/// That distinction is load-bearing rather than cosmetic. A coding-session turn
+/// may carry a `text/plain` attachment (`TurnAttachment` in `buzz-core`), the
+/// provider derives its fetch URL as `{relay}/media/{sha256}.txt`, and the blob
+/// route answers `404` when the requested extension is not the sidecar's
+/// canonical one — so a pasted log stored as `bin` would be unreachable by the
+/// one reader that needs it.
 ///
 /// Returns `(mime, ext)`.
 pub fn validate_file_content(
@@ -214,8 +223,34 @@ pub fn validate_file_content(
                 .unwrap_or_else(|| kind.extension().to_string());
             Ok((mime, ext))
         }
-        None => Ok(("application/octet-stream".to_string(), "bin".to_string())),
+        None => Ok(if looks_like_utf8_text(bytes) {
+            ("text/plain".to_string(), "txt".to_string())
+        } else {
+            ("application/octet-stream".to_string(), "bin".to_string())
+        }),
     }
+}
+
+/// Whether un-sniffable bytes are plain UTF-8 text.
+///
+/// Valid UTF-8 with no NUL byte, which is the same test git uses to decide a
+/// file is not binary, and the same one a reader that will hand these bytes to
+/// a model has to pass anyway. Deliberately **not** stricter than that: a log
+/// pasted out of a terminal is full of ESC sequences and other C0 controls, and
+/// refusing those would push exactly the content this classification exists for
+/// back into the opaque-binary bucket.
+///
+/// Empty input is not text. Nothing is lost by calling it binary — it is served
+/// as a download either way — and the existing contract that zero bytes upload
+/// as `application/octet-stream` is one an e2e test pins
+/// (`test_upload_zero_bytes_accepted`).
+///
+/// This decides a *label*, never whether the bytes are safe: every blob on this
+/// path is served with `Content-Disposition: attachment`, `nosniff` and
+/// `default-src 'none'`, so `text/plain` grants an upload nothing that
+/// `application/octet-stream` did not already have.
+fn looks_like_utf8_text(bytes: &[u8]) -> bool {
+    !bytes.is_empty() && !bytes.contains(&0) && std::str::from_utf8(bytes).is_ok()
 }
 
 /// Whether a stored blob should be served inline (rendered in the client) or as
@@ -2587,14 +2622,45 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_file_plaintext_accepted_as_octet_stream() {
-        // Plain text has no magic bytes — infer returns None. The generic path
-        // accepts it as opaque binary served as a download (the common Slack
-        // case: .txt, .csv, .md, source code).
+    fn test_validate_file_plaintext_accepted_as_text_plain() {
+        // Plain text has no magic bytes — infer returns None, so the generic
+        // path classifies it from the bytes themselves (the common Slack case:
+        // .txt, .csv, .md, source code). Served as a download either way; the
+        // label is what a reader fetching `<sha>.txt` depends on.
         let config = test_config();
         let (mime, ext) = validate_file_content(b"hello, this is a text file\n", &config).unwrap();
-        assert_eq!(mime, "application/octet-stream");
-        assert_eq!(ext, "bin");
+        assert_eq!(mime, "text/plain");
+        assert_eq!(ext, "txt");
+    }
+
+    /// The text/binary split, including the three cases that decide it: a NUL
+    /// byte, invalid UTF-8, and emptiness. Terminal escapes stay text, because
+    /// a pasted log is the content this path exists to carry.
+    #[test]
+    fn test_validate_file_splits_text_from_opaque_bytes() {
+        let config = test_config();
+        let escape_log = format!("{ESC}[31merror{ESC}[0m: boom\n", ESC = '\u{1b}');
+        let cases: [(&[u8], &str, &str); 6] = [
+            (b"line one\nline two\n", "text/plain", "txt"),
+            ("héllo — em dash\n".as_bytes(), "text/plain", "txt"),
+            (escape_log.as_bytes(), "text/plain", "txt"),
+            (b"has\0a nul", "application/octet-stream", "bin"),
+            (&[0xff, 0xfe, 0x41, 0x42], "application/octet-stream", "bin"),
+            (b"", "application/octet-stream", "bin"),
+        ];
+        for (bytes, expected_mime, expected_ext) in cases {
+            let (mime, ext) = validate_file_content(bytes, &config).expect("generic file");
+            assert_eq!(mime, expected_mime, "mime for {bytes:?}");
+            assert_eq!(ext, expected_ext, "ext for {bytes:?}");
+        }
+    }
+
+    /// `text/plain` must not become previewable by being named: the download
+    /// disposition is what keeps an uploaded blob from rendering as active
+    /// content, and that is the whole reason the new label is safe.
+    #[test]
+    fn test_text_plain_is_not_served_inline() {
+        assert!(!serve_inline("text/plain"));
     }
 
     #[test]
