@@ -18,6 +18,7 @@ import {
   CodingSessionHeader,
 } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
+import type { CodingSessionFullAccess } from "./useCodingSessionFullAccess";
 import {
   CodingSessionAgentFocus,
   type CodingSessionAgentFocusItem,
@@ -58,6 +59,7 @@ export function CodingSessionUmbrellaHeaderRow({
   contextLoads,
   focusedExecution,
   focusedExecutionKey,
+  fullAccess = null,
   goal,
   handleFocusExecution,
   handleLensChange,
@@ -104,6 +106,11 @@ export function CodingSessionUmbrellaHeaderRow({
   contextLoads: HeaderProps["contextLoads"];
   focusedExecution: CodingSessionExecution;
   focusedExecutionKey: string | null;
+  /**
+   * The routed execution's local full-access grant — the same execution the
+   * header's provider and workspace items describe.
+   */
+  fullAccess?: CodingSessionFullAccess | null;
   goal: CodingSessionGoal | null;
   handleFocusExecution: (key: string | null) => void;
   handleLensChange: (lens: CodingSessionLens) => void;
@@ -173,6 +180,7 @@ export function CodingSessionUmbrellaHeaderRow({
         // Mission's header is a two-row container; the participant bar below
         // carries the single bottom rule.
         flush={mission}
+        fullAccess={fullAccess}
         founderDetails={
           umbrella.founderPubkey ? (
             <CodingSessionFounderLine

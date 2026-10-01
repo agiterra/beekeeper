@@ -49,6 +49,7 @@ import { useIdentityQuery } from "@/shared/api/hooks";
 import { useElementWidth } from "@/shared/hooks/use-mobile";
 import { cn } from "@/shared/lib/cn";
 import { CodingSessionUmbrellaHeaderRow } from "./CodingSessionUmbrellaHeaderRow";
+import { useCodingSessionFullAccess } from "./useCodingSessionFullAccess";
 import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
 import {
   CODING_SESSION_COMPOSER_DOCK_FADE,
@@ -173,6 +174,10 @@ export function UmbrellaCodingSessionWorkspace({
   // batch the result was discarded and delivery state surfaced only as
   // transient toasts, so a queued provider wake or an ungranted seat was
   // invisible the moment the toast faded.
+  const fullAccess = useCodingSessionFullAccess({
+    channelId,
+    record: focusedExecution.activeGeneration,
+  });
   const teamWake = useCodingSessionTeamWake({
     catalogSettled,
     channelId,
@@ -723,6 +728,7 @@ export function UmbrellaCodingSessionWorkspace({
         composerTaskDock={composerTaskDock}
         contextLoads={contextLoads}
         focusedExecution={focusedExecution}
+        fullAccess={fullAccess}
         focusedExecutionKey={focusedExecutionKey}
         goal={goal}
         handleFocusExecution={handleFocusExecution}

@@ -48,6 +48,7 @@ import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
 import { CodingSessionHeaderOverflow } from "./CodingSessionHeaderOverflow";
+import { CodingSessionFullAccessBadge } from "./CodingSessionFullAccessBadge";
 import { useNewSessionInWorkspaceAction } from "@/features/coding-sessions/hooks/useNewSessionInWorkspaceAction";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { CODING_SESSION_ROUTE_RAIL_ID } from "./CodingSessionRouteRail";
@@ -205,6 +206,10 @@ type CodingSessionHeaderProps = {
    * — an agent's work must never present itself as a person's.
    */
   seat?: { label: string } | null;
+  /** This execution's local full-access grant (`useCodingSessionFullAccess`). */
+  fullAccess?: React.ComponentProps<
+    typeof CodingSessionHeaderOverflow
+  >["fullAccess"];
   sessionTitle?: string | null;
   sessionClosed?: boolean;
   status: CodingSessionWorkspaceStatus;
@@ -250,6 +255,7 @@ export function CodingSessionHeader({
   repoName = null,
   runtimeLabel = null,
   seat = null,
+  fullAccess = null,
   sessionTitle = null,
   sessionClosed = false,
   status,
@@ -353,6 +359,7 @@ export function CodingSessionHeader({
               {seat.label}
             </Badge>
           ) : null}
+          <CodingSessionFullAccessBadge fullAccess={fullAccess} />
           {onRename ? (
             <Button
               aria-label="Rename session"
@@ -690,6 +697,7 @@ export function CodingSessionHeader({
           Mission is a `⋯` holding exactly one item — the workspace one — and
           the flat button run below is untouched (I8). */}
       <CodingSessionHeaderOverflow
+        fullAccess={fullAccess}
         isExporting={isExporting}
         newSessionInWorkspaceDetail={newSessionHere.detail}
         onAddProvider={missionActions ? onAddProvider : undefined}

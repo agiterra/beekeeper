@@ -5,13 +5,20 @@ import {
   FolderPlus,
   OctagonX,
   RotateCcw,
+  ShieldOff,
   Square,
   UserPlus,
 } from "lucide-react";
 
+import {
+  CODING_SESSION_FULL_ACCESS_LABEL,
+  codingSessionFullAccessDetail,
+} from "@/features/coding-sessions/lib/codingSessionFullAccess";
 import { NEW_SESSION_IN_WORKSPACE_LABEL } from "@/features/coding-sessions/lib/codingSessionWorkspaceReuseCopy";
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+
+import type { CodingSessionFullAccess } from "./useCodingSessionFullAccess";
 
 /**
  * The Mission header's `⋯` menu — DESIGN-SPEC A7, built.
@@ -33,6 +40,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
  * header mounts under a lens gate rather than a rewrite of the run itself.
  */
 export function CodingSessionHeaderOverflow({
+  fullAccess = null,
   isExporting = false,
   newSessionInWorkspaceDetail,
   onAddProvider,
@@ -46,6 +54,12 @@ export function CodingSessionHeaderOverflow({
   stopAllLabel,
   stopAllSentence,
 }: {
+  /**
+   * This execution's full-access grant, when its provider is this computer's
+   * and the host answered. Null — a foreign provider, a read in flight or
+   * failed — offers no item at all rather than an "off" nobody read.
+   */
+  fullAccess?: CodingSessionFullAccess | null;
   isExporting?: boolean;
   /**
    * The workspace item's second line, resolved by whoever opened this menu.
@@ -108,6 +122,20 @@ export function CodingSessionHeaderOverflow({
       label: "Add provider…",
       onSelect: onAddProvider,
       testId: "coding-session-overflow-add-provider",
+    });
+  }
+  if (fullAccess) {
+    const detail = codingSessionFullAccessDetail(fullAccess);
+    items.push({
+      detail,
+      disabled: fullAccess.pending !== null,
+      icon: <ShieldOff aria-hidden className="size-3.5" />,
+      key: "full-access",
+      label: CODING_SESSION_FULL_ACCESS_LABEL,
+      name: `${CODING_SESSION_FULL_ACCESS_LABEL}: ${detail}`,
+      onSelect: fullAccess.toggle,
+      pressed: fullAccess.granted,
+      testId: "coding-session-overflow-full-access",
     });
   }
   if (onStopAll) {
@@ -181,6 +209,7 @@ export function CodingSessionHeaderOverflow({
           {items.map((item) => (
             <button
               aria-label={item.name}
+              aria-pressed={item.pressed}
               className={cn(
                 "flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
                 item.destructive
@@ -220,5 +249,7 @@ type OverflowItem = {
   /** Accessible name when it must say more than the label does. */
   name?: string;
   onSelect: () => void;
+  /** Set only on a toggle item: its current, host-read state. */
+  pressed?: boolean;
   testId: string;
 };

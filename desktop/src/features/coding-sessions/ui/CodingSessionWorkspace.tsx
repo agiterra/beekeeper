@@ -54,6 +54,7 @@ import { AddCodingSessionProviderDialog } from "./AddCodingSessionProviderDialog
 import { CodingSessionComposer } from "./CodingSessionComposer";
 import { CodingSessionPeoplePopover } from "./CodingSessionPeoplePopover";
 import { CodingSessionHeader } from "./CodingSessionHeader";
+import { useCodingSessionFullAccess } from "./useCodingSessionFullAccess";
 import { CodingSessionWorkspaceState } from "./CodingSessionWorkspaceState";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { CodingSessionHandoverHost } from "./CodingSessionHandoverHost";
@@ -463,6 +464,7 @@ function ReadyCodingSessionWorkspace({
 }) {
   const gutter = useCodingSessionColumnGutter();
   const resolveActorName = useCodingSessionActorNameResolver(umbrella);
+  const fullAccess = useCodingSessionFullAccess({ channelId, record: session });
   const workspaceRef = React.useRef<HTMLElement>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const contentRef = React.useRef<HTMLDivElement>(null);
@@ -693,6 +695,7 @@ function ReadyCodingSessionWorkspace({
           }
           generationLabel={session.label}
           seat={seatLabel ? { label: seatLabel } : null}
+          fullAccess={fullAccess}
           isExporting={isExporting}
           model={session.model}
           onAddProvider={onAddProvider}
