@@ -308,6 +308,12 @@ pub fn run() {
             // to mount and ask for a status. Repairs only; never registers
             // something nobody agreed to.
             agent_host::autostart::repair_at_launch(&app_handle);
+            // Without a login registration, this app is what runs the host.
+            std::thread::spawn(|| {
+                if let Err(error) = agent_host::app_scoped::ensure_running() {
+                    eprintln!("buzz-desktop: agent-host: could not run the host for this session: {error}");
+                }
+            });
             #[cfg(target_os = "macos")]
             {
                 // No tray here any more: the menu bar is its own process, so

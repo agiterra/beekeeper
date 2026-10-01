@@ -85,6 +85,9 @@ pub async fn install_agent_host_autostart(
     host: State<'_, AgentHost>,
 ) -> Result<CodingSessionProviderStatus, String> {
     let relay_url = relay_ws_url_with_override(&state);
+    // The app's own host steps aside first: the login item starts one at
+    // once, and two hosts must never race for one socket.
+    let _ = tokio::task::spawn_blocking(crate::agent_host::app_scoped::stop).await;
     // Warnings are not an error: a registration that could not be written
     // travels in `status.host.autostart.warnings`, and failing the command
     // would leave the surface with nothing to show but a toast.
@@ -112,7 +115,21 @@ pub async fn decline_agent_host_autostart(
 ) -> Result<CodingSessionProviderStatus, String> {
     let relay_url = relay_ws_url_with_override(&state);
     crate::agent_host::autostart::decline()?;
+    // Declining the login item keeps agents running while the app is open,
+    // which is what the prompt says.
+    run_app_scoped_host().await;
     provider_status(&app, &host, &relay_url).await
+}
+
+/// Run the host as this app's child when no login registration does.
+async fn run_app_scoped_host() {
+    match tokio::task::spawn_blocking(crate::agent_host::app_scoped::ensure_running).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            eprintln!("buzz-desktop: agent-host: could not run the host for this session: {error}");
+        }
+        Err(error) => eprintln!("buzz-desktop: agent-host: host start task failed: {error}"),
+    }
 }
 
 /// The session-capacity setting, and what the running provider is enforcing.
@@ -411,6 +428,9 @@ pub async fn provision_coding_session_provider(
 /// (2026-09-25) left the host off the roster. Reconciling on every attempt is
 /// what makes that unreachable.
 async fn ensure_host_running(app: &AppHandle, host: &AgentHost, relay_url: &str) {
+    // Without a login registration nothing else runs the host, so the app
+    // runs it for as long as it is open (ledger 302(a)).
+    run_app_scoped_host().await;
     if let Err(error) = host.start().await {
         // Disclosed, not fatal: the status this returns to carries the
         // reachability, and the surface renders it. Failing the whole command

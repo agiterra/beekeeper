@@ -30,6 +30,8 @@
 //! a `0600` key file. **The secret never crosses the socket**: the app writes
 //! the file and the socket call only says "look again".
 
+#[cfg(unix)]
+pub mod app_scoped;
 pub mod autostart;
 pub mod client;
 pub mod commission;
@@ -41,6 +43,16 @@ use beekeeper_host_core::layout::{self, Instance};
 use tauri::AppHandle;
 
 pub(crate) use client::{AgentHost, HostReachability, HostSnapshot};
+
+/// The app-lifetime host has a Unix control socket; elsewhere there is
+/// nothing for it to run, and these are the no-ops that say so.
+#[cfg(not(unix))]
+pub(crate) mod app_scoped {
+    pub(crate) fn ensure_running() -> Result<(), String> {
+        Ok(())
+    }
+    pub(crate) fn stop() {}
+}
 
 /// Which Beekeeper instance this app is, in the host's vocabulary.
 ///

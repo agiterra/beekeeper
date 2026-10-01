@@ -33,6 +33,11 @@ pub(crate) fn shut_down_app(app: &tauri::AppHandle, shutdown_done: &std::sync::a
         // Managed agents (`buzz-acp`) are still this app's children and still
         // die with it. That is a known, deliberate limit of this landing; the
         // release notes say so.
+        //
+        // The one exception is a host this app started itself because nothing
+        // runs it at login: the person declined that, so sessions end with the
+        // app, as the prompt told them (ledger 302(a)).
+        crate::agent_host::app_scoped::stop();
         if let Err(error) = shutdown_managed_agents(app) {
             eprintln!("buzz-desktop: failed to stop managed agents: {error}");
         }
