@@ -3453,13 +3453,22 @@ impl SessionActor {
             }
             None => addressed,
         };
+        // An attachment that could not be read leaves its markdown link in the
+        // prose with nothing behind it. Computed before the blocks consume
+        // `image_blocks`, and appended after them, so the note names the final
+        // count the agent actually received.
+        let undelivered =
+            crate::attachments::undelivered_note(attachments.len(), image_blocks.len());
         // Positioned by the markdown references the operator's own text carries,
         // so the agent reads the turn in the order it was written.
-        let blocks = if image_blocks.is_empty() {
+        let mut blocks = if image_blocks.is_empty() {
             vec![buzz_acp::acp::PromptBlock::Text(agent_text)]
         } else {
             crate::attachments::interleave_prompt_blocks(&agent_text, image_blocks)
         };
+        if let Some(note) = undelivered {
+            blocks.push(buzz_acp::acp::PromptBlock::Text(note));
+        }
         // The steer admission queue, installed before the prompt borrows the
         // client: the read loop takes inputs from it one at a time and the
         // actor's select arm below feeds it. `install_steer_input` panics if

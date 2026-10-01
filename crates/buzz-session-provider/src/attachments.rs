@@ -204,6 +204,42 @@ impl MediaFetcher {
     }
 }
 
+/// What the agent is told when an attachment did not arrive, if any did not.
+///
+/// The prose still carries every image's `![image](…/media/<sha>.<ext>)`
+/// reference — [`interleave_prompt_blocks`] deliberately does not rewrite text
+/// the operator signed — so an agent handed the words without the picture sees
+/// a link and, left to itself, fetches it. That request carries no Blossom
+/// token, the relay answers `401`, and the agent reports *that* as the reason
+/// the image is missing. It is not the reason. The person who pasted the
+/// screenshot is then asked to work around a status code that describes only
+/// the agent's own unauthorized request, and the actual failure — a `403` in
+/// this process, already in the host log — is never mentioned.
+///
+/// So say it plainly: this many did not arrive, the link is not a way to get
+/// them, and the honest answer is to ask for them again. The transcript
+/// already counts what was delivered (`begin_turn`'s `attachment_count`);
+/// this is the same fact told to the one party that has to act on it.
+pub(crate) fn undelivered_note(attached: usize, delivered: usize) -> Option<String> {
+    let missing = attached.checked_sub(delivered).filter(|count| *count > 0)?;
+    // The noun agrees with the total attached; the verb and the pronoun agree
+    // with how many are missing. "1 of the 2 image" was the first draft.
+    let plural = if attached == 1 { "image" } else { "images" };
+    let (is_are, them) = if missing == 1 {
+        ("is", "it")
+    } else {
+        ("are", "them")
+    };
+    Some(format!(
+        "[Attachments]\n{missing} of the {attached} {plural} attached to this message could not \
+         be read back from the relay and {is_are} not part of this turn. The markdown image link \
+         in the text above is not a way to get {them}: an unauthenticated request to the relay's \
+         media store answers 401, which says nothing about why the image is missing. Say the \
+         image did not reach you and ask for it again, rather than reporting a status from that \
+         link as the cause."
+    ))
+}
+
 /// Interleave fetched images into the prompt at the positions the operator
 /// wrote them.
 ///
@@ -379,6 +415,37 @@ mod tests {
         let plain = MediaFetcher::new("ws://127.0.0.1:3000", nostr::Keys::generate(), None)
             .expect("fetcher");
         assert_eq!(plain.base, "http://127.0.0.1:3000");
+    }
+
+    /// Every attachment delivered means nothing to say; one missing means the
+    /// agent is told, in the numbers, and told not to chase the link.
+    #[test]
+    fn an_undelivered_attachment_is_disclosed_to_the_agent() {
+        assert_eq!(undelivered_note(0, 0), None);
+        assert_eq!(undelivered_note(2, 2), None);
+        // Cannot happen, and must not underflow into a note claiming a
+        // negative number of missing images.
+        assert_eq!(undelivered_note(1, 2), None);
+
+        let one = undelivered_note(2, 1).expect("one image is missing");
+        assert!(one.starts_with("[Attachments]\n"), "{one}");
+        assert!(one.contains("1 of the 2 images"), "{one}");
+        assert!(one.contains("is not part of this turn"), "{one}");
+        // The two sentences this note exists for: the link is not a route to
+        // the image, and the 401 it would answer is not the explanation.
+        assert!(one.contains("not a way to get it"), "{one}");
+        assert!(one.contains("401"), "{one}");
+        assert!(one.contains("ask for it again"), "{one}");
+
+        // The noun agrees with the total, not with the missing count.
+        let single = undelivered_note(1, 0).expect("the only image is missing");
+        assert!(single.contains("1 of the 1 image attached"), "{single}");
+        assert!(single.contains("is not part of this turn"), "{single}");
+
+        let both = undelivered_note(2, 0).expect("both images are missing");
+        assert!(both.contains("2 of the 2 images"), "{both}");
+        assert!(both.contains("are not part of this turn"), "{both}");
+        assert!(both.contains("not a way to get them"), "{both}");
     }
 
     /// The whole read path against a real HTTP server: the URL is derived from
