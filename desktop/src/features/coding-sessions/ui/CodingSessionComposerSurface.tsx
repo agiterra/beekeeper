@@ -14,7 +14,7 @@ import {
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Textarea } from "@/shared/ui/textarea";
-import type { CodingSessionAttachmentController } from "@/features/coding-sessions/lib/useCodingSessionImageAttachments";
+import type { CodingSessionAttachmentController } from "@/features/coding-sessions/lib/useCodingSessionTurnAttachments";
 import { CodingSessionComposerAttachments } from "./CodingSessionComposerAttachments";
 import {
   useCodingSessionComposerRecipient,

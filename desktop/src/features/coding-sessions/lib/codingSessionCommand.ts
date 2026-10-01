@@ -87,20 +87,81 @@ export function isCodingSessionHostAnswerTagUnsupportedRejection(
       CODING_SESSION_HOST_ANSWER_TAG_UNSUPPORTED_MESSAGE
   );
 }
+/**
+ * Whether a turn was refused because this relay's attachment allowlist predates
+ * text attachments.
+ *
+ * A relay validates the 44220 payload on ingest with the same
+ * `CodingSessionCommandPayload::validate` the client mirrors, so a relay built
+ * before `text/plain` joined `ALLOWED_ATTACHMENT_MIMES` rejects a pasted file
+ * with `invalid: action.attachments[0].mime must be one of image/jpeg,
+ * image/png, image/gif, image/webp` — a sentence that reads, to the person who
+ * pasted a log, as though they had done something wrong.
+ *
+ * Identified by what the list the relay named is *missing*, not by its exact
+ * text: that is the one fact that distinguishes an old relay from a genuinely
+ * bad MIME, and it survives the list growing again later. A rejection naming a
+ * list that does include `text/plain` is some other problem and must keep its
+ * own message.
+ */
+export function isCodingSessionTextAttachmentUnsupportedRejection(
+  error: unknown,
+): boolean {
+  if (!(error instanceof Error)) return false;
+  const reason = stripRelayRejectionPrefix(error.message);
+  const match = /^action\.attachments\[\d+]\.mime must be one of (.+)$/.exec(
+    reason,
+  );
+  if (match === null) return false;
+  return !match[1]
+    .split(",")
+    .map((mime) => mime.trim())
+    .includes(CODING_SESSION_TEXT_ATTACHMENT_MIME);
+}
+
+/** What to tell the person when the relay above refused their paste. */
+export const CODING_SESSION_TEXT_ATTACHMENT_UNSUPPORTED_MESSAGE =
+  "This community's relay does not accept pasted files yet, so the turn was not sent. Remove the pasted file to send the message, or ask for the relay to be updated.";
+
 /** Maximum UTF-8 byte length for a command or target identifier. */
 export const MAX_CODING_SESSION_IDENTIFIER_BYTES = 256;
 /** Maximum UTF-8 byte length for a coding-session turn. */
 export const MAX_CODING_SESSION_TEXT_BYTES = 12 * 1024;
-/** Mirrors `MAX_TURN_ATTACHMENTS` in buzz-core. */
+/** Mirrors `MAX_TURN_ATTACHMENTS` in buzz-core — images and text together. */
 export const MAX_CODING_SESSION_ATTACHMENTS = 4;
-/** Mirrors `MAX_TURN_ATTACHMENT_BYTES` in buzz-core. */
+/** Mirrors `MAX_TURN_ATTACHMENT_BYTES` in buzz-core; images only. */
 export const MAX_CODING_SESSION_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-/** Mirrors `ALLOWED_ATTACHMENT_MIMES` in buzz-core. */
-export const CODING_SESSION_ATTACHMENT_MIMES = [
+/**
+ * Mirrors `MAX_TURN_TEXT_ATTACHMENT_BYTES` in buzz-core.
+ *
+ * Far below the image bound, and for a different reason: an image is downscaled
+ * before it reaches a model and text is not, so every byte here is spent out of
+ * a context window. It is still ~85× what a turn's own
+ * {@link MAX_CODING_SESSION_TEXT_BYTES} can hold, which is the whole point of
+ * attaching a paste rather than inlining it.
+ */
+export const MAX_CODING_SESSION_TEXT_ATTACHMENT_BYTES = 1024 * 1024;
+/** Mirrors `ALLOWED_IMAGE_ATTACHMENT_MIMES` in buzz-core. */
+export const CODING_SESSION_IMAGE_ATTACHMENT_MIMES = [
   "image/jpeg",
   "image/png",
   "image/gif",
   "image/webp",
+] as const;
+/**
+ * The one MIME a text attachment declares, mirroring
+ * `ALLOWED_TEXT_ATTACHMENT_MIMES` in buzz-core.
+ *
+ * It is also what the relay's generic-file validator stores an un-sniffable
+ * UTF-8 upload as, so the declared MIME, the sidecar and the `.txt` the
+ * provider fetches by all agree. They have to: the blob route answers `404`
+ * when the requested extension is not the sidecar's canonical one.
+ */
+export const CODING_SESSION_TEXT_ATTACHMENT_MIME = "text/plain";
+/** Mirrors `ALLOWED_ATTACHMENT_MIMES` in buzz-core: the images then the text. */
+export const CODING_SESSION_ATTACHMENT_MIMES = [
+  ...CODING_SESSION_IMAGE_ATTACHMENT_MIMES,
+  CODING_SESSION_TEXT_ATTACHMENT_MIME,
 ] as const;
 
 /** Provider-neutral target for an external coding-session provider adapter. */
@@ -147,7 +208,7 @@ export function isCodingSessionTurnDelivery(
 }
 
 /**
- * One image attached to a turn, addressed by its Blossom hash.
+ * One image or text file attached to a turn, addressed by its Blossom hash.
  *
  * No URL, deliberately: the provider derives `{relay}/media/{sha256}.{ext}`
  * from the relay it is already connected to, so a signed command can never
@@ -581,13 +642,21 @@ function validateCodingSessionAttachments(value: unknown): void {
         `action.attachments[${index}].mime must be one of ${CODING_SESSION_ATTACHMENT_MIMES.join(", ")}`,
       );
     }
+    // Each kind against its own ceiling, exactly as `TurnAttachment::validate`
+    // does, and the message names the bound that refused it: a text attachment
+    // turned away at 1 MiB and an image accepted at 9 MiB are the same field,
+    // and "too large" alone would point a person at the wrong rule.
+    const limit =
+      attachment.mime === CODING_SESSION_TEXT_ATTACHMENT_MIME
+        ? MAX_CODING_SESSION_TEXT_ATTACHMENT_BYTES
+        : MAX_CODING_SESSION_ATTACHMENT_BYTES;
     if (
       !Number.isSafeInteger(attachment.size) ||
       (attachment.size ?? 0) <= 0 ||
-      (attachment.size ?? 0) > MAX_CODING_SESSION_ATTACHMENT_BYTES
+      (attachment.size ?? 0) > limit
     ) {
       throw new Error(
-        `action.attachments[${index}].size must be between 1 and ${MAX_CODING_SESSION_ATTACHMENT_BYTES} bytes`,
+        `action.attachments[${index}].size must be between 1 and ${limit} bytes`,
       );
     }
   });

@@ -1,8 +1,10 @@
 import * as React from "react";
 
 import {
+  CODING_SESSION_TEXT_ATTACHMENT_UNSUPPORTED_MESSAGE,
   buildCodingSessionTargetKey,
   createCodingSessionCommandId,
+  isCodingSessionTextAttachmentUnsupportedRejection,
   publishCodingSessionCommand,
   publishCodingSessionInterrupt,
   type CodingSessionCommandTarget,
@@ -45,10 +47,10 @@ import { codingSessionWorkspaceStatusDetail } from "@/features/coding-sessions/l
 import type { CodingSessionStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { getCodingSessionComposerState } from "@/features/coding-sessions/lib/codingSessionComposerModel";
 import {
-  expandImageTokens,
-  useCodingSessionImageAttachments,
+  expandAttachmentTokens,
+  useCodingSessionTurnAttachments,
   type CodingSessionAttachmentRef,
-} from "@/features/coding-sessions/lib/useCodingSessionImageAttachments";
+} from "@/features/coding-sessions/lib/useCodingSessionTurnAttachments";
 import {
   type CodingSessionChannelAccess,
   codingSessionChannelAccessAllowsSend,
@@ -275,7 +277,7 @@ export function CodingSessionComposer({
     editorRef.current?.focus();
   }, [recoverable]);
   /**
-   * Write an image token where the person is typing.
+   * Write an attachment token where the person is typing.
    *
    * The caret is what puts the picture in the right place, so a turn reads
    * *"when I do X I see this: [Image #1]"* rather than prose with a tray of
@@ -305,8 +307,12 @@ export function CodingSessionComposer({
     [],
   );
 
-  const attachments = useCodingSessionImageAttachments({
-    enabled: canAttachImages,
+  const attachments = useCodingSessionTurnAttachments({
+    canAttachImages,
+    // Text needs no runtime capability — it reaches the agent as the same kind
+    // of block the turn itself is — so a large paste becomes a file whatever
+    // this execution's `promptImage` says.
+    canAttachText: true,
     onInsertAtCaret: insertAtCaret,
     onTransformDraft: transformDraft,
   });
@@ -384,10 +390,11 @@ export function CodingSessionComposer({
     editor.style.overflowY =
       editor.scrollHeight > maxHeight ? "auto" : "hidden";
   });
-  // `[Image #N]` is what the person reads and keeps editing; the markdown it
-  // becomes is what the relay stores and the transcript renders as a picture.
-  // Expanding here — and never in the draft — is what keeps both true.
-  const preparedText = expandImageTokens(
+  // `[Image #N]`/`[Pasted text #N]` is what the person reads and keeps editing;
+  // the markdown it becomes is what the relay stores and the transcript renders
+  // as a picture or a link. Expanding here — and never in the draft — is what
+  // keeps both true.
+  const preparedText = expandAttachmentTokens(
     (prepareText ? prepareText(text) : text).trim(),
     attachments.attachments,
   );
@@ -452,7 +459,7 @@ export function CodingSessionComposer({
         recordedAt: Date.now(),
         published: false,
         // So a later recovery can say what it is not bringing back: the words
-        // come home, the pictures do not.
+        // come home, the attachments do not.
         attachmentCount: attachmentRefs.length,
       });
       setPendingAction("send");
@@ -487,10 +494,15 @@ export function CodingSessionComposer({
         // same rule the refusal path already follows, including its handling of
         // a person who has started typing again.
         restoreRefusedDraft(draft);
+        // An older relay refuses a pasted file by naming its own MIME
+        // allowlist, which to the person who pasted a log reads as though the
+        // paste were malformed. Say what is actually true instead.
         setError(
-          submitError instanceof Error
-            ? submitError.message
-            : "Unable to send coding-session command.",
+          isCodingSessionTextAttachmentUnsupportedRejection(submitError)
+            ? CODING_SESSION_TEXT_ATTACHMENT_UNSUPPORTED_MESSAGE
+            : submitError instanceof Error
+              ? submitError.message
+              : "Unable to send coding-session command.",
         );
       } finally {
         setPendingAction(null);

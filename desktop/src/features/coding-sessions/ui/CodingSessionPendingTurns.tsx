@@ -217,7 +217,7 @@ function CodingSessionPendingTurnRow({
               Copying leaves this message where it is. It may already have
               reached the running turn.
               {attachmentCount > 0
-                ? ` ${attachmentCount === 1 ? "Its image is" : `Its ${attachmentCount} images are`} not copied.`
+                ? ` ${attachmentCount === 1 ? "Its attachment is" : `Its ${attachmentCount} attachments are`} not copied.`
                 : ""}
             </p>
             <div className="flex items-center gap-2">

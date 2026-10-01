@@ -11,6 +11,8 @@ import {
   codingSessionTargetSupportsInterrupt,
   isCodingSessionCiContinuationAction,
   isCodingSessionHostAnswerTagUnsupportedRejection,
+  isCodingSessionTextAttachmentUnsupportedRejection,
+  MAX_CODING_SESSION_TEXT_ATTACHMENT_BYTES,
   MAX_CODING_SESSION_IDENTIFIER_BYTES,
   MAX_CODING_SESSION_TEXT_BYTES,
   publishCodingSessionCommand,
@@ -539,13 +541,109 @@ test("attachments ride the payload and are validated before signing", () => {
   for (const [bad, label] of [
     [{ ...attachment, sha256: "abc" }, "short hash"],
     [{ ...attachment, sha256: attachment.sha256.toUpperCase() }, "uppercase"],
-    [{ ...attachment, mime: "application/pdf" }, "non-image mime"],
+    [{ ...attachment, mime: "application/pdf" }, "a mime on no allowlist"],
     [{ ...attachment, size: 0 }, "zero size"],
     [{ ...attachment, size: 10 * 1024 * 1024 + 1 }, "oversize"],
   ]) {
     assert.throws(() => build([bad]), undefined, `accepted ${label}`);
   }
   assert.throws(() => build(new Array(5).fill(attachment)), /exceeds 4/);
+});
+
+const pastedFile = {
+  sha256: "bb0011223344556677889900aabbccddeeff00112233445566778899aabbccdd",
+  mime: "text/plain",
+  size: 4096,
+  filename: "pasted-text-1.txt",
+};
+
+test("a pasted file rides the same payload, bounded by the text ceiling", () => {
+  const event = buildCodingSessionCommandEvent({
+    channelId: "3f2b8c1e-0000-4000-8000-000000000001",
+    commandId: "cmd-text",
+    target,
+    text: "fix the crash in [pasted-text-1.txt](http://relay/media/x.txt)",
+    attachments: [pastedFile],
+    deliver: "boundary",
+  });
+  assert.deepEqual(JSON.parse(event.content).action.attachments, [pastedFile]);
+
+  const build = (attachments) =>
+    buildCodingSessionCommandEvent({
+      channelId: "3f2b8c1e-0000-4000-8000-000000000001",
+      commandId: "cmd-text-2",
+      target,
+      text: "go",
+      attachments,
+      deliver: "boundary",
+    });
+
+  // Each kind against its own ceiling. The byte count an image is allowed is
+  // refused for text, and the message names the bound that refused it rather
+  // than the other one.
+  assert.doesNotThrow(() =>
+    build([{ ...pastedFile, size: MAX_CODING_SESSION_TEXT_ATTACHMENT_BYTES }]),
+  );
+  assert.throws(
+    () =>
+      build([
+        { ...pastedFile, size: MAX_CODING_SESSION_TEXT_ATTACHMENT_BYTES + 1 },
+      ]),
+    new RegExp(
+      `between 1 and ${MAX_CODING_SESSION_TEXT_ATTACHMENT_BYTES} bytes`,
+    ),
+  );
+  assert.doesNotThrow(() =>
+    build([
+      { ...attachment, size: MAX_CODING_SESSION_TEXT_ATTACHMENT_BYTES + 1 },
+    ]),
+  );
+
+  // One turn can carry both, and the shared count cap covers them together.
+  assert.doesNotThrow(() => build([attachment, pastedFile]));
+  assert.throws(
+    () => build([attachment, attachment, pastedFile, pastedFile, pastedFile]),
+    /exceeds 4/,
+  );
+});
+
+/**
+ * The rollout hazard this predicate exists for: the desktop can publish a
+ * pasted file the moment it ships, and a relay that has not been rebuilt
+ * refuses it by reciting its own allowlist. That sentence blames the paste.
+ */
+test("isCodingSessionTextAttachmentUnsupportedRejection: only a relay whose allowlist lacks text/plain", () => {
+  assert.equal(
+    isCodingSessionTextAttachmentUnsupportedRejection(
+      new Error(
+        "invalid: action.attachments[0].mime must be one of image/jpeg, image/png, image/gif, image/webp",
+      ),
+    ),
+    true,
+  );
+  // A relay that *does* list text/plain refused this for some other reason —
+  // a genuinely bad MIME — and must keep its own message.
+  assert.equal(
+    isCodingSessionTextAttachmentUnsupportedRejection(
+      new Error(
+        "invalid: action.attachments[1].mime must be one of image/jpeg, image/png, image/gif, image/webp, text/plain",
+      ),
+    ),
+    false,
+  );
+  for (const other of [
+    new Error(
+      "invalid: action.attachments[0].size must be between 1 and 10 bytes",
+    ),
+    new Error("restricted: not a member"),
+    "not an error",
+    undefined,
+  ]) {
+    assert.equal(
+      isCodingSessionTextAttachmentUnsupportedRejection(other),
+      false,
+    );
+  }
 });
 
 // ── A CI-continuation registration is a known action, strictly shaped ───────

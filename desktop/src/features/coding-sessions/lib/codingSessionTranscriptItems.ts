@@ -13,6 +13,7 @@ import type {
   ToolStatus,
   TranscriptItem,
 } from "@/features/agents/ui/agentSessionTypes";
+import { containsAttachmentReference } from "./codingSessionAttachmentReference";
 import { readCostBasis } from "./codingSessionCostBasis";
 import {
   boundEntries,
@@ -205,11 +206,6 @@ export function buildBaseTranscriptItem(
   }
 }
 
-/** Whether prose already references an image, so the reader will see it. */
-function containsImageReference(content: string): boolean {
-  return /!\[[^\]]*\]\([^)]+\)/.test(content);
-}
-
 function buildUserPromptMessage(
   item: Record<string, unknown>,
   ctx: Identity,
@@ -217,15 +213,16 @@ function buildUserPromptMessage(
   const content = typeof item.content === "string" ? item.content : "";
   const suffixes: string[] = [];
   // The count is a fallback, not the display. A turn that references its
-  // images inline renders them where they were written, so restating "1
-  // attachment" underneath would describe something the reader can already
-  // see. The chip survives only for a prompt whose images have no reference
-  // in the prose — an older client, or one whose upload never landed — where
-  // it is the only evidence an image was ever part of the turn.
+  // attachments inline renders them where they were written — the picture
+  // itself, or a link to the pasted file — so restating "1 attachment"
+  // underneath would describe something the reader can already see. The chip
+  // survives only for a prompt whose attachments have no reference in the prose
+  // — an older client, or one whose upload never landed — where it is the only
+  // evidence anything was ever part of the turn.
   if (
     typeof item.attachmentCount === "number" &&
     item.attachmentCount > 0 &&
-    !containsImageReference(content)
+    !containsAttachmentReference(content)
   ) {
     suffixes.push(
       `${item.attachmentCount} attachment${item.attachmentCount === 1 ? "" : "s"}`,

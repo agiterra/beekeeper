@@ -477,6 +477,34 @@ test("a prompt that references its images inline does not also count them", () =
   assert.match(countOnly.text, /\(2 attachments\)/);
 });
 
+test("a prompt that links its pasted file inline does not also count it", () => {
+  const sha = "b".repeat(64);
+
+  // A pasted file is referenced by a plain link, not an image one — the reader
+  // can follow it, so the count would restate what is already on screen.
+  const inline = buildBaseTranscriptItem(
+    {
+      kind: "user_prompt",
+      content: `fix the crash in [pasted-text-1.txt](http://relay/media/${sha}.txt)`,
+      attachmentCount: 1,
+    },
+    IDENTITY,
+  );
+  assert.doesNotMatch(inline.text, /attachment/);
+
+  // An ordinary link someone typed in their prose is not an attachment
+  // reference, so it must not suppress the one piece of evidence there is.
+  const unrelated = buildBaseTranscriptItem(
+    {
+      kind: "user_prompt",
+      content: "see [the docs](http://example.com/guide) for context",
+      attachmentCount: 1,
+    },
+    IDENTITY,
+  );
+  assert.match(unrelated.text, /\(1 attachment\)/);
+});
+
 test("a steered prompt carries the flag the renderer marks it with, and an ordinary one does not", () => {
   const steered = buildBaseTranscriptItem(
     {

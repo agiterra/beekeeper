@@ -632,7 +632,9 @@ test("copy to draft recovers the words, sends nothing, and keeps the unknown row
     // pressed, on screen rather than in a tooltip.
     const row = screen.getByTestId("coding-session-pending-turn");
     assert.match(row.textContent, /may already have reached the running turn/);
-    assert.match(row.textContent, /Its 2 images are not copied\./);
+    // "attachments", not "images": a turn can carry a pasted file too, and the
+    // count does not know which kinds it is standing for.
+    assert.match(row.textContent, /Its 2 attachments are not copied\./);
 
     await act(async () => {
       fireEvent.click(
