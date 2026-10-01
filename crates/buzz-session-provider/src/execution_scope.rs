@@ -251,6 +251,10 @@ pub struct PreparedExecution {
     /// The project's agents repository this execution reads, and whether it
     /// may write there.
     pub agents: Option<(PathBuf, bool)>,
+    /// The person granted this session full access to this computer: it is
+    /// prepared as every session is, and its agent starts without the
+    /// boundary (`crate::full_access`).
+    pub full_access: bool,
 }
 
 impl PreparedExecution {
@@ -258,6 +262,11 @@ impl PreparedExecution {
     /// launches through, so it can never disagree with the launch.
     #[must_use]
     pub fn state(&self) -> BoundaryState {
+        if self.full_access {
+            return BoundaryState::NotEnforced {
+                reason: crate::full_access::FULL_ACCESS_REASON,
+            };
+        }
         let boundary = self.launch.boundary();
         BoundaryState::Enforced {
             backend: boundary.backend(),
@@ -992,6 +1001,7 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         runtime: inputs.runtime,
         claude_options,
         agents,
+        full_access: false,
     })))
 }
 
@@ -2070,7 +2080,12 @@ impl crate::Provider {
         inputs.seat_bee = bee.as_deref();
         inputs.hermit_state = hermit_state.as_deref();
         inputs.prior = facts.prior;
-        prepare(&inputs)
+        let mut plan = prepare(&inputs)?;
+        if let ExecutionPlan::Prepared(prepared) = &mut plan {
+            prepared.full_access =
+                crate::full_access::granted(&self.config.state_dir, facts.session_id);
+        }
+        Ok(plan)
     }
 }
 

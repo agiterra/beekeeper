@@ -51,6 +51,7 @@ pub(crate) use beekeeper_host_core::record::canonical_relay_key;
 
 pub(crate) mod commands;
 pub(crate) mod env;
+pub(crate) mod full_access;
 pub(crate) mod runtimes;
 pub(crate) mod status;
 pub(crate) mod store;

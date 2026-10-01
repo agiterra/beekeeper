@@ -944,3 +944,29 @@ fn the_allocated_branch_is_the_one_writable_branch_and_commits_on_it_work() {
     let refusal = prepare(&both).expect_err("two host branches");
     assert_eq!(refusal.code, EXECUTION_SCOPE_INVALID, "{refusal:?}");
 }
+
+/// Full access (ledger 303): a granted session is prepared exactly as any
+/// other, then disclosed — in its recorded state and in what its agent is told
+/// — as running outside the boundary, never as protected.
+#[test]
+fn a_full_access_session_is_disclosed_as_unbounded_and_told_so() {
+    let fx = fixture();
+    let mut plan = prepared(prepare(&inputs(&fx, "s1", &fx.seat_a, &[], &[])));
+    assert!(matches!(plan.state(), BoundaryState::Enforced { .. }));
+    plan.full_access = true;
+    assert_eq!(
+        plan.state(),
+        BoundaryState::NotEnforced {
+            reason: crate::full_access::FULL_ACCESS_REASON
+        }
+    );
+    let briefing = crate::session::boundary_briefing(&ExecutionPlan::Prepared(plan));
+    assert!(
+        briefing.contains("full access to this computer"),
+        "{briefing}"
+    );
+    assert!(
+        !briefing.contains("Operation not permitted"),
+        "a full-access agent must not be told about refusals it will not meet: {briefing}"
+    );
+}

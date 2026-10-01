@@ -42,6 +42,7 @@ pub mod execution_scope;
 mod execution_scope_git;
 pub mod execution_scope_host;
 pub(crate) mod execution_scope_runtime;
+pub mod full_access;
 mod project_deletion;
 // The durable host-owned queue that puts a seat on its exact input (lane 185,
 // moved here by lane 202 so the party holding the turn gate owns the order).

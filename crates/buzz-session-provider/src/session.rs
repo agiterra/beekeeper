@@ -1882,6 +1882,16 @@ async fn start_agent(
     // source, and every process it starts inherits both
     // (`crate::execution_scope`).
     let mut client = match &request.execution {
+        // Granted full access by the person: the same prepared environment
+        // and working directory, without the boundary around the process.
+        crate::execution_scope::ExecutionPlan::Prepared(prepared) if prepared.full_access => {
+            AcpClient::spawn_with_full_access(
+                &request.agent_command,
+                &request.agent_args,
+                &prepared.launch,
+            )
+            .await
+        }
         crate::execution_scope::ExecutionPlan::Prepared(prepared) => {
             AcpClient::spawn_bounded(
                 &request.agent_command,
@@ -2180,6 +2190,26 @@ fn session_briefing(
 /// place.
 pub(crate) fn boundary_briefing(execution: &crate::execution_scope::ExecutionPlan) -> String {
     match execution {
+        crate::execution_scope::ExecutionPlan::Prepared(prepared) if prepared.full_access => {
+            let mut text = String::from(
+                "\n\nThe person granted this session full access to this computer: no project \
+                 boundary is enforced, so you may install developer tools and change machine-wide \
+                 configuration when the task needs it (Homebrew, toolchains, simulators, global \
+                 packages). Prefer the project's own working tree for project work, leave other \
+                 projects' files and other sessions' work alone, and say what you changed outside \
+                 the project in your report. Anything that needs the person's password, Apple ID \
+                 or a login is still theirs to do: ask for it rather than work around it. This \
+                 runtime's own settings, conversation history and memory are still private to \
+                 this execution.",
+            );
+            if let Some(branch) = &prepared.binding.branch {
+                text.push_str(&format!(
+                    " Your working tree is on the branch `{branch}`, which the host allocated \
+                     for this session: commit there."
+                ));
+            }
+            text
+        }
         crate::execution_scope::ExecutionPlan::Prepared(prepared) => {
             let mut text = format!(
                 "\n\nThis session runs inside a project boundary the host enforces ({}): this \

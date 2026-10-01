@@ -275,3 +275,66 @@ async fn a_bounded_launch_gives_the_child_exactly_the_resolved_environment() {
         "the harness's own namespace leaked: {text}"
     );
 }
+
+/// Full access (ledger 303): the same prepared launch without its boundary.
+/// The child reaches what the boundary refuses, and still receives exactly the
+/// resolved environment — full access widens the filesystem, not the
+/// environment.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn a_full_access_launch_reaches_outside_with_exactly_the_resolved_environment() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().canonicalize().expect("canonical");
+    let own = root.join("own");
+    std::fs::create_dir_all(&own).expect("own");
+    std::fs::write(root.join("outside"), "OUTSIDE").expect("outside");
+    let boundary = crate::exec_boundary::prepare(crate::exec_boundary::BoundarySpec {
+        grants: vec![crate::exec_boundary::Grant::tree(
+            &own,
+            crate::exec_boundary::Access::ReadWrite,
+            "own",
+        )],
+        policy_dir: root.join("host"),
+        probe_readable: {
+            std::fs::write(own.join("probe"), "p").expect("probe");
+            own.join("probe")
+        },
+    })
+    .expect("boundary");
+    let dump = own.join("env");
+    let mut env = ResolvedEnv::baseline(
+        ambient(&[("PATH", "/usr/bin:/bin"), ("PROJECT_A_ONLY", "canary")]),
+        ModelAuth::None,
+        &FENCE,
+        &usable,
+    );
+    env.identity("SEAT_SENTINEL", "seat-a", &usable);
+    let launch = crate::acp::BoundedLaunch::new(boundary, env, own.clone());
+    let script = format!(
+        "/usr/bin/env > '{dump}'; cat '{outside}' >> '{dump}' 2>&1 || echo OUTSIDE_REFUSED >> '{dump}'; \
+         echo DONE >> '{dump}'",
+        dump = dump.display(),
+        outside = root.join("outside").display(),
+    );
+    let mut client = crate::acp::AcpClient::spawn_with_full_access(
+        "/bin/sh",
+        &["-c".to_owned(), script],
+        &launch,
+    )
+    .await
+    .expect("spawn");
+    for _ in 0..100 {
+        if std::fs::read_to_string(&dump).is_ok_and(|text| text.contains("DONE")) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    client.shutdown().await;
+    let text = std::fs::read_to_string(&dump).expect("dump");
+    assert!(text.contains("SEAT_SENTINEL=seat-a"), "{text}");
+    assert!(
+        text.contains("OUTSIDE") && !text.contains("OUTSIDE_REFUSED"),
+        "full access must reach what the boundary refuses: {text}"
+    );
+    assert!(!text.contains("PROJECT_A_ONLY"), "{text}");
+}

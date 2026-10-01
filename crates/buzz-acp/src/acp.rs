@@ -1552,15 +1552,41 @@ impl AcpClient {
         Self::from_command(cmd, command)
     }
 
+    /// Spawn the agent from a prepared launch **without** its boundary,
+    /// because the person granted the session full access to this computer.
+    ///
+    /// Everything else is the prepared launch's: exactly the environment the
+    /// host resolved (nothing inherited), its working directory, its process
+    /// group. Only the `sandbox-exec` wrapper is left off, so the caller must
+    /// disclose the execution as not enforced.
+    pub async fn spawn_with_full_access(
+        command: &str,
+        args: &[String],
+        launch: &BoundedLaunch,
+    ) -> Result<Self, AcpError> {
+        let cmd = Self::launch_command(command.to_owned(), args.to_vec(), launch);
+        Self::from_command(cmd, command)
+    }
+
     /// Assemble a bounded child `Command` without spawning it.
     fn build_bounded_command(
         command: &str,
         args: &[String],
         launch: &BoundedLaunch,
     ) -> tokio::process::Command {
+        let (program, argv) = launch.boundary.wrap(command, args);
+        Self::launch_command(program, argv, launch)
+    }
+
+    /// A child `Command` for `program argv…` with a launch's environment and
+    /// working directory.
+    fn launch_command(
+        program: String,
+        argv: Vec<String>,
+        launch: &BoundedLaunch,
+    ) -> tokio::process::Command {
         use std::process::Stdio;
 
-        let (program, argv) = launch.boundary.wrap(command, args);
         let mut cmd = tokio::process::Command::new(program);
         cmd.args(argv)
             .current_dir(&launch.cwd)
