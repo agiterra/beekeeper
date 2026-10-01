@@ -86,6 +86,14 @@ export async function startSelectedInstalledRoleIdentities(input: {
 export async function prepareProjectForTeams(input: {
   dependencies: TeamReadinessPrepareDependencies;
   onSteps?: (steps: readonly TeamReadinessPrepareStep[]) => void;
+  /**
+   * The project names a pack source (an agents repository), so each seat's
+   * role is staged from it at launch and nothing is installed from the
+   * checkout beforehand. The two install steps are then reported as not
+   * needed rather than run against a `personas/roles` folder the project no
+   * longer has (ledger 302(i)).
+   */
+  rolesStagedAtLaunch?: boolean;
 }): Promise<{
   steps: TeamReadinessPrepareStep[];
   readiness: TeamReadinessResponse | null;
@@ -109,8 +117,19 @@ export async function prepareProjectForTeams(input: {
   let error: string | null = null;
   let readiness: TeamReadinessResponse | null = null;
   try {
-    await run("install_roles", input.dependencies.installRoles);
-    await run("start_roles", input.dependencies.startRoles);
+    if (input.rolesStagedAtLaunch) {
+      for (const step of steps) {
+        if (step.id === "install_roles" || step.id === "start_roles") {
+          step.state = "done";
+          step.detail =
+            "Not needed: each seat's role is staged from the project's agents repository when the session starts.";
+        }
+      }
+      publish();
+    } else {
+      await run("install_roles", input.dependencies.installRoles);
+      await run("start_roles", input.dependencies.startRoles);
+    }
     await run("provision_provider", input.dependencies.provisionProvider);
     await run("start_provider", input.dependencies.startProvider);
     await run("refresh_runtime", input.dependencies.refreshRuntime);

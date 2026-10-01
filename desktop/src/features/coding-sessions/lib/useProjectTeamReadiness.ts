@@ -257,125 +257,153 @@ export function useProjectTeamReadiness(input: {
     scopeKey,
   ]);
 
-  const confirmPrepare = React.useCallback(async () => {
-    if (
-      !scan ||
-      projectRef === null ||
-      relayUrl === null ||
-      scanningRef.current ||
-      preparingRef.current ||
-      preflightingRef.current
-    ) {
-      return;
-    }
-    requireCurrentScope();
-    const generation = operationGenerationRef.current + 1;
-    operationGenerationRef.current = generation;
-    preparingRef.current = true;
-    setIsPreparing(true);
-    setPrepareError(null);
-    setPrepareWarning(null);
-    let installedRoles: readonly InstalledCrewRole[] = [];
-    const result = await prepareProjectForTeams({
-      dependencies: {
-        installRoles: async () => {
-          requireCurrentOperation(generation);
-          const installed = await installCrewRolePacks(
-            scan.directory,
-            names,
-            relayUrl,
-          );
-          requireCurrentOperation(generation);
-          // A pack refreshed without being asked about is still a pack that
-          // can fail, and a silent refresh must not become a hidden failure
-          // (finding 15). Every discovered role the install did not produce is
-          // named here, alongside the roster roles it dropped.
-          const refreshedRoles = new Set(
-            installed.installed.map((entry) => entry.role.trim().toLowerCase()),
-          );
-          const notRefreshed = scan.packs
-            .map((pack) => pack.role.trim().toLowerCase())
-            .filter((role) => role.length > 0 && !refreshedRoles.has(role));
-          const disclosures = [
-            installed.profileSyncError
-              ? `Role profiles need another relay sync: ${installed.profileSyncError}`
-              : null,
-            notRefreshed.length > 0
-              ? `These role packs did not refresh: ${[...new Set(notRefreshed)].sort().join(", ")}.`
-              : null,
-            installed.dropped.length > 0
-              ? `These roster roles hold no seat: ${[...installed.dropped].sort().join(", ")}.`
-              : null,
-          ].filter((line): line is string => line !== null);
-          if (disclosures.length > 0) setPrepareWarning(disclosures.join(" "));
-          installedRoles = installed.installed;
+  // A project that names a pack source stages each seat's role from its
+  // agents repository at launch; its checkout's `personas/roles` is not where
+  // its roles live, so Prepare neither scans nor installs from it (ledger
+  // 302(i)) — it prepares the provider and re-reads.
+  const rolesStagedAtLaunch = readiness?.team.packSourcePresent === true;
+
+  const runPrepare = React.useCallback(
+    async (scanForInstall: typeof scan) => {
+      if (
+        (!scanForInstall && !rolesStagedAtLaunch) ||
+        projectRef === null ||
+        relayUrl === null ||
+        scanningRef.current ||
+        preparingRef.current ||
+        preflightingRef.current
+      ) {
+        return;
+      }
+      requireCurrentScope();
+      const generation = operationGenerationRef.current + 1;
+      operationGenerationRef.current = generation;
+      preparingRef.current = true;
+      setIsPreparing(true);
+      setPrepareError(null);
+      setPrepareWarning(null);
+      let installedRoles: readonly InstalledCrewRole[] = [];
+      const result = await prepareProjectForTeams({
+        rolesStagedAtLaunch: !scanForInstall,
+        dependencies: {
+          installRoles: async () => {
+            requireCurrentOperation(generation);
+            if (!scanForInstall) return;
+            const scan = scanForInstall;
+            const installed = await installCrewRolePacks(
+              scan.directory,
+              names,
+              relayUrl,
+            );
+            requireCurrentOperation(generation);
+            // A pack refreshed without being asked about is still a pack that
+            // can fail, and a silent refresh must not become a hidden failure
+            // (finding 15). Every discovered role the install did not produce is
+            // named here, alongside the roster roles it dropped.
+            const refreshedRoles = new Set(
+              installed.installed.map((entry) =>
+                entry.role.trim().toLowerCase(),
+              ),
+            );
+            const notRefreshed = scan.packs
+              .map((pack) => pack.role.trim().toLowerCase())
+              .filter((role) => role.length > 0 && !refreshedRoles.has(role));
+            const disclosures = [
+              installed.profileSyncError
+                ? `Role profiles need another relay sync: ${installed.profileSyncError}`
+                : null,
+              notRefreshed.length > 0
+                ? `These role packs did not refresh: ${[...new Set(notRefreshed)].sort().join(", ")}.`
+                : null,
+              installed.dropped.length > 0
+                ? `These roster roles hold no seat: ${[...installed.dropped].sort().join(", ")}.`
+                : null,
+            ].filter((line): line is string => line !== null);
+            if (disclosures.length > 0)
+              setPrepareWarning(disclosures.join(" "));
+            installedRoles = installed.installed;
+          },
+          startRoles: async () => {
+            requireCurrentOperation(generation);
+            await startSelectedInstalledRoleIdentities({
+              installed: installedRoles,
+              selectedRoles,
+              start: async (pubkey) => {
+                requireCurrentOperation(generation);
+                const agent = await restartManagedAgent(pubkey, relayUrl);
+                requireCurrentOperation(generation);
+                return agent;
+              },
+            });
+          },
+          provisionProvider: async () => {
+            requireCurrentOperation(generation);
+            await provisionCodingSessionProvider(relayUrl);
+          },
+          startProvider: async () => {
+            requireCurrentOperation(generation);
+            await ensureCodingSessionProviderRunning(relayUrl);
+          },
+          refreshRuntime: async () => {
+            requireCurrentOperation(generation);
+            await input.refreshRuntimeTargets();
+            requireCurrentOperation(generation);
+          },
+          rereadReadiness: () => {
+            requireCurrentOperation(generation);
+            return getTeamReadiness({
+              projectRef,
+              selectedRoles,
+              hiringPolicyEnabled,
+              expectedRelayUrl: relayUrl,
+              channelIds,
+            });
+          },
         },
-        startRoles: async () => {
-          requireCurrentOperation(generation);
-          await startSelectedInstalledRoleIdentities({
-            installed: installedRoles,
-            selectedRoles,
-            start: async (pubkey) => {
-              requireCurrentOperation(generation);
-              const agent = await restartManagedAgent(pubkey, relayUrl);
-              requireCurrentOperation(generation);
-              return agent;
-            },
-          });
+        onSteps: (next) => {
+          if (
+            operationGenerationRef.current === generation &&
+            isCurrentScope()
+          ) {
+            setPrepareSteps([...next]);
+          }
         },
-        provisionProvider: async () => {
-          requireCurrentOperation(generation);
-          await provisionCodingSessionProvider(relayUrl);
-        },
-        startProvider: async () => {
-          requireCurrentOperation(generation);
-          await ensureCodingSessionProviderRunning(relayUrl);
-        },
-        refreshRuntime: async () => {
-          requireCurrentOperation(generation);
-          await input.refreshRuntimeTargets();
-          requireCurrentOperation(generation);
-        },
-        rereadReadiness: () => {
-          requireCurrentOperation(generation);
-          return getTeamReadiness({
-            projectRef,
-            selectedRoles,
-            hiringPolicyEnabled,
-            expectedRelayUrl: relayUrl,
-            channelIds,
-          });
-        },
-      },
-      onSteps: (next) => {
-        if (operationGenerationRef.current === generation && isCurrentScope()) {
-          setPrepareSteps([...next]);
-        }
-      },
-    });
-    if (operationGenerationRef.current !== generation || !isCurrentScope()) {
-      return;
-    }
-    if (result.readiness) {
-      setFreshReadiness({ scopeKey, value: result.readiness });
-    }
-    setPrepareError(result.error);
-    preparingRef.current = false;
-    setIsPreparing(false);
-  }, [
-    channelIds,
-    hiringPolicyEnabled,
-    isCurrentScope,
-    names,
-    projectRef,
-    relayUrl,
-    requireCurrentOperation,
-    requireCurrentScope,
-    scan,
-    scopeKey,
-    selectedRoles,
-    input.refreshRuntimeTargets,
-  ]);
+      });
+      if (operationGenerationRef.current !== generation || !isCurrentScope()) {
+        return;
+      }
+      if (result.readiness) {
+        setFreshReadiness({ scopeKey, value: result.readiness });
+      }
+      setPrepareError(result.error);
+      preparingRef.current = false;
+      setIsPreparing(false);
+    },
+    [
+      channelIds,
+      hiringPolicyEnabled,
+      isCurrentScope,
+      names,
+      projectRef,
+      relayUrl,
+      requireCurrentOperation,
+      requireCurrentScope,
+      rolesStagedAtLaunch,
+      scopeKey,
+      selectedRoles,
+      input.refreshRuntimeTargets,
+    ],
+  );
+
+  const confirmPrepare = React.useCallback(
+    () => runPrepare(scan),
+    [runPrepare, scan],
+  );
+
+  const startPrepare = React.useCallback(
+    () => (rolesStagedAtLaunch ? runPrepare(null) : beginPrepare()),
+    [beginPrepare, rolesStagedAtLaunch, runPrepare],
+  );
 
   const readFreshForLaunch = React.useCallback(async () => {
     if (projectRef === null || relayUrl === null) {
@@ -445,7 +473,7 @@ export function useProjectTeamReadiness(input: {
           [role]: name,
         },
       })),
-    beginPrepare,
+    beginPrepare: startPrepare,
     confirmPrepare,
     cancelPrepare: () => setScanState(null),
     isScanning,
