@@ -22,8 +22,8 @@ use uuid::Uuid;
 use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
 use buzz_core::coding_session_command::{
     coding_session_target_key, CodingSessionAction, CodingSessionCommandPayload,
-    CodingSessionDelivery, TurnAttachment, ALLOWED_ATTACHMENT_MIMES, CODING_SESSION_COMMAND_SCHEMA,
-    CODING_SESSION_COMMAND_TAG_VERSION, MAX_TURN_ATTACHMENTS,
+    CodingSessionDelivery, TurnAttachment, ALLOWED_IMAGE_ATTACHMENT_MIMES,
+    CODING_SESSION_COMMAND_SCHEMA, CODING_SESSION_COMMAND_TAG_VERSION, MAX_TURN_ATTACHMENTS,
 };
 use buzz_core::coding_session_genesis::CodingSessionGenesisPayload;
 use buzz_core::coding_session_identity::ProviderInstanceAlias;
@@ -416,11 +416,15 @@ async fn upload_turn_images(
     let mut attachments = Vec::with_capacity(images.len());
     for path in images {
         let descriptor = client.upload_file(path).await?;
-        if !ALLOWED_ATTACHMENT_MIMES.contains(&descriptor.mime_type.as_str()) {
+        // The image half of the allowlist, not the whole of it: a turn may also
+        // carry a `text/plain` attachment, but this flag is `--image` and this
+        // loop uploads through the image path, so accepting text here would name
+        // a kind it cannot produce.
+        if !ALLOWED_IMAGE_ATTACHMENT_MIMES.contains(&descriptor.mime_type.as_str()) {
             return Err(CliError::Usage(format!(
-                "--image {path} is {}, but a turn attachment must be one of {}",
+                "--image {path} is {}, but an image attachment must be one of {}",
                 descriptor.mime_type,
-                ALLOWED_ATTACHMENT_MIMES.join(", ")
+                ALLOWED_IMAGE_ATTACHMENT_MIMES.join(", ")
             )));
         }
         attachments.push(TurnAttachment {

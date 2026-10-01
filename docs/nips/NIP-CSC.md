@@ -135,7 +135,7 @@ here, at the boundary instead". A consumer that does not understand
 wrong. The same downgrade answers a native attempt that provably did not
 inject — the running turn had already ended (`STEER_TURN_ENDED`), the runtime
 answered the request with an explicit error (`STEER_REJECTED`), or the input
-carried image attachments the native path does not take
+carried attachments the native path does not take
 (`STEER_ATTACHMENTS_UNSUPPORTED`). One admission failure is **not** a
 downgrade: when the execution's native-steer admission is full, nothing is
 written and the command is answered `turn_dropped` / `STEER_SATURATED`,

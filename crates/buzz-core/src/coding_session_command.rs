@@ -17,16 +17,43 @@ pub const CODING_SESSION_COMMAND_TAG_VERSION: &str = "csc1-1";
 pub const MAX_IDENTIFIER_BYTES: usize = 256;
 /// Maximum UTF-8 byte length for turn text.
 pub const MAX_TURN_TEXT_BYTES: usize = 12 * 1024;
-/// Maximum number of image attachments a single turn may carry.
+/// Maximum number of attachments a single turn may carry, of any kind.
 pub const MAX_TURN_ATTACHMENTS: usize = 4;
-/// Maximum declared byte size of a single turn attachment.
+/// Maximum declared byte size of a single **image** turn attachment.
 pub const MAX_TURN_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
+/// Maximum declared byte size of a single **text** turn attachment.
+///
+/// Far below [`MAX_TURN_ATTACHMENT_BYTES`], and not for storage reasons: an
+/// image is downscaled before it reaches a model, and text is not. Every byte
+/// here is delivered verbatim into a prompt, so this ceiling is a context
+/// budget — roughly a quarter of a million tokens, large enough for any log or
+/// diff a person would paste and small enough that one attachment cannot
+/// silently consume a whole context window. A turn that needs more than this
+/// wants a file in the repository, not a paste.
+pub const MAX_TURN_TEXT_ATTACHMENT_BYTES: u64 = 1024 * 1024;
 /// The image MIME types a turn attachment may declare.
 ///
 /// Deliberately the same set `buzz-cli` will upload (`ALLOWED_MIMES`), minus
 /// video: a still image is what an ACP `image` content block can carry.
-pub const ALLOWED_ATTACHMENT_MIMES: [&str; 4] =
+pub const ALLOWED_IMAGE_ATTACHMENT_MIMES: [&str; 4] =
     ["image/jpeg", "image/png", "image/gif", "image/webp"];
+/// The text MIME types a turn attachment may declare.
+///
+/// One entry, and `text/plain` is the honest name for it: what the relay's
+/// generic-file validator stores an unsniffable UTF-8 upload as, and what a
+/// pasted log, stack trace or diff actually is. A text attachment reaches the
+/// agent as an ACP `text` block, so unlike an image it needs no runtime
+/// capability — every runtime that can take a turn at all can take one.
+pub const ALLOWED_TEXT_ATTACHMENT_MIMES: [&str; 1] = ["text/plain"];
+/// Every MIME type a turn attachment may declare: the image set then the text
+/// set, which `allowed_attachment_mimes_is_the_union_of_its_halves` pins.
+pub const ALLOWED_ATTACHMENT_MIMES: [&str; 5] = [
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "text/plain",
+];
 /// Largest integer that can be represented exactly by JavaScript and JSON peers.
 pub const MAX_SAFE_GENERATION: u64 = 9_007_199_254_740_991;
 /// Maximum UTF-8 byte length of a CI-continuation prompt.
@@ -115,12 +142,17 @@ impl CodingSessionDelivery {
     }
 }
 
-/// A Blossom-hosted image attached to a turn.
+/// A Blossom-hosted image or text file attached to a turn.
 ///
 /// Deliberately carries **no URL**. The blob is addressed by hash and the
 /// consuming provider derives `{relay}/media/{sha256}.{ext}` from the relay it
 /// is already connected to, so an operator-supplied string can never steer a
 /// provider's fetch at an arbitrary host.
+///
+/// [`Self::mime`] is the only thing that says which kind this is, and the two
+/// kinds are not interchangeable: an image is bounded by pixels and delivered
+/// as an ACP `image` block that a runtime must advertise; text is bounded by
+/// bytes and delivered as a `text` block that every runtime takes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TurnAttachment {
@@ -140,12 +172,40 @@ pub struct TurnAttachment {
 
 impl TurnAttachment {
     /// The file extension implied by [`Self::mime`].
+    ///
+    /// This is not cosmetic: the relay's blob route compares the requested
+    /// extension against the sidecar's canonical one and answers `404` on a
+    /// mismatch (`serve_blob_for_tenant`), so a text attachment fetched as
+    /// `.png` would simply not be found. `txt` is what the generic-file
+    /// validator stores a UTF-8 upload as.
     pub fn extension(&self) -> &'static str {
         match self.mime.as_str() {
             "image/jpeg" => "jpg",
             "image/gif" => "gif",
             "image/webp" => "webp",
+            "text/plain" => "txt",
             _ => "png",
+        }
+    }
+
+    /// True when this attachment is text, which reaches the agent as a `text`
+    /// block and therefore needs no runtime image capability.
+    pub fn is_text(&self) -> bool {
+        ALLOWED_TEXT_ATTACHMENT_MIMES.contains(&self.mime.as_str())
+    }
+
+    /// True when this attachment is an image, which a runtime must have
+    /// advertised `promptImage` to receive.
+    pub fn is_image(&self) -> bool {
+        ALLOWED_IMAGE_ATTACHMENT_MIMES.contains(&self.mime.as_str())
+    }
+
+    /// The declared-size ceiling that applies to this attachment's kind.
+    fn size_limit(&self) -> u64 {
+        if self.is_text() {
+            MAX_TURN_TEXT_ATTACHMENT_BYTES
+        } else {
+            MAX_TURN_ATTACHMENT_BYTES
         }
     }
 
@@ -167,9 +227,14 @@ impl TurnAttachment {
                 ALLOWED_ATTACHMENT_MIMES.join(", ")
             ));
         }
-        if self.size == 0 || self.size > MAX_TURN_ATTACHMENT_BYTES {
+        // Checked after the MIME allowlist, so `size_limit` is always asked of
+        // a kind this build knows. The bound is named in the message because a
+        // text attachment refused at 1 MiB and an image accepted at 9 MiB are
+        // the same field, and "too large" alone would not say which rule bit.
+        let limit = self.size_limit();
+        if self.size == 0 || self.size > limit {
             return Err(format!(
-                "action.attachments[{index}].size must be between 1 and {MAX_TURN_ATTACHMENT_BYTES} bytes"
+                "action.attachments[{index}].size must be between 1 and {limit} bytes"
             ));
         }
         Ok(())
@@ -637,7 +702,7 @@ mod tests {
                     mime: "application/pdf".into(),
                     ..attachment(SHA_A)
                 },
-                "non-image mime",
+                "a mime on neither allowlist",
             ),
             (
                 TurnAttachment {
@@ -664,7 +729,111 @@ mod tests {
         }
     }
 
-    /// The count is capped, and an image never substitutes for an instruction.
+    fn text_attachment(sha: &str) -> TurnAttachment {
+        TurnAttachment {
+            sha256: sha.into(),
+            mime: "text/plain".into(),
+            size: 4096,
+            dim: None,
+            filename: Some("pasted-text-1.txt".into()),
+        }
+    }
+
+    /// The union constant and the two halves it is built from cannot drift:
+    /// `validate` reads the union and the two kind predicates read the halves,
+    /// so a MIME in one and not the others would be accepted by the envelope
+    /// and then classified as neither image nor text.
+    #[test]
+    fn allowed_attachment_mimes_is_the_union_of_its_halves() {
+        let union: Vec<&str> = ALLOWED_IMAGE_ATTACHMENT_MIMES
+            .iter()
+            .chain(ALLOWED_TEXT_ATTACHMENT_MIMES.iter())
+            .copied()
+            .collect();
+        assert_eq!(ALLOWED_ATTACHMENT_MIMES.to_vec(), union);
+        for mime in ALLOWED_ATTACHMENT_MIMES {
+            let candidate = TurnAttachment {
+                mime: mime.into(),
+                ..attachment(SHA_A)
+            };
+            assert!(
+                candidate.is_image() != candidate.is_text(),
+                "{mime} must be exactly one kind"
+            );
+        }
+    }
+
+    /// A text attachment is a first-class turn attachment: it validates, it
+    /// round-trips, and the extension it derives is the one the relay's blob
+    /// route will actually serve it at.
+    #[test]
+    fn a_text_attachment_validates_and_addresses_itself_as_txt() {
+        let text = text_attachment(SHA_A);
+        assert_eq!(text.extension(), "txt");
+        assert!(text.is_text() && !text.is_image());
+        let payload = start_payload(CodingSessionAction::ThreadTurnStart {
+            text: "fix this".into(),
+            attachments: vec![text],
+            deliver: CodingSessionDelivery::Boundary,
+        });
+        payload.validate().expect("text attachment");
+        let encoded = serde_json::to_string(&payload).expect("encode");
+        let decoded: CodingSessionCommandPayload = serde_json::from_str(&encoded).expect("decode");
+        assert_eq!(decoded, payload);
+    }
+
+    /// The two kinds carry different ceilings, and each is enforced against its
+    /// own: a text attachment the size of a legal image is refused, and the
+    /// message names the bound that refused it rather than a generic "too
+    /// large" that would point a person at the wrong rule.
+    #[test]
+    fn each_attachment_kind_is_bounded_by_its_own_ceiling() {
+        const { assert!(MAX_TURN_TEXT_ATTACHMENT_BYTES < MAX_TURN_ATTACHMENT_BYTES) };
+        let cases = [
+            (MAX_TURN_TEXT_ATTACHMENT_BYTES, true),
+            (MAX_TURN_TEXT_ATTACHMENT_BYTES + 1, false),
+        ];
+        for (size, accepted) in cases {
+            let payload = start_payload(CodingSessionAction::ThreadTurnStart {
+                text: "go".into(),
+                attachments: vec![TurnAttachment {
+                    size,
+                    ..text_attachment(SHA_A)
+                }],
+                deliver: CodingSessionDelivery::Boundary,
+            });
+            assert_eq!(payload.validate().is_ok(), accepted, "text at {size} bytes");
+        }
+        // The same byte count an image is allowed, refused for text, with the
+        // text bound named.
+        let payload = start_payload(CodingSessionAction::ThreadTurnStart {
+            text: "go".into(),
+            attachments: vec![TurnAttachment {
+                size: MAX_TURN_ATTACHMENT_BYTES,
+                ..text_attachment(SHA_A)
+            }],
+            deliver: CodingSessionDelivery::Boundary,
+        });
+        let error = payload.validate().expect_err("oversize text");
+        assert!(
+            error.contains(&MAX_TURN_TEXT_ATTACHMENT_BYTES.to_string()),
+            "message must name the text bound, got {error}"
+        );
+        // And an image at that same size is still fine, so the new ceiling
+        // narrowed nothing it should not have.
+        let payload = start_payload(CodingSessionAction::ThreadTurnStart {
+            text: "go".into(),
+            attachments: vec![TurnAttachment {
+                size: MAX_TURN_ATTACHMENT_BYTES,
+                ..attachment(SHA_A)
+            }],
+            deliver: CodingSessionDelivery::Boundary,
+        });
+        payload.validate().expect("image at its own ceiling");
+    }
+
+    /// The count is capped, and an attachment never substitutes for an
+    /// instruction.
     #[test]
     fn attachment_count_is_capped_and_text_is_still_required() {
         let too_many = vec![attachment(SHA_A); MAX_TURN_ATTACHMENTS + 1];

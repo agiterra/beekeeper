@@ -8222,9 +8222,26 @@ mod tests {
         let good = serde_json::json!([
             { "sha256": sha, "mime": "image/png", "size": 2048 }
         ]);
+        // A pasted file is an attachment like any other, and this is the gate
+        // that decides whether the desktop can publish one at all: the relay
+        // validates the payload on ingest, so a relay whose allowlist predates
+        // `text/plain` refuses the turn whatever the client believes.
+        let pasted = serde_json::json!([
+            { "sha256": sha, "mime": "text/plain", "size": 4096, "filename": "pasted-text-1.txt" }
+        ]);
+        let both = serde_json::json!([
+            { "sha256": sha, "mime": "image/png", "size": 2048 },
+            { "sha256": sha, "mime": "text/plain", "size": 4096 }
+        ]);
         // Absent (every command published before the field existed), empty,
         // and well-formed all pass.
-        for attachments in [None, Some(serde_json::json!([])), Some(good.clone())] {
+        for attachments in [
+            None,
+            Some(serde_json::json!([])),
+            Some(good.clone()),
+            Some(pasted),
+            Some(both),
+        ] {
             assert!(
                 validate_coding_session_command_envelope(&command(attachments.clone())).is_ok(),
                 "rejected attachments={attachments:?}"
@@ -8238,7 +8255,15 @@ mod tests {
             ),
             (
                 serde_json::json!([{ "sha256": sha, "mime": "application/pdf", "size": 1 }]),
-                "non-image mime",
+                "a mime on neither allowlist",
+            ),
+            (
+                // Text carries its own, smaller ceiling: a byte count an image
+                // is allowed is refused here.
+                serde_json::json!([
+                    { "sha256": sha, "mime": "text/plain", "size": 2 * 1024 * 1024 }
+                ]),
+                "text over the text bound",
             ),
             (
                 serde_json::json!([{ "sha256": sha, "mime": "image/png", "size": 0 }]),
