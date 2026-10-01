@@ -50,11 +50,19 @@ pub fn resolve_provider_binary(config: &HostConfig) -> Result<PathBuf, String> {
 /// the binary this machine's Beekeeper manages rather than whatever the
 /// adapter's own lookup finds.
 fn resolve_claude_code_executable() -> Option<PathBuf> {
+    // Found once, kept for the host's lifetime — the rule `login_shell_path`
+    // already follows: every provider (re)start used to run the login-shell
+    // probe again (ledger 302(g)). Only a hit is kept, so a Claude Code
+    // installed after the host started is still found at the next start.
+    static FOUND: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    if let Some(path) = FOUND.get() {
+        return Some(path.clone());
+    }
     let path = resolve_command(CLAUDE_CLI_BINARY)?;
     if beekeeper_host_core::path_env::should_skip_claude_executable(&path, cfg!(windows)) {
         return None;
     }
-    Some(path)
+    Some(FOUND.get_or_init(|| path).clone())
 }
 
 /// Launch one provider process, logging the attempt to the provider's own log.

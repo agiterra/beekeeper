@@ -24,9 +24,11 @@
 //! handles Windows `.cmd` shims and caches across many agent spawns. The host
 //! resolves four binaries, once per provider spawn.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use beekeeper_host_core::command_paths::{
     command_looks_like_path, executable_basename, is_executable_file, resolve_workspace_command,
@@ -124,23 +126,61 @@ fn login_shell_candidates() -> Vec<PathBuf> {
     }
 }
 
+/// How long one login shell gets to answer.
+///
+/// Not unbounded: the supervisor resolves binaries on its way to starting the
+/// provider, so a shell that never returns is a provider that never starts. On
+/// 2026-10-01, at load average 34 straight after a build, each `bash -l` sat
+/// in the loader for over a minute and the provider started four minutes after
+/// the host (ledger 302(g)). A shell that answers at all answers in well under
+/// a second; past this the probe is abandoned and the next step tried.
+const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(10);
+
 fn run_in_login_shell(args: &[&str]) -> Option<String> {
     for shell in login_shell_candidates() {
         let mut command = Command::new(&shell);
         command.args(args);
         command.stdin(std::process::Stdio::null());
-        let Ok(output) = command.output() else {
+        command.stdout(std::process::Stdio::piped());
+        command.stderr(std::process::Stdio::null());
+        let Some(stdout) = output_within(command, LOGIN_SHELL_TIMEOUT) else {
             continue;
         };
-        if !output.status.success() {
-            continue;
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stdout = stdout.trim().to_string();
         if !stdout.is_empty() {
             return Some(stdout);
         }
     }
     None
+}
+
+/// Run `command` to completion and return its stdout if it succeeded within
+/// `limit`; a run past the limit is killed and reaped, and reads as no answer.
+///
+/// The probes print a line or two, far under a pipe's buffer, so reading after
+/// the exit cannot deadlock against a child blocked on a full pipe.
+fn output_within(mut command: Command, limit: Duration) -> Option<String> {
+    let mut child = command.spawn().ok()?;
+    let deadline = Instant::now() + limit;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    if !status.success() {
+        return None;
+    }
+    let mut stdout = String::new();
+    child.stdout.take()?.read_to_string(&mut stdout).ok()?;
+    Some(stdout)
 }
 
 fn find_via_login_shell(command: &str) -> Option<PathBuf> {
@@ -239,6 +279,38 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         }
+    }
+
+    /// A probe that never answers is abandoned at its limit, killed, and reads
+    /// as no answer; one that answers in time is read (ledger 302(g)).
+    #[cfg(unix)]
+    #[test]
+    fn a_probe_past_its_limit_is_abandoned_and_one_in_time_is_read() {
+        let mut slow = Command::new("/bin/sh");
+        slow.args(["-c", "sleep 30"])
+            .stdout(std::process::Stdio::piped());
+        let started = Instant::now();
+        assert_eq!(output_within(slow, Duration::from_millis(200)), None);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "abandoned at the limit, not at the child's exit: {:?}",
+            started.elapsed()
+        );
+
+        let mut quick = Command::new("/bin/sh");
+        quick
+            .args(["-c", "echo /found/claude"])
+            .stdout(std::process::Stdio::piped());
+        assert_eq!(
+            output_within(quick, Duration::from_secs(5)).as_deref(),
+            Some("/found/claude\n")
+        );
+
+        let mut failed = Command::new("/bin/sh");
+        failed
+            .args(["-c", "echo partial; exit 1"])
+            .stdout(std::process::Stdio::piped());
+        assert_eq!(output_within(failed, Duration::from_secs(5)), None);
     }
 
     #[test]
