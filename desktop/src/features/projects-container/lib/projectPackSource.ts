@@ -120,13 +120,20 @@ export function parseProjectPackSourceEvent(
       repo = `30617:${repoMatch[1].toLowerCase()}:${repoMatch[2]}`;
       path = path.trim().replace(/\/+$/, "");
       ref = ref?.trim() ?? null;
+      // Exactly "." names the repository root, where a project's own agents
+      // repository keeps its roles (spec § 4.11) — accepted before the segment
+      // check, as `validate_pack_path` does in Rust. Refusing it dropped the
+      // project's agents repository and let an older record win (ledger 304).
       if (
-        !path ||
-        encoder.encode(path).length > 200 ||
-        path.startsWith("/") ||
-        path.startsWith("~") ||
-        /[\\:]|\p{Cc}/u.test(path) ||
-        path.split("/").some((segment) => ["", ".", ".."].includes(segment)) ||
+        (path !== "." &&
+          (!path ||
+            encoder.encode(path).length > 200 ||
+            path.startsWith("/") ||
+            path.startsWith("~") ||
+            /[\\:]|\p{Cc}/u.test(path) ||
+            path
+              .split("/")
+              .some((segment) => ["", ".", ".."].includes(segment)))) ||
         (ref !== null &&
           (encoder.encode(ref).length > 200 ||
             !ref.startsWith("refs/") ||

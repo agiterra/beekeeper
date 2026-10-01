@@ -362,6 +362,57 @@ test("v2 rejects unsafe paths and malformed refs while preserving valid defaults
   }
 });
 
+test("v2 accepts the repository root, as Rust does, and an agents repository there wins (ledger 304)", () => {
+  const v2 = (expectedSourceId) =>
+    JSON.stringify({ schema: "buzz-project-pack-source/v2", expectedSourceId });
+  for (const path of [".", "./", " . "]) {
+    const parsed = parseProjectPackSourceEvent(
+      event({ content: v2(null), tags: [...event().tags, ["path", path]] }),
+    );
+    assert.equal(parsed?.path, ".", JSON.stringify(path));
+  }
+  for (const path of ["./roles", "roles/.", ".."]) {
+    assert.equal(
+      parseProjectPackSourceEvent(
+        event({ content: v2(null), tags: [...event().tags, ["path", path]] }),
+      ),
+      null,
+      path,
+    );
+  }
+
+  // The Tank Loop pair: an older sha-pinned pack-layout record, replaced by
+  // the project's agents repository at the root. The newer one must win.
+  const older = event({
+    id: "8".repeat(64),
+    created_at: 1_790_000_000,
+    tags: [
+      ["d", PROJECT_COORD],
+      ["repo", `30617:${AUTHOR}:agiterra-packs-43aa15fa1848`],
+      ["sha", "f".repeat(40)],
+    ],
+    content: v2(null),
+  });
+  const newer = event({
+    id: "4".repeat(64),
+    pubkey: OWNER,
+    created_at: 1_790_500_000,
+    tags: [
+      ["d", PROJECT_COORD],
+      ["repo", `30617:${OWNER}:agiterra-beekeeper-agents`],
+      ["ref", "refs/heads/main"],
+      ["path", "."],
+    ],
+    content: v2(older.id),
+  });
+  for (const events of [
+    [older, newer],
+    [newer, older],
+  ]) {
+    assert.equal(newestProjectPackSource(events)?.eventId, newer.id);
+  }
+});
+
 test("v2 repository coordinates match Rust normalization and Unicode length bounds", () => {
   const content = JSON.stringify({
     schema: "buzz-project-pack-source/v2",
