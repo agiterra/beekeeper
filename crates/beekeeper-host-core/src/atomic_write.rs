@@ -10,19 +10,30 @@ use std::path::Path;
 
 /// Write `payload` to `path` atomically, owner-readable only.
 pub fn atomic_write_json_restricted(path: &Path, payload: &[u8]) -> Result<(), String> {
+    atomic_write_with_mode(path, payload, 0o600)
+}
+
+/// Write `payload` to `path` atomically, with `mode` set before the bytes go in.
+///
+/// For files that are not secret but must never be seen half-written — a
+/// launchd plist read by `launchctl` the instant it appears is one. `mode` is
+/// ignored off Unix.
+pub fn atomic_write_with_mode(path: &Path, payload: &[u8], mode: u32) -> Result<(), String> {
     use atomic_write_file::AtomicWriteFile;
 
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mut file = AtomicWriteFile::open(&resolved)
         .map_err(|error| format!("open {} for atomic write: {error}", resolved.display()))?;
 
-    // Owner-only permissions before the secret bytes, not after.
+    // Permissions before the bytes, not after.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        file.set_permissions(std::fs::Permissions::from_mode(mode))
             .map_err(|error| format!("set {} permissions: {error}", resolved.display()))?;
     }
+    #[cfg(not(unix))]
+    let _ = mode;
 
     file.write_all(payload)
         .map_err(|error| format!("write {}: {error}", resolved.display()))?;
