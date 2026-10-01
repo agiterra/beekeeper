@@ -3,7 +3,8 @@
 //! The operator uploads to the relay's Blossom store and the 44220 command
 //! carries only the blob's hash; this module is the other half — it derives the
 //! URL from the relay *this provider* is connected to, reads the bytes back
-//! under a signed `t=get` token, and bounds what reaches a model.
+//! under a signed `t=get` token **and the provider's membership delegation**,
+//! and bounds what reaches a model.
 //!
 //! Addressing by hash rather than URL is deliberate. A URL in the payload would
 //! let whoever signed the command choose where this process makes an outbound
@@ -41,15 +42,31 @@ pub struct MediaFetcher {
     /// `host[:port]`, for the Blossom `server` tag.
     authority: String,
     keys: nostr::Keys,
+    /// The provider's NIP-OA auth tag as JSON, for the `x-auth-tag` header.
+    ///
+    /// Load-bearing on any relay that requires membership. The Blossom token
+    /// proves *which key* is asking; this header is how that key's delegation
+    /// from its owner travels over HTTP, and the provider's own pubkey is not
+    /// a member in its own right — it is admitted through the owner. Without
+    /// it the relay answers `403 relay_membership_required`, every attachment
+    /// is dropped, and the agent is left with the markdown link the prose
+    /// carries, which it cannot read either. `ArtifactUploader` carries the
+    /// same header for the same reason.
+    auth_tag_json: Option<String>,
 }
 
 impl MediaFetcher {
     /// Build a fetcher for the relay this provider is configured against.
     ///
+    /// `auth_tag` is the provider's NIP-OA credential, which must be passed
+    /// wherever the config has one: a membership-gated relay refuses the read
+    /// without it. It is optional only because an open relay has no use for
+    /// one, and because the config's own field is optional.
+    ///
     /// Returns `None` when the relay URL cannot be understood, which simply
     /// means attachments are not deliverable on this host — never a panic on a
     /// path a turn depends on.
-    pub fn new(relay_url: &str, keys: nostr::Keys) -> Option<Self> {
+    pub fn new(relay_url: &str, keys: nostr::Keys, auth_tag: Option<&nostr::Tag>) -> Option<Self> {
         let authority = buzz_core::tenant::relay_url_authority(relay_url);
         if authority.is_empty() {
             return None;
@@ -64,11 +81,19 @@ impl MediaFetcher {
         Some(Self {
             http: reqwest::Client::builder()
                 .timeout(FETCH_TIMEOUT)
+                // Do not follow redirects. The module's premise is that a hash
+                // cannot choose where this process makes an outbound request;
+                // a followed redirect would hand that choice back, and would
+                // forward `x-auth-tag` with it — reqwest strips
+                // `Authorization` across hosts but not that header. The relay
+                // streams blob bytes directly, so there is nothing to follow.
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .ok()?,
             base: format!("{scheme}://{authority}"),
             authority,
             keys,
+            auth_tag_json: auth_tag.and_then(|tag| serde_json::to_string(tag).ok()),
         })
     }
 
@@ -121,10 +146,14 @@ impl MediaFetcher {
             attachment.extension()
         );
         let authorization = self.sign_get_auth()?;
-        let response = self
+        let mut request = self
             .http
             .get(&url)
-            .header(reqwest::header::AUTHORIZATION, authorization)
+            .header(reqwest::header::AUTHORIZATION, authorization);
+        if let Some(json) = &self.auth_tag_json {
+            request = request.header("x-auth-tag", json);
+        }
+        let response = request
             .send()
             .await
             .map_err(|error| format!("fetch failed: {error}"))?;
@@ -337,31 +366,32 @@ mod tests {
     /// A relay URL we cannot parse yields no fetcher rather than a panic.
     #[test]
     fn an_unusable_relay_url_yields_no_fetcher() {
-        assert!(MediaFetcher::new("", nostr::Keys::generate()).is_none());
+        assert!(MediaFetcher::new("", nostr::Keys::generate(), None).is_none());
     }
 
     /// The `ws`/`wss` the provider is configured with maps to the matching
     /// HTTP scheme on the same authority — media is not served over WebSocket.
     #[test]
     fn media_base_follows_the_relay_scheme() {
-        let secure =
-            MediaFetcher::new("wss://hive.example", nostr::Keys::generate()).expect("fetcher");
+        let secure = MediaFetcher::new("wss://hive.example", nostr::Keys::generate(), None)
+            .expect("fetcher");
         assert_eq!(secure.base, "https://hive.example");
-        let plain =
-            MediaFetcher::new("ws://127.0.0.1:3000", nostr::Keys::generate()).expect("fetcher");
+        let plain = MediaFetcher::new("ws://127.0.0.1:3000", nostr::Keys::generate(), None)
+            .expect("fetcher");
         assert_eq!(plain.base, "http://127.0.0.1:3000");
     }
 
     /// The whole read path against a real HTTP server: the URL is derived from
-    /// the relay and the hash, the request carries a Blossom `t=get` token, and
-    /// the answer becomes an ACP image block.
+    /// the relay and the hash, the request carries a Blossom `t=get` token
+    /// **and the provider's membership delegation**, and the answer becomes an
+    /// ACP image block.
     #[tokio::test]
     async fn a_blob_is_fetched_by_hash_and_becomes_an_image_block() {
         use axum::{extract::State, routing::get, Router};
         use std::sync::{Arc, Mutex};
 
-        /// Requests the stub server saw: path, and the Authorization header.
-        type Seen = Arc<Mutex<Vec<(String, Option<String>)>>>;
+        /// Requests the stub server saw: path, `Authorization`, `x-auth-tag`.
+        type Seen = Arc<Mutex<Vec<(String, Option<String>, Option<String>)>>>;
 
         let png = png_bytes(32, 16);
         let sha = hex::encode(Sha256::digest(&png));
@@ -373,14 +403,20 @@ mod tests {
             State((body, seen)): State<(Arc<Vec<u8>>, Seen)>,
             request: axum::extract::Request,
         ) -> Vec<u8> {
-            let authorization = request
-                .headers()
-                .get(axum::http::header::AUTHORIZATION)
-                .and_then(|value| value.to_str().ok())
-                .map(str::to_owned);
-            seen.lock()
-                .expect("lock")
-                .push((request.uri().path().to_owned(), authorization));
+            let header = |name: &str| {
+                request
+                    .headers()
+                    .get(name)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned)
+            };
+            let authorization = header("authorization");
+            let auth_tag = header("x-auth-tag");
+            seen.lock().expect("lock").push((
+                request.uri().path().to_owned(),
+                authorization,
+                auth_tag,
+            ));
             body.as_ref().clone()
         }
 
@@ -395,8 +431,14 @@ mod tests {
             axum::serve(listener, app).await.expect("serve");
         });
 
-        let fetcher = MediaFetcher::new(&format!("ws://{address}"), nostr::Keys::generate())
-            .expect("fetcher");
+        let auth_tag =
+            nostr::Tag::parse(["owner-attestation", "payload"]).expect("a NIP-OA shaped tag");
+        let fetcher = MediaFetcher::new(
+            &format!("ws://{address}"),
+            nostr::Keys::generate(),
+            Some(&auth_tag),
+        )
+        .expect("fetcher");
         let attachment = TurnAttachment {
             sha256: sha.clone(),
             mime: "image/png".into(),
@@ -432,6 +474,16 @@ mod tests {
                 .is_some_and(|value| value.starts_with("Nostr ")),
             "relay media reads are authenticated: {:?}",
             seen[0].1
+        );
+        // The Blossom token proves *which key* is asking; this header is how
+        // that key's delegation from its owner travels. A membership-gated
+        // relay answers `403 relay_membership_required` without it, which is
+        // what shipped — every pasted screenshot was dropped, and the agent
+        // was left chasing the markdown link in the prose.
+        assert_eq!(
+            seen[0].2.as_deref(),
+            Some(r#"["owner-attestation","payload"]"#),
+            "the provider's membership delegation must reach the relay"
         );
 
         // A blob whose bytes do not match the hash the command declared is
@@ -491,7 +543,7 @@ mod tests {
             axum::serve(listener, app).await.expect("serve");
         });
 
-        let fetcher = MediaFetcher::new(&format!("ws://{address}"), nostr::Keys::generate())
+        let fetcher = MediaFetcher::new(&format!("ws://{address}"), nostr::Keys::generate(), None)
             .expect("fetcher");
         let describe = |sha: &str, size: usize| TurnAttachment {
             sha256: sha.to_owned(),
@@ -618,8 +670,8 @@ mod tests {
     /// The read token is a signed kind-24242 event scoped to the relay.
     #[test]
     fn get_auth_is_a_scoped_blossom_token() {
-        let fetcher =
-            MediaFetcher::new("wss://hive.example", nostr::Keys::generate()).expect("fetcher");
+        let fetcher = MediaFetcher::new("wss://hive.example", nostr::Keys::generate(), None)
+            .expect("fetcher");
         let header = fetcher.sign_get_auth().expect("sign");
         let encoded = header.strip_prefix("Nostr ").expect("Nostr scheme");
         let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD

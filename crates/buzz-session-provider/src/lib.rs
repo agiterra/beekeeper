@@ -1127,7 +1127,11 @@ impl Provider {
         let action_steps = action_step_store::ActionStepStore::open(&config.state_dir)?;
         let team_wake_refusals_at_startup = team_wakes.refused_channels().collect();
         let (events_tx, session_events) = mpsc::channel(SESSION_EVENT_CAPACITY);
-        let media = attachments::MediaFetcher::new(&config.relay_url, config.keys.clone());
+        let media = attachments::MediaFetcher::new(
+            &config.relay_url,
+            config.keys.clone(),
+            config.auth_tag.as_ref(),
+        );
         Ok(Self {
             config,
             pubkey_hex,
