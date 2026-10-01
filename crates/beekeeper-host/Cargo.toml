@@ -43,7 +43,7 @@ tracing-subscriber = { workspace = true }
 # different service manager, which is separate work — the same shape
 # `buzz-shell-host` already has.
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["signal", "process", "socket", "user"] }
+nix = { version = "0.31", default-features = false, features = ["fs", "signal", "process", "socket", "user"] }
 
 [dev-dependencies]
 tempfile = "3"

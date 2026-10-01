@@ -62,14 +62,33 @@ enum Command {
     /// Re-read `host.json` and the identity, then restart onto the result.
     Bind,
     /// Register this host to start at login (macOS) or as a systemd user
-    /// service (Linux).
+    /// service (Linux) — or, with `--system`, as a macOS LaunchDaemon that
+    /// starts at boot with nobody logged in.
     Install {
         /// The host binary to register. Defaults to this executable.
         #[arg(long)]
         program: Option<std::path::PathBuf>,
+        /// Install a system LaunchDaemon instead, for a Mac nobody logs in
+        /// to. Needs root and `--user`. macOS only.
+        #[arg(long, requires = "user")]
+        system: bool,
+        /// The account the daemon runs as. Read from the password database;
+        /// never defaulted.
+        #[arg(long, requires = "system")]
+        user: Option<String>,
+        /// Print the daemon's plist and exit, writing nothing. Needs no root.
+        #[arg(long, requires = "system")]
+        print: bool,
     },
     /// Remove the login registration and stop the service.
-    Uninstall,
+    Uninstall {
+        /// Remove a system LaunchDaemon instead. Needs root and `--user`.
+        #[arg(long, requires = "user")]
+        system: bool,
+        /// The account whose daemon to remove.
+        #[arg(long, requires = "system")]
+        user: Option<String>,
+    },
     /// Print whether this host is registered to start at login.
     ///
     /// Distinct from `status`, which asks a *running* host: the two together
@@ -159,6 +178,49 @@ fn init_tracing() {
 }
 
 fn run(instance: Instance, command: Command) -> Result<(), String> {
+    // Before `$HOME` is read: under `sudo` it is not the persona's.
+    match &command {
+        Command::Install {
+            program,
+            system: true,
+            user: Some(user),
+            print,
+        } => {
+            let program = resolve_program(program.as_deref())?;
+            if *print {
+                print!(
+                    "{}",
+                    crate::install::launchd_daemon::render(user, instance, &program)?
+                );
+                return Ok(());
+            }
+            let registration = crate::install::launchd_daemon::install(
+                user,
+                instance,
+                &program,
+                &crate::install::launchd_daemon::rerun_command(),
+            )?;
+            print_registration(&registration);
+            return Ok(());
+        }
+        Command::Uninstall {
+            system: true,
+            user: Some(user),
+        } => {
+            crate::install::launchd_daemon::uninstall(
+                user,
+                instance,
+                &crate::install::launchd_daemon::rerun_command(),
+            )?;
+            println!(
+                "removed the system daemon for {user} ({})",
+                instance.namespace_value()
+            );
+            return Ok(());
+        }
+        _ => {}
+    }
+
     let home = layout::home_dir()?;
     let socket_path = layout::host_socket_path(&home, instance);
 
@@ -175,20 +237,14 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
     // Registration commands need no config and no identity either: installing
     // the service is what a person does *before* commissioning on a server.
     match &command {
-        Command::Install { program } => {
-            let program = match program {
-                Some(program) => program.clone(),
-                None => std::env::current_exe()
-                    .map_err(|error| format!("cannot resolve this executable: {error}"))?,
-            };
-            let program = std::fs::canonicalize(&program)
-                .map_err(|error| format!("cannot resolve {}: {error}", program.display()))?;
+        Command::Install { program, .. } => {
+            let program = resolve_program(program.as_deref())?;
             let registration =
                 crate::install::install(Service::AgentHost, &home, instance, &program)?;
             print_registration(&registration);
             return Ok(());
         }
-        Command::Uninstall => {
+        Command::Uninstall { .. } => {
             crate::install::uninstall(Service::AgentHost, &home, instance)?;
             println!(
                 "removed the login registration for {}",
@@ -292,6 +348,17 @@ fn run(instance: Instance, command: Command) -> Result<(), String> {
     Ok(())
 }
 
+/// The binary to register: `--program`, else this executable, resolved.
+fn resolve_program(program: Option<&std::path::Path>) -> Result<std::path::PathBuf, String> {
+    let program = match program {
+        Some(program) => program.to_path_buf(),
+        None => std::env::current_exe()
+            .map_err(|error| format!("cannot resolve this executable: {error}"))?,
+    };
+    std::fs::canonicalize(&program)
+        .map_err(|error| format!("cannot resolve {}: {error}", program.display()))
+}
+
 /// Print a registration, with its warnings on stderr so a pipe gets only the
 /// facts and a person still sees the problems.
 fn print_registration(registration: &crate::install::Registration) {
@@ -317,7 +384,7 @@ fn client_request(command: &Command) -> Option<Request> {
         Command::Run
         | Command::Check
         | Command::Install { .. }
-        | Command::Uninstall
+        | Command::Uninstall { .. }
         | Command::Installed => None,
     }
 }

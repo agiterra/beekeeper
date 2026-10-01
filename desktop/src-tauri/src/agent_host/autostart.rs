@@ -20,7 +20,7 @@
 
 use std::path::PathBuf;
 
-use beekeeper_host::install::{self, LoginAutostart, Registration, Service};
+use beekeeper_host::install::{self, Domain, LoginAutostart, Registration, Service};
 use beekeeper_host_core::layout;
 use tauri::AppHandle;
 
@@ -189,6 +189,7 @@ pub(crate) fn status() -> Registration {
             path: PathBuf::new(),
             program: None,
             warnings: vec![format!("cannot resolve the home directory: {error}")],
+            domain: Domain::User,
         },
     }
 }
@@ -396,6 +397,7 @@ mod tests {
                 "{HOST_BINARY} was not found beside this app, so the agent host cannot be \
                  registered to start at login — your agents will stop when you quit Beekeeper."
             )],
+            domain: Domain::User,
         };
         assert!(!registration.installed);
         assert!(registration.warnings[0].contains("stop when you quit"));

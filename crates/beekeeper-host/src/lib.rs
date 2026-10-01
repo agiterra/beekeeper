@@ -4,8 +4,9 @@
 //! publishes transcripts back. Until now its body was borrowed: it ran while a
 //! desktop app ran, on hardware that sleeps when a human does
 //! (`VISION_REMOTE_AGENTS.md`). This crate is the body it gets instead — a
-//! process that starts at login, survives every desktop launch, quit and
-//! update, and runs alone on a server with no GUI anywhere.
+//! process that starts at login — or at boot, as a LaunchDaemon on a Mac
+//! nobody logs in to — survives every desktop launch, quit and update, and
+//! runs alone on a server with no GUI anywhere.
 //!
 //! What it does, and deliberately does not do:
 //!

@@ -51,6 +51,7 @@ fn unregistered() -> beekeeper_host::install::Registration {
         path: std::path::PathBuf::from("/home/agent/Library/LaunchAgents/host.plist"),
         program: None,
         warnings: Vec::new(),
+        domain: beekeeper_host::install::Domain::User,
     }
 }
 

@@ -1,8 +1,10 @@
-//! Starting the host at login, and installing it on a server.
+//! Starting the host at login, at boot on a headless Mac, and installing it on
+//! a server.
 //!
-//! Two registrations, one per platform, both written by the same code so that
-//! `bee host install` on a headless box and the desktop app's own
-//! commissioning cannot produce different units.
+//! One registration per platform for a person's own machine, both written by
+//! the same code so that `bee host install` and the desktop app's own
+//! commissioning cannot produce different units — plus, on macOS, a system
+//! LaunchDaemon for a Mac nobody logs in to ([`launchd_daemon`]).
 //!
 //! # macOS: a launchd LaunchAgent
 //!
@@ -25,6 +27,15 @@
 //! plist deliberately carries `KeepAlive: false` so a missing binary fails
 //! once per login rather than in a respawn loop.
 //!
+//! **A LaunchAgent runs only while its user is logged in.** `gui/$UID` is
+//! created at console login and torn down at logout, so on a Mac with nobody
+//! at the screen the host never starts after a reboot. That is what
+//! [`launchd_daemon`] is for: `bee host install --system --user <persona>`, as
+//! root, writes `/Library/LaunchDaemons/io.agiterra.beekeeper.host.daemon.
+//! <persona>[.dev].plist`, which launchd loads at boot and runs as that user.
+//! [`status`] reports either, and says so when both exist — two hosts racing
+//! for one socket.
+//!
 //! # Linux: a systemd user unit
 //!
 //! `Type=simple`, not `oneshot` — this one is long-running. `EnvironmentFile`
@@ -41,6 +52,8 @@ use std::path::{Path, PathBuf};
 
 use beekeeper_host_core::layout::{self, Instance, INSTANCE_VAR};
 use beekeeper_host_core::logs::now_iso;
+
+pub mod launchd_daemon;
 
 /// Which background service a registration is for.
 ///
@@ -69,8 +82,10 @@ impl Service {
     /// Whether this service belongs in a foreground session.
     ///
     /// The menu bar app draws into a logged-in user's menu bar, so it is
-    /// pointless — and on a server, harmful noise — without one. The host is
-    /// the opposite: it exists to run with nobody logged in.
+    /// pointless — and on a server, harmful noise — without one. The host does
+    /// not need one, though whether it *outlives* one depends on how it was
+    /// registered: a systemd user unit with lingering and a macOS
+    /// LaunchDaemon run with nobody logged in; a macOS LaunchAgent does not.
     fn needs_a_session(self) -> bool {
         matches!(self, Self::MenuBar)
     }
@@ -102,14 +117,35 @@ pub fn service_name(service: Service, instance: Instance) -> String {
 pub fn registration_path(service: Service, home: &Path, instance: Instance) -> PathBuf {
     #[cfg(target_os = "macos")]
     {
-        home.join("Library/LaunchAgents")
-            .join(format!("{}.plist", service_name(service, instance)))
+        launch_agent_path(service, home, instance)
     }
     #[cfg(not(target_os = "macos"))]
     {
         home.join(".config/systemd/user")
             .join(format!("{}.service", service_name(service, instance)))
     }
+}
+
+/// Where a macOS LaunchAgent for this service lives under `home`.
+///
+/// Not platform-gated, unlike [`registration_path`]: a daemon install reads it
+/// to refuse a duplicate, and its tests run everywhere.
+pub(crate) fn launch_agent_path(service: Service, home: &Path, instance: Instance) -> PathBuf {
+    home.join("Library/LaunchAgents")
+        .join(format!("{}.plist", service_name(service, instance)))
+}
+
+/// Which service manager domain a registration lives in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Domain {
+    /// The user's own: a LaunchAgent in `gui/$UID`, or a systemd user unit.
+    /// This user can write, load and remove it.
+    #[default]
+    User,
+    /// A macOS LaunchDaemon in `system`, run as this user. Only root can
+    /// write, load or remove it.
+    System,
 }
 
 /// What an install or a check found.
@@ -126,6 +162,10 @@ pub struct Registration {
     /// Facts the caller must disclose rather than absorb.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Whose service manager holds it. Defaults to `user` when reading a
+    /// registration serialised before daemons existed.
+    #[serde(default)]
+    pub domain: Domain,
 }
 
 impl Registration {
@@ -144,7 +184,21 @@ impl Registration {
     /// side.
     ///
     /// True only for the two states a rewrite actually fixes: no file at all,
-    /// and a file that does not name a program that exists.
+    /// and a file that does not name a program that exists. Never for a system
+    /// daemon: only root can rewrite one, so a user-mode rewrite would fail —
+    /// or, worse, succeed beside it as a LaunchAgent and race it for the
+    /// socket. Its problems travel as warnings instead.
+    pub fn needs_rewrite(&self) -> bool {
+        if self.domain == Domain::System {
+            return false;
+        }
+        !self.installed
+            || self
+                .program
+                .as_ref()
+                .is_none_or(|program| !program.exists())
+    }
+
     /// Whether the registration should be rewritten *now*, given what else
     /// is known.
     ///
@@ -157,20 +211,23 @@ impl Registration {
     ///
     /// Only consulted when the host is *unreachable*, because that is the only
     /// time the answer changes anything and `loaded` costs a subprocess. A
-    /// reachable host is loaded by definition.
+    /// reachable host is loaded by definition. Never for a system daemon, for
+    /// the reason `needs_rewrite` gives.
     pub fn needs_repair(&self, host_reachable: bool, loaded: Option<bool>) -> bool {
+        if self.domain == Domain::System {
+            return false;
+        }
         if self.needs_rewrite() {
             return true;
         }
         !host_reachable && loaded == Some(false)
     }
 
-    pub fn needs_rewrite(&self) -> bool {
-        !self.installed
-            || self
-                .program
-                .as_ref()
-                .is_none_or(|program| !program.exists())
+    /// The launchd label or systemd unit stem, read off the file name.
+    pub fn label(&self) -> Option<String> {
+        self.path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
     }
 }
 
@@ -260,6 +317,18 @@ pub fn service_loaded(service: Service, instance: Instance) -> Option<bool> {
     let name = service_name(service, instance);
     #[cfg(target_os = "macos")]
     {
+        // A system daemon is not in this user's domain, so `launchctl list`
+        // would answer "not loaded" about a running host. Ask `system`.
+        if let Some(user) = layout::home_dir()
+            .ok()
+            .and_then(|home| daemon_lookup_user(service, &home))
+        {
+            if launchd_daemon::plist_path(Path::new(launchd_daemon::DAEMON_DIR), &user, instance)
+                .exists()
+            {
+                return launchd_daemon::loaded(&user, instance);
+            }
+        }
         // `launchctl list <label>` exits 0 when loaded and 113 (EDEADLK, used
         // here as "no such process") when not. Any other status is an answer
         // this function does not have.
@@ -341,6 +410,65 @@ pub fn allow_login(home: &Path, instance: Instance) -> Result<(), String> {
 /// that reported one for the other would tell a person to start something they
 /// have not installed.
 pub fn status(service: Service, home: &Path, instance: Instance) -> Registration {
+    let user = daemon_lookup_user(service, home);
+    let lookup = user.as_deref().map(|user| DaemonLookup {
+        dir: Path::new(launchd_daemon::DAEMON_DIR),
+        user,
+    });
+    status_at(service, home, instance, lookup)
+}
+
+/// Where to look for this user's system daemon.
+#[derive(Debug, Clone, Copy)]
+struct DaemonLookup<'a> {
+    dir: &'a Path,
+    user: &'a str,
+}
+
+/// The user whose system daemon to look for, when there is one to look for.
+///
+/// Only the agent host has a daemon form, only macOS has daemons, and only
+/// *our own* home names a user whose daemon this process can mean — for the
+/// same reason [`home_is_ours`] guards activation: a test's tempdir must not
+/// find the machine's real `/Library/LaunchDaemons`.
+fn daemon_lookup_user(service: Service, home: &Path) -> Option<String> {
+    if !cfg!(target_os = "macos") || service != Service::AgentHost || !home_is_ours(home) {
+        return None;
+    }
+    let user = launchd_daemon::current_user_name()?;
+    launchd_daemon::validate_user_name(&user).ok()?;
+    Some(user)
+}
+
+fn status_at(
+    service: Service,
+    home: &Path,
+    instance: Instance,
+    lookup: Option<DaemonLookup<'_>>,
+) -> Registration {
+    let agent = agent_status(service, home, instance);
+    let Some(lookup) = lookup else {
+        return agent;
+    };
+    let Some(mut daemon) = launchd_daemon::registration(lookup.dir, lookup.user, instance) else {
+        return agent;
+    };
+    // The daemon is what reports: it runs at boot whoever is logged in, so
+    // it is the one that will hold the socket. The LaunchAgent's existence is
+    // the problem to disclose, not the registration to describe.
+    if agent.installed {
+        daemon.warnings.push(format!(
+            "both a login LaunchAgent ({}) and a system daemon ({}) are registered for {}: two              hosts will race for one control socket. Keep one — `bee host uninstall` removes the              LaunchAgent, `sudo bee host uninstall --system --user {}` the daemon",
+            agent.path.display(),
+            daemon.path.display(),
+            lookup.user,
+            lookup.user
+        ));
+    }
+    daemon
+}
+
+fn agent_status(service: Service, home: &Path, instance: Instance) -> Registration {
     let path = registration_path(service, home, instance);
     let program = std::fs::read_to_string(&path)
         .ok()
@@ -368,6 +496,7 @@ pub fn status(service: Service, home: &Path, instance: Instance) -> Registration
         path,
         program,
         warnings,
+        domain: Domain::User,
     }
 }
 
@@ -382,6 +511,16 @@ pub fn install(
     instance: Instance,
     program: &Path,
 ) -> Result<Registration, String> {
+    let user = daemon_lookup_user(service, home);
+    let lookup = user.as_deref().map(|user| DaemonLookup {
+        dir: Path::new(launchd_daemon::DAEMON_DIR),
+        user,
+    });
+    install_at(service, home, instance, program, lookup)
+}
+
+/// Refuse a program a service manager could not start.
+pub(crate) fn check_program(service: Service, program: &Path) -> Result<(), String> {
     if !program.is_absolute() {
         return Err(format!(
             "the host binary must be named by an absolute path, not {}",
@@ -394,6 +533,44 @@ pub fn install(
             service.human_name(),
             program.display()
         ));
+    }
+    Ok(())
+}
+
+/// The error for a user-mode change to a host that a system daemon owns, if
+/// one does.
+fn daemon_conflict(
+    lookup: Option<DaemonLookup<'_>>,
+    instance: Instance,
+    doing: &str,
+) -> Option<String> {
+    let lookup = lookup?;
+    let path = launchd_daemon::plist_path(lookup.dir, lookup.user, instance);
+    path.exists().then(|| {
+        format!(
+            "the agent host for {user} is registered as a system daemon ({}), so {doing}. Remove              the daemon with `sudo bee host uninstall --system --user {user}` first, or leave it              — it already runs at boot.",
+            path.display(),
+            user = lookup.user
+        )
+    })
+}
+
+fn install_at(
+    service: Service,
+    home: &Path,
+    instance: Instance,
+    program: &Path,
+    lookup: Option<DaemonLookup<'_>>,
+) -> Result<Registration, String> {
+    check_program(service, program)?;
+    // Also what stops the desktop's repair poll adding a LaunchAgent beside a
+    // daemon it cannot see past.
+    if let Some(error) = daemon_conflict(
+        lookup,
+        instance,
+        "a login LaunchAgent beside it would race it for the control socket",
+    ) {
+        return Err(error);
     }
     let path = registration_path(service, home, instance);
     let parent = path
@@ -423,7 +600,7 @@ pub fn install(
     if let Err(error) = allow_login(home, instance) {
         eprintln!("beekeeper-host: could not clear the login refusal: {error}");
     }
-    Ok(status(service, home, instance))
+    Ok(status_at(service, home, instance, lookup))
 }
 
 /// Remove the registration, and stop the service if it is running.
@@ -431,7 +608,25 @@ pub fn install(
 /// Best-effort on the deactivation — a service that is already gone must not
 /// make an uninstall fail — but the *file* removal is reported, because a
 /// registration left behind is the failure mode this function exists for.
+///
+/// A system daemon is root's, so this removes the user's own registration and
+/// then reports the daemon as an error rather than succeeding over a host that
+/// will still be running at the next boot.
 pub fn uninstall(service: Service, home: &Path, instance: Instance) -> Result<(), String> {
+    let user = daemon_lookup_user(service, home);
+    let lookup = user.as_deref().map(|user| DaemonLookup {
+        dir: Path::new(launchd_daemon::DAEMON_DIR),
+        user,
+    });
+    uninstall_at(service, home, instance, lookup)
+}
+
+fn uninstall_at(
+    service: Service,
+    home: &Path,
+    instance: Instance,
+    lookup: Option<DaemonLookup<'_>>,
+) -> Result<(), String> {
     let path = registration_path(service, home, instance);
     deactivate(service, &path, instance, home);
     // Uninstalling is the operator saying no. Recording it is what stops the
@@ -441,9 +636,13 @@ pub fn uninstall(service: Service, home: &Path, instance: Instance) -> Result<()
         eprintln!("beekeeper-host: could not record the login refusal: {error}");
     }
     match std::fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("failed to remove {}: {error}", path.display())),
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("failed to remove {}: {error}", path.display())),
+    }
+    match daemon_conflict(lookup, instance, "a user uninstall cannot remove it") {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 
@@ -454,11 +653,7 @@ pub fn uninstall(service: Service, home: &Path, instance: Instance) -> Result<()
 fn program_from_registration(content: &str) -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        // The first `<string>` after `ProgramArguments` is argv[0].
-        let after = content.split("ProgramArguments").nth(1)?;
-        let open = after.find("<string>")? + "<string>".len();
-        let close = after[open..].find("</string>")? + open;
-        Some(PathBuf::from(after[open..close].trim()))
+        program_from_plist(content)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -468,6 +663,16 @@ fn program_from_registration(content: &str) -> Option<PathBuf> {
             .and_then(|value| value.split_whitespace().next())
             .map(PathBuf::from)
     }
+}
+
+/// argv[0] of a launchd plist: the first `<string>` after `ProgramArguments`.
+///
+/// Not platform-gated, so the daemon's round trip is tested everywhere.
+pub(crate) fn program_from_plist(content: &str) -> Option<PathBuf> {
+    let after = content.split("ProgramArguments").nth(1)?;
+    let open = after.find("<string>")? + "<string>".len();
+    let close = after[open..].find("</string>")? + open;
+    Some(PathBuf::from(after[open..close].trim()))
 }
 
 #[cfg(target_os = "macos")]
@@ -531,8 +736,6 @@ fn registration_contents(
     home: &Path,
 ) -> String {
     let config = beekeeper_host_core::layout::host_config_path(home, instance);
-    let graceful = crate::terminate::GRACEFUL_SHUTDOWN_TIMEOUT.as_secs()
-        + crate::terminate::ESCALATION_TIMEOUT.as_secs();
     format!(
         r#"[Unit]
 Description=Beekeeper agent host ({namespace}) — supervises this machine's coding-session provider
@@ -562,8 +765,18 @@ WantedBy=default.target
             .map(|arg| format!(" {arg}"))
             .collect::<String>(),
         instance_value = instance.namespace_value(),
-        stop_timeout = graceful + 5,
+        stop_timeout = stop_timeout_secs(),
     )
+}
+
+/// How long a service manager should wait for the host to stop before
+/// killing it: the provider's own SIGINT window plus escalation, plus margin,
+/// so the host is never SIGKILLed mid-handoff and the outbox always flushes.
+/// systemd's `TimeoutStopSec` and launchd's `ExitTimeOut` both use it.
+pub(crate) fn stop_timeout_secs() -> u64 {
+    crate::terminate::GRACEFUL_SHUTDOWN_TIMEOUT.as_secs()
+        + crate::terminate::ESCALATION_TIMEOUT.as_secs()
+        + 5
 }
 
 #[cfg(target_os = "macos")]
@@ -759,6 +972,7 @@ mod tests {
             path: dir.path().join("host.plist"),
             program: Some(program),
             warnings: Vec::new(),
+            domain: Domain::User,
         };
 
         // The file is fine, so the cheap question says nothing is wrong.
@@ -806,6 +1020,7 @@ mod tests {
                  `loginctl enable-linger $USER`"
                     .to_string(),
             ],
+            domain: Domain::User,
         };
         assert!(
             !advisory.needs_rewrite(),
@@ -843,6 +1058,7 @@ mod tests {
             path: dir.path().join("host.plist"),
             program: Some(program),
             warnings: Vec::new(),
+            domain: Domain::User,
         };
         let absent = Registration {
             installed: false,

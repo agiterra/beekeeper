@@ -74,6 +74,11 @@ export type AgentHostStatus = {
     path: string;
     program?: string;
     warnings?: string[];
+    /**
+     * `user` for a LaunchAgent or systemd user unit; `system` for a macOS
+     * LaunchDaemon, which only root can change, so the app never repairs it.
+     */
+    domain?: "user" | "system";
   };
   /**
    * What to do about that registration.
