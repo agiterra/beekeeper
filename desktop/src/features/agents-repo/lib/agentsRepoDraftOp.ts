@@ -28,6 +28,27 @@ export const MAX_COMMIT_RECORD_ENTRIES = 256;
 export const ARCHIVE_SEGMENT = "archive";
 /** Root files a draft may put but never move or delete. */
 export const ROOT_FILES = ["README.md", "team.yml", "actions.yml"] as const;
+/**
+ * The one tree in the layout with folders: a project's document artifacts.
+ * `plans/`, `roles/` and `skills/` stay flat, because a plan's path is cited
+ * by every adopted `planRef` and a role's stem is a `team.yml` key.
+ */
+export const DOCS_ROOT = "docs";
+/** Components allowed under `docs/`, the last of them the file. */
+export const MAX_DOCUMENT_COMPONENTS = 8;
+/** A document's formats, lowercase so one path names one file. */
+export const DOCUMENT_EXTENSIONS = [".md", ".html"] as const;
+/** An image a document embeds, committed beside it. */
+export const DOCUMENT_ASSET_EXTENSIONS = [
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+] as const;
+/** The only dotfile the documents tree admits — how an empty folder exists. */
+export const GITKEEP = ".gitkeep";
 
 export type DraftOpKind =
   | "file.put"
@@ -139,7 +160,19 @@ export type DraftPathClass =
   | "role-skill"
   | "shared-skill"
   | "plan"
-  | "archived-plan";
+  | "archived-plan"
+  | "document"
+  | "document-asset"
+  | "document-folder";
+
+/** Whether a class sits in the documents tree, where folders nest. */
+export function isDocumentClass(value: DraftPathClass): boolean {
+  return (
+    value === "document" ||
+    value === "document-asset" ||
+    value === "document-folder"
+  );
+}
 
 /**
  * A **plan's** filename stem: the name of a document, not a manifest key. It
@@ -172,6 +205,76 @@ function isRoleFile(segment: string): boolean {
 /** A plan file: named for the document it holds. */
 function isPlanFile(segment: string): boolean {
   return segment.endsWith(".md") && isDocStem(segment.slice(0, -3));
+}
+
+/**
+ * A segment of the documents tree: a folder name, or a document's or asset's
+ * stem. The same shape as `isDocStem` — these are document names too — except
+ * that `archive` is an ordinary name here, because the documents tree has no
+ * archive rule. A document is moved or deleted.
+ */
+function isDocSegment(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 96 &&
+    !value.startsWith(".") &&
+    !value.startsWith("-") &&
+    /^[A-Za-z0-9._-]+$/.test(value)
+  );
+}
+
+/**
+ * The stem of `file` once a known extension is taken off, or null when the
+ * name ends in none of them. The *trailing* extension is the one read, so
+ * `notes.md.txt` is not a document.
+ */
+function stemWithExtension(
+  file: string,
+  extensions: readonly string[],
+): string | null {
+  for (const extension of extensions) {
+    if (file.endsWith(extension)) return file.slice(0, -extension.length);
+  }
+  return null;
+}
+
+/**
+ * Classify the components under `docs/`. Folders nest, bounded by
+ * `MAX_DOCUMENT_COMPONENTS`; every folder name is a document name; and the
+ * file is a document, an asset, or the keep that holds an empty folder open.
+ */
+function classifyDocumentPath(
+  path: string,
+  components: readonly string[],
+): { ok: true; class: DraftPathClass } | { ok: false; error: string } {
+  if (components.length > MAX_DOCUMENT_COMPONENTS) {
+    return {
+      ok: false,
+      error: `${path} is ${components.length} components under ${DOCS_ROOT}/; the cap is ${MAX_DOCUMENT_COMPONENTS}`,
+    };
+  }
+  const file = components[components.length - 1] ?? "";
+  const folders = components.slice(0, -1);
+  const badFolder = folders.find((folder) => !isDocSegment(folder));
+  if (badFolder !== undefined) {
+    return {
+      ok: false,
+      error: `${path} has a folder ${badFolder} that is not a document name (at most 96 bytes of letters, digits, '.', '_' or '-', never leading with '.' or '-')`,
+    };
+  }
+  if (file === GITKEEP) return { ok: true, class: "document-folder" };
+  const documentStem = stemWithExtension(file, DOCUMENT_EXTENSIONS);
+  if (documentStem !== null && isDocSegment(documentStem)) {
+    return { ok: true, class: "document" };
+  }
+  const assetStem = stemWithExtension(file, DOCUMENT_ASSET_EXTENSIONS);
+  if (assetStem !== null && isDocSegment(assetStem)) {
+    return { ok: true, class: "document-asset" };
+  }
+  return {
+    ok: false,
+    error: `${path} is not a document (${DOCUMENT_EXTENSIONS.join(", ")}), an image (${DOCUMENT_ASSET_EXTENSIONS.join(", ")}) or ${GITKEEP}`,
+  };
 }
 
 /** Classify a path against the agents repository layout, or say why not. */
@@ -237,13 +340,54 @@ export function draftPathClass(
   if (segments.length >= 3 && a === "skills" && b && isSlug(b)) {
     return { ok: true, class: "shared-skill" };
   }
+  if (segments.length >= 2 && a === DOCS_ROOT) {
+    return classifyDocumentPath(path, segments.slice(1));
+  }
   return {
     ok: false,
-    error: `${path} is outside the agents repository layout (README.md, team.yml, actions.yml, roles/<role>.md, roles/archive/<role>.md, roles/<role>/skills/<skill>/…, skills/<skill>/…, plans/<plan>.md, plans/archive/<plan>.md)`,
+    error: `${path} is outside the agents repository layout (README.md, team.yml, actions.yml, roles/<role>.md, roles/archive/<role>.md, roles/<role>/skills/<skill>/…, skills/<skill>/…, plans/<plan>.md, plans/archive/<plan>.md, docs/<folder>/…/<document>.md|.html, docs/<folder>/…/<image>, docs/<folder>/…/.gitkeep)`,
   };
 }
 
 /** The only legal `to` of a `file.move`, or null. */
+/**
+ * Whether a `file.move` from `path` to `to` names a legal destination, and
+ * why not when it does not.
+ *
+ * The rule differs by class, deliberately: a role or plan has exactly one
+ * destination, its archive counterpart (a plan is never renamed — every
+ * adopted `planRef` names it by path); a document, asset or folder keep may
+ * move to any path of its own class, which is what rename and
+ * move-between-folders are, and Markdown and HTML are one class so changing a
+ * document's format is a move; a root file is put-only and a skill file has no
+ * move at all.
+ *
+ * Renaming a folder is one move per file under it, issued by the caller. This
+ * admits each one; it does not make a directory move atomic.
+ * Pinned by `conformance/agents-repo-draft-path/` (`moves`).
+ */
+export function moveDestinationError(path: string, to: string): string | null {
+  const from = draftPathClass(path);
+  if (!from.ok) return from.error;
+  if (isDocumentClass(from.class)) {
+    if (to === path) return `${path} must move to a different path`;
+    const target = draftPathClass(to);
+    if (!target.ok) return target.error;
+    if (target.class !== from.class) {
+      return `${path} may only name another path of its own class, not ${to}`;
+    }
+    return null;
+  }
+  const counterpart = archiveCounterpart(path);
+  if (counterpart === null) {
+    return `${path} is not a role or plan that can move to or from archive/`;
+  }
+  if (counterpart !== to) {
+    return `${path} may only go to ${counterpart}, not ${to}`;
+  }
+  return null;
+}
+
 export function archiveCounterpart(path: string): string | null {
   const classified = draftPathClass(path);
   if (!classified.ok) return null;
@@ -451,8 +595,7 @@ export function decodeDraftOp(content: string, repo: string): DraftOp | null {
       const path = object.path;
       const to = object.to;
       if (typeof path !== "string" || typeof to !== "string") return null;
-      const counterpart = archiveCounterpart(path);
-      if (counterpart === null || counterpart !== to) return null;
+      if (moveDestinationError(path, to) !== null) return null;
       const base = decodeBase(object);
       if (!base) return null;
       return {

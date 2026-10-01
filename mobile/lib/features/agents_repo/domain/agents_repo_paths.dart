@@ -5,6 +5,7 @@ import 'agents_repo_draft_op.dart';
 /// presentation, in the same order Desktop's Files tab uses.
 enum AgentsRepoGroup {
   plans('Plans'),
+  documents('Documents'),
   roles('Roles'),
   skills('Skills'),
   team('Team'),
@@ -19,6 +20,9 @@ enum AgentsRepoGroup {
 
 AgentsRepoGroup groupOf(String path) => switch (draftPathClass(path)) {
   DraftPathClass.plan => AgentsRepoGroup.plans,
+  DraftPathClass.document ||
+  DraftPathClass.documentAsset ||
+  DraftPathClass.documentFolder => AgentsRepoGroup.documents,
   DraftPathClass.role => AgentsRepoGroup.roles,
   DraftPathClass.roleSkill ||
   DraftPathClass.sharedSkill => AgentsRepoGroup.skills,
@@ -38,8 +42,15 @@ bool isMarkdownPath(String path) => path.endsWith('.md');
 bool isGitkeep(String path) => path.endsWith('/.gitkeep') || path == '.gitkeep';
 
 /// Whether a path may be drafted at all.
-bool isDraftablePath(String path) =>
-    !isGitkeep(path) && draftPathClass(path) != null;
+///
+/// A `.gitkeep` under `docs/` is the exception: it *is* the folder someone
+/// created, so it is drafted like any other file. Every other keep is only
+/// the seed holding a directory open.
+bool isDraftablePath(String path) {
+  final classified = draftPathClass(path);
+  if (classified == DraftPathClass.documentFolder) return true;
+  return !isGitkeep(path) && classified != null;
+}
 
 /// The short name shown in the list.
 String displayName(String path) {
@@ -47,7 +58,10 @@ String displayName(String path) {
   final group = groupOf(path);
   if (group == AgentsRepoGroup.plans ||
       group == AgentsRepoGroup.roles ||
-      group == AgentsRepoGroup.archive) {
+      group == AgentsRepoGroup.archive ||
+      group == AgentsRepoGroup.documents) {
+    // Only `.md` comes off. A document's format is part of what it is, so
+    // `login.html` keeps its extension and an image keeps its own.
     return tail.endsWith('.md') ? tail.substring(0, tail.length - 3) : tail;
   }
   if (group == AgentsRepoGroup.skills && tail == 'SKILL.md') {

@@ -68,6 +68,36 @@ pub const ARCHIVE_SEGMENT: &str = "archive";
 /// The root files a draft may put but never move or delete.
 pub const ROOT_FILES: &[&str] = &["README.md", "team.yml", "actions.yml"];
 
+/// The one tree in the layout with folders: a project's **document
+/// artifacts**. `plans/`, `roles/` and `skills/` stay flat because a plan's
+/// path is cited by every adopted `planRef` and a role's stem is a `team.yml`
+/// key. A document is cited by nothing, so it may be organised.
+pub const DOCS_ROOT: &str = "docs";
+
+/// How many components a path may have under [`DOCS_ROOT`], the last of them
+/// the file. Eight is deep enough for any filing anyone has asked for and
+/// shallow enough that a tree walk is bounded.
+pub const MAX_DOCUMENT_COMPONENTS: usize = 8;
+
+/// A document's formats, lowercase so one path names one file. Markdown
+/// renders in the app; HTML is what an agent's mockup lands as.
+pub const DOCUMENT_EXTENSIONS: &[&str] = &[".md", ".html"];
+
+/// An image a document embeds, committed beside it so it is reviewed and
+/// versioned with the document it belongs to.
+///
+/// `.svg` is admitted here although `buzz-media` refuses `image/svg+xml` as an
+/// upload MIME: in the tree an asset is only ever rendered through `<img>`,
+/// which runs no script, or inside the preview window, which carries its own
+/// CSP and no network. Different surfaces, and neither rule is loosened.
+pub const DOCUMENT_ASSET_EXTENSIONS: &[&str] = &[".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"];
+
+/// The only dotfile the documents tree admits, and the only way a folder
+/// someone created and has not filled yet survives a commit — git has no
+/// empty directories. Without it, "new folder" and "pin a folder" would be
+/// things the product claims and git drops.
+pub const GITKEEP: &str = ".gitkeep";
+
 /// What one op does. The wire spelling is the `ad-op` tag and the content
 /// `op` field; [`validate_agents_repo_draft_envelope`] requires the two to
 /// agree.
@@ -378,6 +408,28 @@ fn is_doc_stem(value: &str) -> bool {
         && !value.eq_ignore_ascii_case(ARCHIVE_SEGMENT)
 }
 
+/// A segment of the **documents** tree: a folder name, or a document's or
+/// asset's stem. The same shape as [`is_doc_stem`] — these are document names
+/// too — except that `archive` is an ordinary name here, because the documents
+/// tree has no archive rule. A document is moved or deleted.
+fn is_doc_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 96
+        && !value.starts_with(['.', '-'])
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+/// The stem of `file` once a known extension is taken off it, or `None` when
+/// the name does not end in one of `extensions`. The *trailing* extension is
+/// the one read, so `notes.md.txt` is not a document.
+fn stem_with_extension<'a>(file: &'a str, extensions: &[&str]) -> Option<&'a str> {
+    extensions
+        .iter()
+        .find_map(|extension| file.strip_suffix(extension))
+}
+
 fn is_file_segment(value: &str) -> bool {
     !value.is_empty()
         && value != "."
@@ -404,6 +456,25 @@ pub enum DraftPathClass {
     Plan,
     /// `plans/archive/<slug>.md`.
     ArchivedPlan,
+    /// `docs/<folder>/…/<stem>.md` or `.html` — a **document artifact**.
+    Document,
+    /// `docs/<folder>/…/<file>.png` and the other image formats: an image a
+    /// document embeds, committed beside it.
+    DocumentAsset,
+    /// `docs/<folder>/…/.gitkeep` — the keep that is how an empty folder
+    /// exists in git at all.
+    DocumentFolder,
+}
+
+impl DraftPathClass {
+    /// Whether this path sits in the documents tree, where folders nest and a
+    /// move may name any path of the same class.
+    pub const fn is_document(self) -> bool {
+        matches!(
+            self,
+            Self::Document | Self::DocumentAsset | Self::DocumentFolder
+        )
+    }
 }
 
 /// Classify a draft path against the agents repository's layout, refusing
@@ -445,13 +516,55 @@ pub fn validate_draft_path(path: &str) -> Result<DraftPathClass, String> {
         ["skills", skill, rest @ ..] if is_slug(skill) && !rest.is_empty() => {
             Ok(DraftPathClass::SharedSkill)
         }
+        [DOCS_ROOT, components @ ..] if !components.is_empty() => {
+            classify_document_path(path, components)
+        }
         _ => Err(format!(
             "draft path {path:?} is outside the agents repository layout \
              (README.md, team.yml, actions.yml, roles/<role>.md, \
              roles/archive/<role>.md, roles/<role>/skills/<skill>/…, \
-             skills/<skill>/…, plans/<plan>.md, plans/archive/<plan>.md)"
+             skills/<skill>/…, plans/<plan>.md, plans/archive/<plan>.md, \
+             docs/<folder>/…/<document>.md|.html, docs/<folder>/…/<image>, \
+             docs/<folder>/…/.gitkeep)"
         )),
     }
+}
+
+/// Classify the components under [`DOCS_ROOT`]. Folders nest, bounded by
+/// [`MAX_DOCUMENT_COMPONENTS`]; every folder name is a document name; and the
+/// file is a document, an asset, or the keep that holds an empty folder open.
+fn classify_document_path(path: &str, components: &[&str]) -> Result<DraftPathClass, String> {
+    if components.len() > MAX_DOCUMENT_COMPONENTS {
+        return Err(format!(
+            "draft path {path:?} is {} components under {DOCS_ROOT}/; the cap is \
+             {MAX_DOCUMENT_COMPONENTS}",
+            components.len()
+        ));
+    }
+    let (file, folders) = components
+        .split_last()
+        .expect("the caller refused an empty component list");
+    if let Some(folder) = folders.iter().find(|folder| !is_doc_segment(folder)) {
+        return Err(format!(
+            "draft path {path:?} has a folder {folder:?} that is not a document name \
+             (at most 96 bytes of letters, digits, '.', '_' or '-', never leading \
+             with '.' or '-')"
+        ));
+    }
+    if *file == GITKEEP {
+        return Ok(DraftPathClass::DocumentFolder);
+    }
+    if stem_with_extension(file, DOCUMENT_EXTENSIONS).is_some_and(is_doc_segment) {
+        return Ok(DraftPathClass::Document);
+    }
+    if stem_with_extension(file, DOCUMENT_ASSET_EXTENSIONS).is_some_and(is_doc_segment) {
+        return Ok(DraftPathClass::DocumentAsset);
+    }
+    Err(format!(
+        "draft path {path:?} is not a document ({}), an image ({}) or {GITKEEP}",
+        DOCUMENT_EXTENSIONS.join(", "),
+        DOCUMENT_ASSET_EXTENSIONS.join(", ")
+    ))
 }
 
 /// The only legal `to` of a `file.move`: a role's or plan's archive path,
@@ -467,6 +580,47 @@ pub fn archive_counterpart(path: &str) -> Option<String> {
         | (DraftPathClass::ArchivedPlan, [root, _, file]) => Some(format!("{root}/{file}")),
         _ => None,
     }
+}
+
+/// Whether a `file.move` from `path` to `to` names a legal destination, and
+/// why not when it does not.
+///
+/// The rule is not the same for every class, deliberately:
+///
+/// - a **role** or **plan** has exactly one destination, its
+///   [`archive_counterpart`]. A plan is never renamed: every adopted `planRef`
+///   names it by path (NIP-PW), and a rename would orphan them.
+/// - a **document**, **asset** or **folder keep** may move to any path of its
+///   own class — that is what rename and move-between-folders are. Markdown
+///   and HTML are one class, so changing a document's format is a move.
+/// - a **root file** is put-only, and a skill file has no move at all.
+///
+/// Renaming a folder is one move per file under it, issued by the client.
+/// This admits each one; it does not make a directory move atomic.
+/// Pinned by `conformance/agents-repo-draft-path/` (`moves`).
+pub fn validate_move_destination(path: &str, to: &str) -> Result<(), String> {
+    let from_class = validate_draft_path(path)?;
+    if from_class.is_document() {
+        if to == path {
+            return Err(format!("draft move of {path:?} must name a different path"));
+        }
+        let to_class = validate_draft_path(to)?;
+        if to_class != from_class {
+            return Err(format!(
+                "draft move of {path:?} may only name another path of its own class, \
+                 not {to:?}"
+            ));
+        }
+        return Ok(());
+    }
+    let counterpart = archive_counterpart(path)
+        .ok_or_else(|| format!("draft path {path:?} is not a role or plan that can be archived"))?;
+    if to != counterpart {
+        return Err(format!(
+            "draft move of {path:?} may only go to {counterpart:?}, not {to:?}"
+        ));
+    }
+    Ok(())
 }
 
 /// Validate a `file.put` text: within [`MAX_AGENTS_REPO_DRAFT_TEXT_BYTES`],
@@ -631,14 +785,7 @@ pub fn decode_agents_repo_draft_op(content: &str, repo: &str) -> Result<AgentsRe
         AgentsRepoDraftOpKind::FileMove => {
             let path = take_str(object, "path")?.to_owned();
             let to = take_str(object, "to")?.to_owned();
-            let counterpart = archive_counterpart(&path).ok_or_else(|| {
-                format!("draft path {path:?} is not a role or plan that can be archived")
-            })?;
-            if to != counterpart {
-                return Err(format!(
-                    "draft move of {path:?} may only go to {counterpart:?}, not {to:?}"
-                ));
-            }
+            validate_move_destination(&path, &to)?;
             AgentsRepoDraftOpValue::FileMove {
                 path,
                 to,
@@ -917,14 +1064,23 @@ mod tests {
             note: Option<String>,
         }
         #[derive(serde::Deserialize)]
+        struct Move {
+            from: String,
+            to: String,
+            ok: bool,
+            #[serde(default)]
+            note: Option<String>,
+        }
+        #[derive(serde::Deserialize)]
         struct Vectors {
             schema: String,
             cases: Vec<Case>,
+            moves: Vec<Move>,
         }
         let raw =
             include_str!("../../../conformance/agents-repo-draft-path/fixtures/path-vectors.json");
         let vectors: Vectors = serde_json::from_str(raw).expect("vectors parse");
-        assert_eq!(vectors.schema, "buzz-agents-repo-draft-path-vectors/v1");
+        assert_eq!(vectors.schema, "buzz-agents-repo-draft-path-vectors/v2");
         assert!(!vectors.cases.is_empty(), "an empty corpus proves nothing");
         for case in vectors.cases {
             let note = case.note.unwrap_or_default();
@@ -942,6 +1098,21 @@ mod tests {
                 (Err(_), None) => {}
             }
         }
+        assert!(
+            !vectors.moves.is_empty(),
+            "the destination rule needs vectors too"
+        );
+        for case in vectors.moves {
+            let note = case.note.unwrap_or_default();
+            let got = validate_move_destination(&case.from, &case.to);
+            assert_eq!(
+                got.is_ok(),
+                case.ok,
+                "move {:?} -> {:?} {note}: {got:?}",
+                case.from,
+                case.to
+            );
+        }
     }
 
     /// The corpus names a class the way the wire and the other two readers do.
@@ -954,6 +1125,9 @@ mod tests {
             DraftPathClass::SharedSkill => "shared-skill",
             DraftPathClass::Plan => "plan",
             DraftPathClass::ArchivedPlan => "archived-plan",
+            DraftPathClass::Document => "document",
+            DraftPathClass::DocumentAsset => "document-asset",
+            DraftPathClass::DocumentFolder => "document-folder",
         }
     }
 
@@ -976,6 +1150,13 @@ mod tests {
             ("skills/marker/SKILL.md", DraftPathClass::SharedSkill),
             ("plans/rpg-2.md", DraftPathClass::Plan),
             ("plans/archive/rpg.md", DraftPathClass::ArchivedPlan),
+            ("docs/notes.md", DraftPathClass::Document),
+            ("docs/mockups/login.html", DraftPathClass::Document),
+            ("docs/a/b/c/d/e/f/g/h.md", DraftPathClass::Document),
+            ("docs/img/shot.png", DraftPathClass::DocumentAsset),
+            ("docs/img/diagram.svg", DraftPathClass::DocumentAsset),
+            ("docs/.gitkeep", DraftPathClass::DocumentFolder),
+            ("docs/mockups/.gitkeep", DraftPathClass::DocumentFolder),
         ] {
             assert_eq!(validate_draft_path(path).expect(path), class, "{path}");
         }
@@ -994,7 +1175,16 @@ mod tests {
             "roles/lead/skills/marker",
             "skills/marker",
             "skills/Marker/SKILL.md",
-            "docs/plan.md",
+            "docs",
+            "docs/x.txt",
+            "docs/x.MD",
+            "docs/.md",
+            "docs/.hidden.md",
+            "docs/-leading.md",
+            "docs/.hidden/x.md",
+            "docs/x/.gitignore",
+            "docs/a/b/c/d/e/f/g/h/i.md",
+            "plans/mockup.html",
             "beekeeper/actions.yml",
             "roles/lead/notes.md",
             "roles/lead/skills/marker/../x",

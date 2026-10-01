@@ -7,6 +7,9 @@
 
 export type AgentsRepoEntryKind =
   | "plan"
+  | "document"
+  | "document-asset"
+  | "document-folder"
   | "role"
   | "skill"
   | "manifest"

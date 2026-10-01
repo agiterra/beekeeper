@@ -1,5 +1,5 @@
 {
-  "schema": "buzz-agents-repo-draft-path-vectors/v1",
+  "schema": "buzz-agents-repo-draft-path-vectors/v2",
   "cases": [
     {
       "path": "README.md",
@@ -170,7 +170,8 @@
     },
     {
       "path": "docs/plan.md",
-      "class": null
+      "class": "document",
+      "note": "admitted since the documents tree landed; pinned as a refusal before it, which is why this vector is a flip and not an addition"
     },
     {
       "path": "beekeeper/actions.yml",
@@ -193,6 +194,271 @@
       "path": "model-registry.yaml",
       "class": null,
       "note": "KNOWN GAP: the product's own seed writes this file and the repository README tells a project to edit it, but no reader admits it as a root file. Pinned as a refusal so the divergence is visible, not so it is correct."
+    },
+    {
+      "path": "docs/notes.md",
+      "class": "document",
+      "note": "a document may sit at the root of the tree; folders are optional"
+    },
+    {
+      "path": "docs/CURRENT_STATE.md",
+      "class": "document",
+      "note": "a document stem is a document name, the same rule a plan stem follows"
+    },
+    {
+      "path": "docs/plan.v2.md",
+      "class": "document",
+      "note": "a dot inside the stem is part of the name, not a second extension"
+    },
+    {
+      "path": "docs/notes/api-shape.md",
+      "class": "document"
+    },
+    {
+      "path": "docs/mockups/login.html",
+      "class": "document",
+      "note": "HTML is a document format: this is what an agent's mockup lands as"
+    },
+    {
+      "path": "docs/archive/x.md",
+      "class": "document",
+      "note": "`archive` is an ordinary folder name here. Unlike plans/ and roles/, the documents tree has no archive rule — a document is moved or deleted"
+    },
+    {
+      "path": "docs/a/b/c/d/e/f/g/h.md",
+      "class": "document",
+      "note": "eight components under docs/ is the deepest admitted"
+    },
+    {
+      "path": "docs/.gitkeep",
+      "class": "document-folder",
+      "note": "the tree's own keep, written by the seed"
+    },
+    {
+      "path": "docs/mockups/.gitkeep",
+      "class": "document-folder",
+      "note": "git has no empty directories, so an empty folder exists only as its keep — this is what makes creating and pinning one real"
+    },
+    {
+      "path": "docs/img/shot.png",
+      "class": "document-asset"
+    },
+    {
+      "path": "docs/img/shot.jpg",
+      "class": "document-asset"
+    },
+    {
+      "path": "docs/img/shot.jpeg",
+      "class": "document-asset"
+    },
+    {
+      "path": "docs/img/anim.gif",
+      "class": "document-asset"
+    },
+    {
+      "path": "docs/img/shot.webp",
+      "class": "document-asset"
+    },
+    {
+      "path": "docs/img/diagram.svg",
+      "class": "document-asset",
+      "note": "SVG is admitted here though buzz-media refuses it as an upload MIME: in the tree it is only ever rendered through <img> or inside the preview window, which runs with its own CSP and no network"
+    },
+    {
+      "path": "docs",
+      "class": null,
+      "note": "the tree root is not a file"
+    },
+    {
+      "path": "docs/x.txt",
+      "class": null,
+      "note": "a document is Markdown or HTML"
+    },
+    {
+      "path": "docs/x.MD",
+      "class": null,
+      "note": "extensions are lowercase, so one path means one file"
+    },
+    {
+      "path": "docs/x.HTML",
+      "class": null
+    },
+    {
+      "path": "docs/x.md.txt",
+      "class": null,
+      "note": "the trailing extension is the one read, and .txt is not a document"
+    },
+    {
+      "path": "docs/.md",
+      "class": null,
+      "note": "an empty stem"
+    },
+    {
+      "path": "docs/.hidden.md",
+      "class": null,
+      "note": "a stem may not start with a dot"
+    },
+    {
+      "path": "docs/-leading.md",
+      "class": null,
+      "note": "a stem may not start with a hyphen"
+    },
+    {
+      "path": "docs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+      "class": null,
+      "note": "a stem is at most 96 bytes, as a plan's is"
+    },
+    {
+      "path": "docs/.hidden/x.md",
+      "class": null,
+      "note": "a folder may not start with a dot"
+    },
+    {
+      "path": "docs/-dir/x.md",
+      "class": null,
+      "note": "a folder may not start with a hyphen"
+    },
+    {
+      "path": "docs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/x.md",
+      "class": null,
+      "note": "a folder is at most 96 bytes"
+    },
+    {
+      "path": "docs/x/.gitignore",
+      "class": null,
+      "note": ".gitkeep is the only dotfile the tree admits"
+    },
+    {
+      "path": "docs/a/b/c/d/e/f/g/h/i.md",
+      "class": null,
+      "note": "nine components is one past the depth cap"
+    },
+    {
+      "path": "docs/a//b.md",
+      "class": null
+    },
+    {
+      "path": "docs/../team.yml",
+      "class": null
+    },
+    {
+      "path": "plans/mockup.html",
+      "class": null,
+      "note": "HTML lives under docs/; a plan is Markdown with beekeeper-plan/v1 frontmatter"
+    },
+    {
+      "path": "plans/img/shot.png",
+      "class": null,
+      "note": "assets live under docs/, and plans/ still has no nested directory"
+    }
+  ],
+  "moves": [
+    {
+      "from": "roles/lead.md",
+      "to": "roles/archive/lead.md",
+      "ok": true,
+      "note": "archiving a role: the counterpart rule, unchanged"
+    },
+    {
+      "from": "roles/archive/lead.md",
+      "to": "roles/lead.md",
+      "ok": true
+    },
+    {
+      "from": "plans/rpg.md",
+      "to": "plans/archive/rpg.md",
+      "ok": true
+    },
+    {
+      "from": "plans/archive/rpg.md",
+      "to": "plans/rpg.md",
+      "ok": true
+    },
+    {
+      "from": "plans/rpg.md",
+      "to": "plans/rpg-2.md",
+      "ok": false,
+      "note": "a plan's only destination is its archive counterpart; renaming one would orphan every adopted planRef naming it"
+    },
+    {
+      "from": "docs/a.md",
+      "to": "docs/b.md",
+      "ok": true,
+      "note": "renaming a document"
+    },
+    {
+      "from": "docs/a.md",
+      "to": "docs/notes/a.md",
+      "ok": true,
+      "note": "moving a document into a folder"
+    },
+    {
+      "from": "docs/notes/a.md",
+      "to": "docs/a.md",
+      "ok": true
+    },
+    {
+      "from": "docs/a.md",
+      "to": "docs/a.md",
+      "ok": false,
+      "note": "a move must move something"
+    },
+    {
+      "from": "docs/a.md",
+      "to": "docs/a.html",
+      "ok": true,
+      "note": "Markdown and HTML are one class, so changing a document's format is a move"
+    },
+    {
+      "from": "docs/a.md",
+      "to": "docs/img/a.png",
+      "ok": false,
+      "note": "a destination is the same class as its source: a document never becomes an asset"
+    },
+    {
+      "from": "docs/img/a.png",
+      "to": "docs/pictures/a.png",
+      "ok": true
+    },
+    {
+      "from": "docs/img/a.png",
+      "to": "docs/img/a.md",
+      "ok": false
+    },
+    {
+      "from": "docs/old/.gitkeep",
+      "to": "docs/new/.gitkeep",
+      "ok": true,
+      "note": "renaming a folder moves its keep; the files under it are one move op each, which the client issues"
+    },
+    {
+      "from": "docs/a.md",
+      "to": "plans/a.md",
+      "ok": false,
+      "note": "a document never becomes a plan"
+    },
+    {
+      "from": "plans/a.md",
+      "to": "docs/a.md",
+      "ok": false
+    },
+    {
+      "from": "docs/a.md",
+      "to": "docs/x.txt",
+      "ok": false,
+      "note": "the destination is a path the grammar admits"
+    },
+    {
+      "from": "README.md",
+      "to": "docs/README.md",
+      "ok": false,
+      "note": "a root file is put-only"
+    },
+    {
+      "from": "skills/marker/SKILL.md",
+      "to": "skills/other/SKILL.md",
+      "ok": false,
+      "note": "a skill file has no move; a skill directory is named by role frontmatter"
     }
   ]
 }

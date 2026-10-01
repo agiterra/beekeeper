@@ -27,6 +27,30 @@ const archiveSegment = 'archive';
 /// Root files a draft may put but never move or delete.
 const rootFiles = ['README.md', 'team.yml', 'actions.yml'];
 
+/// The one tree in the layout with folders: a project's document artifacts.
+/// `plans/`, `roles/` and `skills/` stay flat, because a plan's path is cited
+/// by every adopted `planRef` and a role's stem is a `team.yml` key.
+const docsRoot = 'docs';
+
+/// Components allowed under `docs/`, the last of them the file.
+const maxDocumentComponents = 8;
+
+/// A document's formats, lowercase so one path names one file.
+const documentExtensions = ['.md', '.html'];
+
+/// An image a document embeds, committed beside it.
+const documentAssetExtensions = [
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.svg',
+];
+
+/// The only dotfile the documents tree admits — how an empty folder exists.
+const gitkeep = '.gitkeep';
+
 enum DraftOpKind {
   filePut('file.put'),
   fileMove('file.move'),
@@ -93,6 +117,22 @@ enum DraftPathClass {
   sharedSkill,
   plan,
   archivedPlan,
+
+  /// `docs/<folder>/…/<stem>.md` or `.html` — a document artifact.
+  document,
+
+  /// `docs/<folder>/…/<file>.png` and the other image formats.
+  documentAsset,
+
+  /// `docs/<folder>/…/.gitkeep` — how an empty folder exists in git.
+  documentFolder;
+
+  /// Whether this path sits in the documents tree, where folders nest and a
+  /// move may name any path of the same class.
+  bool get isDocument =>
+      this == DraftPathClass.document ||
+      this == DraftPathClass.documentAsset ||
+      this == DraftPathClass.documentFolder;
 }
 
 /// One op: the repository it belongs to, an optional reason, and the edit.
@@ -320,6 +360,49 @@ bool _isPlanFile(String segment) =>
     segment.endsWith('.md') &&
     _isDocStem(segment.substring(0, segment.length - 3));
 
+/// A segment of the documents tree: a folder name, or a document's or asset's
+/// stem. The same shape as [_isDocStem] — these are document names too —
+/// except that `archive` is an ordinary name here, because the documents tree
+/// has no archive rule. A document is moved or deleted.
+bool _isDocSegment(String value) =>
+    value.isNotEmpty &&
+    value.length <= 96 &&
+    !value.startsWith('.') &&
+    !value.startsWith('-') &&
+    _docStem.hasMatch(value);
+
+/// The stem of [file] once a known extension is taken off, or `null` when the
+/// name ends in none of them. The *trailing* extension is the one read, so
+/// `notes.md.txt` is not a document.
+String? _stemWithExtension(String file, List<String> extensions) {
+  for (final extension in extensions) {
+    if (file.endsWith(extension)) {
+      return file.substring(0, file.length - extension.length);
+    }
+  }
+  return null;
+}
+
+/// Classify the components under `docs/`. Folders nest, bounded by
+/// [maxDocumentComponents]; every folder name is a document name; and the file
+/// is a document, an asset, or the keep that holds an empty folder open.
+DraftPathClass? _classifyDocumentPath(List<String> components) {
+  if (components.length > maxDocumentComponents) return null;
+  final file = components.last;
+  final folders = components.sublist(0, components.length - 1);
+  if (!folders.every(_isDocSegment)) return null;
+  if (file == gitkeep) return DraftPathClass.documentFolder;
+  final documentStem = _stemWithExtension(file, documentExtensions);
+  if (documentStem != null && _isDocSegment(documentStem)) {
+    return DraftPathClass.document;
+  }
+  final assetStem = _stemWithExtension(file, documentAssetExtensions);
+  if (assetStem != null && _isDocSegment(assetStem)) {
+    return DraftPathClass.documentAsset;
+  }
+  return null;
+}
+
 /// Classify a path against the agents repository layout, or `null` when it
 /// is outside it.
 DraftPathClass? draftPathClass(String path) {
@@ -359,6 +442,45 @@ DraftPathClass? draftPathClass(String path) {
   }
   if (segments.length >= 3 && segments[0] == 'skills' && _isSlug(segments[1])) {
     return DraftPathClass.sharedSkill;
+  }
+  if (segments.length >= 2 && segments[0] == docsRoot) {
+    return _classifyDocumentPath(segments.sublist(1));
+  }
+  return null;
+}
+
+/// Why a `file.move` from [path] to [to] is refused, or `null` when it names a
+/// legal destination.
+///
+/// The rule differs by class, deliberately: a role or plan has exactly one
+/// destination, its [archiveCounterpart] (a plan is never renamed — every
+/// adopted `planRef` names it by path); a document, asset or folder keep may
+/// move to any path of its own class, which is what rename and
+/// move-between-folders are, and Markdown and HTML are one class so changing a
+/// document's format is a move; a root file is put-only and a skill file has
+/// no move at all.
+///
+/// Renaming a folder is one move per file under it, issued by the caller.
+/// This admits each one; it does not make a directory move atomic.
+/// Pinned by `conformance/agents-repo-draft-path/` (`moves`).
+String? moveDestinationError(String path, String to) {
+  final from = draftPathClass(path);
+  if (from == null) return '"$path" is outside the agents repository layout.';
+  if (from.isDocument) {
+    if (to == path) return '"$path" must move to a different path.';
+    final target = draftPathClass(to);
+    if (target == null) return '"$to" is outside the agents repository layout.';
+    if (target != from) {
+      return '"$path" may only name another path of its own class, not "$to".';
+    }
+    return null;
+  }
+  final counterpart = archiveCounterpart(path);
+  if (counterpart == null) {
+    return '"$path" is not a role or plan that can move to or from archive/.';
+  }
+  if (counterpart != to) {
+    return '"$path" may only go to "$counterpart", not "$to".';
   }
   return null;
 }
@@ -490,8 +612,7 @@ AgentsRepoDraftOp? decodeAgentsRepoDraftOp(String content, String repo) {
         final path = object['path'];
         final to = object['to'];
         if (path is! String || to is! String) return null;
-        final counterpart = archiveCounterpart(path);
-        if (counterpart == null || counterpart != to) return null;
+        if (moveDestinationError(path, to) != null) return null;
         final base = _decodeBase(object);
         return AgentsRepoDraftOp.fileMove(
           repo: repo,

@@ -14,6 +14,7 @@ import {
   AGENTS_REPO_DRAFT_OP_KIND,
   MAX_AGENTS_REPO_DRAFT_TEXT_BYTES,
   archiveCounterpart,
+  moveDestinationError,
   decodeDraftOp,
   draftOpTags,
   draftPathClass,
@@ -142,9 +143,16 @@ test("the decoder refuses what the Rust validator refuses", () => {
     "absent is not null",
   );
   assert.equal(
-    decodeDraftOp(JSON.stringify({ ...base, path: "docs/plan.md" }), REPO),
+    decodeDraftOp(JSON.stringify({ ...base, path: "docs/plan.txt" }), REPO),
     null,
     "outside the layout",
+  );
+  assert.ok(
+    decodeDraftOp(
+      JSON.stringify({ ...base, path: "docs/mockups/login.html" }),
+      REPO,
+    ),
+    "a document in a folder is inside the layout",
   );
   assert.equal(
     decodeDraftOp(JSON.stringify({ ...base, base: "abc" }), REPO),
@@ -208,13 +216,22 @@ test("the path grammar and the archive counterpart", () => {
   assert.equal(draftPathClass("skills/marker/SKILL.md").class, "shared-skill");
   assert.equal(draftPathClass("plans/rpg.md").class, "plan");
   assert.equal(draftPathClass("team.yml").class, "root-file");
+  assert.equal(draftPathClass("docs/x.md").class, "document");
+  assert.equal(draftPathClass("docs/mockups/login.html").class, "document");
+  assert.equal(draftPathClass("docs/img/shot.png").class, "document-asset");
+  assert.equal(
+    draftPathClass("docs/mockups/.gitkeep").class,
+    "document-folder",
+  );
   for (const bad of [
     "",
     "/roles/lead.md",
     "roles/../x",
     "roles/Lead.md",
     "roles/archive.md",
-    "docs/x.md",
+    "docs",
+    "docs/x.txt",
+    "docs/a/b/c/d/e/f/g/h/i.md",
     "skills/marker",
   ]) {
     assert.equal(draftPathClass(bad).ok, false, bad);
@@ -222,6 +239,14 @@ test("the path grammar and the archive counterpart", () => {
   assert.equal(archiveCounterpart("plans/rpg.md"), "plans/archive/rpg.md");
   assert.equal(archiveCounterpart("roles/archive/lead.md"), "roles/lead.md");
   assert.equal(archiveCounterpart("team.yml"), null);
+  assert.equal(
+    archiveCounterpart("docs/x.md"),
+    null,
+    "the documents tree has no archive rule",
+  );
+  assert.equal(moveDestinationError("docs/x.md", "docs/notes/x.md"), null);
+  assert.ok(moveDestinationError("docs/x.md", "docs/x.md"));
+  assert.ok(moveDestinationError("docs/x.md", "plans/x.md"));
   assert.equal(draftTextError("a\u0000b") !== null, true);
   assert.equal(draftTextError("a\nb\tc\r\n"), null);
   assert.equal(draftTextError(""), null);

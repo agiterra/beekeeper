@@ -16,7 +16,10 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { draftPathClass } from "../../desktop/src/features/agents-repo/lib/agentsRepoDraftOp.ts";
+import {
+  draftPathClass,
+  moveDestinationError,
+} from "../../desktop/src/features/agents-repo/lib/agentsRepoDraftOp.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const corpus = JSON.parse(
@@ -24,7 +27,7 @@ const corpus = JSON.parse(
 );
 
 test("the corpus is the schema this binder expects", () => {
-  assert.equal(corpus.schema, "buzz-agents-repo-draft-path-vectors/v1");
+  assert.equal(corpus.schema, "buzz-agents-repo-draft-path-vectors/v2");
   assert.ok(corpus.cases.length > 0, "an empty corpus proves nothing");
 });
 
@@ -45,5 +48,18 @@ test("the Desktop grammar agrees with every vector", () => {
       );
       assert.equal(got.class, vector.class, JSON.stringify(vector.path));
     }
+  }
+});
+
+test("the Desktop destination rule agrees with every move vector", () => {
+  assert.ok(corpus.moves.length > 0, "the destination rule needs vectors too");
+  for (const vector of corpus.moves) {
+    const error = moveDestinationError(vector.from, vector.to);
+    const note = vector.note ? ` — ${vector.note}` : "";
+    assert.equal(
+      error === null,
+      vector.ok,
+      `${vector.from} -> ${vector.to} should be ${vector.ok ? "legal" : "refused"}${note}${error ? `: ${error}` : ""}`,
+    );
   }
 });

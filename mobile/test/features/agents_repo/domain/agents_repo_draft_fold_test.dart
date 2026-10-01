@@ -76,7 +76,10 @@ void main() {
       draftPathClass('roles/archive/lead.md'),
       DraftPathClass.archivedRole,
     );
-    expect(draftPathClass('docs/x.md'), isNull);
+    expect(draftPathClass('docs/x.md'), DraftPathClass.document);
+    expect(draftPathClass('docs/img/x.png'), DraftPathClass.documentAsset);
+    expect(draftPathClass('docs/x/.gitkeep'), DraftPathClass.documentFolder);
+    expect(draftPathClass('docs/x.txt'), isNull);
     expect(draftPathClass('roles/../x'), isNull);
     expect(archiveCounterpart('plans/rpg.md'), 'plans/archive/rpg.md');
     expect(archiveCounterpart('team.yml'), isNull);

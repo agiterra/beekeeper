@@ -174,10 +174,12 @@ fn fetch_time(checkout: &Path) -> Option<String> {
 /// Where a path sits in the layout, for the tree's grouping.
 pub(crate) fn classify(path: &str) -> &'static str {
     use buzz_core_pkg::agents_repo_draft::{validate_draft_path, DraftPathClass};
-    if path.ends_with("/.gitkeep") || path == ".gitkeep" {
-        return "gitkeep";
-    }
+    // The grammar is asked first, because a `.gitkeep` under `docs/` is a
+    // folder the person created — a row to list and pin — while one under
+    // `plans/` or `roles/archive/` is only the seed holding a directory open.
     match validate_draft_path(path) {
+        Ok(DraftPathClass::DocumentFolder) => "document-folder",
+        Ok(_) if path.ends_with("/.gitkeep") || path == ".gitkeep" => "gitkeep",
         Ok(DraftPathClass::RootFile) if path == "README.md" => "readme",
         Ok(DraftPathClass::RootFile) => "manifest",
         Ok(DraftPathClass::Role) => "role",
@@ -185,6 +187,9 @@ pub(crate) fn classify(path: &str) -> &'static str {
         Ok(DraftPathClass::RoleSkill | DraftPathClass::SharedSkill) => "skill",
         Ok(DraftPathClass::Plan) => "plan",
         Ok(DraftPathClass::ArchivedPlan) => "archived-plan",
+        Ok(DraftPathClass::Document) => "document",
+        Ok(DraftPathClass::DocumentAsset) => "document-asset",
+        Err(_) if path.ends_with("/.gitkeep") || path == ".gitkeep" => "gitkeep",
         Err(_) => "other",
     }
 }

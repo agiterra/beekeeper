@@ -18,7 +18,7 @@ void main() {
               ).readAsStringSync(),
             )
             as Map<String, dynamic>;
-    expect(corpus['schema'], 'buzz-agents-repo-draft-path-vectors/v1');
+    expect(corpus['schema'], 'buzz-agents-repo-draft-path-vectors/v2');
     final cases = corpus['cases'] as List<dynamic>;
     expect(cases, isNotEmpty, reason: 'an empty corpus proves nothing');
 
@@ -30,6 +30,9 @@ void main() {
       DraftPathClass.sharedSkill: 'shared-skill',
       DraftPathClass.plan: 'plan',
       DraftPathClass.archivedPlan: 'archived-plan',
+      DraftPathClass.document: 'document',
+      DraftPathClass.documentAsset: 'document-asset',
+      DraftPathClass.documentFolder: 'document-folder',
     };
 
     for (final entry in cases.cast<Map<String, dynamic>>()) {
@@ -47,6 +50,23 @@ void main() {
         );
         expect(wire[actual!], expected, reason: '"$path" — $note');
       }
+    }
+
+    final moves = corpus['moves'] as List<dynamic>;
+    expect(moves, isNotEmpty, reason: 'the destination rule needs vectors too');
+    for (final entry in moves.cast<Map<String, dynamic>>()) {
+      final from = entry['from'] as String;
+      final to = entry['to'] as String;
+      final ok = entry['ok'] as bool;
+      final note = entry['note'] as String? ?? '';
+      final error = moveDestinationError(from, to);
+      expect(
+        error == null,
+        ok,
+        reason:
+            '"$from" -> "$to" should be ${ok ? "legal" : "refused"} — '
+            '$note${error == null ? "" : ": $error"}',
+      );
     }
   });
 }

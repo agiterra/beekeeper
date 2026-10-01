@@ -10,6 +10,7 @@ import { draftPathClass } from "./agentsRepoDraftOp";
 
 export type AgentsRepoGroup =
   | "plans"
+  | "documents"
   | "roles"
   | "skills"
   | "team"
@@ -18,9 +19,14 @@ export type AgentsRepoGroup =
   | "archive"
   | "other";
 
-/** Group order in the tree: plans lead, per Andy's intent for the tab. */
+/**
+ * Group order in the tree: plans lead, per Andy's intent for the tab, and the
+ * documents tree follows them — both are what a project writes, and the
+ * machinery (roles, skills, manifest) sits below.
+ */
 export const GROUP_ORDER: readonly AgentsRepoGroup[] = [
   "plans",
+  "documents",
   "roles",
   "skills",
   "team",
@@ -32,6 +38,7 @@ export const GROUP_ORDER: readonly AgentsRepoGroup[] = [
 
 export const GROUP_LABEL: Record<AgentsRepoGroup, string> = {
   plans: "Plans",
+  documents: "Documents",
   roles: "Roles",
   skills: "Skills",
   team: "Team",
@@ -48,6 +55,10 @@ export function groupOf(path: string): AgentsRepoGroup {
   switch (classified.class) {
     case "plan":
       return "plans";
+    case "document":
+    case "document-asset":
+    case "document-folder":
+      return "documents";
     case "role":
       return "roles";
     case "role-skill":
@@ -71,6 +82,12 @@ export function kindOf(path: string): AgentsRepoEntryKind {
   switch (classified.class) {
     case "plan":
       return "plan";
+    case "document":
+      return "document";
+    case "document-asset":
+      return "document-asset";
+    case "document-folder":
+      return "document-folder";
     case "role":
       return "role";
     case "role-skill":
@@ -90,16 +107,43 @@ export function isMarkdownPath(path: string): boolean {
   return path.endsWith(".md");
 }
 
-/** Whether a path may be drafted at all (a `.gitkeep` or an `other` file may not). */
+/** Whether a path is an HTML document, which previews in its own window. */
+export function isHtmlPath(path: string): boolean {
+  return path.endsWith(".html");
+}
+
+/** Whether a path is an image a document embeds. */
+export function isDocumentAssetPath(path: string): boolean {
+  const classified = draftPathClass(path);
+  return classified.ok && classified.class === "document-asset";
+}
+
+/**
+ * Whether a path may be drafted at all.
+ *
+ * A `.gitkeep` under `docs/` is the exception: it *is* the folder someone
+ * created, so it is drafted like any other file. Every other keep is only the
+ * seed holding a directory open, and an `other` file is read-only.
+ */
 export function isDraftablePath(path: string): boolean {
-  return !path.endsWith("/.gitkeep") && draftPathClass(path).ok;
+  const classified = draftPathClass(path);
+  if (!classified.ok) return false;
+  if (classified.class === "document-folder") return true;
+  return !path.endsWith("/.gitkeep");
 }
 
 /** The short name shown in the tree: the file stem for plans and roles, else the tail. */
 export function displayName(path: string): string {
   const tail = path.slice(path.lastIndexOf("/") + 1);
   const group = groupOf(path);
-  if (group === "plans" || group === "roles" || group === "archive") {
+  if (
+    group === "plans" ||
+    group === "roles" ||
+    group === "archive" ||
+    group === "documents"
+  ) {
+    // Only `.md` comes off. A document's format is part of what it is, so
+    // `login.html` keeps its extension and an image keeps its own.
     return tail.endsWith(".md") ? tail.slice(0, -3) : tail;
   }
   if (group === "skills") {

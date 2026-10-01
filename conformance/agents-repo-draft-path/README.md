@@ -13,6 +13,10 @@ Three readers, so the record needs vectors (`../README.md`). A rule implemented
 in only one of them is a defect, and nothing in CI would have caught it before
 this corpus existed: each reader's tests used its own table.
 
+Two questions, one corpus: `cases` says what class a path is (or that it is
+refused), and `moves` says whether a `file.move` from one path to another is a
+legal destination. Both are answered by the same three readers.
+
 The grammar is not only about what a draft may *write*. The Desktop Files tab
 runs every path it lists through the same function to decide what it is, and
 `read_tip` refuses to open anything the grammar rejects
@@ -41,6 +45,52 @@ opened fine, which is how the divergence was found.
 
 A plan stem is still bounded: at most 96 bytes, never starting with `.` or `-`,
 and never `archive` in any case, which names the sibling directory.
+
+## The documents tree
+
+`docs/` is the one tree with folders. `plans/`, `roles/` and `skills/` keep
+their flat, fixed-depth shapes, because a plan's path is cited by every adopted
+`planRef` and a role's stem is a `team.yml` key. A document is cited by nothing,
+so it may be organised.
+
+| shape | class |
+| --- | --- |
+| `docs/<folder>/…/<stem>.md`, `…/<stem>.html` | `document` |
+| `docs/<folder>/…/<file>.(png\|jpg\|jpeg\|gif\|webp\|svg)` | `document-asset` |
+| `docs/<folder>/…/.gitkeep` | `document-folder` |
+
+- Folders nest up to **eight components** under `docs/` (the last of which is
+  the file), inside the existing 512-byte path cap. A folder segment follows the
+  same rule as a document stem — at most 96 bytes, no leading `.` or `-` — so
+  the tree cannot hide files or mint something an argument parser reads as a
+  flag.
+- Extensions are **lowercase**, so one path names one file.
+- `archive` is an ordinary folder name here. The documents tree has no archive
+  rule: a document is moved or deleted, and `moves` says so.
+- `.gitkeep` is admitted **only** under `docs/`, and only by that exact name.
+  Git has no empty directories, so a folder someone created and has not filled
+  yet exists only as its keep; without that, "new folder" and "pin a folder"
+  would be things the product claims and git drops at the next commit.
+- `svg` is admitted as an asset although `buzz-media` refuses `image/svg+xml`
+  as an upload MIME (`crates/buzz-media/src/validation.rs`, the active-web-content
+  block). In the tree an asset is only ever rendered through `<img>`, which runs
+  no script, or inside the preview window, which has its own CSP and no network.
+  The two decisions are about different surfaces and neither is loosened here.
+
+## Destinations: what a `file.move` may name
+
+`moves` pins the destination rule, which is **not** the same for every class:
+
+- a **role** or **plan** has exactly one destination, its archive counterpart.
+  A plan is never renamed — every adopted `planRef` names it by path, and a
+  rename would orphan them.
+- a **document**, **asset** or **folder keep** may move to any path of its own
+  class, which is what rename and move-between-folders are. Markdown and HTML
+  are one class, so changing a document's format is a move.
+- a **root file** is put-only, and a skill file has no move at all.
+
+Renaming a folder is one move per file under it, issued by the client. The
+grammar admits each one; it does not make a directory move atomic.
 
 ## Adding a rule
 
