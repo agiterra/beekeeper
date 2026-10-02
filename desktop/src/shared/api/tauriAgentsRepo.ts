@@ -55,3 +55,45 @@ export async function validatePlanSource(
 ): Promise<PlanSourceCheck> {
   return invokeTauri<PlanSourceCheck>("validate_plan_source", { text });
 }
+
+/** What `artifact_preview_open` hands back. */
+export type ArtifactPreviewHandle = {
+  /** The opaque token the `buzz-doc` scheme serves this snapshot under. */
+  token: string;
+  /** The window label, for closing it. */
+  label: string;
+  /** The url the window loads. */
+  url: string;
+  /** Sibling assets the snapshot carries, by repository path. */
+  assets: string[];
+  /**
+   * Assets the document references that the snapshot could not supply. Shown
+   * by name rather than left to render as broken images.
+   */
+  missing: string[];
+};
+
+/**
+ * Open an HTML document artifact in its own window, with its scripts running.
+ *
+ * The window has **no capabilities** (its label matches nothing in
+ * `capabilities/default.json`) and the document is served under its own CSP
+ * with no network, so the mockup behaves as itself without reaching the app.
+ * `draftText` previews the open draft; omit it to preview what is on `main`.
+ */
+export async function artifactPreviewOpen(
+  projectRef: string,
+  path: string,
+  draftText?: string | null,
+): Promise<ArtifactPreviewHandle> {
+  return invokeTauri<ArtifactPreviewHandle>("artifact_preview_open", {
+    projectRef,
+    path,
+    draftText: draftText ?? null,
+  });
+}
+
+/** Drop a preview's snapshot and close its window. */
+export async function artifactPreviewClose(token: string): Promise<void> {
+  return invokeTauri<void>("artifact_preview_close", { token });
+}

@@ -222,6 +222,8 @@ pub(crate) fn invoke_handler(
         commands::agents_repo::agents_repo_ls,
         commands::agents_repo::agents_repo_read,
         commands::agents_repo::agents_repo_commit_drafts,
+        artifact_preview::artifact_preview_open,
+        artifact_preview::artifact_preview_close,
         managed_agents::project_team_setup::project_team_setup_get,
         managed_agents::project_team_setup::project_team_setup_prepare,
         managed_agents::project_team_setup::project_team_setup_validate,

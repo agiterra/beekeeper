@@ -256,6 +256,16 @@ export const KIND_PROJECT_TODO_OP = 44248;
 // `crates/buzz-core/src/kind.rs` and `mobile/lib/shared/relay/nostr_models.dart`.
 export const KIND_AGENTS_REPO_DRAFT_OP = 44250;
 
+// NIP-AR: a project artifact pin op — which documents, plans and folders of
+// the project's agents repository show in every member's sidebar, and in what
+// order. Its own kind rather than another 44250 op, because 44250's fold is a
+// per-path draft chain a `commit.record` closes and a pin must never be closed
+// by a commit. Same project-scoped gate as 44240/44248/44250. Folded by
+// features/agents-repo/lib/artifactPinFold.ts, pinned by
+// conformance/project-artifact-pin-fold/. Mirrored in
+// `crates/buzz-core/src/kind.rs` and `mobile/lib/shared/relay/nostr_models.dart`.
+export const KIND_PROJECT_ARTIFACT_PIN_OP = 44251;
+
 // The coding-session kinds Desktop's own consumer reads, in one place, so the
 // regression guard keeping them out of the chat timeline cannot silently miss a
 // newly added member.

@@ -251,6 +251,33 @@ pub(crate) fn blob_at_tip(repo: &AgentsRepoCheckout, path: &str) -> Option<Strin
     .filter(|sha| sha.len() == 40)
 }
 
+/// The raw bytes of `path` at the tip, or `None` when the tip has no such
+/// file or it is larger than [`MAX_READ_BYTES`].
+///
+/// Unlike [`read_tip`] this does not decode: an image is bytes, and the
+/// preview scheme serves them verbatim.
+pub(crate) fn blob_bytes_at_tip(repo: &AgentsRepoCheckout, path: &str) -> Option<Vec<u8>> {
+    if buzz_core_pkg::agents_repo_draft::validate_draft_path(path).is_err() {
+        return None;
+    }
+    let blob = blob_at_tip(repo, path)?;
+    let size: u64 = run_git(&["cat-file", "-s", &blob], Some(&repo.checkout), &repo.auth)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    if size > MAX_READ_BYTES {
+        return None;
+    }
+    run_git_bytes(
+        &["cat-file", "blob", &blob],
+        Some(&repo.checkout),
+        &repo.auth,
+        &[],
+    )
+    .ok()
+}
+
 /// Read one file at the tip.
 pub(crate) fn read_tip(repo: &AgentsRepoCheckout, path: &str) -> Result<AgentsRepoFile, String> {
     buzz_core_pkg::agents_repo_draft::validate_draft_path(path)?;

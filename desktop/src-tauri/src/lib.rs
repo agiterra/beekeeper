@@ -3,6 +3,7 @@ mod agent_host;
 mod app_menu;
 mod app_state;
 mod archive;
+mod artifact_preview;
 mod builderlab;
 mod coding_sessions;
 mod commands;
@@ -275,7 +276,14 @@ pub fn run() {
                 responder.respond(response);
             });
         })
+        // A previewed document artifact gets its own origin so its scripts
+        // can run under their own CSP; the handler serves only the snapshot
+        // the opener registered (`artifact_preview`).
+        .register_uri_scheme_protocol("buzz-doc", |ctx, request| {
+            artifact_preview::handle_buzz_doc(ctx.app_handle(), &request)
+        })
         .manage(build_app_state())
+        .manage(artifact_preview::ArtifactPreviews::default())
         .manage(ClipboardState::new())
         .manage(PendingCommunityDeepLinks::default())
         .manage(PendingNavigationDeepLinks::default())

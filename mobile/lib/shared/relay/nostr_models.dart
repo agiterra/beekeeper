@@ -76,6 +76,13 @@ abstract final class EventKind {
   /// named drafts landed on `main`. Same project-scoped gate as 44248.
   static const agentsRepoDraftOp = 44250;
 
+  /// Kind:44251 project artifact pin op (NIP-AR): which documents, plans and
+  /// folders of the project's agents repository show in every member's
+  /// sidebar, and in what order. Its own kind rather than another 44250 op,
+  /// because 44250's fold is a per-path draft chain a `commit.record` closes
+  /// and a pin must never be closed by a commit.
+  static const projectArtifactPinOp = 44251;
+
   /// Kind:30624 project pack source (NIP-PK): the repository the project's
   /// roles, plans and manifests are staged from; `d` = the project
   /// coordinate.
