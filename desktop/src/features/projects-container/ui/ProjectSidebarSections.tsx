@@ -559,10 +559,19 @@ export function ProjectSidebarSections({
           void navigate({
             to: "/projects/$projectId/files",
             params: { projectId: project.id },
+            // A file opens as itself: `view=file` shows its content and its
+            // history with no tabs, no tree and no repository-wide controls,
+            // because a pinned row is a way to *read* one document.
+            //
             // A folder has no file to open, so its row selects the folder
             // itself — which is a row in the tree, because a folder is a
-            // pinnable thing in its own right.
-            search: { path: pin.target },
+            // pinnable thing in its own right. Hiding the tree there would
+            // hide the thing that was pinned, so the folder keeps the
+            // whole tab.
+            search:
+              pin.targetKind === "folder"
+                ? { path: pin.target }
+                : { path: pin.target, view: "file" },
           })
         }
         todoLists={

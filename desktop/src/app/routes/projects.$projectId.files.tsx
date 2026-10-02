@@ -18,22 +18,28 @@ const ProjectAgentsRepoScreen = React.lazy(async () => {
  */
 export const Route = createFileRoute("/projects/$projectId/files")({
   component: ProjectFilesRouteComponent,
-  // `path` opens one file; anything with a `..` or an absolute form is dropped.
-  validateSearch: (search: Record<string, unknown>): { path?: string } => {
+  // `path` opens one file; anything with a `..` or an absolute form is
+  // dropped. `view=file` shows that one file alone — its content and its
+  // history, with no tabs and no tree — the way a pinned sidebar row opens
+  // it. `view` without a `path` means nothing.
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { path?: string; view?: "file" } => {
     const path = typeof search.path === "string" ? search.path : undefined;
     if (!path || path.startsWith("/") || path.split("/").includes(".."))
       return {};
-    return { path };
+    return search.view === "file" ? { path, view: "file" } : { path };
   },
 });
 
 function ProjectFilesRouteComponent() {
   usePreviewFeatureWarning("projects");
   const { projectId } = Route.useParams();
-  const { path } = Route.useSearch();
+  const { path, view } = Route.useSearch();
   return (
     <React.Suspense fallback={<ViewLoadingFallback kind="projects" />}>
       <ProjectAgentsRepoScreen
+        focused={view === "file"}
         projectId={projectId}
         selectedPath={path ?? null}
       />

@@ -8,6 +8,8 @@ export const agentsRepoCopy = {
   mainUnreadable: (reason: string) =>
     `Could not read the agents repository from the relay: ${reason}. Showing drafts only; a new draft cannot start until main is readable.`,
   refresh: "Refresh",
+  /** The way out of the one-file view a pinned sidebar row opens. */
+  allArtifacts: "All artifacts",
   asFetchedAt: (when: string) => `main as fetched at ${when}`,
   notOnMain: "not on main",
   newPlan: "New plan",

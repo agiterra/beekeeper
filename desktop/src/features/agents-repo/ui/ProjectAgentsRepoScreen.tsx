@@ -28,6 +28,7 @@ import { agentsRepoCopy as copy } from "../lib/agentsRepoCopy";
 import type { DraftPath } from "../lib/agentsRepoDraftFold";
 import { useAgentsRepoMutations } from "../lib/agentsRepoMutations";
 import { artifactPreviewOpen } from "@/shared/api/tauriAgentsRepo";
+import { cn } from "@/shared/lib/cn";
 
 import { draftPathClass } from "../lib/agentsRepoDraftOp";
 import { planCommitRefusals } from "../lib/agentsRepoPlanSource";
@@ -61,9 +62,20 @@ import { AgentsRepoFileTree, treeRows } from "./AgentsRepoFileTree";
 export function ProjectAgentsRepoScreen({
   projectId,
   selectedPath,
+  focused = false,
 }: {
   projectId: string;
   selectedPath: string | null;
+  /**
+   * `?view=file`: show that one file alone — its name, its content and its
+   * history — the way a pinned sidebar row opens it. No tabs, no tree and
+   * none of the repository-wide controls, because none of them is about the
+   * document someone pinned.
+   *
+   * It only applies to a file. A pinned *folder* is a row in the tree, so
+   * hiding the tree would hide the thing itself.
+   */
+  focused?: boolean;
 }) {
   const { project } = useProjectContainerQuery(projectId);
   const navigate = useNavigate();
@@ -343,6 +355,19 @@ export function ProjectAgentsRepoScreen({
   // A pinned target the repository does not have — neither a file on main nor
   // a draft, and for a folder nothing under its prefix. Said by name, because
   // the alternative is a sidebar row that opens nothing and never says why.
+  /**
+   * Whether to paint the one-file view: asked for by the route, and only for
+   * a path the layout calls a file. A hand-typed `?view=file` naming a folder
+   * (or a folder's keep, which stands for the folder) falls back to the whole
+   * tab — hiding the tree there would hide the thing the path names, and a
+   * dead end is worse than too much chrome.
+   */
+  const onlyThisFile = React.useMemo(() => {
+    if (!focused || selectedPath === null) return false;
+    const classified = draftPathClass(selectedPath);
+    return classified.ok && classified.class !== "document-folder";
+  }, [focused, selectedPath]);
+
   const missingPins = React.useMemo(() => {
     const present = new Set(rows.map((row) => row.path));
     const prefixes = [...present];
@@ -396,17 +421,34 @@ export function ProjectAgentsRepoScreen({
       className="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto p-4"
       data-testid="agents-repo-screen"
     >
-      <div>
-        <h1 className="break-words text-xl font-semibold text-foreground">
-          {project.name}
-        </h1>
-        <ProjectPageTabs
-          active="files"
-          projectId={project.id}
-          showPulse={pulseEnabled}
-        />
-      </div>
-      <p className="mb-3 text-sm text-muted-foreground">{copy.subtitle}</p>
+      {onlyThisFile ? (
+        <div className="mb-2">
+          <Button
+            className="h-auto px-0 text-2xs text-muted-foreground"
+            data-testid="agents-repo-focused-all"
+            onClick={() => select(null)}
+            size="sm"
+            type="button"
+            variant="link"
+          >
+            {copy.allArtifacts}
+          </Button>
+        </div>
+      ) : (
+        <>
+          <div>
+            <h1 className="break-words text-xl font-semibold text-foreground">
+              {project.name}
+            </h1>
+            <ProjectPageTabs
+              active="files"
+              projectId={project.id}
+              showPulse={pulseEnabled}
+            />
+          </div>
+          <p className="mb-3 text-sm text-muted-foreground">{copy.subtitle}</p>
+        </>
+      )}
       {sourceQuery.isSuccess && source === null ? (
         <p
           className="rounded-md bg-muted/50 px-3 py-2 text-sm"
@@ -435,83 +477,100 @@ export function ProjectAgentsRepoScreen({
           {copy.mainUnreadable(listingError)}
         </p>
       ) : null}
-      <div className="mb-2 flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
-        {listing.data ? (
-          <span data-testid="agents-repo-tip">
-            {listing.data.syncedAt
-              ? copy.asFetchedAt(
-                  new Date(listing.data.syncedAt).toLocaleString(),
-                )
-              : `main at ${listing.data.commit.slice(0, 8)}`}
-            {" · "}
-            <span className="font-mono">{listing.data.commit.slice(0, 8)}</span>
-          </span>
-        ) : null}
-        <Button
-          data-testid="agents-repo-refresh"
-          disabled={listing.isFetching}
-          onClick={() => {
-            if (coordinate === null) return;
-            void queryClient.invalidateQueries({
-              queryKey: agentsRepoListingQueryKey(coordinate),
-            });
-            void queryClient.invalidateQueries({
-              queryKey: agentsRepoDraftsQueryKey(coordinate),
-            });
-            if (selectedPath) {
+      {/* One pinned document is not the place to fetch the whole
+          repository or start another file, so the row of
+          repository-wide controls is not drawn at all — an invisible
+          button is still a button. */}
+      {onlyThisFile ? null : (
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
+          {listing.data ? (
+            <span data-testid="agents-repo-tip">
+              {listing.data.syncedAt
+                ? copy.asFetchedAt(
+                    new Date(listing.data.syncedAt).toLocaleString(),
+                  )
+                : `main at ${listing.data.commit.slice(0, 8)}`}
+              {" · "}
+              <span className="font-mono">
+                {listing.data.commit.slice(0, 8)}
+              </span>
+            </span>
+          ) : null}
+          <Button
+            data-testid="agents-repo-refresh"
+            disabled={listing.isFetching}
+            onClick={() => {
+              if (coordinate === null) return;
               void queryClient.invalidateQueries({
-                queryKey: agentsRepoFileQueryKey(coordinate, selectedPath),
+                queryKey: agentsRepoListingQueryKey(coordinate),
               });
-            }
-          }}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
-          {copy.refresh}
-        </Button>
-        {draftAccess.kind === "writable" && isAgentsRepo ? (
-          <>
-            <Button
-              data-testid="agents-repo-new-plan"
-              onClick={onNewPlan}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              {copy.newPlan}
-            </Button>
-            <Button
-              data-testid="agents-repo-new-document"
-              onClick={() => setNewDocumentOpen(true)}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              {copy.newDocument}
-            </Button>
-            <Button
-              data-testid="agents-repo-new-folder"
-              onClick={() => setNewFolderOpen(true)}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              {copy.newFolder}
-            </Button>
-          </>
-        ) : null}
-      </div>
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-[14rem_minmax(0,1fr)_16rem]">
-        <div className="min-h-0 overflow-auto">
-          <AgentsRepoFileTree
-            isPinned={isPinned}
-            onSelect={select}
-            personName={personName}
-            rows={rows}
-            selectedPath={selectedPath}
-          />
+              void queryClient.invalidateQueries({
+                queryKey: agentsRepoDraftsQueryKey(coordinate),
+              });
+              if (selectedPath) {
+                void queryClient.invalidateQueries({
+                  queryKey: agentsRepoFileQueryKey(coordinate, selectedPath),
+                });
+              }
+            }}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            {copy.refresh}
+          </Button>
+          {draftAccess.kind === "writable" && isAgentsRepo ? (
+            <>
+              <Button
+                data-testid="agents-repo-new-plan"
+                onClick={onNewPlan}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {copy.newPlan}
+              </Button>
+              <Button
+                data-testid="agents-repo-new-document"
+                onClick={() => setNewDocumentOpen(true)}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {copy.newDocument}
+              </Button>
+              <Button
+                data-testid="agents-repo-new-folder"
+                onClick={() => setNewFolderOpen(true)}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {copy.newFolder}
+              </Button>
+            </>
+          ) : null}
         </div>
+      )}
+      <div
+        className={cn(
+          "grid min-h-0 flex-1 grid-cols-1 gap-4",
+          onlyThisFile
+            ? "md:grid-cols-[minmax(0,1fr)_16rem]"
+            : "md:grid-cols-[14rem_minmax(0,1fr)_16rem]",
+        )}
+      >
+        {onlyThisFile ? null : (
+          <div className="min-h-0 overflow-auto">
+            <AgentsRepoFileTree
+              isPinned={isPinned}
+              onSelect={select}
+              personName={personName}
+              rows={rows}
+              selectedPath={selectedPath}
+            />
+          </div>
+        )}
         <div className="flex min-h-0 flex-col">
           {subject ? (
             <AgentsRepoEditor

@@ -192,12 +192,53 @@ test.describe("project artifacts (live relay)", () => {
       await page.keyboard.press("Escape");
     });
 
+    await test.step("the pinned row opens the document alone: no tabs, no tree, no repository controls", async () => {
+      // Scoped to this run's group on purpose: the dev community keeps the
+      // projects earlier runs made, and each one pins the same path.
+      await group
+        .getByTestId(`project-artifact-row-${docPath}`)
+        .click({ timeout: 30_000 });
+      // What stays: the document and its history.
+      await expect(page.getByTestId("agents-repo-editor")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(page.getByTestId("agents-repo-editor")).toContainText(
+        "api-shape.md",
+      );
+      await expect(page.getByTestId("agents-repo-drafts-panel")).toBeVisible();
+      // What goes: the project's tabs, the file tree, and every control that
+      // is about the repository rather than this document.
+      await expect(page.getByTestId("project-page-tabs")).toHaveCount(0);
+      await expect(page.getByTestId("agents-repo-tree")).toHaveCount(0);
+      await expect(page.getByTestId("agents-repo-refresh")).toHaveCount(0);
+      await expect(page.getByTestId("agents-repo-tip")).toHaveCount(0);
+      await expect(page.getByTestId("agents-repo-new-document")).toHaveCount(0);
+      await expect(page).toHaveURL(/[?&]view=file(&|$)/);
+      // And a way back, so the view is not a dead end.
+      await page.getByTestId("agents-repo-focused-all").click();
+      await expect(page.getByTestId("project-page-tabs")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(page.getByTestId("agents-repo-tree")).toBeVisible();
+      await expect(page).not.toHaveURL(/view=file/);
+    });
+
     await test.step("a folder pins as its own row, and unpinning drops both", async () => {
       await runCli(
         ["pins", "pin", "--project", seed.coordinate, "docs/notes", "--folder"],
         alice,
       );
       await expect(artifactRows).toHaveCount(2, { timeout: 30_000 });
+      // A folder's row keeps the whole tab: the folder *is* a tree row, so
+      // the one-file view would hide the thing that was pinned.
+      await group
+        .getByTestId("project-artifact-row-docs/notes")
+        .click({ timeout: 30_000 });
+      await expect(page.getByTestId("agents-repo-tree")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(page.getByTestId("project-page-tabs")).toBeVisible();
+      await expect(page).not.toHaveURL(/view=file/);
       await runCli(
         ["pins", "unpin", "--project", seed.coordinate, docPath],
         alice,
