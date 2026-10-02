@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 
+import { agentsRepoCopy } from "@/features/agents-repo/lib/agentsRepoCopy";
 import { LOCAL_GENERAL_ID } from "@/features/projects-container/lib/projectContainerModel";
 import { PROJECT_TAB_TRIGGER_CLASS } from "@/features/projects/ui/ProjectWorkspaceTabList";
 import { cn } from "@/shared/lib/cn";
@@ -46,11 +47,17 @@ const PATH_TABS: readonly PathTab[] = [
   // version of its instructions is here". Its id, path and testid stay
   // `packs` so routes, links and existing selectors keep working.
   { id: "packs", label: "Roles", to: "/projects/$projectId/packs" },
-  // Files: the agents repository itself — plans, roles, skills, team and
-  // actions — edited as shared drafts and committed to main (spec § 4.12).
-  // "Files" rather than "Plans": the tab holds every file class, and the
-  // tree lists plans first.
-  { id: "files", label: "Files", to: "/projects/$projectId/files" },
+  // Artifacts: the agents repository itself — plans, documents, roles,
+  // skills, team and actions — edited as shared drafts and committed to main
+  // (spec § 4.12). The tab read "Files" until the documents tree landed;
+  // "Artifacts" is the name for all of it, and `plans` and `docs` are the two
+  // trees a project writes in. The id, path and testid stay `files` so
+  // routes, remembered routes and existing selectors keep working.
+  {
+    id: "files",
+    label: agentsRepoCopy.tabLabel,
+    to: "/projects/$projectId/files",
+  },
 ];
 
 /**

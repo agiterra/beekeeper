@@ -37,12 +37,15 @@ const filter = (overrides = {}) => ({
   ...overrides,
 });
 
-test("the default filter is My sessions, closed shown, archived hidden, any time", () => {
+test("the default filter is My sessions, closed shown, archived hidden, any time, pins shown", () => {
   assert.deepEqual(DEFAULT_PROJECT_SESSION_FILTER, {
     members: { mode: "mine" },
     showClosed: true,
     showArchived: false,
     range: { kind: "any" },
+    // Somebody pinned it for the project to see: a sidebar that hides what a
+    // teammate pinned until you find a checkbox is the wrong way round.
+    showPinnedArtifacts: true,
   });
 });
 
@@ -315,6 +318,10 @@ test("parseProjectSessionFilter normalises junk and upgrades the first stored sh
       showClosed: false,
       showArchived: true,
       range: { kind: "custom", from: "2026-08-01", to: null },
+      // Stored before the axis existed: it reads as the default rather than
+      // undefined, so an older build's state does not hide what a teammate
+      // pinned.
+      showPinnedArtifacts: true,
     },
   );
   assert.deepEqual(
@@ -354,6 +361,7 @@ test("a stored blob parses per project and survives corruption", () => {
         showClosed: true,
         showArchived: true,
         range: { kind: "week" },
+        showPinnedArtifacts: true,
       },
       "owner:gamma": DEFAULT_PROJECT_SESSION_FILTER,
     },

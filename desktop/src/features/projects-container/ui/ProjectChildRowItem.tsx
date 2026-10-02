@@ -3,6 +3,8 @@ import {
   Archive,
   Bot,
   Eye,
+  FileText,
+  Folder,
   FolderPlus,
   ListChecks,
   LoaderCircle,
@@ -13,6 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 
+import type { PinRow } from "@/features/agents-repo/lib/artifactPinFold";
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import { useNewSessionInWorkspaceAction } from "@/features/coding-sessions/hooks/useNewSessionInWorkspaceAction";
 import { NEW_SESSION_IN_WORKSPACE_LABEL } from "@/features/coding-sessions/lib/codingSessionWorkspaceReuseCopy";
@@ -36,7 +39,7 @@ import type {
   ExactProjectCodingSessionCoordinates,
   ProjectCodingSessionShelfEntry,
 } from "../lib/projectCodingSessionShelf";
-import type { ProjectChildRow } from "../lib/projectChildren";
+import { type ProjectChildRow, artifactPinLabel } from "../lib/projectChildren";
 import { codingSessionRowKey } from "../lib/activeCodingSession";
 import { projectSessionIndicator } from "../lib/projectSessionIndicator";
 import type { ProjectChannelHandlers } from "./ProjectSidebarGroup";
@@ -66,11 +69,16 @@ export function ProjectChildRowItem({
   onObserveShell,
   activeTodoListId,
   onOpenTodoList,
+  activeArtifactTarget,
+  onOpenArtifact,
 }: {
   row: ProjectChildRow;
   /** Id of the to-do list on screen, or null. */
   activeTodoListId?: string | null;
   onOpenTodoList?: (listId: string) => void;
+  /** Path or folder prefix of the artifact on screen, or null. */
+  activeArtifactTarget?: string | null;
+  onOpenArtifact?: (pin: PinRow) => void;
   /** Zero-based position of this row for the item hotkey, or null when unreachable. */
   hotkeyIndex?: number | null;
   channelHandlers: ProjectChannelHandlers;
@@ -427,6 +435,33 @@ export function ProjectChildRowItem({
                 data-testid="project-todo-list-personal"
               />
             ) : null}
+            <ItemPositionBadge index={hotkeyIndex ?? null} />
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      );
+    }
+    case "artifact": {
+      if (!onOpenArtifact) return null;
+      const { pin } = row;
+      const folder = pin.targetKind === "folder";
+      return (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            data-testid={`project-artifact-row-${pin.target}`}
+            isActive={pin.target === activeArtifactTarget}
+            onClick={() => onOpenArtifact(pin)}
+            title={
+              folder
+                ? `${pin.target} — a pinned folder of the project's documents`
+                : `${pin.target} — pinned by this project`
+            }
+          >
+            {folder ? (
+              <Folder className="size-4 shrink-0" />
+            ) : (
+              <FileText className="size-4 shrink-0" />
+            )}
+            <span className="truncate">{artifactPinLabel(pin)}</span>
             <ItemPositionBadge index={hotkeyIndex ?? null} />
           </SidebarMenuButton>
         </SidebarMenuItem>

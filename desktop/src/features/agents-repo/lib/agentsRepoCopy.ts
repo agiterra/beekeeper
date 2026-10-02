@@ -1,8 +1,8 @@
-/** Every sentence the Files tab says, in one place. */
+/** Every sentence the Artifacts tab says, in one place. */
 export const agentsRepoCopy = {
-  tabLabel: "Files",
+  tabLabel: "Artifacts",
   subtitle:
-    "The project's agents repository — plans, roles, skills, team and actions. Drafts are shared through the relay; nothing is real until someone commits it to main.",
+    "The project's agents repository — plans, documents, roles, skills, team and actions. Drafts are shared through the relay; nothing is real until someone commits it to main.",
   noSource:
     "This project has no agents repository yet. Finish repository setup under Project settings → Packs.",
   mainUnreadable: (reason: string) =>
@@ -13,6 +13,17 @@ export const agentsRepoCopy = {
   newPlan: "New plan",
   newPlanHelp:
     "Lower-case letters, digits and dashes; the file lands at plans/<name>.md once you save a draft.",
+  newDocument: "New document",
+  newDocumentHelp:
+    "Letters, digits, dots, dashes and underscores. A document is Markdown or HTML and is checked against no schema — that is what makes it the place for notes, a mockup or a diagram rather than a work plan.",
+  newDocumentFolderLabel: "Folder (optional)",
+  newDocumentFolderHelp:
+    "Nest it up to seven folders deep, e.g. mockups/login. Leave blank for the top of the tree.",
+  newDocumentFormatLabel: "Format",
+  newDocumentNameLabel: "Name",
+  newFolder: "New folder",
+  newFolderHelp:
+    "Git has no empty directories, so the folder lands as its .gitkeep once you commit. Until then it is a draft like any other file.",
   create: "Create",
   cancel: "Cancel",
   edit: "Edit",
@@ -22,6 +33,31 @@ export const agentsRepoCopy = {
   planSourceDisclosure:
     "Plan source is shown and edited as plain text, byte for byte. Paste it from the file, not from a rendered view: a plan whose frontmatter does not read as beekeeper-plan/v1 is refused at commit.",
   diff: "Diff vs main",
+  openPreview: "Open preview",
+  htmlSourceDisclosure:
+    "An HTML document is shown here as its source. Open preview runs it in its own window, where its scripts work but it has no network and no access to the app — so a mockup behaves as itself and can reach nothing.",
+  previewMissing: (paths: readonly string[]) =>
+    `The preview could not find ${paths.length === 1 ? "this file" : "these files"} the document references: ${paths.join(", ")}. ${paths.length === 1 ? "It" : "They"} will be missing from the preview until committed or drafted.`,
+  previewFailed: (reason: string) => `Could not open the preview: ${reason}`,
+  insertImage: "Insert image…",
+  imageUploading: "Uploading…",
+  imageInsertedCommitted: (path: string) =>
+    `Drafted ${path}. The image lands in the repository beside this document when you commit, so it is reviewed and versioned with it.`,
+  imageInsertedLinked: (url: string) =>
+    `Linked ${url}. The image is not versioned with the document and breaks if the blob is purged — commit it into the repository instead if it is meant to last.`,
+  imageKeepInRepository: "Keep in the repository",
+  imageLinkOnly: "Link only",
+  imageChoiceHelp:
+    "Keeping it commits the bytes beside the document. Linking references the relay's media store, which is lighter but is not versioned with the document.",
+  pin: "Pin to sidebar",
+  unpin: "Unpin from sidebar",
+  pinned: "Pinned",
+  pinMissing:
+    "This pinned artifact is on neither main nor a draft. Nothing was lost — unpin it, or commit the file it names.",
+  pinsTruncated:
+    "The pin log was too long to read fully; a pin may be missing from the sidebar.",
+  pinsRanksWithoutPin: (n: number) =>
+    `${n} reorder${n === 1 ? "" : "s"} name${n === 1 ? "s" : ""} an artifact nothing pinned; kept, not shown.`,
   editTab: "Edit",
   archive: "Archive",
   unarchive: "Put back in force",
@@ -59,6 +95,7 @@ export const agentsRepoCopy = {
     "The draft log was too long to read fully; older drafts may be missing.",
   fileTooLarge: "This file is larger than a draft can carry; edit it with git.",
   fileNotText: "This file is not text.",
+  documents: "Documents",
   drafts: "Open drafts",
   noDrafts: "No open drafts.",
   commits: "Recent commits",

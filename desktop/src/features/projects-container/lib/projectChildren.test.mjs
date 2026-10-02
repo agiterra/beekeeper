@@ -59,10 +59,11 @@ test("buildProjectChildren returns [] for empty input", () => {
   assert.deepEqual(buildProjectChildren(emptyInput), []);
 });
 
-test("the sidebar row model is channels, interactive work and pinned to-do lists", () => {
+test("the sidebar row model is channels, interactive work and what members pinned", () => {
   // Repositories, workflows, agents and Pulse belong to the project page;
   // the type table is the contract that keeps them out of the sidebar.
   assert.deepEqual(Object.keys(PROJECT_CHILD_TYPE_RANK).sort(), [
+    "artifact",
     "channel",
     "coding-session",
     "forum",
@@ -70,6 +71,60 @@ test("the sidebar row model is channels, interactive work and pinned to-do lists
     "shell",
     "todo-list",
   ]);
+});
+
+test("pinned artifacts are rows after the to-do lists, in the project's own order", () => {
+  const pin = (target, rank, targetKind = "file") => ({
+    target,
+    targetKind,
+    pinned: true,
+    rank,
+    by: "a".repeat(64),
+    updatedAt: 1,
+  });
+  const rows = buildProjectChildren({
+    streamChannels: [makeChannel()],
+    forumChannels: [],
+    shellSessions: [],
+    // Deliberately out of rank order and not alphabetical: the order the
+    // sidebar shows is the project's, set by whoever reordered the pins, and
+    // alphabetizing would silently undo every drag anyone made.
+    artifactPins: [
+      pin("docs/zebra.md", "a0"),
+      pin("docs/mockups", "a1", "folder"),
+      pin("plans/CURRENT_STATE.md", "a2"),
+    ],
+  });
+  assert.deepEqual(
+    rows.map((row) => row.type),
+    ["channel", "artifact", "artifact", "artifact"],
+  );
+  assert.deepEqual(
+    rows.slice(1).map((row) => projectChildLabel(row)),
+    ["zebra", "mockups", "CURRENT_STATE"],
+  );
+  assert.equal(projectChildKey(rows[1]), "artifact:docs/zebra.md");
+});
+
+test("two pins at the same rank break on their target, never at random", () => {
+  const pin = (target) => ({
+    target,
+    targetKind: "file",
+    pinned: true,
+    rank: "a0",
+    by: "a".repeat(64),
+    updatedAt: 1,
+  });
+  const rows = buildProjectChildren({
+    streamChannels: [],
+    forumChannels: [],
+    shellSessions: [],
+    artifactPins: [pin("docs/b.md"), pin("docs/a.md")],
+  });
+  assert.deepEqual(
+    rows.map((row) => row.pin.target),
+    ["docs/a.md", "docs/b.md"],
+  );
 });
 
 test("a pinned to-do list is a row after the terminals, keyed and labelled by the list", () => {

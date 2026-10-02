@@ -30,6 +30,7 @@ import { ScopePositionBadge } from "@/features/hotkeys/ui/HotkeyBadge";
 import { deferMenuAction } from "@/features/sidebar/ui/sidebarMenuHelpers";
 import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
 import type { ActiveChannelTurnSummary } from "@/features/agents/activeAgentTurnsStore";
+import type { PinRow } from "@/features/agents-repo/lib/artifactPinFold";
 import type { TodoList } from "@/features/project-todos/lib/todoFold";
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
@@ -130,6 +131,9 @@ export function ProjectSidebarGroup({
   activeTodoListId,
   onOpenTodoList,
   onNewTodoList,
+  artifactPins,
+  activeArtifactTarget,
+  onOpenArtifact,
   dragHandleProps,
   isDragging,
 }: {
@@ -188,6 +192,11 @@ export function ProjectSidebarGroup({
   onObserveShell?: (terminal: RemoteTerminal) => void;
   /** The project's pinned to-do lists (NIP-TD `list.pinned`). */
   todoLists?: readonly TodoList[];
+  /** The project's pinned artifacts (NIP-AR `pin.set`), in their own order. */
+  artifactPins?: readonly PinRow[];
+  /** Path or folder prefix of the artifact on screen, or null. */
+  activeArtifactTarget?: string | null;
+  onOpenArtifact?: (pin: PinRow) => void;
   /** Id of the to-do list on screen, or null. */
   activeTodoListId?: string | null;
   onOpenTodoList?: (listId: string) => void;
@@ -247,6 +256,7 @@ export function ProjectSidebarGroup({
         shellSessions,
         remoteTerminals,
         todoLists,
+        artifactPins,
       }),
     [
       filtered.shown,
@@ -255,6 +265,7 @@ export function ProjectSidebarGroup({
       shellSessions,
       remoteTerminals,
       todoLists,
+      artifactPins,
     ],
   );
 
@@ -293,6 +304,16 @@ export function ProjectSidebarGroup({
   // Pinned to-do lists follow the terminals: work the members chose to
   // keep in view.
   const todoRows = children.filter((row) => row.type === "todo-list");
+  // Pinned artifacts follow the to-do lists: the documents and plans the
+  // members chose to keep in reach. Hidden by a per-device filter box, never
+  // by anything that travels — the pin itself is shared (NIP-AR).
+  const showPinnedArtifacts = sessionFilter.showPinnedArtifacts;
+  const artifactRows = showPinnedArtifacts
+    ? children.filter((row) => row.type === "artifact")
+    : [];
+  const hiddenArtifacts = showPinnedArtifacts
+    ? 0
+    : children.filter((row) => row.type === "artifact").length;
 
   // One batched profile read for every founder on screen; rows never query.
   const founderPubkeys = React.useMemo(
@@ -318,11 +339,19 @@ export function ProjectSidebarGroup({
         ...visibleOpenRows,
         ...terminalRows,
         ...todoRows,
+        ...artifactRows,
         ...visibleSettledRows,
       ].filter(
         (row) => !(row.type === "coding-session" && row.entry.pending === true),
       ),
-    [channelRows, terminalRows, todoRows, visibleOpenRows, visibleSettledRows],
+    [
+      artifactRows,
+      channelRows,
+      terminalRows,
+      todoRows,
+      visibleOpenRows,
+      visibleSettledRows,
+    ],
   );
 
   const activeHotkeyScope = useActiveHotkeyScope();
@@ -361,6 +390,9 @@ export function ProjectSidebarGroup({
           return;
         case "todo-list":
           onOpenTodoList?.(row.list.id);
+          return;
+        case "artifact":
+          onOpenArtifact?.(row.pin);
       }
     },
   );
@@ -397,7 +429,9 @@ export function ProjectSidebarGroup({
       onRequestRenameShell={onRequestRenameShell}
       onRequestCloseShell={onRequestCloseShell}
       onObserveShell={onObserveShell}
+      activeArtifactTarget={activeArtifactTarget}
       activeTodoListId={activeTodoListId}
+      onOpenArtifact={onOpenArtifact}
       onOpenTodoList={onOpenTodoList}
     />
   );
@@ -406,10 +440,16 @@ export function ProjectSidebarGroup({
   // when the current filter hides every one of them, otherwise a "My
   // sessions" choice that matches nothing would be impossible to undo.
   const hasAnySession = allSessions.length > 0 || terminalRows.length > 0;
-  // The work menu paints when there is anything to list; the session filter
-  // only when there is a session to filter — a pinned list alone does not
-  // earn a "My sessions" row.
-  const hasWorkRows = hasAnySession || todoRows.length > 0;
+  // The filter also has to paint for a project whose only hideable thing is a
+  // pinned artifact — including when the box is already unticked, or the one
+  // control that would bring those rows back would be the one control the
+  // project cannot reach.
+  const hasPinnedArtifacts = artifactRows.length > 0 || hiddenArtifacts > 0;
+  // The work menu paints when there is anything to list; the filter only when
+  // there is something to filter — a pinned list alone does not earn a "My
+  // sessions" row.
+  const hasWorkRows =
+    hasAnySession || todoRows.length > 0 || hasPinnedArtifacts;
 
   return (
     <SidebarGroup
@@ -632,10 +672,11 @@ export function ProjectSidebarGroup({
                     </SidebarMenuItem>
                   ) : null}
                 </SidebarMenu>
-                {hasAnySession ? (
+                {hasAnySession || hasPinnedArtifacts ? (
                   <ProjectSessionFilterMenu
                     currentPubkey={currentPubkey}
                     filter={sessionFilter}
+                    hiddenArtifacts={hiddenArtifacts}
                     hiddenByState={filtered.hiddenByState}
                     hiddenUnattributed={filtered.hiddenUnattributed}
                     isFallback={isFallback}

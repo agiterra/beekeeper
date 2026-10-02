@@ -18,6 +18,7 @@ import {
 import type { ProjectContainer } from "../hooks";
 import { rosterWithOwner, useProjectRosterQuery } from "../lib/projectMembers";
 import {
+  projectHiddenArtifactsNote,
   projectSessionFilterLabel,
   projectSessionUnattributedNote,
   type ProjectSessionDateRange,
@@ -55,6 +56,7 @@ export function ProjectSessionFilterMenu({
   sessionFounders,
   hiddenUnattributed,
   hiddenByState,
+  hiddenArtifacts = 0,
 }: {
   project: ProjectContainer;
   /** The local General placeholder has no head, so no roster to read. */
@@ -68,6 +70,8 @@ export function ProjectSessionFilterMenu({
   hiddenUnattributed: number;
   /** Sessions hidden by the closed/archived boxes or the date range. */
   hiddenByState: number;
+  /** Pinned artifacts the `showPinnedArtifacts` box is hiding. */
+  hiddenArtifacts?: number;
 }) {
   const [open, setOpen] = React.useState(false);
   const { members } = filter;
@@ -157,8 +161,11 @@ export function ProjectSessionFilterMenu({
   };
 
   const note = projectSessionUnattributedNote(hiddenUnattributed);
+  const artifactsNote = projectHiddenArtifactsNote(hiddenArtifacts);
   const label = projectSessionFilterLabel(filter);
-  const hiddenTotal = hiddenUnattributed + hiddenByState;
+  // Everything the filter is hiding counts in the badge, pinned artifacts
+  // included: the number's job is "there is more than you can see here".
+  const hiddenTotal = hiddenUnattributed + hiddenByState + hiddenArtifacts;
 
   return (
     <DropdownMenu onOpenChange={setOpen} open={open}>
@@ -342,15 +349,44 @@ export function ProjectSessionFilterMenu({
           Show archived
         </DropdownMenuCheckboxItem>
 
-        {note ? (
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+          Artifacts
+        </DropdownMenuLabel>
+        <DropdownMenuCheckboxItem
+          checked={filter.showPinnedArtifacts}
+          data-testid="project-session-filter-show-pinned-artifacts"
+          onCheckedChange={(checked) =>
+            onChange({ ...filter, showPinnedArtifacts: checked === true })
+          }
+          onSelect={keepMenuOpen}
+        >
+          Show pinned artifacts
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal text-muted-foreground">
+          A pin is shared with the whole project; this hides the rows on this
+          computer only.
+        </DropdownMenuLabel>
+
+        {note || artifactsNote ? (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel
-              className="max-w-64 whitespace-normal text-xs font-normal text-muted-foreground"
-              data-testid="project-session-filter-unattributed-note"
-            >
-              {note}
-            </DropdownMenuLabel>
+            {note ? (
+              <DropdownMenuLabel
+                className="max-w-64 whitespace-normal text-xs font-normal text-muted-foreground"
+                data-testid="project-session-filter-unattributed-note"
+              >
+                {note}
+              </DropdownMenuLabel>
+            ) : null}
+            {artifactsNote ? (
+              <DropdownMenuLabel
+                className="max-w-64 whitespace-normal text-xs font-normal text-muted-foreground"
+                data-testid="project-session-filter-hidden-artifacts-note"
+              >
+                {artifactsNote}
+              </DropdownMenuLabel>
+            ) : null}
           </>
         ) : null}
       </DropdownMenuContent>

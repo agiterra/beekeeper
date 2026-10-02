@@ -1,4 +1,4 @@
-import { Pencil, Save, X } from "lucide-react";
+import { ExternalLink, Pencil, Pin, PinOff, Save, X } from "lucide-react";
 import * as React from "react";
 
 import { DiffViewer } from "@/features/messages/ui/DiffViewer";
@@ -14,7 +14,11 @@ import { agentsRepoCopy as copy } from "../lib/agentsRepoCopy";
 import { draftPatch } from "../lib/agentsRepoDiff";
 import type { DraftPath } from "../lib/agentsRepoDraftFold";
 import { archiveCounterpart, draftPathClass } from "../lib/agentsRepoDraftOp";
-import { isDraftablePath, isMarkdownPath } from "../lib/agentsRepoPaths";
+import {
+  isDraftablePath,
+  isHtmlPath,
+  isMarkdownPath,
+} from "../lib/agentsRepoPaths";
 import { isPlanSourcePath } from "../lib/agentsRepoPlanSource";
 
 export type EditorTab = "edit" | "preview" | "diff";
@@ -119,6 +123,10 @@ export function AgentsRepoEditor({
   onWithdraw,
   isSelf,
   busy,
+  pinned,
+  onTogglePin,
+  onOpenPreview,
+  previewNotice,
 }: {
   subject: EditorSubject;
   access: AgentsRepoAccess;
@@ -135,6 +143,14 @@ export function AgentsRepoEditor({
   onWithdraw: (draftId: string) => Promise<void>;
   isSelf: (pubkey: string) => boolean;
   busy: boolean;
+  /** Whether this path is pinned to every member's sidebar, or null when the
+   * project has no repository to pin in. */
+  pinned: boolean | null;
+  onTogglePin: () => Promise<void>;
+  /** Open the HTML document in its own window; null when it is not one. */
+  onOpenPreview: ((text: string) => Promise<void>) | null;
+  /** What the last preview could not find, or why it would not open. */
+  previewNotice: string | null;
 }) {
   // A path that is neither on main nor drafted (a plan just named in the
   // New plan dialog) has nothing to preview: it opens straight into editing.
@@ -169,6 +185,10 @@ export function AgentsRepoEditor({
   // shown as the bytes it is, never rendered.
   const isPlanSource = isPlanSourcePath(subject.path);
   const isMarkdown = isMarkdownPath(subject.path) && !isPlanSource;
+  // An HTML document is shown as source here and run in its own window: an
+  // inline frame would inherit the app's CSP and silently not run its
+  // scripts, which is a preview that lies about what it is showing.
+  const isHtmlDocument = isHtmlPath(subject.path);
   const mainText = subject.main?.text ?? null;
   const draftText = subject.draft?.head.op === "file.delete" ? null : text;
   const removedByDraft =
@@ -213,6 +233,37 @@ export function AgentsRepoEditor({
             {copy.notOnMain}
           </span>
         ) : null}
+        {isHtmlDocument && onOpenPreview !== null ? (
+          <Button
+            data-testid="agents-repo-open-preview"
+            disabled={busy}
+            onClick={() => void onOpenPreview(text)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <ExternalLink className="h-4 w-4" />
+            {copy.openPreview}
+          </Button>
+        ) : null}
+        {pinned === null ? null : (
+          <Button
+            aria-pressed={pinned}
+            data-testid="agents-repo-pin-toggle"
+            disabled={busy}
+            onClick={() => void onTogglePin()}
+            size="sm"
+            type="button"
+            variant={pinned ? "secondary" : "ghost"}
+          >
+            {pinned ? (
+              <PinOff className="h-4 w-4" />
+            ) : (
+              <Pin className="h-4 w-4" />
+            )}
+            {pinned ? copy.unpin : copy.pin}
+          </Button>
+        )}
         <div className="flex gap-1" role="tablist">
           {(
             [
@@ -275,6 +326,22 @@ export function AgentsRepoEditor({
           data-testid="agents-repo-plan-source-disclosure"
         >
           {copy.planSourceDisclosure}
+        </p>
+      ) : null}
+      {isHtmlDocument ? (
+        <p
+          className="rounded-md bg-muted/50 px-2 py-1 text-xs text-muted-foreground"
+          data-testid="agents-repo-html-source-disclosure"
+        >
+          {copy.htmlSourceDisclosure}
+        </p>
+      ) : null}
+      {previewNotice ? (
+        <p
+          className="rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-200"
+          data-testid="agents-repo-preview-notice"
+        >
+          {previewNotice}
         </p>
       ) : null}
       {subject.mainError ? (

@@ -27,7 +27,12 @@ import { gitBlobSha } from "../lib/agentsRepoBlobSha";
 import { agentsRepoCopy as copy } from "../lib/agentsRepoCopy";
 import type { DraftPath } from "../lib/agentsRepoDraftFold";
 import { useAgentsRepoMutations } from "../lib/agentsRepoMutations";
+import { artifactPreviewOpen } from "@/shared/api/tauriAgentsRepo";
+
+import { draftPathClass } from "../lib/agentsRepoDraftOp";
 import { planCommitRefusals } from "../lib/agentsRepoPlanSource";
+import { useArtifactPinMutations } from "../lib/artifactPinMutations";
+import { useArtifactPins } from "../lib/artifactPinQueries";
 import {
   agentsRepoDraftsQueryKey,
   agentsRepoFileQueryKey,
@@ -39,6 +44,10 @@ import {
   useAgentsRepoSource,
 } from "../lib/agentsRepoQueries";
 import { AgentsRepoCommitDialog, changeOf } from "./AgentsRepoCommitDialog";
+import {
+  AgentsRepoNewDocumentDialog,
+  AgentsRepoNewFolderDialog,
+} from "./AgentsRepoNewDocumentDialog";
 import { AgentsRepoNewPlanDialog } from "./AgentsRepoNewPlanDialog";
 import { AgentsRepoDraftsPanel } from "./AgentsRepoDraftsPanel";
 import { AgentsRepoEditor, type EditorSubject } from "./AgentsRepoEditor";
@@ -119,6 +128,59 @@ export function ProjectAgentsRepoScreen({
   );
 
   const mutations = useAgentsRepoMutations(coordinate, repo, personName);
+
+  // Pins are a second op log over the same repository (NIP-AR). The tab reads
+  // them so a row can show its pin and the control can toggle it, and the
+  // sidebar reads the same query key — so a pin toggled here moves the
+  // sidebar row on the same render.
+  const pins = useArtifactPins(coordinate, repo);
+  const pinMutations = useArtifactPinMutations(coordinate, repo);
+  const pinnedTargets = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const row of pins.read?.digest.pins ?? []) {
+      if (row.pinned) set.add(row.target);
+    }
+    return set;
+  }, [pins.read]);
+  const isPinned = React.useCallback(
+    (target: string) => pinnedTargets.has(target),
+    [pinnedTargets],
+  );
+  // A folder keep is never the pinned thing: the folder it holds open is
+  // (NIP-AR), so the control on an open keep pins the folder.
+  const pinTargetOf = React.useCallback(
+    (path: string) =>
+      path.endsWith("/.gitkeep") ? path.slice(0, -"/.gitkeep".length) : path,
+    [],
+  );
+  // What the preview could not find, said by name rather than left to render
+  // as a broken image.
+  const [previewNotice, setPreviewNotice] = React.useState<string | null>(null);
+  const openPreview = React.useCallback(
+    async (text: string) => {
+      if (coordinate === null || selectedPath === null) return;
+      setPreviewNotice(null);
+      try {
+        const handle = await artifactPreviewOpen(
+          coordinate,
+          selectedPath,
+          text,
+        );
+        setPreviewNotice(
+          handle.missing.length > 0
+            ? copy.previewMissing(handle.missing)
+            : null,
+        );
+      } catch (caught) {
+        setPreviewNotice(
+          copy.previewFailed(
+            caught instanceof Error ? caught.message : String(caught),
+          ),
+        );
+      }
+    },
+    [coordinate, selectedPath],
+  );
 
   const select = React.useCallback(
     (path: string | null) => {
@@ -278,8 +340,38 @@ export function ProjectAgentsRepoScreen({
     ],
   );
 
+  // A pinned target the repository does not have — neither a file on main nor
+  // a draft, and for a folder nothing under its prefix. Said by name, because
+  // the alternative is a sidebar row that opens nothing and never says why.
+  const missingPins = React.useMemo(() => {
+    const present = new Set(rows.map((row) => row.path));
+    const prefixes = [...present];
+    return (pins.read?.digest.pins ?? [])
+      .filter((pin) => pin.pinned)
+      .filter((pin) =>
+        pin.targetKind === "folder"
+          ? !prefixes.some((path) => path.startsWith(`${pin.target}/`))
+          : !present.has(pin.target),
+      )
+      .map((pin) => pin.target);
+  }, [pins.read, rows]);
   const [newPlanOpen, setNewPlanOpen] = React.useState(false);
   const onNewPlan = React.useCallback(() => setNewPlanOpen(true), []);
+  const [newDocumentOpen, setNewDocumentOpen] = React.useState(false);
+  const [newFolderOpen, setNewFolderOpen] = React.useState(false);
+  // A new document defaults to the folder the tree has selected, so creating
+  // the second document in a folder does not mean typing its name again.
+  const selectedFolder = React.useMemo(() => {
+    if (selectedPath === null) return "";
+    const classified = draftPathClass(selectedPath);
+    if (classified.ok && classified.class === "document-folder") {
+      return selectedPath.replace(/\/[.]gitkeep$/, "").replace(/^docs\//, "");
+    }
+    if (!selectedPath.startsWith("docs/")) return "";
+    const folder = selectedPath.slice("docs/".length);
+    const at = folder.lastIndexOf("/");
+    return at < 0 ? "" : folder.slice(0, at);
+  }, [selectedPath]);
 
   if (!project) {
     return (
@@ -379,20 +471,41 @@ export function ProjectAgentsRepoScreen({
           {copy.refresh}
         </Button>
         {draftAccess.kind === "writable" && isAgentsRepo ? (
-          <Button
-            data-testid="agents-repo-new-plan"
-            onClick={onNewPlan}
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            {copy.newPlan}
-          </Button>
+          <>
+            <Button
+              data-testid="agents-repo-new-plan"
+              onClick={onNewPlan}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {copy.newPlan}
+            </Button>
+            <Button
+              data-testid="agents-repo-new-document"
+              onClick={() => setNewDocumentOpen(true)}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {copy.newDocument}
+            </Button>
+            <Button
+              data-testid="agents-repo-new-folder"
+              onClick={() => setNewFolderOpen(true)}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {copy.newFolder}
+            </Button>
+          </>
         ) : null}
       </div>
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-[14rem_minmax(0,1fr)_16rem]">
         <div className="min-h-0 overflow-auto">
           <AgentsRepoFileTree
+            isPinned={isPinned}
             onSelect={select}
             personName={personName}
             rows={rows}
@@ -407,6 +520,21 @@ export function ProjectAgentsRepoScreen({
               identicalToMain={identical}
               isSelf={isSelf}
               key={subject.path}
+              onOpenPreview={
+                subject.path.endsWith(".html") && coordinate !== null
+                  ? openPreview
+                  : null
+              }
+              onTogglePin={async () => {
+                setPreviewNotice(null);
+                const target = pinTargetOf(subject.path);
+                if (isPinned(target)) await pinMutations.unpin(target);
+                else await pinMutations.pin(target);
+              }}
+              pinned={
+                repo === null ? null : isPinned(pinTargetOf(subject.path))
+              }
+              previewNotice={previewNotice}
               onArchive={async (message, openedOn) => {
                 if (!subject.main?.blob)
                   throw new Error("Only a file on main can be archived.");
@@ -464,6 +592,30 @@ export function ProjectAgentsRepoScreen({
             personName={personName}
             truncated={drafts.read?.truncated ?? false}
           />
+          {pins.read?.truncated ? (
+            <p
+              className="mt-2 text-2xs text-muted-foreground"
+              data-testid="agents-repo-pins-truncated"
+            >
+              {copy.pinsTruncated}
+            </p>
+          ) : null}
+          {pins.read && pins.read.digest.ranksWithoutPin > 0 ? (
+            <p
+              className="mt-2 text-2xs text-muted-foreground"
+              data-testid="agents-repo-pins-ranks-without-pin"
+            >
+              {copy.pinsRanksWithoutPin(pins.read.digest.ranksWithoutPin)}
+            </p>
+          ) : null}
+          {missingPins.length > 0 ? (
+            <p
+              className="mt-2 rounded-md bg-amber-500/10 px-2 py-1 text-2xs text-amber-800 dark:text-amber-200"
+              data-testid="agents-repo-pins-missing"
+            >
+              {`${copy.pinMissing} ${missingPins.join(", ")}`}
+            </p>
+          ) : null}
           {drafts.kind === "error" ? (
             <p
               className="mt-2 text-xs text-destructive"
@@ -496,6 +648,21 @@ export function ProjectAgentsRepoScreen({
         onCreate={select}
         onOpenChange={setNewPlanOpen}
         open={newPlanOpen}
+      />
+      <AgentsRepoNewDocumentDialog
+        initialFolder={selectedFolder}
+        onCreate={select}
+        onOpenChange={setNewDocumentOpen}
+        open={newDocumentOpen}
+      />
+      <AgentsRepoNewFolderDialog
+        onCreate={(keepPath) => {
+          // The keep opens like any other draft: an empty folder is a saved
+          // empty file, so the person can see what they are about to commit.
+          select(keepPath);
+        }}
+        onOpenChange={setNewFolderOpen}
+        open={newFolderOpen}
       />
     </div>
   );

@@ -6,7 +6,7 @@
  */
 import type { AgentsRepoEntryKind } from "@/shared/api/agentsRepoTypes";
 
-import { draftPathClass } from "./agentsRepoDraftOp";
+import { DOCS_ROOT, draftPathClass } from "./agentsRepoDraftOp";
 
 export type AgentsRepoGroup =
   | "plans"
@@ -171,6 +171,55 @@ export function groupPaths<T extends { path: string }>(
     list.sort((a, b) => a.path.localeCompare(b.path));
     return [{ group, label: GROUP_LABEL[group], entries: list }];
   });
+}
+
+/**
+ * A new document's path from the folder, name and format a person chose.
+ *
+ * Unlike `newPlanPath` this does **not** slugify. A document's stem is a
+ * document name — `CURRENT_STATE.md` and `Login mockup v2` are both things
+ * people write — so the characters the grammar admits are the characters
+ * offered, and anything else is refused by name rather than silently
+ * rewritten into something the person did not type.
+ */
+export function newDocumentPath(
+  folder: string,
+  name: string,
+  format: "md" | "html",
+): { ok: true; path: string } | { ok: false; error: string } {
+  const stem = name.trim().replace(/\.(md|html)$/i, "");
+  if (stem.length === 0)
+    return { ok: false, error: "Give the document a name." };
+  const trimmed = folder
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .replace(new RegExp(`^${DOCS_ROOT}/`), "");
+  const prefix = trimmed.length > 0 ? `${DOCS_ROOT}/${trimmed}` : DOCS_ROOT;
+  const path = `${prefix}/${stem}.${format}`;
+  const classified = draftPathClass(path);
+  if (!classified.ok) return { ok: false, error: classified.error };
+  return { ok: true, path };
+}
+
+/**
+ * A new folder's keep from the folder a person typed.
+ *
+ * The keep is the folder: git has no empty directories, so this is the path a
+ * commit lands to make the folder survive.
+ */
+export function newFolderKeepPath(
+  folder: string,
+): { ok: true; path: string; folder: string } | { ok: false; error: string } {
+  const trimmed = folder
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .replace(new RegExp(`^${DOCS_ROOT}/`), "");
+  if (trimmed.length === 0) return { ok: false, error: "Name the folder." };
+  const prefix = `${DOCS_ROOT}/${trimmed}`;
+  const path = `${prefix}/.gitkeep`;
+  const classified = draftPathClass(path);
+  if (!classified.ok) return { ok: false, error: classified.error };
+  return { ok: true, path, folder: prefix };
 }
 
 /** A new plan's path from a name the person typed. */

@@ -65,6 +65,7 @@ import { useCreateProjectContainerMutation } from "../useCreateProjectContainer"
 import { toastCreateProjectOutcome } from "../lib/toastCreateProjectOutcome";
 import { publishTodoOp } from "@/features/project-todos/lib/todoMutations";
 import { newTodoId } from "@/features/project-todos/lib/todoOp";
+import { usePinnedArtifactsIndex } from "@/features/agents-repo/lib/artifactPinSidebarIndex";
 import { usePinnedTodoListsIndex } from "@/features/project-todos/lib/todoSidebarIndex";
 import {
   CreateTodoListDialog,
@@ -152,6 +153,14 @@ export function ProjectSidebarSections({
     strict: false,
     select: (search: { list?: string }) =>
       pathname.endsWith("/todos") ? (search.list ?? null) : null,
+  });
+  // The artifact on screen, when the Artifacts tab is open with `?path=`.
+  // A folder's row matches the same way: the tab selects a folder by its
+  // prefix, which is what the pin names.
+  const activeArtifactTarget = useSearch({
+    strict: false,
+    select: (search: { path?: string }) =>
+      pathname.endsWith("/files") ? (search.path ?? null) : null,
   });
   const activeShellSessionId = useParams({
     strict: false,
@@ -277,6 +286,10 @@ export function ProjectSidebarSections({
     [projects],
   );
   const pinnedTodoLists = usePinnedTodoListsIndex(todoCoordinates);
+  // Pinned artifacts ride the same coordinates: both are "what the members
+  // chose to keep in reach", and both read the same query key the tab uses so
+  // a pin toggled there moves the row here on the same render.
+  const pinnedArtifacts = usePinnedArtifactsIndex(todoCoordinates);
 
   // One roster read for every project in the sidebar. Close, archive and
   // reopen are founder-only and need no roster; delete is the project's rule,
@@ -534,6 +547,24 @@ export function ProjectSidebarSections({
         }
         remoteTerminals={remoteTerminals}
         onObserveShell={handleObserveShell}
+        activeArtifactTarget={
+          projectRouteId === project.id || projectRouteId === project.dtag
+            ? activeArtifactTarget
+            : null
+        }
+        artifactPins={
+          isFallback ? undefined : pinnedArtifacts.get(project.address)
+        }
+        onOpenArtifact={(pin) =>
+          void navigate({
+            to: "/projects/$projectId/files",
+            params: { projectId: project.id },
+            // A folder has no file to open, so its row selects the folder
+            // itself — which is a row in the tree, because a folder is a
+            // pinnable thing in its own right.
+            search: { path: pin.target },
+          })
+        }
         todoLists={
           isFallback ? undefined : pinnedTodoLists.get(project.address)
         }

@@ -1,3 +1,4 @@
+import type { PinRow } from "@/features/agents-repo/lib/artifactPinFold";
 import type { TodoList } from "@/features/project-todos/lib/todoFold";
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import type { Channel } from "@/shared/api/types";
@@ -120,8 +121,9 @@ export const PROJECT_AGENTS_EMPTY_HINT =
 /**
  * One row in a project's sidebar child list; the type picks the icon. The
  * sidebar lists channels, interactive work (coding sessions and terminals)
- * and the to-do lists members pinned — repositories, workflows, agents and
- * Pulse live on the project page, not here.
+ * and what members pinned — to-do lists, and the documents, plans and folders
+ * of the agents repository. Repositories, workflows, agents and Pulse live on
+ * the project page, not here.
  */
 export type ProjectChildRow =
   | { type: "coding-session"; entry: ProjectCodingSessionShelfEntry }
@@ -129,7 +131,8 @@ export type ProjectChildRow =
   | { type: "forum"; channel: Channel }
   | { type: "shell"; session: ShellSessionInfo }
   | { type: "remote-shell"; terminal: RemoteTerminal }
-  | { type: "todo-list"; list: TodoList };
+  | { type: "todo-list"; list: TodoList }
+  | { type: "artifact"; pin: PinRow };
 
 /** Fixed display order of the flat list — live coding sessions on top: a
  * session is the only child that changes while you watch it. */
@@ -141,6 +144,10 @@ export const PROJECT_CHILD_TYPE_RANK: Record<ProjectChildRow["type"], number> =
     shell: 3,
     "remote-shell": 4,
     "todo-list": 5,
+    // Last, and in the pins' own order rather than alphabetized: the order is
+    // the project's, set by whoever dragged them, so re-sorting by label would
+    // throw away the only thing the rank is for.
+    artifact: 6,
   };
 
 /** Stable, cross-type-unique React key for a child row. */
@@ -158,6 +165,8 @@ export function projectChildKey(row: ProjectChildRow): string {
       return `remote-shell:${row.terminal.ownerPubkey}:${row.terminal.sessionId}`;
     case "todo-list":
       return `todo-list:${row.list.id}`;
+    case "artifact":
+      return `artifact:${row.pin.target}`;
   }
 }
 
@@ -174,6 +183,8 @@ export function projectChildLabel(row: ProjectChildRow): string {
       return row.terminal.title;
     case "todo-list":
       return row.list.title;
+    case "artifact":
+      return artifactPinLabel(row.pin);
   }
 }
 
@@ -189,6 +200,13 @@ export function compareProjectChildren(
   // same word plus a generation number, burying the one that is running now.
   if (a.type === "coding-session" && b.type === "coding-session") {
     return compareProjectCodingSessionEntries(a.entry, b.entry);
+  }
+  // Pins keep the project's order: `(rank, target)` is what the fold sorted
+  // them by and what a reorder changes, so alphabetizing would silently undo
+  // every drag anyone made.
+  if (a.type === "artifact" && b.type === "artifact") {
+    if (a.pin.rank !== b.pin.rank) return a.pin.rank < b.pin.rank ? -1 : 1;
+    return a.pin.target < b.pin.target ? -1 : 1;
   }
   const byLabel = projectChildLabel(a).localeCompare(
     projectChildLabel(b),
@@ -212,6 +230,7 @@ export function buildProjectChildren(input: {
   shellSessions: ShellSessionInfo[];
   remoteTerminals?: RemoteTerminal[];
   todoLists?: readonly TodoList[];
+  artifactPins?: readonly PinRow[];
 }): ProjectChildRow[] {
   const rows: ProjectChildRow[] = [
     ...(input.codingSessions ?? []).map(
@@ -232,6 +251,22 @@ export function buildProjectChildren(input: {
     ...(input.todoLists ?? []).map(
       (list): ProjectChildRow => ({ type: "todo-list", list }),
     ),
+    ...(input.artifactPins ?? []).map(
+      (pin): ProjectChildRow => ({ type: "artifact", pin }),
+    ),
   ];
   return rows.sort(compareProjectChildren);
+}
+
+/**
+ * What a pinned artifact's row reads.
+ *
+ * The tail of the path, with `.md` taken off and every other extension kept:
+ * a document's format is part of what it is, so `login.html` stays itself
+ * while `api-shape.md` reads as its name. A folder reads as its own last
+ * segment.
+ */
+export function artifactPinLabel(pin: PinRow): string {
+  const tail = pin.target.slice(pin.target.lastIndexOf("/") + 1);
+  return tail.endsWith(".md") ? tail.slice(0, -3) : tail;
 }

@@ -13,6 +13,11 @@ import type { ProjectCodingSessionShelfEntry } from "./projectCodingSessionShelf
  *   needs both boxes ticked.
  * - **range** — last activity (`session.lastEventAt`) inside a calendar
  *   window, `any` by default; hiding old work silently is not a default.
+ * - **showPinnedArtifacts** — whether the project's pinned documents, plans
+ *   and folders appear in the sidebar. The only axis that is not about
+ *   sessions, and it is here because this is the box a person opens to decide
+ *   what their sidebar shows. A pin itself is **shared** (NIP-AR): this hides
+ *   the rows on this device and never unpins anything for anyone.
  */
 export type ProjectSessionMemberFilter =
   | { mode: "mine" }
@@ -33,6 +38,7 @@ export type ProjectSessionFilter = {
   showClosed: boolean;
   showArchived: boolean;
   range: ProjectSessionDateRange;
+  showPinnedArtifacts: boolean;
 };
 
 export const DEFAULT_PROJECT_SESSION_FILTER: ProjectSessionFilter = {
@@ -40,6 +46,10 @@ export const DEFAULT_PROJECT_SESSION_FILTER: ProjectSessionFilter = {
   showClosed: true,
   showArchived: false,
   range: { kind: "any" },
+  // On by default: somebody pinned it for the project to see, and a sidebar
+  // that hides what a teammate pinned until you find a checkbox is the wrong
+  // way round.
+  showPinnedArtifacts: true,
 };
 
 /** How many session rows a page shows before "Show more". */
@@ -121,6 +131,10 @@ export function parseProjectSessionFilter(
   }
   return {
     members: parseMembers(record.members),
+    showPinnedArtifacts:
+      typeof record.showPinnedArtifacts === "boolean"
+        ? record.showPinnedArtifacts
+        : DEFAULT_PROJECT_SESSION_FILTER.showPinnedArtifacts,
     showClosed:
       typeof record.showClosed === "boolean"
         ? record.showClosed
@@ -319,6 +333,17 @@ export function projectSessionFilterLabel(
     parts.push(projectSessionDateRangeLabel(filter.range));
   }
   return parts.join(" · ");
+}
+
+/**
+ * The disclosure line for pinned artifacts the filter is hiding.
+ *
+ * Counted and revealable, per this module's rule: a row the sidebar drops
+ * without saying so is a row somebody pinned and nobody can find.
+ */
+export function projectHiddenArtifactsNote(count: number): string | null {
+  if (count <= 0) return null;
+  return `${count} pinned ${count === 1 ? "artifact is" : "artifacts are"} hidden — tick Show pinned artifacts to see ${count === 1 ? "it" : "them"}.`;
 }
 
 /** The disclosure line for sessions the current filter cannot attribute. */

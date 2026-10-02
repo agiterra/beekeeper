@@ -5,6 +5,7 @@ import { cn } from "@/shared/lib/cn";
 
 import type { DraftPath } from "../lib/agentsRepoDraftFold";
 import { displayName, groupPaths, kindOf } from "../lib/agentsRepoPaths";
+import { AgentsRepoDocumentGroup } from "./AgentsRepoDocumentGroup";
 
 export type TreeRow = AgentsRepoEntry & {
   /** The open draft head on this path, if any. */
@@ -37,6 +38,9 @@ export function treeRows(
       notOnMain: true,
     });
   }
+  // A `.gitkeep` outside the documents tree is the seed holding a directory
+  // open, not a file anyone edits. Under `docs/` it is classified
+  // `document-folder` and kept, because there it *is* the folder.
   return [...byPath.values()].filter((row) => row.kind !== "gitkeep");
 }
 
@@ -45,11 +49,14 @@ export function AgentsRepoFileTree({
   selectedPath,
   onSelect,
   personName,
+  isPinned,
 }: {
   rows: readonly TreeRow[];
   selectedPath: string | null;
   onSelect: (path: string) => void;
   personName: (pubkey: string) => string;
+  /** Whether a file path or folder prefix is pinned to the sidebar. */
+  isPinned: (target: string) => boolean;
 }) {
   const groups = React.useMemo(() => groupPaths(rows), [rows]);
   return (
@@ -63,47 +70,57 @@ export function AgentsRepoFileTree({
           <h3 className="mb-1 px-2 text-2xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
             {group.label}
           </h3>
-          <ul className="space-y-0.5">
-            {group.entries.map((row) => {
-              const selected = row.path === selectedPath;
-              return (
-                <li key={row.path}>
-                  <button
-                    aria-current={selected ? "page" : undefined}
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm",
-                      selected
-                        ? "bg-accent text-accent-foreground"
-                        : "text-foreground hover:bg-muted/60",
-                      row.notOnMain && "italic",
-                    )}
-                    data-testid={`agents-repo-file-${row.path}`}
-                    onClick={() => onSelect(row.path)}
-                    title={row.path}
-                    type="button"
-                  >
-                    <span className="min-w-0 flex-1 truncate">
-                      {displayName(row.path)}
-                    </span>
-                    {row.draft ? (
-                      <span
-                        className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-2xs font-medium text-amber-700 dark:text-amber-300"
-                        data-testid={`agents-repo-draft-badge-${row.path}`}
-                        title={`Draft by ${personName(row.draft.head.author)}`}
-                      >
-                        draft
+          {group.group === "documents" ? (
+            <AgentsRepoDocumentGroup
+              isPinned={isPinned}
+              onSelect={onSelect}
+              personName={personName}
+              rows={group.entries}
+              selectedPath={selectedPath}
+            />
+          ) : (
+            <ul className="space-y-0.5">
+              {group.entries.map((row) => {
+                const selected = row.path === selectedPath;
+                return (
+                  <li key={row.path}>
+                    <button
+                      aria-current={selected ? "page" : undefined}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm",
+                        selected
+                          ? "bg-accent text-accent-foreground"
+                          : "text-foreground hover:bg-muted/60",
+                        row.notOnMain && "italic",
+                      )}
+                      data-testid={`agents-repo-file-${row.path}`}
+                      onClick={() => onSelect(row.path)}
+                      title={row.path}
+                      type="button"
+                    >
+                      <span className="min-w-0 flex-1 truncate">
+                        {displayName(row.path)}
                       </span>
-                    ) : null}
-                    {row.notOnMain ? (
-                      <span className="shrink-0 text-2xs text-muted-foreground">
-                        not on main
-                      </span>
-                    ) : null}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+                      {row.draft ? (
+                        <span
+                          className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-2xs font-medium text-amber-700 dark:text-amber-300"
+                          data-testid={`agents-repo-draft-badge-${row.path}`}
+                          title={`Draft by ${personName(row.draft.head.author)}`}
+                        >
+                          draft
+                        </span>
+                      ) : null}
+                      {row.notOnMain ? (
+                        <span className="shrink-0 text-2xs text-muted-foreground">
+                          not on main
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </section>
       ))}
       {groups.length === 0 ? (
