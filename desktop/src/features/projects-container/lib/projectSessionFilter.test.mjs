@@ -7,6 +7,7 @@ import {
   parseProjectSessionFilter,
   projectSessionDateRangeLabel,
   projectSessionFilterLabel,
+  projectHiddenArtifactsNote,
   projectSessionFounders,
   projectSessionUnattributedNote,
   resolveProjectSessionDateRange,
@@ -366,4 +367,18 @@ test("a stored blob parses per project and survives corruption", () => {
       "owner:gamma": DEFAULT_PROJECT_SESSION_FILTER,
     },
   );
+});
+
+test("hiding pinned artifacts says how many and how to get them back", () => {
+  // The rule this module states: nothing is hidden silently. A pin is
+  // shared, so a row the sidebar drops without a word is a row somebody
+  // else put there and nobody can find.
+  assert.equal(projectHiddenArtifactsNote(0), null);
+  assert.equal(projectHiddenArtifactsNote(-1), null);
+  const one = projectHiddenArtifactsNote(1);
+  assert.match(one, /^1 pinned artifact is hidden/);
+  assert.match(one, /Show pinned artifacts/);
+  const many = projectHiddenArtifactsNote(3);
+  assert.match(many, /^3 pinned artifacts are hidden/);
+  assert.match(many, /to see them\.$/);
 });
