@@ -250,6 +250,7 @@ export default defineConfig({
         "**/agents-everywhere.live.spec.ts",
         "**/relay-restart.live.spec.ts",
         "**/project-todos.live.spec.ts",
+        "**/project-artifacts.live.spec.ts",
         "**/parity-ancestor-island.spec.ts",
       ],
       use: {

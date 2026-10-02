@@ -323,35 +323,44 @@ export function ProjectSidebarGroup({
   const founderProfiles = useUsersBatchQuery(founderPubkeys).data?.profiles;
 
   /**
+   * Everything below the channels, in paint order: the open sessions, then
+   * terminals, then the to-do lists, then the pinned artifacts, then the
+   * settled sessions.
+   *
+   * **This is the array the menu paints**, not a copy of it. It used to be
+   * spelled out twice — once here for the numbering and once in the JSX for
+   * the painting — and a row type added to only one of them was numbered and
+   * never drawn: the filter said "1 pinned artifact is hidden" while ticking
+   * the box back on drew nothing (ledger 309(m)).
+   */
+  const workRows = React.useMemo(
+    () => [
+      ...visibleOpenRows,
+      ...terminalRows,
+      ...todoRows,
+      ...artifactRows,
+      ...visibleSettledRows,
+    ],
+    [artifactRows, terminalRows, todoRows, visibleOpenRows, visibleSettledRows],
+  );
+
+  /**
    * The group's rows in the order they are painted below: channels and forums,
-   * then the open sessions, then terminals, then the settled sessions. Built
-   * once and used for both the badge numbers and the registered chords, so the
-   * two cannot drift as the filter, the paging, or the shelf order move.
+   * then everything in `workRows`. Built once and used for both the badge
+   * numbers and the registered chords, so the two cannot drift as the filter,
+   * the paging, or the shelf order move.
    *
    * A pending session row is skipped: it stands for a create the provider has
    * not acknowledged, so there is no generation to open. Numbering it would
-   * put a badge on a row that answers to nothing.
+   * put a badge on a row that answers to nothing. It is still *painted* —
+   * which is why the numbering filters here and the paint does not.
    */
   const displayedRows = React.useMemo(
     () =>
-      [
-        ...channelRows,
-        ...visibleOpenRows,
-        ...terminalRows,
-        ...todoRows,
-        ...artifactRows,
-        ...visibleSettledRows,
-      ].filter(
+      [...channelRows, ...workRows].filter(
         (row) => !(row.type === "coding-session" && row.entry.pending === true),
       ),
-    [
-      artifactRows,
-      channelRows,
-      terminalRows,
-      todoRows,
-      visibleOpenRows,
-      visibleSettledRows,
-    ],
+    [channelRows, workRows],
   );
 
   const activeHotkeyScope = useActiveHotkeyScope();
@@ -648,10 +657,7 @@ export function ProjectSidebarGroup({
                   aria-label={`${project.name} sessions`}
                   data-testid={`project-sessions-${project.dtag}`}
                 >
-                  {visibleOpenRows.map(renderRow)}
-                  {terminalRows.map(renderRow)}
-                  {todoRows.map(renderRow)}
-                  {visibleSettledRows.map(renderRow)}
+                  {workRows.map(renderRow)}
                   {remainingSessions > 0 ? (
                     <SidebarMenuItem>
                       <SidebarMenuButton
