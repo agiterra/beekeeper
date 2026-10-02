@@ -32,7 +32,9 @@ use buzz_core::project_pack_source::{PackPin, ProjectPackSource};
 use nostr::Timestamp;
 use serde_json::{json, Value};
 
-use super::agents_repo_git::{commit_drafts, CommitOutcome, CommitRequest, DraftChange, Identity};
+use super::agents_repo_git::{
+    commit_drafts, AssetBytes, CommitOutcome, CommitRequest, DraftChange, Identity,
+};
 use super::pulse::resolve_project;
 use super::repos::next_replaceable_created_at;
 use crate::client::BuzzClient;
@@ -250,7 +252,17 @@ fn row_json(row: &DraftRow) -> Value {
         "base_commit": row.base_commit,
         "prev": row.prev,
         "message": row.message,
-        "bytes": row.text.as_ref().map(String::len),
+        // An `asset.put` has no text: its content is a media blob, so its
+        // size comes from the op and `sha256`/`mime` say what it names.
+        // Without these a listed image draft reads as an op with no content
+        // at all.
+        "bytes": row
+            .text
+            .as_ref()
+            .map(String::len)
+            .or_else(|| row.size.map(|size| size as usize)),
+        "sha256": row.sha256,
+        "mime": row.mime,
     })
 }
 
@@ -719,6 +731,57 @@ async fn author_identities(client: &BuzzClient, pubkeys: &[String]) -> Vec<Ident
         .collect()
 }
 
+/// Fetch the media blob behind every `asset.put` in `changes`, keyed by sha256.
+///
+/// The bytes are **sha-verified here**: the relay says what it stored, and a
+/// commit writes what it was handed into a repository other people read, so
+/// the one place to check that those agree is before the write. This mirrors
+/// `fetch_commit_assets` in the desktop host — the two commit paths read the
+/// same ops and must agree on what they do with them.
+async fn fetch_commit_assets(
+    client: &BuzzClient,
+    changes: &[DraftChange],
+) -> Result<AssetBytes, CliError> {
+    use sha2::{Digest, Sha256};
+
+    let mut assets = AssetBytes::new();
+    for change in changes {
+        if change.op != "asset.put" {
+            continue;
+        }
+        let sha256 = change.sha256.as_deref().ok_or_else(|| {
+            CliError::Other(format!("the draft for {} names no blob", change.path))
+        })?;
+        if assets.contains_key(sha256) {
+            continue;
+        }
+        let extension = change
+            .path
+            .rsplit_once('.')
+            .map(|(_, ext)| ext)
+            .ok_or_else(|| CliError::Other(format!("{} has no extension", change.path)))?;
+        let bytes = client
+            .download_media(&format!("{sha256}.{extension}"))
+            .await
+            .map_err(|error| {
+                CliError::Other(format!(
+                    "could not fetch the image for {}: {error} — nothing was pushed",
+                    change.path
+                ))
+            })?;
+        let digest = hex::encode(Sha256::digest(&bytes));
+        if digest != sha256 {
+            return Err(CliError::Other(format!(
+                "the bytes served for {} hash to {digest}, not the {sha256} the draft names — \
+                 nothing was pushed",
+                change.path
+            )));
+        }
+        assets.insert(sha256.to_owned(), bytes.to_vec());
+    }
+    Ok(assets)
+}
+
 async fn cmd_commit(
     client: &BuzzClient,
     project: Option<&str>,
@@ -770,10 +833,16 @@ async fn cmd_commit(
             path: head.path.clone(),
             to: head.to.clone(),
             text: head.text.clone(),
+            sha256: head.sha256.clone(),
             base: head.base.clone(),
             message: head.message.clone(),
         });
     }
+    // An image's bytes live in the relay's media store, not in the op, so they
+    // are fetched and checked before any git work starts: a blob that cannot
+    // be served, or whose bytes disagree with the sha the draft names, refuses
+    // the whole commit instead of landing a file nobody drafted.
+    let assets = fetch_commit_assets(client, &changes).await?;
     let templates = super::pack::resolve_templates_dir(templates)
         .ok_or_else(|| CliError::Usage(super::pack::no_templates_message()))?;
     let catalog =
@@ -808,6 +877,7 @@ async fn cmd_commit(
         remote: &snap.clone_url,
         expected_tip: None,
         changes: &changes,
+        assets: &assets,
         message: &subject,
         committer: &committer,
         coauthors: &identities,

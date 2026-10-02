@@ -12,7 +12,7 @@ use super::{
     OwnClone,
 };
 use crate::commands::agents_repo_git::{
-    commit_drafts, CommitOutcome, CommitRequest, DraftChange, Identity,
+    commit_drafts, AssetBytes, CommitOutcome, CommitRequest, DraftChange, Identity,
 };
 
 const OWNER: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -141,6 +141,7 @@ impl Seat {
             path: PLAN.into(),
             to: None,
             text: Some(crate::commands::plans_example::EXAMPLE.into()),
+            sha256: None,
             base: None,
             message: Some("the plan".into()),
         }];
@@ -148,10 +149,12 @@ impl Seat {
             name: "Lead".into(),
             email: "11111111@beekeeper.local".into(),
         };
+        let assets = AssetBytes::new();
         let outcome = commit_drafts(&CommitRequest {
             remote: &self.relay,
             expected_tip: None,
             changes: &changes,
+            assets: &assets,
             message: "docs(agents): the plan",
             committer: &committer,
             coauthors: &[],

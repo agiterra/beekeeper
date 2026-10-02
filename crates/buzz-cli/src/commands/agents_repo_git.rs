@@ -8,9 +8,12 @@
 //! the push is a `--force-with-lease` on the tip this run read, so a push
 //! that raced someone else's lands nothing and says so.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::str::FromStr;
 
+use buzz_core::agents_repo_draft::AgentsRepoDraftOpKind;
 use buzz_persona::agents_repo::{validate_root, ActionsCheck};
 use buzz_persona::template::TemplateCatalog;
 use serde::Serialize;
@@ -24,7 +27,7 @@ pub struct DraftChange {
     pub id: String,
     /// Its author (64 hex).
     pub author: String,
-    /// `file.put`, `file.move` or `file.delete`.
+    /// `file.put`, `file.move`, `file.delete` or `asset.put`.
     pub op: String,
     /// The path the op names.
     pub path: String,
@@ -32,11 +35,22 @@ pub struct DraftChange {
     pub to: Option<String>,
     /// A put's text.
     pub text: Option<String>,
+    /// An `asset.put`'s media blob id. The bytes themselves are fetched and
+    /// sha-verified before the commit runs and arrive in
+    /// [`CommitRequest::assets`]; this is only the key that finds them.
+    pub sha256: Option<String>,
     /// The blob the author started from, or `None` for a new file.
     pub base: Option<String>,
     /// The author's one-line reason.
     pub message: Option<String>,
 }
+
+/// The bytes of every `asset.put` blob this commit lands, by sha256.
+///
+/// An image's bytes never travel in a draft op — the op names a media blob and
+/// the committer writes it into the tree — so they are fetched and verified
+/// before the git work starts, and handed in here.
+pub type AssetBytes = HashMap<String, Vec<u8>>;
 
 /// A name and e-mail for a commit trailer or identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +69,8 @@ pub struct CommitRequest<'a> {
     pub expected_tip: Option<&'a str>,
     /// The heads to apply.
     pub changes: &'a [DraftChange],
+    /// The bytes behind every `asset.put` in `changes`, already sha-verified.
+    pub assets: &'a AssetBytes,
     /// The commit subject.
     pub message: &'a str,
     /// The committer.
@@ -308,8 +324,13 @@ fn commit_in(
     // Build the tree from the tip's index plus the changes.
     git.run(&["read-tree", &tip])?;
     for change in request.changes {
-        match change.op.as_str() {
-            "file.put" => {
+        // Dispatch on the parsed op, not on the string: a new op added to
+        // `AgentsRepoDraftOpKind` then fails to compile here rather than
+        // reaching a live `bee agents-repo commit` as "unknown draft op".
+        let kind = AgentsRepoDraftOpKind::from_str(&change.op)
+            .map_err(|error| CliError::Other(format!("{error} — nothing was pushed")))?;
+        match kind {
+            AgentsRepoDraftOpKind::FilePut => {
                 let text = change.text.clone().unwrap_or_default();
                 let blob = git.run_stdin(&["hash-object", "-w", "--stdin"], text.as_bytes())?;
                 git.run(&[
@@ -319,7 +340,7 @@ fn commit_in(
                     &format!("100644,{blob},{}", change.path),
                 ])?;
             }
-            "file.move" => {
+            AgentsRepoDraftOpKind::FileMove => {
                 let to = change
                     .to
                     .clone()
@@ -335,11 +356,38 @@ fn commit_in(
                     &format!("100644,{blob},{to}"),
                 ])?;
             }
-            "file.delete" => {
+            AgentsRepoDraftOpKind::FileDelete => {
                 git.run(&["update-index", "--force-remove", &change.path])?;
             }
-            other => {
-                return Err(CliError::Other(format!("unknown draft op {other:?}")));
+            // An asset's bytes are a media blob, not op content: the caller
+            // fetched and sha-verified them before this ran, so here they are
+            // just bytes to hash into the tree. A missing entry is a bug in
+            // the caller, named rather than quietly committing nothing.
+            AgentsRepoDraftOpKind::AssetPut => {
+                let sha256 = change.sha256.as_deref().ok_or_else(|| {
+                    CliError::Other(format!("the draft for {} names no blob", change.path))
+                })?;
+                let bytes = request.assets.get(sha256).ok_or_else(|| {
+                    CliError::Other(format!(
+                        "the bytes of blob {} were never fetched — nothing was pushed",
+                        &sha256[..sha256.len().min(8)]
+                    ))
+                })?;
+                let blob = git.run_stdin(&["hash-object", "-w", "--stdin"], bytes)?;
+                git.run(&[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("100644,{blob},{}", change.path),
+                ])?;
+            }
+            // The committer writes these; one arriving as a change to apply
+            // would mean a caller handed us its own record.
+            AgentsRepoDraftOpKind::CommitRecord => {
+                return Err(CliError::Other(format!(
+                    "a commit.record ({}) is not a draft to apply",
+                    &change.id[..change.id.len().min(8)]
+                )));
             }
         }
     }

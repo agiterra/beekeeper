@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use buzz_persona::template::TemplateCatalog;
 
 use crate::commands::agents_repo_git::{
-    commit_drafts, CommitOutcome, CommitRequest, DraftChange, Identity,
+    commit_drafts, AssetBytes, CommitOutcome, CommitRequest, DraftChange, Identity,
 };
 
 fn git(cwd: &Path, args: &[&str]) -> String {
@@ -37,6 +37,9 @@ struct Fixture {
     remote: String,
     work: PathBuf,
     catalog: TemplateCatalog,
+    /// The bytes an `asset.put` would have been handed; empty unless a test
+    /// puts some there.
+    assets: AssetBytes,
 }
 
 impl Fixture {
@@ -68,6 +71,7 @@ impl Fixture {
             remote,
             work,
             catalog,
+            assets: AssetBytes::new(),
         }
     }
 
@@ -133,6 +137,7 @@ impl Fixture {
             coauthors,
             catalog: &self.catalog,
             project: PROJECT,
+            assets: &self.assets,
         }
     }
 }
@@ -155,6 +160,7 @@ fn put(id: &str, path: &str, text: &str, base: Option<String>) -> DraftChange {
         path: path.into(),
         to: None,
         text: Some(text.into()),
+        sha256: None,
         base,
         message: Some("because".into()),
     }
@@ -175,6 +181,7 @@ fn commit_builds_from_tip_and_pushes_one_signed_commit_with_coauthors() {
             path: "roles/poker.md".into(),
             to: Some("roles/archive/poker.md".into()),
             text: None,
+            sha256: None,
             base: fx.blob("roles/poker.md"),
             message: None,
         },
@@ -411,4 +418,76 @@ fn plan_names_resolve_to_plan_paths() {
     assert!(super::plan_path("roles/lead.md").is_err());
     assert!(super::plan_path("../x").is_err());
     assert!(super::plan_path("Archive").is_err());
+}
+
+/// An image's bytes never travel in a draft op, so `asset.put` is the one op
+/// whose content the committer is handed rather than reading. The host
+/// (Tauri) path and this one read the same ops; when only the host learned
+/// `asset.put`, `bee agents-repo commit --all` answered "unknown draft op
+/// \"asset.put\"" on a draft the relay had already accepted. These two tests
+/// pin the arm and its refusal; the exhaustive match on
+/// `AgentsRepoDraftOpKind` in `agents_repo_git.rs` is what keeps the next op
+/// from diverging silently.
+#[test]
+fn an_asset_put_lands_the_exact_bytes_it_was_handed() {
+    use sha2::{Digest, Sha256};
+
+    let mut fx = Fixture::new();
+    // Binary, with a NUL and a high byte, so a path that treated the blob as
+    // text would corrupt it visibly.
+    let bytes: Vec<u8> = vec![
+        0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 1, 2, 0xff,
+    ];
+    let sha = hex::encode(Sha256::digest(&bytes));
+    fx.assets.insert(sha.clone(), bytes.clone());
+    let path = "docs/mockups/img/shot.png";
+    let changes = vec![DraftChange {
+        id: "4".repeat(64),
+        author: ALICE.into(),
+        op: "asset.put".into(),
+        path: path.into(),
+        to: None,
+        text: None,
+        sha256: Some(sha),
+        base: None,
+        message: Some("the shot".into()),
+    }];
+    let committer = Fixture::committer();
+    let outcome = commit_drafts(&fx.request(&changes, &[], &committer)).expect("runs");
+    let CommitOutcome::Yes { paths, .. } = &outcome else {
+        panic!("expected a push, got {outcome:?}");
+    };
+    assert!(
+        paths.iter().any(|p| p.path == path && p.status == "A"),
+        "{paths:?}"
+    );
+    // The blob in the tree is git's hash of exactly these bytes.
+    let file = fx.root.join("shot.png");
+    std::fs::write(&file, &bytes).expect("write");
+    let expected = git(&fx.work, &["hash-object", file.to_str().unwrap()]);
+    assert_eq!(fx.blob(path).as_deref(), Some(expected.as_str()));
+}
+
+#[test]
+fn an_asset_put_whose_bytes_were_never_fetched_refuses_by_name() {
+    let fx = Fixture::new();
+    let sha = "ab".repeat(32);
+    let changes = vec![DraftChange {
+        id: "5".repeat(64),
+        author: ALICE.into(),
+        op: "asset.put".into(),
+        path: "docs/mockups/img/shot.png".into(),
+        to: None,
+        text: None,
+        sha256: Some(sha),
+        base: None,
+        message: None,
+    }];
+    let committer = Fixture::committer();
+    let tip_before = fx.tip();
+    let error = commit_drafts(&fx.request(&changes, &[], &committer)).expect_err("refuses");
+    let message = error.to_string();
+    assert!(message.contains("abababab"), "names the blob: {message}");
+    assert!(message.contains("nothing was pushed"), "{message}");
+    assert_eq!(fx.tip(), tip_before);
 }

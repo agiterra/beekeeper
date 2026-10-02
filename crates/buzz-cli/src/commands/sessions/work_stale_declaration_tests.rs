@@ -18,7 +18,7 @@ use super::*;
 use buzz_core::project_work_fold::{WorkDeclarationProjection, WorkDeclarationState};
 
 use crate::commands::agents_repo_git::{
-    commit_drafts, CommitOutcome, CommitRequest, DraftChange, Identity,
+    commit_drafts, AssetBytes, CommitOutcome, CommitRequest, DraftChange, Identity,
 };
 
 const OWNER: &str = "1ead000000000000000000000000000000000000000000000000000000000000";
@@ -491,13 +491,16 @@ async fn an_agents_repo_draft_commit_leaves_the_declaration_head() {
         path: PLAN_PATH.into(),
         to: None,
         text: Some(edited_plan()),
+        sha256: None,
         base: Some(base),
         message: Some("one more criterion".into()),
     }];
+    let assets = AssetBytes::new();
     let outcome = commit_drafts(&CommitRequest {
         remote: &repo.remote,
         expected_tip: Some(&commit_a),
         changes: &changes,
+        assets: &assets,
         message: "docs(plans): one more criterion",
         committer: &committer,
         coauthors: &[],

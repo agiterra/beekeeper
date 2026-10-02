@@ -13,7 +13,9 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
+use buzz_core_pkg::agents_repo_draft::AgentsRepoDraftOpKind;
 use buzz_persona_pkg::agents_repo::{validate_root, ActionsCheck};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -325,8 +327,13 @@ pub(crate) fn commit_in(
 
     run_git(&["read-tree", tip], cwd, &auth)?;
     for change in &request.drafts {
-        match change.op.as_str() {
-            "file.put" => {
+        // Dispatch on the parsed op, not on the string: a new op added to
+        // `AgentsRepoDraftOpKind` then fails to compile here and in
+        // `bee agents-repo commit`'s twin, rather than reaching a viewer as
+        // "unknown draft op".
+        let kind = AgentsRepoDraftOpKind::from_str(&change.op)?;
+        match kind {
+            AgentsRepoDraftOpKind::FilePut => {
                 let text = change.text.clone().unwrap_or_default();
                 let blob = run_git_bytes(
                     &["hash-object", "-w", "--stdin"],
@@ -346,7 +353,7 @@ pub(crate) fn commit_in(
                     &auth,
                 )?;
             }
-            "file.move" => {
+            AgentsRepoDraftOpKind::FileMove => {
                 let to = change.to.clone().ok_or("a move without a destination")?;
                 let blob = change
                     .base
@@ -368,7 +375,7 @@ pub(crate) fn commit_in(
                     &auth,
                 )?;
             }
-            "file.delete" => {
+            AgentsRepoDraftOpKind::FileDelete => {
                 run_git(
                     &["update-index", "--force-remove", &change.path],
                     cwd,
@@ -379,7 +386,7 @@ pub(crate) fn commit_in(
             // fetched and sha-verified them before this ran, so here they are
             // just bytes to hash into the tree. A missing entry is a bug in
             // the caller, named rather than silently committing nothing.
-            "asset.put" => {
+            AgentsRepoDraftOpKind::AssetPut => {
                 let sha256 = change
                     .sha256
                     .as_deref()
@@ -400,7 +407,15 @@ pub(crate) fn commit_in(
                     &auth,
                 )?;
             }
-            other => return Err(format!("unknown draft op {other:?}")),
+            // The renderer publishes these after a commit lands; one
+            // arriving as a change to apply would mean it handed us its own
+            // record.
+            AgentsRepoDraftOpKind::CommitRecord => {
+                return Err(format!(
+                    "a commit.record ({}) is not a draft to apply",
+                    short(&change.id)
+                ))
+            }
         }
     }
     let tree = run_git(&["write-tree"], cwd, &auth)?.trim().to_owned();
