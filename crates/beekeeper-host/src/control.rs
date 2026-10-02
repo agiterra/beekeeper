@@ -179,6 +179,12 @@ impl HostControl {
         {
             return Ok(false);
         }
+        // Before the loop exists, and before `start` returns: from here until
+        // the loop publishes its first state, a `status` reads `starting`
+        // rather than the `notSupervised` a stopped provider leaves behind.
+        // The host runs this before it serves its socket, so no client can
+        // ever read the gap.
+        self.published.publish(ProviderChildState::Starting);
         let stop = Arc::new(AtomicBool::new(false));
         let supervisor = self.with_commissioned(|commissioned| {
             Supervisor::new(
@@ -262,6 +268,29 @@ mod tests {
         panic!(
             "the supervisor never reported a live child: {:?}",
             control.child_state()
+        );
+    }
+
+    /// `start` publishes `starting` before the loop exists. On the
+    /// current-thread runtime the spawned loop cannot run until this test
+    /// yields, so the read below is the gap itself, deterministically — the
+    /// window that used to read `notSupervised`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_start_reads_as_starting_until_the_loop_reports_a_child() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let control = control(dir.path());
+
+        assert_eq!(control.child_state(), ProviderChildState::NotSupervised);
+        assert!(control.start().expect("start"));
+        assert_eq!(control.child_state(), ProviderChildState::Starting);
+
+        wait_for_live(&control).await;
+        assert!(control.stop().await);
+        assert_eq!(
+            control.child_state(),
+            ProviderChildState::NotSupervised,
+            "a stopped provider reads as notSupervised, not as starting"
         );
     }
 

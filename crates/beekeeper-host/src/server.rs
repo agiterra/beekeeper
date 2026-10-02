@@ -130,7 +130,11 @@ pub async fn serve(
     listener: UnixListener,
     path: std::path::PathBuf,
 ) -> Result<(), String> {
-    tracing::info!("control socket listening on {}", path.display());
+    let available_at = host_available_at();
+    tracing::info!(
+        "control socket listening on {} (available at {available_at})",
+        path.display()
+    );
 
     loop {
         match listener.accept().await {
@@ -259,10 +263,14 @@ fn encode<T: serde::Serialize>(value: &T) -> Response {
     }
 }
 
-/// The host's own start time, stamped once.
-fn host_started_at() -> &'static str {
-    static STARTED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    STARTED.get_or_init(beekeeper_host_core::logs::now_iso)
+/// When this host began answering, stamped once.
+///
+/// [`serve`] stamps it before its first `accept`. The `get_or_init` here is
+/// only a floor for a caller that never served — it used to be the *only*
+/// stamp, which made the field mean "when somebody first asked".
+fn host_available_at() -> &'static str {
+    static AVAILABLE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    AVAILABLE.get_or_init(beekeeper_host_core::logs::now_iso)
 }
 
 fn status(control: &Arc<HostControl>) -> Status {
@@ -276,7 +284,7 @@ fn status(control: &Arc<HostControl>) -> Status {
         protocol_version: crate::protocol::PROTOCOL_VERSION,
         host_version: env!("CARGO_PKG_VERSION").to_string(),
         host_pid: std::process::id(),
-        host_started_at: host_started_at().to_string(),
+        host_available_at: host_available_at().to_string(),
         relay_url: config.relay_url.clone(),
         provider_pubkey: config.provider_pubkey.clone(),
         provider_state_dir: config.provider_state_dir.clone(),

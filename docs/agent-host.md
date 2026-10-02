@@ -262,7 +262,7 @@ all four:
 | --- | --- | --- | --- |
 | not installed | absent | absent | run `bee host install` |
 | installed, not running | absent | present | start it; `beekeeper-host run` in a terminal shows why it exits |
-| running, no provider | answers | — | the `provider.state` says which: `keyUnresolved`, `backoff`, `gaveUp`, `lockHeldElsewhere`, `notSupervised` |
+| running, no provider | answers | — | the `provider.state` says which: `starting`, `keyUnresolved`, `backoff`, `gaveUp`, `lockHeldElsewhere`, `notSupervised` |
 | running, relay unreachable | answers, child live | — | the host cannot tell; Beekeeper can |
 
 `provider.state` values that are *not* failures:
@@ -270,7 +270,18 @@ all four:
 - **`backoff`** — the host is restarting it, and says which attempt. A child
   that crashes comes back on a doubling delay, up to five times in ten
   minutes.
-- **`notSupervised`** — nothing is commissioned, or somebody stopped it.
+- **`starting`** — the host has started supervising and has not spawned the
+  provider yet. Normally gone within a fraction of a second.
+- **`notSupervised`** — somebody stopped it (`bee host stop`). `start` brings
+  it back.
+
+A host that is **not commissioned** never reaches any of these: it exits with
+status 1 before it binds its socket, so it reads as *installed, not running*,
+and `beekeeper-host run` in a terminal prints which file is missing.
+
+`hostAvailableAt` is when the host began answering on its socket, which is
+shortly after the process started, not the same instant. Before protocol 2
+the field was `hostStartedAt` and was stamped by the first `status` call.
 
 And two that are:
 

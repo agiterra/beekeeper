@@ -79,7 +79,7 @@ impl PublishedState {
     /// must clear it. Two separate publishers would eventually leave a stale
     /// ceiling on display over a stopped provider, and nothing about the
     /// display would look wrong.
-    fn publish(&self, state: ProviderChildState) {
+    pub(crate) fn publish(&self, state: ProviderChildState) {
         let settings = match &state {
             ProviderChildState::Live { .. } => self.spawn_settings.lock().ok().and_then(|g| *g),
             _ => None,
@@ -352,7 +352,12 @@ mod tests {
     fn nothing_published_yet_reads_as_not_supervised_rather_than_as_stopped() {
         let published = PublishedState::default();
         assert_eq!(published.child(), ProviderChildState::NotSupervised);
-        assert!(published.child().message().contains("open Beekeeper"));
+        // Says what to do, and claims no cause: nothing has been published,
+        // so "stopped" would be a guess. (It used to send a person to finish
+        // setup, but an uncommissioned host exits before anyone can ask it.)
+        let message = published.child().message();
+        assert!(message.contains("start it"), "{message}");
+        assert!(!message.contains("stopped"), "{message}");
     }
 
     #[test]

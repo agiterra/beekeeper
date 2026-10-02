@@ -205,6 +205,7 @@ fn header_for(provider: &ProviderChildState, running_rows: usize) -> String {
             format!("Agent host: restarting (attempt {failures})")
         }
         ProviderChildState::NotSupervised => "Agent host: running · no provider".to_string(),
+        ProviderChildState::Starting => "Agent host: running · starting provider".to_string(),
         other => format!("Agent host: {}", other.message()),
     }
 }

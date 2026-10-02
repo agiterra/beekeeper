@@ -20,7 +20,7 @@ fn host_status(pubkey: &str, provider: ProviderChildState) -> beekeeper_host::pr
         protocol_version: beekeeper_host::protocol::PROTOCOL_VERSION,
         host_version: "0.1.0".to_string(),
         host_pid: 1234,
-        host_started_at: "2026-09-30T00:00:00Z".to_string(),
+        host_available_at: "2026-09-30T00:00:00Z".to_string(),
         relay_url: "wss://hive.example.org".to_string(),
         provider_pubkey: pubkey.to_string(),
         provider_state_dir: std::path::PathBuf::from("/data/session-provider/aaaa"),

@@ -14,7 +14,7 @@ fn status(provider: ProviderChildState) -> Box<Status> {
         protocol_version: beekeeper_host::protocol::PROTOCOL_VERSION,
         host_version: "0.1.0".into(),
         host_pid: 42,
-        host_started_at: "2026-09-30T00:00:00Z".into(),
+        host_available_at: "2026-09-30T00:00:00Z".into(),
         relay_url: "wss://hive.example.org".into(),
         provider_pubkey: "a".repeat(64),
         provider_state_dir: std::path::PathBuf::from("/data/session-provider/aaaa"),
