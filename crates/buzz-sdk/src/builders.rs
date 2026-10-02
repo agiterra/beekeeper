@@ -52,13 +52,14 @@ use buzz_core::{
         KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST,
         KIND_IA_UNARCHIVE_REQUEST, KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT,
         KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT,
-        KIND_PRESENCE_UPDATE, KIND_PROJECT, KIND_PROJECT_TODO_OP, KIND_PULSE_ENTRY,
-        KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
+        KIND_PRESENCE_UPDATE, KIND_PROJECT, KIND_PROJECT_ARTIFACT_PIN_OP, KIND_PROJECT_TODO_OP,
+        KIND_PULSE_ENTRY, KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
     },
     observer::{
         content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
         OBSERVER_FRAME_TELEMETRY,
     },
+    project_artifact_pin::{validate_project_artifact_pin_envelope, ProjectArtifactPinOp},
     project_todo::{validate_project_todo_envelope, ProjectTodoOp},
     pulse::{validate_pulse_entry_envelope, PulseEntry, PULSE_ENTRY_TAG_VERSION},
 };
@@ -2671,6 +2672,47 @@ fn agents_repo_draft_probe(tags: &[Tag], content: &str) -> Result<nostr::Event, 
     ))
 }
 
+/// Build an unsigned kind:44251 project artifact pin op (NIP-AR).
+///
+/// The validator in `buzz-core` is the only rule: this assembles the tags and
+/// content and hands them to it, so an invalid op is an
+/// [`SdkError::InvalidInput`] before anything is signed. What no builder can
+/// check — that `ar-repo` is the repository the project pins today — the relay
+/// checks at ingest.
+pub fn build_project_artifact_pin_op(
+    coordinate: &str,
+    op: &ProjectArtifactPinOp,
+) -> Result<EventBuilder, SdkError> {
+    let content = op.to_content();
+    let tags = op
+        .tags(coordinate)
+        .iter()
+        .map(|parts| {
+            let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
+            tag(&parts)
+        })
+        .collect::<Result<Vec<Tag>, SdkError>>()?;
+    validate_project_artifact_pin_envelope(&artifact_pin_probe(&tags, &content)?)
+        .map_err(SdkError::InvalidInput)?;
+    Ok(EventBuilder::new(Kind::Custom(KIND_PROJECT_ARTIFACT_PIN_OP as u16), content).tags(tags))
+}
+
+/// The unsigned probe for [`build_project_artifact_pin_op`]; no NIP-AR rule
+/// reads the id, author or signature.
+fn artifact_pin_probe(tags: &[Tag], content: &str) -> Result<nostr::Event, SdkError> {
+    let signature = nostr::secp256k1::schnorr::Signature::from_slice(&[0u8; 64])
+        .map_err(|error| SdkError::InvalidInput(format!("pin op probe: {error}")))?;
+    Ok(nostr::Event::new(
+        nostr::EventId::from_byte_array([0u8; 32]),
+        nostr::PublicKey::from_byte_array([0u8; 32]),
+        nostr::Timestamp::from_secs(0),
+        Kind::Custom(KIND_PROJECT_ARTIFACT_PIN_OP as u16),
+        tags.to_vec(),
+        content,
+        signature,
+    ))
+}
+
 /// Build an unsigned kind:5 deletion of one regular event by id — how an
 /// author withdraws their own draft op (NIP-AD) or to-do op (NIP-TD).
 pub fn build_delete_event(event_id: &str) -> Result<EventBuilder, SdkError> {
@@ -3187,6 +3229,51 @@ mod tests {
         ));
         assert!(build_delete_event(&"0".repeat(64)).is_ok());
         assert!(build_delete_event("nope").is_err());
+    }
+
+    #[test]
+    fn artifact_pin_builder_derives_tags_and_refuses_an_invalid_op() {
+        use buzz_core::project_artifact_pin::{PinTargetKind, ProjectArtifactPinOpValue};
+        let coordinate = format!("30621:{}:tank-loop", "a".repeat(64));
+        let repo = format!("30617:{}:tank-loop-beekeeper-agents", "a".repeat(64));
+        let op = ProjectArtifactPinOp {
+            repo: repo.clone(),
+            target: "docs/mockups".into(),
+            value: ProjectArtifactPinOpValue::PinSet {
+                target_kind: PinTargetKind::Folder,
+                pinned: true,
+                rank: "a0".into(),
+            },
+        };
+        let keys = nostr::Keys::generate();
+        let event = build_project_artifact_pin_op(&coordinate, &op)
+            .expect("builds")
+            .sign_with_keys(&keys)
+            .expect("signs");
+        let tags: Vec<Vec<String>> = event.tags.iter().map(|t| t.as_slice().to_vec()).collect();
+        assert_eq!(tags[0], vec!["a".to_owned(), coordinate.clone()]);
+        assert_eq!(tags[3], vec!["ar-repo".to_owned(), repo.clone()]);
+        assert_eq!(
+            tags[4],
+            vec!["ar-target".to_owned(), "docs/mockups".to_owned()]
+        );
+        assert!(validate_project_artifact_pin_envelope(&event).is_ok());
+
+        // A folder is not a path the layout admits, so declaring it a file
+        // refuses before anything is signed.
+        let bad = ProjectArtifactPinOp {
+            repo,
+            target: "docs/mockups".into(),
+            value: ProjectArtifactPinOpValue::PinSet {
+                target_kind: PinTargetKind::File,
+                pinned: true,
+                rank: "a0".into(),
+            },
+        };
+        assert!(matches!(
+            build_project_artifact_pin_op(&coordinate, &bad),
+            Err(SdkError::InvalidInput(_))
+        ));
     }
     use nostr::{EventId, Keys};
 

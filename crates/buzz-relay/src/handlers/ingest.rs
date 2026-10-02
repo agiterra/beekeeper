@@ -503,6 +503,10 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         // proposing a change to the project's agents repository. Same scope
         // and per-project write admission as Pulse and to-dos.
         buzz_core::kind::KIND_AGENTS_REPO_DRAFT_OP => Ok(Scope::MessagesWrite),
+        // NIP-AR: an artifact pin says which of the project's documents show
+        // in every member's sidebar. Same scope and per-project write
+        // admission as Pulse, to-dos and drafts.
+        buzz_core::kind::KIND_PROJECT_ARTIFACT_PIN_OP => Ok(Scope::MessagesWrite),
         KIND_GIT_PATCH
         | KIND_GIT_PULL_REQUEST
         | KIND_GIT_PR_UPDATE
@@ -773,6 +777,9 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
             // NIP-AD: a draft op belongs to a project, never to a room; its
             // validator rejects an `h` tag too.
             | buzz_core::kind::KIND_AGENTS_REPO_DRAFT_OP
+            // NIP-AR: a pin belongs to a project, never to a room; its
+            // validator rejects an `h` tag too.
+            | buzz_core::kind::KIND_PROJECT_ARTIFACT_PIN_OP
             // NIP-PL leases are author-owned, addressable global state.
             | super::push_lease::KIND_PUSH_LEASE
     )
@@ -4429,6 +4436,24 @@ async fn ingest_event_inner(
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
         admit_project_scoped_write(state, tenant, &event, "draft op").await?;
         super::agents_repo_draft::admit_draft_repository(state, tenant, &event, &op).await?;
+    }
+
+    // NIP-AR: an artifact pin gets the same project-scoped write admission,
+    // then the one check only the relay can make — that `ar-repo` is the
+    // repository the project's kind:30624 pins *today*, so a re-pointed
+    // project's old pins stay readable and are never silently re-aimed.
+    if kind_u32 == buzz_core::kind::KIND_PROJECT_ARTIFACT_PIN_OP {
+        let got = event.content.len();
+        if got > buzz_core::project_artifact_pin::MAX_PROJECT_ARTIFACT_PIN_CONTENT_BYTES {
+            return Err(IngestError::Rejected(format!(
+                "invalid: pin op content exceeds {} bytes (got {got})",
+                buzz_core::project_artifact_pin::MAX_PROJECT_ARTIFACT_PIN_CONTENT_BYTES
+            )));
+        }
+        let op = buzz_core::project_artifact_pin::validate_project_artifact_pin_envelope(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        admit_project_scoped_write(state, tenant, &event, "pin op").await?;
+        super::agents_repo_draft::admit_pin_repository(state, tenant, &event, &op).await?;
     }
 
     if kind_u32 == KIND_GIT_REPO_ANNOUNCEMENT {

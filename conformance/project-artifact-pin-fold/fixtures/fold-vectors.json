@@ -1,0 +1,1127 @@
+{
+  "schema": "buzz-project-artifact-pin-fold-vectors/v1",
+  "cases": [
+    {
+      "name": "empty",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [],
+      "expected": {
+        "schema": "buzz-project-artifact-pin-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "ranksWithoutPin": 0,
+        "pins": []
+      }
+    },
+    {
+      "name": "one pin.set is one row, pinned, at the rank it entered",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a0\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-artifact-pin-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "ranksWithoutPin": 0,
+        "pins": [
+          {
+            "target": "docs/mockups/login.html",
+            "targetKind": "file",
+            "pinned": true,
+            "rank": "a0",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 100
+          }
+        ]
+      }
+    },
+    {
+      "name": "a folder of the documents tree is a pinnable target",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups\",\"targetKind\":\"folder\",\"pinned\":true,\"rank\":\"a0\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-artifact-pin-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "ranksWithoutPin": 0,
+        "pins": [
+          {
+            "target": "docs/mockups",
+            "targetKind": "folder",
+            "pinned": true,
+            "rank": "a0",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 100
+          }
+        ]
+      }
+    },
+    {
+      "name": "un-pinning keeps the row with pinned false and the later author",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a0\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 110,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":false,\"rank\":\"a0\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-artifact-pin-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "ranksWithoutPin": 0,
+        "pins": [
+          {
+            "target": "docs/mockups/login.html",
+            "targetKind": "file",
+            "pinned": false,
+            "rank": "a0",
+            "by": "2222222222222222222222222222222222222222222222222222222222222222",
+            "updatedAt": 110
+          }
+        ]
+      }
+    },
+    {
+      "name": "a pin.rank moves the rank, updates updatedAt, and leaves by alone",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a1\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 110,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.rank"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.rank\",\"target\":\"docs/mockups/login.html\",\"rank\":\"a0\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-artifact-pin-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "ranksWithoutPin": 0,
+        "pins": [
+          {
+            "target": "docs/mockups/login.html",
+            "targetKind": "file",
+            "pinned": true,
+            "rank": "a0",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 110
+          }
+        ]
+      }
+    },
+    {
+      "name": "a pin.rank stamped before the set that introduced the target loses to it",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 90,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.rank"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.rank\",\"target\":\"docs/mockups/login.html\",\"rank\":\"a5\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a1\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-artifact-pin-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "ranksWithoutPin": 0,
+        "pins": [
+          {
+            "target": "docs/mockups/login.html",
+            "targetKind": "file",
+            "pinned": true,
+            "rank": "a1",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 100
+          }
+        ]
+      }
+    },
+    {
+      "name": "a pin.rank naming a target no pin.set introduced is counted, not a row",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 110,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.rank"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/never-pinned.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.rank\",\"target\":\"docs/never-pinned.md\",\"rank\":\"a0\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a0\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-artifact-pin-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "ranksWithoutPin": 1,
+        "pins": [
+          {
+            "target": "docs/mockups/login.html",
+            "targetKind": "file",
+            "pinned": true,
+            "rank": "a0",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 100
+          }
+        ]
+      }
+    },
+    {
+      "name": "rows sort by rank then target, and a plan pins like a document",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a2\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 101,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "plans/CURRENT_STATE.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"plans/CURRENT_STATE.md\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a1\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 102,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups\",\"targetKind\":\"folder\",\"pinned\":true,\"rank\":\"a1\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-artifact-pin-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "ranksWithoutPin": 0,
+        "pins": [
+          {
+            "target": "docs/mockups",
+            "targetKind": "folder",
+            "pinned": true,
+            "rank": "a1",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 102
+          },
+          {
+            "target": "plans/CURRENT_STATE.md",
+            "targetKind": "file",
+            "pinned": true,
+            "rank": "a1",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 101
+          },
+          {
+            "target": "docs/mockups/login.html",
+            "targetKind": "file",
+            "pinned": true,
+            "rank": "a2",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 100
+          }
+        ]
+      }
+    },
+    {
+      "name": "a created_at tie breaks on event id",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 100,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":false,\"rank\":\"a0\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a0\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-artifact-pin-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "ranksWithoutPin": 0,
+        "pins": [
+          {
+            "target": "docs/mockups/login.html",
+            "targetKind": "file",
+            "pinned": false,
+            "rank": "a0",
+            "by": "2222222222222222222222222222222222222222222222222222222222222222",
+            "updatedAt": 100
+          }
+        ]
+      }
+    },
+    {
+      "name": "another repository's op is counted; malformed, mis-kinded, mis-scoped and ungrammatical ops are ignored",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a0\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 101,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-packs"
+            ],
+            [
+              "ar-target",
+              "plans/CURRENT_STATE.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"plans/CURRENT_STATE.md\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a1\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 102,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:other"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "plans/CURRENT_STATE.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"plans/CURRENT_STATE.md\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a1\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 103,
+          "kind": 44250,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "plans/CURRENT_STATE.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"plans/CURRENT_STATE.md\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a1\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000005",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 104,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "plans/CURRENT_STATE.md"
+            ]
+          ],
+          "content": "{not json"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000006",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 105,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "plans/CURRENT_STATE.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"plans/CURRENT_STATE.md\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000007",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 106,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/.gitkeep"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/.gitkeep\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a1\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000008",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 107,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a1\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000009",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 108,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs\",\"targetKind\":\"folder\",\"pinned\":true,\"rank\":\"a1\"}"
+        },
+        {
+          "id": "000000000000000000000000000000000000000000000000000000000000000a",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 109,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "a",
+              "30621:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:other"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "plans/CURRENT_STATE.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"plans/CURRENT_STATE.md\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a1\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-artifact-pin-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 8,
+        "otherRepo": 1,
+        "ranksWithoutPin": 0,
+        "pins": [
+          {
+            "target": "docs/mockups/login.html",
+            "targetKind": "file",
+            "pinned": true,
+            "rank": "a0",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 100
+          }
+        ]
+      }
+    },
+    {
+      "name": "a case-variant a tag folds as its canonical coordinate",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a0\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-artifact-pin-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "ranksWithoutPin": 0,
+        "pins": [
+          {
+            "target": "docs/mockups/login.html",
+            "targetKind": "file",
+            "pinned": true,
+            "rank": "a0",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 100
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate ids keep the first",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":true,\"rank\":\"a0\"}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 200,
+          "kind": 44251,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ar-v",
+              "ar1-1"
+            ],
+            [
+              "ar-op",
+              "pin.set"
+            ],
+            [
+              "ar-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ar-target",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-project-artifact-pin/v1\",\"op\":\"pin.set\",\"target\":\"docs/mockups/login.html\",\"targetKind\":\"file\",\"pinned\":false,\"rank\":\"a9\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-project-artifact-pin-digest/v1",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "ranksWithoutPin": 0,
+        "pins": [
+          {
+            "target": "docs/mockups/login.html",
+            "targetKind": "file",
+            "pinned": true,
+            "rank": "a0",
+            "by": "1111111111111111111111111111111111111111111111111111111111111111",
+            "updatedAt": 100
+          }
+        ]
+      }
+    }
+  ]
+}

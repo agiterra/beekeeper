@@ -135,6 +135,38 @@ pub(crate) async fn admit_draft_repository(
     }
 }
 
+/// Refuse a kind:44251 pin op that names a repository other than the
+/// project's.
+///
+/// The same check `admit_draft_repository` makes, and for the same reason: a
+/// pin names a path *in a repository*, so a project that re-points keeps its
+/// old pins readable and the fold reports them as another repository's rather
+/// than aiming them at the new one.
+pub(crate) async fn admit_pin_repository(
+    state: &AppState,
+    tenant: &TenantContext,
+    event: &Event,
+    op: &buzz_core::project_artifact_pin::ProjectArtifactPinOp,
+) -> Result<(), IngestError> {
+    let coordinate = buzz_core::kind::project_a_scoped_coordinate(event)
+        .ok_or_else(|| IngestError::Rejected("invalid: pin op requires one a tag".into()))?;
+    match project_agents_repository(state, tenant, &coordinate)
+        .await?
+        .as_deref()
+    {
+        Some(repo) if repo == op.repo => Ok(()),
+        Some(repo) => Err(IngestError::Rejected(format!(
+            "invalid: {} is not this project's agents repository (its source pins {repo})",
+            op.repo
+        ))),
+        None => Err(IngestError::Rejected(
+            "invalid: this project has no agents repository (no kind:30624 source); \
+             create one with Finish repository setup or `bee packs init`"
+                .into(),
+        )),
+    }
+}
+
 /// Refuse an `asset.put` whose blob this community does not hold, or whose
 /// MIME or size disagrees with what the media store recorded when it accepted
 /// the upload.

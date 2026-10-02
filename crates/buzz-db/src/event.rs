@@ -809,7 +809,7 @@ pub(crate) async fn query_events_on(
         }
 
         // Project-`a`-scoped kinds (Pulse 44240, to-do op 44248, draft op
-        // 44250): they belong
+        // 44250, pin op 44251): they belong
         // to a *project*, not to a repo, so none of the repo clauses above
         // ever see them — they are absent from `GIT_PROJECT_GATED_KINDS`,
         // whose leading `kind NOT IN` guard would short-circuit the whole

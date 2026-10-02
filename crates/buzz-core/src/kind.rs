@@ -968,6 +968,40 @@ pub const KIND_PROJECT_WORK_RECORD: u32 = 44249;
 /// The wire contract is `docs/nips/NIP-AD.md`.
 pub const KIND_AGENTS_REPO_DRAFT_OP: u32 = 44250;
 
+/// Project artifact pin op — which documents, plans and folders of a
+/// project's agents repository show in every member's sidebar, and in what
+/// order. Regular, stored, append-only, scoped to a NIP-MP project by its
+/// canonical `a` coordinate and gated by project membership alone
+/// ([`is_project_a_scoped_kind`]).
+///
+/// Content is JSON (`buzz-project-artifact-pin/v1`) naming the op: `pin.set`
+/// (pin or unpin a target, declaring whether it is a file or a folder of the
+/// documents tree, and the rank it enters at) or `pin.rank` (move it). Tags
+/// are position-independent with a closed key set: `a`, `ar-v`, `ar-op`,
+/// `ar-repo` (the repository the project's kind:30624 pins) and `ar-target`.
+///
+/// **Its own kind rather than another 44250 op**, because 44250's fold is a
+/// per-path *draft chain* that a `commit.record` closes, and a pin is not a
+/// draft of a file's contents — a commit must never close one. What the two
+/// share is the gate, through one predicate, so none of the admission,
+/// withholding, fan-out or pushdown is written twice.
+///
+/// A pin is **shared**: every member sees it, as NIP-TD's `list.pinned` is.
+/// Hiding the pinned rows is a per-device viewing preference that never
+/// reaches the wire. The fold is [`crate::project_artifact_pin_fold`], pinned
+/// by `conformance/project-artifact-pin-fold/`.
+///
+/// **Allocation.** 44251 is the lowest unused and unreserved kind in this fork
+/// and in vanilla: 44231–44239 are reserved by the continuity research, 44240
+/// is Pulse with 44241–44243 reserved by the Pulse plan, 44244–44247 are the
+/// team transaction, policy, observation and handover, 44248 is the to-do op,
+/// 44249 the project work record and 44250 the agents-repository draft op.
+/// The two greps were run on 2026-10-01: `git grep 44251` over this tree
+/// matched nothing, and `git grep 44251 vanilla/main` (`12201c49b`) the same.
+///
+/// The wire contract is `docs/nips/NIP-AR.md`.
+pub const KIND_PROJECT_ARTIFACT_PIN_OP: u32 = 44251;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -1354,7 +1388,10 @@ pub fn shell_observe_project_ref(event: &nostr::Event) -> Option<String> {
 pub const fn is_project_a_scoped_kind(kind: u32) -> bool {
     matches!(
         kind,
-        KIND_PULSE_ENTRY | KIND_PROJECT_TODO_OP | KIND_AGENTS_REPO_DRAFT_OP
+        KIND_PULSE_ENTRY
+            | KIND_PROJECT_TODO_OP
+            | KIND_AGENTS_REPO_DRAFT_OP
+            | KIND_PROJECT_ARTIFACT_PIN_OP
     )
 }
 
@@ -1365,6 +1402,7 @@ pub const PROJECT_A_SCOPED_KINDS: &[u32] = &[
     KIND_PULSE_ENTRY,
     KIND_PROJECT_TODO_OP,
     KIND_AGENTS_REPO_DRAFT_OP,
+    KIND_PROJECT_ARTIFACT_PIN_OP,
 ];
 
 /// The project coordinate a project-`a`-scoped event is scoped to,
@@ -1790,6 +1828,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_PULSE_ENTRY,
     KIND_PROJECT_TODO_OP,
     KIND_AGENTS_REPO_DRAFT_OP,
+    KIND_PROJECT_ARTIFACT_PIN_OP,
     KIND_CODING_SESSION_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -2027,6 +2066,11 @@ const _: () = assert!(!is_replaceable(KIND_AGENTS_REPO_DRAFT_OP));
 const _: () = assert!(!is_parameterized_replaceable(KIND_AGENTS_REPO_DRAFT_OP));
 const _: () = assert!(KIND_AGENTS_REPO_DRAFT_OP <= u16::MAX as u32);
 const _: () = assert!(is_project_a_scoped_kind(KIND_AGENTS_REPO_DRAFT_OP));
+const _: () = assert!(!is_ephemeral(KIND_PROJECT_ARTIFACT_PIN_OP));
+const _: () = assert!(!is_replaceable(KIND_PROJECT_ARTIFACT_PIN_OP));
+const _: () = assert!(!is_parameterized_replaceable(KIND_PROJECT_ARTIFACT_PIN_OP));
+const _: () = assert!(KIND_PROJECT_ARTIFACT_PIN_OP <= u16::MAX as u32);
+const _: () = assert!(is_project_a_scoped_kind(KIND_PROJECT_ARTIFACT_PIN_OP));
 const _: () = assert!(is_project_a_scoped_kind(KIND_PULSE_ENTRY));
 // A session lease is deliberately ephemeral: it is bounded evidence of recent
 // provider reachability, not durable session history or a replaceable head.

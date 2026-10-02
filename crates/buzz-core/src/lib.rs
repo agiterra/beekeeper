@@ -119,6 +119,12 @@ pub mod presence;
 /// NIP-PMA owner-encrypted private managed-agent wire codec.
 pub mod private_managed_agent;
 pub mod project_agent_association;
+/// NIP-AR: project artifact pins (44251) — the wire contract of one pin or
+/// one reorder.
+pub mod project_artifact_pin;
+/// Pure project artifact pin fold shared by every adapter, pinned by
+/// `conformance/project-artifact-pin-fold/`.
+pub mod project_artifact_pin_fold;
 pub mod project_pack_source;
 /// NIP-PW: the `beekeeper-plan/v1` plan file — the committed statement of
 /// what success means, parsed from bytes with no I/O and no clock.

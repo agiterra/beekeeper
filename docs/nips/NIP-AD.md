@@ -69,7 +69,7 @@ The single validator is `crates/buzz-core/src/agents_repo_draft.rs`; the relay, 
 
 ## Relay behaviour
 
-Admission, withholding, live fan-out, the SQL pushdown and the HTTP request-shape rule are the Pulse and to-do rules, inherited through `buzz_core::kind::is_project_a_scoped_kind` (44240, 44248, 44250): a private project's owner or collaborator may write, a viewer may not (`OK false "restricted: …"`, **403** over `POST /events`, CLI exit 3); a stored op is withheld from a reader whose hidden-private-project set contains its coordinate; `{"kinds":[44250],"#a":[c]}` is accepted, an unscoped or mixed filter is `400`.
+Admission, withholding, live fan-out, the SQL pushdown and the HTTP request-shape rule are the Pulse and to-do rules, inherited through `buzz_core::kind::is_project_a_scoped_kind` (44240, 44248, 44250, 44251): a private project's owner or collaborator may write, a viewer may not (`OK false "restricted: …"`, **403** over `POST /events`, CLI exit 3); a stored op is withheld from a reader whose hidden-private-project set contains its coordinate; `{"kinds":[44250],"#a":[c]}` is accepted, an unscoped or mixed filter is `400`.
 
 Three checks are this kind's own, made at ingest and answered as a rejection (**400**, CLI exit 2) because they are facts about the event against the world, not about the author's authority:
 
