@@ -23,6 +23,13 @@ const exec = promisify(execFile);
 //     now one array, and this spec is what notices if they part again;
 //   - hiding is **disclosed**, with the count, not silent.
 //
+// Each run leaves one project behind in the community it ran against (the
+// same way the to-do gate does). Clear them with:
+//
+//   bee projects delete <slug> --cascade --yes      # as tyler
+//
+// which detaches, and does not delete, the two repositories it made.
+//
 // Requires: BUZZ_E2E_PROJECT_ARTIFACTS=1, BUZZ_E2E_CLI_BIN (a built `bee`),
 // BUZZ_E2E_RELAY_URL pointing at a running relay, and the git credential
 // helper (`just install-git-credentials`) — `bee packs init` pushes the
