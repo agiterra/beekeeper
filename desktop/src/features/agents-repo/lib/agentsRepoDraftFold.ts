@@ -101,7 +101,7 @@ function bytewiseLess(a: string, b: string): boolean {
 }
 
 /** `30621:<hex>:<dtag>` with the hex lowercased; null when not that shape. */
-function normalizeProjectCoordinate(value: string): string | null {
+export function normalizeProjectCoordinate(value: string): string | null {
   const first = value.indexOf(":");
   const second = value.indexOf(":", first + 1);
   if (first < 0 || second < 0) return null;
@@ -116,7 +116,7 @@ function normalizeProjectCoordinate(value: string): string | null {
 }
 
 /** `30617:<lowercase hex>:<id>` exactly; null otherwise. */
-function canonicalRepositoryCoordinate(value: string): string | null {
+export function canonicalRepositoryCoordinate(value: string): string | null {
   const first = value.indexOf(":");
   const second = value.indexOf(":", first + 1);
   if (first < 0 || second < 0) return null;

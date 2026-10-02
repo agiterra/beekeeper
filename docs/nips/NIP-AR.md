@@ -92,3 +92,4 @@ The relay refuses any event whose `created_at` is more than 900 s from its clock
 - Validator: `crates/buzz-core/src/project_artifact_pin.rs`. Fold: `crates/buzz-core/src/project_artifact_pin_fold.rs`. Ranks: `crates/buzz-core/src/fractional_rank.rs`.
 - Relay: `crates/buzz-relay/src/handlers/ingest.rs`, `handlers/agents_repo_draft.rs` (`admit_pin_repository`), `handlers/req.rs`, `api/bridge.rs`; `crates/buzz-db/src/event.rs` pushdown.
 - SDK: `crates/buzz-sdk/src/builders.rs` (`build_project_artifact_pin_op`, `build_delete_event`). CLI: `crates/buzz-cli/src/commands/pins.rs`.
+- Folds: Desktop `desktop/src/features/agents-repo/lib/artifactPinFold.ts`, Mobile `mobile/lib/features/agents_repo/domain/artifact_pin_fold.dart`, both beside the draft modules whose path grammar a target is drawn from.

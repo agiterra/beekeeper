@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../shared/relay/nostr_models.dart';
 import '../../../shared/relay/project_coordinate.dart';
-import 'fractional_rank.dart';
+import 'package:buzz/shared/utils/fractional_rank.dart';
 
 /// Project to-do operations (kind 44248, NIP-TD): one field-level edit to a
 /// shared, project-scoped to-do list.

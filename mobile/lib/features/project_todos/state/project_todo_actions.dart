@@ -4,7 +4,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../shared/relay/relay.dart';
-import '../domain/fractional_rank.dart';
+import 'package:buzz/shared/utils/fractional_rank.dart';
 import '../domain/project_todo_fold.dart';
 import '../domain/project_todo_op.dart';
 import 'project_todos_provider.dart';

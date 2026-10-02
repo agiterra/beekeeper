@@ -3,9 +3,12 @@
 This directory is the byte-exact source of truth for the project artifact pin
 fold. The Rust fold in `buzz-core`
 (`project_artifact_pin_fold.rs`, behind `bee pins`), the TypeScript fold in
-Desktop (`features/project-documents/lib/artifactPinFold.ts`) and the Dart fold
-in Mobile (`features/agents_repo/domain/artifact_pin_fold.dart`) must bind to
-the same vectors. A rule implemented in only one fold is a defect, and nothing
+Desktop (`features/agents-repo/lib/artifactPinFold.ts`) and the Dart fold in
+Mobile (`features/agents_repo/domain/artifact_pin_fold.dart`) must bind to the
+same vectors. They sit beside the draft modules rather than in a feature of
+their own because a pin's target is drawn from the same path grammar, and the
+conformance binders load these modules with no resolver — a relative import
+with an explicit extension, never an alias. A rule implemented in only one fold is a defect, and nothing
 else in CI would catch it: each fold's own tests use its own table.
 
 The fold reports facts about the op log. Whether a pinned target still exists
