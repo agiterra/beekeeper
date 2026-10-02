@@ -19,7 +19,7 @@ const exec = promisify(execFile);
 //   - the sidebar actually *paints* a pinned-artifact row. It did not: the
 //     row was built, numbered and counted but left out of the JSX, so the
 //     filter read "1 pinned artifact is hidden" and ticking the box back on
-//     drew nothing (ledger 309(m)). The paint list and the numbering list are
+//     drew nothing (ledger 311(m)). The paint list and the numbering list are
 //     now one array, and this spec is what notices if they part again;
 //   - hiding is **disclosed**, with the count, not silent.
 //

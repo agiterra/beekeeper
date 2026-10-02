@@ -331,7 +331,7 @@ export function ProjectSidebarGroup({
    * spelled out twice — once here for the numbering and once in the JSX for
    * the painting — and a row type added to only one of them was numbered and
    * never drawn: the filter said "1 pinned artifact is hidden" while ticking
-   * the box back on drew nothing (ledger 309(m)).
+   * the box back on drew nothing (ledger 311(m)).
    */
   const workRows = React.useMemo(
     () => [
