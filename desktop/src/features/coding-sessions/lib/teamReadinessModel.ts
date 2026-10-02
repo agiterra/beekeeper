@@ -476,6 +476,10 @@ const COPY: Record<string, TeamReadinessBlockerCopy> = {
     title: "No coding-session provider is running on this computer",
     action: "Use Prepare below to provision and start one.",
   },
+  PROVIDER_STARTING: {
+    title: "The provider is starting",
+    action: "Wait a moment, then re-read this panel.",
+  },
   PROVIDER_IN_BACKOFF: {
     title: "The provider is supervised but has no live process",
     action: "Wait for it to recover, or restart it from Settings.",

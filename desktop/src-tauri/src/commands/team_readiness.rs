@@ -547,6 +547,16 @@ fn collect_provider(
                 "The provisioned provider has a live child process",
             ));
         }
+        CodingSessionProviderProcessState::Starting => {
+            gathered.provider.process = "starting".into();
+            gathered.provider.key_state = Some(TeamReadinessKeyState::Unverified);
+            gathered.facts.push(TeamReadinessFact::unknown(
+                "provider",
+                "PROVIDER_STARTING",
+                "The agent host is starting the provider",
+                "Wait a moment and re-read this panel.",
+            ));
+        }
         CodingSessionProviderProcessState::Backoff => {
             gathered.provider.process = "backoff".into();
             gathered.provider.key_state = Some(TeamReadinessKeyState::Unverified);

@@ -30,8 +30,13 @@ use serde::{Deserialize, Serialize};
 use crate::sessions::SessionSnapshot;
 use crate::state::{ProviderChildState, RelayConnectionState, RunSettings};
 
-/// The wire version. Bumped on any change a v1 client could misread.
-pub const PROTOCOL_VERSION: u32 = 1;
+/// The wire version. Bumped on any change an older client could misread.
+///
+/// 2: `provider.state` gained `starting`, and `hostStartedAt` became
+/// `hostAvailableAt` (stamped when the socket starts answering, not at the
+/// first `status`). A v2 client still reads a v1 host's `hostStartedAt`; a v1
+/// client fails to decode a v2 status rather than misreading it.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Bound on a `logs` tail, in bytes. A control socket must not become a way to
 /// stream an unbounded file into a menu bar's memory.
@@ -152,8 +157,17 @@ pub struct Status {
     pub protocol_version: u32,
     pub host_version: String,
     pub host_pid: u32,
-    /// RFC 3339 stamp of when this host started.
-    pub host_started_at: String,
+    /// RFC 3339 stamp of when this host began answering on its control
+    /// socket.
+    ///
+    /// Not the process's exec time: commissioning, directory setup and the
+    /// first `start` all come before it. Named for what it measures — the
+    /// field used to be `hostStartedAt`, and was stamped by the first
+    /// `status` call, so it read whenever somebody first asked (17 s after
+    /// exec in the 2026-10-01 reboot test). The old name is still accepted on
+    /// the way in, so this client can read a v1 host.
+    #[serde(alias = "hostStartedAt")]
+    pub host_available_at: String,
     /// The relay this host was commissioned to serve.
     pub relay_url: String,
     /// The provisioned provider's pubkey.
@@ -320,6 +334,47 @@ mod tests {
             warning.code.to_uppercase(),
             "codes are SCREAMING_SNAKE_CASE so a client can switch on them"
         );
+    }
+
+    fn status_fixture() -> Status {
+        Status {
+            protocol_version: PROTOCOL_VERSION,
+            host_version: "0.1.0".to_string(),
+            host_pid: 1234,
+            host_available_at: "2026-09-30T00:00:00Z".to_string(),
+            relay_url: "wss://hive.example.org".to_string(),
+            provider_pubkey: "aa".repeat(32),
+            provider_state_dir: std::path::PathBuf::from("/data/session-provider/aaaa"),
+            provider: ProviderChildState::Starting,
+            provider_settings_in_force: None,
+            relay_connection: RelayConnectionState::unknowable(),
+            sessions: SessionSnapshot {
+                read_at: "2026-09-30T00:00:00Z".to_string(),
+                unavailable: None,
+                sessions: Vec::new(),
+            },
+            turns_in_flight: 0,
+            app_activity: Vec::new(),
+            app_activity_leased: false,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// The field is written under its new name only, and a v1 host's old
+    /// name still reads: a newer app must not lose a host it can talk to.
+    #[test]
+    fn host_available_at_is_written_new_and_read_under_either_name() {
+        let status = status_fixture();
+        let json = serde_json::to_string(&status).expect("encode");
+        assert!(
+            json.contains(r#""hostAvailableAt":"2026-09-30T00:00:00Z""#),
+            "{json}"
+        );
+        assert!(!json.contains("hostStartedAt"), "{json}");
+
+        let v1 = json.replace("hostAvailableAt", "hostStartedAt");
+        let read: Status = serde_json::from_str(&v1).expect("a v1 host's status still decodes");
+        assert_eq!(read.host_available_at, status.host_available_at);
     }
 
     #[test]

@@ -37,6 +37,10 @@ use crate::agent_host::{AgentHost, HostReachability, HostSnapshot};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodingSessionProviderProcessState {
     NotSupervised,
+    /// The host has started a supervision loop that has not reported a child
+    /// yet. Transient, like `Backoff`, and not "not running": nothing is
+    /// needed except a moment.
+    Starting,
     Backoff,
     Live {
         pid: u32,
@@ -171,6 +175,7 @@ impl CodingSessionProviderStatus {
             Child::Live { pid, .. } => CodingSessionProviderProcessState::Live { pid: *pid },
             Child::Backoff { .. } => CodingSessionProviderProcessState::Backoff,
             Child::NotSupervised => CodingSessionProviderProcessState::NotSupervised,
+            Child::Starting => CodingSessionProviderProcessState::Starting,
             // The host is running and told us it will not start a provider,
             // with its reason. That is a fact, not an unknown — and it is not
             // "not supervised" either, because a person has something specific

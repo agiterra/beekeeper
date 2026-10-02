@@ -49,8 +49,8 @@ export type AgentHostStatus = {
   socket: string;
   /**
    * The host's own account of the provider child, when it answered — a tagged
-   * union whose `state` is one of `notSupervised`, `keyUnresolved`, `backoff`,
-   * `live`, `gaveUp` or `lockHeldElsewhere`.
+   * union whose `state` is one of `notSupervised`, `starting`,
+   * `keyUnresolved`, `backoff`, `live`, `gaveUp` or `lockHeldElsewhere`.
    *
    * Deliberately not narrowed here: the honest rendering path is `message`,
    * which the host writes for a person. Switch on `state` only to choose an

@@ -32,9 +32,20 @@ use serde::{Deserialize, Serialize};
     tag = "state"
 )]
 pub enum ProviderChildState {
-    /// The host is not trying to keep a provider alive — it has not been
-    /// commissioned.
+    /// The host is not trying to keep a provider alive: somebody stopped it.
+    ///
+    /// Not "nothing is commissioned". An uncommissioned host exits with
+    /// status 1 before it binds its socket, so no client ever reads this state
+    /// from one — that machine reads as *installed, not running*.
     NotSupervised,
+    /// A supervision loop has been asked for and has not yet reported a
+    /// child.
+    ///
+    /// Published by `start` before the loop exists, so the short window
+    /// between "the host is answering" and "the provider is spawned" reads as
+    /// what it is. It used to read `notSupervised`, which told a client to go
+    /// and start something that was already starting.
+    Starting,
     /// A provider is commissioned but the host could not resolve its key, so
     /// it refuses to start one. Carries the named reason.
     KeyUnresolved {
@@ -113,10 +124,9 @@ impl ProviderChildState {
             // stopped. Whether an identity exists is a question `host.json` and
             // the record store answer, not this enum.
             Self::NotSupervised => {
-                "the host is not running a provider — if coding sessions are not set up on this \
-                 machine yet, open Beekeeper to finish setup"
-                    .to_string()
+                "the host is not running a provider — start it to run one".to_string()
             }
+            Self::Starting => "the host is starting the provider".to_string(),
             Self::KeyUnresolved { reason } => reason.message(),
             Self::Backoff { failures, next_at } => {
                 format!("the provider is restarting (attempt {failures}, next at {next_at})")
@@ -221,6 +231,7 @@ mod tests {
     fn every_state_says_something_a_person_could_act_on() {
         let states = [
             ProviderChildState::NotSupervised,
+            ProviderChildState::Starting,
             ProviderChildState::KeyUnresolved {
                 reason: crate::identity::KeyUnresolved::NotFound {
                     tried: vec!["BEEKEEPER_HOST_PRIVATE_KEY is not set".to_string()],
@@ -257,6 +268,14 @@ mod tests {
                 assert_ne!(left.message(), right.message());
             }
         }
+    }
+
+    #[test]
+    fn starting_is_its_own_state_on_the_wire() {
+        let json = serde_json::to_string(&ProviderChildState::Starting).expect("encode");
+        assert_eq!(json, r#"{"state":"starting"}"#);
+        let back: ProviderChildState = serde_json::from_str(&json).expect("decode");
+        assert_eq!(back, ProviderChildState::Starting);
     }
 
     /// "Somebody else owns this" must never read as "stopped".
