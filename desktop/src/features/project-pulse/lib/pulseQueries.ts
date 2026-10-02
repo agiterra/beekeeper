@@ -62,6 +62,13 @@ import {
 import type { PulseEvent } from "./pulseEntry.ts";
 import { isStrictMetadataContent } from "@/shared/coordination/sessionCoordinationStrictJson";
 import { sessionLeaseExpiryDelayMs } from "@/shared/coordination/sessionCoordinationFold";
+import {
+  type HeldEventReads,
+  type IncrementalSourceResult,
+  heldReadKey,
+  readBundleIncrementally,
+  sharedHeldEventReads,
+} from "@/shared/coordination/incrementalEventRead";
 
 /** Upper bound on entries fetched in one read; a truncated page is a partial read. */
 export const PULSE_ENTRY_QUERY_LIMIT = 500;
@@ -207,31 +214,41 @@ function pulseChunkReads(channels: string[]): PulseSourceRead[] {
  * Run one bundle and attribute its rows back to each read by kind — exact,
  * because the reads in a bundle name disjoint kinds. A bundle that failed is
  * every read in it not happening, so each of its scopes records the failure.
+ *
+ * With a `heldReads` store the durable reads (entries, session facts) are
+ * deltas over what the last read returned (ledger 310); the lease snapshot is
+ * always read whole, since a released lease must disappear.
  */
 async function readPulseBundle(
   reads: PulseSourceRead[],
   fetchEventsBatch: PulseBatchFetcher,
   events: RelayEvent[],
   sourceErrors: PulseDigestError[],
+  heldReads: HeldEventReads | undefined,
 ): Promise<void> {
-  let bundle: RelayEvent[];
+  let results: IncrementalSourceResult[];
   try {
-    bundle = await fetchEventsBatch(reads.map((read) => read.filter));
+    results = await readBundleIncrementally(
+      reads.map((read) => ({
+        filter: read.filter,
+        heldKey:
+          read.scope === "leases" ? null : heldReadKey("pulse", read.filter),
+      })),
+      fetchEventsBatch,
+      { store: heldReads },
+    );
   } catch (error) {
     for (const scope of new Set(reads.map((read) => read.scope))) {
       sourceErrors.push({ scope, message: errorMessage(error) });
     }
     return;
   }
-  events.push(...bundle);
-  for (const read of reads) {
-    const rows = bundle.filter((event) =>
-      read.filter.kinds.includes(event.kind),
-    ).length;
-    if (rows >= read.filter.limit) {
+  reads.forEach((read, index) => {
+    events.push(...results[index].events);
+    if (results[index].reachedLimit) {
       sourceErrors.push({ scope: read.scope, message: read.truncation });
     }
-  }
+  });
 }
 
 /**
@@ -324,6 +341,8 @@ export async function fetchProjectPulseDigest(
      * the project's channels, and the digest is reported partial.
      */
     channelsUnresolved?: boolean;
+    /** Held durable reads to re-read as deltas; absent means read in full. */
+    heldReads?: HeldEventReads;
   } = {},
 ): Promise<ProjectPulseDigest> {
   const fetchEventsBatch: PulseBatchFetcher =
@@ -370,7 +389,13 @@ export async function fetchProjectPulseDigest(
             : pulseChunkReads(channels),
         );
   for (const reads of bundles) {
-    await readPulseBundle(reads, fetchEventsBatch, events, sourceErrors);
+    await readPulseBundle(
+      reads,
+      fetchEventsBatch,
+      events,
+      sourceErrors,
+      dependencies.heldReads,
+    );
   }
 
   // `now` is read once, after the last source query returned — the digest's
@@ -484,6 +509,7 @@ export function useProjectPulseDigest(
     queryFn: () =>
       fetchProjectPulseDigest(coordinate ?? "", stableChannelIds, {
         channelsUnresolved,
+        heldReads: sharedHeldEventReads(),
       }),
   });
 

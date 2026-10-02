@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
+import { finalizeEvent, getEventHash, getPublicKey } from "nostr-tools/pure";
 
-import { resolveEventAuthorPubkey } from "./authors.ts";
+import {
+  clearSignatureCheckCache,
+  hasValidSignature,
+  resolveEventAuthorPubkey,
+  signatureCheckCacheSize,
+} from "./authors.ts";
 
 const SIGNER_SECRET = new Uint8Array(32).fill(1);
 const RELAY_SECRET = new Uint8Array(32).fill(2);
@@ -146,4 +151,73 @@ test("signature memoization checks exact bytes after nested mutations", async ()
   assert.equal(hasValidSignature(event), true);
   event.content = "tampered";
   assert.equal(hasValidSignature(event), false);
+});
+
+// Ledger 310: the signature cache is keyed by (id, sig), so fresh copies of the
+// same event from each IPC response hit it, while tampering still fails.
+test("signature cache hits across distinct copies of one event", () => {
+  clearSignatureCheckCache();
+  const event = finalizeEvent(
+    { kind: 1, created_at: 1_700_000_001, content: "cached", tags: [] },
+    SIGNER_SECRET,
+  );
+  const first = JSON.parse(JSON.stringify(event));
+  const second = JSON.parse(JSON.stringify(event));
+  assert.equal(hasValidSignature(first), true);
+  assert.equal(signatureCheckCacheSize(), 1);
+  assert.equal(hasValidSignature(second), true);
+  assert.equal(signatureCheckCacheSize(), 1);
+});
+
+test("a cached id and sig over tampered content is still rejected", () => {
+  clearSignatureCheckCache();
+  const event = finalizeEvent(
+    { kind: 1, created_at: 1_700_000_002, content: "original", tags: [] },
+    SIGNER_SECRET,
+  );
+  assert.equal(hasValidSignature(JSON.parse(JSON.stringify(event))), true);
+  const tampered = { ...JSON.parse(JSON.stringify(event)), content: "forged" };
+  assert.equal(hasValidSignature(tampered), false);
+  const retagged = {
+    ...JSON.parse(JSON.stringify(event)),
+    tags: [["p", ATTRIBUTED_USER]],
+  };
+  assert.equal(hasValidSignature(retagged), false);
+  // The untouched event still verifies after the forgeries were refused.
+  assert.equal(hasValidSignature(JSON.parse(JSON.stringify(event))), true);
+});
+
+test("a bad signature under a correct id is cached as invalid", () => {
+  clearSignatureCheckCache();
+  const event = finalizeEvent(
+    { kind: 1, created_at: 1_700_000_003, content: "bad sig", tags: [] },
+    SIGNER_SECRET,
+  );
+  const badSig = { ...JSON.parse(JSON.stringify(event)), sig: "11".repeat(64) };
+  assert.equal(hasValidSignature(badSig), false);
+  assert.equal(hasValidSignature({ ...badSig }), false);
+  assert.equal(signatureCheckCacheSize(), 1);
+  assert.equal(hasValidSignature(JSON.parse(JSON.stringify(event))), true);
+});
+
+test("signature cache is size-capped", () => {
+  clearSignatureCheckCache();
+  const pubkey = SIGNER;
+  for (let i = 0; i < 20_005; i += 1) {
+    const unsigned = {
+      pubkey,
+      created_at: 1_700_000_000 + i,
+      kind: 1,
+      tags: [],
+      content: "",
+    };
+    // Correct id, garbage signature: exercises the cache without signing.
+    hasValidSignature({
+      ...unsigned,
+      id: getEventHash(unsigned),
+      sig: "ff".repeat(64),
+    });
+  }
+  assert.equal(signatureCheckCacheSize(), 20_000);
+  clearSignatureCheckCache();
 });

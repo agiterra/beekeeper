@@ -49,6 +49,7 @@ import { resetPendingCodingSessionTurns } from "@/features/coding-sessions/lib/c
 import { resetCodingSessionIngressStores } from "@/features/coding-sessions/lib/codingSessionIngressStoreCache";
 import { resetCodingSessionHireOutcomes } from "@/features/coding-sessions/hooks/useCodingSessionHire";
 import { resetProjectPulseState } from "@/features/project-pulse";
+import { forgetHeldEventReads } from "@/shared/coordination/incrementalEventRead";
 import { resetNavHotkeyBindings } from "@/features/hotkeys/lib/navHotkeyBindingsStore";
 import { resetProjectRouteMemory } from "@/features/projects-container/lib/projectRouteMemoryStore";
 import { resetProjectOrderStore } from "@/features/projects-container/lib/projectOrderStore";
@@ -149,6 +150,9 @@ async function resetCommunityState({
   // names no relay: carrying them across a switch would paint one community's
   // claims and observed commits under another community's project.
   resetProjectPulseState();
+  // Held coordination reads (Agent Progress, Pulse deltas) are one relay's
+  // rows keyed by channel id; a switch must make the next read a full one.
+  forgetHeldEventReads();
   // Hotkey bindings and the "where you were" map are both keyed by
   // (pubkey, relay). Leaving the old community's values loaded would send
   // ⌥2 to a project id the new relay has never heard of, and would let the

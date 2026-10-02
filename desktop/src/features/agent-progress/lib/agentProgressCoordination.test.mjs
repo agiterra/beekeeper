@@ -78,3 +78,20 @@ test("truncation is attributed to the read whose budget filled", async () => {
     [{ scope: "leases", message: "lease snapshot truncated at 1000 events" }],
   );
 });
+
+// Ledger 310: with a held-read store the durable read becomes a delta, the
+// lease snapshot does not.
+test("a held store makes the second durable read a delta and keeps leases whole", async () => {
+  const batches = [];
+  const heldReads = new Map();
+  const fetchEventsBatch = async (filters) => {
+    batches.push(filters);
+    return [];
+  };
+  await fetchAgentProgressCoordination(["c1"], { fetchEventsBatch, heldReads });
+  await fetchAgentProgressCoordination(["c1"], { fetchEventsBatch, heldReads });
+  assert.equal(batches[0][0].since, undefined);
+  assert.equal(typeof batches[1][0].since, "number");
+  assert.equal(batches[1][1].since, undefined);
+  assert.equal(batches[1][0].limit, batches[0][0].limit);
+});

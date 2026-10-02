@@ -1,5 +1,5 @@
 import { normalizePubkey } from "@/shared/lib/pubkey";
-import { verifyEvent } from "nostr-tools/pure";
+import { getEventHash, verifyEvent } from "nostr-tools/pure";
 
 const PUBKEY_HEX_RE = /^[0-9a-f]{64}$/i;
 
@@ -41,6 +41,34 @@ type AuthorResolutionEvent = {
   sig: string;
 };
 
+// Cache only a cryptographic fact about exact signed bytes, never authority or
+// community state. Keyed by the (id, sig) pair, not object identity: every IPC
+// response builds fresh event objects, so an identity-keyed cache never hit and
+// periodic re-queries of ~2,000 events re-ran BigInt Schnorr math each time
+// (45-70% CPU bursts, ledger 310). The id is recomputed from the signed fields
+// on every call before the cache is consulted, so a reused id+sig over altered
+// content still fails; once the id matches, (id, sig) fixes the verdict.
+const SIGNATURE_CACHE_LIMIT = 20_000;
+const signatureChecks = new Map<string, boolean>();
+
+function rememberSignatureCheck(key: string, valid: boolean) {
+  if (signatureChecks.size >= SIGNATURE_CACHE_LIMIT) {
+    const oldest = signatureChecks.keys().next();
+    if (!oldest.done) signatureChecks.delete(oldest.value);
+  }
+  signatureChecks.set(key, valid);
+}
+
+/** Test seam: the number of cached (id, sig) verdicts. */
+export function signatureCheckCacheSize() {
+  return signatureChecks.size;
+}
+
+/** Test seam: forget every cached verdict. */
+export function clearSignatureCheckCache() {
+  signatureChecks.clear();
+}
+
 /**
  * Verify an event's signature, projecting the exact seven signed fields.
  *
@@ -53,13 +81,6 @@ type AuthorResolutionEvent = {
  * Exported because the coding-session trusted-ingress path needs the same
  * signature gate before it will accept a provider-authored event.
  */
-// Cache only a cryptographic fact about exact signed bytes, never authority or
-// community state. Weak keys release entries with their relay event objects.
-const signatureChecks = new WeakMap<
-  AuthorResolutionEvent,
-  { bytes: string; valid: boolean }
->();
-
 export function hasValidSignature(event: AuthorResolutionEvent) {
   try {
     const projected = {
@@ -71,11 +92,18 @@ export function hasValidSignature(event: AuthorResolutionEvent) {
       content: event.content,
       sig: event.sig,
     };
-    const bytes = JSON.stringify(projected);
-    const previous = signatureChecks.get(event);
-    if (previous?.bytes === bytes) return previous.valid;
+    // Cheap (one sha256): binds the cache key to these exact signed bytes.
+    if (getEventHash(projected) !== projected.id) return false;
+    const key = `${projected.id}:${projected.sig}`;
+    const previous = signatureChecks.get(key);
+    if (previous !== undefined) {
+      // Refresh recency so hot events survive eviction.
+      signatureChecks.delete(key);
+      signatureChecks.set(key, previous);
+      return previous;
+    }
     const valid = verifyEvent(projected);
-    signatureChecks.set(event, { bytes, valid });
+    rememberSignatureCheck(key, valid);
     return valid;
   } catch {
     return false;

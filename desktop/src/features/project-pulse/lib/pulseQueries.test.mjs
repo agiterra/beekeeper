@@ -928,3 +928,25 @@ test("a 44223 carrying composeRef and handover reaches the digest, not the exclu
     "a 44223 buzz-core accepts must not be excluded by this client's gate",
   );
 });
+
+// Ledger 310: with a held-read store, entries and session facts become deltas;
+// the lease snapshot is read whole every time.
+test("a held store makes durable Pulse reads deltas and keeps leases whole", async () => {
+  const batches = [];
+  const heldReads = new Map();
+  const fetchEventsBatch = async (filters) => {
+    batches.push(filters);
+    return [];
+  };
+  for (let pass = 0; pass < 2; pass += 1) {
+    await fetchProjectPulseDigest(PROJECT, ["channel-1"], {
+      fetchEventsBatch,
+      heldReads,
+    });
+  }
+  assert.ok(batches[0].every((filter) => filter.since === undefined));
+  for (const filter of batches[1]) {
+    const isLease = filter.kinds.includes(24223);
+    assert.equal(typeof filter.since, isLease ? "undefined" : "number");
+  }
+});

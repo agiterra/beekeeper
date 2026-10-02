@@ -15,6 +15,7 @@ import {
   KIND_CODING_SESSION_TRANSCRIPT,
   KIND_DELETION,
 } from "@/shared/constants/kinds";
+import { forgetHeldEventReads } from "@/shared/coordination/incrementalEventRead";
 
 /**
  * The kinds one coding session owns.
@@ -282,6 +283,9 @@ export async function deleteCodingSession({
     "Timed out deleting the session.",
     "Failed to delete the session.",
   );
+  // Coordination polls re-read as deltas, which cannot see a tombstone; make
+  // their next read a full one so the deleted session leaves them now.
+  forgetHeldEventReads();
   // Only after the relay accepted it: a deletion that was refused leaves the
   // session alive, and its trees with it.
   await disposeOfDeletedSessionWorktrees(sessionRef);

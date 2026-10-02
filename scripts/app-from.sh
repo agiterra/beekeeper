@@ -173,6 +173,16 @@ export BUZZ_SOURCE_COMMIT_COUNT="$COMMIT_COUNT"
 
 TARGET="$(rustc -vV | sed -n 's|host: ||p')"
 
+# Debug profile, optimized. The debug profile is kept for its keyring service
+# and identity (above), not for its codegen: unoptimized, every installed
+# binary — desktop, provider, host — ran several times slower than it needs to,
+# and the desktop's periodic relay re-queries showed up as multi-second
+# CPU bursts (2026-10-02, ledger 310). `opt-level` leaves `debug_assertions`
+# on, so `cfg(debug_assertions)` code paths, the keyring name among them, are
+# unchanged. Exported once so both the sidecar build and `tauri build --debug`
+# below see it; developers' own `cargo` builds are untouched.
+export CARGO_PROFILE_DEV_OPT_LEVEL=2
+
 # ── sidecars (debug profile, same eight the bundle declares) ─────────────────
 echo "==> building sidecars"
 CARGO_PACKAGE_ARGS=()

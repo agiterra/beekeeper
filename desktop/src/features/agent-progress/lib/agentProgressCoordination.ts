@@ -43,6 +43,13 @@ import {
   type CoordinationEvent,
   type SessionCoordinationAmbiguity,
 } from "@/shared/coordination/sessionCoordinationTypes";
+import {
+  type HeldEventReads,
+  type IncrementalSourceResult,
+  heldReadKey,
+  readBundleIncrementally,
+  sharedHeldEventReads,
+} from "@/shared/coordination/incrementalEventRead";
 import { hasValidSignature } from "@/shared/lib/authors";
 
 /** Relay hard cap on the aggregate explicit `#h` values in one request. */
@@ -183,6 +190,8 @@ export async function fetchAgentProgressCoordination(
   dependencies: {
     fetchEventsBatch?: AgentProgressBatchFetcher;
     channelsUnresolved?: boolean;
+    /** Held durable reads to re-read as deltas; absent means read in full. */
+    heldReads?: HeldEventReads;
   } = {},
 ): Promise<AgentProgressCoordinationRead> {
   const fetchEventsBatch: AgentProgressBatchFetcher =
@@ -207,26 +216,36 @@ export async function fetchAgentProgressCoordination(
   // keys that must not share the durable limit or be paginated as history.
   // Rows are attributed back by kind, exact because the kind sets are
   // disjoint; a bundle that failed is both reads not happening.
+  //
+  // With a `heldReads` store the durable read is a delta over what the last
+  // read returned (ledger 310); the lease snapshot is always read whole.
   for (const channels of channelChunks(channelIds)) {
     const reads = agentProgressChunkReads(channels);
-    let bundle: RelayEvent[];
+    let results: IncrementalSourceResult[];
     try {
-      bundle = await fetchEventsBatch(reads.map((read) => read.filter));
+      results = await readBundleIncrementally(
+        reads.map((read) => ({
+          filter: read.filter,
+          heldKey:
+            read.scope === "leases"
+              ? null
+              : heldReadKey("agent-progress", read.filter),
+        })),
+        fetchEventsBatch,
+        { store: dependencies.heldReads },
+      );
     } catch (error) {
       for (const read of reads) {
         errors.push({ scope: read.scope, message: errorMessage(error) });
       }
       continue;
     }
-    events.push(...bundle);
-    for (const read of reads) {
-      const rows = bundle.filter((event) =>
-        read.filter.kinds.includes(event.kind),
-      ).length;
-      if (rows >= read.filter.limit) {
+    reads.forEach((read, index) => {
+      events.push(...results[index].events);
+      if (results[index].reachedLimit) {
         errors.push({ scope: read.scope, message: read.truncation });
       }
-    }
+    });
   }
 
   // `now` is read once, after the last source query returned — the instant
@@ -351,7 +370,10 @@ export function useAgentProgressCoordination(
       identity.data?.pubkey,
     ),
     queryFn: () =>
-      fetchAgentProgressCoordination(stableChannelIds, { channelsUnresolved }),
+      fetchAgentProgressCoordination(stableChannelIds, {
+        channelsUnresolved,
+        heldReads: sharedHeldEventReads(),
+      }),
   });
 
   React.useEffect(() => {
