@@ -27,6 +27,7 @@ pub mod pack;
 pub mod packs;
 pub mod packs_cli;
 pub mod patches;
+pub mod pins;
 pub mod plans_example;
 pub mod pr;
 pub mod project_agents;

@@ -20,8 +20,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use buzz_core::agents_repo_draft::{
-    archive_counterpart, validate_draft_path, AgentsRepoDraftOp, AgentsRepoDraftOpValue, DraftBase,
-    DraftPathClass, MAX_AGENTS_REPO_DRAFT_TEXT_BYTES,
+    archive_counterpart, document_asset_mime, validate_draft_path, validate_move_destination,
+    AgentsRepoDraftOp, AgentsRepoDraftOpValue, DraftBase, DraftPathClass, DOCS_ROOT,
+    MAX_AGENTS_REPO_DRAFT_TEXT_BYTES,
 };
 use buzz_core::agents_repo_draft_fold::{
     fold_agents_repo_drafts, AgentsRepoDraftDigest, DraftFoldEvent, DraftRow,
@@ -486,8 +487,20 @@ async fn cmd_draft_put(
     message: Option<String>,
     prev: Option<&str>,
 ) -> Result<(), CliError> {
-    validate_draft_path(path).map_err(CliError::Usage)?;
     let text = read_text_arg(file)?;
+    cmd_draft_put_text(client, project, path, text, message, prev).await
+}
+
+/// The body of [`cmd_draft_put`] with the text already in hand.
+async fn cmd_draft_put_text(
+    client: &BuzzClient,
+    project: Option<&str>,
+    path: &str,
+    text: String,
+    message: Option<String>,
+    prev: Option<&str>,
+) -> Result<(), CliError> {
+    validate_draft_path(path).map_err(CliError::Usage)?;
     let mut snap = snapshot(client, project).await?;
     let prev = resolve_prev(&snap, path, prev)?;
     let tip = read_tip(&snap, client, path).await?;
@@ -1250,6 +1263,289 @@ pub async fn dispatch_plans(
             .await
         }
     }
+}
+
+/// `bee docs` — the document artifacts tree, `docs/<folder>/…`.
+pub async fn dispatch_docs(
+    cmd: crate::DocsCmd,
+    client: &BuzzClient,
+    _format: &crate::OutputFormat,
+) -> Result<(), CliError> {
+    use crate::DocsCmd;
+    match cmd {
+        DocsCmd::List { project } => {
+            let snap = snapshot(client, project.as_deref()).await?;
+            let listing = client
+                .get_git_read(
+                    &snap.repo_owner,
+                    &snap.repo_id,
+                    &format!("tree/refs/heads/main/{DOCS_ROOT}"),
+                )
+                .await;
+            let mut docs: Vec<Value> = Vec::new();
+            if let Ok(listing) = listing {
+                let tree: Value = serde_json::from_slice(&listing.bytes).unwrap_or(Value::Null);
+                for entry in tree["entries"].as_array().into_iter().flatten() {
+                    let path = entry["path"].as_str().unwrap_or_default();
+                    if entry["kind"] != "blob" {
+                        continue;
+                    }
+                    // What the path *is* comes from the one grammar, so a file
+                    // the tree holds but the layout refuses is listed as
+                    // `other` rather than quietly shown as a document.
+                    let class = match validate_draft_path(path) {
+                        Ok(class) => wire_path_class(class),
+                        Err(_) => "other",
+                    };
+                    let mut row = json!({ "path": path, "class": class, "size": entry["size"] });
+                    if let Some(head) = snap.head(path) {
+                        row["draft"] =
+                            json!({ "id": head.id, "author": head.author, "op": head.op });
+                    }
+                    docs.push(row);
+                }
+            }
+            for entry in snap
+                .digest
+                .paths
+                .iter()
+                .filter(|e| e.path.starts_with(&format!("{DOCS_ROOT}/")))
+            {
+                if !docs.iter().any(|d| d["path"] == entry.path) {
+                    docs.push(json!({
+                        "path": entry.path,
+                        "class": validate_draft_path(&entry.path).map(wire_path_class).unwrap_or("other"),
+                        "size": null,
+                        "draft": { "id": entry.head.id, "author": entry.head.author, "op": entry.head.op },
+                        "not_on_main": true,
+                    }));
+                }
+            }
+            let mut out = json!({ "project": snap.coordinate, "documents": docs });
+            honesty(&snap, &mut out);
+            println!("{out}");
+            Ok(())
+        }
+        DocsCmd::Show {
+            project,
+            path,
+            draft,
+        } => cmd_show(client, project.as_deref(), &doc_path(&path)?, draft).await,
+        DocsCmd::Edit {
+            project,
+            path,
+            file,
+            message,
+            prev,
+        } => {
+            cmd_draft_put(
+                client,
+                project.as_deref(),
+                &doc_path(&path)?,
+                file.as_deref(),
+                message,
+                prev.as_deref(),
+            )
+            .await
+        }
+        DocsCmd::Mv {
+            project,
+            path,
+            to,
+            message,
+            prev,
+        } => {
+            cmd_draft_move_to(
+                client,
+                project.as_deref(),
+                &doc_path(&path)?,
+                &doc_path(&to)?,
+                message,
+                prev.as_deref(),
+            )
+            .await
+        }
+        DocsCmd::Rm {
+            project,
+            path,
+            message,
+            prev,
+        } => {
+            cmd_draft_delete(
+                client,
+                project.as_deref(),
+                &doc_path(&path)?,
+                message,
+                prev.as_deref(),
+            )
+            .await
+        }
+        DocsCmd::NewFolder {
+            project,
+            folder,
+            message,
+        } => {
+            let folder = folder.trim_end_matches('/');
+            let folder = if folder.starts_with(&format!("{DOCS_ROOT}/")) || folder == DOCS_ROOT {
+                folder.to_owned()
+            } else {
+                format!("{DOCS_ROOT}/{folder}")
+            };
+            let path = format!("{folder}/.gitkeep");
+            // An empty folder is its keep, and the keep is an empty file: the
+            // text is "" on purpose, not a placeholder anyone should read.
+            cmd_draft_put_text(
+                client,
+                project.as_deref(),
+                &path,
+                String::new(),
+                message,
+                None,
+            )
+            .await
+        }
+        DocsCmd::Image {
+            project,
+            path,
+            file,
+            message,
+            prev,
+        } => {
+            cmd_draft_asset(
+                client,
+                project.as_deref(),
+                &doc_path(&path)?,
+                &file,
+                message,
+                prev.as_deref(),
+            )
+            .await
+        }
+    }
+}
+
+/// The wire spelling of a path class, as the Files tab and the folds use it.
+fn wire_path_class(class: DraftPathClass) -> &'static str {
+    match class {
+        DraftPathClass::RootFile => "root-file",
+        DraftPathClass::Role => "role",
+        DraftPathClass::ArchivedRole => "archived-role",
+        DraftPathClass::RoleSkill => "role-skill",
+        DraftPathClass::SharedSkill => "shared-skill",
+        DraftPathClass::Plan => "plan",
+        DraftPathClass::ArchivedPlan => "archived-plan",
+        DraftPathClass::Document => "document",
+        DraftPathClass::DocumentAsset => "document-asset",
+        DraftPathClass::DocumentFolder => "document-folder",
+    }
+}
+
+/// A documents-tree path from one written with or without the `docs/` prefix.
+fn doc_path(path: &str) -> Result<String, CliError> {
+    let full = if path.starts_with(&format!("{DOCS_ROOT}/")) {
+        path.to_owned()
+    } else {
+        format!("{DOCS_ROOT}/{path}")
+    };
+    match validate_draft_path(&full) {
+        Ok(class) if class.is_document() => Ok(full),
+        Ok(_) => Err(CliError::Usage(format!(
+            "{full} is not in the documents tree"
+        ))),
+        Err(error) => Err(CliError::Usage(error)),
+    }
+}
+
+/// Draft a move to an explicit destination — a document rename or a move
+/// between folders, which `cmd_draft_move`'s archive counterpart cannot name.
+async fn cmd_draft_move_to(
+    client: &BuzzClient,
+    project: Option<&str>,
+    path: &str,
+    to: &str,
+    message: Option<String>,
+    prev: Option<&str>,
+) -> Result<(), CliError> {
+    validate_move_destination(path, to).map_err(CliError::Usage)?;
+    let mut snap = snapshot(client, project).await?;
+    let prev = resolve_prev(&snap, path, prev)?;
+    let Some(tip) = read_tip(&snap, client, path).await? else {
+        return Err(CliError::NotFound(format!(
+            "{path} is not on main; only a committed file can be moved"
+        )));
+    };
+    let op = AgentsRepoDraftOp {
+        repo: snap.repo_coordinate().to_owned(),
+        message,
+        value: AgentsRepoDraftOpValue::FileMove {
+            path: path.to_owned(),
+            to: to.to_owned(),
+            base: DraftBase {
+                base: Some(tip.blob),
+                base_commit: Some(tip.commit).filter(|c| !c.is_empty()),
+                prev,
+            },
+        },
+    };
+    let out = publish(&mut snap, client, &op).await?;
+    println!("{out}");
+    Ok(())
+}
+
+/// Upload an image and draft it at `path`, so the committer writes the bytes
+/// into the tree beside the document that embeds it.
+async fn cmd_draft_asset(
+    client: &BuzzClient,
+    project: Option<&str>,
+    path: &str,
+    file: &str,
+    message: Option<String>,
+    prev: Option<&str>,
+) -> Result<(), CliError> {
+    // The path decides the type, so this refuses before the upload rather
+    // than after: an `.svg` or a document path cannot carry an asset, and
+    // uploading first would leave a blob nothing names.
+    let expected = document_asset_mime(path).map_err(CliError::Usage)?;
+    let descriptor = client.upload_file(file).await?;
+    if descriptor.mime_type != expected {
+        return Err(CliError::Usage(format!(
+            "{file} uploaded as {} but {path} names {expected}; rename the path to match the \
+             image, or convert the image",
+            descriptor.mime_type
+        )));
+    }
+    let mut snap = snapshot(client, project).await?;
+    let prev = resolve_prev(&snap, path, prev)?;
+    let tip = read_tip(&snap, client, path).await?;
+    let op = AgentsRepoDraftOp {
+        repo: snap.repo_coordinate().to_owned(),
+        message,
+        value: AgentsRepoDraftOpValue::AssetPut {
+            path: path.to_owned(),
+            sha256: descriptor.sha256.clone(),
+            mime: descriptor.mime_type.clone(),
+            size: descriptor.size,
+            base: DraftBase {
+                base: tip
+                    .as_ref()
+                    .map(|t| t.blob.clone())
+                    .filter(|b| !b.is_empty()),
+                base_commit: tip
+                    .as_ref()
+                    .map(|t| t.commit.clone())
+                    .filter(|c| !c.is_empty()),
+                prev,
+            },
+        },
+    };
+    let mut out = publish(&mut snap, client, &op).await?;
+    if let Some(object) = out.as_object_mut() {
+        object.insert("sha256".into(), json!(descriptor.sha256));
+        object.insert("url".into(), json!(descriptor.url));
+        object.insert("size".into(), json!(descriptor.size));
+    }
+    println!("{out}");
+    Ok(())
 }
 
 /// `plans/<name>.md` from a bare name, a `name.md`, or a full path.

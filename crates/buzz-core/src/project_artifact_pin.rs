@@ -256,6 +256,24 @@ pub fn validate_pin_target(target: &str, kind: PinTargetKind) -> Result<(), Stri
     }
 }
 
+/// What `target` is, inferred from its own shape.
+///
+/// A caller never has to label a target: a file is a path the layout admits
+/// and a folder is a prefix of the documents tree, and nothing is both — so a
+/// mislabelled pin is impossible rather than merely refused.
+pub fn pin_target_kind_of(target: &str) -> Result<PinTargetKind, String> {
+    let as_file = validate_pin_target(target, PinTargetKind::File);
+    if as_file.is_ok() {
+        return Ok(PinTargetKind::File);
+    }
+    if validate_pin_target(target, PinTargetKind::Folder).is_ok() {
+        return Ok(PinTargetKind::Folder);
+    }
+    // The file reading is the more specific refusal of the two — it names the
+    // keep case and the grammar — so it is what the caller is told.
+    Err(as_file.unwrap_err())
+}
+
 /// Validate a folder prefix of the documents tree.
 fn validate_pin_folder(target: &str) -> Result<(), String> {
     if target.is_empty() || target.len() > 512 {
@@ -548,6 +566,28 @@ mod tests {
         assert!(error.contains("pin the folder"), "{error}");
         assert!(validate_pin_target("docs/x.txt", PinTargetKind::File).is_err());
         assert!(validate_pin_target("docs/mockups", PinTargetKind::File).is_err());
+    }
+
+    #[test]
+    fn a_targets_kind_is_inferred_from_its_shape() {
+        assert_eq!(
+            pin_target_kind_of("docs/notes/a.md").expect("a document is a file"),
+            PinTargetKind::File
+        );
+        assert_eq!(
+            pin_target_kind_of("plans/CURRENT_STATE.md").expect("a plan is a file"),
+            PinTargetKind::File
+        );
+        assert_eq!(
+            pin_target_kind_of("docs/mockups").expect("a prefix is a folder"),
+            PinTargetKind::Folder
+        );
+        // Nothing is both, so a mislabelled pin is impossible rather than
+        // merely refused.
+        let error = pin_target_kind_of("docs/mockups/.gitkeep").expect_err("a keep is neither");
+        assert!(error.contains("pin the folder"), "{error}");
+        assert!(pin_target_kind_of("plans").is_err());
+        assert!(pin_target_kind_of("docs/x.txt").is_err());
     }
 
     #[test]

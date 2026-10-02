@@ -383,6 +383,19 @@ enum Cmd {
         long_about = "A project's plans: `plans/<name>.md` in its agents repository, each a beekeeper-plan/v1 file.\n\nWriting a new one? Start with `bee plans example`: it prints a complete, valid, task-neutral plan (offline, no key) with every value to replace marked SUBSTITUTE. Draft yours with `bee plans edit`, check it with `bee sessions work validate`, and land it with `bee agents-repo commit`."
     )]
     Plans(PlansCmd),
+    /// A project's documents: `docs/<folder>/…` in its agents repository
+    #[command(
+        subcommand,
+        long_about = "A project's document artifacts: `docs/<folder>/…` in its agents repository \u{2014} Markdown and HTML, with folders, and the images they embed.\n\nThis is where writing that is not a `beekeeper-plan/v1` work plan lives: notes, a mockup, a diagram. Nothing is schema-checked, so a document may be anything; `bee plans` is the other tree and keeps its parser.\n\nA document is drafted, not committed: `bee docs edit` publishes the whole new text for everyone in the project to read, and `bee agents-repo commit` lands it on `main`."
+    )]
+    Docs(DocsCmd),
+    /// Pin a document, plan or folder to every project member's sidebar
+    /// (NIP-AR, kind 44251)
+    #[command(
+        subcommand,
+        long_about = "Which of a project's artifacts show in every member's sidebar, and in what order (NIP-AR, kind 44251).\n\nA pin is shared: pinning is a fact about the project, not a private arrangement, and every member sees it. A pinned target that no longer exists is reported as missing rather than hidden, so whoever pinned it can see what happened."
+    )]
+    Pins(PinsCmd),
     /// Run raw Nostr filters against the relay — the debugging verb
     #[command(subcommand)]
     Events(EventsCmd),
@@ -4995,6 +5008,156 @@ pub enum AgentsRepoDraftCmd {
     },
 }
 
+/// `bee docs` — a project's document artifacts, `docs/<folder>/…` in the
+/// agents repository. The one tree with folders, and the one with no schema.
+#[derive(Subcommand)]
+pub enum DocsCmd {
+    /// List the documents, folders and images on main, and drafts of new ones
+    List {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+    },
+    /// Print a document as main has it, or as its open draft has it
+    Show {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The document's path (`docs/notes/a.md`, or `notes/a.md`)
+        path: String,
+        /// The open draft's text rather than main's
+        #[arg(long)]
+        draft: bool,
+    },
+    /// Draft the whole new text of a document (from --file or stdin)
+    Edit {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The document's path (`docs/notes/a.md`, or `notes/a.md`)
+        path: String,
+        /// Read the text from this file instead of stdin
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+        /// One line saying why
+        #[arg(long)]
+        message: Option<String>,
+        /// The draft head you edited from (id or 8+ prefix)
+        #[arg(long)]
+        prev: Option<String>,
+    },
+    /// Draft a move: rename a document or move it between folders
+    Mv {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The document, image or folder keep to move
+        path: String,
+        /// Where it goes — any path of the same class
+        to: String,
+        /// One line saying why
+        #[arg(long)]
+        message: Option<String>,
+        /// The draft head you moved from (id or 8+ prefix)
+        #[arg(long)]
+        prev: Option<String>,
+    },
+    /// Draft a delete
+    Rm {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The document, image or folder keep to delete
+        path: String,
+        /// One line saying why
+        #[arg(long)]
+        message: Option<String>,
+        /// The draft head you deleted from (id or 8+ prefix)
+        #[arg(long)]
+        prev: Option<String>,
+    },
+    /// Draft an empty folder, as its `.gitkeep`
+    #[command(
+        name = "new-folder",
+        after_help = "Git has no empty directories, so a folder exists as the keep that holds it open. This drafts `docs/<folder>/.gitkeep`; a commit lands it and the folder survives."
+    )]
+    NewFolder {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The folder (`docs/mockups`, or `mockups`)
+        folder: String,
+        /// One line saying why
+        #[arg(long)]
+        message: Option<String>,
+    },
+    /// Upload an image and draft it at an asset path, so it is committed
+    /// beside the document that embeds it
+    #[command(
+        after_help = "A draft op carries UTF-8 text only, so the bytes go to the relay's media store and the draft names the blob; the committer fetches it and writes it into the tree. The MIME the store records must be the one the path's extension names, and an `.svg` cannot be uploaded at all \u{2014} the store refuses it as active web content, so commit an SVG with git."
+    )]
+    Image {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Where it goes (`docs/mockups/img/shot.png`)
+        path: String,
+        /// The image file to upload
+        #[arg(long)]
+        file: String,
+        /// One line saying why
+        #[arg(long)]
+        message: Option<String>,
+        /// The draft head you replaced from (id or 8+ prefix)
+        #[arg(long)]
+        prev: Option<String>,
+    },
+}
+
+/// `bee pins` — which artifacts show in every member's sidebar (NIP-AR).
+#[derive(Subcommand)]
+pub enum PinsCmd {
+    /// List the project's pins, in sidebar order
+    List {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Include targets that were pinned once and are not now
+        #[arg(long)]
+        all: bool,
+    },
+    /// Pin a document, plan or folder to every member's sidebar
+    Pin {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// A file path (`docs/notes/a.md`) or a folder (`docs/mockups`)
+        target: String,
+        /// Place it at this position in the order (0 is first); appends by default
+        #[arg(long)]
+        index: Option<usize>,
+    },
+    /// Unpin a target, leaving its row with `pinned: false`
+    Unpin {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The pinned target
+        target: String,
+    },
+    /// Move a pinned target to a position in the order
+    Move {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// The pinned target
+        target: String,
+        /// Its new position among the pinned rows (0 is first)
+        #[arg(long)]
+        index: usize,
+    },
+}
+
 /// `bee plans` — sugar over `plans/<name>.md` in the agents repository.
 #[derive(Subcommand)]
 pub enum PlansCmd {
@@ -5619,6 +5782,8 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Todos(sub) => commands::todos::dispatch(sub, &client, &cli.format).await,
         Cmd::AgentsRepo(sub) => commands::agents_repo::dispatch(sub, &client, &cli.format).await,
         Cmd::Plans(sub) => commands::agents_repo::dispatch_plans(sub, &client, &cli.format).await,
+        Cmd::Docs(sub) => commands::agents_repo::dispatch_docs(sub, &client, &cli.format).await,
+        Cmd::Pins(sub) => commands::pins::dispatch(sub, &client, &cli.format).await,
         Cmd::Events(sub) => commands::events::dispatch(sub, &client, &cli.format).await,
         Cmd::Packs(sub) => commands::packs_cli::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
@@ -6274,6 +6439,7 @@ mod tests {
             "channels",
             "ci",
             "dms",
+            "docs",
             "emoji",
             "events",
             "feed",
@@ -6288,6 +6454,7 @@ mod tests {
             "pack",
             "packs",
             "patches",
+            "pins",
             "plans",
             "pr",
             "projects",
@@ -6690,6 +6857,37 @@ mod tests {
             .collect();
         names.sort();
         assert_eq!(names, vec!["edit", "example", "list", "show"]);
+    }
+
+    /// The two artifact groups a seat types by name. Pinned for the same
+    /// reason `plans` is: a renamed verb silently breaks every briefing and
+    /// every script that already names it.
+    #[test]
+    fn docs_and_pins_subcommand_names_are_stable() {
+        let cmd = Cli::command();
+        let names_of = |group: &str| -> Vec<String> {
+            let found = Cli::command()
+                .get_subcommands()
+                .find(|g| g.get_name() == group)
+                .map(|g| {
+                    let mut names: Vec<String> = g
+                        .get_subcommands()
+                        .map(|sub| sub.get_name().to_string())
+                        .filter(|name| name != "help")
+                        .collect();
+                    names.sort();
+                    names
+                });
+            found.unwrap_or_else(|| panic!("{group} group"))
+        };
+        assert_eq!(
+            names_of("docs"),
+            vec!["edit", "image", "list", "mv", "new-folder", "rm", "show"]
+        );
+        assert_eq!(names_of("pins"), vec!["list", "move", "pin", "unpin"]);
+        // `plans` keeps its own four: the documents tree is a second tree, not
+        // a replacement, and a plan's path is cited by every adopted planRef.
+        assert!(cmd.get_subcommands().any(|g| g.get_name() == "plans"));
     }
 
     /// `bee plans example` answers with no identity and no relay: it is
