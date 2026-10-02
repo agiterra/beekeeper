@@ -137,10 +137,11 @@ use buzz_sdk::builders::{
     build_coding_session_provider_catalog, build_coding_session_transcript_item,
     build_coding_session_turn_receipt, coding_session_turn_receipt_semantic_key,
 };
+#[cfg(test)]
+use buzz_sdk::coding_session::coding_session_provider_catalog_semantic_key;
 use buzz_sdk::coding_session::{
     coding_session_lifecycle_receipt_semantic_key, coding_session_metadata_semantic_key,
-    coding_session_provider_catalog_semantic_key, coding_session_transcript_semantic_key,
-    MAX_TRANSCRIPT_CONTENT_BYTES,
+    coding_session_transcript_semantic_key, MAX_TRANSCRIPT_CONTENT_BYTES,
 };
 use buzz_sdk::coding_session_observation::build_coding_session_observation;
 
@@ -459,6 +460,9 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     };
 
     let mut provider = Provider::new(config)?;
+    provider
+        .outbox
+        .set_background_interval(Duration::from_secs(3));
 
     let pubkey_hex = provider.config.pubkey_hex();
     tracing::info!(
@@ -493,6 +497,23 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
         );
     }
 
+    // Membership must be known before recovery queues any channel-scoped fact.
+    // A failed discovery aborts startup rather than guessing that old membership
+    // still grants publication authority.
+    let channels = relay.discover_channels().await?;
+    for channel_id in channels.keys().copied() {
+        // `Some(now)` — not `None` — so a channel with no consumed-command
+        // watermark replays the last `REPLAY_GRACE_SECS` instead of starting
+        // at the startup watermark, which would skip any command that arrived
+        // while the provider was down.
+        provider
+            .subscribe(&mut relay, channel_id, Some(now_secs()))
+            .await?;
+    }
+    relay.subscribe_membership_notifications().await?;
+    provider.membership_known = true;
+    provider.purge_outbox_for_left_channels()?;
+
     // Repair what the last exit left behind — and, because the relay reader
     // and its witnessed identity are now in hand, do it in the order §3.2
     // requires: reconcile accepted deletions and re-derive the handover fence
@@ -517,17 +538,6 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     provider.start_action_step_listener();
     let mut action_step_events = provider.take_action_step_events();
 
-    let channels = relay.discover_channels().await?;
-    for channel_id in channels.keys().copied() {
-        // `Some(now)` — not `None` — so a channel with no consumed-command
-        // watermark replays the last `REPLAY_GRACE_SECS` instead of starting
-        // at the startup watermark, which would skip any command that arrived
-        // while the provider was down.
-        provider
-            .subscribe(&mut relay, channel_id, Some(now_secs()))
-            .await?;
-    }
-    relay.subscribe_membership_notifications().await?;
     provider.start_project_deletion_listener();
     let mut project_deletion_events = provider.project_deletion_events.take();
     provider.refresh_catalog(true)?;
@@ -741,12 +751,11 @@ fn prepare_terminal_stop<T>(
 
 /// What the provider last said about one session's generation.
 ///
-/// The content is kept to suppress a republication that would say exactly the
-/// same thing; the status is kept so a correction that arrives out of band — a
+/// Accepted content is persisted by the outbox; this status lets a correction
+/// that arrives out of band — a
 /// worktree observation landing after the publication it belongs to — can
 /// restate the lifecycle it found rather than guess a new one.
 struct PublishedMetadata {
-    content: String,
     status: SessionStatus,
 }
 
@@ -910,6 +919,8 @@ pub struct Provider {
     /// umbrella until its next create or resume.
     policy_turn_budgets: HashMap<String, u32>,
     subscribed: BTreeSet<Uuid>,
+    /// Whether channel discovery has established the current membership set.
+    membership_known: bool,
     projects_fingerprint: Option<(SystemTime, u64)>,
     /// Latest signed lease per exact target not yet handed to the relay task.
     pending_leases: HashMap<String, lease::PendingLease>,
@@ -1203,6 +1214,7 @@ impl Provider {
             context_refresh: HashMap::new(),
             policy_turn_budgets: HashMap::new(),
             subscribed: BTreeSet::new(),
+            membership_known: false,
             projects_fingerprint: None,
             pending_leases: HashMap::new(),
             established_leases: HashSet::new(),
@@ -1469,7 +1481,12 @@ impl Provider {
             self.state.update_session(&record.session_id, |record| {
                 record.open_turn = None;
             })?;
-            self.publish_metadata(record.channel_id, &target, SessionStatus::Disconnected)?;
+            self.publish_metadata_at_priority(
+                record.channel_id,
+                &target,
+                SessionStatus::Disconnected,
+                Priority::Normal,
+            )?;
         }
         // Last, and the reason the file exists: this is the moment every open
         // seated generation has lost its process and its one-shot custody, and
@@ -1530,14 +1547,12 @@ impl Provider {
             }
             let event = build_coding_session_provider_catalog(channel_id, revision, &content)?
                 .sign_with_keys(&self.config.keys)?;
-            self.outbox.enqueue(
+            // Local replacement is per channel, while the signed cspc-key
+            // still names the exact revision and bytes for consumer validation.
+            self.outbox.enqueue_latest(
                 KIND_CODING_SESSION_PROVIDER_CATALOG,
-                &coding_session_provider_catalog_semantic_key(
-                    &channel_id.to_string(),
-                    revision,
-                    &content,
-                ),
-                Priority::High,
+                &format!("catalog:{channel_id}"),
+                Priority::Normal,
                 event,
             )?;
             advertised.push(channel_id);
@@ -1659,6 +1674,8 @@ impl Provider {
                 // The notification is addressed to this provider alone
                 // (`#p` is its own key): every execution it runs in that
                 // channel has lost the authority it runs under.
+                self.subscribed.remove(&channel_id);
+                self.purge_outbox_for_left_channels()?;
                 let affected: Vec<String> = self
                     .state
                     .sessions()
@@ -1671,7 +1688,6 @@ impl Provider {
                         "this provider was removed from the session's channel",
                     )?;
                 }
-                self.subscribed.remove(&channel_id);
                 relay.unsubscribe_channel(channel_id).await?;
             }
             _ => {
@@ -8432,7 +8448,7 @@ impl Provider {
             self.outbox.enqueue(
                 KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
                 &disposition.semantic_key,
-                Priority::High,
+                Priority::Live,
                 disposition.event,
             )?;
             self.state.finish_terminal_disposition(&command_id)?;
@@ -8470,7 +8486,7 @@ impl Provider {
         self.outbox.enqueue(
             KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
             outbox_key.unwrap_or(&semantic_key),
-            Priority::High,
+            Priority::Live,
             event,
         )?;
         Ok(())
@@ -9684,6 +9700,19 @@ impl Provider {
         target: &CodingSessionTarget,
         status: SessionStatus,
     ) -> anyhow::Result<()> {
+        self.publish_metadata_at_priority(channel_id, target, status, Priority::High)
+    }
+
+    fn publish_metadata_at_priority(
+        &mut self,
+        channel_id: Uuid,
+        target: &CodingSessionTarget,
+        status: SessionStatus,
+        priority: Priority,
+    ) -> anyhow::Result<()> {
+        if self.membership_known && !self.subscribed.contains(&channel_id) {
+            return Ok(());
+        }
         // §3.2, and the whole of root's continuity finding: a retired umbrella
         // publishes nothing, ever again. This is the single choke point every
         // metadata publish passes through, so the guard lives here rather than
@@ -9725,25 +9754,26 @@ impl Provider {
         }
         let metadata = self.metadata_for(target, status);
         let content = serde_json::to_string(&metadata)?;
+        let semantic_key = coding_session_metadata_semantic_key(target);
+        self.last_metadata
+            .insert(target.session_id.clone(), PublishedMetadata { status });
+        // Pending truth takes precedence: if idle was accepted but running is
+        // queued, a new idle must replace running, not be skipped as unchanged.
         if self
-            .last_metadata
-            .get(&target.session_id)
-            .is_some_and(|published| published.content == content)
+            .outbox
+            .pending_content(KIND_CODING_SESSION_METADATA, &semantic_key)
+            .or_else(|| {
+                self.outbox
+                    .accepted_content(KIND_CODING_SESSION_METADATA, &semantic_key)
+            })
+            == Some(content.as_str())
         {
             return Ok(());
         }
         let event = build_coding_session_metadata(channel_id, target, &content)?
             .sign_with_keys(&self.config.keys)?;
-        self.outbox.enqueue_latest(
-            KIND_CODING_SESSION_METADATA,
-            &coding_session_metadata_semantic_key(target),
-            Priority::High,
-            event,
-        )?;
-        self.last_metadata.insert(
-            target.session_id.clone(),
-            PublishedMetadata { content, status },
-        );
+        self.outbox
+            .enqueue_latest(KIND_CODING_SESSION_METADATA, &semantic_key, priority, event)?;
         Ok(())
     }
 
@@ -9808,6 +9838,15 @@ impl Provider {
         let event = build_coding_session_transcript_item(channel_id, target, event_seq, &content)?
             .sign_with_keys(&self.config.keys)?;
         let event_id = event.id.to_hex();
+        let priority = if self
+            .sessions
+            .live_session_ids()
+            .any(|id| id == target.session_id)
+        {
+            Priority::Live
+        } else {
+            priority
+        };
         self.outbox.enqueue(
             KIND_CODING_SESSION_TRANSCRIPT,
             &coding_session_transcript_semantic_key(target, event_seq),
@@ -10885,6 +10924,19 @@ impl Provider {
         &mut self,
         publisher: &RelayEventPublisher,
     ) -> anyhow::Result<usize> {
+        if self.membership_known {
+            let subscribed = &self.subscribed;
+            self.pending_leases.retain(|_, publication| {
+                publication.event.tags.iter().any(|tag| {
+                    let parts = tag.as_slice();
+                    parts.first().is_some_and(|name| name == "h")
+                        && parts
+                            .get(1)
+                            .and_then(|value| Uuid::parse_str(value).ok())
+                            .is_some_and(|channel| subscribed.contains(&channel))
+                })
+            });
+        }
         let mut semantic_keys: Vec<String> = self.pending_leases.keys().cloned().collect();
         semantic_keys.sort_unstable();
         let mut published = 0usize;
@@ -10922,13 +10974,41 @@ impl Provider {
     pub async fn flush<S: EventSink>(&mut self, sink: &S) -> anyhow::Result<usize> {
         self.flush_terminal_dispositions()?;
         self.purge_outbox_for_retired()?;
+        self.purge_outbox_for_left_channels()?;
         Ok(self.outbox.flush(sink).await?)
     }
 
     async fn flush_one<S: EventSink>(&mut self, sink: &S) -> anyhow::Result<usize> {
         self.flush_terminal_dispositions()?;
         self.purge_outbox_for_retired()?;
+        self.purge_outbox_for_left_channels()?;
         Ok(self.outbox.flush_one(sink).await?)
+    }
+
+    /// Remove publications whose channel membership was explicitly withdrawn.
+    fn purge_outbox_for_left_channels(&mut self) -> anyhow::Result<()> {
+        if !self.membership_known {
+            return Ok(());
+        }
+        let mut catalog = self.state.catalog().clone();
+        catalog
+            .advertised_channels
+            .retain(|channel| self.subscribed.contains(channel));
+        if catalog.advertised_channels != self.state.catalog().advertised_channels {
+            self.state.set_catalog(catalog)?;
+        }
+        let subscribed = &self.subscribed;
+        self.outbox.discard(|entry| {
+            entry.event.tags.iter().any(|tag| {
+                let parts = tag.as_slice();
+                parts.first().is_some_and(|name| name == "h")
+                    && parts
+                        .get(1)
+                        .and_then(|value| Uuid::parse_str(value).ok())
+                        .is_some_and(|channel| !subscribed.contains(&channel))
+            })
+        })?;
+        Ok(())
     }
 
     /// Drop every queued fact that would advertise a retired execution.
@@ -12147,6 +12227,10 @@ mod tests {
     mod observed_gate_row_tests;
     #[path = "operation_fence_tests.rs"]
     mod operation_fence_tests;
+    #[path = "relay_restart_wire_tests.rs"]
+    mod relay_restart_wire_tests;
+    #[path = "relay_throttling_tests.rs"]
+    mod relay_throttling_tests;
     #[path = "session_policy_budget_tests.rs"]
     mod session_policy_budget_tests;
     #[path = "team_wake_disposition_tests.rs"]

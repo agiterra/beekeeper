@@ -26,11 +26,13 @@
 //! rejected row at high priority is enough to starve every fresh row behind it,
 //! because the drain stops at the first error on every pass (ledger 170).
 
-use std::collections::HashSet;
+use buzz_acp::relay::AcknowledgedPublishError;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -64,9 +66,11 @@ const RELAY_REJECTION_ENVELOPE: &str = "relay rejected durable event: ";
 /// on its signer; re-sending the identical, identically signed event can only
 /// earn the identical answer. Deliberately excluded: `rate-limited:` and
 /// `error:` (the relay is asking for later, not for never), `auth-required:`
-/// and `restricted:` (an authenticated or re-admitted socket can change the
+/// and other `restricted:` reasons (an authenticated or re-admitted socket can change the
 /// answer), and `duplicate:` (the relay already holds the event, which a retry
 /// resolves harmlessly).
+/// The exact membership refusal is also final: this host must observe membership
+/// before it authors new status, rather than retry a departed channel forever.
 const FINAL_REJECTION_PREFIXES: &[&str] = &["invalid:", "blocked:"];
 
 /// Seconds since the Unix epoch, or 0 if the clock is before it.
@@ -93,19 +97,22 @@ fn final_rejection_reason(error: &str) -> Option<&str> {
         Some(at) => &error[at + RELAY_REJECTION_ENVELOPE.len()..],
         None => error,
     };
-    FINAL_REJECTION_PREFIXES
-        .iter()
-        .any(|prefix| reason.starts_with(prefix))
-        .then_some(reason)
+    (reason == "restricted: not a channel member"
+        || FINAL_REJECTION_PREFIXES
+            .iter()
+            .any(|prefix| reason.starts_with(prefix)))
+    .then_some(reason)
 }
 
 /// Drain order for pending rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Priority {
+    /// Live session receipts and current-turn transcript, ahead of recovery.
+    Live,
     /// Lifecycle receipts and terminal turn items — a consumer waits on these.
     High,
-    /// Everything else.
+    /// Paced background work, including catalogs and recovery status.
     Normal,
 }
 
@@ -140,6 +147,10 @@ enum LedgerRow {
     Ack {
         id: String,
     },
+    /// A relay-accepted latest value, retained even after ledger compaction.
+    Accepted {
+        entry: Box<OutboxEntry>,
+    },
     /// This row will never be published. Finished, like [`LedgerRow::Ack`],
     /// but for a reason the consumer never saw — so the reason and the time
     /// are recorded with it rather than lost to a log line.
@@ -169,9 +180,22 @@ pub trait EventSink {
         &self,
         event: nostr::Event,
     ) -> impl std::future::Future<Output = Result<(), String>> + Send;
+
+    /// Preserve typed local-gate information when the transport provides it.
+    fn publish_detailed(
+        &self,
+        event: nostr::Event,
+    ) -> impl std::future::Future<Output = Result<(), AcknowledgedPublishError>> + Send {
+        let result = self.publish(event);
+        async move { result.await.map_err(AcknowledgedPublishError::from) }
+    }
 }
 
 impl EventSink for buzz_acp::relay::RelayEventPublisher {
+    async fn publish_detailed(&self, event: nostr::Event) -> Result<(), AcknowledgedPublishError> {
+        self.publish_event_acknowledged_detailed(event).await
+    }
+
     async fn publish(&self, event: nostr::Event) -> Result<(), String> {
         self.publish_event_acknowledged(event)
             .await
@@ -185,6 +209,10 @@ pub struct Outbox {
     path: PathBuf,
     signer: String,
     pending: Vec<Pending>,
+    accepted: HashMap<(u32, String), OutboxEntry>,
+    paused_until: Option<Instant>,
+    background_interval: Duration,
+    background_next_at: Option<Instant>,
     /// Rows this ledger has given up on: parked at load, parked during a
     /// drain, or refused at enqueue. Counted from the ledger's own `Park`
     /// rows at load and incremented as more are parked, so a restart does not
@@ -207,7 +235,9 @@ impl Outbox {
         let mut acked: HashSet<String> = HashSet::new();
         let mut fenced_by_signer = 0usize;
         let mut fenced_by_key = 0usize;
+        let mut superseded_ids = Vec::new();
         let mut parked = 0usize;
+        let mut accepted = HashMap::new();
 
         let body = match std::fs::read_to_string(&path) {
             Ok(body) => body,
@@ -224,6 +254,12 @@ impl Outbox {
                 Ok(LedgerRow::Replace { entry, supersedes }) => {
                     acked.extend(supersedes);
                     rows.push(*entry);
+                }
+                Ok(LedgerRow::Accepted { entry }) => {
+                    acked.insert(entry.id.clone());
+                    if entry.signer == signer {
+                        accepted.insert((entry.kind, entry.semantic_key.clone()), *entry);
+                    }
                 }
                 Ok(LedgerRow::Ack { id }) => {
                     acked.insert(id);
@@ -246,7 +282,33 @@ impl Outbox {
         // died after durably appending a newer value but before retiring a
         // legacy row written by an older binary.
         rows.reverse();
-        for entry in rows {
+        for mut entry in rows {
+            if entry.kind == 44222 {
+                entry.priority = Priority::Normal;
+                if let Some(channel) = entry.event.tags.iter().find_map(|tag| {
+                    let parts = tag.as_slice();
+                    (parts.first().map(String::as_str) == Some("h"))
+                        .then(|| parts.get(1))
+                        .flatten()
+                        .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                }) {
+                    entry.semantic_key = format!("catalog:{channel}");
+                }
+            }
+            if entry.kind == 44223
+                && serde_json::from_str::<serde_json::Value>(&entry.event.content)
+                    .ok()
+                    .is_some_and(|content| {
+                        content.get("status").and_then(serde_json::Value::as_str)
+                            == Some("disconnected")
+                    })
+            {
+                entry.priority = Priority::Normal;
+            }
+            if entry.kind == 44225 && entry.priority == Priority::Live {
+                // A previous process's transcript is replay, not the current turn.
+                entry.priority = Priority::High;
+            }
             if acked.contains(&entry.id) {
                 continue;
             }
@@ -256,6 +318,7 @@ impl Outbox {
             }
             if !seen_keys.insert((entry.kind, entry.semantic_key.clone())) {
                 fenced_by_key += 1;
+                superseded_ids.push(entry.id);
                 continue;
             }
             pending.push(Pending {
@@ -282,10 +345,19 @@ impl Outbox {
             path,
             signer: signer.to_owned(),
             pending,
+            accepted,
+            paused_until: None,
+            background_interval: Duration::ZERO,
+            background_next_at: None,
             parked,
             #[cfg(test)]
             fail_next_enqueue: false,
         };
+        // Replay coalescing must be durable: otherwise accepting the newest
+        // row lets an older unsent version resurrect on the next restart.
+        for id in superseded_ids {
+            outbox.append(&LedgerRow::Ack { id })?;
+        }
         // Same treatment as a rotated key: a row the relay can no longer accept
         // is not a backlog, it is a poison that starves everything behind it.
         // Clearing it on open means a restart is a real remedy.
@@ -330,6 +402,11 @@ impl Outbox {
         self.fail_next_enqueue = true;
     }
 
+    /// Pace background traffic while leaving live work immediately eligible.
+    pub fn set_background_interval(&mut self, interval: Duration) {
+        self.background_interval = interval;
+    }
+
     /// Number of rows still awaiting delivery.
     pub fn pending_len(&self) -> usize {
         self.pending.len()
@@ -363,6 +440,22 @@ impl Outbox {
             .iter()
             .map(|row| (row.entry.kind, row.entry.semantic_key.clone()))
             .collect()
+    }
+
+    /// Content of the latest relay-accepted status for this exact identity.
+    pub fn accepted_content(&self, kind: u32, semantic_key: &str) -> Option<&str> {
+        self.accepted
+            .get(&(kind, semantic_key.to_owned()))
+            .map(|entry| entry.event.content.as_str())
+    }
+
+    /// Content of the current queued value, which may supersede an accepted one.
+    pub fn pending_content(&self, kind: u32, semantic_key: &str) -> Option<&str> {
+        self.pending
+            .iter()
+            .rev()
+            .find(|row| row.entry.kind == kind && row.entry.semantic_key == semantic_key)
+            .map(|row| row.entry.event.content.as_str())
     }
 
     /// Whether a row for this `(kind, semantic key)` is already queued.
@@ -499,6 +592,10 @@ impl Outbox {
         max_attempts: usize,
     ) -> io::Result<usize> {
         let now = Instant::now();
+        if self.paused_until.is_some_and(|until| until > now) {
+            return Ok(0);
+        }
+        self.paused_until = None;
         let mut order: Vec<usize> = (0..self.pending.len())
             .filter(|index| {
                 self.pending[*index]
@@ -526,6 +623,13 @@ impl Outbox {
                 continue;
             };
             let entry = self.pending[index].entry.clone();
+            if entry.priority == Priority::Normal
+                && self
+                    .background_next_at
+                    .is_some_and(|at| at > Instant::now())
+            {
+                continue;
+            }
             let now = unix_now();
             if outside_relay_window(&entry.event, now) {
                 // Do not spend a send on it: the answer is already known.
@@ -542,12 +646,45 @@ impl Outbox {
                 continue;
             }
             sends = sends.saturating_add(1);
-            match sink.publish(entry.event.clone()).await {
+            tracing::debug!(target: "csp::outbox", kind = entry.kind, event_id = %entry.event.id, priority = ?entry.priority, "attempting queued publication");
+            let outcome = sink.publish_detailed(entry.event.clone()).await;
+            if entry.priority == Priority::Normal
+                && !matches!(
+                    &outcome,
+                    Err(AcknowledgedPublishError::RateLimited { sent: false, .. })
+                )
+            {
+                self.background_next_at = Some(Instant::now() + self.background_interval);
+            }
+            match outcome {
                 Ok(()) => {
-                    self.ack(&entry.id)?;
+                    if entry.kind == 44223 {
+                        self.append(&LedgerRow::Accepted {
+                            entry: Box::new(entry.clone()),
+                        })?;
+                        self.accepted
+                            .insert((entry.kind, entry.semantic_key.clone()), entry.clone());
+                        self.pending.retain(|row| row.entry.id != entry.id);
+                    } else {
+                        self.ack(&entry.id)?;
+                    }
                     delivered = delivered.saturating_add(1);
                 }
+                Err(AcknowledgedPublishError::RateLimited { deadline, sent }) => {
+                    self.paused_until = Some(deadline);
+                    let row = &mut self.pending[index];
+                    if sent {
+                        row.attempts = row.attempts.saturating_add(1);
+                    }
+                    // The gate, not an exponential row backoff, determines eligibility.
+                    row.next_attempt_at = None;
+                    tracing::warn!(target: "csp::outbox", kind = entry.kind, attempts = row.attempts,
+                        sent, retry_secs = deadline.saturating_duration_since(Instant::now()).as_secs_f64(),
+                        "publication paused by relay rate gate");
+                    break;
+                }
                 Err(error) => {
+                    let error = error.to_string();
                     if let Some(reason) = final_rejection_reason(&error) {
                         // A verdict on the bytes, not on the socket. Retrying
                         // the identical event can only earn the identical
@@ -593,11 +730,29 @@ impl Outbox {
         let now = Instant::now();
         self.pending
             .iter()
-            .map(|row| match row.next_attempt_at {
-                None => Duration::ZERO,
-                Some(at) => at.saturating_duration_since(now),
+            .map(|row| {
+                let retry = row
+                    .next_attempt_at
+                    .map(|at| at.saturating_duration_since(now))
+                    .unwrap_or_default();
+                if row.entry.priority == Priority::Normal {
+                    retry.max(
+                        self.background_next_at
+                            .map(|at| at.saturating_duration_since(now))
+                            .unwrap_or_default(),
+                    )
+                } else {
+                    retry
+                }
             })
             .min()
+            .map(|delay| {
+                delay.max(
+                    self.paused_until
+                        .map(|at| at.saturating_duration_since(now))
+                        .unwrap_or_default(),
+                )
+            })
     }
 
     /// Durably drop every queued row `discard` selects, without publishing it.
@@ -680,7 +835,16 @@ impl Outbox {
             return Ok(());
         }
         match std::fs::metadata(&self.path) {
-            Ok(meta) if meta.len() > COMPACT_THRESHOLD_BYTES => atomic_write(&self.path, b""),
+            Ok(meta) if meta.len() > COMPACT_THRESHOLD_BYTES => {
+                let mut body = String::new();
+                for entry in self.accepted.values() {
+                    body.push_str(&serde_json::to_string(&LedgerRow::Accepted {
+                        entry: Box::new(entry.clone()),
+                    })?);
+                    body.push('\n');
+                }
+                atomic_write(&self.path, body.as_bytes())
+            }
             Ok(_) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error),
@@ -1298,3 +1462,7 @@ mod tests {
         assert_eq!(backoff(50), RETRY_MAX);
     }
 }
+
+#[cfg(test)]
+#[path = "publish/throttling_tests.rs"]
+mod throttling_tests;
