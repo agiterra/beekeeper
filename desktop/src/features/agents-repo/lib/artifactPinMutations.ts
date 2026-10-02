@@ -41,8 +41,14 @@ export function nextPinCreatedAt(headSecs: number, nowSecs: number): number {
 
 /**
  * What the target is, from its own shape — the TypeScript twin of
- * `pin_target_kind_of`. A caller never labels a target, so a mislabelled pin
- * is impossible rather than merely refused.
+ * `pin_target_kind_of`.
+ *
+ * The two grammars overlap on one shape: a folder name may contain a dot, so
+ * `docs/notes.txt` is a legal *folder* as well as a refused *file*. There this
+ * **refuses rather than guesses** — reading a mistyped `.txt` as a folder
+ * would pin a row naming nothing. A caller that knows which it has (the tree
+ * knows: it clicked a folder row or a file row) passes `kind` and skips the
+ * inference entirely.
  */
 export function pinTargetKindOf(
   target: string,
@@ -50,6 +56,13 @@ export function pinTargetKindOf(
   const asFile = pinTargetError(target, "file");
   if (asFile === null) return { ok: true, kind: "file" };
   if (pinTargetError(target, "folder") === null) {
+    const last = target.slice(target.lastIndexOf("/") + 1);
+    if (last.includes(".")) {
+      return {
+        ok: false,
+        error: `${target} is file-shaped but is not a file the layout admits, and it is also a legal folder name — say which you mean. As a file: ${asFile}`,
+      };
+    }
     return { ok: true, kind: "folder" };
   }
   // The file reading is the more specific refusal of the two — it names the
@@ -117,8 +130,15 @@ export async function publishPinOp(
 }
 
 export type ArtifactPinMutations = {
-  /** Pin `target`, appending it to the order unless `index` says otherwise. */
-  pin: (target: string, index?: number) => Promise<RelayEvent>;
+  /**
+   * Pin `target`, appending it to the order unless `index` says otherwise.
+   * `kind` skips the shape inference — a caller that clicked a row knows
+   * which it was, and the inference refuses the one ambiguous shape.
+   */
+  pin: (
+    target: string,
+    options?: { index?: number; kind?: PinTargetKind },
+  ) => Promise<RelayEvent>;
   /** Unpin `target`, keeping its rank so re-pinning puts it back. */
   unpin: (target: string) => Promise<RelayEvent>;
   /** Move a pinned `target` to `index` among the pinned rows. */
@@ -153,10 +173,18 @@ export function useArtifactPinMutations(
       return read?.digest.pins.find((row) => row.target === target);
     };
     return {
-      async pin(target, index) {
+      async pin(target, options) {
         const { coordinate, repo } = require();
-        const classified = pinTargetKindOf(target);
-        if (!classified.ok) throw new Error(classified.error);
+        const index = options?.index;
+        let kind = options?.kind;
+        if (kind === undefined) {
+          const classified = pinTargetKindOf(target);
+          if (!classified.ok) throw new Error(classified.error);
+          kind = classified.kind;
+        } else {
+          const error = pinTargetError(target, kind);
+          if (error !== null) throw new Error(error);
+        }
         // Re-pinning something that was pinned before keeps where it was,
         // unless the caller asked for a position.
         const previous = rowOf(target);
@@ -169,7 +197,7 @@ export function useArtifactPinMutations(
           content: {
             op: "pin.set",
             target,
-            targetKind: classified.kind,
+            targetKind: kind,
             pinned: true,
             rank,
           },

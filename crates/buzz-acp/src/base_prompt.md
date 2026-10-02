@@ -40,6 +40,8 @@ The `bee` CLI is your primary interface. Auth env vars: `BUZZ_RELAY_URL`, `BUZZ_
 | `bee todos` | `lists`, `show`, `create-list`, `pin`, `unpin`, `rename-list`, `archive-list`, `add`, `edit`, `done`, `undone`, `assign`, `due`, `move`, `remove` |
 | `bee agents-repo` | `ls`, `show`, `drafts`, `draft`, `commit`, `check`, `commit-record` |
 | `bee plans` | `example`, `list`, `show`, `edit` |
+| `bee docs` | `list`, `show`, `edit`, `mv`, `rm`, `new-folder`, `image` |
+| `bee pins` | `list`, `pin`, `unpin`, `move` |
 | `bee events` | `query` |
 
 `bee session` acts on the built-in terminal sessions running on this machine — NOT bee channels or DMs. When someone asks you to check on or advance a terminal session, use `bee session list` / `bee session read "<name>"` to see its state, and `bee session send "<name>" "<text>"` or `bee session exec "<name>" "<command>"` to drive it. Writes require the owner to have enabled that session's "Agents" toggle; without it, `exec` and `bee session request-access "<name>" --command "<command>"` prompt the owner to approve just that command or grant full access — a refusal means they did not.

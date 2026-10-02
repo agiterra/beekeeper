@@ -5136,6 +5136,11 @@ pub enum PinsCmd {
         /// Place it at this position in the order (0 is first); appends by default
         #[arg(long)]
         index: Option<usize>,
+        /// The target is a folder of the documents tree. Only needed when the
+        /// name is file-shaped (a folder may contain a dot), which the shape
+        /// alone cannot tell from a mistyped filename.
+        #[arg(long)]
+        folder: bool,
     },
     /// Unpin a target, leaving its row with `pinned: false`
     Unpin {

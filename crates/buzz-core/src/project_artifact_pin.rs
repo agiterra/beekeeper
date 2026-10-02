@@ -256,17 +256,34 @@ pub fn validate_pin_target(target: &str, kind: PinTargetKind) -> Result<(), Stri
     }
 }
 
-/// What `target` is, inferred from its own shape.
+/// What `target` is, inferred from its own shape, or why that cannot be
+/// decided from the shape alone.
 ///
-/// A caller never has to label a target: a file is a path the layout admits
-/// and a folder is a prefix of the documents tree, and nothing is both — so a
-/// mislabelled pin is impossible rather than merely refused.
+/// A caller usually need not label a target: a file is a path the layout
+/// admits and a folder is a prefix of the documents tree. But the two
+/// grammars overlap on one shape — a folder name may contain a dot, so
+/// `docs/notes.txt` is a legal *folder* as well as a refused *file* — and
+/// there the inference **refuses rather than guesses**. Reading a mistyped
+/// `.txt` as a folder would pin a row that names nothing, and the person who
+/// typed a filename would never learn why.
+///
+/// A caller that knows which it has says so with [`validate_pin_target`]; the
+/// CLI's `--folder` exists for exactly the dotted-folder case this refuses.
 pub fn pin_target_kind_of(target: &str) -> Result<PinTargetKind, String> {
     let as_file = validate_pin_target(target, PinTargetKind::File);
     if as_file.is_ok() {
         return Ok(PinTargetKind::File);
     }
     if validate_pin_target(target, PinTargetKind::Folder).is_ok() {
+        let last = target.rsplit('/').next().unwrap_or(target);
+        if last.contains('.') {
+            return Err(format!(
+                "{target:?} is file-shaped but is not a file the layout admits, and it is \
+                 also a legal folder name — say which you mean (a folder is pinned with \
+                 --folder). As a file: {}",
+                as_file.unwrap_err()
+            ));
+        }
         return Ok(PinTargetKind::Folder);
     }
     // The file reading is the more specific refusal of the two — it names the
@@ -587,7 +604,21 @@ mod tests {
         let error = pin_target_kind_of("docs/mockups/.gitkeep").expect_err("a keep is neither");
         assert!(error.contains("pin the folder"), "{error}");
         assert!(pin_target_kind_of("plans").is_err());
-        assert!(pin_target_kind_of("docs/x.txt").is_err());
+        // The one overlap: a folder name may contain a dot, so this is both a
+        // refused file and a legal folder. Inferring "folder" would pin a row
+        // naming nothing and never tell the person who typed a filename why,
+        // so the shape alone does not decide it.
+        let error = pin_target_kind_of("docs/x.txt").expect_err("ambiguous");
+        assert!(error.contains("--folder"), "{error}");
+        assert!(error.contains("As a file:"), "{error}");
+        // Said explicitly, both readings still work.
+        assert!(validate_pin_target("docs/x.txt", PinTargetKind::Folder).is_ok());
+        assert!(validate_pin_target("docs/x.txt", PinTargetKind::File).is_err());
+        // A dotless folder is unambiguous and needs no flag.
+        assert_eq!(
+            pin_target_kind_of("docs/v2").expect("dotless"),
+            PinTargetKind::Folder
+        );
     }
 
     #[test]

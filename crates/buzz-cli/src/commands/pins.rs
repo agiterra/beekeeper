@@ -21,7 +21,8 @@ use std::collections::HashMap;
 use buzz_core::fractional_rank::rank_between;
 use buzz_core::kind::KIND_PROJECT_ARTIFACT_PIN_OP;
 use buzz_core::project_artifact_pin::{
-    pin_target_kind_of, PinTargetKind, ProjectArtifactPinOp, ProjectArtifactPinOpValue,
+    pin_target_kind_of, validate_pin_target, PinTargetKind, ProjectArtifactPinOp,
+    ProjectArtifactPinOpValue,
 };
 use buzz_core::project_artifact_pin_fold::{
     fold_project_artifact_pins, PinFoldEvent, PinRow, ProjectArtifactPinDigest,
@@ -220,11 +221,18 @@ pub async fn dispatch(
             project,
             target,
             index,
+            folder,
         } => {
             // What the target *is* comes from the one grammar, not from a
-            // flag: a folder and a file are told apart by their own shapes,
-            // so a caller cannot mislabel one.
-            let kind = pin_target_kind_of(&target).map_err(CliError::Usage)?;
+            // flag — except on the one shape the two grammars overlap on, a
+            // folder name with a dot in it, where the inference refuses and
+            // `--folder` is how the caller says which they meant.
+            let kind = if folder {
+                validate_pin_target(&target, PinTargetKind::Folder).map_err(CliError::Usage)?;
+                PinTargetKind::Folder
+            } else {
+                pin_target_kind_of(&target).map_err(CliError::Usage)?
+            };
             let mut snap = snapshot(client, project.as_deref()).await?;
             let rank = rank_at(&snap, &target, index)?;
             let op = ProjectArtifactPinOp {

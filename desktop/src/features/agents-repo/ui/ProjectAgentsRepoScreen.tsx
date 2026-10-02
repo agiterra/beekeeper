@@ -529,7 +529,16 @@ export function ProjectAgentsRepoScreen({
                 setPreviewNotice(null);
                 const target = pinTargetOf(subject.path);
                 if (isPinned(target)) await pinMutations.unpin(target);
-                else await pinMutations.pin(target);
+                // The editor knows which it has: an open keep is its folder,
+                // anything else is the file. Saying so skips an inference
+                // that refuses the one shape the two grammars share.
+                else {
+                  await pinMutations.pin(target, {
+                    kind: subject.path.endsWith("/.gitkeep")
+                      ? "folder"
+                      : "file",
+                  });
+                }
               }}
               pinned={
                 repo === null ? null : isPinned(pinTargetOf(subject.path))
