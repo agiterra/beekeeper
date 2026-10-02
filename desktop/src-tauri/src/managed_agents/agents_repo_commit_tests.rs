@@ -33,6 +33,9 @@ struct Fixture {
     remote_url: String,
     cache: PathBuf,
     catalog: TemplateCatalog,
+    /// The bytes the caller would have fetched for an `asset.put`, by sha256.
+    /// A test that lands an image seeds this; everything else leaves it empty.
+    assets: AssetBytes,
     auth: crate::commands::project_git_exec::GitAuthConfig,
 }
 
@@ -80,6 +83,7 @@ impl Fixture {
             remote_url,
             cache,
             catalog,
+            assets: Default::default(),
             auth,
         }
     }
@@ -142,6 +146,7 @@ impl Fixture {
             &repo.tip,
             ids,
             &self.catalog,
+            &self.assets,
         )
         .expect("commit runs")
     }
@@ -165,6 +170,7 @@ fn put(id: &str, path: &str, text: &str, base: Option<String>) -> AgentsRepoDraf
         path: path.into(),
         to: None,
         text: Some(text.into()),
+        sha256: None,
         base,
         message: Some("because".into()),
     }
@@ -184,6 +190,99 @@ fn request(
             name: Some("Alice".into()),
         }],
     }
+}
+
+#[test]
+fn an_asset_put_lands_the_fetched_bytes_and_a_folder_keep_holds_its_folder() {
+    // The whole point of committing an image rather than linking one: the
+    // bytes are in the tree, byte for byte, beside the document that embeds
+    // them, and the empty folder a person made survives as its keep.
+    let mut fx = Fixture::new();
+    let png: Vec<u8> = vec![
+        0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0xde, 0xad, 0xbe, 0xef,
+    ];
+    let sha256 = {
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(&png))
+    };
+    fx.assets.insert(sha256.clone(), png.clone());
+    let drafts = vec![
+        put(
+            "1",
+            "docs/mockups/login.html",
+            "<p><img src=\"img/shot.png\"></p>\n",
+            None,
+        ),
+        put("3", "docs/empty/.gitkeep", "", None),
+        AgentsRepoDraftChange {
+            id: "2".repeat(64),
+            author: ALICE.into(),
+            op: "asset.put".into(),
+            path: "docs/mockups/img/shot.png".into(),
+            to: None,
+            text: None,
+            sha256: Some(sha256.clone()),
+            base: None,
+            message: Some("the login shot".into()),
+        },
+    ];
+    let result = fx.commit(&request(drafts, None));
+    assert_eq!(result.pushed, "yes", "{result:?}");
+
+    let repo = fx.checkout();
+    let listing = list_tip(&repo).expect("list");
+    let kinds: std::collections::BTreeMap<&str, &str> = listing
+        .entries
+        .iter()
+        .map(|e| (e.path.as_str(), e.kind.as_str()))
+        .collect();
+    assert_eq!(kinds.get("docs/mockups/login.html"), Some(&"document"));
+    assert_eq!(
+        kinds.get("docs/mockups/img/shot.png"),
+        Some(&"document-asset")
+    );
+    // A keep under `docs/` is the folder, not the seed holding a directory
+    // open, so it is listed as one.
+    assert_eq!(kinds.get("docs/empty/.gitkeep"), Some(&"document-folder"));
+
+    // The blob in the tree *is* the bytes that were fetched. Git names a blob
+    // by its own hash of the content, so the object id in the tree equalling
+    // `hash-object` of the PNG is the whole proof — no decoding involved.
+    let loose = fx.root.join("shot.png");
+    std::fs::write(&loose, &png).expect("write the bytes git will hash");
+    let expected_oid = git(
+        &fx.auth,
+        &fx.cache,
+        &["hash-object", "--", &loose.display().to_string()],
+    );
+    let in_tree = git(
+        &fx.auth,
+        &fx.cache,
+        &[
+            "rev-parse",
+            &format!("{}:docs/mockups/img/shot.png", repo.tip),
+        ],
+    );
+    assert_eq!(
+        in_tree.trim(),
+        expected_oid.trim(),
+        "the fetched bytes are the blob"
+    );
+    let size = git(
+        &fx.auth,
+        &fx.cache,
+        &[
+            "cat-file",
+            "-s",
+            &format!("{}:docs/mockups/img/shot.png", repo.tip),
+        ],
+    );
+    assert_eq!(size.trim(), png.len().to_string());
+    // `read_tip` refuses to decode it as text, which is what the renderer
+    // reads as "fetch this through the asset route instead".
+    let read = read_tip(&repo, "docs/mockups/img/shot.png").expect("read");
+    assert_eq!(read.state, "not-text");
+    assert!(read.text.is_none());
 }
 
 #[test]
@@ -232,6 +331,7 @@ fn a_commit_lands_with_trailers_and_the_tree_is_validated_first() {
             path: "roles/poker.md".into(),
             to: Some("roles/archive/poker.md".into()),
             text: None,
+            sha256: None,
             base: fx.blob("roles/poker.md"),
             message: None,
         },
@@ -365,6 +465,7 @@ fn a_push_that_loses_the_lease_reports_no_and_leaves_the_remote_alone() {
         &tip_before,
         vec!["1".repeat(64)],
         &fx.catalog,
+        &fx.assets,
     )
     .expect("runs");
     assert_eq!(result.pushed, "no", "{result:?}");

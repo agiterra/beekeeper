@@ -14,7 +14,7 @@ import 'agents_repo_draft_op.dart';
 /// `fixtures/fold-vectors.json`. Pure and total: any set of events in, one
 /// digest out, the same digest from every client.
 
-const agentsRepoDraftDigestSchema = 'buzz-agents-repo-draft-digest/v1';
+const agentsRepoDraftDigestSchema = 'buzz-agents-repo-draft-digest/v2';
 
 /// One file op as the digest reports it, head or superseded.
 @immutable
@@ -26,6 +26,15 @@ class DraftRow {
   final String path;
   final String? to;
   final String? text;
+
+  /// An `asset.put`'s media blob id.
+  final String? sha256;
+
+  /// An `asset.put`'s MIME.
+  final String? mime;
+
+  /// An `asset.put`'s size in bytes.
+  final int? size;
   final String? base;
   final String? baseCommit;
   final String? prev;
@@ -39,6 +48,9 @@ class DraftRow {
     required this.path,
     required this.to,
     required this.text,
+    required this.sha256,
+    required this.mime,
+    required this.size,
     required this.base,
     required this.baseCommit,
     required this.prev,
@@ -53,6 +65,9 @@ class DraftRow {
     'path': path,
     'to': to,
     'text': text,
+    'sha256': sha256,
+    'mime': mime,
+    'size': size,
     'base': base,
     'baseCommit': baseCommit,
     'prev': prev,
@@ -210,6 +225,9 @@ DraftRow _row(_Decoded d) => DraftRow(
   path: d.op.path!,
   to: d.op.kind == DraftOpKind.fileMove ? d.op.to : null,
   text: d.op.kind == DraftOpKind.filePut ? d.op.text : null,
+  sha256: d.op.kind == DraftOpKind.assetPut ? d.op.sha256 : null,
+  mime: d.op.kind == DraftOpKind.assetPut ? d.op.mime : null,
+  size: d.op.kind == DraftOpKind.assetPut ? d.op.size : null,
   base: d.op.base,
   baseCommit: d.op.baseCommit,
   prev: d.op.prev,

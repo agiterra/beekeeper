@@ -16,6 +16,8 @@ ALICE = "1" * 64; BOB = "2" * 64
 B1 = "1" * 40; B2 = "2" * 40; C1 = "c" * 40; C2 = "d" * 40
 SCHEMA = "buzz-agents-repo-draft/v1"
 LEAD = "roles/lead.md"; PLAN = "plans/rpg.md"; ARCH = "plans/archive/rpg.md"
+DOC = "docs/mockups/login.html"; SHOT = "docs/mockups/img/shot.png"
+SHA1 = "e" * 64; SHA2 = "f" * 64
 
 def eid(n): return f"{n:064x}"
 
@@ -28,6 +30,10 @@ def move(path, to, base=None, baseCommit=None, prev=None, message=None):
 def delete(path, base=None, baseCommit=None, prev=None, message=None):
     return {"schema": SCHEMA, "op": "file.delete", "path": path,
             "base": base, "baseCommit": baseCommit, "prev": prev, "message": message}
+def asset(path, sha256, mime, size, base=None, baseCommit=None, prev=None, message=None):
+    return {"schema": SCHEMA, "op": "asset.put", "path": path, "sha256": sha256,
+            "mime": mime, "size": size, "base": base, "baseCommit": baseCommit,
+            "prev": prev, "message": message}
 def record(commit, paths, drafts, message=None):
     return {"schema": SCHEMA, "op": "commit.record", "commit": commit,
             "paths": paths, "drafts": drafts, "message": message}
@@ -47,8 +53,10 @@ def ev(n, pk, t, c, kind=44250, project=P, repo=R, tags=None, content_override=N
 def row(e):
     c = json.loads(e["content"])
     return {"id": e["id"], "author": e["pubkey"], "createdAt": e["created_at"], "op": c["op"],
-            "path": c["path"], "to": c.get("to"), "text": c.get("text"), "base": c["base"],
-            "baseCommit": c["baseCommit"], "prev": c["prev"], "message": c["message"]}
+            "path": c["path"], "to": c.get("to"), "text": c.get("text"),
+            "sha256": c.get("sha256"), "mime": c.get("mime"), "size": c.get("size"),
+            "base": c["base"], "baseCommit": c["baseCommit"], "prev": c["prev"],
+            "message": c["message"]}
 def dpath(path, head, superseded=(), diverged=False):
     return {"path": path, "head": row(head), "superseded": [row(s) for s in superseded],
             "diverged": diverged, "updatedAt": head["created_at"]}
@@ -57,7 +65,7 @@ def crow(e):
     return {"id": e["id"], "commit": c["commit"], "by": e["pubkey"], "createdAt": e["created_at"],
             "paths": c["paths"], "drafts": c["drafts"], "message": c["message"]}
 def digest(paths, commits=(), ignored=0, otherRepo=0):
-    return {"schema": "buzz-agents-repo-draft-digest/v1", "project": P, "repo": R,
+    return {"schema": "buzz-agents-repo-draft-digest/v2", "project": P, "repo": R,
             "ignored": ignored, "otherRepo": otherRepo, "paths": paths, "commits": list(commits)}
 
 cases = []
@@ -155,7 +163,47 @@ cases.append({"name": "paths sort bytewise regardless of op order", "project": P
               "events": [e1, e2, e3],
               "expected": digest([dpath("actions.yml", e2), dpath("plans/a.md", e3), dpath("team.yml", e1)])})
 
-out = {"schema": "buzz-agents-repo-draft-fold-vectors/v1", "cases": cases}
+# An asset carries no text: its bytes are a blob the relay's media store
+# already validated, named by sha256, and the committer writes them into the
+# tree. The row reports what the op said, so a reader can show the image and a
+# committer can fetch it; `text` is null exactly as a move's is.
+e1 = ev(1, ALICE, 100, asset(SHOT, SHA1, "image/png", 2048, message="the login shot"))
+cases.append({"name": "an asset put is the head of its path and reports sha256, mime and size",
+              "project": P, "repo": R, "events": [e1],
+              "expected": digest([dpath(SHOT, e1)])})
+
+# A document and the image it embeds are two paths, folded independently, and
+# they sort bytewise like any others.
+e1 = ev(1, ALICE, 100, put(DOC, "<p><img src=\"img/shot.png\"></p>\n"))
+e2 = ev(2, ALICE, 101, asset(SHOT, SHA1, "image/png", 2048))
+cases.append({"name": "a document and its asset are separate paths",
+              "project": P, "repo": R, "events": [e1, e2],
+              "expected": digest([dpath(SHOT, e2), dpath(DOC, e1)])})
+
+# Replacing an image is a second asset put on the same path, so the newest is
+# the head and the first stays visible as superseded — nothing anyone uploaded
+# disappears, the same promise a document's text gets.
+e1 = ev(1, ALICE, 100, asset(SHOT, SHA1, "image/png", 2048))
+e2 = ev(2, BOB, 110, asset(SHOT, SHA2, "image/png", 4096, prev=eid(1)))
+cases.append({"name": "re-uploading an image supersedes the first asset put",
+              "project": P, "repo": R, "events": [e1, e2],
+              "expected": digest([dpath(SHOT, e2, [e1])])})
+
+# A folder keep is an ordinary draftable path: this is what "new folder" is on
+# the wire, and what a commit lands so git keeps the empty directory.
+e1 = ev(1, ALICE, 100, put("docs/mockups/.gitkeep", ""))
+cases.append({"name": "a folder keep is an ordinary path with an ordinary head",
+              "project": P, "repo": R, "events": [e1],
+              "expected": digest([dpath("docs/mockups/.gitkeep", e1)])})
+
+# A document moves between folders; a move names both ends, as an archive
+# toggle does, and the destination is a path of the same class.
+e1 = ev(1, ALICE, 100, move("docs/a.md", "docs/notes/a.md", base=B1))
+cases.append({"name": "a document move names both ends",
+              "project": P, "repo": R, "events": [e1],
+              "expected": digest([dpath("docs/a.md", e1), dpath("docs/notes/a.md", e1)])})
+
+out = {"schema": "buzz-agents-repo-draft-fold-vectors/v2", "cases": cases}
 with open(os.path.join(HERE, "fixtures", "fold-vectors.json"), "w") as f:
     json.dump(out, f, indent=2)
     f.write("\n")

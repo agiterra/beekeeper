@@ -18,7 +18,7 @@ void main() {
           as Map<String, dynamic>;
 
   test('vectors carry the expected schema', () {
-    expect(vectors['schema'], 'buzz-agents-repo-draft-fold-vectors/v1');
+    expect(vectors['schema'], 'buzz-agents-repo-draft-fold-vectors/v2');
     expect((vectors['cases'] as List<dynamic>).isNotEmpty, isTrue);
   });
 

@@ -47,7 +47,7 @@ use crate::kind::{normalize_project_coordinate, KIND_AGENTS_REPO_DRAFT_OP};
 use crate::project_pack_source::normalize_repository_coordinate;
 
 /// Exact `schema` value carried by a digest.
-pub const AGENTS_REPO_DRAFT_DIGEST_SCHEMA: &str = "buzz-agents-repo-draft-digest/v1";
+pub const AGENTS_REPO_DRAFT_DIGEST_SCHEMA: &str = "buzz-agents-repo-draft-digest/v2";
 
 /// One stored event as the fold sees it — the subset of a Nostr event the
 /// rules read. A relay-stored event converts losslessly; the conformance
@@ -95,7 +95,7 @@ pub struct DraftRow {
     pub author: String,
     /// The op's `created_at`.
     pub created_at: u64,
-    /// `file.put`, `file.move` or `file.delete`.
+    /// `file.put`, `file.move`, `file.delete` or `asset.put`.
     pub op: String,
     /// The op's `path`.
     pub path: String,
@@ -103,6 +103,12 @@ pub struct DraftRow {
     pub to: Option<String>,
     /// A put's whole text; null otherwise.
     pub text: Option<String>,
+    /// An `asset.put`'s media blob id; null otherwise.
+    pub sha256: Option<String>,
+    /// An `asset.put`'s MIME; null otherwise.
+    pub mime: Option<String>,
+    /// An `asset.put`'s size in bytes; null otherwise.
+    pub size: Option<u64>,
     /// The blob the author started from, or null for a new file.
     pub base: Option<String>,
     /// The `main` commit the author read, or null.
@@ -223,17 +229,47 @@ fn decode(project: &str, repo: &str, event: &DraftFoldEvent) -> Decode {
     }
 }
 
+/// What an `asset.put` row reports where a text op reports its text.
+struct RowAsset {
+    sha256: Option<String>,
+    mime: Option<String>,
+    size: Option<u64>,
+}
+
 fn row(d: &Decoded<'_>) -> Option<DraftRow> {
-    let (op, path, to, text, base) = match &d.op.value {
+    let none = || RowAsset {
+        sha256: None,
+        mime: None,
+        size: None,
+    };
+    let (op, path, to, text, asset, base) = match &d.op.value {
         AgentsRepoDraftOpValue::FilePut { path, text, base } => {
-            ("file.put", path, None, Some(text.clone()), base)
+            ("file.put", path, None, Some(text.clone()), none(), base)
         }
         AgentsRepoDraftOpValue::FileMove { path, to, base } => {
-            ("file.move", path, Some(to.clone()), None, base)
+            ("file.move", path, Some(to.clone()), None, none(), base)
         }
         AgentsRepoDraftOpValue::FileDelete { path, base } => {
-            ("file.delete", path, None, None, base)
+            ("file.delete", path, None, None, none(), base)
         }
+        AgentsRepoDraftOpValue::AssetPut {
+            path,
+            sha256,
+            mime,
+            size,
+            base,
+        } => (
+            "asset.put",
+            path,
+            None,
+            None,
+            RowAsset {
+                sha256: Some(sha256.clone()),
+                mime: Some(mime.clone()),
+                size: Some(*size),
+            },
+            base,
+        ),
         AgentsRepoDraftOpValue::CommitRecord { .. } => return None,
     };
     let DraftBase {
@@ -249,6 +285,9 @@ fn row(d: &Decoded<'_>) -> Option<DraftRow> {
         path: path.clone(),
         to,
         text,
+        sha256: asset.sha256,
+        mime: asset.mime,
+        size: asset.size,
         base,
         base_commit,
         prev,
@@ -377,7 +416,7 @@ mod tests {
         let raw =
             include_str!("../../../conformance/agents-repo-draft-fold/fixtures/fold-vectors.json");
         let vectors: Vectors = serde_json::from_str(raw).expect("vectors parse");
-        assert_eq!(vectors.schema, "buzz-agents-repo-draft-fold-vectors/v1");
+        assert_eq!(vectors.schema, "buzz-agents-repo-draft-fold-vectors/v2");
         assert!(!vectors.cases.is_empty());
         for case in vectors.cases {
             let digest = fold_agents_repo_drafts(&case.project, &case.repo, &case.events);

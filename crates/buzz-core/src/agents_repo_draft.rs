@@ -92,6 +92,23 @@ pub const DOCUMENT_EXTENSIONS: &[&str] = &[".md", ".html"];
 /// CSP and no network. Different surfaces, and neither rule is loosened.
 pub const DOCUMENT_ASSET_EXTENSIONS: &[&str] = &[".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"];
 
+/// The MIME the relay's media store admits for each asset extension, which is
+/// also what an `asset.put` must name. `.svg` is deliberately absent: the
+/// media store refuses `image/svg+xml` as active web content, so an SVG in the
+/// tree is committed with git rather than uploaded — the refusal says so.
+pub const DOCUMENT_ASSET_MIMES: &[(&str, &str)] = &[
+    (".png", "image/png"),
+    (".jpg", "image/jpeg"),
+    (".jpeg", "image/jpeg"),
+    (".gif", "image/gif"),
+    (".webp", "image/webp"),
+];
+
+/// A sanity bound on an `asset.put`'s `size`. The media store's own configured
+/// cap is what actually admitted the blob; this only refuses a number that
+/// cannot describe an image anyone uploaded.
+pub const MAX_DOCUMENT_ASSET_BYTES: u64 = 100 * 1024 * 1024;
+
 /// The only dotfile the documents tree admits, and the only way a folder
 /// someone created and has not filled yet survives a commit — git has no
 /// empty directories. Without it, "new folder" and "pin a folder" would be
@@ -109,16 +126,21 @@ pub enum AgentsRepoDraftOpKind {
     FileMove,
     /// Delete one file.
     FileDelete,
+    /// Put an image at an asset path by naming the media blob that holds its
+    /// bytes. A draft op carries UTF-8 text only, so the bytes travel through
+    /// the relay's media store and the committer writes them into the tree.
+    AssetPut,
     /// The committer's record that named drafts landed in a commit on `main`.
     CommitRecord,
 }
 
 impl AgentsRepoDraftOpKind {
     /// Every op, in wire order.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::FilePut,
         Self::FileMove,
         Self::FileDelete,
+        Self::AssetPut,
         Self::CommitRecord,
     ];
 
@@ -128,6 +150,7 @@ impl AgentsRepoDraftOpKind {
             Self::FilePut => "file.put",
             Self::FileMove => "file.move",
             Self::FileDelete => "file.delete",
+            Self::AssetPut => "asset.put",
             Self::CommitRecord => "commit.record",
         }
     }
@@ -159,6 +182,18 @@ impl AgentsRepoDraftOpKind {
                 "schema",
                 "op",
                 "path",
+                "base",
+                "baseCommit",
+                "prev",
+                "message",
+            ],
+            Self::AssetPut => &[
+                "schema",
+                "op",
+                "path",
+                "sha256",
+                "mime",
+                "size",
                 "base",
                 "baseCommit",
                 "prev",
@@ -232,6 +267,19 @@ pub enum AgentsRepoDraftOpValue {
         /// Where the author started.
         base: DraftBase,
     },
+    /// Put the media blob `sha256` at the asset path `path`.
+    AssetPut {
+        /// The asset path.
+        path: String,
+        /// The blob's sha256 (64 lowercase hex), its id in the media store.
+        sha256: String,
+        /// The blob's MIME, which must be the one the path's extension names.
+        mime: String,
+        /// The blob's size in bytes, as the uploader observed it.
+        size: u64,
+        /// Where the author started.
+        base: DraftBase,
+    },
     /// `commit` on `main` carries the named `drafts`, which touched `paths`.
     CommitRecord {
         /// The commit sha (40 lowercase hex).
@@ -262,6 +310,7 @@ impl AgentsRepoDraftOp {
             AgentsRepoDraftOpValue::FilePut { .. } => AgentsRepoDraftOpKind::FilePut,
             AgentsRepoDraftOpValue::FileMove { .. } => AgentsRepoDraftOpKind::FileMove,
             AgentsRepoDraftOpValue::FileDelete { .. } => AgentsRepoDraftOpKind::FileDelete,
+            AgentsRepoDraftOpValue::AssetPut { .. } => AgentsRepoDraftOpKind::AssetPut,
             AgentsRepoDraftOpValue::CommitRecord { .. } => AgentsRepoDraftOpKind::CommitRecord,
         }
     }
@@ -271,7 +320,8 @@ impl AgentsRepoDraftOp {
         match &self.value {
             AgentsRepoDraftOpValue::FilePut { path, .. }
             | AgentsRepoDraftOpValue::FileMove { path, .. }
-            | AgentsRepoDraftOpValue::FileDelete { path, .. } => Some(path),
+            | AgentsRepoDraftOpValue::FileDelete { path, .. }
+            | AgentsRepoDraftOpValue::AssetPut { path, .. } => Some(path),
             AgentsRepoDraftOpValue::CommitRecord { .. } => None,
         }
     }
@@ -281,7 +331,8 @@ impl AgentsRepoDraftOp {
     pub fn paths(&self) -> Vec<&str> {
         match &self.value {
             AgentsRepoDraftOpValue::FilePut { path, .. }
-            | AgentsRepoDraftOpValue::FileDelete { path, .. } => vec![path],
+            | AgentsRepoDraftOpValue::FileDelete { path, .. }
+            | AgentsRepoDraftOpValue::AssetPut { path, .. } => vec![path],
             AgentsRepoDraftOpValue::FileMove { path, to, .. } => vec![path, to],
             AgentsRepoDraftOpValue::CommitRecord { paths, .. } => {
                 paths.iter().map(String::as_str).collect()
@@ -294,7 +345,8 @@ impl AgentsRepoDraftOp {
         match &self.value {
             AgentsRepoDraftOpValue::FilePut { base, .. }
             | AgentsRepoDraftOpValue::FileMove { base, .. }
-            | AgentsRepoDraftOpValue::FileDelete { base, .. } => Some(base),
+            | AgentsRepoDraftOpValue::FileDelete { base, .. }
+            | AgentsRepoDraftOpValue::AssetPut { base, .. } => Some(base),
             AgentsRepoDraftOpValue::CommitRecord { .. } => None,
         }
     }
@@ -325,6 +377,19 @@ impl AgentsRepoDraftOp {
             }
             AgentsRepoDraftOpValue::FileDelete { path, base } => {
                 object.insert("path".into(), Value::from(path.as_str()));
+                put_base(&mut object, base);
+            }
+            AgentsRepoDraftOpValue::AssetPut {
+                path,
+                sha256,
+                mime,
+                size,
+                base,
+            } => {
+                object.insert("path".into(), Value::from(path.as_str()));
+                object.insert("sha256".into(), Value::from(sha256.as_str()));
+                object.insert("mime".into(), Value::from(mime.as_str()));
+                object.insert("size".into(), Value::from(*size));
                 put_base(&mut object, base);
             }
             AgentsRepoDraftOpValue::CommitRecord {
@@ -623,6 +688,33 @@ pub fn validate_move_destination(path: &str, to: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The MIME an `asset.put` at `path` must name, or why the path cannot carry
+/// an uploaded asset at all.
+///
+/// The extension decides, not the uploader: a blob is served with the type its
+/// path implies, so the two agreeing is what keeps a `.png` from being served
+/// as something else.
+pub fn document_asset_mime(path: &str) -> Result<&'static str, String> {
+    if validate_draft_path(path)? != DraftPathClass::DocumentAsset {
+        return Err(format!("draft path {path:?} is not an asset path"));
+    }
+    DOCUMENT_ASSET_MIMES
+        .iter()
+        .find(|(extension, _)| path.ends_with(extension))
+        .map(|(_, mime)| *mime)
+        .ok_or_else(|| {
+            format!(
+                "{path:?} cannot be uploaded: the relay's media store refuses this type as \
+                 active web content, so an asset at this path is committed with git"
+            )
+        })
+}
+
+/// `true` for a 64-character lowercase hex media blob id.
+pub fn is_blob_sha256(value: &str) -> bool {
+    value.len() == 64 && is_lower_hex(value)
+}
+
 /// Validate a `file.put` text: within [`MAX_AGENTS_REPO_DRAFT_TEXT_BYTES`],
 /// no control characters other than newline, carriage return and tab. An
 /// empty text is legal (a `.gitkeep`, an emptied plan).
@@ -802,6 +894,38 @@ pub fn decode_agents_repo_draft_op(content: &str, repo: &str) -> Result<AgentsRe
                 base: take_base(object)?,
             }
         }
+        AgentsRepoDraftOpKind::AssetPut => {
+            let path = take_str(object, "path")?.to_owned();
+            let expected = document_asset_mime(&path)?;
+            let sha256 = take_str(object, "sha256")?.to_owned();
+            if !is_blob_sha256(&sha256) {
+                return Err(
+                    "asset.put sha256 must be a 64-character lowercase hex blob id".to_owned(),
+                );
+            }
+            let mime = take_str(object, "mime")?.to_owned();
+            if mime != expected {
+                return Err(format!(
+                    "asset.put at {path:?} must name {expected:?}, not {mime:?}"
+                ));
+            }
+            let size = object
+                .get("size")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "asset.put size must be a positive integer".to_owned())?;
+            if size == 0 || size > MAX_DOCUMENT_ASSET_BYTES {
+                return Err(format!(
+                    "asset.put size must be 1..={MAX_DOCUMENT_ASSET_BYTES} bytes"
+                ));
+            }
+            AgentsRepoDraftOpValue::AssetPut {
+                path,
+                sha256,
+                mime,
+                size,
+                base: take_base(object)?,
+            }
+        }
         AgentsRepoDraftOpKind::CommitRecord => {
             let commit = take_str(object, "commit")?.to_owned();
             if !is_git_sha(&commit) {
@@ -953,6 +1077,20 @@ mod tests {
         }
     }
 
+    fn asset_op() -> AgentsRepoDraftOp {
+        AgentsRepoDraftOp {
+            repo: REPO.to_owned(),
+            message: Some("the login shot".to_owned()),
+            value: AgentsRepoDraftOpValue::AssetPut {
+                path: "docs/mockups/img/shot.png".to_owned(),
+                sha256: "e".repeat(64),
+                mime: "image/png".to_owned(),
+                size: 2048,
+                base: base(),
+            },
+        }
+    }
+
     fn move_op() -> AgentsRepoDraftOp {
         AgentsRepoDraftOp {
             repo: REPO.to_owned(),
@@ -1019,7 +1157,7 @@ mod tests {
 
     #[test]
     fn every_op_round_trips_through_content_and_envelope() {
-        for op in [put_op(), move_op(), delete_op(), record_op()] {
+        for op in [put_op(), move_op(), delete_op(), asset_op(), record_op()] {
             let decoded = decode_agents_repo_draft_op(&op.to_content(), REPO).expect("decodes");
             assert_eq!(decoded, op);
             let validated = validate_agents_repo_draft_envelope(&signed(&op)).expect("validates");
@@ -1037,6 +1175,41 @@ mod tests {
         value.as_object_mut().expect("object").remove("prev");
         let err = decode_agents_repo_draft_op(&value.to_string(), REPO).expect_err("refuses");
         assert!(err.contains("missing field \"prev\""), "{err}");
+    }
+
+    #[test]
+    fn an_asset_put_names_a_blob_whose_mime_its_path_implies() {
+        let content = asset_op().to_content();
+        assert!(decode_agents_repo_draft_op(&content, REPO).is_ok());
+        let swap = |key: &str, value: Value| {
+            let mut object: Value = serde_json::from_str(&content).expect("json");
+            object
+                .as_object_mut()
+                .expect("object")
+                .insert(key.into(), value);
+            decode_agents_repo_draft_op(&object.to_string(), REPO).expect_err("refuses")
+        };
+        // The extension decides the type, so a blob cannot be served as
+        // something its path does not name.
+        let err = swap("mime", Value::from("image/jpeg"));
+        assert!(err.contains("must name \"image/png\""), "{err}");
+        let err = swap("sha256", Value::from("abc"));
+        assert!(err.contains("64-character lowercase hex"), "{err}");
+        let err = swap("size", Value::from(0));
+        assert!(err.contains("size must be"), "{err}");
+        let err = swap("size", Value::from(MAX_DOCUMENT_ASSET_BYTES + 1));
+        assert!(err.contains("size must be"), "{err}");
+        // A document is not an asset path, and an SVG cannot be uploaded at
+        // all — the media store refuses the type, and the refusal says so
+        // rather than leaving the person to guess.
+        let err = swap("path", Value::from("docs/notes.md"));
+        assert!(err.contains("not an asset path"), "{err}");
+        let err = swap("path", Value::from("docs/img/diagram.svg"));
+        assert!(err.contains("committed with git"), "{err}");
+        assert_eq!(
+            document_asset_mime("docs/img/shot.jpeg").expect("jpeg"),
+            "image/jpeg"
+        );
     }
 
     #[test]

@@ -11,6 +11,7 @@
 //! **unknown**, never "failed". The renderer publishes the `commit.record`;
 //! this host never signs a relay event on the viewer's behalf here.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use buzz_persona_pkg::agents_repo::{validate_root, ActionsCheck};
@@ -29,7 +30,7 @@ pub struct AgentsRepoDraftChange {
     pub id: String,
     /// Its author (64 hex).
     pub author: String,
-    /// `file.put`, `file.move` or `file.delete`.
+    /// `file.put`, `file.move`, `file.delete` or `asset.put`.
     pub op: String,
     /// The path the op names.
     pub path: String,
@@ -39,6 +40,15 @@ pub struct AgentsRepoDraftChange {
     /// A put's text.
     #[serde(default)]
     pub text: Option<String>,
+    /// An `asset.put`'s media blob id; the bytes are fetched before the
+    /// commit runs and handed in beside the request.
+    ///
+    /// The row the renderer sends also carries `mime` and `size`; neither is
+    /// taken here, because the sha256 check on the fetched bytes already
+    /// settles what they would. Unknown fields are ignored, so the renderer
+    /// sends the row as the fold reports it.
+    #[serde(default)]
+    pub sha256: Option<String>,
     /// The blob the author started from, or null for a new file.
     #[serde(default)]
     pub base: Option<String>,
@@ -46,6 +56,13 @@ pub struct AgentsRepoDraftChange {
     #[serde(default)]
     pub message: Option<String>,
 }
+
+/// The bytes of every `asset.put` blob this commit lands, by sha256.
+///
+/// Fetched from the relay's media store and sha-verified by the caller
+/// *before* the blocking commit runs, so the tree write stays synchronous and
+/// `commit_in` stays testable without a network.
+pub(crate) type AssetBytes = HashMap<String, Vec<u8>>;
 
 /// A draft author's display name, for the `Co-authored-by:` trailer.
 #[derive(Debug, Clone, Deserialize)]
@@ -160,6 +177,7 @@ pub(crate) fn commit_drafts(
     repo: &AgentsRepoCheckout,
     request: &AgentsRepoCommitRequest,
     committer: (String, String),
+    assets: &AssetBytes,
 ) -> Result<AgentsRepoCommitResult, String> {
     let draft_ids: Vec<String> = request.drafts.iter().map(|d| d.id.clone()).collect();
     let tip = repo.tip.clone();
@@ -181,6 +199,7 @@ pub(crate) fn commit_drafts(
         &tip,
         draft_ids,
         &catalog,
+        assets,
     );
     drop(scratch);
     outcome
@@ -195,6 +214,7 @@ pub(crate) fn commit_in(
     tip: &str,
     draft_ids: Vec<String>,
     catalog: &buzz_persona_pkg::template::TemplateCatalog,
+    assets: &AssetBytes,
 ) -> Result<AgentsRepoCommitResult, String> {
     if let Some(expected) = request.expected_tip.as_deref().filter(|e| !e.is_empty()) {
         if expected != tip {
@@ -351,6 +371,31 @@ pub(crate) fn commit_in(
             "file.delete" => {
                 run_git(
                     &["update-index", "--force-remove", &change.path],
+                    cwd,
+                    &auth,
+                )?;
+            }
+            // An asset's bytes are a media blob, not op content: the caller
+            // fetched and sha-verified them before this ran, so here they are
+            // just bytes to hash into the tree. A missing entry is a bug in
+            // the caller, named rather than silently committing nothing.
+            "asset.put" => {
+                let sha256 = change
+                    .sha256
+                    .as_deref()
+                    .ok_or("an asset.put without a sha256")?;
+                let bytes = assets.get(sha256).ok_or_else(|| {
+                    format!("the bytes of blob {} were never fetched", short(sha256))
+                })?;
+                let blob = run_git_bytes(&["hash-object", "-w", "--stdin"], cwd, &auth, bytes)?;
+                let blob = String::from_utf8_lossy(&blob).trim().to_owned();
+                run_git(
+                    &[
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        &format!("100644,{blob},{}", change.path),
+                    ],
                     cwd,
                     &auth,
                 )?;

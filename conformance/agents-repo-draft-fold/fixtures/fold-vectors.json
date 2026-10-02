@@ -1,5 +1,5 @@
 {
-  "schema": "buzz-agents-repo-draft-fold-vectors/v1",
+  "schema": "buzz-agents-repo-draft-fold-vectors/v2",
   "cases": [
     {
       "name": "empty",
@@ -7,7 +7,7 @@
       "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
       "events": [],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -52,7 +52,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -68,6 +68,9 @@
               "path": "roles/lead.md",
               "to": null,
               "text": "# lead v1\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": "1111111111111111111111111111111111111111",
               "baseCommit": "cccccccccccccccccccccccccccccccccccccccc",
               "prev": null,
@@ -175,7 +178,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -191,6 +194,9 @@
               "path": "roles/lead.md",
               "to": null,
               "text": "v3\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": "1111111111111111111111111111111111111111",
               "baseCommit": "cccccccccccccccccccccccccccccccccccccccc",
               "prev": "0000000000000000000000000000000000000000000000000000000000000002",
@@ -205,6 +211,9 @@
                 "path": "roles/lead.md",
                 "to": null,
                 "text": "v1\n",
+                "sha256": null,
+                "mime": null,
+                "size": null,
                 "base": "1111111111111111111111111111111111111111",
                 "baseCommit": "cccccccccccccccccccccccccccccccccccccccc",
                 "prev": null,
@@ -218,6 +227,9 @@
                 "path": "roles/lead.md",
                 "to": null,
                 "text": "v2\n",
+                "sha256": null,
+                "mime": null,
+                "size": null,
                 "base": "1111111111111111111111111111111111111111",
                 "baseCommit": "cccccccccccccccccccccccccccccccccccccccc",
                 "prev": "0000000000000000000000000000000000000000000000000000000000000001",
@@ -325,7 +337,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -341,6 +353,9 @@
               "path": "roles/lead.md",
               "to": null,
               "text": "alice\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": "1111111111111111111111111111111111111111",
               "baseCommit": null,
               "prev": "0000000000000000000000000000000000000000000000000000000000000001",
@@ -355,6 +370,9 @@
                 "path": "roles/lead.md",
                 "to": null,
                 "text": "v1\n",
+                "sha256": null,
+                "mime": null,
+                "size": null,
                 "base": "1111111111111111111111111111111111111111",
                 "baseCommit": null,
                 "prev": null,
@@ -368,6 +386,9 @@
                 "path": "roles/lead.md",
                 "to": null,
                 "text": "bob\n",
+                "sha256": null,
+                "mime": null,
+                "size": null,
                 "base": "1111111111111111111111111111111111111111",
                 "baseCommit": null,
                 "prev": "0000000000000000000000000000000000000000000000000000000000000001",
@@ -446,7 +467,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -462,6 +483,9 @@
               "path": "roles/lead.md",
               "to": null,
               "text": "v1 too\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": "1111111111111111111111111111111111111111",
               "baseCommit": null,
               "prev": null,
@@ -476,6 +500,9 @@
                 "path": "roles/lead.md",
                 "to": null,
                 "text": "v1\n",
+                "sha256": null,
+                "mime": null,
+                "size": null,
                 "base": "1111111111111111111111111111111111111111",
                 "baseCommit": null,
                 "prev": null,
@@ -554,7 +581,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -570,6 +597,9 @@
               "path": "plans/rpg.md",
               "to": null,
               "text": null,
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": "1111111111111111111111111111111111111111",
               "baseCommit": null,
               "prev": "0000000000000000000000000000000000000000000000000000000000000001",
@@ -584,6 +614,9 @@
                 "path": "plans/rpg.md",
                 "to": null,
                 "text": "plan\n",
+                "sha256": null,
+                "mime": null,
+                "size": null,
                 "base": null,
                 "baseCommit": null,
                 "prev": null,
@@ -637,7 +670,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -653,6 +686,9 @@
               "path": "plans/rpg.md",
               "to": "plans/archive/rpg.md",
               "text": null,
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": "1111111111111111111111111111111111111111",
               "baseCommit": "cccccccccccccccccccccccccccccccccccccccc",
               "prev": null,
@@ -672,6 +708,9 @@
               "path": "plans/rpg.md",
               "to": "plans/archive/rpg.md",
               "text": null,
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": "1111111111111111111111111111111111111111",
               "baseCommit": "cccccccccccccccccccccccccccccccccccccccc",
               "prev": null,
@@ -754,7 +793,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -770,6 +809,9 @@
               "path": "plans/archive/rpg.md",
               "to": null,
               "text": "archived, annotated\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": "1111111111111111111111111111111111111111",
               "baseCommit": null,
               "prev": "0000000000000000000000000000000000000000000000000000000000000001",
@@ -784,6 +826,9 @@
                 "path": "plans/rpg.md",
                 "to": "plans/archive/rpg.md",
                 "text": null,
+                "sha256": null,
+                "mime": null,
+                "size": null,
                 "base": "1111111111111111111111111111111111111111",
                 "baseCommit": null,
                 "prev": null,
@@ -803,6 +848,9 @@
               "path": "plans/rpg.md",
               "to": "plans/archive/rpg.md",
               "text": null,
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": "1111111111111111111111111111111111111111",
               "baseCommit": null,
               "prev": null,
@@ -939,7 +987,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -955,6 +1003,9 @@
               "path": "plans/rpg.md",
               "to": null,
               "text": "plan\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": null,
               "baseCommit": null,
               "prev": null,
@@ -974,6 +1025,9 @@
               "path": "roles/lead.md",
               "to": null,
               "text": "after commit\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": "2222222222222222222222222222222222222222",
               "baseCommit": "dddddddddddddddddddddddddddddddddddddddd",
               "prev": null,
@@ -1095,7 +1149,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -1111,6 +1165,9 @@
               "path": "roles/lead.md",
               "to": null,
               "text": "v2\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": null,
               "baseCommit": null,
               "prev": "0000000000000000000000000000000000000000000000000000000000000001",
@@ -1203,7 +1260,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -1449,7 +1506,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 5,
@@ -1465,6 +1522,9 @@
               "path": "roles/lead.md",
               "to": null,
               "text": "v1\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": null,
               "baseCommit": null,
               "prev": null,
@@ -1514,7 +1574,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -1530,6 +1590,9 @@
               "path": "roles/lead.md",
               "to": null,
               "text": "case-variant a\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": null,
               "baseCommit": null,
               "prev": null,
@@ -1608,7 +1671,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -1624,6 +1687,9 @@
               "path": "roles/lead.md",
               "to": null,
               "text": "v1\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": null,
               "baseCommit": null,
               "prev": null,
@@ -1731,7 +1797,7 @@
         }
       ],
       "expected": {
-        "schema": "buzz-agents-repo-draft-digest/v1",
+        "schema": "buzz-agents-repo-draft-digest/v2",
         "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
         "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
         "ignored": 0,
@@ -1747,6 +1813,9 @@
               "path": "actions.yml",
               "to": null,
               "text": "schema: buzz-project-actions/v1\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": "2222222222222222222222222222222222222222",
               "baseCommit": null,
               "prev": null,
@@ -1766,6 +1835,9 @@
               "path": "plans/a.md",
               "to": null,
               "text": "a\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": null,
               "baseCommit": null,
               "prev": null,
@@ -1785,6 +1857,472 @@
               "path": "team.yml",
               "to": null,
               "text": "schema: beekeeper-team/v1\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
+              "base": "1111111111111111111111111111111111111111",
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "an asset put is the head of its path and reports sha256, mime and size",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44250,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "asset.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "docs/mockups/img/shot.png"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"asset.put\",\"path\":\"docs/mockups/img/shot.png\",\"sha256\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"mime\":\"image/png\",\"size\":2048,\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":\"the login shot\"}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v2",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "docs/mockups/img/shot.png",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 100,
+              "op": "asset.put",
+              "path": "docs/mockups/img/shot.png",
+              "to": null,
+              "text": null,
+              "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              "mime": "image/png",
+              "size": 2048,
+              "base": null,
+              "baseCommit": null,
+              "prev": null,
+              "message": "the login shot"
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "a document and its asset are separate paths",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44250,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "docs/mockups/login.html"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"docs/mockups/login.html\",\"text\":\"<p><img src=\\\"img/shot.png\\\"></p>\\n\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 101,
+          "kind": 44250,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "asset.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "docs/mockups/img/shot.png"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"asset.put\",\"path\":\"docs/mockups/img/shot.png\",\"sha256\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"mime\":\"image/png\",\"size\":2048,\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v2",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "docs/mockups/img/shot.png",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000002",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 101,
+              "op": "asset.put",
+              "path": "docs/mockups/img/shot.png",
+              "to": null,
+              "text": null,
+              "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              "mime": "image/png",
+              "size": 2048,
+              "base": null,
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 101
+          },
+          {
+            "path": "docs/mockups/login.html",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 100,
+              "op": "file.put",
+              "path": "docs/mockups/login.html",
+              "to": null,
+              "text": "<p><img src=\"img/shot.png\"></p>\n",
+              "sha256": null,
+              "mime": null,
+              "size": null,
+              "base": null,
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "re-uploading an image supersedes the first asset put",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44250,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "asset.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "docs/mockups/img/shot.png"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"asset.put\",\"path\":\"docs/mockups/img/shot.png\",\"sha256\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"mime\":\"image/png\",\"size\":2048,\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
+          "created_at": 110,
+          "kind": 44250,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "asset.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "docs/mockups/img/shot.png"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"asset.put\",\"path\":\"docs/mockups/img/shot.png\",\"sha256\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"mime\":\"image/png\",\"size\":4096,\"base\":null,\"baseCommit\":null,\"prev\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v2",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "docs/mockups/img/shot.png",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000002",
+              "author": "2222222222222222222222222222222222222222222222222222222222222222",
+              "createdAt": 110,
+              "op": "asset.put",
+              "path": "docs/mockups/img/shot.png",
+              "to": null,
+              "text": null,
+              "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "mime": "image/png",
+              "size": 4096,
+              "base": null,
+              "baseCommit": null,
+              "prev": "0000000000000000000000000000000000000000000000000000000000000001",
+              "message": null
+            },
+            "superseded": [
+              {
+                "id": "0000000000000000000000000000000000000000000000000000000000000001",
+                "author": "1111111111111111111111111111111111111111111111111111111111111111",
+                "createdAt": 100,
+                "op": "asset.put",
+                "path": "docs/mockups/img/shot.png",
+                "to": null,
+                "text": null,
+                "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "mime": "image/png",
+                "size": 2048,
+                "base": null,
+                "baseCommit": null,
+                "prev": null,
+                "message": null
+              }
+            ],
+            "diverged": false,
+            "updatedAt": 110
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "a folder keep is an ordinary path with an ordinary head",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44250,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.put"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "docs/mockups/.gitkeep"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.put\",\"path\":\"docs/mockups/.gitkeep\",\"text\":\"\",\"base\":null,\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v2",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "docs/mockups/.gitkeep",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 100,
+              "op": "file.put",
+              "path": "docs/mockups/.gitkeep",
+              "to": null,
+              "text": "",
+              "sha256": null,
+              "mime": null,
+              "size": null,
+              "base": null,
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          }
+        ],
+        "commits": []
+      }
+    },
+    {
+      "name": "a document move names both ends",
+      "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+      "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+      "events": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "created_at": 100,
+          "kind": 44250,
+          "tags": [
+            [
+              "a",
+              "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop"
+            ],
+            [
+              "ad-v",
+              "ad1-1"
+            ],
+            [
+              "ad-op",
+              "file.move"
+            ],
+            [
+              "ad-repo",
+              "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents"
+            ],
+            [
+              "ad-path",
+              "docs/a.md"
+            ],
+            [
+              "ad-path",
+              "docs/notes/a.md"
+            ]
+          ],
+          "content": "{\"schema\":\"buzz-agents-repo-draft/v1\",\"op\":\"file.move\",\"path\":\"docs/a.md\",\"to\":\"docs/notes/a.md\",\"base\":\"1111111111111111111111111111111111111111\",\"baseCommit\":null,\"prev\":null,\"message\":null}"
+        }
+      ],
+      "expected": {
+        "schema": "buzz-agents-repo-draft-digest/v2",
+        "project": "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop",
+        "repo": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop-beekeeper-agents",
+        "ignored": 0,
+        "otherRepo": 0,
+        "paths": [
+          {
+            "path": "docs/a.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 100,
+              "op": "file.move",
+              "path": "docs/a.md",
+              "to": "docs/notes/a.md",
+              "text": null,
+              "sha256": null,
+              "mime": null,
+              "size": null,
+              "base": "1111111111111111111111111111111111111111",
+              "baseCommit": null,
+              "prev": null,
+              "message": null
+            },
+            "superseded": [],
+            "diverged": false,
+            "updatedAt": 100
+          },
+          {
+            "path": "docs/notes/a.md",
+            "head": {
+              "id": "0000000000000000000000000000000000000000000000000000000000000001",
+              "author": "1111111111111111111111111111111111111111111111111111111111111111",
+              "createdAt": 100,
+              "op": "file.move",
+              "path": "docs/a.md",
+              "to": "docs/notes/a.md",
+              "text": null,
+              "sha256": null,
+              "mime": null,
+              "size": null,
               "base": "1111111111111111111111111111111111111111",
               "baseCommit": null,
               "prev": null,

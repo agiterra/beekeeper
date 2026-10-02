@@ -55,6 +55,7 @@ enum DraftOpKind {
   filePut('file.put'),
   fileMove('file.move'),
   fileDelete('file.delete'),
+  assetPut('asset.put'),
   commitRecord('commit.record');
 
   const DraftOpKind(this.wire);
@@ -92,6 +93,18 @@ enum DraftOpKind {
       'schema',
       'op',
       'path',
+      'base',
+      'baseCommit',
+      'prev',
+      'message',
+    ],
+    assetPut => const [
+      'schema',
+      'op',
+      'path',
+      'sha256',
+      'mime',
+      'size',
       'base',
       'baseCommit',
       'prev',
@@ -152,6 +165,15 @@ class AgentsRepoDraftOp {
   /// A put's whole text.
   final String? text;
 
+  /// An `asset.put`'s media blob id.
+  final String? sha256;
+
+  /// An `asset.put`'s MIME.
+  final String? mime;
+
+  /// An `asset.put`'s size in bytes.
+  final int? size;
+
   /// Blob sha of the file on `main` the author started from; null = new.
   final String? base;
 
@@ -177,6 +199,9 @@ class AgentsRepoDraftOp {
     this.path,
     this.to,
     this.text,
+    this.sha256,
+    this.mime,
+    this.size,
     this.base,
     this.baseCommit,
     this.prev,
@@ -240,6 +265,29 @@ class AgentsRepoDraftOp {
          prev: prev,
        );
 
+  const AgentsRepoDraftOp.assetPut({
+    required String repo,
+    required String path,
+    required String sha256,
+    required String mime,
+    required int size,
+    required String? base,
+    required String? baseCommit,
+    required String? prev,
+    String? message,
+  }) : this._(
+         repo: repo,
+         message: message,
+         kind: DraftOpKind.assetPut,
+         path: path,
+         sha256: sha256,
+         mime: mime,
+         size: size,
+         base: base,
+         baseCommit: baseCommit,
+         prev: prev,
+       );
+
   const AgentsRepoDraftOp.commitRecord({
     required String repo,
     required String commit,
@@ -258,7 +306,9 @@ class AgentsRepoDraftOp {
   /// Every path the op names: the file (and a move's destination), or a
   /// record's paths.
   List<String> get namedPaths => switch (kind) {
-    DraftOpKind.filePut || DraftOpKind.fileDelete => [path!],
+    DraftOpKind.filePut ||
+    DraftOpKind.fileDelete ||
+    DraftOpKind.assetPut => [path!],
     DraftOpKind.fileMove => [path!, to!],
     DraftOpKind.commitRecord => List.of(paths),
   };
@@ -284,6 +334,14 @@ class AgentsRepoDraftOp {
         object['prev'] = prev;
       case DraftOpKind.fileDelete:
         object['path'] = path;
+        object['base'] = base;
+        object['baseCommit'] = baseCommit;
+        object['prev'] = prev;
+      case DraftOpKind.assetPut:
+        object['path'] = path;
+        object['sha256'] = sha256;
+        object['mime'] = mime;
+        object['size'] = size;
         object['base'] = base;
         object['baseCommit'] = baseCommit;
         object['prev'] = prev;
@@ -445,6 +503,31 @@ DraftPathClass? draftPathClass(String path) {
   }
   if (segments.length >= 2 && segments[0] == docsRoot) {
     return _classifyDocumentPath(segments.sublist(1));
+  }
+  return null;
+}
+
+/// The MIME the relay's media store admits for each asset extension, which is
+/// also what an `asset.put` must name. `.svg` is deliberately absent: the
+/// media store refuses `image/svg+xml` as active web content, so an SVG in the
+/// tree is committed with git rather than uploaded.
+const documentAssetMimes = <String, String>{
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+};
+
+/// A sanity bound on an `asset.put`'s `size`; the media store's cap is real.
+const maxDocumentAssetBytes = 100 * 1024 * 1024;
+
+/// The MIME an `asset.put` at [path] must name, or `null` when the path cannot
+/// carry an uploaded asset at all. The extension decides, not the uploader.
+String? documentAssetMime(String path) {
+  if (draftPathClass(path) != DraftPathClass.documentAsset) return null;
+  for (final entry in documentAssetMimes.entries) {
+    if (path.endsWith(entry.key)) return entry.value;
   }
   return null;
 }
@@ -632,6 +715,29 @@ AgentsRepoDraftOp? decodeAgentsRepoDraftOp(String content, String repo) {
         return AgentsRepoDraftOp.fileDelete(
           repo: repo,
           path: path,
+          base: base.base,
+          baseCommit: base.baseCommit,
+          prev: base.prev,
+          message: message,
+        );
+      case DraftOpKind.assetPut:
+        final path = object['path'];
+        if (path is! String) return null;
+        final mime = documentAssetMime(path);
+        if (mime == null || object['mime'] != mime) return null;
+        final sha256 = object['sha256'];
+        if (sha256 is! String || !isEventId(sha256)) return null;
+        final size = object['size'];
+        if (size is! int || size <= 0 || size > maxDocumentAssetBytes) {
+          return null;
+        }
+        final base = _decodeBase(object);
+        return AgentsRepoDraftOp.assetPut(
+          repo: repo,
+          path: path,
+          sha256: sha256,
+          mime: mime,
+          size: size,
           base: base.base,
           baseCommit: base.baseCommit,
           prev: base.prev,

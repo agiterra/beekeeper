@@ -54,6 +54,7 @@ export type DraftOpKind =
   | "file.put"
   | "file.move"
   | "file.delete"
+  | "asset.put"
   | "commit.record";
 
 export type DraftBase = {
@@ -69,6 +70,16 @@ export type DraftOpContent =
   | ({ op: "file.put"; path: string; text: string } & DraftBase)
   | ({ op: "file.move"; path: string; to: string } & DraftBase)
   | ({ op: "file.delete"; path: string } & DraftBase)
+  | ({
+      op: "asset.put";
+      path: string;
+      /** The blob's id in the relay's media store. */
+      sha256: string;
+      /** The MIME the path's extension names. */
+      mime: string;
+      /** The blob's size in bytes, as the uploader observed it. */
+      size: number;
+    } & DraftBase)
   | { op: "commit.record"; commit: string; paths: string[]; drafts: string[] };
 
 /** One op: the repository it belongs to, an optional reason, and the edit. */
@@ -109,6 +120,18 @@ const CONTENT_KEYS: Record<DraftOpKind, readonly string[]> = {
     "prev",
     "message",
   ],
+  "asset.put": [
+    "schema",
+    "op",
+    "path",
+    "sha256",
+    "mime",
+    "size",
+    "base",
+    "baseCommit",
+    "prev",
+    "message",
+  ],
   "commit.record": ["schema", "op", "commit", "paths", "drafts", "message"],
 };
 
@@ -117,6 +140,7 @@ export function isDraftOpKind(value: unknown): value is DraftOpKind {
     value === "file.put" ||
     value === "file.move" ||
     value === "file.delete" ||
+    value === "asset.put" ||
     value === "commit.record"
   );
 }
@@ -133,6 +157,11 @@ export function isEventId(value: unknown): value is string {
   return (
     typeof value === "string" && value.length === 64 && LOWER_HEX.test(value)
   );
+}
+
+/** A 64-character lowercase hex media blob id. */
+export function isBlobSha256(value: unknown): value is string {
+  return isEventId(value);
 }
 
 function isSlug(value: string): boolean {
@@ -164,6 +193,36 @@ export type DraftPathClass =
   | "document"
   | "document-asset"
   | "document-folder";
+
+/**
+ * The MIME the relay's media store admits for each asset extension, which is
+ * also what an `asset.put` must name. `.svg` is deliberately absent: the media
+ * store refuses `image/svg+xml` as active web content, so an SVG in the tree
+ * is committed with git rather than uploaded.
+ */
+export const DOCUMENT_ASSET_MIMES: readonly (readonly [string, string])[] = [
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".gif", "image/gif"],
+  [".webp", "image/webp"],
+];
+
+/** A sanity bound on an `asset.put`'s `size`; the media store's cap is real. */
+export const MAX_DOCUMENT_ASSET_BYTES = 100 * 1024 * 1024;
+
+/**
+ * The MIME an `asset.put` at `path` must name, or null when the path cannot
+ * carry an uploaded asset at all. The extension decides, not the uploader.
+ */
+export function documentAssetMime(path: string): string | null {
+  const classified = draftPathClass(path);
+  if (!classified.ok || classified.class !== "document-asset") return null;
+  for (const [extension, mime] of DOCUMENT_ASSET_MIMES) {
+    if (path.endsWith(extension)) return mime;
+  }
+  return null;
+}
 
 /** Whether a class sits in the documents tree, where folders nest. */
 export function isDocumentClass(value: DraftPathClass): boolean {
@@ -454,6 +513,7 @@ export function draftOpPaths(content: DraftOpContent): string[] {
   switch (content.op) {
     case "file.put":
     case "file.delete":
+    case "asset.put":
       return [content.path];
     case "file.move":
       return [content.path, content.to];
@@ -486,6 +546,15 @@ export function encodeDraftOpContent(op: DraftOp): string {
       break;
     case "file.delete":
       object.path = c.path;
+      object.base = c.base;
+      object.baseCommit = c.baseCommit;
+      object.prev = c.prev;
+      break;
+    case "asset.put":
+      object.path = c.path;
+      object.sha256 = c.sha256;
+      object.mime = c.mime;
+      object.size = c.size;
       object.base = c.base;
       object.baseCommit = c.baseCommit;
       object.prev = c.prev;
@@ -615,6 +684,30 @@ export function decodeDraftOp(content: string, repo: string): DraftOp | null {
         repo,
         message: message.value,
         content: { op: kind, path, ...base },
+      };
+    }
+    case "asset.put": {
+      const path = object.path;
+      if (typeof path !== "string") return null;
+      const mime = documentAssetMime(path);
+      if (mime === null || object.mime !== mime) return null;
+      const sha256 = object.sha256;
+      if (typeof sha256 !== "string" || !isBlobSha256(sha256)) return null;
+      const size = object.size;
+      if (
+        typeof size !== "number" ||
+        !Number.isInteger(size) ||
+        size <= 0 ||
+        size > MAX_DOCUMENT_ASSET_BYTES
+      ) {
+        return null;
+      }
+      const base = decodeBase(object);
+      if (!base) return null;
+      return {
+        repo,
+        message: message.value,
+        content: { op: kind, path, sha256, mime, size, ...base },
       };
     }
     case "commit.record": {

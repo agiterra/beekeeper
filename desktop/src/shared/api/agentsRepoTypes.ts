@@ -53,10 +53,18 @@ export type AgentsRepoFile = {
 export type AgentsRepoDraftChange = {
   id: string;
   author: string;
-  op: "file.put" | "file.move" | "file.delete";
+  op: "file.put" | "file.move" | "file.delete" | "asset.put";
   path: string;
   to: string | null;
   text: string | null;
+  /**
+   * An `asset.put`'s media blob id. The host fetches those bytes and
+   * sha-verifies them before the commit; `mime` and `size` ride along for
+   * symmetry with the fold's row and the host ignores them.
+   */
+  sha256: string | null;
+  mime: string | null;
+  size: number | null;
   base: string | null;
   message: string | null;
 };

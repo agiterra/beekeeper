@@ -28,8 +28,8 @@ const folds = JSON.parse(
 );
 
 test("the corpus pins the constants the fold codes", () => {
-  assert.equal(folds.schema, "buzz-agents-repo-draft-fold-vectors/v1");
-  assert.equal(AGENTS_REPO_DRAFT_DIGEST_SCHEMA, "buzz-agents-repo-draft-digest/v1");
+  assert.equal(folds.schema, "buzz-agents-repo-draft-fold-vectors/v2");
+  assert.equal(AGENTS_REPO_DRAFT_DIGEST_SCHEMA, "buzz-agents-repo-draft-digest/v2");
   assert.ok(folds.cases.length > 0, "the corpus must hold vectors");
 });
 

@@ -15,7 +15,7 @@ import {
 } from "./agentsRepoDraftOp.ts";
 
 export const AGENTS_REPO_DRAFT_DIGEST_SCHEMA =
-  "buzz-agents-repo-draft-digest/v1";
+  "buzz-agents-repo-draft-digest/v2";
 
 /** The subset of a relay event the fold reads. */
 export type DraftFoldEvent = {
@@ -32,10 +32,18 @@ export type DraftRow = {
   id: string;
   author: string;
   createdAt: number;
-  op: "file.put" | "file.move" | "file.delete";
+  op: "file.put" | "file.move" | "file.delete" | "asset.put";
   path: string;
+  /** A move's destination; null otherwise. */
   to: string | null;
+  /** A text put's whole text; null otherwise. */
   text: string | null;
+  /** An `asset.put`'s media blob id; null otherwise. */
+  sha256: string | null;
+  /** An `asset.put`'s MIME; null otherwise. */
+  mime: string | null;
+  /** An `asset.put`'s size in bytes; null otherwise. */
+  size: number | null;
   base: string | null;
   baseCommit: string | null;
   prev: string | null;
@@ -166,6 +174,9 @@ function row(d: Decoded): DraftRow | null {
     path: c.path,
     to: c.op === "file.move" ? c.to : null,
     text: c.op === "file.put" ? c.text : null,
+    sha256: c.op === "asset.put" ? c.sha256 : null,
+    mime: c.op === "asset.put" ? c.mime : null,
+    size: c.op === "asset.put" ? c.size : null,
     base: c.base,
     baseCommit: c.baseCommit,
     prev: c.prev,

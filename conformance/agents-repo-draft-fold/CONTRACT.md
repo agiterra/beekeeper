@@ -38,6 +38,7 @@ The key set is exact per op: every listed key must be present (nullables as
 | `file.put` | `path`, `text`, `base`, `baseCommit`, `prev`, `message` | the whole new text of `path` |
 | `file.move` | `path`, `to`, `base`, `baseCommit`, `prev`, `message` | `path` moves to `to`, its archive counterpart |
 | `file.delete` | `path`, `base`, `baseCommit`, `prev`, `message` | `path` is removed |
+| `asset.put` | `path`, `sha256`, `mime`, `size`, `base`, `baseCommit`, `prev`, `message` | the image at `path` is the media blob `sha256` |
 | `commit.record` | `commit`, `paths`, `drafts`, `message` | `commit` on `main` carries the named `drafts` |
 
 `base` is the blob sha (40 hex) of the file on `main` the author started
@@ -48,7 +49,9 @@ the author edited from, or `null`. `message` is one line ≤ 512 bytes or
 agents repository layout (`README.md`, `team.yml`, `actions.yml`,
 `roles/<slug>.md`, `roles/archive/<slug>.md`,
 `roles/<slug>/skills/<skill>/…`, `skills/<skill>/…`, `plans/<slug>.md`,
-`plans/archive/<slug>.md`; `archive` is never a slug). The event's tags are
+`plans/archive/<slug>.md`, and the documents tree `docs/<folder>/…` —
+`archive` is never a slug, and the path grammar with its own vectors is
+`conformance/agents-repo-draft-path/`). The event's tags are
 `a`, `ad-v` (`ad1-1`), `ad-op`, `ad-repo`, and one `ad-path` per path the op
 names. An `h` tag is a rejection.
 
@@ -72,6 +75,14 @@ not folded.
 3. **Close.** `closed` is the union of every `commit.record`'s `drafts`,
    whether or not the fold ever saw those ids. Records are emitted in
    `commits`, newest key first.
+   An `asset.put` is a file op like any other: it names one path, carries a
+   base and a `prev`, and folds into a head. What it does not carry is text —
+   a draft op is UTF-8 only, so an image's bytes travel through the relay's
+   media store and the op names the blob (`sha256`), its `mime` and its
+   `size`. The committer fetches that blob and writes it into the tree. The
+   fold does not check that the blob exists; that is the relay's check at
+   ingest, and a reader that cannot fetch it says so rather than drawing a
+   broken image.
 4. **Heads.** A file op *names* a path `P` when its `path` is `P`, or it is
    a `file.move` whose `to` is `P` (so a move is a candidate head at both
    ends: delete-shaped at `path`, put-shaped with the source blob at `to`).
@@ -86,11 +97,11 @@ not folded.
 6. **Order out.** Paths sort bytewise. `updatedAt` on a path is the head's
    `created_at`.
 
-## Digest shape (`buzz-agents-repo-draft-digest/v1`)
+## Digest shape (`buzz-agents-repo-draft-digest/v2`)
 
 ```json
 {
-  "schema": "buzz-agents-repo-draft-digest/v1",
+  "schema": "buzz-agents-repo-draft-digest/v2",
   "project": "30621:<owner>:<dtag>",
   "repo": "30617:<owner>:<id>",
   "ignored": 0,
@@ -110,11 +121,15 @@ A row (head or superseded):
 
 ```json
 { "id": "<64 hex>", "author": "<64 hex>", "createdAt": 0, "op": "file.put",
-  "path": "roles/lead.md", "to": null, "text": "…", "base": null,
-  "baseCommit": null, "prev": null, "message": null }
+  "path": "roles/lead.md", "to": null, "text": "…", "sha256": null,
+  "mime": null, "size": null, "base": null, "baseCommit": null,
+  "prev": null, "message": null }
 ```
 
-Every nullable member is emitted as `null`, never omitted. `ignored` and
+Every nullable member is emitted as `null`, never omitted. `to` is a move's
+destination; `text` a text put's bytes; `sha256`, `mime` and `size` an
+`asset.put`'s blob. **v2** added the asset three; a v1 digest is the same
+document without them. `ignored` and
 `otherRepo` are the fold's honesty counters: a client shows them when they
 are not zero rather than presenting a listing that silently dropped
 somebody's draft. Whether the read that produced the input was

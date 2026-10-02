@@ -5,7 +5,15 @@
 //!    the repository the project's newest kind:30624 pins. Otherwise a draft
 //!    could be written against a repository the project does not use, and a
 //!    re-pointed project would keep accumulating drafts for the old one.
-//! 2. **A `commit.record` names a commit on `main`.** The relay reads the
+//! 2. **An `asset.put` names a blob this community holds.** A draft op
+//!    carries UTF-8 text only, so an image's bytes travel through the media
+//!    store and the op names the blob by sha256. The relay reads the
+//!    community-scoped sidecar — the tenant read gate for otherwise shared
+//!    content-addressed bytes — and requires the blob to be there with the
+//!    MIME and size the op claims. That turns three client claims into
+//!    relay-checked facts, and keeps a draft from naming another community's
+//!    blob.
+//! 3. **A `commit.record` names a commit on `main`.** The relay reads the
 //!    repository's manifest chain (no pack is hydrated) and requires the
 //!    commit to be `refs/heads/main` now, or to have been within the last
 //!    [`crate::api::git::hydrate::MAIN_TIP_HISTORY`] pushes. A record is
@@ -22,6 +30,7 @@ use buzz_core::kind::KIND_PROJECT_PACK_SOURCE;
 use buzz_core::project_pack_source::decode_project_pack_source;
 use buzz_core::tenant::TenantContext;
 use buzz_db::EventQuery;
+use buzz_media::MediaStorage;
 use nostr::Event;
 
 use super::ingest::IngestError;
@@ -91,6 +100,16 @@ pub(crate) async fn admit_draft_repository(
             ));
         }
     }
+    if let AgentsRepoDraftOpValue::AssetPut {
+        path,
+        sha256,
+        mime,
+        size,
+        ..
+    } = &op.value
+    {
+        return admit_asset_blob(state, tenant, path, sha256, mime, *size).await;
+    }
     let AgentsRepoDraftOpValue::CommitRecord { commit, .. } = &op.value else {
         return Ok(());
     };
@@ -114,4 +133,51 @@ pub(crate) async fn admit_draft_repository(
             "invalid: commit {commit} cannot be on main: repository {id} has never been pushed"
         ))),
     }
+}
+
+/// Refuse an `asset.put` whose blob this community does not hold, or whose
+/// MIME or size disagrees with what the media store recorded when it accepted
+/// the upload.
+///
+/// The sidecar, not the raw object, is what is read: raw bytes are shared
+/// content-addressed storage, and the community-scoped sidecar is the tenant
+/// gate. Reading the object directly would let a draft in community A name a
+/// blob only community B ever uploaded.
+async fn admit_asset_blob(
+    state: &AppState,
+    tenant: &TenantContext,
+    path: &str,
+    sha256: &str,
+    mime: &str,
+    size: u64,
+) -> Result<(), IngestError> {
+    let key = MediaStorage::ctx_sidecar_key(tenant, sha256);
+    let present =
+        state.media_storage.head(&key).await.map_err(|e| {
+            IngestError::Internal(format!("error: media sidecar lookup failed: {e}"))
+        })?;
+    if !present {
+        return Err(IngestError::Rejected(format!(
+            "invalid: no blob {sha256} in this community's media store — upload the image \
+             first, then draft the asset at {path}"
+        )));
+    }
+    let meta = state
+        .media_storage
+        .get_sidecar(tenant, sha256)
+        .await
+        .map_err(|e| IngestError::Internal(format!("error: media sidecar unreadable: {e}")))?;
+    if meta.mime_type != mime {
+        return Err(IngestError::Rejected(format!(
+            "invalid: blob {sha256} is {} in this community's media store, not {mime}",
+            meta.mime_type
+        )));
+    }
+    if meta.size != size {
+        return Err(IngestError::Rejected(format!(
+            "invalid: blob {sha256} is {} bytes in this community's media store, not {size}",
+            meta.size
+        )));
+    }
+    Ok(())
 }

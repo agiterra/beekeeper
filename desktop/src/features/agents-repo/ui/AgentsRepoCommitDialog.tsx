@@ -30,6 +30,9 @@ export function changeOf(entry: DraftPath): AgentsRepoDraftChange {
     path: head.path,
     to: head.to,
     text: head.text,
+    sha256: head.sha256,
+    mime: head.mime,
+    size: head.size,
     base: head.base,
     message: head.message,
   };
