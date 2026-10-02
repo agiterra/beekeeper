@@ -23,6 +23,11 @@ const exec = promisify(execFile);
 //     now one array, and this spec is what notices if they part again;
 //   - hiding is **disclosed**, with the count, not silent.
 //
+// What it cannot show: a document's *contents*. Reading the repository is a
+// Tauri host command the mock bridge does not answer, so every editor here
+// reports main unreadable. The pins, the routing and the chrome are what this
+// gate covers.
+//
 // Each run leaves one project behind in the community it ran against (the
 // same way the to-do gate does). Clear them with:
 //
@@ -221,8 +226,24 @@ test.describe("project artifacts (live relay)", () => {
       await expect(page.getByTestId("agents-repo-tip")).toHaveCount(0);
       await expect(page.getByTestId("agents-repo-new-document")).toHaveCount(0);
       await expect(page).toHaveURL(/[?&]view=file(&|$)/);
-      // And a way back, so the view is not a dead end.
-      await page.getByTestId("agents-repo-focused-all").click();
+      // The capture is of the chrome, not of the document: this harness is a
+      // browser with a relay bridge, and reading a repository's files is a
+      // *Tauri host* command (`agents_repo_ls` / `agents_repo_read`) the mock
+      // does not answer. So the editor here says main is unreadable and shows
+      // no content, and that this gate is green says nothing about whether a
+      // document renders — only the app can answer that.
+      await waitForAnimations(page);
+      await page.screenshot({
+        path: "test-results/project-artifacts/focused-document.png",
+        clip: { x: 256, y: 0, width: 1024, height: 420 },
+      });
+      // And a way back, so the view is not a dead end — in the document's
+      // own header row, beside its name, not floating above the view.
+      const back = page
+        .getByTestId("agents-repo-editor")
+        .getByTestId("agents-repo-focused-all");
+      await expect(back).toBeVisible();
+      await back.click();
       await expect(page.getByTestId("project-page-tabs")).toBeVisible({
         timeout: 30_000,
       });

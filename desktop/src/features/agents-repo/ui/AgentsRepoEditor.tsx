@@ -1,4 +1,12 @@
-import { ExternalLink, Pencil, Pin, PinOff, Save, X } from "lucide-react";
+import {
+  ArrowLeft,
+  ExternalLink,
+  Pencil,
+  Pin,
+  PinOff,
+  Save,
+  X,
+} from "lucide-react";
 import * as React from "react";
 
 import { DiffViewer } from "@/features/messages/ui/DiffViewer";
@@ -127,6 +135,7 @@ export function AgentsRepoEditor({
   onTogglePin,
   onOpenPreview,
   previewNotice,
+  onBack,
 }: {
   subject: EditorSubject;
   access: AgentsRepoAccess;
@@ -151,6 +160,12 @@ export function AgentsRepoEditor({
   onOpenPreview: ((text: string) => Promise<void>) | null;
   /** What the last preview could not find, or why it would not open. */
   previewNotice: string | null;
+  /**
+   * Leave the one-file view, or null when this editor is inside the whole
+   * tab and there is nothing to leave. It leads the header row because it is
+   * the only way back from a view with no tabs.
+   */
+  onBack?: (() => void) | null;
 }) {
   // A path that is neither on main nor drafted (a plan just named in the
   // New plan dialog) has nothing to preview: it opens straight into editing.
@@ -222,6 +237,18 @@ export function AgentsRepoEditor({
       data-testid="agents-repo-editor"
     >
       <div className="flex flex-wrap items-center gap-2">
+        {onBack ? (
+          <Button
+            data-testid="agents-repo-focused-all"
+            onClick={onBack}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            {copy.allArtifacts}
+          </Button>
+        ) : null}
         <h2
           className="min-w-0 flex-1 truncate font-mono text-sm text-foreground"
           title={subject.path}

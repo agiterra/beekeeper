@@ -421,20 +421,7 @@ export function ProjectAgentsRepoScreen({
       className="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto p-4"
       data-testid="agents-repo-screen"
     >
-      {onlyThisFile ? (
-        <div className="mb-2">
-          <Button
-            className="h-auto px-0 text-2xs text-muted-foreground"
-            data-testid="agents-repo-focused-all"
-            onClick={() => select(null)}
-            size="sm"
-            type="button"
-            variant="link"
-          >
-            {copy.allArtifacts}
-          </Button>
-        </div>
-      ) : (
+      {onlyThisFile ? null : (
         <>
           <div>
             <h1 className="break-words text-xl font-semibold text-foreground">
@@ -579,6 +566,7 @@ export function ProjectAgentsRepoScreen({
               identicalToMain={identical}
               isSelf={isSelf}
               key={subject.path}
+              onBack={onlyThisFile ? () => select(null) : null}
               onOpenPreview={
                 subject.path.endsWith(".html") && coordinate !== null
                   ? openPreview
