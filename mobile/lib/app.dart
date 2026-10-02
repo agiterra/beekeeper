@@ -17,6 +17,10 @@ import 'features/channels/deep_link_dispatcher.dart';
 import 'features/profile/user_status_cache_provider.dart';
 import 'features/profile/settings_profile_header.dart';
 import 'features/project_todos/state/project_todos_provider.dart';
+import 'features/agents_repo/domain/artifact_pin_fold.dart';
+import 'features/agents_repo/domain/artifact_pin_op.dart';
+import 'features/agents_repo/state/agents_repo_source_provider.dart';
+import 'features/agents_repo/state/artifact_pins_provider.dart';
 import 'features/agents_repo/ui/agents_repo_page.dart';
 import 'features/project_todos/ui/project_todos_page.dart';
 import 'features/projects/ui/project_tree.dart';
@@ -59,14 +63,20 @@ List<Override> appFeatureOverrides() => [
   projectTodoOpenerProvider.overrideWithValue(openProjectTodos),
   projectPinnedTodoListsProvider.overrideWithValue(readPinnedProjectTodoLists),
   projectAgentsRepoOpenerProvider.overrideWithValue(openProjectAgentsRepo),
+  projectPinnedArtifactsProvider.overrideWithValue(readPinnedProjectArtifacts),
 ];
 
-/// Push a project's Files page: its agents repository, read from main and
-/// drafted through the relay (NIP-AD).
-void openProjectAgentsRepo(BuildContext context, String address) =>
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => AgentsRepoPage(address: address)),
-    );
+/// Push a project's Artifacts page: its agents repository, read from main and
+/// drafted through the relay (NIP-AD), on [path] when one was asked for.
+void openProjectAgentsRepo(
+  BuildContext context,
+  String address, {
+  String? path,
+}) => Navigator.of(context).push(
+  MaterialPageRoute<void>(
+    builder: (_) => AgentsRepoPage(address: address, initialPath: path),
+  ),
+);
 
 /// Push a project's to-do page, on [listId] when one was asked for.
 void openProjectTodos(BuildContext context, String address, {String? listId}) =>
@@ -91,6 +101,35 @@ List<PinnedTodoListRow> readPinnedProjectTodoLists(
         personal: list.personal,
       ),
 ];
+
+/// A project's pinned artifacts as its tree shows them, read live from the
+/// project's pin fold — in the project's own rank order, which is what
+/// whoever reordered the pins decided.
+///
+/// A project whose agents repository has not resolved yet contributes no
+/// rows: a pin names a path *in a repository*, and folding against a guess
+/// would show rows that belong to another one.
+List<PinnedArtifactRow> readPinnedProjectArtifacts(
+  WidgetRef ref,
+  String address,
+) {
+  final repo = ref
+      .watch(agentsRepoSourceProvider(address))
+      .maybeWhen(data: (source) => source?.repo, orElse: () => null);
+  if (repo == null) return const [];
+  return [
+    for (final pin
+        in ref
+            .watch(artifactPinsProvider((address: address, repo: repo)))
+            .digest
+            .pinnedOnly)
+      PinnedArtifactRow(
+        target: pin.target,
+        label: artifactPinLabel(pin),
+        isFolder: pin.targetKind == PinTargetKind.folder,
+      ),
+  ];
+}
 
 class App extends HookConsumerWidget {
   const App({super.key});

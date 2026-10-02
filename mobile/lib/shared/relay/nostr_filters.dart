@@ -472,6 +472,35 @@ abstract final class NostrFilters {
     limit: 100,
   );
 
+  // --- Project artifact pins (NIP-AR) ----------------------------------------
+
+  /// Every kind:44251 pin op for one project, newest first.
+  static NostrFilter artifactPinOps(
+    String projectAddress, {
+    int limit = 500,
+    int? until,
+  }) => NostrFilter(
+    kinds: const [EventKind.projectArtifactPinOp],
+    tags: {
+      '#a': [projectAddress],
+    },
+    limit: limit,
+    until: until,
+  );
+
+  /// Live twin of [artifactPinOps]: ops from [sinceSeconds] on.
+  static NostrFilter artifactPinOpsLive(
+    String projectAddress,
+    int sinceSeconds,
+  ) => NostrFilter(
+    kinds: const [EventKind.projectArtifactPinOp],
+    tags: {
+      '#a': [projectAddress],
+    },
+    since: sinceSeconds,
+    limit: 100,
+  );
+
   // --- Shared terminals (NIP-ST) ---------------------------------------------
 
   /// Every shared-terminal announce (kind:30623) the relay will show me.

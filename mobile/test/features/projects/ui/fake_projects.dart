@@ -164,6 +164,8 @@ List<Override> projectOverrides({
   ProjectTerminalOpener? terminalOpener,
   ProjectTodoOpener? todoOpener,
   ProjectPinnedTodoListsReader? pinnedTodoLists,
+  ProjectAgentsRepoOpener? agentsRepoOpener,
+  ProjectPinnedArtifactsReader? pinnedArtifacts,
 }) => [
   projectsProvider.overrideWith(() => FakeProjectsNotifier(projects)),
   terminalsIndexProvider.overrideWith(
@@ -175,4 +177,6 @@ List<Override> projectOverrides({
   projectTerminalOpenerProvider.overrideWithValue(terminalOpener),
   projectTodoOpenerProvider.overrideWithValue(todoOpener),
   projectPinnedTodoListsProvider.overrideWithValue(pinnedTodoLists),
+  projectAgentsRepoOpenerProvider.overrideWithValue(agentsRepoOpener),
+  projectPinnedArtifactsProvider.overrideWithValue(pinnedArtifacts),
 ];

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:buzz/features/agents_repo/domain/artifact_pin_fold.dart';
 import 'package:buzz/features/agents_repo/domain/artifact_pin_op.dart';
+import 'package:buzz/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// The Dart fold binds to `conformance/project-artifact-pin-fold/fixtures/
@@ -37,7 +38,7 @@ void main() {
     test('fold vector: ${entry['name']}', () {
       final events = [
         for (final raw in (entry['events'] as List<dynamic>))
-          PinFoldEvent.fromJson(raw as Map<String, Object?>),
+          NostrEvent.fromJson({...raw as Map<String, dynamic>, 'sig': ''}),
       ];
       final digest = foldProjectArtifactPins(
         entry['project'] as String,
@@ -63,7 +64,7 @@ void main() {
       vector['repo'] as String,
       [
         for (final raw in (vector['events'] as List<dynamic>))
-          PinFoldEvent.fromJson(raw as Map<String, Object?>),
+          NostrEvent.fromJson({...raw as Map<String, dynamic>, 'sig': ''}),
       ],
     );
     expect(digest.pins, hasLength(1));

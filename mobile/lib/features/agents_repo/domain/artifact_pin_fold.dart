@@ -1,3 +1,4 @@
+import 'package:buzz/shared/relay/nostr_models.dart';
 import 'package:buzz/shared/relay/project_coordinate.dart';
 import 'package:flutter/foundation.dart';
 
@@ -10,38 +11,6 @@ import 'artifact_pin_op.dart';
 ///
 /// Rules, normatively, are that directory's `CONTRACT.md`.
 const projectArtifactPinDigestSchema = 'buzz-project-artifact-pin-digest/v1';
-
-/// The subset of a relay event the fold reads.
-@immutable
-class PinFoldEvent {
-  final String id;
-  final String pubkey;
-  final int createdAt;
-  final int kind;
-  final List<List<String>> tags;
-  final String content;
-
-  const PinFoldEvent({
-    required this.id,
-    required this.pubkey,
-    required this.createdAt,
-    required this.kind,
-    required this.tags,
-    required this.content,
-  });
-
-  factory PinFoldEvent.fromJson(Map<String, Object?> json) => PinFoldEvent(
-    id: json['id'] as String,
-    pubkey: json['pubkey'] as String,
-    createdAt: json['created_at'] as int,
-    kind: json['kind'] as int,
-    tags: [
-      for (final tag in (json['tags'] as List<Object?>))
-        [for (final part in (tag as List<Object?>)) part as String],
-    ],
-    content: json['content'] as String,
-  );
-}
 
 /// One target the digest reports.
 @immutable
@@ -92,6 +61,13 @@ class ProjectArtifactPinDigest {
   /// `pin.rank` ops naming a target no `pin.set` ever introduced.
   final int ranksWithoutPin;
   final List<PinRow> pins;
+
+  /// The digest of a project nothing has been read for yet.
+  const ProjectArtifactPinDigest.empty(this.project, this.repo)
+    : ignored = 0,
+      otherRepo = 0,
+      ranksWithoutPin = 0,
+      pins = const [];
 
   const ProjectArtifactPinDigest({
     required this.project,
@@ -164,7 +140,7 @@ class _TargetState {
   int updatedAt = 0;
 }
 
-String? _singleTag(PinFoldEvent event, String key) {
+String? _singleTag(NostrEvent event, String key) {
   String? found;
   for (final tag in event.tags) {
     if (tag.length == 2 && tag[0] == key) {
@@ -179,7 +155,7 @@ String? _singleTag(PinFoldEvent event, String key) {
 ProjectArtifactPinDigest foldProjectArtifactPins(
   String project,
   String repo,
-  List<PinFoldEvent> events,
+  Iterable<NostrEvent> events,
 ) {
   var ignored = 0;
   var otherRepo = 0;
@@ -283,4 +259,15 @@ ProjectArtifactPinDigest foldProjectArtifactPins(
     ranksWithoutPin: ranksWithoutPin,
     pins: pins,
   );
+}
+
+/// What a pinned artifact's row reads.
+///
+/// The tail of the path with `.md` taken off and every other extension kept:
+/// a document's format is part of what it is, so `login.html` stays itself
+/// while `api-shape.md` reads as its name. A folder reads as its own last
+/// segment.
+String artifactPinLabel(PinRow pin) {
+  final tail = pin.target.substring(pin.target.lastIndexOf('/') + 1);
+  return tail.endsWith('.md') ? tail.substring(0, tail.length - 3) : tail;
 }

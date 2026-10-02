@@ -62,15 +62,47 @@ typedef ProjectTodoOpener =
 /// one, and tests leave it `null` or install a recorder.
 final projectTodoOpenerProvider = Provider<ProjectTodoOpener?>((ref) => null);
 
-/// Opens a project's agents repository (its plans, roles and manifests, read
-/// from `main` and drafted through the relay) from a project tree.
+/// Opens a project's agents repository — its plans, documents, roles and
+/// manifests, read from `main` and drafted through the relay — from a project
+/// tree. `path` opens one artifact; omit it for the tree.
 typedef ProjectAgentsRepoOpener =
-    void Function(BuildContext context, String address);
+    void Function(BuildContext context, String address, {String? path});
 
-/// The opener the tree's "Files" row uses. `null` — the default here, so
+/// The opener the tree's "Artifacts" row uses. `null` — the default here, so
 /// this feature never imports `agents_repo` — hides the row; `app.dart`
 /// provides the real one.
 final projectAgentsRepoOpenerProvider = Provider<ProjectAgentsRepoOpener?>(
+  (ref) => null,
+);
+
+/// One artifact pinned to a project's tree: what the row needs and no more,
+/// so this feature never imports the pin fold.
+@immutable
+class PinnedArtifactRow {
+  /// The file path or folder prefix the pin names.
+  final String target;
+
+  /// What the row reads.
+  final String label;
+
+  /// `true` for a folder of the documents tree; the row shows a folder icon.
+  final bool isFolder;
+
+  const PinnedArtifactRow({
+    required this.target,
+    required this.label,
+    required this.isFolder,
+  });
+}
+
+/// Reads a project's pinned artifacts for its tree, in the project's order.
+typedef ProjectPinnedArtifactsReader =
+    List<PinnedArtifactRow> Function(WidgetRef ref, String address);
+
+/// The reader the tree uses for the rows under "Artifacts". `null` — the
+/// default here — renders no rows; `app.dart` reads the pin fold, and tests
+/// leave it `null` or install a fake.
+final projectPinnedArtifactsProvider = Provider<ProjectPinnedArtifactsReader?>(
   (ref) => null,
 );
 
@@ -138,6 +170,7 @@ class ProjectTree extends HookConsumerWidget {
     final profiles = ref.watch(userCacheProvider);
     final opener = ref.watch(projectTerminalOpenerProvider);
     final todoOpener = ref.watch(projectTodoOpenerProvider);
+    final pinnedArtifactsReader = ref.watch(projectPinnedArtifactsProvider);
     final filesOpener = ref.watch(projectAgentsRepoOpenerProvider);
     final pinnedTodoReader = ref.watch(projectPinnedTodoListsProvider);
     final binding = ref.watch(codingSessionObserverBindingProvider);
@@ -260,17 +293,21 @@ class ProjectTree extends HookConsumerWidget {
     final pinnedTodoLists = todoOpener == null || pinnedTodoReader == null
         ? const <PinnedTodoListRow>[]
         : pinnedTodoReader(ref, project.address);
-    // The Files row is the door to the project's agents repository: plans,
-    // roles and manifests read from main, drafted through the relay.
+    // The Artifacts row is the door to the project's agents repository: plans,
+    // documents, roles and manifests read from main, drafted through the
+    // relay. The pinned artifacts sit under it, each a door straight to one.
     final filesRow = filesOpener == null
         ? null
         : _ProjectChildTile(
             key: ValueKey('project-row-files:${project.address}'),
             icon: LucideIcons.folderOpen,
-            label: 'Files',
+            label: 'Artifacts',
             detail: null,
             onTap: () => filesOpener(context, project.address),
           );
+    final pinnedArtifacts = filesOpener == null || pinnedArtifactsReader == null
+        ? const <PinnedArtifactRow>[]
+        : pinnedArtifactsReader(ref, project.address);
 
     String ownerLabel(String pubkey) =>
         profiles[pubkey.toLowerCase()]?.label ?? shortPubkey(pubkey);
@@ -324,6 +361,20 @@ class ProjectTree extends HookConsumerWidget {
                   )
                 : null,
             onTap: () => todoOpener!(context, project.address, listId: list.id),
+          ),
+        // In the project's own rank order, as the fold sorted them: whoever
+        // reordered the pins decided this, and re-sorting here would throw
+        // that away.
+        for (final pin in pinnedArtifacts)
+          _ProjectChildTile(
+            key: ValueKey(
+              'project-row-artifact:${project.address}:${pin.target}',
+            ),
+            icon: pin.isFolder ? LucideIcons.folder : LucideIcons.fileText,
+            label: pin.label,
+            detail: null,
+            onTap: () =>
+                filesOpener!(context, project.address, path: pin.target),
           ),
         if (isEmpty)
           ProjectSectionNote(
