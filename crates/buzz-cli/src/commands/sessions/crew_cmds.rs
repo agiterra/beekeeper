@@ -202,7 +202,7 @@ async fn fetch_crew_facts(client: &BuzzClient, channel_id: &str) -> Result<CrewF
 
 /// Publish one signed coding-session event and return the write response,
 /// merged with the crew fields the caller needs to follow it up.
-async fn submit_with(
+pub(super) async fn submit_with(
     client: &BuzzClient,
     event: nostr::Event,
     conflict: &str,
@@ -749,6 +749,11 @@ pub async fn cmd_create(
             file,
             &command_id,
             cwd,
+            // The provider binds a hinted directory to a project only when
+            // the hint names it; without this a projected create run in a
+            // directory outside the recorded checkout is refused
+            // EXECUTION_SCOPE_INVALID.
+            project,
         )?),
         _ => None,
     };
@@ -930,8 +935,8 @@ pub async fn cmd_create(
     }
 }
 
-const CREATE_WAIT_DEFAULT_SECONDS: u64 = 120;
-const CREATE_WAIT_MAX_SECONDS: u64 = 300;
+pub(super) const CREATE_WAIT_DEFAULT_SECONDS: u64 = 120;
+pub(super) const CREATE_WAIT_MAX_SECONDS: u64 = 300;
 
 /// Link to an execution qualified by its receipt signer, without a transcript coordinate.
 pub(super) fn coding_session_navigation_url(
@@ -997,26 +1002,34 @@ fn same_create_answer(left: &CreateWaitOutcome, right: &CreateWaitOutcome) -> bo
     }
 }
 
-/// Select the provider's signed answer to one create. Unrelated commands,
-/// wrong signers, malformed events, and turn receipts are ignored. Two
-/// different answers are a contradiction and never get resolved by time.
-pub(super) fn classify_create_receipts(
+/// Every lifecycle receipt in `events` that `provider_authority` signed for
+/// exactly `command_id` in `channel_id`, with its event id.
+///
+/// The one place a 44224 answer to a CLI-published lifecycle command is
+/// admitted: the signature verifies, the signer is the named provider, the
+/// envelope carries exactly the four tags the SDK builder writes, and the
+/// content decodes through `buzz-core`'s receipt decoder naming the same
+/// command. Anything else — an unrelated command, a wrong signer, a malformed
+/// event — is skipped, never guessed at.
+pub(super) fn verified_command_receipts(
     events: &[Value],
     channel_id: &str,
     command_id: &str,
     provider_authority: &str,
-) -> Result<Option<CreateWaitOutcome>, String> {
-    let mut answer: Option<CreateWaitOutcome> = None;
+) -> Vec<(String, buzz_core::coding_session_payload::LifecycleReceipt)> {
+    let expected_key = coding_session_lifecycle_receipt_semantic_key(command_id);
+    let expected = [
+        ["h", channel_id],
+        ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+        ["csl-command", command_id],
+        ["csl-key", expected_key.as_str()],
+    ];
+    let mut admitted = Vec::new();
     for raw in events {
         let Ok(event) = serde_json::from_value::<nostr::Event>(raw.clone()) else {
             continue;
         };
         if u32::from(event.kind.as_u16()) != KIND_CODING_SESSION_LIFECYCLE_RECEIPT
-            || !event.tags.iter().any(|tag| {
-                tag.as_slice().len() == 2
-                    && tag.as_slice()[0] == "h"
-                    && tag.as_slice()[1] == channel_id
-            })
             || !event
                 .pubkey
                 .to_hex()
@@ -1027,13 +1040,6 @@ pub(super) fn classify_create_receipts(
         if buzz_core::verify_event(&event).is_err() {
             continue;
         }
-        let expected_key = coding_session_lifecycle_receipt_semantic_key(command_id);
-        let expected = [
-            ["h", channel_id],
-            ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
-            ["csl-command", command_id],
-            ["csl-key", expected_key.as_str()],
-        ];
         if event.tags.len() != expected.len()
             || event.tags.iter().zip(expected).any(|(got, want)| {
                 got.as_slice().len() != 2
@@ -1049,6 +1055,24 @@ pub(super) fn classify_create_receipts(
         if receipt.command_id != command_id {
             continue;
         }
+        admitted.push((event.id.to_hex(), receipt));
+    }
+    admitted
+}
+
+/// Select the provider's signed answer to one create. Unrelated commands,
+/// wrong signers, malformed events, and turn receipts are ignored. Two
+/// different answers are a contradiction and never get resolved by time.
+pub(super) fn classify_create_receipts(
+    events: &[Value],
+    channel_id: &str,
+    command_id: &str,
+    provider_authority: &str,
+) -> Result<Option<CreateWaitOutcome>, String> {
+    let mut answer: Option<CreateWaitOutcome> = None;
+    for (receipt_event_id, receipt) in
+        verified_command_receipts(events, channel_id, command_id, provider_authority)
+    {
         let candidate = match receipt.status {
             ReceiptStatus::Created | ReceiptStatus::CreatedWithFailedInitialTurn => {
                 let Some(target) = receipt.session.clone() else {
@@ -1056,7 +1080,7 @@ pub(super) fn classify_create_receipts(
                 };
                 CreateWaitOutcome::Confirmed {
                     status: receipt.status,
-                    receipt_event_id: event.id.to_hex(),
+                    receipt_event_id,
                     target,
                     error: receipt.error.clone(),
                 }
@@ -1066,7 +1090,7 @@ pub(super) fn classify_create_receipts(
                     continue;
                 };
                 CreateWaitOutcome::Refused {
-                    receipt_event_id: event.id.to_hex(),
+                    receipt_event_id,
                     error,
                 }
             }
@@ -1085,13 +1109,29 @@ pub(super) fn classify_create_receipts(
     Ok(answer)
 }
 
-async fn await_create_receipt(
+/// How a wait for one lifecycle command's receipt ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ReceiptWait<T> {
+    /// The classifier selected an answer.
+    Answered(T),
+    /// The provider signed two answers that disagree.
+    Conflicted(String),
+    /// Nothing answered before the deadline. `query_failed` says whether any
+    /// receipt query failed or was cut off, so "no receipt" is never reported
+    /// over a relay that could not be asked.
+    Unconfirmed { query_failed: bool },
+}
+
+/// Poll the exact receipt query for `command_id` until `classify` selects an
+/// answer or `timeout_secs` passes. Publishes nothing and never retries the
+/// command itself.
+pub(super) async fn await_command_receipt<T>(
     client: &BuzzClient,
     channel_id: &str,
     command_id: &str,
-    provider_authority: &str,
     timeout_secs: u64,
-) -> CreateWaitOutcome {
+    classify: impl Fn(&[Value]) -> Result<Option<T>, String>,
+) -> ReceiptWait<T> {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
     let mut query_failed = false;
     let filter = json!({
@@ -1102,23 +1142,40 @@ async fn await_create_receipt(
     loop {
         let query = tokio::time::timeout_at(deadline, client.query_all(filter.clone())).await;
         match query {
-            Ok(Ok(events)) => {
-                match classify_create_receipts(&events, channel_id, command_id, provider_authority)
-                {
-                    Ok(Some(outcome)) => return outcome,
-                    Ok(None) => {}
-                    Err(detail) => return CreateWaitOutcome::Conflicted { detail },
-                }
-            }
+            Ok(Ok(events)) => match classify(&events) {
+                Ok(Some(answer)) => return ReceiptWait::Answered(answer),
+                Ok(None) => {}
+                Err(detail) => return ReceiptWait::Conflicted(detail),
+            },
             Ok(Err(_)) => query_failed = true,
-            Err(_) => return CreateWaitOutcome::Unconfirmed { query_failed: true },
+            Err(_) => return ReceiptWait::Unconfirmed { query_failed: true },
         }
         let now = tokio::time::Instant::now();
         if now >= deadline {
-            return CreateWaitOutcome::Unconfirmed { query_failed };
+            return ReceiptWait::Unconfirmed { query_failed };
         }
         let next_poll = std::cmp::min(deadline, now + std::time::Duration::from_millis(500));
         tokio::time::sleep_until(next_poll).await;
+    }
+}
+
+async fn await_create_receipt(
+    client: &BuzzClient,
+    channel_id: &str,
+    command_id: &str,
+    provider_authority: &str,
+    timeout_secs: u64,
+) -> CreateWaitOutcome {
+    let wait = await_command_receipt(client, channel_id, command_id, timeout_secs, |events| {
+        classify_create_receipts(events, channel_id, command_id, provider_authority)
+    })
+    .await;
+    match wait {
+        ReceiptWait::Answered(outcome) => outcome,
+        ReceiptWait::Conflicted(detail) => CreateWaitOutcome::Conflicted { detail },
+        ReceiptWait::Unconfirmed { query_failed } => {
+            CreateWaitOutcome::Unconfirmed { query_failed }
+        }
     }
 }
 

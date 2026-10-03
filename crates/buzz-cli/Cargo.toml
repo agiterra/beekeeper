@@ -101,6 +101,10 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rand = { workspace = true }
 
 [dev-dependencies]
+# The provider's own hint reader, so the CLI's `--cwd --project` hint is proven
+# against `ProjectsFile::hint_binds_project` rather than a copy of its rules
+# (sessions/create_hint_tests.rs). Test-only: buzz-cli never runs a provider.
+buzz-session-provider = { path = "../buzz-session-provider" }
 # Scratch files for channel-templates.json fixtures in tests
 tempfile = "3"
 # Minimal HTTP test server for retry/policy integration tests

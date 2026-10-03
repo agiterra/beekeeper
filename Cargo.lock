@@ -1018,6 +1018,7 @@ dependencies = [
  "buzz-core",
  "buzz-persona",
  "buzz-sdk",
+ "buzz-session-provider",
  "buzz-workflow",
  "buzz-ws-client",
  "bytes",

@@ -531,7 +531,7 @@ fn the_pending_hint_is_written_beside_the_projects_file_with_the_exact_body_and_
     let (_dir, projects, work) = hint_fixture();
     let before = std::fs::read(&projects).expect("read before");
 
-    let binding = bind_pending_directory(&projects, "cmd-1", &work).expect("bind");
+    let binding = bind_pending_directory(&projects, "cmd-1", &work, None).expect("bind");
 
     assert_eq!(
         binding.hint_path,
@@ -602,8 +602,8 @@ fn a_pre_existing_hint_for_the_same_create_is_replaced() {
     let second = dir.path().join("recovered-again");
     std::fs::create_dir_all(&second).expect("mkdir");
 
-    bind_pending_directory(&projects, "cmd-2", &first).expect("first bind");
-    let binding = bind_pending_directory(&projects, "cmd-2", &second).expect("second bind");
+    bind_pending_directory(&projects, "cmd-2", &first, None).expect("first bind");
+    let binding = bind_pending_directory(&projects, "cmd-2", &second, None).expect("second bind");
 
     let hints: Vec<_> = std::fs::read_dir(pending_hints_dir(&projects))
         .expect("read dir")
@@ -637,7 +637,7 @@ fn a_hints_directory_that_cannot_be_created_refuses_before_anything_is_claimed()
     std::fs::write(blocked.join("pending-hints"), "not a directory").expect("seed");
     let projects = blocked.join("projects.json");
 
-    let error = bind_pending_directory(&projects, "cmd-3", &work).expect_err("must refuse");
+    let error = bind_pending_directory(&projects, "cmd-3", &work, None).expect_err("must refuse");
     assert!(
         error
             .to_string()
@@ -660,7 +660,7 @@ fn a_command_id_that_is_not_a_safe_file_name_is_refused() {
     // change that let one through would be a traversal.
     for hostile in ["../escape", "a/b", "", "with space"] {
         assert!(
-            bind_pending_directory(&projects, hostile, &work).is_err(),
+            bind_pending_directory(&projects, hostile, &work, None).is_err(),
             "{hostile:?} must not become a file name"
         );
     }
@@ -726,7 +726,7 @@ fn the_hint_binds_the_recovered_checkout_and_leaves_the_projects_mapping_alone()
     .to_string();
     std::fs::write(&projects, &mapping).expect("seed");
 
-    let binding = bind_pending_directory(&projects, "cmd-4", &folder_b).expect("bind");
+    let binding = bind_pending_directory(&projects, "cmd-4", &folder_b, None).expect("bind");
 
     let body: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&binding.hint_path).expect("read")).expect("json");

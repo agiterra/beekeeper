@@ -364,7 +364,7 @@ pub fn derive_liveness(
 
 /// The wire string [`SessionStatus::Stopped`] serializes as, asked of the
 /// enum rather than written out, so a rename cannot silently pass this by.
-fn stopped_status_word() -> String {
+pub(super) fn stopped_status_word() -> String {
     serde_json::to_value(SessionStatus::Stopped)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))

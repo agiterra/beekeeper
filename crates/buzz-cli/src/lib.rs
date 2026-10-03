@@ -3383,6 +3383,45 @@ pub enum SessionsCmd {
         #[arg(long = "projects-file", requires = "cwd")]
         projects_file: Option<PathBuf>,
     },
+    /// Durably stop one execution (kind 44221 `session.stop`).
+    ///
+    /// Publishes the same command the desktop's Stop sends: the exact current
+    /// generation of `--session` (an execution's sessionId, the uuid inside a
+    /// `sessions list` target — not the umbrella `sessionRef`), resolved from
+    /// this channel's records, with a fresh commandId. Refused with exit 1 and
+    /// nothing published when the channel has no execution with that id, when
+    /// it is already stopped, or when `--provider-authority` is not the
+    /// provider that signs its records.
+    ///
+    /// A stopped execution cannot be resumed. Only the session's founder may
+    /// stop it; the provider refuses anyone else with a signed `failed`
+    /// receipt (UNAUTHORIZED_OPERATOR).
+    ///
+    /// With `--wait`, waits for the provider's signed receipt for that
+    /// commandId and reports `outcome`: `stopped` (exit 0), `refused` (exit
+    /// 1, the receipt's error attached), or `unconfirmed` (exit 5) when no
+    /// receipt arrived in time — not a failure and not a success; the
+    /// commandId is kept and no second stop is sent.
+    #[command(
+        after_help = "Examples:\n  bee sessions stop --channel <uuid> --session <session-id> --provider-authority <hex64>\n  bee sessions stop --channel <uuid> --session <session-id> --provider-authority <hex64> --wait --timeout-secs 60\n\nOutput: {event_id, accepted, message, commandId, target} and, with --wait, {waited, outcome, receipt}. receipt is null when outcome is unconfirmed.\n\nRecipe:\n  bee sessions stop --channel <uuid> --session <session-id> --provider-authority <hex64> --wait"
+    )]
+    Stop {
+        /// Channel UUID the execution was published into
+        #[arg(long)]
+        channel: String,
+        /// The execution's sessionId (the uuid inside a `sessions list` target)
+        #[arg(long)]
+        session: String,
+        /// Signing pubkey (64-char lowercase hex) of the provider that owns the execution
+        #[arg(long = "provider-authority")]
+        provider_authority: String,
+        /// Wait for the provider's signed receipt for this stop.
+        #[arg(long)]
+        wait: bool,
+        /// Maximum seconds to wait after relay acceptance (1..=300).
+        #[arg(long = "timeout-secs")]
+        timeout_secs: Option<u64>,
+    },
     /// Ask an umbrella's host to seat a new agent on a role (kind 44221
     /// `session.hire`).
     ///
@@ -6856,6 +6895,7 @@ mod tests {
                 "seat-repair",
                 "send",
                 "status",
+                "stop",
                 "tools",
                 "transcript",
                 "verdict",
@@ -7061,7 +7101,7 @@ mod tests {
             // appended here and two of them independently wrote 35 (item 108's
             // exact-count trap); the finalizer set it once, after every lane,
             // and both tests re-run green.
-            ("sessions", 40),
+            ("sessions", 41),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

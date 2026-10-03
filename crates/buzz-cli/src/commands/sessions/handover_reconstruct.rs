@@ -384,7 +384,9 @@ pub(super) async fn create_execution(
     // hint has to be on disk by the time the command arrives — and a failure
     // to write it has to stop the run before anything is claimed.
     if let (Some(path), Some(cwd)) = (projects_file, recovered_cwd) {
-        let binding = bind_pending_directory(path, &command_id, cwd)?;
+        // A reconstruction's create names no project (`project_ref: None`
+        // above), so its hint binds none.
+        let binding = bind_pending_directory(path, &command_id, cwd, None)?;
         notes.verified(format!(
             "wrote the pending hint {} binding this create to {}, which is what the provider \
              resolves its working directory from",
@@ -630,6 +632,14 @@ pub(super) fn resolve_create_directory(
 ///
 /// The projects file itself is **neither read nor written**.
 ///
+/// `project_ref` is the NIP-MP coordinate the create names, when it names one.
+/// It is written as the hint's `projectRef`, which is the only thing that lets
+/// the provider treat a directory outside the project's recorded checkout as
+/// that project's workspace (`ProjectsFile::hint_binds_project` in
+/// `crates/buzz-session-provider/src/commands.rs`). A projected create whose
+/// hint omits it is refused `EXECUTION_SCOPE_INVALID`. `None` writes no key,
+/// so a projectless hint stays byte-for-byte the three-key body.
+///
 /// # Errors
 /// A directory that cannot be created, a `commandId` that is not safe as a
 /// file name, or a working directory that does not resolve to an absolute
@@ -639,6 +649,7 @@ pub(super) fn bind_pending_directory(
     projects_file: &Path,
     command_id: &str,
     directory: &Path,
+    project_ref: Option<&str>,
 ) -> Result<ProjectsBinding, CliError> {
     // The command id becomes a path component. It is a UUID this process
     // minted, so this can only fail if that ever changes — which is exactly
@@ -685,12 +696,16 @@ pub(super) fn bind_pending_directory(
     #[cfg(not(unix))]
     let _ = existed;
 
-    let body = serde_json::to_string(&json!({
+    let mut hint = json!({
         "commandId": command_id,
         "path": directory.to_string_lossy(),
         "writtenAt": chrono::Utc::now().timestamp(),
-    }))
-    .map_err(|error| CliError::Other(format!("pending hint serialization failed: {error}")))?;
+    });
+    if let (Some(object), Some(project_ref)) = (hint.as_object_mut(), project_ref) {
+        object.insert("projectRef".into(), json!(project_ref));
+    }
+    let body = serde_json::to_string(&hint)
+        .map_err(|error| CliError::Other(format!("pending hint serialization failed: {error}")))?;
 
     let hint_path = hints.join(format!("{command_id}.json"));
     let temporary = hints.join(format!(".{command_id}.{}.tmp", uuid::Uuid::new_v4()));

@@ -78,6 +78,13 @@ pub mod crew_cmds;
 mod crew_tests;
 #[cfg(test)]
 mod crew_wire_tests;
+// `session.stop` from a terminal: an unattended controller's deadline stop.
+pub mod stop;
+#[cfg(test)]
+mod stop_wire_tests;
+// `sessions create --cwd --project` writes a hint the provider can bind.
+#[cfg(test)]
+mod create_hint_tests;
 pub mod explain;
 // Lane C: absent-participant handover (`docs/HANDOVER_IMPL.md` §4). Split by
 // topic so no file passes 1,000 lines: the four verbs, the git half, and the
@@ -2803,6 +2810,23 @@ pub async fn dispatch(
                 timeout_secs,
                 cwd.as_deref(),
                 projects_file.as_deref(),
+            )
+            .await
+        }
+        SessionsCmd::Stop {
+            channel,
+            session,
+            provider_authority,
+            wait,
+            timeout_secs,
+        } => {
+            stop::cmd_stop(
+                client,
+                &channel,
+                &session,
+                &provider_authority,
+                wait,
+                timeout_secs,
             )
             .await
         }

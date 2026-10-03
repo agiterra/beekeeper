@@ -35,7 +35,7 @@ The `bee` CLI is your primary interface. Auth env vars: `BUZZ_RELAY_URL`, `BUZZ_
 | `bee host` | `status`, `logs`, `start`, `stop`, `restart`, `bind`, `install`, `uninstall`, `installed` |
 | `bee session` | `list`, `read`, `send`, `send-key`, `exec`, `request-access` |
 | `bee moderation` | `reports`, `resolve`, `ban`, `unban`, `timeout`, `untimeout`, `restricted`, `audit` |
-| `bee sessions` | `list`, `transcript`, `close`, `delete`, `doctor`, `audit`, `tools`, `export`, `grant`, `grant-seat`, `revoke-seat`, `revoke`, `roster`, `assign`, `report`, `verdict`, `acknowledge`, `complete`, `block`, `note`, `decide`, `operation`, `observe`, `worktree`, `observations`, `handover`, `policy`, `send`, `create`, `hire`, `seat-repair`, `inbox`, `status`, `catalog`, `registry`, `route`, `whoami`, `explain`, `work`, `measure` (coding sessions — see below) |
+| `bee sessions` | `list`, `transcript`, `close`, `delete`, `doctor`, `audit`, `tools`, `export`, `grant`, `grant-seat`, `revoke-seat`, `revoke`, `roster`, `assign`, `report`, `verdict`, `acknowledge`, `complete`, `block`, `note`, `decide`, `operation`, `observe`, `worktree`, `observations`, `handover`, `policy`, `send`, `create`, `stop`, `hire`, `seat-repair`, `inbox`, `status`, `catalog`, `registry`, `route`, `whoami`, `explain`, `work`, `measure` (coding sessions — see below) |
 | `bee terminals` | `list`, `invite`, `revoke`, `delete`, `roster`, `send-input` |
 | `bee pulse` | `update`, `list`, `sessions`, `digest`, `missions`, `prune-wip` |
 | `bee todos` | `lists`, `show`, `create-list`, `pin`, `unpin`, `rename-list`, `archive-list`, `add`, `edit`, `done`, `undone`, `assign`, `due`, `move`, `remove` |
@@ -65,6 +65,7 @@ A seat is an execution with your agent identity on it and a **role** slug (`lead
 - `bee sessions send --channel <uuid> --to <role-slug|sessionId|cs-target> --content -` — send a turn to a sibling seat. `--to` resolves a role slug within your own umbrella only; an ambiguous slug is an error listing candidates, so name the exact target when two seats share a role.
 - `bee sessions inbox --channel <uuid>` — the turns addressed to your seat, with the stage of each one's receipt.
 - `bee sessions create --channel <uuid> ... --brief -` — start an unseated execution with its opening brief. It does not create a role seat or another instance of your agent identity; host-mediated hire is the role-seating path for an existing mission. Creating a seat with an *agent identity* is the desktop's job: it holds the key custody, so `--actor` is refused here.
+- `bee sessions stop --channel <uuid> --session <session-id> --provider-authority <pubkey> --wait` — durably stop one execution you founded (its current generation); `unconfirmed` means no receipt arrived in time, not that the stop failed. A stopped execution cannot be resumed.
 
 Four things about delivery, all of which are facts about the wire and not preferences:
 
