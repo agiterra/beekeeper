@@ -43,6 +43,10 @@ import {
   fanOutObservedCodingSessionEvents,
   subscribeToObservedCodingSessionEvents,
 } from "./codingSessionObservedEvents";
+import {
+  createCodingSessionIngressPublishCoalescer,
+  reuseCodingSessionIngressSnapshotArrays,
+} from "./useTrustedCodingSessionIngressPublish";
 
 const TRUSTED_INGRESS_HISTORY_LIMIT = 1000;
 
@@ -469,9 +473,9 @@ export function useTrustedCodingSessionIngress(
     let liveError: string | null = null;
     let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // Trailing-debounced cache rewrite: publish() fires per live event, and
-    // the retained-shelf selection walks every metadata bucket, so the write
-    // coalesces bursts rather than serializing on each event.
+    // Trailing-debounced cache rewrite: publish() can still fire once per
+    // frame during a stream, and the retained-shelf selection walks every
+    // metadata bucket, so the write coalesces bursts rather than serializing.
     const schedulePersist = () => {
       if (!persistenceCacheKey || persistTimer !== null) return;
       persistTimer = setTimeout(() => {
@@ -487,9 +491,14 @@ export function useTrustedCodingSessionIngress(
     // listener can ingest a batch first; duplicate ingestion is only a no-op
     // for this reader after it has published that shared store revision.
     let publishedRevision = -1;
-    const publish = () => {
+    let lastStored: ReturnType<typeof store.snapshot> | null = null;
+    const publishSnapshot = () => {
       if (cancelled) return;
-      const stored = store.snapshot(stableChannelIds);
+      const stored = reuseCodingSessionIngressSnapshotArrays(
+        lastStored,
+        store.snapshot(stableChannelIds),
+      );
+      lastStored = stored;
       publishedRevision = store.getRevision();
       setSnapshot({
         authorityIdentity,
@@ -524,10 +533,17 @@ export function useTrustedCodingSessionIngress(
       });
       schedulePersist();
     };
+    // Relay events publish at most once per animation frame: a streaming turn
+    // delivers many events per frame and only the frame's last state is ever
+    // painted. Everything else — loading, errors, the live fence arming —
+    // publishes at once, and absorbs any frame already requested.
+    const coalescer =
+      createCodingSessionIngressPublishCoalescer(publishSnapshot);
+    const publish = coalescer.flushNow;
     const receiveObservedEvents = (events: readonly RelayEvent[]) => {
       if (cancelled) return;
       store.ingestRelayEvents(events, stableChannelIds, authority);
-      if (store.getRevision() !== publishedRevision) publish();
+      if (store.getRevision() !== publishedRevision) coalescer.schedule();
     };
     const unsubscribeObserved = subscribeToObservedCodingSessionEvents(
       receiveObservedEvents,
@@ -597,7 +613,7 @@ export function useTrustedCodingSessionIngress(
           ),
           (event) => {
             store.ingestRelayEvents([event], stableChannelIds, authority);
-            publish();
+            coalescer.schedule();
             fanOutObservedCodingSessionEvents([event], receiveObservedEvents);
           },
         )
@@ -635,6 +651,7 @@ export function useTrustedCodingSessionIngress(
     });
     return () => {
       cancelled = true;
+      coalescer.cancel();
       historyController.cancel();
       unsubscribeLive?.();
       disarm();

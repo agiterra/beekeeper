@@ -10,8 +10,10 @@ import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreferenc
  * The session's founder, named.
  *
  * `variant="line"` is the standalone bar under the header and still requires
- * a linked genesis. `variant="label"` is the provenance popover's value cell
- * and needs only the founder key, however it resolved.
+ * a linked genesis. `variant="inline"` makes the same claim, under the same
+ * condition, as a quiet span that rides at the end of another row (the
+ * single-session workspace's goal row). `variant="label"` is the provenance
+ * popover's value cell and needs only the founder key, however it resolved.
  */
 export function CodingSessionFounderLine({
   founderPubkey,
@@ -20,7 +22,7 @@ export function CodingSessionFounderLine({
 }: {
   founderPubkey: string | null;
   genesisRef: string | null;
-  variant?: "label" | "line";
+  variant?: "inline" | "label" | "line";
 }) {
   const gutter = useCodingSessionColumnGutter();
   // The `label` variant only needs the founder: a legacy session (creates
@@ -42,6 +44,17 @@ export function CodingSessionFounderLine({
     return <span className="font-medium text-foreground">{label}</span>;
   }
   if (!genesisRef) return null;
+  if (variant === "inline") {
+    return (
+      <span
+        className="ms-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground"
+        data-genesis-ref={genesisRef}
+        data-testid="coding-session-founded-by"
+      >
+        Founded by <span className="font-medium text-foreground">{label}</span>
+      </span>
+    );
+  }
   return (
     <div
       className={cn(

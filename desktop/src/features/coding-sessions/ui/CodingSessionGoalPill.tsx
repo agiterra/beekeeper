@@ -28,6 +28,8 @@ export function CodingSessionGoalPill({
   founderPubkey,
   goal,
   headerCarriesGoal = false,
+  quiet = false,
+  trailing = null,
   workspaceExpanded = false,
   sessionRef,
   variant = "workspace",
@@ -38,6 +40,16 @@ export function CodingSessionGoalPill({
   goal: CodingSessionGoal | null;
   /** The session header already renders the goal text; leave only edit access. */
   headerCarriesGoal?: boolean;
+  /**
+   * The workspace's one quiet row: no pill border or fill, small muted text,
+   * one line until expanded. Same controls, same test ids.
+   */
+  quiet?: boolean;
+  /**
+   * Rides at the end of the same row (the workspace puts the founder there).
+   * Rendered only when the row itself renders.
+   */
+  trailing?: React.ReactNode;
   /** Matches the transcript/composer when no secondary rail is open. */
   workspaceExpanded?: boolean;
   sessionRef: string | null;
@@ -174,9 +186,11 @@ export function CodingSessionGoalPill({
             : cn(
                 CODING_SESSION_COLUMN_CLASS,
                 measure,
-                goal && !headerCarriesGoal
-                  ? "flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/8 px-3 py-2"
-                  : "flex items-center",
+                quiet
+                  ? "flex min-w-0 items-start gap-2 text-xs text-muted-foreground"
+                  : goal && !headerCarriesGoal
+                    ? "flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/8 px-3 py-2"
+                    : "flex items-center",
               )
         }
         // The workspace pill is a measure box in its own right — same cap as
@@ -213,8 +227,18 @@ export function CodingSessionGoalPill({
           ) : null
         ) : (
           <>
-            <Target className="mt-0.5 size-3.5 shrink-0 text-primary" />
-            <p className="min-w-0 flex-1 text-foreground">
+            <Target
+              className={cn(
+                "mt-0.5 size-3.5 shrink-0",
+                quiet ? "text-muted-foreground" : "text-primary",
+              )}
+            />
+            <p
+              className={cn(
+                "min-w-0 flex-1",
+                quiet ? "text-muted-foreground" : "text-foreground",
+              )}
+            >
               <span className="font-medium">Goal:</span>{" "}
               <span
                 className={
@@ -263,6 +287,7 @@ export function CodingSessionGoalPill({
             ) : null}
           </>
         )}
+        {compact ? null : trailing}
       </div>
       {dialog}
     </>

@@ -7,6 +7,8 @@ import {
   formatPendingCodingSessionTurnAge,
   noteTextSettledCodingSessionEchoes,
   PENDING_CODING_SESSION_TURN_STALL_MS,
+  PENDING_CODING_SESSION_TURN_TTL_MS,
+  pendingCodingSessionTurnHeldByProvider,
   pendingCodingSessionTurnKey,
   pendingCodingSessionTurnState,
   requestCodingSessionDraftRecovery,
@@ -43,7 +45,21 @@ export function useVisibleCodingSessionPendingTurns({
   targetKey: string | null;
 }): { turns: readonly PendingCodingSessionTurn[]; now: number } {
   const pending = usePendingCodingSessionTurns();
-  const now = useCodingSessionPendingClock(pending.length > 0);
+  // No polling clock here. Time changes which rows survive only at one kind of
+  // moment — a row's TTL running out — so the resolution re-reads the clock
+  // when the pending set changes and again at the next such deadline, and
+  // otherwise leaves the surface alone. The rows' own captions age on a clock
+  // each row owns (`useCodingSessionPendingRowClock`), which re-renders the
+  // row and nothing above it.
+  const expiryTick = useCodingSessionPendingExpiryTick(
+    pending,
+    channelId,
+    targetKey,
+  );
+  const now = React.useMemo(
+    () => readPendingClock(pending, expiryTick),
+    [pending, expiryTick],
+  );
   const resolved = React.useMemo(
     () =>
       targetKey === null
@@ -135,7 +151,7 @@ export function CodingSessionPendingTurns({
 }
 
 function CodingSessionPendingTurnRow({
-  now,
+  now: listNow,
   targetLabel,
   turn,
 }: {
@@ -143,6 +159,7 @@ function CodingSessionPendingTurnRow({
   targetLabel: string | null;
   turn: PendingCodingSessionTurn;
 }) {
+  const now = useCodingSessionPendingRowClock(listNow);
   const state = pendingCodingSessionTurnState(turn, now);
   const stalled = state === "stalled";
   const unknown = state === "unknown";
@@ -186,6 +203,11 @@ function CodingSessionPendingTurnRow({
     turn.targetKey,
     turn.text,
   ]);
+  // The row's clock ticks every two seconds; the words it shows do not.
+  const body = React.useMemo(
+    () => <Markdown content={turn.text.trim() || " "} mediaInset />,
+    [turn.text],
+  );
   return (
     <div
       className="group flex flex-col items-end gap-1"
@@ -202,7 +224,7 @@ function CodingSessionPendingTurnRow({
             : "opacity-70 ring-border/40",
         )}
       >
-        <Markdown content={turn.text.trim() || " "} mediaInset />
+        {body}
         {unknown ? (
           // Inside the bubble, not on the caption line: the plain workspace's
           // dock reserve (`pb-44`) is a constant, and at full scroll the last
@@ -367,20 +389,84 @@ export function describePendingCodingSessionTurn(
 }
 
 /**
- * A coarse clock that runs only while rows are on screen. The rows change what
- * they claim as time passes, and nothing else in the tree re-renders to tell
- * them; polling stops the moment the last row is retired.
+ * The wall clock, read when the pending set or the expiry tick changes. Takes
+ * both only so the memo that calls it names them as what it depends on.
  */
-function useCodingSessionPendingClock(active: boolean): number {
-  const [now, setNow] = React.useState(() => Date.now());
+function readPendingClock(
+  _pending: readonly PendingCodingSessionTurn[],
+  _expiryTick: number,
+): number {
+  return Date.now();
+}
+
+/**
+ * A coarse clock owned by one pending row. The row changes what it claims as
+ * time passes ("Not picked up yet", "— 4m"), and it is the only thing that
+ * does — so it is the only thing this clock re-renders. It starts from the
+ * list's reading and never runs behind it.
+ */
+function useCodingSessionPendingRowClock(listNow: number): number {
+  const [now, setNow] = React.useState(() => Math.max(listNow, Date.now()));
   React.useEffect(() => {
-    if (!active) return;
-    setNow(Date.now());
+    setNow((current) => Math.max(current, listNow));
     const timer = window.setInterval(
-      () => setNow(Date.now()),
+      () => setNow(Math.max(listNow, Date.now())),
       PENDING_TURN_POLL_MS,
     );
     return () => window.clearInterval(timer);
-  }, [active]);
-  return now;
+  }, [listNow]);
+  return Math.max(now, listNow);
+}
+
+/**
+ * A counter that advances once at the next moment a visible row's TTL runs
+ * out — the only time-driven change in which rows survive. Rows the provider
+ * holds never expire, so they schedule nothing.
+ */
+function useCodingSessionPendingExpiryTick(
+  pending: readonly PendingCodingSessionTurn[],
+  channelId: string,
+  targetKey: string | null,
+): number {
+  // The last deadline that fired doubles as the tick. A deadline is marked
+  // fired only once the wall clock has truly passed it — a timer that wakes
+  // early (clock adjustment, coarse timer) re-arms for the remainder instead,
+  // or the resolver would still see the row as live and nothing would ever
+  // look again. Once truly fired it is not re-armed: if the row it expired
+  // were still in the store a moment later, scheduling it again would spin at
+  // 0 ms.
+  const [firedDeadline, setFiredDeadline] = React.useState(
+    Number.NEGATIVE_INFINITY,
+  );
+  React.useEffect(() => {
+    if (targetKey === null) return;
+    let deadline = Number.POSITIVE_INFINITY;
+    for (const entry of pending) {
+      if (entry.channelId !== channelId || entry.targetKey !== targetKey) {
+        continue;
+      }
+      if (pendingCodingSessionTurnHeldByProvider(entry)) continue;
+      const expiresAt =
+        entry.recordedAt + PENDING_CODING_SESSION_TURN_TTL_MS + 1;
+      if (expiresAt <= firedDeadline) continue;
+      deadline = Math.min(deadline, expiresAt);
+    }
+    if (!Number.isFinite(deadline)) return;
+    let timer: number | undefined;
+    const arm = () => {
+      timer = window.setTimeout(
+        () => {
+          if (Date.now() < deadline) {
+            arm();
+            return;
+          }
+          setFiredDeadline(deadline);
+        },
+        Math.max(0, deadline - Date.now()),
+      );
+    };
+    arm();
+    return () => window.clearTimeout(timer);
+  }, [channelId, firedDeadline, pending, targetKey]);
+  return firedDeadline;
 }

@@ -6,7 +6,6 @@ import {
   buildCodingSessionTargetKey,
   codingSessionTargetSupportsInterrupt,
 } from "@/features/coding-sessions/lib/codingSessionCommand";
-import { deriveTranscriptItemBlockIds } from "@/features/agents/ui/agentSessionTranscriptGrouping";
 import type { CodingSessionPopoutBootstrap } from "@/features/coding-sessions/lib/codingSessionBootstrap";
 import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
 import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
@@ -25,8 +24,6 @@ import type { CodingSessionReachabilityResolver } from "@/features/coding-sessio
 import { resolveCodingSessionUmbrellaComposerAuthority } from "@/features/coding-sessions/lib/codingSessionUmbrellaComposerModel";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
 import { useCodingSessionRoster } from "@/features/coding-sessions/lib/codingSessionRoster";
-import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
-import { deriveCodingSessionContextWindow } from "@/features/coding-sessions/lib/codingSessionContextWindow";
 import {
   formatCodingSessionExecutionLabel,
   formatCodingSessionRuntimeLabel,
@@ -47,7 +44,6 @@ import { useCodingSessionProject } from "@/features/projects-container/hooks";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useFeatureEnabled } from "@/shared/features/useFeatureEnabled";
 import { useAnchoredScroll } from "@/features/messages/ui/useAnchoredScroll";
-import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
 import { Button } from "@/shared/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { AddCodingSessionProviderDialog } from "./AddCodingSessionProviderDialog";
@@ -72,7 +68,8 @@ import {
   CODING_SESSION_SHELL_CLASS,
   CodingSessionColumn,
 } from "./CodingSessionColumn";
-import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
+import { CodingSessionWorkspaceGoalRow } from "./CodingSessionWorkspaceGoalRow";
+import { useCodingSessionWorkspaceDerivations } from "./CodingSessionWorkspaceDerivations";
 import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { useCodingSessionExport } from "./useCodingSessionExport";
 import { CodingSessionTaskRail } from "./CodingSessionTaskRail";
@@ -86,13 +83,11 @@ import {
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
 import { CodingSessionSubagentsSurface } from "./CodingSessionSubagentsPanel";
-import { deriveCodingSessionSubagentPanel } from "@/features/coding-sessions/lib/codingSessionSubagents";
 import {
   CodingSessionSurfaceHost,
   useCodingSessionSurfaceHostState,
   type CodingSessionSurfaceDescriptor,
 } from "./CodingSessionSurfaceHost";
-import { deriveCodingSessionObservedChanges } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { UmbrellaCodingSessionWorkspace } from "./CodingSessionUmbrellaWorkspace";
 import { useCodingSessionClosureDialog } from "../hooks/useCodingSessionClosureDialog";
@@ -501,8 +496,20 @@ function ReadyCodingSessionWorkspace({
     currentUserPubkey,
     acceptedOperators,
   });
+  // Every transcript-wide derivation, memoized on a reconciled transcript: a
+  // re-projection that changed no item (a status event, another execution's
+  // event) keeps the same array, so none of them re-runs; an append keeps
+  // every earlier item's identity for the memoized rows downstream.
+  const {
+    contextWindow,
+    messages,
+    observedChanges,
+    subagents,
+    taskModel,
+    transcript,
+  } = useCodingSessionWorkspaceDerivations(session.transcript);
   const operatorProfiles = useCodingSessionOperatorProfiles(
-    session.transcript,
+    transcript,
     currentUserPubkey,
   );
   const commandTargetKey = React.useMemo(
@@ -517,18 +524,18 @@ function ReadyCodingSessionWorkspace({
   // "No conversation yet" empty state has to yield to them.
   const pendingTurns = useVisibleCodingSessionPendingTurns({
     channelId,
-    echoes: session.transcript,
+    echoes: transcript,
     targetKey: commandTargetKey,
   });
   // This operator's own earlier prompts, for ⌘↑/⌘↓ recall in the composer.
   const promptHistory = React.useMemo(
     () =>
       buildCodingSessionPromptHistory({
-        transcript: session.transcript,
+        transcript,
         pending: pendingTurns.turns,
         currentPubkey: currentUserPubkey,
       }),
-    [currentUserPubkey, pendingTurns.turns, session.transcript],
+    [currentUserPubkey, pendingTurns.turns, transcript],
   );
   const [renameOpen, setRenameOpen] = React.useState(false);
   const authoritativeTitle = sessionName?.content ?? session.title;
@@ -542,15 +549,6 @@ function ReadyCodingSessionWorkspace({
       genesisRef === null &&
       composerAuthority.isUngovernedSession &&
       composerAuthority.canPromptExecutions);
-  const blockIds = React.useMemo(
-    () => deriveTranscriptItemBlockIds(session.transcript),
-    [session.transcript],
-  );
-  const stableBlockIds = useStableArrayShallow(blockIds);
-  const messages = React.useMemo(
-    () => stableBlockIds.map((id) => ({ id })),
-    [stableBlockIds],
-  );
   const { isAtBottom, newMessageCount, onScroll, scrollToBottom } =
     useAnchoredScroll({
       channelId: `${channelId}:${generationId}`,
@@ -569,28 +567,12 @@ function ReadyCodingSessionWorkspace({
   const resolveReachability = sharedResolveReachability ?? ownReachability;
   const reachability = resolveReachability(session.commandTarget);
   const status = deriveCodingSessionWorkspaceStatus(
-    session.transcript,
+    transcript,
     session.status,
     session.statusAt,
     reachability,
   );
-  const taskModel = React.useMemo(
-    () => deriveCodingSessionTaskModel(session.transcript),
-    [session.transcript],
-  );
-  const contextWindow = React.useMemo(
-    () => deriveCodingSessionContextWindow(session.transcript),
-    [session.transcript],
-  );
-  const observedChanges = React.useMemo(
-    () => deriveCodingSessionObservedChanges(session.transcript),
-    [session.transcript],
-  );
   const changedFiles = observedChanges.files;
-  const subagents = React.useMemo(
-    () => deriveCodingSessionSubagentPanel([session.transcript]),
-    [session.transcript],
-  );
   // Surfaces offered by current data: Observed changes always applies to a
   // transcript; Agents only when there is someone to list — a participant per
   // signed execution, or a subagent a seat spawned — never an empty tab.
@@ -646,7 +628,7 @@ function ReadyCodingSessionWorkspace({
     isNarrow,
     isWorking,
     model: taskModel,
-    transcript: session.transcript,
+    transcript,
   });
   // The dock overlays the transcript; the column reserves its measured
   // height. See the hook for what the old constant cost.
@@ -759,10 +741,6 @@ function ReadyCodingSessionWorkspace({
             sourceRepoRef: session.repoRef ?? null,
           }}
         />
-        <CodingSessionFounderLine
-          founderPubkey={founderPubkey}
-          genesisRef={genesisRef}
-        />
       </div>
       {sessionRef ? (
         <CodingSessionNameDialog
@@ -783,12 +761,17 @@ function ReadyCodingSessionWorkspace({
             className={cn(gutter, "pb-2")}
             data-testid="coding-session-goal-slot"
           >
-            <CodingSessionGoalPill
+            {/* One quiet row: the goal (withheld when it only restates the
+                title) and the founder. The founder is also in the header's
+                provenance popover, one click away, when this row is empty. */}
+            <CodingSessionWorkspaceGoalRow
               channelId={channelId}
               currentUserPubkey={currentUserPubkey}
               founderPubkey={founderPubkey}
+              genesisRef={genesisRef}
               goal={goal}
               sessionRef={sessionRef}
+              title={authoritativeTitle}
               workspaceExpanded={narrativeExpanded}
             />
           </div>
@@ -814,13 +797,12 @@ function ReadyCodingSessionWorkspace({
                 {/* "No conversation yet" is false the moment a turn is in
                     flight, so the empty state stands down for the pending row
                     rather than sitting above it. */}
-                {session.transcript.length > 0 ||
-                pendingTurns.turns.length === 0 ? (
+                {transcript.length > 0 || pendingTurns.turns.length === 0 ? (
                   <CodingSessionTranscript
                     currentUserPubkey={currentUserPubkey}
                     generationId={generationId}
                     isWorking={isWorking}
-                    items={session.transcript}
+                    items={transcript}
                     operatorProfiles={operatorProfiles}
                     scrollRef={scrollRef}
                   />
