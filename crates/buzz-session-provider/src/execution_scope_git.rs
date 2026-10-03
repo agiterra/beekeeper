@@ -256,6 +256,11 @@ fn refuse_alternates(git_dir: &Path) -> Result<(), CreateFailure> {
 /// rewrites, other projects' settings) stays out.
 const STAGED_GIT_KEYS: &str = r"^(user\.(name|email)|credential\..*|filter\..*)$";
 
+/// [`STAGED_GIT_KEYS`] without the operator's credentials: what a session
+/// keeps when the provider withholds operator Git auth
+/// ([`crate::session_isolation`]).
+const STAGED_GIT_KEYS_WITHOUT_CREDENTIALS: &str = r"^(user\.(name|email)|filter\..*)$";
+
 /// The execution's staged Git configuration and what running it needs.
 #[derive(Debug)]
 pub(crate) struct StagedGit {
@@ -285,11 +290,17 @@ pub(crate) struct StagedGit {
 /// `nostr.keyfile` is staged too: that is how the operator's own Git transport
 /// authenticates when no seat key is in the environment.
 ///
+/// With `withhold_credentials` no `credential.*` entry is read or staged, and
+/// no `nostr.keyfile` whatever `unseated` says: the execution gets who
+/// commits and the filter drivers, and no way to authenticate as the
+/// operator.
+///
 /// `tool_dir` is where the host's own `bee` lives: the app bundle ships
 /// `git-credential-nostr` beside it.
 pub(crate) fn stage_git_config(
     control: &Path,
     unseated: bool,
+    withhold_credentials: bool,
     tool_dir: Option<&Path>,
 ) -> Result<StagedGit, CreateFailure> {
     let config = control.join("gitconfig");
@@ -313,11 +324,12 @@ pub(crate) fn stage_git_config(
     // `git maintenance run --auto` a commit starts would try to repack the
     // project's shared refs, which the boundary refuses, and outlive the turn.
     crate::execution_scope::write_host_file(&building, STAGED_GIT_BASE, false)?;
-    let staged = fill_git_config(&building, unseated, tool_dir).and_then(|staged| {
-        std::fs::rename(&building, &config)
-            .map(|()| staged)
-            .map_err(unavailable)
-    });
+    let staged =
+        fill_git_config(&building, unseated, withhold_credentials, tool_dir).and_then(|staged| {
+            std::fs::rename(&building, &config)
+                .map(|()| staged)
+                .map_err(unavailable)
+        });
     if staged.is_err() {
         let _ = std::fs::remove_file(&building);
     }
@@ -331,6 +343,7 @@ const STAGED_GIT_BASE: &[u8] = b"[maintenance]\n\tauto = false\n[gc]\n\tauto = 0
 fn fill_git_config(
     config: &Path,
     unseated: bool,
+    withhold_credentials: bool,
     tool_dir: Option<&Path>,
 ) -> Result<StagedGit, CreateFailure> {
     let unavailable = |error: std::io::Error| {
@@ -344,10 +357,14 @@ fn fill_git_config(
         helpers: Vec::new(),
         keyfile: None,
     };
-    let mut entries: Vec<(String, String)> =
-        operator_git_config(&["--get-regexp", STAGED_GIT_KEYS]);
+    let keys = if withhold_credentials {
+        STAGED_GIT_KEYS_WITHOUT_CREDENTIALS
+    } else {
+        STAGED_GIT_KEYS
+    };
+    let mut entries: Vec<(String, String)> = operator_git_config(&["--get-regexp", keys]);
 
-    if unseated {
+    if unseated && !withhold_credentials {
         let keyfile = operator_git_config(&["--get", "nostr.keyfile"])
             .into_iter()
             .next()

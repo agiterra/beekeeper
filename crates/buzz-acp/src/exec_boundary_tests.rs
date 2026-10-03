@@ -90,6 +90,7 @@ fn the_policy_may_not_live_inside_a_grant() {
     let spec = BoundarySpec {
         grants: vec![Grant::tree(&own, Access::ReadWrite, "own checkout")],
         policy_dir: own.join("policies"),
+        egress: Default::default(),
         probe_readable: own.join("f"),
     };
     assert!(matches!(prepare(spec), Err(BoundaryError::InvalidSpec(_))));
@@ -101,6 +102,7 @@ fn no_backend_is_claimed_off_macos() {
     let spec = BoundarySpec {
         grants: Vec::new(),
         policy_dir: PathBuf::from("/tmp/policies"),
+        egress: Default::default(),
         probe_readable: PathBuf::from("/etc/hosts"),
     };
     assert!(matches!(prepare(spec), Err(BoundaryError::Unsupported(_))));
@@ -138,6 +140,7 @@ mod macos {
         let boundary = prepare(BoundarySpec {
             grants: vec![Grant::tree(&a, Access::ReadWrite, "own checkout")],
             policy_dir: root.join("host"),
+            egress: Default::default(),
             probe_readable: a.join("own.txt"),
         })
         .expect("boundary prepared and self-tested");
@@ -326,6 +329,7 @@ mod macos {
                 Grant::scratch(&host, "boundary-can", Access::ReadOnly, "too wide"),
             ],
             policy_dir: host.clone(),
+            egress: Default::default(),
             probe_readable: own.join("f"),
         };
         assert!(
@@ -342,6 +346,7 @@ mod macos {
                 ),
             ],
             policy_dir: host,
+            egress: Default::default(),
             probe_readable: own.join("f"),
         };
         assert!(
@@ -393,6 +398,7 @@ mod macos {
                 Grant::file(&link, Access::NoUnlink, "the link to it"),
             ],
             policy_dir: root.join("host"),
+            egress: Default::default(),
             probe_readable: target.clone(),
         })
         .expect("prepared");
@@ -437,6 +443,7 @@ mod macos {
                 prepare(BoundarySpec {
                     grants: vec![Grant::tree(&own, Access::ReadWrite, "own")],
                     policy_dir: host,
+                    egress: Default::default(),
                     probe_readable: own.join("f"),
                 })
                 .expect("prepared")
@@ -467,4 +474,141 @@ mod macos {
             .collect();
         assert_eq!(files.len(), 2, "one immutable policy per distinct scope");
     }
+}
+
+#[test]
+fn an_egress_proxy_denies_all_outbound_but_its_loopback_port() {
+    let grants = vec![Grant::tree("/work/a", Access::ReadWrite, "own checkout")];
+    let open = render_policy(&grants).expect("renders");
+    assert!(
+        !open.contains("network-outbound"),
+        "no egress setting leaves the network as it was:\n{open}"
+    );
+    let addr: std::net::SocketAddr = "127.0.0.1:18080".parse().expect("addr");
+    let egress = Egress::loopback_proxy(addr).expect("loopback");
+    let policy = render_policy_with(&grants, egress).expect("renders");
+    let deny = policy
+        .find("(deny network-outbound)\n")
+        .expect("outbound denied");
+    let allow = policy
+        .find("(allow network-outbound (remote tcp \"localhost:18080\"))\n")
+        .expect("the proxy port allowed");
+    assert!(deny < allow, "the one exception follows the denial");
+    assert_eq!(
+        policy.matches("allow network-outbound").count(),
+        1,
+        "exactly one exception, and no Unix-socket exception:\n{policy}"
+    );
+    assert!(policy.contains(&format!("policy v{POLICY_VERSION}")));
+    assert_eq!(POLICY_VERSION, 4);
+}
+
+#[test]
+fn an_egress_proxy_that_is_not_loopback_is_refused() {
+    for bad in ["10.0.0.1:8080", "0.0.0.0:8080", "127.0.0.1:0", "[::]:8080"] {
+        let addr: std::net::SocketAddr = bad.parse().expect("addr");
+        assert!(
+            matches!(
+                Egress::loopback_proxy(addr),
+                Err(BoundaryError::InvalidSpec(_))
+            ),
+            "{bad} was accepted"
+        );
+        assert!(
+            matches!(
+                render_policy_with(&[], Egress::LoopbackProxy(addr)),
+                Err(BoundaryError::InvalidSpec(_))
+            ),
+            "{bad} rendered"
+        );
+    }
+    assert!(Egress::loopback_proxy("[::1]:8080".parse().expect("v6")).is_ok());
+}
+
+/// Live, under the real policy: the proxy's loopback port connects; another
+/// loopback port, an external address and a Unix-domain socket are refused,
+/// each beside an unconfined positive control where one is possible.
+#[cfg(target_os = "macos")]
+#[test]
+fn live_egress_reaches_only_the_proxy_port() {
+    let (_dir, root) = canonical_tempdir();
+    let own = root.join("own");
+    std::fs::create_dir_all(&own).expect("own");
+    std::fs::write(own.join("f"), "x").expect("probe file");
+    let proxy = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("proxy listener");
+    let other = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("other listener");
+    let proxy_addr = proxy.local_addr().expect("proxy addr");
+    let other_port = other.local_addr().expect("other addr").port();
+    let boundary = prepare(BoundarySpec {
+        grants: vec![Grant::tree(&own, Access::ReadWrite, "own")],
+        policy_dir: root.join("host"),
+        egress: Egress::loopback_proxy(proxy_addr).expect("loopback"),
+        probe_readable: own.join("f"),
+    })
+    .expect("prepare verifies the egress rule");
+    assert_eq!(boundary.egress().proxy(), Some(proxy_addr));
+    let policy = boundary.policy_file.clone();
+
+    let allowed = run_connect_probe(Some(&policy), proxy_addr.port()).expect("probe");
+    assert!(
+        allowed.status.success(),
+        "the proxy port must connect: {}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+
+    assert!(run_connect_probe(None, other_port)
+        .expect("control")
+        .status
+        .success());
+    let refused = run_connect_probe(Some(&policy), other_port).expect("probe");
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("Operation not permitted"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+
+    // An external address: EPERM is the sandbox's refusal, never a network
+    // outcome (a blackholed route would time out, an absent one would say
+    // unreachable), so no unconfined control is needed to attribute it.
+    let external = std::process::Command::new(SANDBOX_EXEC)
+        .arg("-f")
+        .arg(&policy)
+        .args(["/bin/bash", "-c", "exec 3<>/dev/tcp/1.1.1.1/443"])
+        .env_clear()
+        .output()
+        .expect("external probe");
+    assert!(!external.status.success());
+    assert!(
+        String::from_utf8_lossy(&external.stderr).contains("Operation not permitted"),
+        "{}",
+        String::from_utf8_lossy(&external.stderr)
+    );
+
+    let socket = root.join("u.sock");
+    let _unix = std::os::unix::net::UnixListener::bind(&socket).expect("unix listener");
+    let nc = |bounded: bool| {
+        let mut command = if bounded {
+            let mut command = std::process::Command::new(SANDBOX_EXEC);
+            command.arg("-f").arg(&policy).arg("/usr/bin/nc");
+            command
+        } else {
+            std::process::Command::new("/usr/bin/nc")
+        };
+        // `-w 1`: the listener never accepts, so nc would otherwise wait.
+        command
+            .args(["-w", "1", "-U"])
+            .arg(&socket)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("nc")
+            .status
+            .success()
+    };
+    assert!(nc(false), "the Unix socket accepts an unconfined connect");
+    assert!(
+        !nc(true),
+        "a Unix-domain connect is refused under the policy"
+    );
+    drop((proxy, other));
 }

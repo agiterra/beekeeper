@@ -36,6 +36,18 @@ const codingSessionBoundaryStatuses = <String, String>{
 
 const codingSessionBoundaryTitle = 'Project boundary';
 
+/// What the provider withheld from the session beyond the project boundary
+/// (`session_isolation.rs` `isolation_status_items`). Published only when the
+/// provider's setting is on; the `reason` is a fixed slug and adds nothing.
+const codingSessionIsolationStatuses = <String, String>{
+  'operator_git_withheld':
+      'Git credentials from this computer were withheld from this session',
+  'network_egress_proxy_only':
+      'This session can reach the network only through the provider\u2019s egress proxy',
+};
+
+const codingSessionIsolationTitle = 'Session isolation';
+
 const _maxSummaryChars = 200;
 const _maxTextChars = 8000;
 
@@ -323,6 +335,15 @@ CodingSessionTranscriptItem _pairToolResult(
 
 CodingSessionTranscriptItem _status(CodingSessionTranscriptEnvelope envelope) {
   final slug = _stringOrNull(envelope.item['status']) ?? '';
+  final isolation = codingSessionIsolationStatuses[slug];
+  if (isolation != null) {
+    return _base(
+      envelope,
+      type: CodingSessionItemType.lifecycle,
+      title: codingSessionIsolationTitle,
+      text: isolation,
+    );
+  }
   final boundary = codingSessionBoundaryStatuses[slug];
   if (boundary != null) {
     final reason = _stringOrNull(envelope.item['reason']);

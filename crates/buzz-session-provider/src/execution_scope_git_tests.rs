@@ -116,7 +116,7 @@ fn staged_helpers_and_filters_run_from_an_install_path_with_spaces() {
 
     // A bare helper name, found beside the host's tools.
     write_operator("fixture synthetic-secret");
-    let staged = stage_git_config(&control, false, Some(&install)).expect("staged");
+    let staged = stage_git_config(&control, false, false, Some(&install)).expect("staged");
     assert!(
         staged
             .helpers
@@ -148,9 +148,83 @@ fn staged_helpers_and_filters_run_from_an_install_path_with_spaces() {
 
     // An operator's already-quoted shell helper keeps working, and is granted.
     write_operator(&format!("!{} synthetic-secret", shell_quoted(&quoted)));
-    let staged = stage_git_config(&control, false, None).expect("staged");
+    let staged = stage_git_config(&control, false, false, None).expect("staged");
     assert!(staged.helpers.contains(&quoted), "{:?}", staged.helpers);
     let answer = git(&staged.config, &root, &["credential", "fill"], fill);
     assert!(answer.contains("username=quoted-user"), "{answer}");
+    TEST_OPERATOR_CONFIG.with(|config| *config.borrow_mut() = None);
+}
+
+/// With operator Git withheld, an unseated session's staged configuration
+/// carries who commits and the filter drivers, and none of the operator's
+/// credentials: no `credential.*` entry, no `nostr.keyfile`, and no helper
+/// program to grant. The same operator configuration staged without the
+/// setting carries all three, so the difference is the setting's.
+#[cfg(unix)]
+#[test]
+fn withheld_operator_git_stages_no_credentials() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().expect("temp");
+    let root = canonical(root.path()).expect("canonical");
+    let tools = root.join("tools");
+    std::fs::create_dir_all(&tools).expect("tools");
+    for name in ["git-credential-fixture", "demo-filter"] {
+        let path = tools.join(name);
+        std::fs::write(&path, "#!/bin/sh\nexit 0\n").expect("tool");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    let keyfile = root.join("operator.key");
+    std::fs::write(&keyfile, "nsec-fixture-not-a-key\n").expect("key");
+    let operator = root.join("operator-gitconfig");
+    for (key, value) in [
+        ("user.name", "Operator"),
+        ("user.email", "operator@example.invalid"),
+        ("credential.helper", "fixture"),
+        ("credential.https://example.invalid.helper", "fixture"),
+        ("nostr.keyfile", keyfile.to_str().expect("utf-8")),
+        ("filter.demo.clean", "demo-filter cleaned"),
+    ] {
+        let status = std::process::Command::new("git")
+            .args(["config", "--file"])
+            .arg(&operator)
+            .args(["--add", key, value])
+            .status()
+            .expect("git config");
+        assert!(status.success(), "operator config");
+    }
+    TEST_OPERATOR_CONFIG.with(|config| *config.borrow_mut() = Some(operator.clone()));
+    let read = |staged: &StagedGit| std::fs::read_to_string(&staged.config).expect("staged file");
+
+    let granted_dir = root.join("granted");
+    std::fs::create_dir_all(&granted_dir).expect("control");
+    let granted = stage_git_config(&granted_dir, true, false, Some(&tools)).expect("staged");
+    let text = read(&granted);
+    assert!(text.contains("[credential]"), "{text}");
+    assert!(text.contains("keyfile"), "{text}");
+    assert_eq!(granted.keyfile.as_deref(), Some(keyfile.as_path()));
+    assert!(granted
+        .helpers
+        .iter()
+        .any(|path| path.ends_with("git-credential-fixture")));
+
+    let withheld_dir = root.join("withheld");
+    std::fs::create_dir_all(&withheld_dir).expect("control");
+    let withheld = stage_git_config(&withheld_dir, true, true, Some(&tools)).expect("staged");
+    let text = read(&withheld);
+    assert!(!text.contains("credential"), "{text}");
+    assert!(!text.contains("nostr"), "{text}");
+    assert!(!text.contains("keyfile"), "{text}");
+    assert!(text.contains("name = Operator"), "{text}");
+    assert!(text.contains("email = operator@example.invalid"), "{text}");
+    assert!(text.contains("[filter \"demo\"]"), "{text}");
+    assert_eq!(withheld.keyfile, None);
+    assert!(
+        withheld
+            .helpers
+            .iter()
+            .all(|path| path.ends_with("demo-filter")),
+        "only the filter driver is a program to grant: {:?}",
+        withheld.helpers
+    );
     TEST_OPERATOR_CONFIG.with(|config| *config.borrow_mut() = None);
 }

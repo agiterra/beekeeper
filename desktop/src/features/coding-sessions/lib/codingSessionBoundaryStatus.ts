@@ -79,3 +79,44 @@ export function codingSessionBoundaryText(
   }
   return `${text} (${CODING_SESSION_BOUNDARY_REASONS.get(reason) ?? reason})`;
 }
+
+/** The row title for the provider's session isolation statuses. */
+export const CODING_SESSION_ISOLATION_TITLE = "Session isolation";
+
+/**
+ * What the provider withheld from this session beyond the project boundary
+ * (`crates/buzz-session-provider/src/session_isolation.rs`
+ * `isolation_status_items`). Published only when the provider's setting is
+ * on, and only beside an enforced boundary, so each row states a fact the
+ * host applied; the `reason` is a fixed slug and adds nothing to the copy.
+ */
+export const CODING_SESSION_ISOLATION_STATUSES: ReadonlyMap<string, string> =
+  new Map([
+    [
+      "operator_git_withheld",
+      "Git credentials from this computer were withheld from this session",
+    ],
+    [
+      "network_egress_proxy_only",
+      "This session can reach the network only through the provider's egress proxy",
+    ],
+  ]);
+
+/**
+ * The title and text for a boundary or isolation status, or `undefined`
+ * when `status` is neither, so the caller falls through to its other status
+ * renderers.
+ */
+export function codingSessionBoundaryRow(
+  status: string,
+  reason: unknown,
+): { title: string; text: string } | undefined {
+  const isolation = CODING_SESSION_ISOLATION_STATUSES.get(status);
+  if (isolation !== undefined) {
+    return { title: CODING_SESSION_ISOLATION_TITLE, text: isolation };
+  }
+  const text = codingSessionBoundaryText(status, reason);
+  return text === undefined
+    ? undefined
+    : { title: CODING_SESSION_BOUNDARY_TITLE, text };
+}

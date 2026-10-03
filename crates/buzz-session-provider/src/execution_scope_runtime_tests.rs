@@ -267,6 +267,7 @@ mod preflight {
                 Grant::file(&case.cli, Access::ReadOnly, "cli"),
             ],
             policy_dir: case.own.parent().expect("root").join("host"),
+            egress: Default::default(),
             probe_readable: case.own.join("probe"),
         })
         .expect("boundary");

@@ -86,6 +86,7 @@ pub mod retirement;
 pub mod seat_bee;
 pub mod seat_requests;
 pub mod session;
+pub mod session_isolation;
 pub mod situation_card;
 pub mod state;
 mod team_wake;
@@ -3829,6 +3830,10 @@ impl Provider {
             execution_scope::boundary_status_item(&execution_state),
             Priority::High,
         )?;
+        // What the provider's isolation settings withheld, when any did.
+        for item in crate::session_isolation::isolation_status_items(&execution_state) {
+            self.enqueue_transcript(plan.channel_id, &target, None, item, Priority::High)?;
+        }
 
         // A genesis may already carry an accepted authority chain — another
         // execution under the same umbrella can be granted operators before
@@ -4871,6 +4876,10 @@ impl Provider {
             execution_scope::boundary_status_item(&execution_state),
             Priority::High,
         )?;
+        // What the provider's isolation settings withheld, when any did.
+        for item in crate::session_isolation::isolation_status_items(&execution_state) {
+            self.enqueue_transcript(plan.channel_id, &target, None, item, Priority::High)?;
+        }
         self.publish_metadata(plan.channel_id, &target, SessionStatus::Idle)?;
         self.record_first_lease_prerequisites(&target, &outbox_before);
         // A restart lost every in-memory policy ceiling, and a resume is where
@@ -13056,6 +13065,7 @@ mod tests {
             // real runtime's login or state.
             runtime_profile_override: Some(crate::execution_scope::RuntimeProfile::TestDouble),
             model_details: Default::default(),
+            session_isolation: Default::default(),
         }
     }
 
@@ -13125,6 +13135,8 @@ mod tests {
                     backend: None,
                     policy_digest: None,
                     reason: Some("no-backend-for-platform".to_owned()),
+                    operator_git: None,
+                    egress: None,
                 }
             );
         }

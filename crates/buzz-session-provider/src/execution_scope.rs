@@ -27,13 +27,14 @@
 use std::path::{Path, PathBuf};
 
 use buzz_acp::acp::BoundedLaunch;
-use buzz_acp::exec_boundary::{self, Access, BoundaryError, BoundarySpec, Grant};
+use buzz_acp::exec_boundary::{self, Access, BoundaryError, BoundarySpec, Egress, Grant};
 use buzz_acp::exec_env::{EnvSource, ModelAuth, ResolvedEnv};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::agent_fence::FENCE;
 use crate::session::CreateFailure;
+use crate::session_isolation::SessionIsolation;
 
 /// Receipt code: the promised boundary could not be put in place.
 pub const EXECUTION_BOUNDARY_UNAVAILABLE: &str = "EXECUTION_BOUNDARY_UNAVAILABLE";
@@ -145,6 +146,9 @@ pub enum BoundaryState {
         backend: &'static str,
         /// Digest of the exact policy enforced.
         policy_digest: String,
+        /// What the provider's isolation settings withheld from this
+        /// execution (operator Git credentials, open egress).
+        isolation: SessionIsolation,
     },
     /// No backend exists on this platform; nothing is enforced and the
     /// execution must never be described as protected.
@@ -170,6 +174,14 @@ pub struct RecordedBoundary {
     /// Why nothing was enforced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// `withheld` when the operator's Git credentials were kept out of this
+    /// execution by the provider's setting; absent when they were not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_git: Option<String>,
+    /// `loopback-proxy` when outbound network was confined to the host's
+    /// loopback proxy; absent when the boundary did not govern egress.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress: Option<String>,
 }
 
 /// The recorded form of a boundary state.
@@ -179,17 +191,27 @@ pub fn recorded_state(state: &BoundaryState) -> Option<RecordedBoundary> {
         BoundaryState::Enforced {
             backend,
             policy_digest,
+            isolation,
         } => RecordedBoundary {
             enforced: true,
             backend: Some((*backend).to_owned()),
             policy_digest: Some(policy_digest.clone()),
             reason: None,
+            operator_git: isolation
+                .withhold_operator_git
+                .then(|| crate::session_isolation::RECORDED_WITHHELD.to_owned()),
+            egress: isolation
+                .egress
+                .proxy()
+                .map(|_| crate::session_isolation::RECORDED_LOOPBACK_PROXY.to_owned()),
         },
         BoundaryState::NotEnforced { reason } => RecordedBoundary {
             enforced: false,
             backend: None,
             policy_digest: None,
             reason: Some((*reason).to_owned()),
+            operator_git: None,
+            egress: None,
         },
     })
 }
@@ -294,6 +316,9 @@ pub struct PreparedExecution {
     /// prepared as every session is, and its agent starts without the
     /// boundary (`crate::full_access`).
     pub full_access: bool,
+    /// Whether the provider's setting kept the operator's Git credentials
+    /// out of this execution (see [`crate::session_isolation`]).
+    pub operator_git_withheld: bool,
 }
 
 impl PreparedExecution {
@@ -310,6 +335,11 @@ impl PreparedExecution {
         BoundaryState::Enforced {
             backend: boundary.backend(),
             policy_digest: boundary.digest().to_owned(),
+            isolation: SessionIsolation {
+                withhold_operator_git: self.operator_git_withheld,
+                // Read from the verified boundary, never from the setting.
+                egress: boundary.egress(),
+            },
         }
     }
 }
@@ -485,6 +515,9 @@ pub struct ScopeInputs<'a> {
     /// or host Git that fetches for the project. Never a seat, which carries
     /// its own key, and never a host command that runs project code.
     pub operator_git_auth: bool,
+    /// The provider's session isolation settings. Applied to coding
+    /// sessions only; host commands and discovery ignore them.
+    pub isolation: SessionIsolation,
     /// The record's previous binding and native cursor, on a resume/restore.
     pub prior: Option<(Option<&'a ExecutionBinding>, Option<&'a str>)>,
     /// The host environment the baseline is resolved from. `None` (always,
@@ -530,6 +563,7 @@ impl<'a> ScopeInputs<'a> {
             host_branch: None,
             host_read: &[],
             operator_git_auth: false,
+            isolation: SessionIsolation::default(),
             prior: None,
             ambient_env: None,
             branch_authority: None,
@@ -856,12 +890,21 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
     let tool_dir = Some(bin);
 
     // Git transport: the operator's selected identity and credential
-    // helpers, staged host-side as a read-only file.
-    let operator_auth = inputs.operator_git_auth
-        || (inputs.actor.is_none() && inputs.purpose == ScopePurpose::Session);
+    // helpers, staged host-side as a read-only file — unless the provider
+    // withholds operator Git from sessions, when neither is staged.
+    let session = inputs.purpose == ScopePurpose::Session;
+    let withhold_git = session && inputs.isolation.withhold_operator_git;
+    let egress = if session {
+        inputs.isolation.egress
+    } else {
+        Egress::Unrestricted
+    };
+    let operator_auth =
+        !withhold_git && (inputs.operator_git_auth || (inputs.actor.is_none() && session));
     let git = crate::execution_scope_git::stage_git_config(
         &dirs.control,
         operator_auth,
+        withhold_git,
         inputs.seat_bee.and_then(Path::parent),
     )?;
     grants.push(Grant::file(
@@ -880,7 +923,10 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         ));
     }
     if model || !git.helpers.is_empty() {
-        if let Some(login) = keychain_login_grant(&home, inputs.runtime, !git.helpers.is_empty()) {
+        // Withheld, the only programs left are filter drivers, which answer
+        // from no keychain.
+        let credential_helpers = !withhold_git && !git.helpers.is_empty();
+        if let Some(login) = keychain_login_grant(&home, inputs.runtime, credential_helpers) {
             grants.push(login);
         }
     }
@@ -916,6 +962,7 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         ));
     }
     if let Some(sock) = std::env::var_os("SSH_AUTH_SOCK")
+        .filter(|_| !withhold_git)
         .map(PathBuf::from)
         .and_then(|p| canonical(&p))
     {
@@ -993,6 +1040,7 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         grants,
         policy_dir: state_dir.join(BOUNDARIES_DIR),
         probe_readable,
+        egress,
     })
     .map_err(|error| boundary_failure(&error))?;
 
@@ -1004,6 +1052,8 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         codex_home: codex_home.as_deref(),
         claude_config: claude.as_ref().map(|(_, config, _)| config.as_path()),
         hermit_state: hermit_state.as_deref(),
+        withhold_git,
+        egress,
     };
     let env = resolve_env(&boundary, inputs, &scope_env, tool_dir.as_deref())?;
     let mut claude_options = None;
@@ -1022,6 +1072,8 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         policy = %boundary.digest(),
         scope = %digest,
         grants = boundary.grants().len(),
+        operator_git_withheld = withhold_git,
+        egress = ?boundary.egress(),
         env = ?env,
         native_history = ?native_history,
         native_refusal = ?native_refusal,
@@ -1036,6 +1088,7 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         claude_options,
         agents,
         full_access: false,
+        operator_git_withheld: withhold_git,
     })))
 }
 
@@ -1830,6 +1883,10 @@ struct ScopeEnv<'a> {
     codex_home: Option<&'a Path>,
     claude_config: Option<&'a Path>,
     hermit_state: Option<&'a Path>,
+    /// Keep the operator's ssh agent out of the environment.
+    withhold_git: bool,
+    /// The proxy every proxy variable names, when egress is confined.
+    egress: Egress,
 }
 
 /// The child's environment: baseline by source; the runtime's own values
@@ -1919,8 +1976,23 @@ fn resolve_env(
     if let Some(home) = scope.codex_home {
         scoped.push(("CODEX_HOME", text(home)));
     }
+    if let Some(proxy) = scope.egress.proxy() {
+        // The boundary refuses every other connection, so a proxy variable
+        // inherited from the host, or an exemption, would only send a client
+        // somewhere it cannot reach.
+        let url = crate::session_isolation::proxy_url(proxy);
+        for name in crate::session_isolation::PROXY_VARS {
+            scoped.push((name, url.clone()));
+        }
+        for name in crate::session_isolation::NO_PROXY_VARS {
+            scoped.push((name, String::new()));
+        }
+    }
     for (name, value) in scoped {
         env.scope(name, &value).map_err(invalid)?;
+    }
+    if scope.withhold_git {
+        env.remove("SSH_AUTH_SOCK");
     }
     // Codex's own state locations are scope-owned: never inherited.
     env.remove("CODEX_SQLITE_HOME");
@@ -2133,10 +2205,23 @@ impl crate::Provider {
         inputs.seat_bee = bee.as_deref();
         inputs.hermit_state = hermit_state.as_deref();
         inputs.prior = facts.prior;
+        inputs.isolation = self.config.session_isolation;
         let mut plan = prepare(&inputs)?;
         if let ExecutionPlan::Prepared(prepared) = &mut plan {
+            let granted = crate::full_access::granted(&self.config.state_dir, facts.session_id);
+            // A provider that confines egress runs no session outside the
+            // boundary: full access would remove the network rule with it.
+            // The session then discloses the boundary it actually runs in.
+            if granted && self.config.session_isolation.egress.proxy().is_some() {
+                tracing::warn!(
+                    target: "csp::scope",
+                    session_id = %facts.session_id,
+                    "full access was granted for this session, but this provider confines \
+                     session egress, so it runs inside the boundary"
+                );
+            }
             prepared.full_access =
-                crate::full_access::granted(&self.config.state_dir, facts.session_id);
+                granted && self.config.session_isolation.egress.proxy().is_none();
         }
         Ok(plan)
     }
@@ -2149,6 +2234,10 @@ mod tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "execution_scope_prep_tests.rs"]
 mod prep_tests;
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "execution_scope_isolation_tests.rs"]
+mod isolation_tests;
 
 #[cfg(all(test, target_os = "macos"))]
 #[path = "execution_scope_live_tests.rs"]

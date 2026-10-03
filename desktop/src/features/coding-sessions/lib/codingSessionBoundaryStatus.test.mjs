@@ -6,6 +6,8 @@ import {
   CODING_SESSION_BOUNDARY_TITLE,
   CODING_SESSION_FULL_ACCESS_BOUNDARY_TEXT,
   CODING_SESSION_FULL_ACCESS_REASON,
+  CODING_SESSION_ISOLATION_STATUSES,
+  CODING_SESSION_ISOLATION_TITLE,
   codingSessionBoundaryText,
 } from "./codingSessionBoundaryStatus.ts";
 import { buildBaseTranscriptItem } from "./codingSessionTranscriptItems.ts";
@@ -73,4 +75,30 @@ test("other reasons are unchanged by the full-access case", () => {
     codingSessionBoundaryText("session_fresh", "full-access"),
     undefined,
   );
+});
+
+test("the provider's isolation statuses render as session isolation rows", () => {
+  // crates/buzz-session-provider/src/session_isolation.rs
+  const expected = [
+    [
+      "operator_git_withheld",
+      "provider-setting",
+      "Git credentials from this computer were withheld from this session",
+    ],
+    [
+      "network_egress_proxy_only",
+      "loopback-proxy",
+      "This session can reach the network only through the provider's egress proxy",
+    ],
+  ];
+  assert.equal(CODING_SESSION_ISOLATION_STATUSES.size, expected.length);
+  for (const [status, reason, text] of expected) {
+    const item = buildBaseTranscriptItem(
+      { kind: "status", status, reason },
+      IDENTITY,
+    );
+    assert.equal(item.title, CODING_SESSION_ISOLATION_TITLE);
+    assert.equal(item.text, text);
+    assert.equal(codingSessionBoundaryText(status, reason), undefined);
+  }
 });

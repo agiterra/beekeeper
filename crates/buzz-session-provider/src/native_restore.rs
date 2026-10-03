@@ -461,6 +461,10 @@ impl Provider {
             crate::execution_scope::boundary_status_item(&execution_state),
             Priority::High,
         )?;
+        // What the provider's isolation settings withheld, when any did.
+        for item in crate::session_isolation::isolation_status_items(&execution_state) {
+            self.enqueue_transcript(record.channel_id, &target, None, item, Priority::High)?;
+        }
         self.publish_metadata(record.channel_id, &target, SessionStatus::Idle)?;
         // Same handshake the resume path uses: the live lease is queued by the
         // runtime tick once the facts this open enqueued have been published,

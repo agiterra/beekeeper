@@ -180,6 +180,14 @@ pub struct Config {
     /// for a runtime that was not discovered (or whose discovery failed); the
     /// catalog then publishes only what it knows from its own tables.
     pub model_details: BTreeMap<String, BTreeMap<String, ModelDetail>>,
+    /// Isolation every coding session gets beyond its file boundary:
+    /// `BUZZ_CSP_SESSION_OPERATOR_GIT=withhold` keeps the operator's Git
+    /// credentials (credential helpers, `nostr.keyfile`, the ssh agent) out
+    /// of sessions, and `BUZZ_CSP_SESSION_EGRESS_PROXY=<loopback ip>:<port>`
+    /// confines their outbound network to TCP to that one loopback port with
+    /// every proxy variable pointed at it. Both absent is today's behaviour;
+    /// a malformed value refuses startup. See [`crate::session_isolation`].
+    pub session_isolation: crate::session_isolation::SessionIsolation,
 }
 
 /// The adapter's own description of one model option value.
@@ -303,6 +311,7 @@ impl Config {
         let turn_budget = parse_u64(&lookup, "BUZZ_CSP_TURN_BUDGET", DEFAULT_TURN_BUDGET)?;
         let include_thoughts = parse_bool(&lookup, "BUZZ_CSP_INCLUDE_THOUGHTS", true)?;
         let emit_raw_sdk_frames = parse_bool(&lookup, "BUZZ_CSP_EMIT_RAW_SDK_FRAMES", false)?;
+        let session_isolation = crate::session_isolation::SessionIsolation::from_lookup(&lookup)?;
         let redaction_retention = crate::redaction_vault::RetentionPolicy::from_setting(
             lookup(crate::redaction_vault::RetentionPolicy::ENV_VAR).as_deref(),
         );
@@ -329,6 +338,7 @@ impl Config {
             command_horizon,
             runtime_profile_override: None,
             model_details: BTreeMap::new(),
+            session_isolation,
         })
     }
 

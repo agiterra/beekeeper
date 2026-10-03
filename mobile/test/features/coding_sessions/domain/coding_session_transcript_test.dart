@@ -280,6 +280,35 @@ void main() {
       expect(items.last.text, contains('(no-backend-for-platform)'));
     });
 
+    test('isolation statuses say what the provider withheld', () {
+      final blocks = projectCodingSessionTranscript([
+        _envelope(
+          eventSeq: 1,
+          item: {
+            'kind': 'status',
+            'status': 'operator_git_withheld',
+            'reason': 'provider-setting',
+          },
+        ),
+        _envelope(
+          eventSeq: 2,
+          item: {
+            'kind': 'status',
+            'status': 'network_egress_proxy_only',
+            'reason': 'loopback-proxy',
+          },
+        ),
+      ]);
+      final items = blocks.single.items;
+      expect(items.first.title, codingSessionIsolationTitle);
+      expect(
+        items.first.text,
+        'Git credentials from this computer were withheld from this session',
+      );
+      expect(items.last.title, codingSessionIsolationTitle);
+      expect(items.last.text, contains('only through the provider'));
+    });
+
     test('reasoning is folded by default', () {
       final blocks = projectCodingSessionTranscript([
         _envelope(eventSeq: 1, item: {'kind': 'reasoning', 'text': 'thinking'}),

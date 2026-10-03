@@ -41,11 +41,23 @@
 //! refuse the canary is an error, never a silent fallback: a caller that
 //! promised enforcement refuses the launch instead of running unconfined.
 //!
+//! # Outbound network
+//!
+//! By default the boundary governs files only: outbound network is whatever
+//! the operating system allows. A spec that names [`Egress::LoopbackProxy`]
+//! also denies every `network-outbound` operation — TCP and UDP to any
+//! address, DNS through the system resolver's socket, and every Unix-domain
+//! socket connect — except TCP to that one loopback port, where an
+//! allowlisting proxy the host supplies is expected to listen. The
+//! self-test then also proves, against a host-owned listener on another
+//! loopback port, that the denial is in force before any child starts.
+//!
 //! macOS is the only backend. Elsewhere [`prepare`] answers
 //! [`BoundaryError::Unsupported`] and the caller must disclose that no
 //! boundary is enforced; it must not describe the execution as protected.
 
 use std::fmt;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -55,7 +67,7 @@ pub const BACKEND_MACOS_SEATBELT: &str = "macos-seatbelt";
 
 /// Version of the policy shape this module renders. Part of every policy
 /// text, so a change to the rendering is a change to the digest.
-pub const POLICY_VERSION: u32 = 3;
+pub const POLICY_VERSION: u32 = 4;
 
 /// macOS's login-shell `PATH` composer, denied inside the boundary.
 pub const PATH_HELPER: &str = "/usr/libexec/path_helper";
@@ -216,6 +228,48 @@ impl Grant {
     }
 }
 
+/// What outbound network a bounded execution may open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Egress {
+    /// Outbound network is not governed by the boundary (the default, and
+    /// the behaviour of every policy before version 4).
+    #[default]
+    Unrestricted,
+    /// Every outbound network operation is denied except a TCP connect to
+    /// this loopback address's port.
+    ///
+    /// Seatbelt can name a remote only as `localhost:<port>` (or `*`), so the
+    /// rule admits that port on every loopback address — `127.0.0.1` and
+    /// `::1` alike — not the one address given. Unix-domain socket connects
+    /// are denied with no exception: nothing a bounded runtime is known to
+    /// need reaches the network through one, and the system resolver's socket
+    /// (`mDNSResponder`) is exactly the DNS path an allowlisting proxy exists
+    /// to remove. A runtime that needs one fails loudly with `EPERM`; it is
+    /// never silently granted.
+    LoopbackProxy(SocketAddr),
+}
+
+impl Egress {
+    /// A loopback proxy egress for `addr`.
+    ///
+    /// # Errors
+    /// [`BoundaryError::InvalidSpec`] when `addr` is not a loopback address
+    /// with a non-zero port: the policy could not confine egress to it.
+    pub fn loopback_proxy(addr: SocketAddr) -> Result<Self, BoundaryError> {
+        check_loopback(addr)?;
+        Ok(Self::LoopbackProxy(addr))
+    }
+
+    /// The proxy address, when egress is confined to one.
+    #[must_use]
+    pub const fn proxy(self) -> Option<SocketAddr> {
+        match self {
+            Self::Unrestricted => None,
+            Self::LoopbackProxy(addr) => Some(addr),
+        }
+    }
+}
+
 /// Everything [`prepare`] needs.
 #[derive(Debug, Clone)]
 pub struct BoundarySpec {
@@ -227,6 +281,8 @@ pub struct BoundarySpec {
     pub policy_dir: PathBuf,
     /// A granted, readable file the self-test must be able to read.
     pub probe_readable: PathBuf,
+    /// What outbound network the execution may open.
+    pub egress: Egress,
 }
 
 /// Why a boundary could not be prepared.
@@ -278,6 +334,7 @@ pub struct PreparedBoundary {
     policy_file: PathBuf,
     digest: String,
     grants: Vec<Grant>,
+    egress: Egress,
 }
 
 // Grants name host-private paths; diagnostics get the digest and a count.
@@ -287,6 +344,7 @@ impl fmt::Debug for PreparedBoundary {
             .field("backend", &BACKEND_MACOS_SEATBELT)
             .field("digest", &self.digest)
             .field("grants", &self.grants.len())
+            .field("egress", &self.egress)
             .finish()
     }
 }
@@ -319,6 +377,12 @@ impl PreparedBoundary {
     #[must_use]
     pub fn grants(&self) -> &[Grant] {
         &self.grants
+    }
+
+    /// What outbound network this boundary permits.
+    #[must_use]
+    pub const fn egress(&self) -> Egress {
+        self.egress
     }
 
     /// Whether `path` is readable under this boundary (granted or a system
@@ -357,12 +421,21 @@ pub fn overlaps_system_root(path: &Path) -> Option<&'static str> {
         .map(|(root, _)| *root)
 }
 
-/// Render the policy text for `grants`.
+/// Render the policy text for `grants`, with outbound network unrestricted.
+///
+/// # Errors
+/// See [`render_policy_with`].
+pub fn render_policy(grants: &[Grant]) -> Result<String, BoundaryError> {
+    render_policy_with(grants, Egress::Unrestricted)
+}
+
+/// Render the policy text for `grants` and `egress`.
 ///
 /// # Errors
 /// [`BoundaryError::InvalidSpec`] when a grant path is relative, is `/`, or
-/// contains a character the policy language cannot carry safely.
-pub fn render_policy(grants: &[Grant]) -> Result<String, BoundaryError> {
+/// contains a character the policy language cannot carry safely, or when the
+/// egress proxy is not a loopback address with a port.
+pub fn render_policy_with(grants: &[Grant], egress: Egress) -> Result<String, BoundaryError> {
     let mut out = String::new();
     out.push_str(&format!(
         ";; Beekeeper project execution boundary, policy v{POLICY_VERSION}\n"
@@ -436,7 +509,27 @@ pub fn render_policy(grants: &[Grant]) -> Result<String, BoundaryError> {
         "(deny file-read* process-exec (literal {}))\n",
         quote(PATH_HELPER)?
     ));
+    if let Egress::LoopbackProxy(addr) = egress {
+        check_loopback(addr)?;
+        // Last, so nothing above outranks either rule. The deny covers TCP,
+        // UDP (including DNS) and Unix-domain connects; the one allow is TCP
+        // to the proxy's port on loopback (Seatbelt's `localhost`).
+        out.push_str("(deny network-outbound)\n");
+        out.push_str(&format!(
+            "(allow network-outbound (remote tcp \"localhost:{}\"))\n",
+            addr.port()
+        ));
+    }
     Ok(out)
+}
+
+fn check_loopback(addr: SocketAddr) -> Result<(), BoundaryError> {
+    if !addr.ip().is_loopback() || addr.port() == 0 {
+        return Err(BoundaryError::InvalidSpec(format!(
+            "egress proxy {addr} is not a loopback address with a port"
+        )));
+    }
+    Ok(())
 }
 
 fn check_policy_text(text: &str) -> Result<(), BoundaryError> {
@@ -509,7 +602,7 @@ pub fn prepare(spec: BoundarySpec) -> Result<PreparedBoundary, BoundaryError> {
             )));
         }
     }
-    let rendered = render_policy(&spec.grants)?;
+    let rendered = render_policy_with(&spec.grants, spec.egress)?;
     let digest = hex::encode(Sha256::digest(rendered.as_bytes()));
     let policy_file = policy_dir.join(format!("{digest}.sb"));
     install_once(policy_dir, &policy_file, &rendered)?;
@@ -518,10 +611,14 @@ pub fn prepare(spec: BoundarySpec) -> Result<PreparedBoundary, BoundaryError> {
     let write_canary = policy_dir.join("boundary-write-canary");
     install_canary(&write_canary, "")?;
     self_test(&policy_file, &spec.probe_readable, &canary, &write_canary)?;
+    if let Egress::LoopbackProxy(proxy) = spec.egress {
+        egress_self_test(&policy_file, proxy)?;
+    }
     Ok(PreparedBoundary {
         policy_file,
         digest,
         grants: spec.grants,
+        egress: spec.egress,
     })
 }
 
@@ -670,6 +767,86 @@ fn self_test(
             String::from_utf8_lossy(&output.stderr).trim()
         ))),
     }
+}
+
+/// One TCP connect from a shell, to `127.0.0.1:<port>`. Bash's `/dev/tcp`,
+/// so no tool beyond the system shell is needed. Exit 0 when connected.
+const CONNECT_PROBE: &str = r#"exec 3<>"/dev/tcp/127.0.0.1/$1""#;
+
+/// Run [`CONNECT_PROBE`] against `port`, unconfined or under `policy`.
+pub(crate) fn run_connect_probe(
+    policy: Option<&Path>,
+    port: u16,
+) -> Result<std::process::Output, BoundaryError> {
+    let mut command = match policy {
+        Some(policy) => {
+            let mut command = std::process::Command::new(SANDBOX_EXEC);
+            command.arg("-f").arg(policy).arg("/bin/bash");
+            command
+        }
+        None => std::process::Command::new("/bin/bash"),
+    };
+    command
+        .arg("-c")
+        .arg(CONNECT_PROBE)
+        .arg("bash")
+        .arg(port.to_string())
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|error| {
+            BoundaryError::SelfTestFailed(format!("could not start the egress probe: {error}"))
+        })
+}
+
+/// Verify the egress rule: a host-owned listener on another loopback port
+/// accepts an unconfined connect (the positive control) and refuses — with
+/// the sandbox's `EPERM`, not a refused or reset connection — the same
+/// connect under the policy.
+fn egress_self_test(policy: &Path, proxy: SocketAddr) -> Result<(), BoundaryError> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|error| {
+        BoundaryError::SelfTestFailed(format!(
+            "could not open the egress probe's loopback listener: {error}"
+        ))
+    })?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| {
+            BoundaryError::SelfTestFailed(format!(
+                "the egress probe's listener has no port: {error}"
+            ))
+        })?
+        .port();
+    if port == proxy.port() {
+        return Err(BoundaryError::SelfTestFailed(
+            "the egress probe's listener landed on the proxy's own port".to_owned(),
+        ));
+    }
+    let control = run_connect_probe(None, port)?;
+    if !control.status.success() {
+        return Err(BoundaryError::SelfTestFailed(
+            "a loopback connect failed even without the boundary, so a refusal under it would \
+             prove nothing"
+                .to_owned(),
+        ));
+    }
+    let bounded = run_connect_probe(Some(policy), port)?;
+    let stderr = String::from_utf8_lossy(&bounded.stderr);
+    if bounded.status.success() {
+        return Err(BoundaryError::SelfTestFailed(
+            "a loopback port other than the egress proxy's was reachable from inside the boundary"
+                .to_owned(),
+        ));
+    }
+    if !stderr.contains("Operation not permitted") {
+        return Err(BoundaryError::SelfTestFailed(format!(
+            "the egress probe failed under the boundary, but not with the boundary's refusal: {}",
+            stderr.trim()
+        )));
+    }
+    drop(listener);
+    Ok(())
 }
 
 #[cfg(test)]

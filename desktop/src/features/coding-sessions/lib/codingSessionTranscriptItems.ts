@@ -31,10 +31,7 @@ import {
 } from "./codingSessionDefensive";
 import { formatRedactedBytes } from "@/shared/lib/redactionMarker";
 
-import {
-  CODING_SESSION_BOUNDARY_TITLE,
-  codingSessionBoundaryText,
-} from "./codingSessionBoundaryStatus";
+import { codingSessionBoundaryRow } from "./codingSessionBoundaryStatus";
 import { normalizeOperatorPubkey } from "./codingSessionPromptAttribution";
 import type { CodingSessionQuarantineItemV1 } from "./codingSessionTranscriptItemContract";
 
@@ -846,13 +843,9 @@ function buildStatusLifecycleItem(
     typeof item.status === "string" ? item.status : "",
     200,
   );
-  const boundary = codingSessionBoundaryText(status, item.reason);
+  const boundary = codingSessionBoundaryRow(status, item.reason);
   if (boundary !== undefined) {
-    return buildSimpleLifecycleItem(
-      ctx,
-      CODING_SESSION_BOUNDARY_TITLE,
-      boundary,
-    );
+    return buildSimpleLifecycleItem(ctx, boundary.title, boundary.text);
   }
   const continuity = CODING_SESSION_CONTINUITY_STATUSES.get(status);
   if (!continuity) {
