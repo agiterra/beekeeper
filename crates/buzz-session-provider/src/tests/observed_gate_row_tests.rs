@@ -94,9 +94,8 @@ fn head_of(cwd: &std::path::Path) -> String {
 
 /// Drain session events until the provider has applied one resolved gate row.
 ///
-/// The row is published a moment after the gate closes, not inside
-/// `handle_session_event`, because resolving `HEAD` costs two `git`
-/// subprocesses that must not run on the provider loop.
+/// The outcome is queued after the workdir check; no later Git snapshot
+/// is allowed to supply its execution-time tree.
 async fn pump_until_gate_observed(provider: &mut Provider) {
     pump_until(provider, |event| {
         matches!(event, session::SessionEvent::GateObserved { .. })
@@ -187,19 +186,8 @@ async fn a_seats_failing_cargo_test_publishes_an_observed_gate_row_it_never_aske
         gate.rows[0].summary.as_deref(),
         Some("test result: FAILED. 0 passed; 2 failed; 0 ignored")
     );
-    // The commit the gate ran against, resolved by the provider in the seat's
-    // own workdir — the seat was never asked, and the seat's transcript never
-    // mentioned a commit.
-    assert_eq!(
-        gate.rows[0].head_sha.as_deref(),
-        Some(head_of(&checkout(&dir)).as_str()),
-        "the row names the commit HEAD held when the gate closed"
-    );
-    assert_eq!(
-        gate.rows[0].dirty,
-        Some(false),
-        "a clean checkout is published as clean, and the pair travels together"
-    );
+    assert_eq!(gate.rows[0].head_sha, None);
+    assert_eq!(gate.rows[0].dirty, None);
     // The envelope is filed under the channel the session publishes into.
     let tags: Vec<Vec<String>> = event
         .tags
@@ -322,13 +310,9 @@ async fn a_gate_in_a_plain_directory_publishes_a_row_that_names_no_commit() {
     assert_eq!(rows[0].dirty, None);
 }
 
-/// A worktree with changes in it is published as dirty.
-///
-/// This is the field that stops a green row from admitting a commit it was
-/// not measured against: the tree the gate ran over was not the tree that
-/// commit names.
+/// Current dirtiness cannot establish the tree at command execution.
 #[tokio::test]
-async fn a_gate_run_over_a_changed_worktree_is_published_as_dirty() {
+async fn a_gate_run_over_a_changed_worktree_keeps_execution_binding_unknown() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (mut provider, _channel_id, session_id) = observed_fixture(&dir, true);
     std::fs::write(checkout(&dir).join("scratch.rs"), "// uncommitted").expect("write");
@@ -345,24 +329,14 @@ async fn a_gate_run_over_a_changed_worktree_is_published_as_dirty() {
 
     let rows = published_gate_rows(&mut provider).await;
     assert_eq!(rows.len(), 1);
-    assert_eq!(
-        rows[0].head_sha.as_deref(),
-        Some(head_of(&checkout(&dir)).as_str())
-    );
-    assert_eq!(
-        rows[0].dirty,
-        Some(true),
-        "an untracked file is a change the commit does not name"
-    );
+    assert_eq!(rows[0].head_sha, None);
+    assert_eq!(rows[0].dirty, None);
 }
 
-/// Two gates run at two commits name two commits.
-///
-/// The point of the key, stated as a test: without it both rows would be
-/// "green on this mission", and the older run's green would admit the newer
-/// commit — the shape of finding 27.
+/// A commit made after a tool result but before async delivery must never
+/// be attributed to the earlier gate. The live Claude run exposed this race.
 #[tokio::test]
-async fn two_gates_at_two_commits_name_the_commit_each_one_ran_at() {
+async fn a_later_commit_cannot_supply_an_earlier_gates_execution_binding() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (mut provider, _channel_id, session_id) = observed_fixture(&dir, true);
     let cwd = checkout(&dir);
@@ -376,7 +350,7 @@ async fn two_gates_at_two_commits_name_the_commit_each_one_ran_at() {
             tool_result("t1", false, ""),
         ],
     );
-    pump_until_gate_observed(&mut provider).await;
+    // Do not yield to the queued gate task until the tree has changed.
 
     // A second commit in the seat's own checkout, between the two gates.
     let git = |args: &[&str]| {
@@ -403,6 +377,7 @@ async fn two_gates_at_two_commits_name_the_commit_each_one_ran_at() {
     git(&["commit", "-q", "--no-gpg-sign", "-m", "second"]);
     let second = head_of(&cwd);
     assert_ne!(first, second);
+    pump_until_gate_observed(&mut provider).await;
 
     feed(
         &mut provider,
@@ -416,8 +391,11 @@ async fn two_gates_at_two_commits_name_the_commit_each_one_ran_at() {
 
     let rows = published_gate_rows(&mut provider).await;
     assert_eq!(rows.len(), 2, "two gates, two rows");
-    assert_eq!(rows[0].head_sha.as_deref(), Some(first.as_str()));
-    assert_eq!(rows[1].head_sha.as_deref(), Some(second.as_str()));
+    for row in rows {
+        assert_eq!(row.outcome, CodingSessionObservationGateOutcome::Passed);
+        assert_eq!(row.head_sha, None);
+        assert_eq!(row.dirty, None);
+    }
 }
 
 /// Observation rows are a second publication of transcript-derived strings.

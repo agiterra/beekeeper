@@ -9544,29 +9544,14 @@ impl Provider {
         ))
     }
 
-    /// Two facts, from the seat's own `cwd` as the provider's own record holds
-    /// it: `git rev-parse HEAD` and whether the worktree matched it. **The
-    /// agent is never asked** — the whole point of an `observed` row is that
-    /// its subject cannot write it, and a commit the subject named would be
-    /// exactly the claim finding 26 caught being wrong.
+    /// Queue the observed tool outcome after checking that its workdir exists.
     ///
-    /// A workdir that is not a repository, an unborn branch with no commits,
-    /// a `git` that is missing, and a probe that times out all yield **no**
-    /// `headSha`: the row is published naming no commit, which admits nothing
-    /// anywhere and says nothing false. The pair travels together, so a probe
-    /// that answered one and not the other yields neither
-    /// (`coding_session_observation.rs`'s gate-row validator refuses the half
-    /// shape outright).
-    ///
-    /// **A directory that is not there is different from all of those, and is
-    /// no longer one of them** (live-run finding 82). The directory is
-    /// resolved at every gate by [`gate_cwd::resolve`], which prefers the
-    /// host's *current* answer over the one the create recorded; when nothing
-    /// exists at the resolved path the gate is refused with `cwd missing:
-    /// <path>` and **no row is minted at all**. A relocated worktree used to
-    /// publish `headSha: null` rows for every gate it ran, which the push gate
-    /// correctly refused to admit and no operator could interpret.
-    fn spawn_gate_head_probe(
+    /// A post-result Git probe cannot establish the tree the command ran on:
+    /// another command may already have committed or changed it. Until the
+    /// execution boundary supplies a fenced snapshot, these rows deliberately
+    /// name no commit and cannot admit a landing. Periodic Git metadata remains
+    /// a separate current-state observation.
+    fn spawn_gate_observation(
         &mut self,
         session_id: &str,
         observed: gate_observer::ObservedGateRow,
@@ -9575,13 +9560,12 @@ impl Provider {
             return;
         };
         let recorded_cwd = record.cwd.clone();
-        let host_git = self.host_git_request(record, &recorded_cwd);
         let projects_file = self.config.projects_file.clone();
         let events = self.session_events_tx.clone();
         let session_id = session_id.to_owned();
         self.git_probe_tasks.spawn(async move {
             let resolved = gate_cwd::resolve(projects_file.as_deref(), &session_id, &recorded_cwd);
-            let Some(cwd) = resolved.present() else {
+            let Some(_cwd) = resolved.present() else {
                 // No row. The sentence is the whole disclosure: an operator
                 // greps for it after a relocation, and the alternative is the
                 // silent `headSha: null` this replaced.
@@ -9594,37 +9578,6 @@ impl Provider {
                 }
                 return;
             };
-            let scope = crate::execution_scope_host::HostGitRequest {
-                tree: cwd.to_path_buf(),
-                ..host_git
-            }
-            .prepare()
-            .await;
-            let probe = git_probe::probe_for_gate(cwd, scope.as_ref()).await;
-            let mut observed = observed;
-            let probe = match probe {
-                Ok(probe) => probe,
-                Err(refusal) => {
-                    // Unreachable in practice — `present()` already proved the
-                    // directory — but a race that removes it between the two
-                    // refuses rather than minting a null row.
-                    tracing::warn!(
-                        target: "csp::git",
-                        %session_id,
-                        "refusing to observe a gate: {refusal}"
-                    );
-                    return;
-                }
-            };
-            let head_observed = probe.commit.is_some();
-            let dirty_observed = probe.dirty.is_some();
-            if let (Some(commit), Some(dirty)) = (probe.commit, probe.dirty) {
-                observed.row.head_sha = Some(commit);
-                observed.row.dirty = Some(dirty);
-            } else {
-                tracing::warn!(target: "csp::git", %session_id, head_observed, dirty_observed,
-                    "gate tree binding unavailable; the row names no commit");
-            }
             // A closed receiver means the provider loop is gone; the row has
             // nowhere to be published, so it is dropped rather than logged as
             // a failure.
@@ -10345,20 +10298,16 @@ impl Provider {
                     // published under this provider's key, and never asked
                     // for. A composed command (finding 57) can close more
                     // than one gate at once, so this is a loop, not an `if
-                    // let` — every row it hands back gets its own probe.
+                    // let` — every row it hands back gets its own observation.
                     for observed in self
                         .gate_observers
                         .entry(session_id.clone())
                         .or_default()
                         .on_item(&item, now_ms())
                     {
-                        // Start a bounded observation after receiving the
-                        // result. Scope preparation and Git run asynchronously;
-                        // this is not an execution-time snapshot and cannot
-                        // exclude another command changing the tree first.
-                        // Never replace an unavailable binding with metadata
-                        // obtained by a later periodic probe.
-                        self.spawn_gate_head_probe(&session_id, observed);
+                        // The tool outcome is observed; its execution-time
+                        // tree is not. Never join later Git state onto it.
+                        self.spawn_gate_observation(&session_id, observed);
                     }
                     self.enqueue_transcript(
                         channel_id,
@@ -10674,6 +10623,10 @@ impl Provider {
             return Ok(());
         };
         let mut observed = observed;
+        // This path has no execution-time fenced tree evidence. Even a
+        // successful later probe cannot bind the earlier command honestly.
+        observed.row.head_sha = None;
+        observed.row.dirty = None;
         observed.row.command = command.to_owned();
         observed.row.summary = text
             .get("summary")

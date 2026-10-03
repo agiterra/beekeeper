@@ -121,6 +121,7 @@ pub(crate) async fn probe(
 /// no row at all. A directory that is there degrades exactly as before —
 /// a checkout with no commits yet is not a lie, it is a repository without a
 /// `HEAD`.
+#[cfg(test)]
 pub(crate) async fn probe_for_gate(
     cwd: &Path,
     scope: Option<&crate::execution_scope_host::HostLaunchPlan>,
@@ -141,7 +142,7 @@ pub(crate) async fn probe_for_gate(
 /// already parses, counted rather than emptiness-tested.
 ///
 /// A directory that is not there refuses by name, as
-/// [`probe_for_gate`] does and for the same reason: the caller must not read
+/// the gate workdir check does: the caller must not read
 /// "no commit observed" from a checkout that has moved. Everything else
 /// degrades to `None`, which the caller treats as "unknown", never as "clean".
 pub(crate) async fn probe_verification_input(
