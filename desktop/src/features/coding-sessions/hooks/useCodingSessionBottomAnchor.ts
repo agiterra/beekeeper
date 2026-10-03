@@ -111,15 +111,61 @@ export function bottomAnchorOnResize(
   };
 }
 
-const rememberedDistances = new Map<string, number>();
+/**
+ * Per-key scroll memory: the held distance, and the first entry the umbrella
+ * timeline's render window started at (`CodingSessionUmbrellaTimelineWindow`).
+ * One map so a remount restores both together — a distance measured against
+ * thirty loaded turns means nothing against the default ten.
+ */
+type RememberedScroll = { distance: number; windowStartKey: string | null };
+
+const remembered = new Map<string, RememberedScroll>();
+
+function rememberPatch(key: string, patch: Partial<RememberedScroll>) {
+  const previous = remembered.get(key) ?? { distance: 0, windowStartKey: null };
+  remembered.delete(key);
+  remembered.set(key, { ...previous, ...patch });
+  if (remembered.size > MAX_REMEMBERED) {
+    const oldest = remembered.keys().next().value;
+    if (oldest !== undefined) remembered.delete(oldest);
+  }
+}
 
 function remember(key: string, distance: number) {
-  rememberedDistances.delete(key);
-  rememberedDistances.set(key, distance);
-  if (rememberedDistances.size > MAX_REMEMBERED) {
-    const oldest = rememberedDistances.keys().next().value;
-    if (oldest !== undefined) rememberedDistances.delete(oldest);
-  }
+  rememberPatch(key, { distance });
+}
+
+/** Record where the umbrella timeline's render window starts for `key`. */
+export function rememberCodingSessionNarrativeWindow(
+  key: string,
+  windowStartKey: string | null,
+): void {
+  if (remembered.get(key)?.windowStartKey === windowStartKey) return;
+  rememberPatch(key, { windowStartKey });
+}
+
+/** The render-window start remembered for `key`, or null. */
+export function recallCodingSessionNarrativeWindow(key: string): string | null {
+  return remembered.get(key)?.windowStartKey ?? null;
+}
+
+/** Forget every remembered distance and window (a community switch). */
+export function resetCodingSessionNarrativeMemory(): void {
+  remembered.clear();
+}
+
+/** The live anchor state of each bound scroller, for `isBottomAnchorAtLatest`. */
+const liveStates = new WeakMap<HTMLElement, () => BottomAnchorState>();
+
+/**
+ * Whether the anchor bound to `scroller` is holding the bottom — the anchor's
+ * own number, not geometry. Read during a commit, geometry already includes
+ * rows that just mounted and reports the reader as scrolled up; the anchor's
+ * state does not move until its resize callback runs. `false` when unbound.
+ */
+export function isBottomAnchorAtLatest(scroller: HTMLElement | null): boolean {
+  if (!scroller) return false;
+  return liveStates.get(scroller)?.().distance === 0;
 }
 
 function isScrollKey(event: KeyboardEvent): boolean {
@@ -175,7 +221,7 @@ function bindBottomAnchor(
   const doc = scroller.ownerDocument;
   const view = doc.defaultView ?? window;
   let state: BottomAnchorState = {
-    distance: rememberedDistances.get(key) ?? 0,
+    distance: remembered.get(key)?.distance ?? 0,
     restoring: true,
   };
   let readerUntil = 0;
@@ -222,6 +268,7 @@ function bindBottomAnchor(
     if (isScrollKey(event)) markReader();
   };
 
+  liveStates.set(scroller, () => state);
   apply();
   const restoreTimer = view.setTimeout(() => {
     state = { ...state, restoring: false };
@@ -246,6 +293,7 @@ function bindBottomAnchor(
   }
   return () => {
     remember(key, state.distance);
+    liveStates.delete(scroller);
     view.clearTimeout(restoreTimer);
     scroller.removeEventListener("scroll", handleScroll);
     scroller.removeEventListener("wheel", markReader);

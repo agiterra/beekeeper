@@ -22,6 +22,20 @@ export function scrollCodingSessionNarrativeToLatest(
   viewport.scrollTo({ behavior: "smooth", top: viewport.scrollHeight });
 }
 
+/** Focusing a seat (the live-activity bar, the roster) jumps to the latest. */
+export function useScrollNarrativeToLatestOnFocus(
+  narrativeScrollRef: React.RefObject<HTMLElement | null>,
+  focusedExecutionKey: string | null,
+): void {
+  React.useLayoutEffect(() => {
+    if (focusedExecutionKey === null) return;
+    const frame = window.requestAnimationFrame(() => {
+      scrollCodingSessionNarrativeToLatest(narrativeScrollRef.current);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusedExecutionKey, narrativeScrollRef]);
+}
+
 /**
  * Provenance labels a contiguous execution run, not every turn. A generation
  * lifecycle row already identifies the execution and generation, so the first

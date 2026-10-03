@@ -33,6 +33,7 @@ import {
   buildUmbrellaTimeline,
   codingSessionUmbrellaEntryKey,
   type CodingSessionUmbrellaTimelineEntry,
+  type CodingSessionUmbrellaTurnBlock as CodingSessionUmbrellaTurnBlockEntry,
 } from "@/features/coding-sessions/lib/codingSessionUmbrellaTimeline";
 import {
   listCodingSessionUmbrellaParticipants,
@@ -57,6 +58,12 @@ import {
   CodingSessionUmbrellaTurnBlock,
   type CodingSessionTurnBlockLiveness,
 } from "./CodingSessionUmbrellaTurnBlock";
+import { CodingSessionUmbrellaLoadEarlier } from "./CodingSessionUmbrellaLoadEarlier";
+import {
+  UMBRELLA_TIMELINE_REVEAL_ITEM_EVENT,
+  umbrellaTimelineLiveBlockKeys,
+} from "./CodingSessionUmbrellaTimelineWindow";
+import { useCodingSessionUmbrellaTimelineWindow } from "./useCodingSessionUmbrellaTimelineWindow";
 
 /** The turn block's Mission shell: the card grammar, keeping the accent rail. */
 const MISSION_TURN_BLOCK_CLASS = missionRowClass("standard", {
@@ -81,9 +88,11 @@ export function CodingSessionUmbrellaTimelineView({
   onFocusExecution,
   onMissionVisibleTimesChange,
   missionRevealRef,
+  narrativeScrollRef,
   operatorProfiles,
   resolveMissionActor,
   resolvePromptSeat,
+  scrollMemoryKey,
   umbrella,
   wakeOperations,
 }: {
@@ -122,6 +131,18 @@ export function CodingSessionUmbrellaTimelineView({
    * rather than a callback prop so publishing it does not re-render the stream.
    */
   missionRevealRef?: React.MutableRefObject<((key: string) => void) | null>;
+  /**
+   * The scroller this view renders inside. The render window reads the bottom
+   * anchor bound to it (trim only at the latest) and holds the reader's place
+   * across "Load earlier". Without it the window still works; it just never
+   * trims and does not correct the position after loading earlier turns.
+   */
+  narrativeScrollRef?: React.RefObject<HTMLElement | null>;
+  /**
+   * The bottom anchor's key for this narrative, so the render window is
+   * remembered beside the scroll distance. Defaults to the umbrella key.
+   */
+  scrollMemoryKey?: string;
   operatorProfiles?: UserProfileLookup;
   actorNames?: CodingSessionActorNameResolver;
   /** Pubkey → seat name for transaction rows; the finalizer supplies it. */
@@ -317,12 +338,85 @@ export function CodingSessionUmbrellaTimelineView({
     key: string;
     nonce: number;
   } | null>(null);
-  const revealFact = React.useCallback((key: string) => {
+  const scrollBlockIntoView = React.useCallback((key: string) => {
     blockNodes.current
       .get(key)
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
-    setRevealed((current) => ({ key, nonce: (current?.nonce ?? 0) + 1 }));
   }, []);
+  // Only the most recent turns render; the Route rail, a handoff link or a
+  // fact link may still name an older row, so a reveal widens the window
+  // first and scrolls once the row exists.
+  const liveBlockKeys = React.useMemo(
+    () =>
+      umbrellaTimelineLiveBlockKeys(
+        narrativeEntries.filter(
+          (entry): entry is CodingSessionUmbrellaTurnBlockEntry =>
+            entry.kind === "turn-block",
+        ),
+        codingSessionUmbrellaEntryKey,
+      ),
+    [narrativeEntries],
+  );
+  const windowSource = React.useMemo(
+    () => ({
+      entries,
+      keyOf: codingSessionMissionStreamEntryKey,
+      isTurn: (entry: (typeof entries)[number]) =>
+        entry.kind === "turn-block" &&
+        (focusedExecutionKey === null ||
+          focusedExecutionKey === entry.executionKey),
+      isLive: (entry: (typeof entries)[number]) =>
+        entry.kind === "turn-block" &&
+        liveBlockKeys.has(codingSessionUmbrellaEntryKey(entry)),
+    }),
+    [entries, focusedExecutionKey, liveBlockKeys],
+  );
+  const timelineWindow = useCodingSessionUmbrellaTimelineWindow({
+    source: windowSource,
+    memoryKey: scrollMemoryKey ?? `umbrella:${umbrella.umbrellaKey}`,
+    scrollRef: narrativeScrollRef,
+    onRevealReady: scrollBlockIntoView,
+  });
+  const revealInWindow = timelineWindow.reveal;
+  const revealFact = React.useCallback(
+    (key: string) => {
+      if (!revealInWindow(key)) scrollBlockIntoView(key);
+      setRevealed((current) => ({ key, nonce: (current?.nonce ?? 0) + 1 }));
+    },
+    [revealInWindow, scrollBlockIntoView],
+  );
+  // A transcript item asked for by id (a subagent's row in the Agents
+  // surface) may sit in a turn above the window, where no DOM query reaches.
+  React.useEffect(() => {
+    if (typeof document === "undefined") return;
+    const handle = (event: Event) => {
+      const itemId = (event as CustomEvent<{ itemId?: unknown }>).detail
+        ?.itemId;
+      if (typeof itemId !== "string") return;
+      const block = narrativeEntries.find(
+        (entry) =>
+          entry.kind === "turn-block" &&
+          entry.items.some((item) => item.id === itemId),
+      );
+      if (block === undefined) return;
+      event.preventDefault();
+      revealFact(codingSessionUmbrellaEntryKey(block));
+    };
+    document.addEventListener(UMBRELLA_TIMELINE_REVEAL_ITEM_EVENT, handle);
+    return () =>
+      document.removeEventListener(UMBRELLA_TIMELINE_REVEAL_ITEM_EVENT, handle);
+  }, [narrativeEntries, revealFact]);
+  const windowStartIndex = timelineWindow.window.startIndex;
+  // With a seat focused the window counts only that seat's turns, while the
+  // rows above it hold every seat's; the control has to say which it counted.
+  const focusedAgentLabel =
+    focusedExecutionKey === null
+      ? null
+      : (labelsByExecutionKey.get(focusedExecutionKey) ?? "the focused seat");
+  const renderedEntries = React.useMemo(
+    () => (windowStartIndex === 0 ? entries : entries.slice(windowStartIndex)),
+    [entries, windowStartIndex],
+  );
   React.useEffect(() => {
     if (revealed === null) return;
     const handle = window.setTimeout(() => setRevealed(null), 2400);
@@ -339,6 +433,7 @@ export function CodingSessionUmbrellaTimelineView({
   // timer, no scroll listener, no author time — the observer reports entries
   // and each entry answers with the signed second it was registered under.
   const visibleRowKeys = React.useRef(new Set<string>());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the window decides which rows are registered, so a change to it is a change to what must be observed
   React.useEffect(() => {
     if (onMissionVisibleTimesChange === undefined) return;
     if (typeof IntersectionObserver === "undefined") return;
@@ -357,8 +452,11 @@ export function CodingSessionUmbrellaTimelineView({
       onMissionVisibleTimesChange(seconds);
     });
     for (const node of blockNodes.current.values()) observer.observe(node);
-    return () => observer.disconnect();
-  }, [onMissionVisibleTimesChange, secondsByRowKey]);
+    return () => {
+      observer.disconnect();
+      visibleRowKeys.current.clear();
+    };
+  }, [onMissionVisibleTimesChange, secondsByRowKey, windowStartIndex]);
 
   const pendingTurns = umbrella.executions.map((execution) => {
     const target = execution.activeGeneration.commandTarget;
@@ -401,7 +499,15 @@ export function CodingSessionUmbrellaTimelineView({
       className="flex flex-col gap-7"
       data-testid="coding-session-umbrella-timeline"
     >
-      {entries.map((entry) => {
+      {timelineWindow.window.hiddenEntryCount > 0 ? (
+        <CodingSessionUmbrellaLoadEarlier
+          hiddenEntryCount={timelineWindow.window.hiddenEntryCount}
+          hiddenTurnCount={timelineWindow.window.hiddenTurnCount}
+          turnsCountedFor={focusedAgentLabel}
+          onLoadEarlier={timelineWindow.loadEarlier}
+        />
+      ) : null}
+      {renderedEntries.map((entry) => {
         const key = codingSessionMissionStreamEntryKey(entry);
         if (entry.kind === "transaction") {
           // The rail points at these rows, so they have to be registerable

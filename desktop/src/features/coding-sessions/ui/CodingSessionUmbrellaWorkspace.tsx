@@ -90,7 +90,7 @@ import {
   CodingSessionComposerRecipientContext,
   CodingSessionMissionLensContext,
   CodingSessionOpenHoldsContext,
-  scrollCodingSessionNarrativeToLatest,
+  useScrollNarrativeToLatestOnFocus,
   useCodingSessionElementHeight,
 } from "./CodingSessionUmbrellaWorkspaceModel";
 
@@ -240,9 +240,10 @@ export function UmbrellaCodingSessionWorkspace({
     string | null
   >(null);
   const narrativeScrollRef = React.useRef<HTMLDivElement>(null);
+  const narrativeMemoryKey = `${channelId}:${umbrella.sessionRef ?? umbrella.umbrellaKey}`;
   const narrativeAnchorRef = useCodingSessionBottomAnchor(
     narrativeScrollRef,
-    `${channelId}:${umbrella.sessionRef ?? umbrella.umbrellaKey}`,
+    narrativeMemoryKey,
   );
   const workspaceActorName = useCodingSessionActorNameResolver(umbrella);
   const composerParticipants = React.useMemo(
@@ -678,13 +679,7 @@ export function UmbrellaCodingSessionWorkspace({
     },
     [lensCoordinates, surfaceHost.close, surfaceHost.select],
   );
-  React.useLayoutEffect(() => {
-    if (focusedExecutionKey === null) return;
-    const frame = window.requestAnimationFrame(() => {
-      scrollCodingSessionNarrativeToLatest(narrativeScrollRef.current);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [focusedExecutionKey]);
+  useScrollNarrativeToLatestOnFocus(narrativeScrollRef, focusedExecutionKey);
 
   const handlePopout = React.useCallback(() => {
     void openCodingSessionPopout(channelId, generationId).catch((error) => {
@@ -898,6 +893,8 @@ export function UmbrellaCodingSessionWorkspace({
                       missionRevealRef={
                         mission ? routeRail.revealRef : undefined
                       }
+                      narrativeScrollRef={narrativeScrollRef}
+                      scrollMemoryKey={narrativeMemoryKey}
                       onMissionVisibleTimesChange={
                         mission ? routeRail.setVisibleAt : undefined
                       }
