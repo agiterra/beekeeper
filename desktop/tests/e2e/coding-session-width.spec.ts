@@ -639,9 +639,24 @@ for (const { choice, cap, gutter: px } of SESSION_WIDTHS) {
         composer: outer('[data-testid="coding-session-composer"]'),
         goalPill: outer('[data-testid="coding-session-goal-workspace"]'),
         transcript: outer('[data-testid="coding-session-transcript"]'),
-        founderLine: pad(
-          document.querySelector('[data-testid="coding-session-founded-by"]'),
-        ),
+        // The founder is no longer a padded bar of its own: it rides inline
+        // at the end of the goal row, so it must sit inside the goal row's
+        // measure box (and so inherit its gutter) rather than carry one.
+        founderLine: (() => {
+          const founder = document.querySelector(
+            '[data-testid="coding-session-founded-by"]',
+          );
+          if (!founder) return null;
+          const goalRow = box('[data-testid="coding-session-goal-workspace"]');
+          const rect = founder.getBoundingClientRect();
+          const row = goalRow?.getBoundingClientRect();
+          return {
+            insideGoalRow: goalRow ? goalRow.contains(founder) : false,
+            withinGoalRowEdges: row
+              ? rect.left >= row.left - 0.5 && rect.right <= row.right + 0.5
+              : false,
+          };
+        })(),
         edges: {
           composer: edges('[data-testid="coding-session-composer"]'),
           goalPill: edges('[data-testid="coding-session-goal-workspace"]'),
@@ -663,9 +678,15 @@ for (const { choice, cap, gutter: px } of SESSION_WIDTHS) {
     expect(gutters.transcript).toEqual(expected);
     expect(gutters.composer).toEqual(expected);
     expect(gutters.goalPill).toEqual(expected);
-    // Null when this fixture's genesis did not resolve; a present line must
-    // still share the gutter rather than keeping a hardcoded copy of its own.
-    if (gutters.founderLine) expect(gutters.founderLine).toEqual(expected);
+    // Null when this fixture's genesis did not resolve; a present founder
+    // must live in the goal row — sharing its gutter and its cap — rather
+    // than as a separate bar with a hardcoded gutter of its own.
+    if (gutters.founderLine) {
+      expect(gutters.founderLine).toEqual({
+        insideGoalRow: true,
+        withinGoalRowEdges: true,
+      });
+    }
 
     // Whatever the cap resolves to, all three surfaces land on it. This is the
     // register the shared column exists to protect.

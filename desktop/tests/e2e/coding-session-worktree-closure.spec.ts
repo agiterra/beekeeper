@@ -273,7 +273,9 @@ async function openSessionAndCloseDialog(page: Page) {
     timeout: 15_000,
   });
 
-  await page.getByTestId("coding-session-close").click();
+  // Close session lives in the header's `⋯` session-actions menu.
+  await page.getByTestId("coding-session-overflow").click();
+  await page.getByTestId("coding-session-overflow-close-session").click();
   await expect(
     page.getByTestId("coding-session-closure-worktrees"),
   ).toBeVisible();

@@ -323,16 +323,40 @@ test("captures the busy transcript narrative collapsed and expanded", async ({
   page,
 }) => {
   const workspace = await openSeededSession(page, events());
-  const disclosure = page.getByText("+3 previous tool calls");
-  await expect(disclosure).toBeVisible();
+  // Settled, the turn folds its work behind one "Worked for …" row. The
+  // answer and the failed check stay on screen; the six successful calls and
+  // the intermediate prose do not.
+  const fold = page.getByTestId("coding-session-worked-fold");
+  await expect(fold).toHaveCount(1);
+  await expect(fold).toHaveAttribute("aria-expanded", "false");
+  await expect(fold).toContainText("Worked for 1m 16s");
   await expect(
     page.getByText("Tool call failed", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByTestId("transcript-tool-item")).toHaveCount(1);
+  await expect(page.getByTestId("coding-session-tool-group")).toHaveCount(0);
+  // The agent's final message — the answer — is never folded.
+  await expect(
+    page.getByText("Unit and type checks pass", { exact: false }),
   ).toBeVisible();
   await waitForAnimations(page);
   await workspace.screenshot({ path: `${SHOTS}/01-collapsed.png` });
 
-  await disclosure.click();
-  await expect(page.getByText("Show fewer tool calls")).toBeVisible();
+  // Opening the fold puts the work back in place: the six consecutive
+  // successful calls read as one sentence-summary row, itself closed.
+  await fold.click();
+  await expect(fold).toHaveAttribute("aria-expanded", "true");
+  const group = page.getByTestId("coding-session-tool-group");
+  await expect(group).toHaveCount(1);
+  await expect(group).toHaveAttribute("data-count", "6");
+  const groupToggle = group.getByRole("button").first();
+  await expect(groupToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("transcript-tool-item")).toHaveCount(1);
+
+  // And the summary row opens onto every call it stands for.
+  await groupToggle.click();
+  await expect(groupToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("transcript-tool-item")).toHaveCount(7);
   await waitForAnimations(page);
   await workspace.screenshot({ path: `${SHOTS}/02-expanded.png` });
 });
@@ -345,15 +369,22 @@ test("captures the latest plan snapshot collapsed and expanded", async ({
   await expect(taskDock).toBeVisible();
   await expect(taskDock).toContainText("Tasks");
   await expect(taskDock).toContainText("2/4");
-  await expect(taskDock).toContainText("now");
+  // The dock mounts collapsed to one line (no auto-open over the transcript);
+  // that line names the step in hand rather than a separate "now" marker.
+  await expect(taskDock).toHaveAttribute("data-expanded", "false");
+  await expect(
+    page.getByTestId("coding-session-task-dock-summary"),
+  ).toContainText("Add focused verification");
   await expect(page.getByTestId("coding-session-composer-queue")).toBeVisible();
   await expect(page.getByLabel("Coding-session instruction")).toBeEnabled();
   const plan = page.getByTestId("coding-session-inline-plan");
   await expect(plan).toHaveCount(1);
   await expect(plan).toContainText("Add focused verification");
   await expect(plan).toContainText("2/4");
-  await expect(page.getByText("Work Log")).toBeVisible();
-  await expect(page.getByText("Plan updated")).toBeVisible();
+  // The plan is its own row: no "Work Log" heading or "Plan updated" echo
+  // repeats it.
+  await expect(page.getByText("Work Log")).toHaveCount(0);
+  await expect(page.getByText("Plan updated")).toHaveCount(0);
   await expect(
     page.getByText("Session history", { exact: false }),
   ).toBeVisible();

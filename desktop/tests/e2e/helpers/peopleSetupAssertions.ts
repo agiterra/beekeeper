@@ -437,6 +437,9 @@ export function peopleDialog(page: Page): Locator {
 
 /** Open the session People surface and wait for its roster to settle. */
 export async function openPeopleDialog(page: Page): Promise<Locator> {
+  // People is a row inside the header's Details popover; it opens the same
+  // People dialog the former standalone `People N` button did.
+  await page.getByTestId("coding-session-provenance-toggle").click();
   await page.getByTestId("coding-session-people-toggle").click();
   const dialog = peopleDialog(page);
   await expect(dialog).toBeVisible();
@@ -649,6 +652,11 @@ export const READ_COMMAND_EXCEPTIONS = new Set<string>([
   "plugin:webview|set_webview_zoom",
   "plugin:os|platform",
   "create_auth_event",
+  // A read: the session's full-access grant on this computer (its setter is
+  // `set_coding_session_full_access`). The query starts once the session record
+  // names its provider and session id; with ingress publishes batched per frame
+  // that first read can land just after the baseline is taken.
+  "coding_session_full_access",
   // Transport, not app state. A publish would still need `sign_event`, which
   // this allowlist denies, so an EVENT frame cannot slip through here.
   "plugin:websocket|connect",

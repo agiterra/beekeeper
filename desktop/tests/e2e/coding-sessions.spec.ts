@@ -517,13 +517,28 @@ test("a seeded signed session is discoverable, opens, and renders its turn", asy
   await expect(
     page.getByTestId("coding-session-assistant-message"),
   ).toContainText("Reconnect now recovers cleanly.");
-  // Recent consequential work remains part of the settled turn's readable
-  // narrative. Only an older prefix is eligible for progressive disclosure.
-  await expect(page.getByTestId("transcript-tool-item").first()).toBeVisible();
+  // A settled turn folds the work that produced its answer behind one
+  // "Worked for …" row; the answer above stays on screen. The duration lives
+  // on that row, and the hidden tool call is out of the DOM until it opens.
+  const fold = page.getByTestId("coding-session-worked-fold");
+  await expect(fold).toHaveCount(1);
+  await expect(fold).toHaveAttribute("aria-expanded", "false");
+  await expect(fold).toHaveAttribute("data-hidden-count", "1");
+  await expect(fold).toContainText("Worked for 3.6s");
+  // The shared tool classifier does not class Claude's `Bash` as a shell
+  // tool, so the sentence counts it as a generic call.
+  await expect(fold).toContainText("Ran 1 tool call");
+  await expect(page.getByTestId("transcript-tool-item")).toHaveCount(0);
+  await fold.click();
+  await expect(fold).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("transcript-tool-item")).toHaveCount(1);
+  await expect(page.getByTestId("transcript-tool-item")).toBeVisible();
 
   const completion = page.getByTestId("coding-session-turn-completion");
   await expect(completion).toHaveAttribute("data-turn-state", "completed");
-  await expect(completion).toContainText("Worked for 3.6s");
+  // The fold row already says how long it took, so the completion line does
+  // not repeat it. Its cost estimate is hover-revealed but stays in the DOM.
+  await expect(completion).not.toContainText("Worked for");
   await expect(completion).toContainText("$0.32");
 
   await expect(page.getByTestId("coding-session-composer")).toBeVisible();

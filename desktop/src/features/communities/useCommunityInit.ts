@@ -48,6 +48,7 @@ import { resetPendingCodingSessionLifecycle } from "@/features/coding-sessions/l
 import { resetPendingCodingSessionTurns } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import { resetCodingSessionIngressStores } from "@/features/coding-sessions/lib/codingSessionIngressStoreCache";
 import { resetCodingSessionHireOutcomes } from "@/features/coding-sessions/hooks/useCodingSessionHire";
+import { resetCodingSessionNarrativeMemory } from "@/features/coding-sessions/hooks/useCodingSessionBottomAnchor";
 import { resetProjectPulseState } from "@/features/project-pulse";
 import { forgetHeldEventReads } from "@/shared/coordination/incrementalEventRead";
 import { resetNavHotkeyBindings } from "@/features/hotkeys/lib/navHotkeyBindingsStore";
@@ -127,6 +128,10 @@ async function resetCommunityState({
   // it — so a hire answered in one community could otherwise put a lead's name
   // on a transcript row in the next (REVIEW-B3 N2).
   resetCodingSessionHireOutcomes();
+  // Each narrative's remembered scroll distance and render-window start are
+  // keyed by ids from the relay they were read on; kept across a switch they
+  // would restore one community's reading place onto another's timeline.
+  resetCodingSessionNarrativeMemory();
   // Which coding-session conversation lanes are openable is per-relay: keeping
   // the old community's refs would hide chat in the new one (channel ids are
   // UUIDs, but a hidden message with no lane to render in is the one outcome

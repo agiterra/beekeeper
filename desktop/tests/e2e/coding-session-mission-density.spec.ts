@@ -1590,7 +1590,7 @@ test("B4: the Mission editor opens at one line and the reserve is the dock", asy
   ).toBeLessThanOrEqual(2);
 });
 
-test("B4: Conversation keeps min-h-24, and its reserve is the dock too", async ({
+test("B4: Conversation opens at min-h-16, and its reserve is the dock too", async ({
   page,
 }) => {
   await openMockApp(page, {
@@ -1603,9 +1603,10 @@ test("B4: Conversation keeps min-h-24, and its reserve is the dock too", async (
   const editor = page.getByLabel("Coding-session instruction");
   await expect(editor).toBeVisible();
   const classes = (await editor.getAttribute("class")) ?? "";
-  expect(classes, "Conversation's editor keeps its four-line opening").toMatch(
-    /\bmin-h-24\b/,
-  );
+  expect(
+    classes,
+    "Conversation's editor opens compact, at about two lines",
+  ).toMatch(/\bmin-h-16\b/);
   expect(classes).not.toMatch(/\bmin-h-11\b/);
   // Conversation used to keep the literal `pb-48` (`pb-[34rem]` while a seat
   // worked). That literal is what Andy's 2026-09-29 screenshots show: the

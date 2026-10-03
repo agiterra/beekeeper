@@ -684,7 +684,9 @@ async function openJoinDialogOnSeededSession(page: Page) {
   await expect(page.getByTestId("coding-session-header")).toBeVisible({
     timeout: 15_000,
   });
-  await page.getByTestId("coding-session-add-provider").click();
+  // Add provider lives in the header's `⋯` session-actions menu.
+  await page.getByTestId("coding-session-overflow").click();
+  await page.getByTestId("coding-session-overflow-add-provider").click();
   await expect(
     page.getByTestId("add-coding-session-provider-dialog"),
   ).toBeVisible();
