@@ -9,6 +9,7 @@ import {
   isCodingSessionTranscriptError,
   parseCodingSessionTurnResult,
   stabilizeCodingSessionTranscriptModel,
+  summarizeCodingSessionTools,
 } from "./codingSessionTranscriptModel.ts";
 
 const timestamp = "2026-07-30T12:00:00.000Z";
@@ -390,11 +391,14 @@ test("does not coalesce unscoped activity across session generations", () => {
   assert.equal(model.blocks[1].entries[0].item.text, "Current generation.");
 });
 
-test("deduplicates only the result echo, preserving same-text assistant identities", () => {
+test("deduplicates only the result echo, preserving every assistant word", () => {
+  // Consecutive assistant items are slices of one stream and now read as one
+  // message; the echo check must still drop only the result body, never a
+  // piece of the prose itself.
   const model = deriveCodingSessionTranscriptModel(
     [
       message({ id: "prompt", role: "user", text: "Repeat the update" }),
-      message({ id: "answer-1", role: "assistant", text: "Still working." }),
+      message({ id: "answer-1", role: "assistant", text: "Still working. " }),
       message({ id: "answer-2", role: "assistant", text: "Still working." }),
       lifecycle({
         id: "result",
@@ -407,15 +411,16 @@ test("deduplicates only the result echo, preserving same-text assistant identiti
   const turn = model.blocks[0];
 
   assert.equal(turn.kind, "turn");
+  const assistant = turn.entries.flatMap((entry) =>
+    entry.kind === "item" &&
+    entry.item.type === "message" &&
+    entry.item.role === "assistant"
+      ? [entry.item]
+      : [],
+  );
   assert.deepEqual(
-    turn.entries.flatMap((entry) =>
-      entry.kind === "item" &&
-      entry.item.type === "message" &&
-      entry.item.role === "assistant"
-        ? [entry.item.id]
-        : [],
-    ),
-    ["answer-1", "answer-2"],
+    assistant.map((item) => [item.id, item.text]),
+    [["answer-1", "Still working. Still working."]],
   );
   assert.deepEqual(turn.diagnostics, []);
 });
@@ -465,15 +470,15 @@ test("suppresses an exact ceremonial result body while keeping turn completion",
   assert.equal(turn.completion.state, "completed");
 });
 
-test("keeps the three most recent successful tools and collapses only the older prefix", () => {
+test("groups each run of settled successful tools into one sentence row", () => {
   const model = deriveCodingSessionTranscriptModel(
     [
       message({ id: "prompt", role: "user", text: "Run checks" }),
       tool({ id: "tool-1" }),
       tool({ id: "tool-2" }),
-      tool({ id: "tool-3" }),
+      tool({ id: "tool-3", renderClass: "file-read" }),
       tool({ id: "tool-4" }),
-      tool({ id: "tool-5" }),
+      tool({ id: "tool-5", renderClass: "file-edit" }),
       tool({ id: "tool-failed", isError: true }),
       tool({ id: "tool-6" }),
     ],
@@ -482,43 +487,69 @@ test("keeps the three most recent successful tools and collapses only the older 
   const turn = model.blocks[0];
 
   assert.equal(turn.kind, "turn");
-  assert.equal(turn.entries[1].kind, "tool-group");
-  assert.equal(turn.entries[1].label, "Ran 2 commands");
   assert.deepEqual(
-    turn.entries[1].items.map((item) => item.id),
-    ["tool-1", "tool-2"],
+    turn.entries.map((entry) => [
+      entry.kind,
+      entry.kind === "item" ? entry.item.id : entry.id,
+    ]),
+    [
+      ["item", "prompt"],
+      ["tool-group", "tools:tool-1"],
+      // A failure is never grouped, and it ends the run.
+      ["item", "tool-failed"],
+      // A run of one stays an ordinary row.
+      ["item", "tool-6"],
+    ],
   );
-  assert.equal(turn.entries[2].kind, "item");
-  assert.equal(turn.entries[2].item.id, "tool-3");
-  assert.equal(turn.entries[3].kind, "item");
-  assert.equal(turn.entries[3].item.id, "tool-4");
-  assert.equal(turn.entries[4].kind, "item");
-  assert.equal(turn.entries[4].item.id, "tool-5");
-  assert.equal(turn.entries[5].kind, "item");
-  assert.equal(turn.entries[5].item.id, "tool-failed");
-  assert.equal(turn.entries[6].kind, "item");
-  assert.equal(turn.entries[6].item.id, "tool-6");
+  assert.equal(
+    turn.entries[1].label,
+    "Ran 3 commands, read 1 file and edited 1 file",
+  );
+  assert.equal(turn.entries[1].items.length, 5);
   assert.equal(turn.isWorking, true);
+  assert.equal(turn.fold, null, "nothing folds while the turn is live");
 });
 
-test("keeps short successful tool runs fully visible", () => {
+test("tool sentence counts files once each and calls otherwise", () => {
+  const read = (id, path) => ({
+    ...tool({ id, renderClass: "file-read" }),
+    args: { file_path: path },
+  });
+  assert.equal(
+    summarizeCodingSessionTools([
+      read("r1", "src/a.ts"),
+      read("r2", "src/a.ts"),
+      read("r3", "src/b.ts"),
+      tool({ id: "s1" }),
+      tool({ id: "s2" }),
+    ]),
+    "Read 2 files and ran 2 commands",
+  );
+  assert.equal(
+    summarizeCodingSessionTools([
+      tool({ id: "g1", renderClass: "generic" }),
+      tool({ id: "g2", renderClass: "generic" }),
+    ]),
+    "Ran 2 tool calls",
+  );
+  assert.equal(summarizeCodingSessionTools([]), "");
+});
+
+test("a single settled tool stays an ordinary row", () => {
   const model = deriveCodingSessionTranscriptModel(
     [
       message({ id: "prompt", role: "user", text: "Run checks" }),
       tool({ id: "tool-1" }),
-      tool({ id: "tool-2" }),
-      tool({ id: "tool-3" }),
     ],
     { isWorking: true },
   );
   const turn = model.blocks[0];
 
-  assert.equal(turn.kind, "turn");
   assert.deepEqual(
     turn.entries.map((entry) =>
       entry.kind === "item" ? entry.item.id : entry.id,
     ),
-    ["prompt", "tool-1", "tool-2", "tool-3"],
+    ["prompt", "tool-1"],
   );
 });
 

@@ -247,8 +247,9 @@ test("characterization: only settled successful tools satisfy the completed-succ
 test("divergence (Buzz canonical): grouping keys on settled success, the donor exempts tools by name", () => {
   // Donor law: collapsible = tool && toolName NOT IN {AskUserQuestion,
   // ExitPlanMode, TodoWrite} — a NAME allowlist. Buzz has no name check:
-  // any completed successful tool joins the prefix group, including one the
-  // donor would always keep standalone.
+  // any completed successful tool joins the run's sentence row, including one
+  // the donor would always keep standalone. (Since the 2026-10-03 session-view
+  // pass the whole run groups; there is no "three most recent" tail.)
   const model = deriveCodingSessionTranscriptModel(
     [
       message({ id: "prompt", role: "user", text: "go" }),
@@ -265,21 +266,16 @@ test("divergence (Buzz canonical): grouping keys on settled success, the donor e
     { isWorking: false },
   );
   const turn = model.blocks[0];
-  assert.deepEqual(entryIds(turn), [
-    "prompt",
-    "tools:ask",
-    "run-2",
-    "run-3",
-    "run-4",
-  ]);
+  assert.deepEqual(entryIds(turn), ["prompt", "tools:ask"]);
   const group = turn.entries[1];
   assert.equal(group.kind, "tool-group");
   assert.deepEqual(
     group.items.map((item) => item.id),
-    ["ask", "run-1"],
+    ["ask", "run-1", "run-2", "run-3", "run-4"],
   );
-  // Mixed render classes fall back to the generic label.
-  assert.equal(group.label, "Ran 2 tool calls");
+  // Mixed render classes read as one sentence, in first-seen order. The
+  // read names no file, so it counts as its own.
+  assert.equal(group.label, "Read 1 file and ran 4 commands");
 });
 
 test("characterization: tool group labels count a single render class by verb", () => {
@@ -293,14 +289,14 @@ test("characterization: tool group labels count a single render class by verb", 
     ).blocks[0].entries[1];
   assert.equal(
     derive(["s1", "s2", "s3", "s4", "s5"], "shell").label,
-    "Ran 2 commands",
+    "Ran 5 commands",
   );
   assert.equal(
     derive(["r1", "r2", "r3", "r4", "r5"], "file-read").label,
-    "Read 2 files",
+    "Read 5 files",
   );
   assert.equal(
     derive(["e1", "e2", "e3", "e4", "e5"], "file-edit").label,
-    "Edited 2 files",
+    "Edited 5 files",
   );
 });

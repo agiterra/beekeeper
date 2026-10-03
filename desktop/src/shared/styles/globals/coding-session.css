@@ -76,6 +76,34 @@
   margin-left: var(--coding-session-live-focus-width);
 }
 
+/* A live line scrolled out of view keeps its place but stops animating; see
+   `usePauseAnimationsOffscreen` in CodingSessionTranscriptWorking.tsx. */
+[data-offscreen="true"] .coding-session-live-activity-focus,
+[data-offscreen="true"] .coding-session-live-activity-counter,
+[data-offscreen="true"] .animate-spin {
+  animation-play-state: paused;
+}
+
+/* Turn metadata (time, cost, copy) waits for the pointer or keyboard focus;
+   it is never hidden from assistive technology. A failure or a stop is not
+   metadata and does not use this class. */
+.coding-session-turn-meta {
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.group\/turn:hover .coding-session-turn-meta,
+.coding-session-turn-meta:focus-within,
+.coding-session-turn-meta[data-pinned="true"] {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .coding-session-turn-meta {
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .coding-session-agent-breathe,
   .coding-session-live-activity-focus,

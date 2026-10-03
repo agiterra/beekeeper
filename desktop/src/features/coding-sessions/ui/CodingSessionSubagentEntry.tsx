@@ -17,6 +17,7 @@ import {
 import type { CodingSessionTranscriptEntry } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { cn } from "@/shared/lib/cn";
 import { Markdown } from "@/shared/ui/markdown";
+import { requestCodingSessionUmbrellaItemReveal } from "./CodingSessionUmbrellaTimelineWindow";
 
 type SubagentsEntry = Extract<
   CodingSessionTranscriptEntry,
@@ -75,6 +76,7 @@ export function CodingSessionSubagentStatusIcon({
 /**
  * A Task/Agent spawn in the lead's stream: one compact row, with the
  * subagent's own items behind it. Several spawns in a row share the row.
+ * The items are built only while the row is open.
  */
 export function CodingSessionSubagentEntry({
   disclosureId,
@@ -93,6 +95,11 @@ export function CodingSessionSubagentEntry({
   return (
     <details
       className="group/subagents"
+      // Named on the row itself because the spawns below are built only while
+      // it is open; `revealCodingSessionSubagentInStream` finds it by these.
+      data-subagent-call-ids={entry.spawns
+        .map((spawn) => spawn.call.id)
+        .join(" ")}
       data-status={status}
       data-testid="coding-session-subagents"
       onToggle={(event) => onOpenChange(disclosureId, event.currentTarget.open)}
@@ -107,16 +114,18 @@ export function CodingSessionSubagentEntry({
         <CodingSessionSubagentStatusIcon status={status} />
         <ChevronDown className="size-3.5 shrink-0 transition-transform group-open/subagents:rotate-180" />
       </summary>
-      <div className="mt-1 ml-1 flex flex-col gap-3 border-l border-border/60 pl-4">
-        {entry.spawns.map((spawn) => (
-          <CodingSessionSubagentSpawnDetail
-            key={spawn.call.id}
-            renderChild={renderChild}
-            showHeader={entry.spawns.length > 1}
-            spawn={spawn}
-          />
-        ))}
-      </div>
+      {open ? (
+        <div className="mt-1 ml-1 flex flex-col gap-3 border-l border-border/60 pl-4">
+          {entry.spawns.map((spawn) => (
+            <CodingSessionSubagentSpawnDetail
+              key={spawn.call.id}
+              renderChild={renderChild}
+              showHeader={entry.spawns.length > 1}
+              spawn={spawn}
+            />
+          ))}
+        </div>
+      ) : null}
     </details>
   );
 }
@@ -196,20 +205,24 @@ export function CodingSessionSubagentSpawnDetail({
 
 /**
  * Open and scroll to a spawn's row in the conversation, if it is mounted.
- * Best-effort: a virtualized-out row returns `false` and the caller keeps its
- * own inline view.
+ * When it is not (its turn sits above the umbrella timeline's "Load earlier"),
+ * ask the umbrella timeline to widen its window to that turn; `true` means
+ * the timeline took the request. Otherwise — e.g. a virtualized-out row in the
+ * one-seat view — `false`, and the caller keeps its own inline view.
  */
 export function revealCodingSessionSubagentInStream(
   callItemId: string,
 ): boolean {
   if (typeof document === "undefined") return false;
-  const spawn = document.querySelector(
-    `[data-testid="coding-session-transcript"] [data-subagent-call-id="${CSS.escape(callItemId)}"]`,
+  // The group row names its spawns, because a closed row has not built them.
+  const group = document.querySelector(
+    `[data-testid="coding-session-transcript"] details[data-subagent-call-ids~="${CSS.escape(callItemId)}"]`,
   );
-  const group = spawn?.closest("details");
-  if (!(group instanceof HTMLDetailsElement)) return false;
+  if (!(group instanceof HTMLDetailsElement)) {
+    return requestCodingSessionUmbrellaItemReveal(callItemId);
+  }
   // Setting `open` fires `toggle`, which the row already mirrors into the
-  // transcript's disclosure state.
+  // transcript's disclosure state; that state builds the spawns.
   group.open = true;
   group.scrollIntoView({ behavior: "smooth", block: "nearest" });
   return true;

@@ -12,6 +12,7 @@ import {
 import {
   CODING_SESSION_VIRTUALIZATION_THRESHOLD,
   CodingSessionTranscript,
+  createCodingSessionDisclosureStore,
 } from "./CodingSessionTranscript.tsx";
 
 const timestamp = "2026-07-30T12:00:00.000Z";
@@ -106,8 +107,9 @@ test("renders the latest plan snapshot as a compact expandable narrative row", a
   assert.match(markup, />1\/3</);
   assert.match(markup, /data-plan-state="active"/);
   assert.match(markup, /Working for/);
-  assert.match(markup, /Work Log/);
-  assert.match(markup, /Plan updated/);
+  // The plan is its own row; no "Work Log" heading or "Plan updated" echo
+  // repeats it.
+  assert.doesNotMatch(markup, /Work Log|Plan updated/);
   assert.doesNotMatch(markup, /transcript-tool-item/);
   assert.doesNotMatch(markup, /Working in order/);
 });
@@ -139,9 +141,15 @@ function fileEdit(id, path, result) {
   };
 }
 
-async function renderTranscript(props) {
+async function renderTranscript({ open, ...props }) {
+  // `open` seeds the disclosure store, standing in for clicks a static
+  // render cannot make.
+  const transcriptProps = open
+    ? { ...props, disclosureStore: createCodingSessionDisclosureStore(open) }
+    : props;
   const rootRoute = createRootRoute({
-    component: () => React.createElement(CodingSessionTranscript, props),
+    component: () =>
+      React.createElement(CodingSessionTranscript, transcriptProps),
   });
   const router = createRouter({
     history: createMemoryHistory({ initialEntries: ["/"] }),
@@ -151,7 +159,7 @@ async function renderTranscript(props) {
   return renderToStaticMarkup(React.createElement(RouterProvider, { router }));
 }
 
-test("renders a settled turn with recent work visible in the narrative", async () => {
+test("folds a settled turn's work behind one Worked row and keeps the answer", async () => {
   const markup = await renderTranscript({
     generationId: "generation-1",
     isWorking: false,
@@ -183,43 +191,97 @@ test("renders a settled turn with recent work visible in the narrative", async (
   assert.match(markup, /Fix the reconnect bug/);
   assert.match(markup, /coding-session-assistant-message/);
   assert.match(markup, /Reconnect now recovers cleanly/);
-  assert.doesNotMatch(markup, /coding-session-worked-fold/);
-  assert.equal(markup.match(/data-testid="transcript-tool-item"/g)?.length, 2);
+  // The work is one row: its duration and a sentence of what it did.
+  assert.match(markup, /data-testid="coding-session-worked-fold"/);
+  assert.match(markup, /aria-expanded="false"/);
   assert.match(markup, /Worked for 3\.6s/);
-  assert.match(markup, /\$0\.32/);
+  assert.match(markup, /Ran 2 commands/);
+  assert.doesNotMatch(markup, /data-testid="transcript-tool-item"/);
+  assert.doesNotMatch(markup, /data-testid="coding-session-tool-group"/);
+  // Cost and copy sit in the quiet completion line, in the document but
+  // shown on hover; the duration is not said twice.
+  assert.match(markup, /class="coding-session-turn-meta/);
+  assert.match(markup, /\$0\.32 estimate/);
+  assert.match(markup, /data-testid="coding-session-turn-copy"/);
+  assert.equal(markup.match(/3\.6s/g)?.length, 1);
   assert.doesNotMatch(markup, /ceremony key|d7d05d957388/);
   assert.equal(markup.match(/Reconnect now recovers cleanly/g)?.length, 1);
-  assert.equal(markup.match(/3\.6s/g)?.length, 1);
+  // The fold row sits before the answer.
+  assert.ok(
+    markup.indexOf("coding-session-worked-fold") <
+      markup.indexOf("coding-session-assistant-message"),
+  );
 });
 
-test("folds bounded assistant commentary while leaving terminal Markdown visible", async () => {
+test("opening the fold puts every folded entry back in place", async () => {
   const markup = await renderTranscript({
     generationId: "generation-1",
     isWorking: false,
     items: [
-      message("prompt", "user", "Investigate the failure"),
-      message("commentary", "assistant", "I’m checking the build logs."),
+      message("prompt", "user", "Fix the reconnect bug"),
       tool("tool-1"),
-      message("answer", "assistant", "**Fixed** the build."),
+      tool("tool-2"),
+      message("answer", "assistant", "Reconnect now recovers cleanly."),
       {
         id: "result",
         type: "lifecycle",
         renderClass: "status",
         title: "Turn result",
-        text: "**Fixed** the build. (2200ms)",
+        text: "Reconnect now recovers cleanly. (3557ms) ($0.3209)",
         timestamp,
         turnId: "turn-1",
         bridgeSource,
       },
     ],
+    open: ["fold:turn-1"],
   });
 
+  assert.match(markup, /aria-expanded="true"/);
+  assert.match(markup, /data-testid="coding-session-tool-group"/);
+  assert.match(markup, /Ran 2 commands/);
+  const fold = markup.indexOf("coding-session-worked-fold");
+  const group = markup.indexOf("coding-session-tool-group");
+  const answer = markup.indexOf("coding-session-assistant-message");
+  assert.ok(fold < group && group < answer, "folded work returns in order");
+});
+
+test("folds bounded assistant commentary while leaving terminal Markdown visible", async () => {
+  const items = [
+    message("prompt", "user", "Investigate the failure"),
+    message("commentary", "assistant", "I’m checking the build logs."),
+    tool("tool-1"),
+    message("answer", "assistant", "**Fixed** the build."),
+    {
+      id: "result",
+      type: "lifecycle",
+      renderClass: "status",
+      title: "Turn result",
+      text: "**Fixed** the build. (2200ms)",
+      timestamp,
+      turnId: "turn-1",
+      bridgeSource,
+    },
+  ];
+  const folded = await renderTranscript({
+    generationId: "generation-1",
+    isWorking: false,
+    items,
+  });
+  assert.match(folded, /Worked for 2\.2s/);
+  assert.doesNotMatch(folded, /I’m checking the build logs\./);
+  assert.equal(folded.match(/Fixed/g)?.length, 1);
+
+  const markup = await renderTranscript({
+    generationId: "generation-1",
+    isWorking: false,
+    items,
+    open: ["fold:turn-1"],
+  });
   const foldIndex = markup.indexOf("coding-session-worked-fold");
   const commentaryIndex = markup.indexOf("I’m checking the build logs.");
   const terminalIndex = markup.lastIndexOf("Fixed");
   assert.ok(foldIndex >= 0 && foldIndex < commentaryIndex);
   assert.ok(commentaryIndex < terminalIndex);
-  assert.ok(markup.lastIndexOf("</details>") < terminalIndex);
   assert.equal(markup.match(/Fixed/g)?.length, 1);
 });
 
@@ -336,29 +398,44 @@ test("a signed running turn animates Thinking only before visible work begins", 
   assert.match(markup, />Thinking</);
 });
 
-test("keeps three successful tools visible after the previous-tool disclosure", async () => {
-  const markup = await renderTranscript({
+test("a live run of tools reads as one sentence row that opens in place", async () => {
+  const items = [
+    message("prompt", "user", "Run the checks"),
+    tool("tool-1"),
+    tool("tool-2"),
+    tool("tool-3"),
+    tool("tool-4"),
+    tool("tool-5"),
+  ];
+  const closed = await renderTranscript({
     generationId: "generation-1",
     isWorking: true,
-    items: [
-      message("prompt", "user", "Run the checks"),
-      tool("tool-1"),
-      tool("tool-2"),
-      tool("tool-3"),
-      tool("tool-4"),
-      tool("tool-5"),
-    ],
+    items,
   });
 
-  assert.match(markup, /coding-session-tool-group/);
-  assert.match(markup, /\+2 previous tool calls/);
-  assert.doesNotMatch(markup, /coding-session-worked-fold/);
-  assert.match(markup, /Show fewer tool calls/);
-  assert.equal(markup.match(/data-testid="transcript-tool-item"/g)?.length, 5);
-  assert.doesNotMatch(
-    markup,
-    /coding-session-tool-group[^>]+border border-border/,
+  assert.equal(
+    closed.match(/data-testid="coding-session-tool-group"/g)?.length,
+    1,
   );
+  assert.match(closed, />Ran 5 commands</);
+  // Nothing folds while the turn is live, and closed calls are not built.
+  assert.doesNotMatch(closed, /coding-session-worked-fold/);
+  assert.doesNotMatch(closed, /data-testid="transcript-tool-item"/);
+  // The working line follows the work.
+  assert.ok(
+    closed.indexOf("coding-session-tool-group") <
+      closed.indexOf("coding-session-working"),
+  );
+
+  const opened = await renderTranscript({
+    generationId: "generation-1",
+    isWorking: true,
+    items,
+    open: ["group:tools:tool-1"],
+  });
+  assert.equal(opened.match(/data-testid="transcript-tool-item"/g)?.length, 5);
+  // A closed call row builds only its summary, never its output.
+  assert.doesNotMatch(opened, /10 pass/);
 });
 
 test("renders truthful per-turn changed files and inline signed diffs", async () => {
@@ -385,11 +462,36 @@ test("renders truthful per-turn changed files and inline signed diffs", async ()
 
   assert.match(markup, /coding-session-changed-files/);
   assert.match(markup, /1 changed file/);
-  assert.match(markup, /src\/header\.tsx/);
   assert.match(markup, /\+1/);
   assert.match(markup, /-1/);
-  assert.match(markup, /const title =/);
   assert.doesNotMatch(markup, /Open diff/);
+  // The card is never folded into "Worked for"; its file list and diffs are
+  // built when opened.
+  assert.doesNotMatch(markup, /const title =/);
+
+  const opened = await renderTranscript({
+    generationId: "generation-1",
+    isWorking: false,
+    items: [
+      message("prompt", "user", "Update the header"),
+      fileEdit(
+        "edit-1",
+        "src/header.tsx",
+        [
+          "diff --git a/src/header.tsx b/src/header.tsx",
+          "--- a/src/header.tsx",
+          "+++ b/src/header.tsx",
+          "@@ -1 +1 @@",
+          "-const title = 'Old';",
+          "+const title = 'Buzz';",
+        ].join("\n"),
+      ),
+      message("answer", "assistant", "Updated the header."),
+    ],
+    open: ["changed-files:turn-1", "changed-files:turn-1:src/header.tsx"],
+  });
+  assert.match(opened, /src\/header\.tsx/);
+  assert.match(opened, /const title =/);
 });
 
 test("omits invented diff stats when a signed edit has only a path", async () => {
@@ -404,7 +506,6 @@ test("omits invented diff stats when a signed edit has only a path", async () =>
   });
 
   assert.match(markup, /1 changed file/);
-  assert.match(markup, /src\/header\.tsx/);
   assert.doesNotMatch(markup, /text-emerald-600|text-rose-600|Open diff/);
 });
 
@@ -631,6 +732,7 @@ test("tool output wraps rather than scrolling sideways, and unbroken tokens stil
     generationId: "gen-1",
     isWorking: true,
     items: [{ ...tool("t-1", "executing"), result: blob }],
+    open: ["item:t-1"],
     operatorProfiles: null,
     scrollRef: { current: null },
   });
@@ -649,6 +751,7 @@ test("tool output wraps rather than scrolling sideways, and unbroken tokens stil
     generationId: "gen-1",
     isWorking: false,
     items: [{ ...tool("t-1"), result: blob }],
+    open: ["item:t-1"],
     operatorProfiles: null,
     scrollRef: { current: null },
   });
@@ -686,4 +789,61 @@ test("a steered prompt shows a visible marker beside its author; an ordinary one
     markup,
     /data-testid="coding-session-user-message-author"[^>]*>You<\/span><span[^>]*data-testid="coding-session-user-message-steered"/,
   );
+});
+
+function resultWithOutcome(outcome) {
+  return {
+    id: "result",
+    type: "lifecycle",
+    renderClass: "status",
+    title: "Turn result",
+    text: "Partial answer. (1200ms)",
+    outcome,
+    timestamp,
+    turnId: "turn-1",
+    bridgeSource,
+  };
+}
+
+test("an abnormal outcome is always on screen, outside the hover metadata", async () => {
+  for (const outcome of ["max_tokens", "refusal"]) {
+    const markup = await renderTranscript({
+      generationId: "generation-1",
+      isWorking: false,
+      items: [
+        message("prompt", "user", "Write it all"),
+        message("answer", "assistant", "Partial answer."),
+        resultWithOutcome(outcome),
+      ],
+    });
+    const words = outcome.replace("_", " ");
+    assert.match(
+      markup,
+      new RegExp(
+        `data-testid="coding-session-turn-outcome"[^>]*>.*Ended: ${words}<`,
+      ),
+    );
+    // Not inside the opacity-0 metadata span.
+    const meta = markup.match(
+      /<span class="coding-session-turn-meta[\s\S]*?data-testid="coding-session-turn-meta">([\s\S]*?)<\/span><\/div>/,
+    );
+    assert.ok(meta, markup);
+    assert.doesNotMatch(meta[1], new RegExp(words));
+  }
+});
+
+test("a normal end of turn shows no outcome badge", async () => {
+  for (const outcome of ["end_turn", "success", undefined]) {
+    const markup = await renderTranscript({
+      generationId: "generation-1",
+      isWorking: false,
+      items: [
+        message("prompt", "user", "Write it"),
+        message("answer", "assistant", "Partial answer."),
+        resultWithOutcome(outcome),
+      ],
+    });
+    assert.doesNotMatch(markup, /coding-session-turn-outcome/);
+    assert.doesNotMatch(markup, /end turn/);
+  }
 });

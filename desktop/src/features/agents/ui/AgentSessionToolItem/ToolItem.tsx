@@ -25,17 +25,39 @@ import { getSentMessageLink } from "./messageLinks";
 import { isTodoSummary, TodoToolSummary } from "./TodoToolSummary";
 import { ToolDetailBlocks } from "./ToolDetailBlocks";
 
-export function ToolItem({
+type ToolItemProps = AgentTranscriptIdentityProps & {
+  item: Extract<TranscriptItem, { type: "tool" }>;
+  profiles?: UserProfileLookup;
+  /**
+   * Controlled open state. The coding-session transcript passes it so a row
+   * keeps its state across a virtualizer remount; managed-agent views omit
+   * it and the row keeps its own.
+   */
+  open?: boolean;
+  /** Called with the new state when the row is toggled; pair with `open`. */
+  onOpenChange?: (open: boolean) => void;
+};
+
+/**
+ * One tool call as a compact row whose detail is one click away.
+ *
+ * Memoized, and the detail (parameters, output, diff, file content) is built
+ * only while the row is open: a long session has hundreds of closed rows, and
+ * each used to build its full detail tree on every render. A failed call is
+ * the exception — its output is built closed too, so the failure's own words
+ * are in the document (find-in-page, screen readers) without a click.
+ */
+export const ToolItem = React.memo(function ToolItem({
   agentAvatarUrl,
   agentName,
   agentPubkey,
   item,
+  onOpenChange,
+  open,
   profiles,
-}: AgentTranscriptIdentityProps & {
-  item: Extract<TranscriptItem, { type: "tool" }>;
-  profiles?: UserProfileLookup;
-}) {
-  const [isExpanded, setIsExpanded] = React.useState(false);
+}: ToolItemProps) {
+  const [ownExpanded, setOwnExpanded] = React.useState(false);
+  const isExpanded = open ?? ownExpanded;
   const hasArgs = Object.keys(item.args).length > 0;
   const hasResult = item.result.trim().length > 0;
   // `isError` is the tool's own claim; `status === "failed"` is the harness's.
@@ -45,7 +67,10 @@ export function ToolItem({
   const failed = item.isError || item.status === "failed";
   const canonicalToolName = item.buzzToolName ?? item.toolName;
   const buzzTool = getBuzzToolInfo(canonicalToolName);
-  const compactSummary = buildCompactToolSummary(item);
+  const compactSummary = React.useMemo(
+    () => buildCompactToolSummary(item),
+    [item],
+  );
   const duration = getToolDurationDisplay(item);
   const messageLink = getSentMessageLink(item);
   const timestampTitle = formatTranscriptTimestampTitle(item.timestamp);
@@ -59,9 +84,11 @@ export function ToolItem({
   const agentResolvedAvatarUrl = agentProfile?.avatarUrl ?? agentAvatarUrl;
   const handleToggle = React.useCallback(
     (event: React.SyntheticEvent<HTMLDetailsElement>) => {
-      setIsExpanded(event.currentTarget.open);
+      const next = event.currentTarget.open;
+      if (onOpenChange) onOpenChange(next);
+      else setOwnExpanded(next);
     },
-    [],
+    [onOpenChange],
   );
 
   if (compactSummary.presentation === "message") {
@@ -148,27 +175,29 @@ export function ToolItem({
           ) : null}
         </summary>
 
-        <ToolDetailBlocks
-          args={item.args}
-          description={buzzTool?.label}
-          fileEditDiff={compactSummary.fileEditDiff}
-          fileReadContent={compactSummary.fileReadContent}
-          hasArgs={hasArgs}
-          hasResult={hasResult}
-          imagePreview={
-            compactSummary.imageContent != null && isExpanded
-              ? {
-                  src: compactSummary.imageContent.src,
-                  title: compactSummary.imageContent.title,
-                }
-              : null
-          }
-          isError={failed}
-          outputGap={item.outputGap}
-          result={item.result}
-          shellCommand={compactSummary.shellContent}
-        />
+        {isExpanded || failed ? (
+          <ToolDetailBlocks
+            args={item.args}
+            description={buzzTool?.label}
+            fileEditDiff={compactSummary.fileEditDiff}
+            fileReadContent={compactSummary.fileReadContent}
+            hasArgs={hasArgs}
+            hasResult={hasResult}
+            imagePreview={
+              compactSummary.imageContent != null && isExpanded
+                ? {
+                    src: compactSummary.imageContent.src,
+                    title: compactSummary.imageContent.title,
+                  }
+                : null
+            }
+            isError={failed}
+            outputGap={item.outputGap}
+            result={item.result}
+            shellCommand={compactSummary.shellContent}
+          />
+        ) : null}
       </details>
     </div>
   );
-}
+});

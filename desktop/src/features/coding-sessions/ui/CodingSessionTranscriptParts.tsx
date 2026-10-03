@@ -4,7 +4,6 @@ import {
   ChevronDown,
   Circle,
   CircleDot,
-  CircleStop,
   Clock3,
   FileDiff,
   LoaderCircle,
@@ -16,20 +15,14 @@ import {
   hasFileEditLineDiff,
 } from "@/features/agents/ui/FileEditDiffView";
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
-import {
-  formatCodingSessionCompletionOutcome,
-  formatCodingSessionCost,
-  formatCodingSessionCostBasis,
-  formatCodingSessionDuration,
-  type CodingSessionChangedFile,
-  type CodingSessionTranscriptTurn,
-} from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import type { CodingSessionChangedFile } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import type {
   CodingSessionTask,
   CodingSessionTaskModel,
 } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import { cn } from "@/shared/lib/cn";
 import { RedactedText } from "@/shared/ui/RedactedPill";
+import { useCodingSessionDisclosure } from "./CodingSessionTranscriptDisclosure";
 
 /**
  * The leaf presentation pieces of the coding-session transcript.
@@ -37,6 +30,9 @@ import { RedactedText } from "@/shared/ui/RedactedPill";
  * Split out of `CodingSessionTranscript.tsx` purely for the file-size
  * discipline — the donor's single 992-line module was one import rename away
  * from the 1000-line ceiling, and the ceiling is never the thing that moves.
+ *
+ * Every disclosure here builds its body only while open: a closed row is a
+ * summary line and nothing else, however much detail sits behind it.
  */
 
 export function CodingSessionActiveTool({
@@ -95,82 +91,22 @@ export function CodingSessionActiveTool({
       <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2">
         {summary}
       </summary>
-      <div className="mt-1 ml-1 min-w-0 border-l border-border/60 pl-4">
-        {Object.keys(item.args).length > 0 ? (
-          <pre className="buzz-code-scrollbar max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
-            <RedactedText text={safeFormatToolArgs(item.args)} />
-          </pre>
-        ) : null}
-        {item.result.trim() ? (
-          <pre className="buzz-code-scrollbar mt-2 max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
-            <RedactedText text={item.result} />
-          </pre>
-        ) : null}
-      </div>
+      {open ? (
+        <div className="mt-1 ml-1 min-w-0 border-l border-border/60 pl-4">
+          {Object.keys(item.args).length > 0 ? (
+            <pre className="buzz-code-scrollbar max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
+              <RedactedText text={safeFormatToolArgs(item.args)} />
+            </pre>
+          ) : null}
+          {item.result.trim() ? (
+            <pre className="buzz-code-scrollbar mt-2 max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
+              <RedactedText text={item.result} />
+            </pre>
+          ) : null}
+        </div>
+      ) : null}
     </details>
   );
-}
-
-export function CodingSessionWorking({
-  showThinking = false,
-  startedAt,
-  stepLabel = null,
-}: {
-  showThinking?: boolean;
-  startedAt: string | null;
-  stepLabel?: string | null;
-}) {
-  const elapsed = useLiveCodingSessionDuration(startedAt);
-  return (
-    <div
-      className="border-b border-border/60 px-0.5 pt-1 pb-2 text-sm text-muted-foreground tabular-nums"
-      data-testid="coding-session-working"
-      role="status"
-    >
-      <span>{elapsed ? `Working for ${elapsed}` : "Working…"}</span>
-      {stepLabel ? (
-        <span className="ml-2 text-muted-foreground/60">· {stepLabel}</span>
-      ) : null}
-      {showThinking ? <CodingSessionThinking /> : null}
-    </div>
-  );
-}
-
-function CodingSessionThinking() {
-  return (
-    <div
-      className="relative mt-1 min-h-6 w-fit max-w-full overflow-hidden rounded-md text-sm leading-relaxed"
-      data-testid="coding-session-thinking"
-    >
-      <span className="block py-0.5 text-muted-foreground/65">Thinking</span>
-      <span
-        aria-hidden
-        className="coding-session-live-activity-focus pointer-events-none absolute inset-y-0 select-none"
-      >
-        <span className="coding-session-live-activity-counter block">
-          <span className="coding-session-live-activity-aligned block py-0.5 text-foreground">
-            Thinking
-          </span>
-        </span>
-      </span>
-    </div>
-  );
-}
-
-function useLiveCodingSessionDuration(startedAt: string | null): string | null {
-  const [now, setNow] = React.useState(() => Date.now());
-
-  React.useEffect(() => {
-    if (!startedAt) return;
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
-  }, [startedAt]);
-
-  if (!startedAt) return null;
-  const start = Date.parse(startedAt);
-  if (!Number.isFinite(start)) return null;
-  if (now <= start) return null;
-  return formatCodingSessionDuration(Math.max(0, now - start));
 }
 
 export function CodingSessionInlinePlan({
@@ -319,20 +255,29 @@ export function CodingSessionChangedFilesCard({
           <CodingSessionDiffStats additions={additions} deletions={deletions} />
         ) : null}
       </summary>
-      <div className="mt-1 flex flex-col gap-1">
-        {files.map((file) => (
-          <CodingSessionChangedFileRow file={file} key={file.path} />
-        ))}
-      </div>
+      {open ? (
+        <div className="mt-1 flex flex-col gap-1">
+          {files.map((file) => (
+            <CodingSessionChangedFileRow
+              disclosureId={`${disclosureId}:${file.path}`}
+              file={file}
+              key={file.path}
+            />
+          ))}
+        </div>
+      ) : null}
     </details>
   );
 }
 
 function CodingSessionChangedFileRow({
+  disclosureId,
   file,
 }: {
+  disclosureId: string;
   file: CodingSessionChangedFile;
 }) {
+  const [open, setOpen] = useCodingSessionDisclosure(disclosureId);
   const inlineDiffs = file.diffs.filter(hasFileEditLineDiff);
   const label = (
     <>
@@ -367,21 +312,25 @@ function CodingSessionChangedFileRow({
     <details
       className="group/changed-file rounded-lg"
       data-testid="coding-session-changed-file"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      open={open}
     >
       <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-lg px-2 hover:bg-muted/30">
         {label}
         <ChevronDown className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/changed-file:rotate-180" />
       </summary>
-      <div className="mt-1 flex min-w-0 flex-col gap-2 overflow-hidden rounded-lg border border-border/50 bg-background/50">
-        {inlineDiffs.map((diff) => (
-          <FileEditDiffBlock diff={diff} key={diff.id} />
-        ))}
-      </div>
+      {open ? (
+        <div className="mt-1 flex min-w-0 flex-col gap-2 overflow-hidden rounded-lg border border-border/50 bg-background/50">
+          {inlineDiffs.map((diff) => (
+            <FileEditDiffBlock diff={diff} key={diff.id} />
+          ))}
+        </div>
+      ) : null}
     </details>
   );
 }
 
-function CodingSessionDiffStats({
+export function CodingSessionDiffStats({
   additions,
   deletions,
 }: {
@@ -395,63 +344,6 @@ function CodingSessionDiffStats({
       </span>
       <span className="text-rose-600 dark:text-rose-400">-{deletions}</span>
     </span>
-  );
-}
-
-export function CodingSessionTurnCompletion({
-  completion,
-  durationShownInWorkFold,
-}: {
-  completion: NonNullable<CodingSessionTranscriptTurn["completion"]>;
-  durationShownInWorkFold: boolean;
-}) {
-  const workedDuration =
-    completion.state === "completed" &&
-    completion.durationMs !== null &&
-    !durationShownInWorkFold
-      ? formatCodingSessionDuration(completion.durationMs)
-      : null;
-  const details = [
-    completion.durationMs !== null &&
-    !durationShownInWorkFold &&
-    workedDuration === null
-      ? formatCodingSessionDuration(completion.durationMs)
-      : null,
-    formatCodingSessionCompletionOutcome(completion),
-    completion.costUsd !== null
-      ? `${formatCodingSessionCost(completion.costUsd)} ${formatCodingSessionCostBasis(completion.costBasis)}`
-      : null,
-  ].filter((value): value is string => value !== null);
-
-  return (
-    <div
-      className={cn(
-        "mt-2 flex items-center gap-1.5 border-t border-border/50 pt-3 text-sm text-muted-foreground",
-        completion.state === "interrupted" &&
-          "text-amber-600 dark:text-amber-400",
-        completion.state === "failed" && "text-destructive",
-      )}
-      data-testid="coding-session-turn-completion"
-      data-turn-state={completion.state}
-    >
-      {completion.state === "interrupted" ? (
-        <CircleStop className="size-3.5" />
-      ) : completion.state === "failed" ? (
-        <X className="size-3.5" />
-      ) : (
-        <Check className="size-3.5" />
-      )}
-      <span>
-        {completion.state === "interrupted"
-          ? "Stopped"
-          : completion.state === "failed"
-            ? "Failed"
-            : workedDuration
-              ? `Worked for ${workedDuration}`
-              : "Completed"}
-      </span>
-      {details.length > 0 ? <span>· {details.join(" · ")}</span> : null}
-    </div>
   );
 }
 
@@ -487,24 +379,37 @@ export const CodingSessionDiagnostics = React.memo(
             {diagnostics.length === 1 ? "event" : "events"}
           </span>
         </summary>
-        <div className="mt-1 ml-1 flex flex-col gap-2 border-l border-border/60 pl-3">
-          {diagnostics.map((item) => (
-            <div data-testid="coding-session-diagnostic-row" key={item.id}>
-              <p className="font-medium text-foreground/75">
-                <RedactedText text={item.title} />
-              </p>
-              {"text" in item && item.text ? (
-                <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap">
-                  <RedactedText text={item.text} />
-                </p>
-              ) : null}
-            </div>
-          ))}
-        </div>
+        {open ? (
+          <CodingSessionDiagnosticRows diagnostics={diagnostics} />
+        ) : null}
       </details>
     );
   },
 );
+
+/** The rows behind a diagnostics disclosure; rendered only while it is open. */
+export function CodingSessionDiagnosticRows({
+  diagnostics,
+}: {
+  diagnostics: TranscriptItem[];
+}) {
+  return (
+    <div className="mt-1 ml-1 flex flex-col gap-2 border-l border-border/60 pl-3">
+      {diagnostics.map((item) => (
+        <div data-testid="coding-session-diagnostic-row" key={item.id}>
+          <p className="font-medium text-foreground/75">
+            <RedactedText text={item.title} />
+          </p>
+          {"text" in item && item.text ? (
+            <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap">
+              <RedactedText text={item.text} />
+            </p>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function formatActiveToolLabel(
   item: Extract<TranscriptItem, { type: "tool" }>,
