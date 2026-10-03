@@ -12,6 +12,8 @@ import {
   X,
 } from "lucide-react";
 
+import * as React from "react";
+
 import type {
   CodingSessionTask,
   CodingSessionTaskModel,
@@ -168,6 +170,16 @@ export function CodingSessionTaskRail({
   );
 }
 
+/**
+ * The plan's one persistent place: a rail docked above the composer.
+ *
+ * SESSION_VIEW_UX_PLAN L4. It used to open fully on every turn that published
+ * a plan — up to 28 rem of task list pushed over the transcript the person was
+ * reading, with the same plan also behind a header button and in the
+ * transcript. Now it mounts as one line — progress and the task in hand — and
+ * opens only when asked. Nothing is withheld: the line names the count and
+ * the current task, and one click shows every task with its state.
+ */
 function CodingSessionTaskDock({
   loadState,
   model,
@@ -177,60 +189,138 @@ function CodingSessionTaskDock({
   model: CodingSessionTaskModel | null;
   onClose?: () => void;
 }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const listId = React.useId();
+  const summary = codingSessionTaskDockSummary({ loadState, model });
   return (
     <aside
       aria-label="Session tasks"
-      className="max-h-[min(48vh,28rem)] overflow-y-auto rounded-t-3xl border border-border/70 bg-background px-5 pt-4 pb-10 shadow-lg"
+      className={cn(
+        "rounded-t-2xl border border-border/70 bg-background px-3 pt-1 shadow-sm",
+        // The composer overlaps the rail's bottom edge by the wrapper's
+        // negative margin; this padding keeps the last line clear of it.
+        expanded ? "max-h-[min(48vh,28rem)] overflow-y-auto pb-8" : "pb-7",
+      )}
+      data-expanded={expanded ? "true" : "false"}
       data-testid="coding-session-task-dock"
       data-variant="dock"
       id={CODING_SESSION_TASK_RAIL_ID}
     >
-      <header className="mb-3 flex h-7 items-center gap-2">
-        <ListChecks aria-hidden className="size-4 text-muted-foreground" />
-        <h2 className="text-sm font-semibold">Tasks</h2>
-        {model && model.tasks.length > 0 ? (
-          <span className="text-sm tabular-nums text-muted-foreground">
-            {model.completedCount}/{model.tasks.length}
-          </span>
-        ) : null}
+      <div className="flex h-8 min-w-0 items-center gap-1">
+        <button
+          aria-controls={listId}
+          aria-expanded={expanded}
+          aria-label={
+            expanded ? "Collapse session tasks" : "Expand session tasks"
+          }
+          className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 text-left text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          data-testid="coding-session-task-dock-toggle"
+          onClick={() => setExpanded((value) => !value)}
+          type="button"
+        >
+          <ChevronRight
+            aria-hidden
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground transition-transform",
+              expanded && "rotate-90",
+            )}
+          />
+          <ListChecks
+            aria-hidden
+            className="size-3.5 shrink-0 text-muted-foreground"
+          />
+          <span className="shrink-0 font-semibold">Tasks</span>
+          {model && model.tasks.length > 0 ? (
+            <span className="shrink-0 tabular-nums text-muted-foreground">
+              {model.completedCount}/{model.tasks.length}
+            </span>
+          ) : null}
+          {summary ? (
+            <span
+              className="min-w-0 truncate text-muted-foreground"
+              data-testid="coding-session-task-dock-summary"
+            >
+              {summary}
+            </span>
+          ) : null}
+        </button>
         {onClose ? (
           <button
             aria-label="Close session tasks"
-            className="ml-auto inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={onClose}
+            title="Hide the plan for this turn; the header's Plan control brings it back"
             type="button"
           >
-            <X aria-hidden className="size-4" />
+            <X aria-hidden className="size-3.5" />
           </button>
         ) : null}
-      </header>
-      {loadState === "loading" ? (
-        <TaskRailLoadingState />
-      ) : loadState === "error" ? (
-        <TaskRailEmptyState
-          description="Beekeeper could not read the latest signed plan."
-          icon="error"
-          title="Tasks unavailable"
-        />
-      ) : !model ? (
-        <TaskRailEmptyState
-          description="Signed plan updates will appear here."
-          title="No tasks yet"
-        />
-      ) : model.tasks.length === 0 ? (
-        <TaskRailEmptyState
-          description="The latest signed plan contains no tasks."
-          title="No tasks"
-        />
-      ) : (
-        <ol aria-label="Session tasks" className="space-y-0.5">
-          {model.tasks.map((task) => (
-            <CodingSessionTaskDockRow key={task.id} task={task} />
-          ))}
-        </ol>
-      )}
+      </div>
+      {expanded ? (
+        <div className="pt-1" id={listId}>
+          {loadState === "loading" ? (
+            <TaskRailLoadingState />
+          ) : loadState === "error" ? (
+            <TaskRailEmptyState
+              description="Beekeeper could not read the latest signed plan."
+              icon="error"
+              title="Tasks unavailable"
+            />
+          ) : !model ? (
+            <TaskRailEmptyState
+              description="Signed plan updates will appear here."
+              title="No tasks yet"
+            />
+          ) : model.tasks.length === 0 ? (
+            <TaskRailEmptyState
+              description="The latest signed plan contains no tasks."
+              title="No tasks"
+            />
+          ) : (
+            <ol aria-label="Session tasks" className="space-y-0.5">
+              {model.tasks.map((task) => (
+                <CodingSessionTaskDockRow key={task.id} task={task} />
+              ))}
+            </ol>
+          )}
+        </div>
+      ) : null}
     </aside>
   );
+}
+
+/**
+ * The collapsed dock's one line after the count: the first failed task, else
+ * the first blocked one, else the task in hand, else the honest state of the
+ * plan. Never a
+ * guess — a plan nobody published says so.
+ */
+export function codingSessionTaskDockSummary({
+  loadState,
+  model,
+}: {
+  loadState: TaskRailLoadState;
+  model: CodingSessionTaskModel | null;
+}): string | null {
+  if (loadState === "loading") return "Loading plan…";
+  if (loadState === "error") return "Plan unavailable";
+  if (!model) return "No tasks yet";
+  if (model.tasks.length === 0) return "No tasks";
+  // A failure leads, then a block, then the task in hand: a one-line summary
+  // that showed "working on X" over a failed task would be the comfortable
+  // guess rather than the truth.
+  const current =
+    model.tasks.find((task) => task.status === "failed") ??
+    model.tasks.find((task) => task.status === "blocked") ??
+    model.tasks.find((task) => task.status === "in_progress");
+  if (current) {
+    return current.status === "in_progress"
+      ? current.text
+      : `${statusLabel(current.status)}: ${current.text}`;
+  }
+  if (model.completedCount === model.tasks.length) return "All complete";
+  const next = model.tasks.find((task) => task.status === "pending");
+  return next ? `Next: ${next.text}` : null;
 }
 
 function CodingSessionTaskDockRow({ task }: { task: CodingSessionTask }) {

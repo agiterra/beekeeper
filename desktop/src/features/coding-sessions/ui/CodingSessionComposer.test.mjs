@@ -318,9 +318,16 @@ test("founder authority gates send, interrupt, resume, and stop together", () =>
     }),
   );
   assert.match(disconnected, /coding-session-composer-resume[^>]*disabled=""/);
+  assert.match(disconnected, />This provider execution is disconnected\.</);
+  // Why Reconnect and Stop are disabled is on screen, each reason on its own
+  // line — not left to the disabled buttons' tooltips.
   assert.match(
     disconnected,
-    /This provider execution is disconnected\. Ask the session owner for collaborator access\./,
+    /data-testid="coding-session-composer-notice-reason"[^>]*>Ask the session owner for collaborator access\.</,
+  );
+  assert.match(
+    disconnected,
+    /data-testid="coding-session-composer-notice-reason"[^>]*>Only the session founder can stop this execution\.</,
   );
   assert.match(
     disconnected,

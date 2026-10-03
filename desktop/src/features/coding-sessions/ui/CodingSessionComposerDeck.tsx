@@ -46,14 +46,6 @@ type CodingSessionComposerDeckProps = {
   canInterrupt: boolean;
   canSessionStop: boolean;
   canSteer: boolean;
-  /**
-   * One line naming what the mid-turn controls will do, or `null` when the
-   * execution is idle. Rendered above the control row rather than in a
-   * `title`: the delivery class is the most consequential and least visible
-   * thing about a message sent into a working session, and a tooltip is
-   * invisible on touch and unannounced by most screen readers.
-   */
-  deliveryHint: string | null;
   context: CodingSessionComposerControlContext | undefined;
   contextWindow: CodingSessionContextWindow | null;
   /**
@@ -78,7 +70,15 @@ type CodingSessionComposerDeckProps = {
   recipientControl?: React.ReactNode;
 };
 
-/** The compact, provider-neutral footer inside the full-screen composer. */
+/**
+ * The compact, provider-neutral footer inside the full-screen composer.
+ *
+ * SESSION_VIEW_UX_PLAN L4: identity, access and traits are small chips, each
+ * with its detail one click away in a popover (traits in the identity
+ * popover's `Model traits` row). The delivery hint moved to the composer's
+ * one-line notice strip (`CodingSessionComposerSurface`), so the deck is a
+ * single row.
+ */
 export function CodingSessionComposerDeck({
   authorityReason,
   authorityUnresolved,
@@ -86,7 +86,6 @@ export function CodingSessionComposerDeck({
   canInterrupt,
   canSessionStop,
   canSteer,
-  deliveryHint,
   context,
   contextWindow,
   accessCopy,
@@ -154,35 +153,25 @@ export function CodingSessionComposerDeck({
 
   return (
     <div className="flex min-w-0 flex-col">
-      {/* Its own line, above the controls it describes, so it survives a
-          narrow window and 250% text instead of being truncated out of the
-          deck's single row. */}
-      {deliveryHint === null ? null : (
-        <p
-          className="px-4 pb-1 text-2xs leading-snug text-muted-foreground"
-          data-testid="coding-session-composer-delivery-hint"
-        >
-          {deliveryHint}
-        </p>
-      )}
       <div
-        className="flex min-h-14 min-w-0 items-center gap-2 px-4 pb-3"
+        className="flex min-h-11 min-w-0 items-center gap-2 px-3 pb-2"
         data-testid="coding-session-control-deck"
       >
-        <div className="flex min-w-0 items-center text-sm text-muted-foreground">
+        <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
           {recipientControl ?? (
             <Popover>
               <PopoverTrigger asChild>
                 <button
                   aria-label="Show execution identity"
-                  className="flex min-w-0 items-center gap-2 rounded-lg py-1.5 pr-3 text-foreground/75 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className={cn(
+                    COMPOSER_CHIP_CLASS,
+                    "min-w-0 text-foreground/75",
+                  )}
                   data-testid="coding-session-control-identity"
                   type="button"
                 >
-                  <span className="grid size-5 shrink-0 place-items-center rounded-full border border-border/80 bg-muted/40">
-                    <Bot aria-hidden className="size-3" />
-                  </span>
-                  <span className="max-w-52 truncate">{identityLabel}</span>
+                  <Bot aria-hidden className="size-3 shrink-0" />
+                  <span className="max-w-48 truncate">{identityLabel}</span>
                 </button>
               </PopoverTrigger>
               <PopoverContent align="start" className="w-72" side="top">
@@ -238,16 +227,14 @@ export function CodingSessionComposerDeck({
             </Popover>
           )}
 
-          <ComposerDeckSeparator />
-
           <Popover>
             <PopoverTrigger asChild>
               <button
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className={cn(COMPOSER_CHIP_CLASS, "shrink-0")}
                 data-testid="coding-session-control-authority"
                 type="button"
               >
-                <ShieldCheck aria-hidden className="size-3.5" />
+                <ShieldCheck aria-hidden className="size-3 shrink-0" />
                 {accessLabel}
               </button>
             </PopoverTrigger>
@@ -270,16 +257,13 @@ export function CodingSessionComposerDeck({
           </Popover>
 
           {deckTraits ? (
-            <>
-              <ComposerDeckSeparator />
-              <span
-                className="shrink-0 px-3 py-1.5"
-                data-testid="coding-session-control-traits"
-                title="Fixed model traits for this execution"
-              >
-                {deckTraits}
-              </span>
-            </>
+            <span
+              className="hidden shrink-0 rounded-full px-2 py-0.5 sm:inline"
+              data-testid="coding-session-control-traits"
+              title="Fixed model traits for this execution; the identity chip lists them in full"
+            >
+              {deckTraits}
+            </span>
           ) : null}
         </div>
 
@@ -419,9 +403,9 @@ export function CodingSessionComposerDeck({
   );
 }
 
-function ComposerDeckSeparator() {
-  return <span aria-hidden className="h-6 w-px shrink-0 bg-border/70" />;
-}
+/** One compact chip: a quiet pill whose detail lives in its popover. */
+const COMPOSER_CHIP_CLASS =
+  "inline-flex h-6 items-center gap-1.5 rounded-full border border-border/60 bg-background/40 px-2 transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function ComposerDefinition({
   label,

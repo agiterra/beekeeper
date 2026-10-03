@@ -171,6 +171,7 @@ export function CodingSessionComposerSurface({
           authorityReason={authorityReason}
           canControl={canControl}
           canSessionStop={canSessionStop}
+          deliveryHint={deliveryHint}
           error={error}
           errorAction={errorAction}
           isDisconnected={isDisconnected}
@@ -248,21 +249,13 @@ export function CodingSessionComposerSurface({
           aria-label="Coding-session instruction"
           className={cn(
             "min-h-16 min-w-0 flex-1 resize-y text-foreground caret-primary",
+            // SESSION_VIEW_UX_PLAN L4: compact at rest. Conversation opens at
+            // about two lines (it was four: a 6 rem box over an empty draft)
+            // and grows with the text — `CodingSessionComposer`'s auto-grow and
+            // its 12-rem ceiling are unchanged. Mission's job is watching, so
+            // it still opens at one line (B4).
             immersive &&
-              "block min-h-24 w-full resize-none rounded-none border-0 bg-transparent px-4 pt-4 pb-1 shadow-none focus-visible:ring-0",
-            // B4: Conversation's composer is that lens's centre of gravity and
-            // keeps its four-line opening. Mission's job is watching, and a
-            // ~390 px reserve for an empty text box is a third of a 1080-tall
-            // window. It opens at one line and grows on focus and on content —
-            // `CodingSessionComposer`'s auto-grow and its 12-rem ceiling are
-            // unchanged.
-            //
-            // Appended, never substituted: `cn` is `twMerge`, so Mission's
-            // `min-h-11` wins over the `min-h-24` in the string above while
-            // Conversation's class attribute stays byte-for-byte what it was.
-            // Lifting `min-h-24` out into a ternary would have reordered
-            // Conversation's classes — same styles, different bytes, and I8
-            // freezes the bytes.
+              "block min-h-16 w-full resize-none rounded-none border-0 bg-transparent px-4 pt-3 pb-1 shadow-none focus-visible:ring-0",
             immersive && mission && "min-h-11",
             !immersive &&
               variant === "floating" &&
@@ -334,7 +327,6 @@ export function CodingSessionComposerSurface({
             isUnavailable={isUnavailable}
             isUngovernedSession={isUngovernedSession}
             isWorking={isWorking}
-            deliveryHint={deliveryHint}
             onInterrupt={onInterrupt}
             onPrimary={onPrimary}
             onQueueNext={onQueueNext}
@@ -458,10 +450,23 @@ function CompactComposerActions({
   );
 }
 
+/**
+ * The strip above the immersive composer: notices and the delivery hint, one
+ * line each.
+ *
+ * SESSION_VIEW_UX_PLAN L4. A lifecycle notice (unreachable, disconnected,
+ * ended) is the strip's line; otherwise, while a turn runs, the delivery hint
+ * is — the two never compete for space. Each line is one line: the sentence
+ * truncates visually with its whole text in the `title` and in the DOM, so a
+ * screen reader hears all of it, and the state word leads every sentence so
+ * the truth survives the cut. An error is never folded into that one line: a
+ * failure gets its own row, in full.
+ */
 function ComposerLifecycleNotice({
   authorityReason,
   canControl,
   canSessionStop,
+  deliveryHint,
   error,
   errorAction,
   isDisconnected,
@@ -482,6 +487,8 @@ function ComposerLifecycleNotice({
   authorityReason: string | null;
   canControl: boolean;
   canSessionStop: boolean;
+  /** What the mid-turn controls will do, or null when idle. */
+  deliveryHint: string | null;
   error: string | null;
   errorAction: React.ReactNode;
   isDisconnected: boolean;
@@ -497,7 +504,14 @@ function ComposerLifecycleNotice({
   unreachable: boolean;
   unreachableDetail: string | null;
 }) {
-  if (!error && !errorAction && !unreachable && !isDisconnected && !isEnded) {
+  if (
+    !error &&
+    !errorAction &&
+    !unreachable &&
+    !isDisconnected &&
+    !isEnded &&
+    deliveryHint === null
+  ) {
     return null;
   }
   const reconnectDisabledReason = accessCopy
@@ -516,7 +530,7 @@ function ComposerLifecycleNotice({
         ? "Stop is unavailable until provider authority is available."
         : "Only the session founder can stop this execution.";
   return (
-    <div className="relative z-0 mx-3 -mb-5 space-y-2 rounded-t-2xl border border-b-0 border-border/70 bg-muted/35 px-3 pt-3 pb-7">
+    <div className="relative z-0 mx-3 -mb-5 space-y-1 rounded-t-2xl border border-b-0 border-border/70 bg-muted/35 px-3 pt-1.5 pb-6">
       {error ? (
         <p
           className="text-sm text-destructive"
@@ -533,7 +547,7 @@ function ComposerLifecycleNotice({
               <Button
                 data-testid="coding-session-composer-add-provider"
                 onClick={onAddProvider}
-                size="sm"
+                size="xs"
                 type="button"
               >
                 Add provider
@@ -557,7 +571,7 @@ function ComposerLifecycleNotice({
                   isSending
                 }
                 onClick={onReconnect}
-                size="sm"
+                size="xs"
                 type="button"
               >
                 {isResuming ? "Reconnecting…" : "Reconnect"}
@@ -566,7 +580,7 @@ function ComposerLifecycleNotice({
                 data-testid="coding-session-composer-session-stop"
                 disabled={!canSessionStop || isSending}
                 onClick={onSessionStop}
-                size="sm"
+                size="xs"
                 title={
                   stopDisabledReason ??
                   "Stop this provider execution; the session stays open."
@@ -578,8 +592,12 @@ function ComposerLifecycleNotice({
               </Button>
             </div>
           }
+          // Why Reconnect or Stop is disabled is said on screen, each on its
+          // own line — never only in the disabled button's tooltip, which is
+          // invisible on touch and unannounced by most screen readers.
+          reasons={[reconnectDisabledReason, stopDisabledReason]}
         >
-          {`This provider execution is disconnected.${reconnectDisabledReason ? ` ${reconnectDisabledReason}` : ""}${stopDisabledReason ? ` ${stopDisabledReason}` : ""}`}
+          This provider execution is disconnected.
         </LifecycleNoticeRow>
       ) : isEnded ? (
         <LifecycleNoticeRow
@@ -588,7 +606,7 @@ function ComposerLifecycleNotice({
               <Button
                 data-testid="coding-session-composer-add-provider"
                 onClick={onAddProvider}
-                size="sm"
+                size="xs"
                 type="button"
               >
                 Add provider
@@ -599,27 +617,63 @@ function ComposerLifecycleNotice({
         >
           This provider execution has ended and cannot be resumed.
         </LifecycleNoticeRow>
+      ) : deliveryHint !== null ? (
+        // Wraps rather than truncating: the delivery class is the most
+        // consequential thing about a message sent into a running turn, and a
+        // cut sentence would leave its second half to a tooltip.
+        <p
+          className="line-clamp-2 text-2xs leading-5 text-muted-foreground"
+          data-testid="coding-session-composer-delivery-hint"
+          title={deliveryHint}
+        >
+          {deliveryHint}
+        </p>
       ) : null}
     </div>
   );
 }
 
+/**
+ * One notice: the state sentence (at most two lines, state word first, whole
+ * text in the DOM and the `title`), then any reason a control beside it is
+ * disabled, each on its own unclamped line.
+ */
 function LifecycleNoticeRow({
   action,
   children,
+  reasons = [],
   testId,
 }: {
   action: React.ReactNode;
   children: React.ReactNode;
+  /** Why an action here is unavailable; nulls are skipped. */
+  reasons?: ReadonlyArray<string | null>;
   testId?: string;
 }) {
+  const shown = reasons.filter((reason): reason is string => Boolean(reason));
   return (
     <div
-      className="flex items-center justify-between gap-3"
+      className="flex min-h-6 items-start justify-between gap-3"
       data-testid={testId}
     >
-      <p className="text-sm text-muted-foreground">{children}</p>
-      {action}
+      <div className="min-w-0 py-0.5">
+        <p
+          className="line-clamp-2 text-xs text-muted-foreground"
+          title={typeof children === "string" ? children : undefined}
+        >
+          {children}
+        </p>
+        {shown.map((reason) => (
+          <p
+            className="text-2xs text-muted-foreground"
+            data-testid="coding-session-composer-notice-reason"
+            key={reason}
+          >
+            {reason}
+          </p>
+        ))}
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   );
 }

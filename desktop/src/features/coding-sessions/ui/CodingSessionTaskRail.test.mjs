@@ -7,6 +7,7 @@ import { CodingSessionHeader } from "./CodingSessionHeader.tsx";
 import {
   CODING_SESSION_TASK_RAIL_ID,
   CodingSessionTaskRail,
+  codingSessionTaskDockSummary,
 } from "./CodingSessionTaskRail.tsx";
 
 const activeModel = {
@@ -122,7 +123,7 @@ test("task rail fills a focus-managed sheet without retaining desktop width", ()
   assert.doesNotMatch(markup, /w-80 border-l/);
 });
 
-test("desktop tasks dock cleanly above the composer instead of taking a side rail", () => {
+test("desktop tasks dock above the composer as one collapsed line", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionTaskRail, {
       model: activeModel,
@@ -133,16 +134,71 @@ test("desktop tasks dock cleanly above the composer instead of taking a side rai
 
   assert.match(markup, /data-testid="coding-session-task-dock"/);
   assert.match(markup, /data-variant="dock"/);
+  // SESSION_VIEW_UX_PLAN L4: mounted collapsed — no auto-open over the
+  // transcript — yet the line still says how far along and what is in hand.
+  assert.match(markup, /data-expanded="false"/);
+  assert.match(markup, /aria-expanded="false"/);
+  assert.match(markup, /aria-label="Expand session tasks"/);
   assert.match(markup, />Tasks</);
   assert.match(markup, /1\/3/);
-  assert.match(markup, /Build the Buzz rail/);
-  assert.match(markup, />now</);
+  assert.match(
+    markup,
+    /data-testid="coding-session-task-dock-summary"[^>]*>Blocked: Await a provider state</,
+  );
+  assert.doesNotMatch(markup, /<ol/);
+  assert.doesNotMatch(markup, />now</);
   assert.match(markup, /aria-label="Close session tasks"/);
   assert.doesNotMatch(markup, /w-80 border-l/);
   assert.doesNotMatch(markup, /role="progressbar"/);
 });
 
-test("header exposes an accessible Plan toggle tied to the exact rail", () => {
+test("the collapsed line states the plan honestly in every case", () => {
+  const line = (model, loadState = "ready") =>
+    codingSessionTaskDockSummary({ loadState, model });
+  assert.equal(line(null, "loading"), "Loading plan…");
+  assert.equal(line(null, "error"), "Plan unavailable");
+  assert.equal(line(null), "No tasks yet");
+  assert.equal(line({ ...activeModel, tasks: [] }), "No tasks");
+  // Attention leads, even over the task in hand: activeModel has one
+  // in-progress task and one blocked one.
+  assert.equal(line(activeModel), "Blocked: Await a provider state");
+  assert.equal(
+    line({
+      ...activeModel,
+      tasks: activeModel.tasks.filter((task) => task.status !== "blocked"),
+    }),
+    "Build the Buzz rail",
+  );
+  // A failed task leads the line, ahead of blocked and in-progress ones.
+  assert.equal(
+    line({
+      ...activeModel,
+      tasks: [
+        ...activeModel.tasks,
+        { id: "task-failed", text: "Run the gate", status: "failed" },
+      ],
+    }),
+    "Failed: Run the gate",
+  );
+  assert.equal(
+    line({
+      ...activeModel,
+      tasks: [{ id: "p", text: "Write tests", status: "pending" }],
+      completedCount: 0,
+    }),
+    "Next: Write tests",
+  );
+  assert.equal(
+    line({
+      ...activeModel,
+      tasks: [{ id: "c", text: "Done", status: "completed" }],
+      completedCount: 1,
+    }),
+    "All complete",
+  );
+});
+
+test("header offers Plan only while the plan is not already on screen", () => {
   const openMarkup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
       channelName: "Hive Sessions",
@@ -166,16 +222,17 @@ test("header exposes an accessible Plan toggle tied to the exact rail", () => {
     }),
   );
 
+  // The docked rail (or the sheet) is showing: a second Plan control would be
+  // the plan on screen twice.
+  assert.doesNotMatch(openMarkup, /coding-session-task-rail-toggle/);
   assert.match(
-    openMarkup,
+    closedMarkup,
     new RegExp(`aria-controls="${CODING_SESSION_TASK_RAIL_ID}"`),
   );
-  assert.match(openMarkup, /aria-expanded="true"/);
-  assert.match(openMarkup, /aria-label="Hide session plan"/);
-  assert.match(openMarkup, />Plan</);
-  assert.match(openMarkup, /3 tasks/);
   assert.match(closedMarkup, /aria-expanded="false"/);
   assert.match(closedMarkup, /aria-label="Show session plan"/);
+  assert.match(closedMarkup, />Plan</);
+  assert.match(closedMarkup, /3 tasks/);
 });
 
 test("header keeps signed generation provenance subordinate to session orientation", () => {
@@ -198,7 +255,7 @@ test("header keeps signed generation provenance subordinate to session orientati
     markup,
     />amas-redux · buzz · Claude Code · claude-sonnet-4-6 · caf82e4c-generation-2</,
   );
-  assert.match(markup, /aria-label="Show session provenance"/);
+  assert.match(markup, /aria-label="Show session details"/);
   assert.doesNotMatch(markup, /<h1[^>]*>caf82e4c-generation-2<\/h1>/);
 });
 
@@ -220,8 +277,10 @@ test("compact header keeps icon-only controls keyboard labeled", () => {
   assert.match(markup, /data-compact="true"/);
   assert.match(markup, /aria-label="Session status: Idle"/);
   assert.match(markup, /aria-label="Show session plan"/);
-  assert.match(markup, /aria-label="Show session provenance"/);
-  assert.match(markup, />Pop out</);
+  assert.match(markup, /aria-label="Show session details"/);
+  // Pop out is a `⋯` item now; the menu's trigger is labelled.
+  assert.match(markup, /aria-label="Session actions"/);
+  assert.doesNotMatch(markup, />Pop out</);
 });
 
 test("header omits the Plan control in non-ready workspace states", () => {

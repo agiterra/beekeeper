@@ -1,72 +1,53 @@
-import {
-  Bot,
-  Download,
-  ExternalLink,
-  GitCompare,
-  Info,
-  ListChecks,
-  PanelLeft,
-  PanelRight,
-  Pencil,
-  OctagonX,
-  RotateCcw,
-  Square,
-  UserPlus,
-  Users,
-  X,
-} from "lucide-react";
+import { Bot, Pencil, RotateCcw, X } from "lucide-react";
 import * as React from "react";
 import type { ReactNode } from "react";
 
-import {
-  renderCodingSessionContextLoad,
-  type CodingSessionContextLoad,
-} from "@/features/coding-sessions/lib/codingSessionContextLoad";
-import {
-  formatCodingSessionHireTally,
-  summarizeCodingSessionHireOutcomes,
-  type CodingSessionHireOutcomeState,
-} from "@/features/coding-sessions/lib/codingSessionHireAnswer";
-import { useCodingSessionHireOutcomes } from "@/features/coding-sessions/hooks/useCodingSessionHire";
 import { formatCodingSessionModelSummary } from "@/features/coding-sessions/lib/codingSessionLabels";
-import type { CodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
-import type {
-  CodingSessionUmbrellaRecord,
-  CodingSessionWorkspaceStatus,
-} from "@/features/coding-sessions/lib/codingSessionTypes";
-import {
-  formatCodingSessionDispositionLine,
-  listCodingSessionUmbrellaDispositions,
-  type CodingSessionActorNameResolver,
-} from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
-import {
-  codingSessionWorkspaceStatusDetail,
-  deriveCodingSessionExecutionStatus,
-} from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
+import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
+import { codingSessionWorkspaceStatusDetail } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
-import { cn } from "@/shared/lib/cn";
 
 import { CodingSessionHeaderOverflow } from "./CodingSessionHeaderOverflow";
 import { CodingSessionFullAccessBadge } from "./CodingSessionFullAccessBadge";
+import {
+  CodingSessionHeaderDetailsGroup,
+  CodingSessionHeaderPlanToggle,
+  CodingSessionHeaderStatusBadge,
+  type CodingSessionHeaderSurfaceTab,
+} from "./CodingSessionHeaderParts";
+import { CodingSessionHeaderDetails } from "./CodingSessionHeaderDetails";
+import type {
+  CodingSessionContextRow,
+  CodingSessionRoutedSeatRow,
+} from "./CodingSessionHeaderProvenance";
 import { useNewSessionInWorkspaceAction } from "@/features/coding-sessions/hooks/useNewSessionInWorkspaceAction";
-import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
-import { CODING_SESSION_ROUTE_RAIL_ID } from "./CodingSessionRouteRail";
-import { CODING_SESSION_TASK_RAIL_ID } from "./CodingSessionTaskRail";
+
+// The header was split at the 1,000-line ceiling; these names keep their old
+// import path so no caller had to move.
+export { CodingSessionDispositionStrip } from "./CodingSessionHeaderDispositionStrip";
+export {
+  CodingSessionProvenanceDetails,
+  type CodingSessionContextRow,
+  type CodingSessionRoutedSeatRow,
+} from "./CodingSessionHeaderProvenance";
+export type { CodingSessionHeaderSurfaceTab } from "./CodingSessionHeaderParts";
 
 /**
- * A compact direct affordance for one surface tab of the shared right-side
- * surface host. Clicking an inactive affordance opens the host on that tab;
- * clicking the active one closes the host.
+ * The session header: title, status, the full-access badge, and a handful of
+ * primary controls; every other action lives in the `⋯` menu.
+ *
+ * SESSION_VIEW_UX_PLAN L4. The header used to carry about fourteen controls
+ * in one row — a flat run of Add provider, Stop all, Close, Reopen, Export and
+ * Pop out beside the surface tabs, People, Plan and the provenance popover.
+ * Mission had already collapsed the six actions into `⋯` (DESIGN-SPEC A7);
+ * every lens does now. What stays in the row is what a person reads or
+ * toggles while watching — status, the live counts on the surface tabs, and
+ * one Details control (People with its count, plus provenance) — plus Reopen on a closed session, which is that
+ * session's one primary action. Nothing was removed: each moved control keeps
+ * its handler, label and consequence line in the menu
+ * (`CodingSessionHeader.reachability.test.mjs` holds every one of them to it).
  */
-export type CodingSessionHeaderSurfaceTab = {
-  id: string;
-  label: string;
-  icon: "agents" | "changes" | "inspector";
-  count?: number;
-  active: boolean;
-};
-
 type CodingSessionHeaderProps = {
   /** Multi-execution focus/status chips. Omitted for the effortless N=1 path. */
   agentControls?: ReactNode;
@@ -124,10 +105,9 @@ type CodingSessionHeaderProps = {
   /** How many seats {@link onStopAll} would stop. Named on the control. */
   stopAllCount?: number;
   /**
-   * `Stop all (2 seats)` — the Mission overflow item's label.
+   * `Stop all (2 seats)` — the `⋯` menu item's label, in every lens.
    *
-   * Present only in Mission. Conversation keeps `Stop all (2)` on its flat
-   * button, byte for byte.
+   * Absent, the header builds the same shape from {@link stopAllCount}.
    */
   stopAllLabel?: string | null;
   /** The liveness split sentence, from the same W1 map the seat chips read. */
@@ -149,8 +129,9 @@ type CodingSessionHeaderProps = {
    */
   routeRailDisplacesInspector?: boolean;
   /**
-   * Collapse the six actions into one `⋯` (DESIGN-SPEC A7). Mission only —
-   * Conversation's flat run of six buttons and its DOM do not move (I8).
+   * Historical: collapsed the six actions into one `⋯` (DESIGN-SPEC A7) in
+   * Mission only. Every lens collapses them now (SESSION_VIEW_UX_PLAN L4), so
+   * this no longer changes the header; accepted so callers need not change.
    */
   missionActions?: boolean;
   /**
@@ -189,6 +170,12 @@ type CodingSessionHeaderProps = {
   /** Opens the owning project. Given one, the project reads as a crumb you can
    * follow rather than a word in a context line. */
   onOpenProject?: () => void;
+  /**
+   * Shows or hides the plan. The header offers it only while the plan is not
+   * already on screen ({@link taskRailOpen} false): the dock rail above the
+   * composer is the plan's one persistent place, and this is the way back to
+   * it — on a narrow window (a sheet) or after the rail was dismissed.
+   */
   onToggleTaskRail?: () => void;
   /** Toggles the shared surface host open/closed on the given surface tab. */
   onToggleSurface?: (id: string) => void;
@@ -311,22 +298,20 @@ export function CodingSessionHeader({
     modelLabel,
     conciseGenerationLabel,
   ]);
+  // `missionActions` used to gate the `⋯` collapse to Mission. Every lens
+  // collapses now, so the prop no longer changes what is offered; it is kept
+  // because callers still pass it.
+  void missionActions;
 
   return (
     <header
       // Mission mounts the participant bar as row 2 of the same container, and
       // the container gets exactly one bottom rule — below row 2. In
       // Conversation this header IS the whole container, so it keeps its own.
-      //
-      // Written as two whole literals rather than a `cn(...)` merge, and the
-      // `data-flush` attribute omitted rather than set to "false", so the
-      // Conversation lens emits byte-identical markup to before this prop
-      // existed (I8). A `cn` merge reorders the class string, which is
-      // cosmetically identical and still a DOM change.
       className={
         flush
-          ? "flex h-14 shrink-0 items-center gap-3 bg-background/85 px-4 backdrop-blur-xl"
-          : "flex h-14 shrink-0 items-center gap-3 border-b border-border/60 bg-background/85 px-4 backdrop-blur-xl"
+          ? "flex h-14 shrink-0 items-center gap-2 bg-background/85 px-4 backdrop-blur-xl"
+          : "flex h-14 shrink-0 items-center gap-2 border-b border-border/60 bg-background/85 px-4 backdrop-blur-xl"
       }
       data-compact={compact ? "true" : "false"}
       data-flush={flush ? "true" : undefined}
@@ -345,7 +330,7 @@ export function CodingSessionHeader({
           <X />
         </Button>
       ) : null}
-      <div className="min-w-0 flex-1">
+      <div className="group/title min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1">
           <h1 className="truncate text-sm font-semibold">{title}</h1>
           {seat ? (
@@ -361,9 +346,12 @@ export function CodingSessionHeader({
           ) : null}
           <CodingSessionFullAccessBadge fullAccess={fullAccess} />
           {onRename ? (
+            // An edit affordance of the title, not an action in the run: it
+            // shows on hover or keyboard focus of the title, and stays in the
+            // tab order the whole time.
             <Button
               aria-label="Rename session"
-              className="shrink-0"
+              className="shrink-0 opacity-0 transition-opacity group-hover/title:opacity-100 focus-visible:opacity-100"
               data-testid="coding-session-rename"
               onClick={onRename}
               size="icon-xs"
@@ -406,253 +394,62 @@ export function CodingSessionHeader({
         </p>
       </div>
       {agentControls ? (
-        <div className="hidden min-w-0 max-w-[min(38vw,36rem)] md:flex">
-          {agentControls}
-        </div>
+        <>
+          <div className="hidden min-w-0 max-w-[min(38vw,36rem)] md:flex">
+            {agentControls}
+          </div>
+          {/* The chips need room a narrow window does not have; the status
+              they summarise must not leave with them. */}
+          <div className="shrink-0 md:hidden">
+            <CodingSessionHeaderStatusBadge
+              compact={compact}
+              sessionClosed={sessionClosed}
+              status={status}
+              statusText={statusText}
+              testId="coding-session-status-badge-narrow"
+            />
+          </div>
+        </>
+      ) : (
+        <CodingSessionHeaderStatusBadge
+          compact={compact}
+          sessionClosed={sessionClosed}
+          status={status}
+          statusText={statusText}
+        />
+      )}
+      {onToggleTaskRail && !taskRailOpen ? (
+        <CodingSessionHeaderPlanToggle
+          compact={compact}
+          onToggle={onToggleTaskRail}
+          open={taskRailOpen}
+          taskCount={taskCount}
+        />
       ) : null}
-      {!agentControls ? (
-        <Badge
-          aria-label={`Session status: ${sessionClosed ? "Closed" : statusText}`}
-          className={cn("gap-1.5", compact && "px-2")}
-          data-testid="coding-session-status-badge"
-          title={sessionClosed ? "Closed" : statusText}
-          variant="outline"
-        >
-          <span
-            aria-hidden
-            className={cn(
-              "h-2 w-2 rounded-full",
-              !sessionClosed && status.kind === "working"
-                ? "bg-emerald-500"
-                : status.kind === "idle" || status.kind === "ended"
-                  ? "bg-muted-foreground/50"
-                  : // Founded, never started: hollow, like every other
-                    // founded surface — a filled colour would claim a state
-                    // nobody has published.
-                    status.kind === "founded"
-                    ? "bg-transparent ring-1 ring-inset ring-muted-foreground/50"
-                    : // A lifecycle-signed "Disconnected" or "Needs attention"
-                      // reads like the execution rail's own attention state, not
-                      // like an unread status.
-                      status.kind === "unknown" && status.attention
-                      ? "bg-destructive"
-                      : "bg-amber-500",
-            )}
-          />
-          {compact ? (
-            <span className="sr-only">
-              {sessionClosed ? "Closed" : statusText}
-            </span>
-          ) : sessionClosed ? (
-            "Closed"
-          ) : (
-            statusText
-          )}
-        </Badge>
-      ) : null}
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button
-            aria-label="Show session provenance"
-            data-testid="coding-session-provenance-toggle"
-            size="icon-xs"
-            type="button"
-            variant="ghost"
-          >
-            <Info />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent align="end" className="w-72">
-          <CodingSessionProvenanceDetails
-            channelName={channelName}
-            contextLoads={contextLoads}
-            founderDetails={founderDetails}
-            generationLabel={generationLabel}
-            projectName={projectName}
-            providerAuthorityPubkey={providerAuthorityPubkey}
-            routedSeats={routedSeats}
-          />
-        </PopoverContent>
-      </Popover>
-      {onToggleTaskRail ? (
-        <Button
-          aria-controls={CODING_SESSION_TASK_RAIL_ID}
-          aria-expanded={taskRailOpen}
-          aria-label={taskRailOpen ? "Hide session plan" : "Show session plan"}
-          data-testid="coding-session-task-rail-toggle"
-          onClick={onToggleTaskRail}
-          size={compact ? "icon" : "sm"}
-          type="button"
-          variant={taskRailOpen ? "secondary" : "ghost"}
-        >
-          <ListChecks />
-          <span className={compact ? "sr-only" : undefined}>Plan</span>
-          {taskCount > 0 ? (
-            <>
-              <span
-                aria-hidden
-                className={cn(
-                  "rounded-full bg-background/70 px-1.5 text-xs",
-                  compact && "sr-only",
-                )}
-              >
-                {taskCount}
-              </span>
-              <span className="sr-only">{taskCount} tasks</span>
-            </>
-          ) : null}
-        </Button>
-      ) : null}
-      {(onToggleSurface && surfaceTabs) || onOpenPeople ? (
-        <fieldset
-          aria-label="Session details"
-          className="flex shrink-0 items-center gap-0.5 rounded-xl border border-border/55 bg-muted/20 p-0.5"
-        >
-          {onToggleSurface && surfaceTabs
-            ? surfaceTabs.map((tab) => (
-                <Button
-                  aria-controls={surfaceHostId}
-                  aria-expanded={tab.active}
-                  aria-label={
-                    tab.active
-                      ? `Hide ${tab.label.toLowerCase()}`
-                      : `Show ${tab.label.toLowerCase()}`
-                  }
-                  data-testid={`coding-session-surface-toggle-${tab.id}`}
-                  key={tab.id}
-                  onClick={() => onToggleSurface(tab.id)}
-                  size={compact ? "icon" : "sm"}
-                  type="button"
-                  variant={tab.active ? "secondary" : "ghost"}
-                >
-                  {tab.icon === "agents" ? (
-                    <Users />
-                  ) : tab.icon === "inspector" ? (
-                    <PanelRight />
-                  ) : (
-                    <GitCompare />
-                  )}
-                  <span className={compact ? "sr-only" : undefined}>
-                    {tab.label}
-                  </span>
-                  {tab.count !== undefined && tab.count > 0 ? (
-                    <span
-                      className={cn(
-                        "rounded-full bg-background/70 px-1.5 text-xs",
-                        compact && "sr-only",
-                      )}
-                    >
-                      {tab.count}
-                    </span>
-                  ) : null}
-                </Button>
-              ))
-            : null}
-          {onToggleRouteRail ? (
-            <Button
-              // F7: the IDREF has to land on something. Both the expanded rail
-              // and the 40 px scrubber carry this id, because the control
-              // governs whichever of the two is mounted.
-              aria-controls={CODING_SESSION_ROUTE_RAIL_ID}
-              aria-expanded={routeRailExpanded}
-              aria-label={
-                routeRailExpanded ? "Collapse route rail" : "Expand route rail"
-              }
-              aria-pressed={routeRailExpanded}
-              data-testid="coding-session-route-toggle"
-              onClick={onToggleRouteRail}
-              size={compact ? "icon" : "sm"}
-              title={
-                routeRailExpanded
-                  ? "Collapse the route rail to its scrubber"
-                  : routeRailDisplacesInspector
-                    ? "Expand the route rail — closes the Inspector, which this width cannot hold beside it"
-                    : "Expand the route rail"
-              }
-              type="button"
-              variant={routeRailExpanded ? "secondary" : "ghost"}
-            >
-              <PanelLeft />
-              <span className={compact ? "sr-only" : undefined}>Route</span>
-            </Button>
-          ) : null}
-          {onOpenPeople ? (
-            <Button
-              aria-label="Show session people"
-              data-testid="coding-session-people-toggle"
-              onClick={onOpenPeople}
-              size={compact ? "icon" : "sm"}
-              title="People with access to this session"
-              type="button"
-              variant="ghost"
-            >
-              <Users />
-              <span className={compact ? "sr-only" : undefined}>People</span>
-              {peopleCount > 0 ? (
-                <>
-                  <span
-                    aria-hidden
-                    className={cn(
-                      "rounded-full bg-background/70 px-1.5 text-xs",
-                      compact && "sr-only",
-                    )}
-                  >
-                    {peopleCount}
-                  </span>
-                  <span className="sr-only">{peopleCount} people</span>
-                </>
-              ) : null}
-            </Button>
-          ) : null}
-        </fieldset>
-      ) : null}
-      {!missionActions && onAddProvider ? (
-        <Button
-          aria-label="Add a provider to this session"
-          data-testid="coding-session-add-provider"
-          onClick={onAddProvider}
-          size={compact ? "icon" : "sm"}
-          title="Add another provider to this session"
-          type="button"
-          variant="ghost"
-        >
-          <UserPlus />
-          <span className={compact ? "sr-only" : undefined}>Add provider</span>
-        </Button>
-      ) : null}
-      {!missionActions && onStopAll ? (
-        <Button
-          aria-label={`Stop ${stopAllCount} live ${
-            stopAllCount === 1 ? "seat" : "seats"
-          }`}
-          data-testid="coding-session-stop-all"
-          onClick={onStopAll}
-          size={compact ? "icon" : "sm"}
-          title="Stop every live seat in this session. The session stays open; a stopped seat cannot be resumed."
-          type="button"
-          variant="ghost"
-        >
-          <OctagonX />
-          <span className={compact ? "sr-only" : undefined}>
-            Stop all{stopAllCount > 0 ? ` (${stopAllCount})` : ""}
-          </span>
-        </Button>
-      ) : null}
-      {!missionActions && onCloseSession ? (
-        <Button
-          aria-label="Close session"
-          data-testid="coding-session-close"
-          onClick={onCloseSession}
-          size={compact ? "icon" : "sm"}
-          title="Move this session to Settled without stopping its providers"
-          type="button"
-          variant="ghost"
-        >
-          <Square />
-          <span className={compact ? "sr-only" : undefined}>Close</span>
-        </Button>
-      ) : null}
-      {!missionActions && onReopenSession ? (
+      <CodingSessionHeaderDetailsGroup
+        compact={compact}
+        onToggleRouteRail={onToggleRouteRail}
+        onToggleSurface={onToggleSurface}
+        routeRailDisplacesInspector={routeRailDisplacesInspector}
+        routeRailExpanded={routeRailExpanded}
+        surfaceHostId={surfaceHostId}
+        surfaceTabs={surfaceTabs}
+      />
+      <CodingSessionHeaderDetails
+        channelName={channelName}
+        compact={compact}
+        contextLoads={contextLoads}
+        founderDetails={founderDetails}
+        generationLabel={generationLabel}
+        onOpenPeople={onOpenPeople}
+        peopleCount={peopleCount}
+        projectName={projectName}
+        providerAuthorityPubkey={providerAuthorityPubkey}
+        routedSeats={routedSeats}
+      />
+      {onReopenSession ? (
+        // A closed session's one primary action stays in the row; every
+        // other action is in the menu below.
         <Button
           aria-label="Reopen session"
           data-testid="coding-session-reopen"
@@ -666,50 +463,20 @@ export function CodingSessionHeader({
           <span className={compact ? "sr-only" : undefined}>Reopen</span>
         </Button>
       ) : null}
-      {!missionActions && onExport ? (
-        <Button
-          aria-label="Export transcript"
-          data-testid="coding-session-export"
-          disabled={isExporting}
-          onClick={onExport}
-          size="icon"
-          type="button"
-          variant="ghost"
-        >
-          <Download />
-        </Button>
-      ) : null}
-      {!missionActions && onPopout ? (
-        <Button
-          data-testid="coding-session-header-popout"
-          onClick={onPopout}
-          size={compact ? "icon" : "sm"}
-          type="button"
-          variant="outline"
-        >
-          <ExternalLink />
-          <span className={compact ? "sr-only" : undefined}>Pop out</span>
-        </Button>
-      ) : null}
-      {/* Always mounted, and empty-safe: the overflow renders nothing at all
-          when it has no items. Mission still collapses its six actions in
-          here; every other lens passes none of them, so what appears outside
-          Mission is a `⋯` holding exactly one item — the workspace one — and
-          the flat button run below is untouched (I8). */}
+      {/* Empty-safe: renders nothing when it has no items. */}
       <CodingSessionHeaderOverflow
         fullAccess={fullAccess}
         isExporting={isExporting}
         newSessionInWorkspaceDetail={newSessionHere.detail}
-        onAddProvider={missionActions ? onAddProvider : undefined}
-        onCloseSession={missionActions ? onCloseSession : undefined}
-        onExport={missionActions ? onExport : undefined}
+        onAddProvider={onAddProvider}
+        onCloseSession={onCloseSession}
+        onExport={onExport}
         onNewSessionInWorkspace={
           workspaceReuse ? newSessionHere.start : undefined
         }
         onOpenChange={handleOverflowOpenChange}
-        onPopout={missionActions ? onPopout : undefined}
-        onReopenSession={missionActions ? onReopenSession : undefined}
-        onStopAll={missionActions ? onStopAll : undefined}
+        onPopout={onPopout}
+        onStopAll={onStopAll}
         stopAllLabel={
           stopAllLabel ??
           `Stop all (${stopAllCount} ${stopAllCount === 1 ? "seat" : "seats"})`
@@ -721,155 +488,6 @@ export function CodingSessionHeader({
       />
     </header>
   );
-}
-
-/**
- * One routed seat's line in the provenance popover.
- *
- * `line` is `describeCodingSessionRouting`'s sentence verbatim — `routed:
- * builder/standard → claude-primary/sonnet (medium) — <reason>`. Rendered as
- * one line, never a panel: a routing decision that needs its own screen to be
- * readable is a decision nobody reads. A seat nothing routed contributes no
- * row at all, because "not routed" and "routed to the default" are different
- * facts and only one of them happened.
- */
-export type CodingSessionRoutedSeatRow = {
-  key: string;
-  line: string;
-};
-
-/** One execution's line in the provenance popover's `Context` section. */
-export type CodingSessionContextRow = {
-  key: string;
-  /** How the seat names itself — `Actor · Role`, or runtime and model. */
-  label: string;
-  /** What the wire reported, or null when nothing has. */
-  load: CodingSessionContextLoad | null;
-};
-
-/**
- * The provenance popover's body (SURFACES.md D7).
- *
- * The 2026-08-29 walk (finding 5) read the shipped popover in full — channel,
- * signed projection, verified source — and found it answered none of the
- * questions it exists to answer: no founder, though the 44226 genesis carries
- * one and **W6 says a founder is never unknown**, and no context, though the
- * 44225 usage items were on the wire and `bee sessions status` printed 27% of
- * a 1M window from exactly them. Both rows live here now, rendered the way
- * the CLI renders them so the two cannot drift apart.
- *
- * Exported so the copy can be asserted directly: Radix does not mount popover
- * content until it opens, so a test that renders the header alone sees none
- * of this.
- */
-export function CodingSessionProvenanceDetails({
-  channelName = null,
-  contextLoads,
-  founderDetails,
-  generationLabel,
-  projectName = null,
-  providerAuthorityPubkey = null,
-  routedSeats,
-}: {
-  channelName?: string | null;
-  contextLoads?: readonly CodingSessionContextRow[];
-  founderDetails?: ReactNode;
-  generationLabel: string;
-  projectName?: string | null;
-  providerAuthorityPubkey?: string | null;
-  /** The routed seats in this umbrella, one line each. */
-  routedSeats?: readonly CodingSessionRoutedSeatRow[];
-}) {
-  return (
-    <div data-testid="coding-session-provenance-details">
-      <p className="text-sm font-medium">Shared session details</p>
-      <dl className="mt-3 grid gap-2 text-xs">
-        {projectName ? (
-          <div>
-            <dt className="text-muted-foreground">Project</dt>
-            <dd className="mt-0.5 wrap-break-word">{projectName}</dd>
-          </div>
-        ) : null}
-        {channelName ? (
-          <div>
-            <dt className="text-muted-foreground">Channel</dt>
-            <dd className="mt-0.5 wrap-break-word">#{channelName}</dd>
-          </div>
-        ) : null}
-        <div>
-          <dt className="text-muted-foreground">Signed projection</dt>
-          <dd className="mt-0.5 wrap-break-word">{generationLabel}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Founded by</dt>
-          <dd className="mt-0.5 wrap-break-word">
-            {founderDetails ?? (
-              <span
-                data-testid="coding-session-provenance-founder-unresolved"
-                title="No genesis or create naming this session's founder has reached this client yet."
-              >
-                unresolved
-              </span>
-            )}
-          </dd>
-        </div>
-        {providerAuthorityPubkey ? (
-          <div>
-            <dt className="text-muted-foreground">Verified source</dt>
-            <dd className="mt-0.5 font-mono wrap-break-word">
-              {shortPubkey(providerAuthorityPubkey)}
-            </dd>
-          </div>
-        ) : null}
-        {routedSeats && routedSeats.length > 0 ? (
-          <div data-testid="coding-session-provenance-routing">
-            <dt className="text-muted-foreground">Routing</dt>
-            {routedSeats.map((row) => (
-              <dd
-                className="mt-0.5 truncate wrap-break-word"
-                data-testid="coding-session-routed-line"
-                key={row.key}
-                title={row.line}
-              >
-                {row.line}
-              </dd>
-            ))}
-          </div>
-        ) : null}
-        {contextLoads && contextLoads.length > 0 ? (
-          <div data-testid="coding-session-provenance-context">
-            <dt className="text-muted-foreground">Context</dt>
-            {contextLoads.map((row) => (
-              <dd
-                className="mt-0.5 flex items-baseline justify-between gap-2 wrap-break-word"
-                key={row.key}
-              >
-                <span className="min-w-0 truncate">{row.label}</span>
-                {row.load === null ? (
-                  <span
-                    className="shrink-0 text-muted-foreground"
-                    title="no usage reported"
-                  >
-                    {renderCodingSessionContextLoad(null)}
-                  </span>
-                ) : (
-                  <span className="shrink-0 font-mono">
-                    {renderCodingSessionContextLoad(row.load)}
-                  </span>
-                )}
-              </dd>
-            ))}
-          </div>
-        ) : null}
-      </dl>
-    </div>
-  );
-}
-
-function shortPubkey(value: string): string {
-  return value.length <= 20
-    ? value
-    : `${value.slice(0, 10)}…${value.slice(-8)}`;
 }
 
 function removeRepeatedTitle(generationLabel: string, title: string): string {
@@ -891,109 +509,4 @@ function uniqueNonemptyLabels(
     labels.push(label);
   }
   return labels;
-}
-
-/**
- * The umbrella's disposition strip: one line per execution, the lead's first.
- *
- * It sits directly under the header because it answers a header question —
- * *is this team still working?* — that the aggregate status badge cannot: a
- * lead that has delivered its verdict and a builder still standing by are one
- * "Working" between them (ledger 77, "Umbrella UI (a)").
- *
- * Every line comes from the 44223 facts the umbrella already holds; nothing
- * here fetches. The status is the same reachability-demoted one the focus
- * chips use, so a provider nothing is answering for can never read `live`, and
- * an execution with no transcript says so rather than reporting an age it does
- * not have.
- *
- * Since 2026-08-30 it carries one more line: **hires**. This host answers
- * `session.hire` in the app shell, out of sight of every session screen, and
- * until now the outcomes it produced were discarded by the runner that mounted
- * it — a hire could be read, judged and thrown away with nothing on screen at
- * all (ledger draft 97, live). The counts are the only place a person can see
- * that this computer is answering hires, so they sit next to the seats those
- * hires produce. Nothing has happened → no line.
- */
-export function CodingSessionDispositionStrip({
-  actorNames,
-  canSteer = false,
-  hireOutcomes,
-  nowMs,
-  resolveReachability,
-  umbrella,
-}: {
-  /** Resolves a seat's actor pubkey to a display name, when one is known. */
-  actorNames?: CodingSessionActorNameResolver;
-  /**
-   * Whether this viewer may prompt executions. It chooses which of W1's two
-   * waiting strings a waiting seat reads, and nothing else.
-   */
-  canSteer?: boolean;
-  /**
-   * The hire outcomes to count. Defaults to what this app's hire host has
-   * published, which is the only source in the running app; supplied directly
-   * by tests, which have no host mounted.
-   */
-  hireOutcomes?: readonly {
-    state: CodingSessionHireOutcomeState;
-    detail: string | null;
-  }[];
-  /** Fixed clock for tests; defaults to now at render time. */
-  nowMs?: number;
-  resolveReachability: CodingSessionReachabilityResolver;
-  umbrella: CodingSessionUmbrellaRecord;
-}) {
-  const items = React.useMemo(
-    () =>
-      listCodingSessionUmbrellaDispositions(
-        umbrella,
-        (execution) =>
-          deriveCodingSessionExecutionStatus(
-            execution,
-            resolveReachability(execution.activeGeneration.commandTarget),
-          ),
-        actorNames,
-        canSteer,
-      ),
-    [actorNames, canSteer, resolveReachability, umbrella],
-  );
-  const published = useCodingSessionHireOutcomes();
-  const hires = hireOutcomes ?? published;
-  const hireTally = React.useMemo(
-    () => summarizeCodingSessionHireOutcomes(hires),
-    [hires],
-  );
-  const hireLine = formatCodingSessionHireTally(hireTally);
-  if (items.length === 0 && hireLine === null) return null;
-  const at = nowMs ?? Date.now();
-  return (
-    <ul
-      aria-label="Session team disposition"
-      className="flex flex-wrap items-center gap-x-4 gap-y-0.5 border-b border-border/60 bg-background/70 px-4 py-1 text-2xs text-muted-foreground"
-      data-testid="coding-session-disposition-strip"
-    >
-      {items.map((item) => (
-        <li
-          className="min-w-0 truncate"
-          data-testid="coding-session-disposition-row"
-          key={item.executionKey}
-        >
-          {formatCodingSessionDispositionLine(item, at)}
-        </li>
-      ))}
-      {hireLine === null ? null : (
-        <li
-          className="min-w-0 truncate"
-          data-testid="coding-session-hires-row"
-          // The newest reason, on hover. One line on the strip cannot carry a
-          // relay sentence, and a count with no way to reach the reason is a
-          // number that tells you something is wrong and nothing else.
-          title={hireTally.lastReason ?? undefined}
-        >
-          {hireLine}
-        </li>
-      )}
-    </ul>
-  );
 }

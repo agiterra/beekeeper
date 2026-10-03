@@ -17,7 +17,17 @@ export function deriveCodingSessionActiveTaskModel({
   return latestTurnId === model.turnId ? model : null;
 }
 
-/** Per-turn attachment state for the temporary Tasks surface above composer. */
+/**
+ * Per-turn attachment state for the Tasks rail above the composer.
+ *
+ * `open` means *mounted*, not *expanded*. On a wide window the rail mounts for
+ * every turn with an active plan and renders as one collapsed line
+ * (`CodingSessionTaskRail` variant `dock`), so nothing opens over the
+ * transcript on its own; `close` dismisses it for this turn and the header's
+ * Plan control — shown only while the rail is not — brings it back. On a
+ * narrow window there is no rail, and `open` is the plan sheet, opened only
+ * from that header control.
+ */
 export function useCodingSessionTaskDock({
   isNarrow,
   isWorking,

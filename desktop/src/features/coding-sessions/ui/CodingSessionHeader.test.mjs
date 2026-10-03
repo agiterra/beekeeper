@@ -48,7 +48,14 @@ test("umbrella header promotes the goal and aggregate agent status", () => {
   );
   assert.match(markup, /Make two-agent work read as one session/);
   assert.match(markup, /Codex working · Claude idle/);
-  assert.doesNotMatch(markup, /coding-session-status-badge/);
+  // The chips carry per-agent status on a wide window. A narrow one hides
+  // them, so a compact status takes their place there rather than leaving
+  // the header with no status at all.
+  assert.doesNotMatch(markup, /data-testid="coding-session-status-badge"/);
+  assert.match(
+    markup,
+    /class="shrink-0 md:hidden"><span[^>]*aria-label="Session status: 2 agents · 1 working"[^>]*data-testid="coding-session-status-badge-narrow"/,
+  );
   assert.doesNotMatch(markup, />generation 1<\/p>/);
 });
 
@@ -67,7 +74,7 @@ test("the team lens lives beside the title instead of creating another header", 
   assert.equal((markup.match(/<header/g) ?? []).length, 1);
 });
 
-test("header renders the export button only when an export handler is provided", () => {
+test("export is offered from the ⋯ menu only when an export handler is provided", () => {
   const baseProps = {
     channelName: "Hive Sessions",
     generationLabel: "Keystone Session · generation 2",
@@ -77,7 +84,8 @@ test("header renders the export button only when an export handler is provided",
   const withoutExport = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, baseProps),
   );
-  assert.doesNotMatch(withoutExport, /data-testid="coding-session-export"/);
+  // No action at all, so no menu: a `⋯` over an empty list would lie.
+  assert.doesNotMatch(withoutExport, /data-testid="coding-session-overflow"/);
 
   const withExport = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
@@ -85,12 +93,11 @@ test("header renders the export button only when an export handler is provided",
       onExport() {},
     }),
   );
-  assert.match(withExport, /data-testid="coding-session-export"/);
-  assert.match(withExport, /aria-label="Export transcript"/);
-  assert.doesNotMatch(
-    withExport,
-    /data-testid="coding-session-export"[^>]*disabled/,
-  );
+  // SESSION_VIEW_UX_PLAN L4: the flat button moved into the menu. Its
+  // disabled-while-exporting state is proved by opening the menu
+  // (`CodingSessionHeader.reachability.test.mjs`).
+  assert.match(withExport, /data-testid="coding-session-overflow"/);
+  assert.doesNotMatch(withExport, /data-testid="coding-session-export"/);
 });
 
 test("header exposes rename only when the authority-aware workspace provides it", () => {
@@ -112,23 +119,6 @@ test("header exposes rename only when the authority-aware workspace provides it"
   );
   assert.match(markup, /data-testid="coding-session-rename"/);
   assert.match(markup, /aria-label="Rename session"/);
-});
-
-test("header disables the export button while an export is running", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(CodingSessionHeader, {
-      channelName: "Hive Sessions",
-      generationLabel: "Keystone Session · generation 2",
-      isExporting: true,
-      onExport() {},
-      status: { kind: "idle", label: "Idle" },
-    }),
-  );
-  const exportButton = markup.match(
-    /<button[^>]*data-testid="coding-session-export"[^>]*>/u,
-  );
-  assert.ok(exportButton, "export button must render");
-  assert.match(exportButton[0], /disabled/);
 });
 
 test("surface affordances are compact direct tabs into the shared host", () => {
@@ -175,7 +165,7 @@ test("surface affordances are compact direct tabs into the shared host", () => {
   assert.match(markup, />Observed changes</);
 });
 
-test("the add-provider affordance appears only when this session can take one", () => {
+test("the add-provider action appears only when this session can take one", () => {
   const baseProps = {
     channelName: "Hive Sessions",
     generationLabel: "Keystone Session · generation 2",
@@ -187,7 +177,8 @@ test("the add-provider affordance appears only when this session can take one", 
   const withoutJoin = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, baseProps),
   );
-  assert.doesNotMatch(withoutJoin, /data-testid="coding-session-add-provider"/);
+  assert.doesNotMatch(withoutJoin, /coding-session-add-provider/);
+  assert.doesNotMatch(withoutJoin, /data-testid="coding-session-overflow"/);
 
   const withJoin = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
@@ -195,8 +186,9 @@ test("the add-provider affordance appears only when this session can take one", 
       onAddProvider() {},
     }),
   );
-  assert.match(withJoin, /data-testid="coding-session-add-provider"/);
-  assert.match(withJoin, /Add provider/);
+  // It lives in the ⋯ menu now, in every lens.
+  assert.match(withJoin, /data-testid="coding-session-overflow"/);
+  assert.doesNotMatch(withJoin, /data-testid="coding-session-add-provider"/);
 });
 
 test("closure controls describe session state without rewriting execution status", () => {
@@ -212,10 +204,13 @@ test("closure controls describe session state without rewriting execution status
       onCloseSession() {},
     }),
   );
-  assert.match(close, /data-testid="coding-session-close"/);
+  // Close is a menu item now; the status still reads the execution's word.
+  assert.doesNotMatch(close, /data-testid="coding-session-close"/);
+  assert.match(close, /data-testid="coding-session-overflow"/);
   assert.match(close, /aria-label="Session status: Ended"/);
   assert.doesNotMatch(close, /data-testid="coding-session-reopen"/);
 
+  // Reopen is a closed session's one primary action, so it stays in the row.
   const reopen = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
       ...baseProps,
@@ -230,6 +225,8 @@ test("closure controls describe session state without rewriting execution status
     /title="Return this session to Sessions without starting a provider"/,
   );
   assert.doesNotMatch(reopen, /data-testid="coding-session-close"/);
+  // …and is not offered twice.
+  assert.doesNotMatch(reopen, /data-testid="coding-session-overflow"/);
 });
 
 test("an owning project reads as a followable crumb ahead of the context line", () => {
@@ -461,7 +458,7 @@ test("disposition strip renders nothing when the umbrella holds no execution", (
  * greyed-out control invites the click that teaches you the authority is not
  * yours.
  */
-test("Stop all names how many seats it stops, and only the founder sees it", () => {
+test("Stop all is the founder's, in the ⋯ menu, and nobody else sees it", () => {
   const base = {
     channelName: "Beekeeper sessions",
     generationLabel: "Keystone Session · generation 1",
@@ -476,15 +473,17 @@ test("Stop all names how many seats it stops, and only the founder sees it", () 
       stopAllCount: 3,
     }),
   );
-  assert.match(founderView, /data-testid="coding-session-stop-all"/);
-  assert.match(founderView, /Stop all \(3\)/);
-  assert.match(founderView, /aria-label="Stop 3 live seats"/);
+  // The item's label and consequence sentence are proved by opening the
+  // menu (`CodingSessionHeader.reachability.test.mjs`).
+  assert.match(founderView, /data-testid="coding-session-overflow"/);
+  assert.doesNotMatch(founderView, /data-testid="coding-session-stop-all"/);
 
   // Everybody else: no control at all, and nothing disabled to click at.
   const viewerView = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, base),
   );
   assert.doesNotMatch(viewerView, /coding-session-stop-all/);
+  assert.doesNotMatch(viewerView, /coding-session-overflow/);
   assert.doesNotMatch(viewerView, /Stop all/);
 });
 
@@ -617,16 +616,10 @@ test("a pop-out or dialog gets a close control it can name", () => {
 });
 
 /**
- * The `⋯` menu is now mounted on every session header, not only Mission's.
- *
- * It is the home for "New session in this workspace", which the brief
- * requires to be reachable from an open session — and before this, the menu
- * existed only for a multi-execution session in Mission lens, so an ordinary
- * single-execution session had no header route to it at all.
- *
- * The bargain is that nothing else moved: outside Mission the menu holds
- * exactly that one item, and the flat run of buttons beside it is byte for
- * byte what it was (I8).
+ * SESSION_VIEW_UX_PLAN L4: every lens collapses the header's actions into the
+ * one `⋯` menu Mission already had (DESIGN-SPEC A7). The row keeps title,
+ * status, the full-access badge, the live-count surface tabs and one Details
+ * control (People with its count, plus provenance).
  */
 const FLAT_RUN_PROPS = {
   channelName: "Hive Sessions",
@@ -642,57 +635,42 @@ const FLAT_RUN_PROPS = {
   stopAllCount: 1,
 };
 
-const OVERFLOW_TRIGGER = /<button aria-label="Session actions".*?<\/button>/s;
+const FORMER_FLAT_ACTIONS = [
+  "coding-session-add-provider",
+  "coding-session-stop-all",
+  "coding-session-close",
+  "coding-session-export",
+  "coding-session-header-popout",
+];
 
-test("a session header offers the ⋯ menu; without a session it does not", () => {
-  const withoutSession = renderToStaticMarkup(
-    React.createElement(CodingSessionHeader, FLAT_RUN_PROPS),
-  );
-  // A pending, loading or unavailable header has no session whose workspace
-  // could be looked up, so it gets no menu rather than an empty one.
-  assert.doesNotMatch(withoutSession, /data-testid="coding-session-overflow"/);
-
-  const withSession = renderToStaticMarkup(
-    React.createElement(CodingSessionHeader, {
+test("Conversation's flat action run is one ⋯ menu, with or without a session", () => {
+  for (const props of [
+    FLAT_RUN_PROPS,
+    {
       ...FLAT_RUN_PROPS,
       workspaceReuse: { channelId: "channel-1", sessionRef: "session-1" },
-    }),
-  );
-  assert.match(withSession, /data-testid="coding-session-overflow"/);
-  assert.equal(
-    withSession.match(/data-testid="coding-session-overflow"/g).length,
-    1,
-  );
-});
-
-test("mounting the ⋯ menu leaves the Conversation flat run byte-identical", () => {
-  const withoutSession = renderToStaticMarkup(
-    React.createElement(CodingSessionHeader, FLAT_RUN_PROPS),
-  );
-  const withSession = renderToStaticMarkup(
-    React.createElement(CodingSessionHeader, {
-      ...FLAT_RUN_PROPS,
-      workspaceReuse: { channelId: "channel-1", sessionRef: "session-1" },
-    }),
-  );
-  // Remove the trigger the menu added; what is left must be the old header,
-  // character for character.
-  assert.match(withSession, OVERFLOW_TRIGGER);
-  assert.equal(withSession.replace(OVERFLOW_TRIGGER, ""), withoutSession);
-  // The run itself, in the order it has always had; the menu is appended
-  // after it, at the right end, where Mission's `⋯` already sits.
-  for (const testId of [
-    "coding-session-add-provider",
-    "coding-session-stop-all",
-    "coding-session-close",
-    "coding-session-export",
-    "coding-session-header-popout",
+    },
   ]) {
-    assert.match(withSession, new RegExp(`data-testid="${testId}"`));
+    const markup = renderToStaticMarkup(
+      React.createElement(CodingSessionHeader, props),
+    );
+    assert.equal(
+      (markup.match(/data-testid="coding-session-overflow"/g) ?? []).length,
+      1,
+    );
+    for (const testId of FORMER_FLAT_ACTIONS) {
+      assert.doesNotMatch(markup, new RegExp(`data-testid="${testId}"`));
+    }
   }
 });
 
-test("Mission still collapses its six actions and gains no flat button", () => {
+test("Mission collapses the same actions and gains no flat button", () => {
+  const conversation = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      ...FLAT_RUN_PROPS,
+      workspaceReuse: { channelId: "channel-1", sessionRef: "session-1" },
+    }),
+  );
   const mission = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
       ...FLAT_RUN_PROPS,
@@ -701,7 +679,9 @@ test("Mission still collapses its six actions and gains no flat button", () => {
     }),
   );
   assert.match(mission, /data-testid="coding-session-overflow"/);
-  assert.doesNotMatch(mission, /data-testid="coding-session-stop-all"/);
-  assert.doesNotMatch(mission, /data-testid="coding-session-close"/);
-  assert.doesNotMatch(mission, /data-testid="coding-session-add-provider"/);
+  for (const testId of FORMER_FLAT_ACTIONS) {
+    assert.doesNotMatch(mission, new RegExp(`data-testid="${testId}"`));
+  }
+  // One header for both lenses: the prop no longer changes the row.
+  assert.equal(mission, conversation);
 });

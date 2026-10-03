@@ -9,6 +9,7 @@ import {
   Square,
   UserPlus,
 } from "lucide-react";
+import * as React from "react";
 
 import {
   CODING_SESSION_FULL_ACCESS_LABEL,
@@ -21,23 +22,24 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import type { CodingSessionFullAccess } from "./useCodingSessionFullAccess";
 
 /**
- * The Mission header's `⋯` menu — DESIGN-SPEC A7, built.
+ * The session header's `⋯` menu — DESIGN-SPEC A7, built, and since
+ * SESSION_VIEW_UX_PLAN L4 the home of the header's actions in every lens.
  *
  * Critique A6: row 1 ran `People 4` · `Stop all (2)` · `Close`, all the same
  * size and the same `ghost` variant, adjacent. One of those is unrecoverable
  * by its own title and the other has a `Reopen`. Two controls that read
  * identically and differ by everything.
  *
- * So the six *actions* collapse here, in the order A7 fixes, and `People` and
- * the surface toggles stay in row 1 — they are navigation, not action, and a
+ * So the actions collapse here, in the order A7 fixes, and `People` and the
+ * surface toggles stay in the row — they are navigation, not action, and a
  * menu is the wrong home for a thing you toggle while reading. `Stop all`
  * takes the destructive treatment the composer's own `Stop execution` item
  * already uses (`CodingSessionComposerDeck.tsx`): `text-destructive`, and a
  * second line naming the consequence rather than a tooltip nobody opens.
  *
- * Mission only. Conversation's header keeps its flat run of six buttons and
- * its DOM byte for byte (I8), which is why this is a separate component the
- * header mounts under a lens gate rather than a rewrite of the run itself.
+ * Mission collapsed first; Conversation's flat run of six buttons followed
+ * when the header was cut to title, status and a few primary controls. Each
+ * item keeps the handler, label and consequence its flat button had.
  */
 export function CodingSessionHeaderOverflow({
   fullAccess = null,
@@ -100,6 +102,16 @@ export function CodingSessionHeaderOverflow({
    */
   stopAllSentence: string;
 }) {
+  // Controlled so a chosen item closes the menu: a `⋯` left open over the
+  // dialog or window it just launched reads as though nothing happened.
+  const [open, setOpen] = React.useState(false);
+  const handleOpenChange = React.useCallback(
+    (next: boolean) => {
+      setOpen(next);
+      onOpenChange?.(next);
+    },
+    [onOpenChange],
+  );
   const items: OverflowItem[] = [];
   // First, and above the destructive run: it creates rather than ends, and
   // it is the only item here that starts something new. Its second line is
@@ -192,7 +204,7 @@ export function CodingSessionHeaderOverflow({
   if (items.length === 0) return null;
 
   return (
-    <Popover onOpenChange={onOpenChange}>
+    <Popover onOpenChange={handleOpenChange} open={open}>
       <PopoverTrigger asChild>
         <button
           aria-label="Session actions"
@@ -219,7 +231,12 @@ export function CodingSessionHeaderOverflow({
               data-testid={item.testId}
               disabled={item.disabled}
               key={item.key}
-              onClick={item.onSelect}
+              onClick={() => {
+                // The full-access toggle is a state you read back in place;
+                // every other item launches something and gets out of its way.
+                if (item.pressed === undefined) handleOpenChange(false);
+                item.onSelect();
+              }}
               type="button"
             >
               <span className="mt-0.5 shrink-0">{item.icon}</span>
