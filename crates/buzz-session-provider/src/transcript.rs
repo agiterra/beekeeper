@@ -10,10 +10,24 @@
 //!
 //! Agents stream prose one token at a time. Publishing an event per token would
 //! be unreadable, unaffordable, and would bury the tool calls that carry the
-//! actual work. So text accumulates and flushes at three boundaries:
+//! actual work. So text accumulates and flushes at four boundaries:
 //!
 //! - **size** — [`COALESCE_FLUSH_BYTES`], well under the 32 KiB event cap so a
 //!   flushed block never needs truncating;
+//! - **paragraph** — only when switched on
+//!   ([`with_paragraph_flush`](TranscriptTranslator::with_paragraph_flush);
+//!   off by default, because every reader older than the change shows each
+//!   item as its own message), and for the agent's own prose only: a blank
+//!   line outside an open
+//!   code fence, once at least [`MIN_PARAGRAPH_FLUSH_BYTES`] has built up, so a
+//!   long answer reaches a reader paragraph by paragraph instead of all at
+//!   once. The boundary is a property of the text, not of time, so the
+//!   translator keeps no clock. A blank line between items of one list, or
+//!   before an indented continuation, is not a boundary: a client rendering
+//!   each item alone would show two lists. The split moves no byte — the items
+//!   concatenate to exactly what the agent wrote — so a client can join a
+//!   turn's consecutive `assistant_text` items back into one message. See
+//!   `ParagraphScanner`;
 //! - **narrative** — any tool call or tool result, because prose written *before*
 //!   the agent reached for a tool belongs before it in the record;
 //! - **turn end** — nothing is left buffered when the turn's `result` lands.
@@ -29,7 +43,9 @@
 //! subagent's narration must never merge with the agent's or another
 //! subagent's, because once flushed as one block nothing could split it again.
 //! Those buffers flush on that subagent's next non-text item, on the owning
-//! call's terminal result, and at turn end.
+//! call's terminal result, at turn end and at the size boundary — never at a
+//! paragraph, which is for the narrative a person reads live. Thoughts, which
+//! readers fold away, do not split at paragraphs either.
 //!
 //! # Redaction
 //!
@@ -91,6 +107,19 @@ use sha2::{Digest, Sha256};
 
 /// Flush the text buffer once it reaches this size.
 pub const COALESCE_FLUSH_BYTES: usize = 24 * 1024;
+/// The shortest prose a paragraph boundary may flush on its own.
+///
+/// Every flush is a signed, durably queued kind 44225 event, so the boundary
+/// that makes an answer arrive paragraph by paragraph is also a multiplier on
+/// relay volume. Below this size a paragraph rides along with the next one
+/// instead of being published alone. 512 bytes bounds a turn's prose events at
+/// one per half-kilobyte of prose (at most 48 per 24 KiB buffer, against one
+/// today), keeps each event's id, signature, tags and envelope well under the
+/// text it carries, and — at the few hundred bytes a second a model streams —
+/// holds a session to roughly one prose event a second without a clock. Short
+/// openers ("Sure.", "Done:") and terse bullet lists coalesce, which is where
+/// an event per paragraph would have been mostly envelope.
+pub const MIN_PARAGRAPH_FLUSH_BYTES: usize = 512;
 /// Cap on a serialized tool input before it is replaced by a digest.
 pub const MAX_TOOL_INPUT_BYTES: usize = 8 * 1024;
 /// Cap on a tool result's textual content.
@@ -120,6 +149,11 @@ const USAGE_UPDATE_VARIANTS: [&str; 4] = [
 pub struct TranscriptTranslator {
     include_thoughts: bool,
     text: String,
+    /// Whether `text` flushes at paragraph boundaries.
+    paragraph_flush: bool,
+    /// Where `text` may be split at a paragraph boundary. Fed only while
+    /// `paragraph_flush` is on.
+    paragraphs: ParagraphScanner,
     thoughts: String,
     usage: Option<Value>,
     tool_calls: u64,
@@ -157,6 +191,188 @@ struct HeldCall {
 struct ProseBuffers {
     text: String,
     thoughts: String,
+}
+
+/// The longest head of a line the paragraph scanner keeps. Enough to read a
+/// list marker or a fence; a longer line is ordinary content whatever its tail.
+const LINE_HEAD_BYTES: usize = 64;
+
+/// Finds paragraph boundaries in the agent's streamed prose.
+///
+/// Fed each chunk as it arrives, with the buffer offset it lands at, and kept
+/// incremental so a long buffer is never rescanned per token. A boundary is
+/// the end of a blank line (whitespace only) that closes a block with content
+/// and is outside an open code fence. The offset is just past the blank line's
+/// newline, so the item ends with the paragraph break and the next begins
+/// with the next paragraph's first character.
+///
+/// After a block that held a list item the boundary waits for the first
+/// characters of the next line: a list marker or an indented line continues
+/// the list, and the blank line is then not a boundary.
+#[derive(Debug, Default)]
+struct ParagraphScanner {
+    /// The open fence's character and run length.
+    fence: Option<(char, usize)>,
+    /// The head of the line being streamed, up to [`LINE_HEAD_BYTES`].
+    line: String,
+    /// The line being streamed is longer than `line` holds.
+    line_overflowed: bool,
+    /// The block since the last blank line has a non-blank line.
+    block_has_content: bool,
+    /// The block since the last blank line has a list item.
+    block_has_list: bool,
+    /// A boundary after a list block, waiting on the next line.
+    pending: Option<usize>,
+    /// The latest boundary found and not yet taken.
+    boundary: Option<usize>,
+}
+
+impl ParagraphScanner {
+    /// Read `chunk`, which starts at byte `base` of the buffer.
+    fn feed(&mut self, chunk: &str, base: usize) {
+        for (index, ch) in chunk.char_indices() {
+            if ch == '\n' {
+                self.end_line(base + index + 1);
+                continue;
+            }
+            if self.line.len() + ch.len_utf8() <= LINE_HEAD_BYTES {
+                self.line.push(ch);
+            } else {
+                self.line_overflowed = true;
+            }
+            if self.pending.is_some() {
+                self.decide_pending(false);
+            }
+        }
+    }
+
+    fn end_line(&mut self, offset: usize) {
+        let blank = self.line.trim().is_empty() && !self.line_overflowed;
+        if self.pending.is_some() {
+            if blank {
+                // Another blank line: still undecided, and the split moves
+                // past it.
+                self.pending = Some(offset);
+            } else {
+                self.decide_pending(true);
+            }
+        }
+        let line = std::mem::take(&mut self.line);
+        let overflowed = std::mem::take(&mut self.line_overflowed);
+        if let Some((fence, run)) = self.fence {
+            if !overflowed && closes_fence(&line, fence, run) {
+                self.fence = None;
+            }
+            return;
+        }
+        if blank {
+            if std::mem::take(&mut self.block_has_content) {
+                if std::mem::take(&mut self.block_has_list) {
+                    self.pending = Some(offset);
+                } else {
+                    self.boundary = Some(offset);
+                }
+            }
+            return;
+        }
+        self.block_has_content = true;
+        if list_marker(&line, true) == Some(true) {
+            self.block_has_list = true;
+        }
+        if let Some(fence) = opens_fence(&line) {
+            self.fence = Some(fence);
+        }
+    }
+
+    /// Settle a pending boundary once the next line says whether it continues
+    /// the list. `complete` is whether that line has ended.
+    fn decide_pending(&mut self, complete: bool) {
+        let Some(at) = self.pending else {
+            return;
+        };
+        let continues = if self.line.starts_with([' ', '\t']) {
+            Some(true)
+        } else {
+            list_marker(&self.line, complete)
+        };
+        match continues {
+            Some(true) => {
+                self.pending = None;
+                self.block_has_list = true;
+            }
+            Some(false) => {
+                self.pending = None;
+                self.boundary = Some(at);
+            }
+            None => {}
+        }
+    }
+
+    /// The latest boundary at least `min` bytes in, rebasing what remains to
+    /// the buffer that will be left once the prefix is flushed.
+    fn take_boundary(&mut self, min: usize) -> Option<usize> {
+        let at = self.boundary.filter(|at| *at >= min)?;
+        self.boundary = None;
+        self.pending = self.pending.map(|pending| pending.saturating_sub(at));
+        Some(at)
+    }
+
+    /// The whole buffer was flushed: no offset means anything now, but the
+    /// fence, the block and the line being streamed carry on.
+    fn forget_offsets(&mut self) {
+        self.boundary = None;
+        self.pending = None;
+    }
+}
+
+/// Whether `line` starts with a list marker (`-`, `*`, `+`, or up to nine
+/// digits and `.` or `)`, then whitespace or the line's end). `None` while
+/// the streamed head could still go either way.
+fn list_marker(line: &str, complete: bool) -> Option<bool> {
+    let line = line.trim_start_matches([' ', '\t']);
+    let mut chars = line.chars();
+    let after_marker = match chars.next() {
+        None => return if complete { Some(false) } else { None },
+        Some('-' | '*' | '+') => chars.next(),
+        Some(first) if first.is_ascii_digit() => {
+            let mut digits = 1;
+            loop {
+                match chars.next() {
+                    Some(ch) if ch.is_ascii_digit() && digits < 9 => digits += 1,
+                    Some('.' | ')') => break chars.next(),
+                    None => return if complete { Some(false) } else { None },
+                    Some(_) => return Some(false),
+                }
+            }
+        }
+        Some(_) => return Some(false),
+    };
+    match after_marker {
+        None => {
+            if complete {
+                Some(true)
+            } else {
+                None
+            }
+        }
+        Some(ch) => Some(ch == ' ' || ch == '\t'),
+    }
+}
+
+/// The fence a line opens: three or more backticks or tildes after any
+/// indentation (a fence inside a list item is indented).
+fn opens_fence(line: &str) -> Option<(char, usize)> {
+    let line = line.trim_start();
+    let fence = line.chars().next().filter(|ch| matches!(ch, '`' | '~'))?;
+    let run = line.chars().take_while(|ch| *ch == fence).count();
+    (run >= 3).then_some((fence, run))
+}
+
+/// Whether `line` closes a fence of `run` `fence` characters: at least as
+/// many of the same character and nothing else.
+fn closes_fence(line: &str, fence: char, run: usize) -> bool {
+    let line = line.trim();
+    line.len() >= run && line.chars().all(|ch| ch == fence)
 }
 
 /// What the owning call's frames have said about the subagent it spawned.
@@ -513,6 +729,8 @@ impl TranscriptTranslator {
         Self {
             include_thoughts,
             text: String::new(),
+            paragraph_flush: false,
+            paragraphs: ParagraphScanner::default(),
             thoughts: String::new(),
             usage: None,
             tool_calls: 0,
@@ -522,6 +740,17 @@ impl TranscriptTranslator {
             subagents: Vec::new(),
             stream_checks: Vec::new(),
         }
+    }
+
+    /// Publish the agent's prose a paragraph at a time as well as at the size,
+    /// narrative and turn boundaries. Off unless asked for: with it off the
+    /// item sequence is exactly what it was before the paragraph boundary
+    /// existed. See `Config::transcript_paragraph_flush` for who it is unsafe
+    /// for.
+    #[must_use]
+    pub fn with_paragraph_flush(mut self, paragraph_flush: bool) -> Self {
+        self.paragraph_flush = paragraph_flush;
+        self
     }
 
     /// Open a turn with the operator's prompt.
@@ -557,6 +786,7 @@ impl TranscriptTranslator {
         attachment_count: usize,
     ) -> Vec<Value> {
         self.text.clear();
+        self.paragraphs = ParagraphScanner::default();
         self.thoughts.clear();
         self.subagents.clear();
         self.usage = None;
@@ -593,13 +823,34 @@ impl TranscriptTranslator {
         }
         match kind {
             "agent_message_chunk" => {
-                self.text.push_str(&content_text(update.get("content")));
+                let chunk = content_text(update.get("content"));
+                if self.paragraph_flush {
+                    self.paragraphs.feed(&chunk, self.text.len());
+                }
+                self.text.push_str(&chunk);
                 if self.text.len() >= COALESCE_FLUSH_BYTES {
                     let mut items = self.release_held_in(None);
-                    items.extend(self.flush_text());
+                    // The cut lands wherever the size does, possibly inside
+                    // a fence or mid-line; the scanner keeps reading the text
+                    // that continues it.
+                    self.paragraphs.forget_offsets();
+                    items.extend(self.take_text());
                     return items;
                 }
-                Vec::new()
+                // A call of the agent's still waiting for its arguments
+                // defers the paragraph: publishing prose releases held calls
+                // first, and a paragraph is far more frequent than the size
+                // cut, so flushing here would put argument-less "Terminal"
+                // rows back on the wire — the very row the hold exists to
+                // prevent. The boundary is kept; the first chunk after the
+                // arguments land (or the next narrative boundary) publishes it.
+                if self.held.iter().any(|call| call.scope.is_none()) {
+                    return Vec::new();
+                }
+                match self.paragraphs.take_boundary(MIN_PARAGRAPH_FLUSH_BYTES) {
+                    Some(at) => self.flush_paragraphs(at),
+                    None => Vec::new(),
+                }
             }
             "agent_thought_chunk" => {
                 if !self.include_thoughts {
@@ -787,7 +1038,37 @@ impl TranscriptTranslator {
         items
     }
 
+    /// Publish the agent's prose up to `at`, a paragraph boundary, keeping
+    /// the rest buffered.
+    ///
+    /// Never reached with one of the agent's calls held (the caller defers),
+    /// so the release below is a no-op kept for the hold's contract. Buffered
+    /// thinking goes first:
+    /// the agent thinks before it writes, so what is buffered was written
+    /// before this paragraph, and left for the next narrative boundary it
+    /// would surface several paragraphs after the answer it led to.
+    fn flush_paragraphs(&mut self, at: usize) -> Vec<Value> {
+        let mut items = self.release_held_in(None);
+        items.extend(self.flush_thoughts());
+        let rest = self.text.split_off(at);
+        let text = std::mem::replace(&mut self.text, rest);
+        if !text.trim().is_empty() {
+            items.push(json!({ "kind": "assistant_text", "text": text }));
+        }
+        items
+    }
+
+    /// Publish all of the agent's prose at a narrative or turn boundary.
+    ///
+    /// What follows a tool call or a plan is a new block to every reader, so
+    /// the paragraph scanner starts over: a fence the prose before it left
+    /// open does not swallow the paragraph breaks after it.
     fn flush_text(&mut self) -> Vec<Value> {
+        self.paragraphs = ParagraphScanner::default();
+        self.take_text()
+    }
+
+    fn take_text(&mut self) -> Vec<Value> {
         if self.text.trim().is_empty() {
             self.text.clear();
             return Vec::new();
@@ -1453,6 +1734,10 @@ fn truncate_first_string_of_len(value: &mut Value, len: usize, target: usize) ->
         _ => false,
     }
 }
+
+#[cfg(test)]
+#[path = "transcript_paragraph_tests.rs"]
+mod paragraph_tests;
 
 #[cfg(test)]
 mod tests {

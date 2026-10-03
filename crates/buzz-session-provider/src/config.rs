@@ -154,6 +154,19 @@ pub struct Config {
     pub turn_budget: u64,
     /// Whether `agent_thought_chunk` updates become `reasoning` transcript items.
     pub include_thoughts: bool,
+    /// Publish the agent's prose a paragraph at a time rather than only at a
+    /// tool call, the size cap or the turn's end.
+    ///
+    /// Off by default, and while off the transcript items are exactly what
+    /// they were without it. On, one answer becomes several consecutive
+    /// `assistant_text` items, which every reader older than the change shows
+    /// as separate messages: installed desktops fold all but the last paragraph
+    /// and repeat the result body, `bee sessions` export heads each paragraph
+    /// with its own label, mobile renders one block per item, and the context
+    /// brief's latest assistant event names only the last paragraph. Turn it on
+    /// only where the readers join consecutive prose.
+    /// See `BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH`.
+    pub transcript_paragraph_flush: bool,
     /// Ask the adapter to forward raw SDK messages to the local log.
     ///
     /// Off by default. This is a debugging instrument, not a setting: the
@@ -310,6 +323,8 @@ impl Config {
         // 0 is unlimited here for the same reason as `BUZZ_CSP_MAX_SESSIONS`.
         let turn_budget = parse_u64(&lookup, "BUZZ_CSP_TURN_BUDGET", DEFAULT_TURN_BUDGET)?;
         let include_thoughts = parse_bool(&lookup, "BUZZ_CSP_INCLUDE_THOUGHTS", true)?;
+        let transcript_paragraph_flush =
+            parse_bool(&lookup, "BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", false)?;
         let emit_raw_sdk_frames = parse_bool(&lookup, "BUZZ_CSP_EMIT_RAW_SDK_FRAMES", false)?;
         let session_isolation = crate::session_isolation::SessionIsolation::from_lookup(&lookup)?;
         let redaction_retention = crate::redaction_vault::RetentionPolicy::from_setting(
@@ -333,6 +348,7 @@ impl Config {
             answer_stall_timeout,
             turn_budget,
             include_thoughts,
+            transcript_paragraph_flush,
             emit_raw_sdk_frames,
             redaction_retention,
             command_horizon,
@@ -837,6 +853,18 @@ mod tests {
         let mut vars = minimal();
         vars.insert("BUZZ_CSP_INCLUDE_THOUGHTS", "false".into());
         assert!(!load(&vars).unwrap().include_thoughts);
+    }
+
+    /// Paragraph flushing changes the wire every older reader renders, so it
+    /// is opt-in: absent means off, and it is switched on only by name.
+    #[test]
+    fn transcript_paragraph_flush_is_off_unless_switched_on() {
+        assert!(!load(&minimal()).unwrap().transcript_paragraph_flush);
+        let mut vars = minimal();
+        vars.insert("BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", "1".into());
+        assert!(load(&vars).unwrap().transcript_paragraph_flush);
+        vars.insert("BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", "sometimes".into());
+        assert!(load(&vars).is_err());
     }
 
     /// Zero is how a person says "no ceiling" (asked for 2026-08-24). It used

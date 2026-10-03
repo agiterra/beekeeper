@@ -131,6 +131,7 @@ fn request(
         max_turn_duration: Duration::from_secs(300),
         idle_shutdown: Duration::from_secs(600),
         include_thoughts: false,
+        transcript_paragraph_flush: false,
         execution,
     }
 }
@@ -606,6 +607,7 @@ async fn the_installed_codex_runtime_works_inside_the_boundary_and_reaches_nothi
         max_turn_duration: Duration::from_secs(300),
         idle_shutdown: Duration::from_secs(600),
         include_thoughts: false,
+        transcript_paragraph_flush: false,
         execution,
     };
     let started = match manager.create(codex_request(plan, None)).await {

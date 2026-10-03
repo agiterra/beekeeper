@@ -308,6 +308,9 @@ pub struct CreateRequest {
     pub idle_shutdown: Duration,
     /// Whether `agent_thought_chunk` updates become `reasoning` items.
     pub include_thoughts: bool,
+    /// Whether the agent's prose is published a paragraph at a time. See
+    /// [`crate::config::Config::transcript_paragraph_flush`].
+    pub transcript_paragraph_flush: bool,
     /// The host-prepared execution scope: boundary, resolved environment and
     /// native-history binding (`crate::execution_scope`). Required, so no
     /// producer can launch without deciding it.
@@ -333,6 +336,10 @@ impl std::fmt::Debug for CreateRequest {
             .field("max_turn_duration", &self.max_turn_duration)
             .field("idle_shutdown", &self.idle_shutdown)
             .field("include_thoughts", &self.include_thoughts)
+            .field(
+                "transcript_paragraph_flush",
+                &self.transcript_paragraph_flush,
+            )
             .field("execution", &self.execution.state())
             .finish_non_exhaustive()
     }
@@ -1256,7 +1263,8 @@ impl SessionManager {
             idle_shutdown: request.idle_shutdown,
             events,
             observer,
-            translator: TranscriptTranslator::new(request.include_thoughts),
+            translator: TranscriptTranslator::new(request.include_thoughts)
+                .with_paragraph_flush(request.transcript_paragraph_flush),
             native_output: match &request.execution {
                 crate::execution_scope::ExecutionPlan::Prepared(prepared) => prepared
                     .codex_home
@@ -4269,6 +4277,7 @@ server.serve_forever()
             max_turn_duration: std::time::Duration::from_secs(20),
             idle_shutdown: std::time::Duration::from_secs(60),
             include_thoughts: false,
+            transcript_paragraph_flush: false,
             execution: crate::execution_scope::ExecutionPlan::Legacy {
                 reason: "unit-test",
             },
@@ -4877,6 +4886,7 @@ done
             max_turn_duration: Duration::from_secs(10),
             idle_shutdown: Duration::from_secs(30),
             include_thoughts: true,
+            transcript_paragraph_flush: false,
             execution: crate::execution_scope::ExecutionPlan::Legacy {
                 reason: "unit-test",
             },

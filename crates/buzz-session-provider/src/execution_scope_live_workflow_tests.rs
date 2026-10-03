@@ -269,6 +269,7 @@ fn request(
         max_turn_duration: Duration::from_secs(420),
         idle_shutdown: Duration::from_secs(600),
         include_thoughts: false,
+        transcript_paragraph_flush: false,
         execution,
     }
 }

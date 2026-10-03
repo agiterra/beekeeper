@@ -237,6 +237,7 @@ fn create_request(cwd: &Path, agent: String, execution: ExecutionPlan) -> Create
         max_turn_duration: Duration::from_secs(20),
         idle_shutdown: Duration::from_secs(30),
         include_thoughts: false,
+        transcript_paragraph_flush: false,
         execution,
     }
 }

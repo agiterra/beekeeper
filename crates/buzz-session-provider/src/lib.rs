@@ -3607,6 +3607,7 @@ impl Provider {
             max_turn_duration: self.config.max_turn_duration,
             idle_shutdown: self.config.session_idle_shutdown,
             include_thoughts: self.config.include_thoughts,
+            transcript_paragraph_flush: self.config.transcript_paragraph_flush,
         };
 
         let events = self.sessions.event_sender();
@@ -4743,6 +4744,7 @@ impl Provider {
             max_turn_duration: self.config.max_turn_duration,
             idle_shutdown: self.config.session_idle_shutdown,
             include_thoughts: self.config.include_thoughts,
+            transcript_paragraph_flush: self.config.transcript_paragraph_flush,
         };
         let events = self.sessions.event_sender();
         let startup_future = SessionManager::start(request, events);
@@ -13059,6 +13061,7 @@ mod tests {
             redaction_retention: crate::redaction_vault::RetentionPolicy::default(),
             max_turn_duration: Duration::from_secs(7200),
             include_thoughts: true,
+            transcript_paragraph_flush: false,
             command_horizon: Duration::from_secs(86_400),
             // These fixtures launch shell doubles, not Claude or Codex: they
             // opt into the test runtime profile here, so the provider still

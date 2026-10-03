@@ -381,6 +381,7 @@ impl Provider {
             max_turn_duration: self.config.max_turn_duration,
             idle_shutdown: self.config.session_idle_shutdown,
             include_thoughts: self.config.include_thoughts,
+            transcript_paragraph_flush: self.config.transcript_paragraph_flush,
         };
         let events = self.sessions.event_sender();
         let startup_future = SessionManager::start(request, events);

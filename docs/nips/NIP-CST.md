@@ -16,6 +16,8 @@ shared transcript.
 > 2. **`reasoning` items are allowed and on by default.** The donor forbade
 >    them. Here they are a first-class item kind, gated by
 >    `BUZZ_CSP_INCLUDE_THOUGHTS` (default on). See below.
+> 3. **Paragraph-boundary prose flushing is available and off by default.**
+>    Gated by `BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` (default off). See below.
 
 ## Wire contract
 
@@ -81,6 +83,31 @@ the same redaction, depth, and size bounds as every other item kind, and are
 controlled by `BUZZ_CSP_INCLUDE_THOUGHTS` on the producer (default on). A
 deployment that does not want them recorded turns the flag off; nothing
 downstream requires them to be present.
+
+## Fork amendment: paragraph-boundary prose flushing
+
+By default a turn's agent prose is coalesced into `assistant_text` items that
+flush only when the buffer fills or the prose ends (a tool call, a reasoning
+item, the turn's result). `BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` on the
+producer (default **off**) additionally flushes agent prose at paragraph
+boundaries, so an answer arrives paragraph by paragraph. It applies to the
+agent's own prose only, never a subagent's. A boundary flushes only when:
+
+- the buffered prose is at least 512 bytes (`MIN_PARAGRAPH_FLUSH_BYTES`);
+  shorter paragraphs ride along with the next one;
+- it is not inside an open code fence or a list that continues past it;
+- none of the agent's own tool calls (as opposed to a subagent's) is held
+  back awaiting its streamed arguments — while one is, the flush is deferred.
+
+The items concatenate to exactly the streamed bytes: no separator is added
+or removed at a split. A reader must therefore join consecutive
+`assistant_text` items with the same attribution into one message. Readers
+that predate this amendment do not — older desktops fold all but the last
+paragraph and repeat the result body, `bee sessions` export heads each
+paragraph with its own label, mobile renders one block per item, and the
+context brief's latest assistant event names only the last paragraph — which
+is why the flag is off by default. While it is off, the items are byte-for-byte
+what they were without it.
 
 ## Fork amendment: `user_prompt` correlation fields
 

@@ -189,6 +189,7 @@ async fn setup_first_turn_reaches_real_child_with_draft_cwd_brief_and_shipped_ro
             max_turn_duration: Duration::from_secs(10),
             idle_shutdown: Duration::from_secs(30),
             include_thoughts: true,
+            transcript_paragraph_flush: false,
         })
         .await
         .expect("real seated provider create");
