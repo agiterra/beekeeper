@@ -216,6 +216,60 @@ impl SpawnFacts {
     }
 }
 
+/// An append-only terminal stream with a bounded prefix and a digest of every
+/// omitted byte. Reserving marker space once avoids retaining the full output
+/// just to compute an honest truncation digest at completion.
+#[derive(Debug, Default)]
+struct TerminalOutput {
+    prefix: String,
+    omitted: Option<(usize, Sha256)>,
+}
+
+impl TerminalOutput {
+    fn append(&mut self, data: &str) {
+        if let Some((bytes, hash)) = &mut self.omitted {
+            *bytes = bytes.saturating_add(data.len());
+            hash.update(data.as_bytes());
+            return;
+        }
+        if data.len() <= MAX_TOOL_CONTENT_BYTES.saturating_sub(self.prefix.len()) {
+            self.prefix.push_str(data);
+            return;
+        }
+        // 128 exceeds the longest marker (usize decimal count + SHA-256).
+        let retained_limit = MAX_TOOL_CONTENT_BYTES - 128;
+        let mut hash = Sha256::new();
+        let mut omitted = 0;
+        if self.prefix.len() > retained_limit {
+            let keep = floor_boundary(&self.prefix, retained_limit);
+            let tail = self.prefix.split_off(keep);
+            hash.update(tail.as_bytes());
+            omitted += tail.len();
+        } else {
+            let keep = floor_boundary(data, retained_limit - self.prefix.len());
+            self.prefix.push_str(&data[..keep]);
+            let tail = &data[keep..];
+            hash.update(tail.as_bytes());
+            self.omitted = Some((tail.len(), hash));
+            return;
+        }
+        hash.update(data.as_bytes());
+        omitted += data.len();
+        self.omitted = Some((omitted, hash));
+    }
+
+    fn finish(self) -> String {
+        match self.omitted {
+            Some((bytes, hash)) => format!(
+                "{}…[elided {bytes} bytes, sha256:{}]",
+                self.prefix,
+                hex::encode(hash.finalize())
+            ),
+            None => self.prefix,
+        }
+    }
+}
+
 /// What the adapter has told us about one open tool call so far.
 ///
 /// ACP delivers a tool call in pieces: the opening `tool_call` frame often
@@ -232,6 +286,10 @@ struct ToolMemo {
     paths: Vec<String>,
     changes: Vec<ToolEditChange>,
     spawn: SpawnFacts,
+    terminal_id: Option<String>,
+    terminal_output: Option<TerminalOutput>,
+    exit_code: Option<i64>,
+    output_closed: bool,
 }
 
 impl ToolMemo {
@@ -239,7 +297,20 @@ impl ToolMemo {
     /// — the adapter is correcting itself — while paths and changes accumulate,
     /// because a call can touch more than one file.
     fn absorb(&mut self, update: &Value) {
+        if update.get("sessionUpdate").and_then(Value::as_str) == Some("tool_call") {
+            // Only the opening frame declares a terminal association. Later
+            // chunks cannot rebind a call to a different terminal.
+            self.terminal_id = update
+                .pointer("/_meta/terminal_info/terminal_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned);
+            self.terminal_output = None;
+            self.exit_code = None;
+            self.output_closed = false;
+        }
         self.spawn.absorb(update);
+        self.absorb_terminal(update);
         if let Some(name) =
             string_field(update, "toolName").or_else(|| string_field(update, "title"))
         {
@@ -288,6 +359,58 @@ impl ToolMemo {
         }
     }
 
+    /// codex-acp 2.0.1 sends output as metadata deltas, then deliberately
+    /// omits terminal content. Both its delta and Zed-compatible chunk keys
+    /// append, not replace. Bind their terminal id to this exact call; never
+    /// let malformed metadata attach another terminal's output or exit.
+    fn absorb_terminal(&mut self, update: &Value) {
+        if self.output_closed {
+            return;
+        }
+        let Some(id) = update
+            .get("toolCallId")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+        else {
+            return;
+        };
+        // Some adapters declare a terminal id distinct from the tool id.
+        // Without an opening declaration, accept only the tool id itself.
+        let terminal_id = self.terminal_id.as_deref().unwrap_or(id);
+        let matching =
+            |value: &Value| value.get("terminal_id").and_then(Value::as_str) == Some(terminal_id);
+        if let Some(output) = update
+            .pointer("/_meta/terminal_output_delta")
+            .or_else(|| update.pointer("/_meta/terminal_output"))
+            .filter(|value| matching(value))
+        {
+            if let Some(data) = output.get("data").and_then(Value::as_str) {
+                self.terminal_output
+                    .get_or_insert_with(TerminalOutput::default)
+                    .append(data);
+            }
+        }
+        if let Some(exit) = update
+            .pointer("/_meta/terminal_exit")
+            .filter(|value| matching(value))
+        {
+            self.exit_code = exit.get("exit_code").and_then(Value::as_i64);
+        } else if let Some(output) = update.get("rawOutput").and_then(Value::as_object) {
+            // Non-terminal command completion in the same adapter. A random
+            // MCP result containing an exit_code business field is not this
+            // single-field command envelope.
+            if output.len() == 1
+                && matches!(self.kind.as_deref(), Some("execute" | "read" | "search"))
+                && update
+                    .pointer("/_meta/is_mcp_tool_call")
+                    .and_then(Value::as_bool)
+                    != Some(true)
+            {
+                self.exit_code = output.get("exit_code").and_then(Value::as_i64);
+            }
+        }
+    }
+
     /// Whether the adapter has said what this call acts on: its arguments, or
     /// the files and diffs an edit carries in place of them.
     fn has_arguments(&self) -> bool {
@@ -313,6 +436,10 @@ impl ToolMemo {
         self.input = None;
         self.paths = Vec::new();
         self.changes = Vec::new();
+        self.terminal_id = None;
+        self.terminal_output = None;
+        self.exit_code = None;
+        self.output_closed = true;
     }
 }
 
@@ -797,13 +924,19 @@ impl TranscriptTranslator {
         let input = memo.input.clone();
         let edit = tool_edit_payload(&memo.paths, &memo.changes);
         let subagent = memo.spawn.object(update);
+        let streamed = memo.terminal_output.take().map(TerminalOutput::finish);
+        let exit_code = memo.exit_code;
         memo.shed_payload();
 
+        // A final text snapshot replaces, never appends to, streamed bytes.
+        // Commands with only a numeric rawOutput still use their stream.
         let content = content_text(update.get("content"));
-        let content = if content.is_empty() {
-            raw_output_text(update)
-        } else {
+        let content = if !content.is_empty() {
             content
+        } else if let Some(streamed) = streamed {
+            streamed
+        } else {
+            raw_output_text(update)
         };
         let mut item = Map::new();
         item.insert("kind".into(), json!("tool_result"));
@@ -826,6 +959,9 @@ impl TranscriptTranslator {
             json!(bound_text(&content, MAX_TOOL_CONTENT_BYTES)),
         );
         item.insert("isError".into(), json!(status == "failed"));
+        if let Some(exit_code) = exit_code {
+            item.insert("exitCode".into(), json!(exit_code));
+        }
         if let Some(subagent) = subagent {
             item.insert("subagent".into(), subagent);
         }
@@ -1147,14 +1283,27 @@ fn raw_output_text(update: &Value) -> String {
 }
 
 /// Truncate `text` to `max_bytes`, recording what was dropped.
+///
+/// When the budget cannot hold a complete elision marker, return an empty
+/// string: a partial marker would imply digest evidence that is unavailable,
+/// and exceeding the budget would break the enclosing item's size limit.
 pub fn bound_text(text: &str, max_bytes: usize) -> String {
     if text.len() <= max_bytes {
         return text.to_owned();
     }
-    let dropped = &text[floor_boundary(text, max_bytes)..];
-    let marker = elision_marker(dropped);
-    let keep = floor_boundary(text, max_bytes.saturating_sub(marker.len()));
-    format!("{}{marker}", &text[..keep])
+    let mut keep = floor_boundary(text, max_bytes);
+    loop {
+        // The marker itself displaces source bytes. Hash the actual suffix
+        // after making room, not the suffix at the original byte ceiling.
+        let marker = elision_marker(&text[keep..]);
+        if keep + marker.len() <= max_bytes {
+            return format!("{}{marker}", &text[..keep]);
+        }
+        if keep == 0 {
+            return String::new();
+        }
+        keep = floor_boundary(text, max_bytes.saturating_sub(marker.len()));
+    }
 }
 
 fn elision_marker(dropped: &str) -> String {
@@ -2378,3 +2527,7 @@ mod tests {
         assert!(done[0].get("toolKind").is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "transcript_terminal_tests.rs"]
+mod terminal_tests;

@@ -22,12 +22,11 @@
 //! * **Only commands it recognises.** An unmatched command produces nothing.
 //!   A matcher that guessed would put a gate name on a command that is not
 //!   that gate, which is worse than the silence it replaced.
-//! * **Only outcomes the transcript carries.** ACP reports a tool result as
-//!   `completed` or `failed` (`transcript::terminal_status`), and the
-//!   published item carries that as `isError`. That is the strongest signal
-//!   available at this seam — the shell's numeric exit status is not on the
-//!   wire — so a row says `passed` or `failed` and never `not-run`, which is a
-//!   fact only a caller who decided not to run something can state.
+//! * **Only outcomes the transcript carries.** Typed `exitCode`, when
+//!   provided, preserves shell failure even when ACP labels the operation
+//!   `completed`. A tool failure also remains a failure if exit code zero
+//!   disagrees. Without a numeric exit, `isError` remains the disclosed ACP
+//!   signal. Missing or malformed evidence never supplies an inferred pass.
 //! * **Its own clock, disclosed as its own.** `durationMs` is the provider's
 //!   measurement between the two frames, and NIP-CSOB already says every
 //!   duration is the author's own; here the author is the provider, which is
@@ -61,44 +60,17 @@
 //! function looks still produces no row — silence, not a guess, exactly as
 //! before.
 //!
-//! # Composed commands (finding 57)
+//! # Composed commands
 //!
-//! Live run 4 ran all three gates green and produced **zero** observed rows:
-//! Keystone ran each one as `echo "== fmt =="; cargo fmt --all --check; echo
-//! "fmt exit=$?"`, and the observer of record refused every line with a `;`
-//! outright. That is still the right refusal for a line this seam cannot
-//! read exactly — but a `;`/`&&`-joined line whose every top-level segment is
-//! *itself* either a recognised gate or one of the four wrappers a seat
-//! legitimately narrates with (`cd`, `echo`, `nice`, `env`) is not such a
-//! line, and is now accepted.
-//!
-//! One `tool_result` still carries exactly one `isError` for the *whole*
-//! line, never one per segment, so a composed call cannot say which segment
-//! produced that exit the way a bare one can:
-//!
-//! * **`isError: true` on more than one gate segment publishes nothing.**
-//!   The failure could be any of them (or, for a `&&` line, a wrapper ahead
-//!   of all of them, which never let a gate run at all) — a guess here is
-//!   exactly the false claim this module exists to refuse.
-//! * **`isError: false` publishes a `passed` row for every gate segment.**
-//!   Sound for a pure `&&` line (bash's own short-circuit means reaching the
-//!   end at all proves every segment succeeded) and for the common
-//!   banner-then-gate shape. **Not sound in general** for a `;` line whose
-//!   *last* segment is a wrapper that cannot itself fail, such as Keystone's
-//!   own `echo "fmt exit=$?"` tail — bash reports the tail's exit, not the
-//!   gate's, so a failing gate followed by that tail is indistinguishable
-//!   from a passing one at this seam. Two consequences, both deliberate: a
-//!   solitary gate segment still gets a `failed` row on `isError: true`
-//!   (unchanged from the pre-existing `cd <path> && <gate>` case, which
-//!   carries the same "a wrapper ahead of it could have been what failed"
-//!   caveat and was never flagged for it); and Keystone's *actual* line is
-//!   refused regardless of any of the above, because the hermit-activation
-//!   prefix it also carries (`. <path> >/dev/null 2>&1; …`) is a genuine
-//!   redirect, which this module keeps refusing unconditionally. The code
-//!   fix here widens what a *bare-enough* composed line can prove; it does
-//!   not make an embedded redirect provable, and does not make a `;`-tailed
-//!   gate's failure provable. The seat-facing fix for both is the same one:
-//!   run each gate as its own command (see the persona packs).
+//! A tool result reports one outcome for the entire shell line. A successful
+//! `&&` chain proves that each recognized segment ran successfully; a failed
+//! chain cannot identify the failing segment. A chain containing `cd` is
+//! refused regardless of outcome because the host does not observe its actual
+//! execution directory. Unsupported cwd-changing wrappers are also refused.
+//! Semicolon-separated lines are never evidence for individual segment
+//! outcomes: a later command can mask an earlier failure. Unsupported shell
+//! syntax is refused by the matcher. Run gates separately for unambiguous
+//! outcomes in both directions.
 
 use std::collections::VecDeque;
 
@@ -127,7 +99,7 @@ pub struct ObservedGateRow {
     /// every row this module returns. They are resolved by
     /// [`crate::Provider::spawn_gate_head_probe`], which runs `git rev-parse
     /// HEAD` and `git status --porcelain` in the seat's own workdir at the
-    /// moment this row closes — in the provider process, from the `cwd` the
+    /// next asynchronous probe opportunity — in the provider process, from the `cwd` the
     /// provider already holds on the session record, never by asking the
     /// agent. This module only reads transcript frames and has no filesystem
     /// of its own; splitting it that way is what keeps it synchronous and
@@ -296,11 +268,20 @@ impl GateObserver {
             return Vec::new();
         };
         let pending = self.pending.remove(index).expect("index just found");
-        // `isError` is the published form of ACP's own terminal status. A
-        // result that carries neither is not evidence of a pass, so it is
-        // dropped rather than turned into one.
-        let Some(is_error) = item.get("isError").and_then(Value::as_bool) else {
-            return Vec::new();
+        // ACP completion does not imply shell success. Prefer typed exit
+        // evidence when present; neither an exit failure nor a tool failure
+        // may become a pass when the other signal disagrees.
+        let tool_error = item.get("isError").and_then(Value::as_bool);
+        let exit_error = match item.get("exitCode") {
+            Some(Value::Null) | None => None,
+            Some(code) => match code.as_i64() {
+                Some(code) => Some(code != 0),
+                None => return Vec::new(),
+            },
+        };
+        let is_error = match (tool_error, exit_error) {
+            (None, None) => return Vec::new(),
+            (tool, exit) => tool == Some(true) || exit == Some(true),
         };
         // Which gate(s) this call ran can only be known now — see
         // `resolve_command` and the module doc, "Harness shapes". A call that
@@ -309,16 +290,33 @@ impl GateObserver {
         let Some(command) = resolve_command(item, pending.call_command.as_deref()) else {
             return Vec::new();
         };
+        let Some(parts) = split_top_level_segments(&command) else {
+            return Vec::new();
+        };
+        // The host probe still uses the session's recorded working directory.
+        // A successful `cd other && gate` would otherwise bind its result to
+        // the wrong repository. Until observed execution cwd is available,
+        // refuse that projection rather than guessing which tree was tested.
+        if parts.iter().any(|part| segment_is_cd(part)) {
+            return Vec::new();
+        }
         let Some(segments) = match_gate_segments(&command) else {
             return Vec::new();
         };
-        // A composed call pairs one exit with several gates. `isError: true`
-        // there cannot say which of them produced it — a `&&` line may not
-        // even have reached a later gate at all — so more than one gate
-        // segment on a failing call publishes nothing rather than a guess.
-        // A single segment is unambiguous either way, exactly the bare-gate
-        // case this module has always reported.
-        if is_error && segments.len() > 1 {
+        // Shell status belongs to the whole line. `a; b` may hide a failed
+        // `a`, and a failed `cd dir && gate` may never have run the gate.
+        // Quoted punctuation remains part of a word, not a separator.
+        let Some(tokens) = shell_split(&command) else {
+            return Vec::new();
+        };
+        if tokens
+            .iter()
+            .any(|token| matches!(token, ShellToken::Semicolon))
+            || (is_error
+                && tokens
+                    .iter()
+                    .any(|token| matches!(token, ShellToken::AndAnd)))
+        {
             return Vec::new();
         }
         let duration_ms = now_ms
@@ -705,7 +703,7 @@ fn summary_of(content: Option<&Value>) -> Option<String> {
         .lines()
         .rev()
         .map(str::trim)
-        .find(|line| !line.is_empty())?;
+        .find(|line| !line.is_empty() && !is_markdown_fence(line))?;
     let line: String = line
         .chars()
         .filter(|character| !character.is_control())
@@ -718,6 +716,16 @@ fn summary_of(content: Option<&Value>) -> Option<String> {
         bounded.pop();
     }
     Some(bounded)
+}
+
+/// Adapter console wrappers are presentation, not the command's verdict.
+fn is_markdown_fence(line: &str) -> bool {
+    ["```", "~~~"].iter().any(|marker| {
+        line.strip_prefix(marker).is_some_and(|tail| {
+            tail.chars()
+                .all(|character| character.is_ascii_alphanumeric() || "_-".contains(character))
+        })
+    })
 }
 
 fn string_at(value: &Value, key: &str) -> Option<String> {

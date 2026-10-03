@@ -238,15 +238,33 @@ async fn status(cwd: &Path, scope: &crate::execution_scope_host::HostLaunchPlan)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    let output = tokio::time::timeout(PROBE_TIMEOUT, command.output())
-        .await
-        .ok()?
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8(output.stdout).ok())
-        .flatten()
+    // Log only a reason and numeric status: Git's stderr may contain private
+    // paths or output from repository-configured filters. Previously every
+    // failure here silently erased both dirty and HEAD on the gate row.
+    match tokio::time::timeout(PROBE_TIMEOUT, command.output()).await {
+        Ok(Ok(output)) if output.status.success() => match String::from_utf8(output.stdout) {
+            Ok(stdout) => Some(stdout),
+            Err(_) => {
+                tracing::warn!(target: "csp::git", reason = "non_utf8", "git status was not observed");
+                None
+            }
+        },
+        Ok(Ok(output)) => {
+            tracing::warn!(target: "csp::git", reason = "nonzero_exit", status = %output.status,
+                "git status was not observed");
+            None
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(target: "csp::git", reason = "spawn_failed", error_kind = ?error.kind(),
+                "git status was not observed");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(target: "csp::git", reason = "timeout", timeout_ms = PROBE_TIMEOUT.as_millis(),
+                "git status was not observed");
+            None
+        }
+    }
 }
 
 /// Configuration a host-side `git` passes so no repository-configured

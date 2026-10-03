@@ -9616,9 +9616,14 @@ impl Provider {
                     return;
                 }
             };
+            let head_observed = probe.commit.is_some();
+            let dirty_observed = probe.dirty.is_some();
             if let (Some(commit), Some(dirty)) = (probe.commit, probe.dirty) {
                 observed.row.head_sha = Some(commit);
                 observed.row.dirty = Some(dirty);
+            } else {
+                tracing::warn!(target: "csp::git", %session_id, head_observed, dirty_observed,
+                    "gate tree binding unavailable; the row names no commit");
             }
             // A closed receiver means the provider loop is gone; the row has
             // nowhere to be published, so it is dropped rather than logged as
@@ -10347,10 +10352,12 @@ impl Provider {
                         .or_default()
                         .on_item(&item, now_ms())
                     {
-                        // The commit is resolved *now*, at the moment the gate
-                        // closed, not when the row is published: a seat that
-                        // commits between the two would otherwise have its
-                        // green row name a commit the gate never saw.
+                        // Start a bounded observation after receiving the
+                        // result. Scope preparation and Git run asynchronously;
+                        // this is not an execution-time snapshot and cannot
+                        // exclude another command changing the tree first.
+                        // Never replace an unavailable binding with metadata
+                        // obtained by a later periodic probe.
                         self.spawn_gate_head_probe(&session_id, observed);
                     }
                     self.enqueue_transcript(
@@ -10648,6 +10655,30 @@ impl Provider {
         else {
             return Ok(());
         };
+        // The observer needs the original command to recognize a gate, but
+        // this second projection of the transcript must not bypass its privacy
+        // boundary. Use the same workspace-aware redactor before signing.
+        let text = serde_json::json!({
+            "command": observed.row.command,
+            "summary": observed.row.summary,
+        });
+        let workspace = self.state.session(session_id).map(|record| &record.cwd);
+        let (text, redactions) = match workspace {
+            Some(root) => buzz_core::coding_session_context::
+                sanitize_coding_session_context_content_recording_for_workspace(&text, root),
+            None => buzz_core::coding_session_context::
+                sanitize_coding_session_context_content_recording(&text),
+        };
+        self.record_redactions(session_id, &redactions, now_ms());
+        let Some(command) = text.get("command").and_then(serde_json::Value::as_str) else {
+            return Ok(());
+        };
+        let mut observed = observed;
+        observed.row.command = command.to_owned();
+        observed.row.summary = text
+            .get("summary")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
         let payload = CodingSessionObservationPayload {
             schema: CODING_SESSION_OBSERVATION_SCHEMA.to_owned(),
             session_ref,

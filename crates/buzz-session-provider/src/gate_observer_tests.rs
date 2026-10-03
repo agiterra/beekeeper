@@ -366,41 +366,24 @@ fn interleaved_calls_close_against_their_own_ids() {
     );
 }
 
-/// The pre-existing `cd <path> && <gate>` shape, unchanged in spirit: one
-/// gate, wrapped, still gets its own row and still trusts the compound's
-/// exit as that one gate's own — exactly as it did before finding 57, and
-/// for the same reason (nothing else on the line can produce the exit).
+/// A failed wrapper can prevent the only gate from running at all.
 #[test]
-fn a_single_gate_wrapped_by_cd_still_gets_its_own_row_named_for_itself_alone() {
+fn a_failed_cd_chain_does_not_claim_the_gate_failed() {
     let mut observer = GateObserver::default();
     observer.on_item(&tool_call("t1", "cd desktop && pnpm test"), 0);
-    let failed = observer
-        .on_item(&tool_result("t1", true, "1 failing"), 500)
-        .pop()
-        .expect("the single gate segment still closes");
-    assert_eq!(failed.row.gate, "pnpm test");
-    assert_eq!(
-        failed.row.command, "pnpm test",
-        "the row names the gate's own segment, not the cd prefix ahead of it"
-    );
-    assert_eq!(
-        failed.row.outcome,
-        CodingSessionObservationGateOutcome::Failed
-    );
+    assert!(observer
+        .on_item(&tool_result("t1", true, "cd failed"), 500)
+        .is_empty());
 }
 
-/// Finding 57's headline case: three gates, one `;`-joined line, one
-/// `tool_result`. `isError: false` is sound here — nothing follows the last
-/// gate that could itself fail and hide behind it — so every gate segment
-/// gets its own `passed` row, sharing the one summary and duration the
-/// transcript actually carries.
+/// Successful short-circuit chains prove every segment succeeded.
 #[test]
 fn a_composed_line_that_passed_publishes_one_row_per_gate_segment() {
     let mut observer = GateObserver::default();
     observer.on_item(
         &tool_call(
             "t1",
-            "cargo fmt --all --check; cargo clippy -- -D warnings; cargo test",
+            "cargo fmt --all --check && cargo clippy -- -D warnings && cargo test",
         ),
         1_000,
     );
@@ -668,4 +651,118 @@ fn finding_80_a_path_to_the_program_names_the_same_gate_as_the_bare_name() {
     ] {
         assert_eq!(single_gate(command), None, "{command}");
     }
+}
+
+#[test]
+fn console_fences_do_not_replace_the_actual_gate_summary() {
+    for (content, expected) in [
+        ("```console\nRan 1 test\n\nOK\n```", Some("OK")),
+        ("```\nFAILED (failures=1)\n```", Some("FAILED (failures=1)")),
+        (
+            "~~~text\nerror: Recipe `test` failed\n~~~",
+            Some("error: Recipe `test` failed"),
+        ),
+        ("```console\n\n```", None),
+        ("", None),
+    ] {
+        assert_eq!(summary_of(Some(&json!(content))).as_deref(), expected);
+    }
+}
+
+#[test]
+fn semicolon_status_cannot_certify_an_earlier_gate() {
+    for command in [
+        "cargo test; echo done",
+        "cargo fmt; cargo test",
+        "echo banner; cargo test",
+        "cargo fmt && cargo test; echo done",
+    ] {
+        for failed in [true, false] {
+            let mut observer = GateObserver::default();
+            observer.on_item(&tool_call("t1", command), 0);
+            assert!(
+                observer
+                    .on_item(&tool_result("t1", failed, "tail result"), 1)
+                    .is_empty(),
+                "{command}"
+            );
+        }
+    }
+}
+
+#[test]
+fn quoted_semicolons_do_not_disqualify_a_bare_command() {
+    let mut observer = GateObserver::default();
+    observer.on_item(&tool_call("t1", "cargo test 'name;literal'"), 0);
+    assert_eq!(
+        observer.on_item(&tool_result("t1", false, "ok"), 1).len(),
+        1
+    );
+}
+
+#[test]
+fn typed_shell_exit_failure_overrides_acp_completion() {
+    for (is_error, exit_code, expected) in [
+        (
+            Some(false),
+            Some(7),
+            CodingSessionObservationGateOutcome::Failed,
+        ),
+        (
+            Some(true),
+            Some(0),
+            CodingSessionObservationGateOutcome::Failed,
+        ),
+        (
+            Some(false),
+            Some(0),
+            CodingSessionObservationGateOutcome::Passed,
+        ),
+        (None, Some(7), CodingSessionObservationGateOutcome::Failed),
+        (None, Some(0), CodingSessionObservationGateOutcome::Passed),
+        (
+            Some(false),
+            None,
+            CodingSessionObservationGateOutcome::Passed,
+        ),
+    ] {
+        let mut observer = GateObserver::default();
+        observer.on_item(&tool_call("t1", "just test"), 0);
+        let result = json!({"kind": "tool_result", "toolId": "t1", "isError": is_error,
+                            "exitCode": exit_code, "content": "observed output"});
+        let rows = observer.on_item(&result, 1);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].row.outcome, expected);
+    }
+}
+
+#[test]
+fn cwd_changing_commands_cannot_bind_a_gate_to_the_session_repository() {
+    for command in [
+        "cd other && just test",
+        "just test && cd other",
+        "cd other && just test && cd ..",
+        "pushd other && just test",
+        "env -C other just test",
+        "env --chdir=other just test",
+    ] {
+        for is_error in [true, false] {
+            let mut observer = GateObserver::default();
+            observer.on_item(&tool_call("t1", command), 0);
+            assert!(
+                observer
+                    .on_item(&tool_result("t1", is_error, "output"), 1)
+                    .is_empty(),
+                "{command}"
+            );
+        }
+    }
+}
+
+#[test]
+fn malformed_typed_exit_cannot_fall_back_to_success() {
+    let mut observer = GateObserver::default();
+    observer.on_item(&tool_call("t1", "just test"), 0);
+    let result = json!({"kind": "tool_result", "toolId": "t1", "isError": false, "exitCode": "7"});
+    assert!(observer.on_item(&result, 1).is_empty());
 }

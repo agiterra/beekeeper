@@ -419,3 +419,83 @@ async fn two_gates_at_two_commits_name_the_commit_each_one_ran_at() {
     assert_eq!(rows[0].head_sha.as_deref(), Some(first.as_str()));
     assert_eq!(rows[1].head_sha.as_deref(), Some(second.as_str()));
 }
+
+/// Observation rows are a second publication of transcript-derived strings.
+/// Recognizing an absolute tool path must not publish the host path again.
+#[tokio::test]
+async fn observed_gate_text_uses_the_transcripts_workspace_privacy_boundary() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut provider, channel_id, session_id) = observed_fixture(&dir, false);
+    let command = "/Users/private-owner/toolchain/just test";
+    let summary = format!(
+        "failure in {}/src/check.rs; /Users/private-owner/private.txt",
+        checkout(&dir).display()
+    );
+    let observed = gate_observer::ObservedGateRow {
+        row: CodingSessionObservationGateRow {
+            gate: "just test".to_owned(),
+            outcome: CodingSessionObservationGateOutcome::Failed,
+            command: command.to_owned(),
+            summary: Some(summary.clone()),
+            duration_ms: Some(1),
+            head_sha: None,
+            dirty: None,
+        },
+    };
+    provider
+        .publish_observed_gate_row(&session_id, channel_id, observed)
+        .expect("publish");
+    let rows = published_gate_rows(&mut provider).await;
+    assert_eq!(rows.len(), 1);
+    let expected =
+        buzz_core::coding_session_context::sanitize_coding_session_context_content_for_workspace(
+            &serde_json::json!({"command": command, "summary": summary}),
+            &checkout(&dir),
+        );
+    assert_eq!(
+        rows[0].command,
+        expected["command"].as_str().expect("command")
+    );
+    assert_eq!(rows[0].summary.as_deref(), expected["summary"].as_str());
+    let wire = serde_json::to_string(&rows).expect("json");
+    assert!(!wire.contains("/Users/private-owner"));
+    assert!(!wire.contains(checkout(&dir).to_str().expect("path")));
+    assert!(rows[0]
+        .summary
+        .as_deref()
+        .expect("summary")
+        .contains("src/check.rs"));
+}
+
+#[tokio::test]
+async fn observed_gate_credentials_are_neither_published_nor_retained_in_the_vault() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut provider, channel_id, session_id) = observed_fixture(&dir, false);
+    let secret = "ghp_aaaaaaaaaaaaaaaaaaaa";
+    let observed = gate_observer::ObservedGateRow {
+        row: CodingSessionObservationGateRow {
+            gate: "just test".to_owned(),
+            outcome: CodingSessionObservationGateOutcome::Failed,
+            command: "just test".to_owned(),
+            summary: Some(format!("export GITHUB_TOKEN={secret}")),
+            duration_ms: Some(1),
+            head_sha: None,
+            dirty: None,
+        },
+    };
+    provider
+        .publish_observed_gate_row(&session_id, channel_id, observed)
+        .expect("publish");
+    let rows = published_gate_rows(&mut provider).await;
+    assert_eq!(rows.len(), 1);
+    let wire = serde_json::to_string(&rows).expect("json");
+    assert!(!wire.contains(secret));
+    let expected = buzz_core::coding_session_context::sanitize_coding_session_context_content(
+        &serde_json::json!({"summary": format!("export GITHUB_TOKEN={secret}")}),
+    );
+    assert_eq!(rows[0].summary.as_deref(), expected["summary"].as_str());
+    assert!(provider
+        .recorded_redactions
+        .get(&session_id)
+        .is_none_or(|entries| entries.is_empty()));
+}
