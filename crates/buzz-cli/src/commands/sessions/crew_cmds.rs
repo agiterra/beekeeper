@@ -662,9 +662,24 @@ pub async fn cmd_create(
     driver: Option<&str>,
     wait: bool,
     timeout_secs: Option<u64>,
+    cwd: Option<&std::path::Path>,
+    projects_file: Option<&std::path::Path>,
 ) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
     refuse_unsupported_create_flags(actor, role, driver)?;
+    // Refused before anything is written or published: a directory the
+    // provider would ignore, or nowhere to put its hint.
+    let bound_projects_file =
+        match (cwd, projects_file) {
+            (Some(cwd), explicit) => Some(super::handover_reconstruct::resolve_create_directory(
+                cwd, explicit,
+            )?),
+            (None, Some(_)) => return Err(CliError::Usage(
+                "--projects-file locates where the --cwd binding is written, so it requires --cwd"
+                    .to_owned(),
+            )),
+            (None, None) => None,
+        };
     let timeout_secs = if wait {
         let timeout = timeout_secs.unwrap_or(CREATE_WAIT_DEFAULT_SECONDS);
         if !(1..=CREATE_WAIT_MAX_SECONDS).contains(&timeout) {
@@ -725,6 +740,19 @@ pub async fn cmd_create(
     // the lifecycle builder would later refuse.
     build_coding_session_lifecycle_command(channel, &payload).map_err(sdk_err)?;
 
+    // The working-directory binding, on disk before the first write to the
+    // relay: the provider resolves a create's directory from this one-shot
+    // hint when the command arrives (`ProjectsFile::resolve`), and a failure
+    // to write it must stop the create rather than run it somewhere else.
+    let binding = match (bound_projects_file.as_deref(), cwd) {
+        (Some(file), Some(cwd)) => Some(super::handover_reconstruct::bind_pending_directory(
+            file,
+            &command_id,
+            cwd,
+        )?),
+        _ => None,
+    };
+
     // A bare create signed by a managed agent is a new umbrella, not a join.
     // Its attested owner receives an explicit collaborator grant while the
     // agent remains the immutable founder. Explicit coordinates bypass this
@@ -749,6 +777,13 @@ pub async fn cmd_create(
     let builder = build_coding_session_lifecycle_command(channel, &payload).map_err(sdk_err)?;
     let event = client.sign_event_unchecked(builder)?;
     let mut extra = json!({ "commandId": command_id, "seated": false });
+    if let (Some(object), Some(binding)) = (extra.as_object_mut(), binding.as_ref()) {
+        object.insert("cwd".into(), json!(binding.directory.to_string_lossy()));
+        object.insert(
+            "pendingHint".into(),
+            json!(binding.hint_path.to_string_lossy()),
+        );
+    }
     if let (Some(object), Some(value)) = (extra.as_object_mut(), governance.as_ref()) {
         object.extend(
             json!({

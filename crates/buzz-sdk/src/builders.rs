@@ -762,6 +762,46 @@ pub fn build_create_channel(
     Ok(EventBuilder::new(Kind::Custom(9007), "").tags(tags))
 }
 
+/// Build a NIP-29 create-group event (kind 9007) for a project's hidden
+/// session transport channel: the same wire the desktop founder publishes
+/// (`h`, `name`, `["visibility","private"]`, `["channel_type","transport"]`,
+/// optional `about`, then `["project", <coordinate>]`). The relay admits the
+/// project's members through the project ACL rather than channel membership,
+/// and private keeps it from being advertised community-wide.
+///
+/// # Errors
+/// [`SdkError::InvalidTag`] for an empty name or a `project_ref` that is not
+/// a canonical `30621:<owner hex>:<d>` project coordinate.
+pub fn build_create_transport_channel(
+    channel_id: Uuid,
+    name: &str,
+    about: Option<&str>,
+    project_ref: &str,
+) -> Result<EventBuilder, SdkError> {
+    let project = buzz_core::kind::normalize_project_coordinate(project_ref)
+        .filter(|canonical| canonical == project_ref)
+        .ok_or_else(|| {
+            SdkError::InvalidTag(format!(
+                "project {project_ref:?} is not a canonical 30621:<owner hex>:<d> coordinate"
+            ))
+        })?;
+    let name = buzz_core::channel::canonical_channel_name(name);
+    if name.trim().is_empty() {
+        return Err(SdkError::InvalidTag("channel name is required".into()));
+    }
+    let mut tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["name", name])?,
+        tag(&["visibility", Visibility::Private.as_str()])?,
+        tag(&["channel_type", ChannelKind::Transport.as_str()])?,
+    ];
+    if let Some(a) = about {
+        tags.push(tag(&["about", a])?);
+    }
+    tags.push(tag(&["project", &project])?);
+    Ok(EventBuilder::new(Kind::Custom(9007), "").tags(tags))
+}
+
 /// Build a NIP-29 join-request event (kind 9021).
 pub fn build_join(channel_id: Uuid) -> Result<EventBuilder, SdkError> {
     let tags = vec![tag(&["h", &channel_id.to_string()])?];
@@ -3986,6 +4026,40 @@ mod tests {
         let ev = sign(build_set_purpose(cid, "Team coordination").unwrap());
         assert_eq!(ev.kind.as_u16(), 9002);
         assert!(has_tag(&ev, "purpose", "Team coordination"));
+    }
+
+    #[test]
+    fn create_transport_channel_matches_the_desktop_founder_wire() {
+        let cid = uuid();
+        let owner = "ab".repeat(32);
+        let project = format!("30621:{owner}:lab");
+        let ev = sign(
+            build_create_transport_channel(cid, "Lab Sessions", Some("about"), &project).unwrap(),
+        );
+        assert_eq!(ev.kind.as_u16(), 9007);
+        let tags: Vec<Vec<String>> = ev.tags.iter().map(|t| t.clone().to_vec()).collect();
+        let cid = cid.to_string();
+        let name = buzz_core::channel::canonical_channel_name("Lab Sessions").to_owned();
+        let expected: Vec<Vec<&str>> = vec![
+            vec!["h", &cid],
+            vec!["name", &name],
+            vec!["visibility", "private"],
+            vec!["channel_type", "transport"],
+            vec!["about", "about"],
+            vec!["project", &project],
+        ];
+        assert_eq!(tags, expected);
+        for bad in [
+            "lab".to_owned(),
+            format!("30178:{owner}:lab"),
+            format!("30621:{}:lab", "AB".repeat(32)),
+            "30621:abc:lab".to_owned(),
+        ] {
+            assert!(
+                build_create_transport_channel(uuid(), "x", None, &bad).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

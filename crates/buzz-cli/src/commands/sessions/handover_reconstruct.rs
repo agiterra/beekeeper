@@ -591,6 +591,35 @@ pub(super) fn resolve_projects_file(
     }
 }
 
+/// Check a directory a caller names for a create (`bee sessions create
+/// --cwd`) and resolve the projects file its hint goes beside, refusing with
+/// the remedy before anything is written or published.
+///
+/// The provider ignores a hint whose path is not an existing absolute
+/// directory and falls through to the project or channel default, so a
+/// directory that would be ignored is refused here instead of silently
+/// running the session somewhere else.
+pub(super) fn resolve_create_directory(
+    cwd: &Path,
+    explicit_projects_file: Option<&Path>,
+) -> Result<PathBuf, CliError> {
+    if !cwd.is_absolute() {
+        return Err(CliError::Usage(format!(
+            "--cwd {} is not an absolute path, and the provider ignores a relative working \
+             directory; pass the absolute path",
+            cwd.display()
+        )));
+    }
+    if !cwd.is_dir() {
+        return Err(CliError::Usage(format!(
+            "--cwd {} is not an existing directory, and the provider ignores a hint naming one; \
+             create it first",
+            cwd.display()
+        )));
+    }
+    resolve_projects_file(explicit_projects_file, cwd)
+}
+
 /// Write the one-shot hint binding `command_id` to `directory`.
 ///
 /// Atomic at the rename, because the provider may read this directory at any
@@ -626,7 +655,7 @@ pub(super) fn bind_pending_directory(
     }
     let directory = directory.canonicalize().map_err(|error| {
         CliError::Usage(format!(
-            "the recovered checkout {} cannot be resolved to an absolute path ({error}), and the \
+            "the working directory {} cannot be resolved to an absolute path ({error}), and the \
              provider ignores a relative working directory",
             directory.display()
         ))
@@ -636,8 +665,8 @@ pub(super) fn bind_pending_directory(
     let existed = hints.is_dir();
     std::fs::create_dir_all(&hints).map_err(|error| {
         CliError::Usage(format!(
-            "cannot create the pending-hints directory {} ({error}), so the recovered checkout \
-             could not be bound to this create and nothing was claimed",
+            "cannot create the pending-hints directory {} ({error}), so the working directory \
+             could not be bound to this create and nothing was claimed or published",
             hints.display()
         ))
     })?;

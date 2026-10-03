@@ -2781,6 +2781,8 @@ pub async fn dispatch(
             driver,
             wait,
             timeout_secs,
+            cwd,
+            projects_file,
         } => {
             crew_cmds::cmd_create(
                 client,
@@ -2799,6 +2801,8 @@ pub async fn dispatch(
                 driver.as_deref(),
                 wait,
                 timeout_secs,
+                cwd.as_deref(),
+                projects_file.as_deref(),
             )
             .await
         }

@@ -181,6 +181,9 @@ pub enum ChannelType {
     Stream,
     #[value(name = "forum")]
     Forum,
+    /// A project's hidden session transport channel (requires `--project`).
+    #[value(name = "transport")]
+    Transport,
 }
 
 impl std::fmt::Display for ChannelType {
@@ -188,6 +191,7 @@ impl std::fmt::Display for ChannelType {
         match self {
             Self::Stream => write!(f, "stream"),
             Self::Forum => write!(f, "forum"),
+            Self::Transport => write!(f, "transport"),
         }
     }
 }
@@ -926,7 +930,7 @@ pub enum ChannelsCmd {
     },
     /// Create a new channel
     #[command(
-        after_help = "Examples:\n  bee channels create --name general --type stream --visibility open\n  bee channels create --name design --type forum --visibility open --description \"Design discussions\"\n  bee channels create --name standup --type stream --visibility open --ttl 3600  # ephemeral, archived after 1h idle\n  bee channels create --name project-x --template \"Buzz Team\"  # type/visibility/canvas/roster from the template; explicit flags override"
+        after_help = "Examples:\n  bee channels create --name general --type stream --visibility open\n  bee channels create --name design --type forum --visibility open --description \"Design discussions\"\n  bee channels create --name standup --type stream --visibility open --ttl 3600  # ephemeral, archived after 1h idle\n  bee channels create --name project-x --template \"Buzz Team\"  # type/visibility/canvas/roster from the template; explicit flags override\n  bee channels create --name x-sessions --type transport --visibility private --project 30621:<owner-hex>:<d>  # the project's hidden session transport, as the desktop founds it"
     )]
     Create {
         /// Channel name
@@ -954,6 +958,12 @@ pub enum ChannelsCmd {
         /// app's prod app-data dir). Mainly for the dev store or testing.
         #[arg(long, value_name = "PATH")]
         templates_file: Option<String>,
+        /// Project coordinate (`30621:<owner hex>:<d>`) a `--type transport`
+        /// channel belongs to: published as its `project` tag, private, the
+        /// same wire the desktop's session founder uses. Required with
+        /// `--type transport` and refused with any other type.
+        #[arg(long, value_name = "COORDINATE", conflicts_with = "template")]
+        project: Option<String>,
     },
     /// Update channel name, description, visibility, or ephemeral TTL
     #[command(
@@ -3311,7 +3321,7 @@ pub enum SessionsCmd {
     /// founder and grants its attested owner collaborator authority. Passing
     /// session coordinates joins that exact umbrella and never infers a grant.
     #[command(
-        after_help = "Examples:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex> --provider-instance <ref> --provider-authority <hex> --model <id> --brief -\n  bee sessions create --channel <uuid> --provider-instance <ref> --provider-authority <hex> --brief 'start' --wait --timeout-secs 60\n\nRecipe:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex64> --provider-instance <ref> --provider-authority <hex64> --brief -\n\nFor a bare managed-agent create, the CLI first publishes a fresh genesis and a collaborator grant for the cryptographically verified NIP-OA owner; setup failure prevents dispatch. With --wait, the command publishes the create once and waits for the named provider's signed receipt. A confirmed receipt adds the exact cs-target; timeout preserves the commandId and never retries."
+        after_help = "Examples:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex> --provider-instance <ref> --provider-authority <hex> --model <id> --brief -\n  bee sessions create --channel <uuid> --provider-instance <ref> --provider-authority <hex> --brief 'start' --wait --timeout-secs 60\n  bee sessions create --channel <uuid> --provider-instance <ref> --provider-authority <hex> --cwd /abs/dir --projects-file <provider projects.json> --brief -\n\nRecipe:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex64> --provider-instance <ref> --provider-authority <hex64> --brief -\n\nFor a bare managed-agent create, the CLI first publishes a fresh genesis and a collaborator grant for the cryptographically verified NIP-OA owner; setup failure prevents dispatch. With --wait, the command publishes the create once and waits for the named provider's signed receipt. A confirmed receipt adds the exact cs-target; timeout preserves the commandId and never retries."
     )]
     Create {
         /// Channel UUID to publish the create into
@@ -3359,6 +3369,19 @@ pub enum SessionsCmd {
         /// Maximum seconds to wait after relay acceptance (1..=300).
         #[arg(long = "timeout-secs")]
         timeout_secs: Option<u64>,
+        /// Absolute, existing directory the execution runs in. A create has no
+        /// directory field, so this writes a one-shot hint for the create's
+        /// commandId beside the provider's projects file before anything is
+        /// published — the same binding `bee sessions handover continue --cwd`
+        /// writes. Only a provider on this machine reading that projects file
+        /// sees it.
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        /// The provider's projects file, whose sibling `pending-hints/`
+        /// directory receives the --cwd binding. Defaults to
+        /// $BUZZ_CSP_PROJECTS_FILE; the projects file itself is never modified.
+        #[arg(long = "projects-file", requires = "cwd")]
+        projects_file: Option<PathBuf>,
     },
     /// Ask an umbrella's host to seat a new agent on a role (kind 44221
     /// `session.hire`).

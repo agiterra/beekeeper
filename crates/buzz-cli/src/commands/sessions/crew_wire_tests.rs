@@ -424,6 +424,8 @@ async fn managed_bare_create_founds_grants_verified_owner_then_dispatches() {
         None,
         false,
         None,
+        None,
+        None,
     )
     .await
     .expect_err("invalid create must fail before governance setup");
@@ -448,6 +450,8 @@ async fn managed_bare_create_founds_grants_verified_owner_then_dispatches() {
         None,
         None,
         false,
+        None,
+        None,
         None,
     )
     .await
@@ -558,6 +562,8 @@ async fn creator_owner_grant_failure_prevents_session_dispatch() {
         None,
         false,
         None,
+        None,
+        None,
     )
     .await
     .expect_err("grant refusal must stop before create");
@@ -643,6 +649,8 @@ async fn managed_join_never_infers_a_creator_owner_grant() {
         None,
         false,
         None,
+        None,
+        None,
     )
     .await
     .expect("join create");
@@ -689,6 +697,8 @@ async fn invalid_owner_attestation_fails_before_any_session_write() {
         None,
         None,
         false,
+        None,
+        None,
         None,
     )
     .await
@@ -763,6 +773,8 @@ async fn lost_managed_create_response_reports_unconfirmed_command() {
         None,
         None,
         false,
+        None,
+        None,
         None,
     )
     .await
@@ -915,6 +927,8 @@ async fn create_wait_uses_one_publish_and_exact_receipt_query() {
             None,
             true,
             Some(1),
+            None,
+            None,
         )
         .await
     }
@@ -980,5 +994,142 @@ async fn create_wait_uses_one_publish_and_exact_receipt_query() {
     assert_eq!(query.get("target"), Some(&first_target));
     assert!(session_url.contains("target=coding-session%2Fv1%7C"));
     drop(records);
+    server.abort();
+}
+
+/// `bee sessions create --cwd` binds the create's directory through the
+/// same one-shot hint the handover reconstruction writes: on disk, naming
+/// this create's commandId and the canonical directory, before the relay
+/// sees the create. A directory the provider would ignore, or a missing
+/// projects file, is refused before anything is written or published.
+#[tokio::test]
+async fn create_with_cwd_writes_the_hint_before_publishing_the_create() {
+    use axum::body::Bytes;
+    use axum::extract::State;
+    use axum::response::Json;
+    use axum::routing::post;
+    use axum::Router;
+    use std::sync::{Arc, Mutex};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let projects = dir.path().join("provider/projects.json");
+    let workdir = dir.path().join("lab work");
+    std::fs::create_dir_all(&workdir).expect("workdir");
+    let hints = super::handover_reconstruct::pending_hints_dir(&projects);
+
+    // Each published event, with the hint files present when it arrived.
+    type Seen = Arc<Mutex<Vec<(nostr::Event, Vec<String>)>>>;
+    let published: Seen = Arc::new(Mutex::new(Vec::new()));
+    let watched = hints.clone();
+    let app = Router::new()
+        .route(
+            "/events",
+            post(move |State(published): State<Seen>, body: Bytes| {
+                let watched = watched.clone();
+                async move {
+                    let event: nostr::Event = serde_json::from_slice(&body).expect("event JSON");
+                    let event_id = event.id.to_hex();
+                    let present = std::fs::read_dir(&watched)
+                        .map(|entries| {
+                            entries
+                                .filter_map(Result::ok)
+                                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    published.lock().expect("published").push((event, present));
+                    Json(serde_json::json!({
+                        "event_id": event_id,
+                        "accepted": true,
+                        "message": ""
+                    }))
+                }
+            }),
+        )
+        .with_state(published.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let url = format!("http://{}", listener.local_addr().expect("address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("recording relay");
+    });
+    let client = BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+    let provider = nostr::Keys::generate().public_key().to_hex();
+    let session_ref = "10e635a2-4150-4f65-ad5d-37c2afb0dd93";
+    let genesis_ref = "ab".repeat(32);
+
+    let create = |cwd: Option<std::path::PathBuf>, projects_file: Option<std::path::PathBuf>| {
+        let client = &client;
+        let provider = provider.clone();
+        let genesis_ref = genesis_ref.clone();
+        async move {
+            cmd_create(
+                client,
+                CHANNEL,
+                Some(session_ref),
+                Some(&genesis_ref),
+                "provider-primary",
+                &provider,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                false,
+                None,
+                cwd.as_deref(),
+                projects_file.as_deref(),
+            )
+            .await
+        }
+    };
+
+    for (cwd, why) in [
+        (std::path::PathBuf::from("relative/dir"), "not absolute"),
+        (dir.path().join("missing"), "not an existing directory"),
+    ] {
+        let error = create(Some(cwd), Some(projects.clone()))
+            .await
+            .expect_err(why);
+        assert!(matches!(error, CliError::Usage(_)), "{why}: {error:?}");
+    }
+    let error = create(None, Some(projects.clone()))
+        .await
+        .expect_err("projects file without cwd");
+    assert!(matches!(error, CliError::Usage(message) if message.contains("requires --cwd")));
+    assert!(published.lock().expect("published").is_empty());
+    assert!(!hints.exists(), "nothing was written for a refused create");
+
+    create(Some(workdir.clone()), Some(projects.clone()))
+        .await
+        .expect("bound create");
+    let seen = published.lock().expect("published");
+    assert_eq!(seen.len(), 1, "the join publishes only the create");
+    let (event, present) = &seen[0];
+    let payload: CodingSessionLifecycleCommandPayload =
+        serde_json::from_str(&event.content).expect("create payload");
+    let hint_name = format!("{}.json", payload.command_id);
+    assert_eq!(
+        present,
+        &vec![hint_name.clone()],
+        "the hint was on disk when the create arrived"
+    );
+    let hint: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(hints.join(&hint_name)).expect("hint"))
+            .expect("hint JSON");
+    assert_eq!(hint["commandId"], payload.command_id);
+    assert_eq!(
+        hint["path"],
+        serde_json::json!(workdir.canonicalize().expect("canonical").to_string_lossy())
+    );
+    assert!(
+        !projects.exists(),
+        "the projects file itself is never written"
+    );
+    drop(seen);
     server.abort();
 }

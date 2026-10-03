@@ -290,12 +290,36 @@ pub async fn cmd_create_channel(
     visibility: &str,
     description: Option<&str>,
     ttl: Option<i64>,
+    project: Option<&str>,
 ) -> Result<(), CliError> {
-    match channel_type {
-        "stream" | "forum" => {}
+    match (channel_type, project) {
+        ("stream" | "forum", None) => {}
+        ("transport", Some(_)) => {
+            return cmd_create_transport_channel(
+                client,
+                name,
+                visibility,
+                description,
+                ttl,
+                project,
+            )
+            .await
+        }
+        ("transport", None) => {
+            return Err(CliError::Usage(
+                "--type transport is a project's session transport channel and requires \
+                 --project <30621:owner:d>"
+                    .to_owned(),
+            ))
+        }
+        ("stream" | "forum", Some(_)) => {
+            return Err(CliError::Usage(format!(
+                "--project is only for --type transport (got --type {channel_type})"
+            )))
+        }
         _ => {
             return Err(CliError::Usage(format!(
-                "--type must be 'stream' or 'forum' (got: {channel_type})"
+                "--type must be 'stream', 'forum' or 'transport' (got: {channel_type})"
             )))
         }
     }
@@ -326,6 +350,42 @@ pub async fn cmd_create_channel(
         buzz_sdk::build_create_channel(channel_uuid, name, Some(vis), Some(ct), description, ttl)
             .map_err(|e| CliError::Other(format!("build_create_channel failed: {e}")))?;
 
+    let event = client.sign_event(builder)?;
+    let resp = client.submit_event(event).await?;
+    print_create_response(&resp, "channel_id", &channel_uuid.to_string());
+    Ok(())
+}
+
+/// `bee channels create --type transport --project <coordinate>`: a project's
+/// hidden, private session transport channel, on the same wire the desktop
+/// founder publishes ([`buzz_sdk::build_create_transport_channel`]).
+async fn cmd_create_transport_channel(
+    client: &BuzzClient,
+    name: &str,
+    visibility: &str,
+    description: Option<&str>,
+    ttl: Option<i64>,
+    project: Option<&str>,
+) -> Result<(), CliError> {
+    let project = project.ok_or_else(|| CliError::Usage("--project is required".to_owned()))?;
+    if visibility != "private" {
+        return Err(CliError::Usage(format!(
+            "a transport channel is private, as the desktop founds it (got --visibility \
+             {visibility}): an open one would advertise the project's session transport \
+             community-wide"
+        )));
+    }
+    if ttl.is_some() {
+        return Err(CliError::Usage(
+            "--ttl is refused for a transport channel: archiving it would cut the project's \
+             sessions off their transport"
+                .to_owned(),
+        ));
+    }
+    let channel_uuid = Uuid::new_v4();
+    let builder =
+        buzz_sdk::build_create_transport_channel(channel_uuid, name, description, project)
+            .map_err(|error| CliError::Usage(error.to_string()))?;
     let event = client.sign_event(builder)?;
     let resp = client.submit_event(event).await?;
     print_create_response(&resp, "channel_id", &channel_uuid.to_string());
@@ -1496,6 +1556,7 @@ pub async fn dispatch(
             ttl,
             template,
             templates_file,
+            project,
         } => {
             if let Some(template_name) = template {
                 cmd_create_channel_from_template(
@@ -1523,6 +1584,7 @@ pub async fn dispatch(
                     &visibility.to_string(),
                     description.as_deref(),
                     ttl,
+                    project.as_deref(),
                 )
                 .await
             }
@@ -2922,5 +2984,96 @@ mod tests {
             map.values().all(|h| h.profile_updated_at.is_none()),
             "the hung profile query must contribute nothing: {map:?}"
         );
+    }
+
+    /// `--type transport --project` publishes the desktop founder's exact
+    /// create; every combination the desktop never publishes is refused
+    /// before anything reaches the relay.
+    #[tokio::test]
+    async fn transport_create_mirrors_the_desktop_and_refuses_the_rest() {
+        use axum::body::Bytes;
+        use axum::extract::State;
+        use axum::routing::post;
+        use axum::Router;
+        use std::sync::{Arc, Mutex};
+
+        let published = Arc::new(Mutex::new(Vec::<nostr::Event>::new()));
+        let app = Router::new()
+            .route(
+                "/events",
+                post(
+                    |State(published): State<Arc<Mutex<Vec<nostr::Event>>>>,
+                     body: Bytes| async move {
+                        let event: nostr::Event =
+                            serde_json::from_slice(&body).expect("event JSON");
+                        let event_id = event.id.to_hex();
+                        published.lock().expect("published").push(event);
+                        axum::Json(json!({
+                            "event_id": event_id, "accepted": true, "message": ""
+                        }))
+                    },
+                ),
+            )
+            .with_state(published.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("recording relay");
+        });
+        let client = BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+        let project = format!("30621:{}:lab", "ab".repeat(32));
+
+        for (channel_type, visibility, ttl, project_ref) in [
+            ("transport", "private", None, None),
+            ("stream", "private", None, Some(project.as_str())),
+            ("forum", "open", None, Some(project.as_str())),
+            ("transport", "open", None, Some(project.as_str())),
+            ("transport", "private", Some(3600), Some(project.as_str())),
+            ("transport", "private", None, Some("30621:not-a-key:lab")),
+        ] {
+            let error = super::cmd_create_channel(
+                &client,
+                "lab-sessions",
+                channel_type,
+                visibility,
+                None,
+                ttl,
+                project_ref,
+            )
+            .await
+            .expect_err("refused");
+            assert!(
+                matches!(error, CliError::Usage(_)),
+                "{channel_type}/{visibility}/{ttl:?}/{project_ref:?}: {error:?}"
+            );
+        }
+        assert!(published.lock().expect("published").is_empty());
+
+        super::cmd_create_channel(
+            &client,
+            "lab-sessions",
+            "transport",
+            "private",
+            Some("Lab sessions"),
+            None,
+            Some(&project),
+        )
+        .await
+        .expect("transport create");
+        let events = published.lock().expect("published");
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.kind.as_u16(), 9007);
+        let tags: Vec<Vec<String>> = event.tags.iter().map(|t| t.clone().to_vec()).collect();
+        assert_eq!(tags.len(), 6, "{tags:?}");
+        assert_eq!(tags[1], vec!["name", "lab-sessions"]);
+        assert_eq!(tags[2], vec!["visibility", "private"]);
+        assert_eq!(tags[3], vec!["channel_type", "transport"]);
+        assert_eq!(tags[4], vec!["about", "Lab sessions"]);
+        assert_eq!(tags[5], vec!["project".to_owned(), project.clone()]);
+        drop(events);
+        server.abort();
     }
 }
