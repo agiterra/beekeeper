@@ -1,8 +1,10 @@
 # Working in agiterra/beekeeper
 
-This repo is **Beekeeper**, agiterra's fork of
-[block/buzz](https://github.com/block/buzz). It is a single-branch repo: `main`
-is the product, and upstream is merged in occasionally.
+This repo is **Beekeeper**. It began as a fork of
+[block/buzz](https://github.com/block/buzz) — which is why the crates are still
+named `buzz-*` — and is now its own product: nothing is merged in from that
+repository and nothing is pushed to it. It is a single-branch repo, and `main`
+is the product.
 
 ## Remotes
 
@@ -10,12 +12,12 @@ is the product, and upstream is merged in occasionally.
 |---|---|---|
 | `origin` | `hive.agiterra.org/git/<owner>/agiterra-beekeeper` | The relay's **own** git hosting — Beekeeper serving its own source. **`main` tracks `origin/main`**, and this is where you push. Needs Nostr credentials; run `just install-git-credentials`. |
 | `upstream` | [agiterra/beekeeper](https://github.com/agiterra/beekeeper) | GitHub. Still what **Woodpecker watches**, so it is what CI and the relay deploy from — kept in step automatically by the forge's mirror bridge (see § The relay is canonical). Fetch-only from clones; never push here. |
-| `vanilla` | [agiterra/buzz](https://github.com/agiterra/buzz) | The block/buzz mirror, plus the one CI patch that runs it on ci.agiterra.org. Upstream work is merged or cherry-picked from here. |
 
-This is not the arrangement described before 2026-08-24, when `origin` was the
-GitHub repo and there was no `upstream`. Both names moved at once, so anything
-you remember about which is which is probably stale — `git remote -v` is the
-only reliable answer.
+Two remotes, both agiterra's. This is not the arrangement described before
+2026-08-24, when `origin` was the GitHub repo and there was no `upstream`; both
+names moved at once, so anything you remember about which is which is probably
+stale — `git remote -v` is the only reliable answer. Beware the word in older
+documents and in the ledger, too: there, "upstream" means `block/buzz`.
 
 ### One push, one destination (since 2026-08-26)
 
@@ -46,11 +48,11 @@ against GitHub's ~400 ms), and the pre-push guards resolve their base from
 `main@{upstream}`, so they run on every push. Both were verified against the
 relay base after the switch.
 
-There is deliberately **no `block/buzz` remote**. `vanilla` already carries
-that history, so a second path to the same commits earned nothing and cost 827
-remote-tracking refs. If the mirror ever stops being synced, `git remote add
-block https://github.com/block/buzz.git` puts the old path back in one command
-— note the name, since `upstream` is taken now.
+There is deliberately **no `block/buzz` remote and no vanilla mirror**. Both
+were removed on 2026-10-03 along with the last of the fork process: `blockbuzz`
+cost 1,167 remote-tracking refs and `vanilla` 2, for history nothing here reads
+any more. Adding either back is one `git remote add`, but there is no workflow
+that wants one — see the note on the fork at the top of this file.
 
 **Do not hard-code `origin` in tooling.** Two pre-push guards did, and both
 broke the day the names moved — silently, in different ways:
@@ -304,53 +306,22 @@ Two things to get right:
 Re-run the gate *after* rebasing, not before. A branch that was green against
 an older `main` proves nothing about the base it will actually land on.
 
-**This does not apply to `vanilla/main`** — see § Merging upstream, which
-explains why upstream history is merged instead.
+Every branch here is rebased. There is no longer any exception: the one that
+existed was upstream history, and this repo no longer tracks any.
 
 This repo previously carried an upstreamable-feature-branch model
 (`feature/*` rebased onto a `main` mirror, reassembled through
 `integration/glue` into a force-pushed `integrated`). That is gone. Upstream
-receives far too many submissions for ours to land in useful time, so the
+received far too many submissions for ours to land in useful time, so the
 branches were being maintained for a merge that was never going to happen —
-and two of them had already stopped building standalone. The vanilla mirror,
-and the one CI patch that runs on ci.agiterra.org, now live in
-[agiterra/buzz](https://github.com/agiterra/buzz).
+and two of them had already stopped building standalone. That was the first step
+of the separation finished on 2026-10-03.
 
 Those branches were retired locally on 2026-08-22, along with the pre-rebrand
 `feature/*` lineage whose content is already on `main` under different SHAs.
 Nothing was thrown away: each survives as a local-only `archive/<branch>` tag
 (`git tag -l 'archive/*'`), which keeps the commits reachable without putting
 them back in `git branch`. They are not pushed.
-
-## Merging upstream
-
-```sh
-git fetch vanilla
-git merge vanilla/main         # merge, never rebase — see below
-```
-
-Upstream is the one place this repo does **not** rebase, and the reason is not
-style. Those commits already exist in `agiterra/buzz` and in `block/buzz`;
-rebasing them would mint new SHAs for history other repos share, so every later
-merge would conflict against its own phantom copies. Topic branches carry no
-such obligation — nobody else has them — which is why they are rebased.
-
-Three things to check before starting one:
-
-- **`vanilla/main` is not pristine block/buzz.** It carries this fork's CI
-  patch on top (`12201c49b`, BIP-340 validation of `oa[0]` in
-  `git-sign-nostr`), so a merge brings that along. Wanted today; slated for
-  revert once upstream takes the fix.
-
-- **Migration numbering.** This fork owns `migrations/0032`–`0040`. If upstream
-  has added migrations past `0031`, the numbers collide and the renumbering has
-  to be resolved deliberately — a migration that changes number after it has run
-  anywhere is a data-loss hazard, not a merge conflict.
-- **Feature collision.** Upstream has independently shipped its own `projects`
-  and `pulse`. The protocol layer is compatible (`KIND_PROJECT = 30621` is the
-  same number on both sides), but the desktop screens are two independent
-  redesigns of one surface. Picking hunks there produces a mixed, broken UI;
-  decide whether to retire ours or keep it before touching the files.
 
 ## CI
 
@@ -614,12 +585,14 @@ The relay deploys itself. **One deployer script,
 |---|---|---|---|---|
 | `beekeeper-autodeploy.timer` | `/etc/default/beekeeper-autodeploy` | `agiterra/beekeeper` (Woodpecker `repo_id=2`) | `main` | `hive` → `/opt/beekeeper` |
 
-The vanilla relay (`buzz-autodeploy`, `agiterra/buzz` / `repo_id=1`, the `buzz`
-instance behind lightyear.agiterra.org) was retired on 2026-09-29.
+A second relay used to deploy the vanilla mirror (`buzz-autodeploy`,
+`agiterra/buzz` / `repo_id=1`, the `buzz` instance behind
+lightyear.agiterra.org). It was retired on 2026-09-29 and the mirror itself on
+2026-10-03.
 
-`REPO_ID` is still the load-bearing line: Woodpecker's pipelines table keeps
-repo 1's `main` history, so an unpinned query could select a vanilla build, and
-deploying it would come up *healthy*.
+`REPO_ID` is still the load-bearing line even so: Woodpecker's pipelines table
+keeps repo 1's `main` history, so an unpinned query could still select one of
+those builds, and deploying it would come up *healthy*.
 
 Every 5 minutes it polls Woodpecker's sqlite, and when the newest push pipeline
 for its repo and branch is green it exports the source from the forge git
@@ -704,8 +677,8 @@ Resolution (`crates/buzz-relay/build.rs` / `src/build_provenance.rs`, and see
    a native `cargo build`.
 2. `BUZZ_SOURCE_SHA`, the build-arg `Dockerfile` already declares (`ARG`
    default `unknown`, then `ENV`) and every image-build path threads through:
-   `.github/workflows/docker.yml` (`github.sha`, for the public
-   `ghcr.io/block/buzz` image) and `deploy/autodeploy/autodeploy` (the full
+   `.github/workflows/docker.yml` (`github.sha`, for the published relay
+   image) and `deploy/autodeploy/autodeploy` (the full
    `$sha` it already selects from Woodpecker, for hive). This is the
    case `git` cannot answer on its own: the relay's `.dockerignore` excludes
    `.git/`, and `deploy/autodeploy/autodeploy` builds from a `git archive`

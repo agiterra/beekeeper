@@ -116,7 +116,7 @@ New to Buzz? Pick the path that matches you.
 
 ### I just want to try the app
 
-Grab a packaged build from the [latest release](https://github.com/block/buzz/releases/latest):
+Grab a packaged build from the [latest release](https://github.com/agiterra/beekeeper/releases/latest):
 
 | Platform | File |
 |---|---|
@@ -140,12 +140,6 @@ To run a relay for your team without managing servers, you can deploy one to Rai
 
 See [here](https://engineering.block.xyz/blog/run-your-own-buzz-relay) for details.
 
-### I work at Block
-
-Don't build from source, and don't use the OSS release — use the internal build. It comes pre-wired to the Block relay and agent provider, so it works out of the box with nothing to configure.
-
-Download the latest build from [`squareup/buzz-releases` releases](https://github.com/squareup/buzz-releases/releases/latest) and install it.
-
 ### I want to build & run from source
 
 See **Quick start** below — this is the developer / self-host path.
@@ -160,7 +154,7 @@ You also need **git 2.46 or newer** — the relay authenticates git with a Nostr
 
 **Once:**
 ```bash
-git clone https://github.com/block/buzz.git && cd buzz
+git clone https://github.com/agiterra/beekeeper.git && cd beekeeper
 . ./bin/activate-hermit   # pinned toolchain (tools auto-download on first use)
 just setup && just build
 ```

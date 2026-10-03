@@ -1,16 +1,17 @@
-# Contributing to Buzz
+# Contributing to Beekeeper
 
-> **agiterra fork note** — this is Beekeeper, agiterra's fork of block/buzz.
-> The guide below is upstream's and still describes the code accurately. For how
-> *this* repo works — single `main` branch, ordinary topic branches, upstream
-> merged in occasionally, CI on ci.agiterra.org — see
+> **Where this guide came from** — Beekeeper began as a fork of block/buzz, and
+> most of this guide is inherited from there. It still describes the code
+> accurately, which is why it is kept. What it does *not* describe is how this
+> repo is run: a single `main` branch, ordinary short-lived topic branches that
+> are rebased and never merged, no upstream to track, and CI on
+> ci.agiterra.org. For that, see
 > [docs/INTEGRATION.md](docs/INTEGRATION.md).
 
-Welcome, and thank you for your interest in contributing! Buzz is an
-open-source project and we're glad you're here. This guide will help you
-get from zero to a merged pull request.
+Welcome, and thank you for your interest in contributing! This guide will help
+you get from zero to a merged pull request.
 
-If you have questions that aren't answered here, [open an issue](https://github.com/block/buzz/issues/new).
+If you have questions that aren't answered here, [open an issue](https://github.com/agiterra/beekeeper/issues/new).
 
 ---
 
@@ -41,7 +42,7 @@ unacceptable behavior to **conduct@buzz-relay.org**.
 
 ## Before You Open a PR
 
-Before starting, search [open PRs](https://github.com/block/buzz/pulls) and [open issues](https://github.com/block/buzz/issues) for duplicates — someone may already be working on the same thing. When you open your PR, link the closest existing one in the description (or say "none found").
+Before starting, search [open PRs](https://github.com/agiterra/beekeeper/pulls) and [open issues](https://github.com/agiterra/beekeeper/issues) for duplicates — someone may already be working on the same thing. When you open your PR, link the closest existing one in the description (or say "none found").
 
 For anything beyond a small fix, opening an issue first is strongly recommended. Describe the problem and proposed solution so a maintainer can acknowledge the approach before you build — it avoids two people building the same thing in parallel.
 
@@ -140,7 +141,7 @@ clippy`, `just test-unit`, and `just test` need no GTK.
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/block/buzz.git
+git clone https://github.com/agiterra/beekeeper.git
 cd buzz
 
 # 2. Activate Hermit (optional but recommended)
@@ -448,21 +449,18 @@ to existing clients.
 
 ## Ecosystem
 
-Buzz is developed across multiple repositories. This repo (`block/buzz`)
-is the open-source home for all application code — the relay, desktop app,
-mobile app, CLI, and agent harness. Internal repositories handle
-enterprise-signed builds and infrastructure deployment.
+This repo holds all of the application code — the relay, desktop app, web
+client, mobile app, CLI and agent harness — and its own deploy configuration
+under `deploy/`. The project's roles, plans and ledger live in a second
+repository on the relay; everything else is here.
 
-See [AGENTS.md § Ecosystem](AGENTS.md#ecosystem) for the full repo table and
-dependency diagram.
+See [AGENTS.md § Ecosystem](AGENTS.md#ecosystem) for the repo and pipeline
+diagram, and [RELEASING.md](RELEASING.md) for the release process.
 
-**External contributors:** Fork `block/buzz`, open a PR, and CI runs
-automatically. No special access is required.
-
-**Block team members:** See the internal
-[sprout-releases CONTRIBUTING.md](https://github.com/squareup/sprout-releases/blob/main/CONTRIBUTING.md)
-for team access setup, onboarding, and the full repo inventory. See
-[RELEASING.md](RELEASING.md) for the release process.
+**Contributors:** fork [agiterra/beekeeper](https://github.com/agiterra/beekeeper),
+open a PR, and CI runs automatically. No special access is required. Note that
+GitHub is a mirror: `hive.agiterra.org` is canonical and is where maintainers
+push, so a merged PR reaches GitHub by way of the relay.
 
 ---
 

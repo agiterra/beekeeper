@@ -27,7 +27,12 @@ keypair.
 
 - Requires Docker Compose v2.24.4 or newer; the TLS override uses Compose's
   `!reset` tag to remove the direct relay port when Caddy terminates HTTPS.
-- Default `BUZZ_IMAGE` tracks `ghcr.io/block/buzz:main` for early testing. Pin it to `ghcr.io/block/buzz:sha-<7>` or a semver release tag for production once available.
+- `BUZZ_IMAGE` has **no published default any more**: it defaults to
+  `beekeeper-relay:latest`, which is a local build, because Beekeeper does not
+  publish a relay image. Build one with `docker build -t beekeeper-relay:latest
+  .` from the repository root, or set `BUZZ_IMAGE` to whatever registry you
+  publish to. The hive relay never relies on this default — its deployer sets
+  `BUZZ_IMAGE` to the image it just built on the host.
 - Keep `BUZZ_RELAY_PRIVATE_KEY`, `BUZZ_GIT_HOOK_HMAC_SECRET`, database/Redis,
   and S3 secrets stable across restarts.
 - `RELAY_OWNER_PUBKEY` is intentionally not prefixed with `BUZZ_`; it must be a

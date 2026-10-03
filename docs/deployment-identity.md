@@ -1,5 +1,16 @@
 # Relay deployment identity
 
+> **This describes the inherited block/buzz publishing lane, and does not
+> describe how the hive relay is deployed today.** The attestations and the
+> `cosign` recipes below belong to images published by Block's Docker workflow.
+> Beekeeper's relay deploys itself by building its own image *on the relay
+> host* from a `git archive` export of a green pipeline's commit
+> ([docs/INTEGRATION.md](INTEGRATION.md) § Deploying), so there is no registry
+> push and **no attestation to verify**. The commit a running relay was built
+> from is disclosed over NIP-11 as `software_commit` instead. Keep this document
+> for the day Beekeeper publishes signed images of its own; do not read it as a
+> check anyone can run against hive now.
+
 Canonical relay images from `ghcr.io/block/buzz` carry two signed
 attestations:
 

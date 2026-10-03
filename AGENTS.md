@@ -47,40 +47,35 @@
 > strike the losing claim where it stands; if the evidence cannot settle it,
 > mark the state unknown and keep both links.
 
-> **This repo is Beekeeper, agiterra's fork of
-> [block/buzz](https://github.com/block/buzz).** It is a single-branch repo:
-> `main` is the product and topic branches are ordinary and short-lived. There
-> is no assembly ceremony and no split step; build on a topic branch, let the
-> user test it, land it.
+> **This repo is Beekeeper.** It began in 2025 as a fork of
+> [block/buzz](https://github.com/block/buzz), which is why so much of the tree
+> is still named `buzz-*`, but it is its own product now: nothing is pulled from
+> that repository and nothing is pushed to it. There is no vanilla mirror to
+> merge and no upstream to track. A `block/buzz` link in an older document is
+> history, not a process — if you find one that reads as an instruction, it is
+> stale and worth deleting.
+>
+> It is a single-branch repo: `main` is the product and topic branches are
+> ordinary and short-lived. There is no assembly ceremony and no split step;
+> build on a topic branch, let the user test it, land it.
 >
 > **Topic branches are rebased onto `main`, never merged into it.** They are
 > short-lived and single-author, so rewriting them costs nothing and keeps
-> `main` linear. Use `git rebase --signoff main` — rebase onto the local
-> branch, not a remote-tracking ref, because the remote names moved on
-> 2026-08-24 and any command naming one dates quickly. A plain `git rebase`
-> preserves existing trailers, but any commit it recreates without one fails
-> the DCO gate. Force-push the topic branch afterwards; that is expected.
+> `main` linear. Use `git rebase --signoff main` — rebase onto the local branch
+> rather than a remote-tracking ref, because remote names have moved before and
+> any command naming one dates quickly. A plain `git rebase` preserves existing
+> trailers, but any commit it recreates without one fails the DCO gate.
+> Force-push the topic branch afterwards; that is expected.
 >
-> **The vanilla mirror is the exception: `vanilla/main` is merged, never
-> rebased.** Those commits already exist in `agiterra/buzz` and `block/buzz`,
-> so rebasing would rewrite history other repos share and make every later
-> merge conflict against its own phantom copies. (Read "upstream" carefully in
-> older documents: it used to mean block/buzz, and since 2026-08-24 there is
-> also a *remote* named `upstream`, which is the GitHub copy of this fork.) See [docs/INTEGRATION.md](docs/INTEGRATION.md),
-> especially the three checks before starting an upstream merge (the CI patch
-> `vanilla/main` carries, migration numbering, and the upstream
-> `projects`/`pulse` collision).
->
-> The near-pristine vanilla mirror, and the single CI patch that runs it on
-> ci.agiterra.org, live in
-> [agiterra/buzz](https://github.com/agiterra/buzz) — not here.
->
-> **Three remotes, and the names moved recently.** `origin` is the relay's own
-> git hosting (`hive.agiterra.org`), `upstream` is
-> [agiterra/beekeeper](https://github.com/agiterra/beekeeper) where `main`
-> lives and CI watches, `vanilla` is the block/buzz mirror. Run `git remote -v`
-> rather than trusting memory, and **never hard-code a remote name in tooling**
-> — two pre-push guards did and both broke silently the day the names moved.
+> **Two remotes, both ours.** `origin` is the relay's own git hosting
+> (`hive.agiterra.org`) and is canonical; `upstream` is
+> [agiterra/beekeeper](https://github.com/agiterra/beekeeper), the GitHub copy
+> CI watches, which a bridge fills from `origin` within seconds of a push — so
+> you push to `origin` only. Beware the name: in documents written before
+> 2026-08-24, and in the ledger, "upstream" means `block/buzz`; here it means
+> agiterra's own GitHub copy. Run `git remote -v` rather than trusting memory,
+> and **never hard-code a remote name in tooling** — two pre-push guards did and
+> both broke silently the day the names moved.
 > See [docs/INTEGRATION.md](docs/INTEGRATION.md) § Remotes.
 >
 > **Pushing to `origin` needs Nostr credentials — run `just
@@ -90,7 +85,7 @@
 > The recipe writes no key material: the key file is the human's to create.
 > See [docs/INTEGRATION.md](docs/INTEGRATION.md) § Pushing to the relay.
 
-This guide is for AI agents contributing to the Buzz codebase. It covers
+This guide is for AI agents contributing to the Beekeeper codebase. It covers
 agent-specific context and conventions. For general contributor info (setup,
 code style, PR process, architecture), see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -117,27 +112,29 @@ and runtime evidence answer different questions.
 
 ## Ecosystem
 
-Buzz spans five repos. This one (`block/buzz`) is the OSS source for the relay, desktop, mobile, and CLI. The others handle internal builds and deployment:
+Beekeeper is two repositories and one pipeline, all agiterra's own. Everything
+that used to live in Block's build and deploy repos is either in this tree under
+`deploy/` or on the relay host.
 
-| Repo | Purpose |
-|------|---------|
-| [block/buzz](https://github.com/block/buzz) | OSS source — relay, desktop app, mobile app, CLI, agent harness |
-| [squareup/buzz-releases](https://github.com/squareup/buzz-releases) | Buildkite pipelines producing Block-signed macOS + iOS builds with `-block` desktop version suffix |
-| [squareup/sprout-oss](https://github.com/squareup/sprout-oss) | CI pipeline building the relay Docker image and pushing to internal ECR |
-| [squareup/block-coder-tf-stacks](https://github.com/squareup/block-coder-tf-stacks) | Terraform + ArgoCD deploying the relay to the staging Kubernetes cluster |
-| [squareup/sprout-backend-blox](https://github.com/squareup/sprout-backend-blox) | Desktop backend provider script connecting Blox workstation agents to the relay |
+| Where | What |
+|-------|------|
+| this repo | relay, desktop, web, mobile, CLI, agent harness — and its own deploy configuration under `deploy/` |
+| `bee-keeper-beekeeper-agents` on hive | the project's roles, plans, ledger and `team.yml`. See the top of this file; `just agents-repo` clones it beside this checkout |
+| [ci.agiterra.org](https://ci.agiterra.org) | Woodpecker runs `.woodpecker/` on pushes to `main` and on PRs |
+| the relay host | `beekeeper-autodeploy.timer` deploys the newest green `main` pipeline into `/opt/beekeeper` |
 
 ```
-block/buzz (source)
-  ├─► buzz-releases      (desktop + mobile builds → Artifactory, GitHub, Mobile Releases)
-  ├─► sprout-oss         (relay Docker image → ECR)
-  │     └─► block-coder-tf-stacks  (Helm chart → ArgoCD → staging cluster)
-  └─── sprout-backend-blox         (Blox compute provider for Desktop agent launch)
+hive.agiterra.org          (origin — canonical, NIP-98 auth)
+  └─► bridge ──► agiterra/beekeeper on GitHub   (upstream — what CI watches)
+                   └─► ci.agiterra.org          (.woodpecker gate)
+                         └─► beekeeper-autodeploy  (newest green main → the relay)
 ```
 
-See [RELEASING.md](RELEASING.md) for the desktop release flow and
-[CONTRIBUTING.md § Ecosystem](CONTRIBUTING.md#ecosystem) for contributor
-access information.
+Nothing flows to or from `block/buzz` in either direction, and there is no
+internal build pipeline to coordinate with: a push to `origin` is the whole
+release path. See [RELEASING.md](RELEASING.md) for the desktop release flow and
+[docs/INTEGRATION.md](docs/INTEGRATION.md) § CI and § Deploying for the gate and
+the deployer.
 
 ---
 
@@ -534,9 +531,9 @@ only the current set remains, otherwise reviewers still see the stale images:
 
 ```bash
 # List screenshot comments to find the stale one's id
-gh pr view <pr> --repo block/buzz --json comments \
+gh pr view <pr> --repo agiterra/beekeeper --json comments \
   --jq '.comments[] | select(.body | test("pr-<pr>--")) | {id, url}'
-gh api -X DELETE repos/block/buzz/issues/comments/<stale-comment-id>
+gh api -X DELETE repos/agiterra/beekeeper/issues/comments/<stale-comment-id>
 ```
 
 Branch cleanup when fully done: `git push origin --delete agent-screenshots/<username>`.
@@ -620,7 +617,7 @@ not post. This catches the most common screenshot regression.
 
 **PR comments:** Use a body template (3rd arg to `post-screenshots.sh`) with
 `{{filename}}` placeholders. Each screenshot gets a `###` heading + one-line
-description. See [PR #803](https://github.com/block/buzz/pull/803).
+description.
 
 ---
 

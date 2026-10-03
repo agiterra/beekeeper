@@ -26,7 +26,7 @@ Still unimplemented: `link` on get commands and the follow-ups in slice 4.
 ## Problem
 
 When a message contains a GitHub URL, the desktop client renders a rich
-preview card ("GitHub · PR block/buzz #4020") below the message. Those cards
+preview card ("GitHub · PR agiterra/beekeeper #4020") below the message. Those cards
 are produced entirely client-side by URL parsing in
 `desktop/src/shared/lib/linkPreview.ts` and rendered by
 `desktop/src/shared/ui/link-preview-attachment.tsx`.

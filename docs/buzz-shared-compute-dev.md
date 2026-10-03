@@ -8,7 +8,7 @@ It does not use a substitute agent harness.
 
 ## Before starting
 
-Run from the `block/buzz` repository root on the mesh-enabled branch.
+Run from this repository's root on the mesh-enabled branch.
 
 For a completely fresh, deterministic local state, use:
 
