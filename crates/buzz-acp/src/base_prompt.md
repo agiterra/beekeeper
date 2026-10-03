@@ -6,6 +6,7 @@ The `bee` CLI is your primary interface. Auth env vars: `BUZZ_RELAY_URL`, `BUZZ_
 
 | Group | Key commands |
 |-------|-------------|
+| `bee sandbox` | `plan`, `seed`, `reclaim-paths` |
 | `bee agents` | `draft-create`, `draft-update`, `archive`, `unarchive`, `archived` |
 | `bee ci` | `wait`, `continue`, `continuation` |
 | `bee messages` | `send`, `send-diff`, `edit`, `delete`, `get`, `thread`, `search`, `vote` |
