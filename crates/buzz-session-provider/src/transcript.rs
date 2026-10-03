@@ -41,6 +41,30 @@
 //! item on its way to the envelope, using the same redactor as the private
 //! rehydration package.
 //!
+//! # Command output completeness
+//!
+//! A `tool_result` whose content came from the adapter's final frame (its
+//! `content` blocks or `rawOutput`) carries no completeness keys: the adapter
+//! handed over the output as a whole. One assembled only from streamed output
+//! chunks (codex-acp's `terminal_output_delta`) cannot be taken as whole —
+//! Codex starts streaming a command only after it has spawned it, so output
+//! printed in between is never streamed, and codex-acp does not resend it at
+//! completion once any chunk streamed. Such a result carries three keys,
+//! always together:
+//!
+//! - `contentSource`: `"streamed_deltas"` — the content is the streamed bytes;
+//!   or `"native_rollout"` — the provider recovered the whole output from the
+//!   agent's own record of the command and the streamed bytes were its tail;
+//! - `outputComplete`: `true` only when the provider verified the content
+//!   against that record; `false` when it could not;
+//! - `outputGap` (only when `outputComplete` is `false`):
+//!   `{ "streamedBytes", "aggregatedBytes"? }` — what was streamed, and what
+//!   the agent's record says the command printed, when that record was read.
+//!
+//! The translator emits the unverified form; the provider's reconciliation
+//! (the crate's `native_output` module) upgrades it or leaves it, never
+//! guesses.
+//!
 //! # Truncation
 //!
 //! Two independent caps. Tool inputs, outputs and edit payloads are bounded on
@@ -71,6 +95,11 @@ pub const COALESCE_FLUSH_BYTES: usize = 24 * 1024;
 pub const MAX_TOOL_INPUT_BYTES: usize = 8 * 1024;
 /// Cap on a tool result's textual content.
 pub const MAX_TOOL_CONTENT_BYTES: usize = 8 * 1024;
+/// `contentSource` of a result assembled only from streamed output chunks.
+pub const CONTENT_SOURCE_STREAMED: &str = "streamed_deltas";
+/// `contentSource` of a result the provider recovered whole from the agent's
+/// own record of the command.
+pub const CONTENT_SOURCE_NATIVE_ROLLOUT: &str = "native_rollout";
 /// Shortest string worth truncating; below this, shrinking buys nothing.
 const MIN_TRUNCATABLE_BYTES: usize = 64;
 
@@ -103,6 +132,9 @@ pub struct TranscriptTranslator {
     /// Prose buffers for subagents, keyed by the Task/Agent call that owns
     /// them, in the order each was opened so a turn-end flush is deterministic.
     subagents: Vec<(String, ProseBuffers)>,
+    /// Stream-assembled results produced since the last
+    /// [`take_stream_checks`](Self::take_stream_checks).
+    stream_checks: Vec<StreamCheck>,
 }
 
 /// A call held back until its arguments stream in.
@@ -223,10 +255,17 @@ impl SpawnFacts {
 struct TerminalOutput {
     prefix: String,
     omitted: Option<(usize, Sha256)>,
+    /// Every byte the stream carried, counted and hashed whole, so the
+    /// provider can later check it against the agent's own record of the
+    /// command without having retained it.
+    total: usize,
+    whole: Sha256,
 }
 
 impl TerminalOutput {
     fn append(&mut self, data: &str) {
+        self.total = self.total.saturating_add(data.len());
+        self.whole.update(data.as_bytes());
         if let Some((bytes, hash)) = &mut self.omitted {
             *bytes = bytes.saturating_add(data.len());
             hash.update(data.as_bytes());
@@ -258,16 +297,41 @@ impl TerminalOutput {
         self.omitted = Some((omitted, hash));
     }
 
-    fn finish(self) -> String {
-        match self.omitted {
+    fn finish(self) -> (String, StreamedOutput) {
+        let streamed = StreamedOutput {
+            bytes: self.total,
+            sha256: self.whole.finalize().into(),
+        };
+        let text = match self.omitted {
             Some((bytes, hash)) => format!(
                 "{}…[elided {bytes} bytes, sha256:{}]",
                 self.prefix,
                 hex::encode(hash.finalize())
             ),
             None => self.prefix,
-        }
+        };
+        (text, streamed)
     }
+}
+
+/// The size and digest of everything one call's output stream carried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StreamedOutput {
+    /// Bytes the stream carried, before any elision.
+    pub bytes: usize,
+    /// SHA-256 of those bytes, in order.
+    pub sha256: [u8; 32],
+}
+
+/// A `tool_result` whose content was assembled only from streamed output
+/// chunks, which the provider may verify against the agent's own record of
+/// the command (see the module docs, "Command output completeness").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StreamCheck {
+    /// The call the result belongs to.
+    pub tool_id: String,
+    /// What the stream carried.
+    pub streamed: StreamedOutput,
 }
 
 /// What the adapter has told us about one open tool call so far.
@@ -456,6 +520,7 @@ impl TranscriptTranslator {
             anonymous: ToolMemo::default(),
             held: Vec::new(),
             subagents: Vec::new(),
+            stream_checks: Vec::new(),
         }
     }
 
@@ -661,6 +726,13 @@ impl TranscriptTranslator {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The stream-assembled results produced since the last call, for the
+    /// provider to verify against the agent's own record. Each names a
+    /// `tool_result` item already returned, marked `outputComplete: false`.
+    pub(crate) fn take_stream_checks(&mut self) -> Vec<StreamCheck> {
+        std::mem::take(&mut self.stream_checks)
     }
 
     /// Close a turn: flush anything buffered and publish its final usage
@@ -931,10 +1003,12 @@ impl TranscriptTranslator {
         // A final text snapshot replaces, never appends to, streamed bytes.
         // Commands with only a numeric rawOutput still use their stream.
         let content = content_text(update.get("content"));
+        let mut stream_only = None;
         let content = if !content.is_empty() {
             content
-        } else if let Some(streamed) = streamed {
-            streamed
+        } else if let Some((text, streamed)) = streamed {
+            stream_only = Some(streamed);
+            text
         } else {
             raw_output_text(update)
         };
@@ -964,6 +1038,20 @@ impl TranscriptTranslator {
         }
         if let Some(subagent) = subagent {
             item.insert("subagent".into(), subagent);
+        }
+        if let Some(streamed) = stream_only {
+            // Unverified until the provider checks it: an adapter can stream
+            // only part of a command's output and say nothing at completion.
+            item.insert("contentSource".into(), json!(CONTENT_SOURCE_STREAMED));
+            item.insert("outputComplete".into(), json!(false));
+            item.insert(
+                "outputGap".into(),
+                json!({ "streamedBytes": streamed.bytes }),
+            );
+            self.stream_checks.push(StreamCheck {
+                tool_id: tool_id.clone(),
+                streamed,
+            });
         }
         let mut item = Value::Object(item);
         stamp_parent(&mut item, subagent_parent(update).as_deref());

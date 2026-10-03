@@ -187,6 +187,9 @@ class _ToolRowView extends HookWidget {
                 color: colors.onSurfaceVariant,
               ),
             ),
+          // Shown folded too: a partial output nobody opens is still partial.
+          if (tool?.outputGap case final gap?)
+            _ToolOutputGapNotice(gap: gap, itemKey: item.eventId),
           if (expanded.value) ...[
             if (tool != null && tool.args.isNotEmpty)
               Padding(
@@ -320,6 +323,40 @@ class _RowShell extends StatelessWidget {
                 ),
                 ?child,
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Said beside a tool output the provider could not verify complete: what
+/// renders below is what was captured, and the beginning may be missing.
+class _ToolOutputGapNotice extends StatelessWidget {
+  final CodingSessionToolOutputGap gap;
+  final String itemKey;
+
+  const _ToolOutputGapNotice({required this.gap, required this.itemKey});
+
+  @override
+  Widget build(BuildContext context) {
+    final detail = gap.detail;
+    final warning = context.appColors.warning;
+    return Padding(
+      padding: const EdgeInsets.only(top: Grid.half),
+      child: Row(
+        key: ValueKey('coding-session-tool-output-gap-$itemKey'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(LucideIcons.triangleAlert, size: 14, color: warning),
+          const SizedBox(width: Grid.half),
+          Expanded(
+            child: Text(
+              detail == null
+                  ? codingSessionToolOutputGapHeadline
+                  : '$codingSessionToolOutputGapHeadline · $detail',
+              style: context.textTheme.labelSmall?.copyWith(color: warning),
             ),
           ),
         ],

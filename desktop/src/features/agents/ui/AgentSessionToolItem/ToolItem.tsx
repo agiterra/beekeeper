@@ -1,4 +1,5 @@
 import * as React from "react";
+import { TriangleAlert } from "lucide-react";
 
 import {
   resolveUserLabel,
@@ -13,6 +14,7 @@ import type { AgentTranscriptIdentityProps } from "../activityRenderClasses/type
 import {
   formatTranscriptTimestampTitle,
   getToolDurationDisplay,
+  TOOL_OUTPUT_GAP_HEADLINE,
 } from "../agentSessionUtils";
 import { CompactMessageSummary } from "./CompactMessageSummary";
 import {
@@ -132,6 +134,18 @@ export function ToolItem({
             thumbnailSrc={compactSummary.thumbnailSrc}
             label={compactSummary.label}
           />
+          {item.outputGap ? (
+            // The full notice is in the details; the collapsed row still has
+            // to say the output is partial, or nobody opens it to find out.
+            <TriangleAlert
+              aria-label={TOOL_OUTPUT_GAP_HEADLINE}
+              className="size-3.5 shrink-0 text-amber-700 dark:text-amber-400"
+              data-testid="transcript-tool-output-gap-marker"
+              role="img"
+            >
+              <title>{TOOL_OUTPUT_GAP_HEADLINE}</title>
+            </TriangleAlert>
+          ) : null}
         </summary>
 
         <ToolDetailBlocks
@@ -150,6 +164,7 @@ export function ToolItem({
               : null
           }
           isError={failed}
+          outputGap={item.outputGap}
           result={item.result}
           shellCommand={compactSummary.shellContent}
         />

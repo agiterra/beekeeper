@@ -74,6 +74,7 @@ pub mod host_command;
 pub mod host_result_wake;
 mod lease;
 mod model_catalog;
+mod native_output;
 pub mod native_restore;
 mod native_steer_authority;
 pub mod payload;

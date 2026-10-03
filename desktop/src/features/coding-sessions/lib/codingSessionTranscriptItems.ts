@@ -33,6 +33,7 @@ import { formatRedactedBytes } from "@/shared/lib/redactionMarker";
 
 import { codingSessionBoundaryRow } from "./codingSessionBoundaryStatus";
 import { normalizeOperatorPubkey } from "./codingSessionPromptAttribution";
+import { codingSessionToolOutputGapField } from "./codingSessionToolOutputCompleteness";
 import type { CodingSessionQuarantineItemV1 } from "./codingSessionTranscriptItemContract";
 
 /** Display identity for the signer whose events these are. */
@@ -390,6 +391,7 @@ export function buildToolResultItem(
     isError,
     toolKind,
     editPaths,
+    ...codingSessionToolOutputGapField(item),
     timestamp: ctx.timestamp,
     startedAt: ctx.timestamp,
     completedAt: ctx.timestamp,
@@ -450,6 +452,7 @@ export function buildPairedToolResultItem(
     isError,
     toolKind,
     editPaths,
+    ...codingSessionToolOutputGapField(resultItem),
     timestamp: callCtx.timestamp,
     startedAt: callCtx.timestamp,
     completedAt: resultCtx.timestamp,

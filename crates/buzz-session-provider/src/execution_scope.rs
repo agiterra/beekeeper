@@ -319,6 +319,10 @@ pub struct PreparedExecution {
     /// Whether the provider's setting kept the operator's Git credentials
     /// out of this execution (see [`crate::session_isolation`]).
     pub operator_git_withheld: bool,
+    /// The execution's private `CODEX_HOME`, for a Codex execution: where
+    /// the provider reads the agent's own record of a command whose streamed
+    /// output may be incomplete. `None` for every other runtime.
+    pub codex_home: Option<PathBuf>,
 }
 
 impl PreparedExecution {
@@ -1089,6 +1093,7 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         agents,
         full_access: false,
         operator_git_withheld: withhold_git,
+        codex_home,
     })))
 }
 

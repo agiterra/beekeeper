@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:intl/intl.dart';
 
 import 'coding_session_target.dart';
 
@@ -48,6 +49,9 @@ class CodingSessionToolRow {
 
   final CodingSessionToolStatus status;
 
+  /// Set only when the result's output may be missing its beginning.
+  final CodingSessionToolOutputGap? outputGap;
+
   const CodingSessionToolRow({
     required this.toolName,
     required this.toolId,
@@ -56,7 +60,74 @@ class CodingSessionToolRow {
     required this.result,
     required this.isError,
     required this.status,
+    this.outputGap,
   });
+}
+
+/// The headline said beside a tool output that may be missing its start.
+const codingSessionToolOutputGapHeadline =
+    'Output may be missing its beginning';
+
+/// A tool result the provider could not verify complete (44225
+/// `outputComplete: false`): assembled from streamed chunks, and the adapter
+/// is known to drop the beginning of a command's output.
+///
+/// `contentSource`, `outputComplete` and `outputGap` travel together. Absent
+/// keys mean the adapter's final frame as always, and `outputComplete: true`
+/// means verified or recovered — neither earns a gap. A malformed `outputGap`
+/// costs only the byte counts, never the notice.
+@immutable
+class CodingSessionToolOutputGap {
+  /// Bytes captured from the stream, when the provider reported a count.
+  final int? streamedBytes;
+
+  /// Bytes the adapter said the full output had, when it said.
+  final int? aggregatedBytes;
+
+  const CodingSessionToolOutputGap({this.streamedBytes, this.aggregatedBytes});
+
+  /// The gap a raw `tool_result` declares, or `null` when it declares none.
+  static CodingSessionToolOutputGap? fromResult(Map<String, dynamic> result) {
+    if (result['outputComplete'] != false) return null;
+    final declared = result['outputGap'];
+    final gap = declared is Map ? declared : const {};
+    final streamed = _byteCount(gap['streamedBytes']);
+    final aggregated = _byteCount(gap['aggregatedBytes']);
+    return CodingSessionToolOutputGap(
+      streamedBytes: streamed,
+      // A total below what was captured contradicts itself; drop it rather
+      // than print "captured 900 of 600 bytes".
+      aggregatedBytes:
+          aggregated != null && (streamed == null || aggregated >= streamed)
+          ? aggregated
+          : null,
+    );
+  }
+
+  /// `captured 1,193 of 1,793 bytes`, `captured 1,193 bytes`, or `null` when
+  /// the provider reported no count.
+  String? get detail {
+    final streamed = streamedBytes;
+    if (streamed == null) return null;
+    final format = NumberFormat.decimalPattern('en_US');
+    final aggregated = aggregatedBytes;
+    return aggregated == null
+        ? 'captured ${format.format(streamed)} bytes'
+        : 'captured ${format.format(streamed)} of '
+              '${format.format(aggregated)} bytes';
+  }
+
+  static int? _byteCount(Object? value) =>
+      value is int && value >= 0 ? value : null;
+
+  @override
+  bool operator ==(Object other) =>
+      other is CodingSessionToolOutputGap &&
+      other.streamedBytes == streamedBytes &&
+      other.aggregatedBytes == aggregatedBytes;
+
+  @override
+  int get hashCode => Object.hash(streamedBytes, aggregatedBytes);
 }
 
 /// The structured outcome a `result` item reports.

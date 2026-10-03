@@ -4,7 +4,9 @@ import type { FileReadContent } from "../agentSessionFileRead";
 import { FileContentBlock } from "../FileContentBlock";
 import { FileEditDiffBlock, hasFileEditLineDiff } from "../FileEditDiffView";
 import { formatCodeValue } from "../agentSessionUtils";
+import type { TranscriptToolOutputGap } from "../agentSessionTypes";
 import { ShellCommandBlock } from "./ShellCommandBlock";
+import { ToolOutputGapNotice } from "./ToolOutputGapNotice";
 import { ViewImageToolPreview } from "./ViewImageToolPreview";
 
 export function ToolDetailBlocks({
@@ -16,6 +18,7 @@ export function ToolDetailBlocks({
   hasResult,
   imagePreview,
   isError,
+  outputGap,
   result,
   shellCommand,
 }: {
@@ -27,6 +30,8 @@ export function ToolDetailBlocks({
   hasResult: boolean;
   imagePreview: { src: string | null; title: string | null } | null;
   isError: boolean;
+  /** Set only when the output may be missing its beginning. */
+  outputGap?: TranscriptToolOutputGap;
   result: string;
   shellCommand: string | null;
 }) {
@@ -54,6 +59,7 @@ export function ToolDetailBlocks({
         <ShellCommandBlock
           command={shellCommand}
           isError={isError}
+          outputGap={outputGap}
           result={result}
         />
       ) : showParameters ? (
@@ -62,6 +68,9 @@ export function ToolDetailBlocks({
           tone="muted"
           value={JSON.stringify(args, null, 2)}
         />
+      ) : null}
+      {!showShellCommand && outputGap ? (
+        <ToolOutputGapNotice gap={outputGap} />
       ) : null}
       {!showShellCommand && hasResult ? (
         showFileEditDiff ? (

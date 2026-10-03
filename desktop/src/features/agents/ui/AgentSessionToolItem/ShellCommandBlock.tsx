@@ -2,10 +2,12 @@ import { Terminal } from "lucide-react";
 
 import { cn } from "@/shared/lib/cn";
 import { ScrollFadeMonoPanel } from "../FileContentBlock";
+import type { TranscriptToolOutputGap } from "../agentSessionTypes";
 import {
   parseShellToolOutput,
   type ShellToolOutput,
 } from "../agentSessionUtils";
+import { ToolOutputGapNotice } from "./ToolOutputGapNotice";
 
 /**
  * The text shown under a shell command.
@@ -39,10 +41,13 @@ export function shellBlockOutput(
 export function ShellCommandBlock({
   command,
   isError,
+  outputGap,
   result,
 }: {
   command: string;
   isError: boolean;
+  /** Set only when the output may be missing its beginning. */
+  outputGap?: TranscriptToolOutputGap;
   result: string;
 }) {
   const shellOutput = shellBlockOutput(parseShellToolOutput(result), isError);
@@ -65,6 +70,11 @@ export function ShellCommandBlock({
           {command}
         </p>
       </ScrollFadeMonoPanel>
+      {outputGap ? (
+        <div className="mt-2 font-sans">
+          <ToolOutputGapNotice gap={outputGap} />
+        </div>
+      ) : null}
       {shellOutput ? (
         <ScrollFadeMonoPanel
           className="mt-2"

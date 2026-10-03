@@ -1,4 +1,25 @@
 import { rewriteRelayUrl } from "@/shared/lib/mediaUrl";
+import type { TranscriptToolOutputGap } from "./agentSessionTypes";
+
+/** The headline shown over a tool output that may be missing its start. */
+export const TOOL_OUTPUT_GAP_HEADLINE = "Output may be missing its beginning";
+
+const BYTE_COUNT_FORMAT = new Intl.NumberFormat("en-US");
+
+/**
+ * The byte-count detail under the headline: `captured 1,193 of 1,793 bytes`
+ * when the full size is known, `captured 1,193 bytes` when only the captured
+ * size is, and `null` when the provider reported neither.
+ */
+export function formatToolOutputGapDetail(
+  gap: TranscriptToolOutputGap,
+): string | null {
+  if (gap.streamedBytes === undefined) return null;
+  const captured = BYTE_COUNT_FORMAT.format(gap.streamedBytes);
+  return gap.aggregatedBytes === undefined
+    ? `captured ${captured} bytes`
+    : `captured ${captured} of ${BYTE_COUNT_FORMAT.format(gap.aggregatedBytes)} bytes`;
+}
 
 export function getToolString(
   record: Record<string, unknown>,

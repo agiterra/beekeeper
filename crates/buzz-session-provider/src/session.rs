@@ -1257,6 +1257,13 @@ impl SessionManager {
             events,
             observer,
             translator: TranscriptTranslator::new(request.include_thoughts),
+            native_output: match &request.execution {
+                crate::execution_scope::ExecutionPlan::Prepared(prepared) => prepared
+                    .codex_home
+                    .clone()
+                    .map(crate::native_output::NativeOutputSource::codex),
+                crate::execution_scope::ExecutionPlan::Legacy { .. } => None,
+            },
             first_turn_preamble: startup.pending_briefing.clone(),
             agent_version: startup.agent_version.clone(),
             media: request.media.clone(),
@@ -2854,6 +2861,10 @@ struct SessionActor {
     events: mpsc::Sender<SessionEvent>,
     observer: ObserverHandle,
     translator: TranscriptTranslator,
+    /// The session's own record of its commands, when the provider owns it:
+    /// stream-assembled command output is verified against it before it is
+    /// published (see [`crate::native_output`]).
+    native_output: Option<crate::native_output::NativeOutputSource>,
     first_turn_preamble: Option<String>,
     /// Reads a turn's attachments back from the relay. See
     /// [`crate::attachments`].
@@ -3524,11 +3535,14 @@ impl SessionActor {
                 },
                 result = prompt.as_mut() => break PromptInterruption::Completed(result),
                 frame = frames.recv() => {
-                    let items = translate_frame(
+                    let mut items = translate_frame(
                         &mut self.translator,
                         &self.acp_session_id,
                         frame,
                     );
+                    let checks = self.translator.take_stream_checks();
+                    crate::native_output::reconcile(&mut items, checks, self.native_output.as_ref())
+                        .await;
                     emit_items(&self.events, &self.session_id, &turn_id, items).await;
                 }
                 settled = pending.next(), if !pending.is_empty() => {
@@ -3686,8 +3700,15 @@ impl SessionActor {
         loop {
             match frames.try_recv() {
                 Ok(frame) => {
-                    let items =
+                    let mut items =
                         translate_frame(&mut self.translator, &self.acp_session_id, Ok(frame));
+                    let checks = self.translator.take_stream_checks();
+                    crate::native_output::reconcile(
+                        &mut items,
+                        checks,
+                        self.native_output.as_ref(),
+                    )
+                    .await;
                     emit_items(&self.events, &self.session_id, &turn_id, items).await;
                 }
                 Err(broadcast::error::TryRecvError::Lagged(dropped)) => {

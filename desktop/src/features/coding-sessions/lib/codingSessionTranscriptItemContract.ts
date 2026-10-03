@@ -142,6 +142,21 @@ export type CodingSessionKnownTranscriptItemV1 = {
        * an absent field was not reported, never zero.
        */
       subagent?: CodingSessionSubagentReportV1;
+      /**
+       * Where `content` came from, when the provider said. Additive; an
+       * unknown value reads as absent. `contentSource`, `outputComplete` and
+       * `outputGap` are present together or absent together, and absent means
+       * the adapter's final frame as always.
+       */
+      contentSource?: "streamed_deltas" | "native_rollout";
+      /**
+       * `false`: assembled from streamed chunks and not verifiable complete —
+       * codex is known to drop the beginning of a command's output. `true`:
+       * verified, or recovered from the agent's own record.
+       */
+      outputComplete?: boolean;
+      /** Only when `outputComplete` is `false`. */
+      outputGap?: { streamedBytes?: number; aggregatedBytes?: number };
     }
   | {
       kind: "result";

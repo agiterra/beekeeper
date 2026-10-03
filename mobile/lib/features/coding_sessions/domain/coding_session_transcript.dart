@@ -294,6 +294,7 @@ CodingSessionTranscriptItem _unpairedToolResult(
       argsSummary: '',
       result: _boundedText(_stringify(item['content'])),
       isError: isError,
+      outputGap: CodingSessionToolOutputGap.fromResult(item),
       status: isError
           ? CodingSessionToolStatus.failed
           : CodingSessionToolStatus.completed,
@@ -326,6 +327,7 @@ CodingSessionTranscriptItem _pairToolResult(
       argsSummary: tool.argsSummary,
       result: _boundedText(_stringify(result['content'])),
       isError: isError,
+      outputGap: CodingSessionToolOutputGap.fromResult(result),
       status: isError
           ? CodingSessionToolStatus.failed
           : CodingSessionToolStatus.completed,

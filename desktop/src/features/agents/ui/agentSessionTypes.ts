@@ -127,6 +127,19 @@ export type TranscriptSubagentReport = {
   toolUseCount?: number;
 };
 
+/**
+ * A tool result whose output the provider could not verify complete (44225
+ * `outputComplete: false`): the text was assembled from streamed chunks, and
+ * the adapter is known to drop the beginning of a command's output. Present
+ * only on such a result; a complete, recovered or unlabelled result has none.
+ */
+export type TranscriptToolOutputGap = {
+  /** Bytes captured from the stream, when the provider reported a count. */
+  streamedBytes?: number;
+  /** Bytes the adapter said the full output had, when it said. */
+  aggregatedBytes?: number;
+};
+
 export type TranscriptItem =
   | ({
       id: string;
@@ -284,6 +297,8 @@ export type TranscriptItem =
       toolCallId?: string;
       /** The result's subagent report, on a Task/Agent call that carried one. */
       subagent?: TranscriptSubagentReport;
+      /** Set only when the output may be missing its beginning. */
+      outputGap?: TranscriptToolOutputGap;
       timestamp: string;
       startedAt: string;
       completedAt: string | null;
