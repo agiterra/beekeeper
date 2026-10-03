@@ -70,6 +70,18 @@ pub(crate) struct CodingSessionSeatWorktree {
     /// founder's own tree, which names no seat at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor_pubkey: Option<String>,
+    /// What the project's `sandbox.yml` seeded into this tree when it was cut,
+    /// entry by entry, and what it did not.
+    ///
+    /// Kept so a cold build a week later is explicable rather than mysterious:
+    /// the receipt says which manifest ran, which mechanism each entry used,
+    /// and which entries were refused or skipped and why. Held as JSON because
+    /// nothing here reads it back as a decision — it is a record of what
+    /// happened, and re-deriving it later could only ever describe a different
+    /// day. Absent on a record cut before this field, or in a project that
+    /// declares no `sandbox.yml`, which is not the same as a seed that failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeding: Option<serde_json::Value>,
 }
 
 /// The `user.name`/`user.email` one seat worktree was configured with.
@@ -228,6 +240,7 @@ pub(crate) fn migrate_pending_worktrees(store: &mut CodingSessionWorkdirStore) -
                 agents_clone: None,
                 commit_identity: None,
                 actor_pubkey: None,
+                seeding: None,
             },
         );
         migrated += 1;

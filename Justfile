@@ -1439,12 +1439,65 @@ benchmark-down:
 
 # ─── Worktree lifecycle (L11) ─────────────────────────────────────────────────
 
+# Seed a worktree you cut by hand, exactly as the Beekeeper launcher would.
+#
+# Reads the tree's own sandbox.yml — one declaration, one parser (`bee`). A
+# second copy of it in bash is how the reclaim list came to disagree with itself
+# in four places, so this recipe parses nothing.
+#
+# On APFS the heavy directories are cloned, so a 36 GB target/ costs seconds and
+# almost no disk, and the cargo registry is shared through one pool per
+# repository instead of re-downloaded per tree.
+#
+#   just sandbox-seed ../beekeeper-wt-mine                 print the plan only
+#   just sandbox-seed ../beekeeper-wt-mine --confirm        seed it
+#   just sandbox-seed ../beekeeper-wt-mine --run-recipes --confirm
+#                                                          and run the project's
+#                                                          own setup recipes
+#
+# Seed a hand-cut worktree's build state, as the Beekeeper launcher would
+sandbox-seed TREE *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{justfile_directory()}}/bin:$PATH"
+    # A fresh worktree has nothing built, so look for a usable `bee` rather than
+    # assuming this checkout has one.
+    BEE="${BUZZ_BEE:-$(command -v bee 2>/dev/null || true)}"
+    for candidate in \
+        "{{justfile_directory()}}/target/release/bee" \
+        "{{justfile_directory()}}/target/debug/bee" \
+        "/Applications/Beekeeper.app/Contents/MacOS/bee"; do
+        [[ -n "$BEE" && -x "$BEE" ]] && break
+        BEE="$candidate"
+    done
+    if [[ -z "$BEE" || ! -x "$BEE" ]]; then
+        echo "no 'bee' found. Build it with 'cargo build -p buzz-cli', install the app," >&2
+        echo "or set BUZZ_BEE to a binary." >&2
+        exit 1
+    fi
+    "$BEE" sandbox seed --tree "{{TREE}}" --from "{{justfile_directory()}}" {{ARGS}}
+
+# What this project declares as build state, and what reclaim would do to it
+sandbox-plan *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{justfile_directory()}}/bin:$PATH"
+    BEE="${BUZZ_BEE:-$(command -v bee 2>/dev/null || true)}"
+    [[ -n "$BEE" && -x "$BEE" ]] || BEE="{{justfile_directory()}}/target/debug/bee"
+    [[ -x "$BEE" ]] || { echo "no 'bee' found; run 'cargo build -p buzz-cli'" >&2; exit 1; }
+    "$BEE" sandbox plan {{ARGS}}
+
+
 # Remove the merged, clean lane worktrees; list the merged-but-dirty ones; refuse
 # every unmerged tree, however old. Opt-in, never wired into `just check` or any
 # hook: this removes directories, and nothing that removes a directory should run
 # because somebody typed a different command. Pass --dry-run first — it prints the
-# whole plan and removes nothing. --targets also deletes target/ in every merged
-# tree, held or not: no commit lives in a build directory.
+# whole plan and removes nothing. --targets also deletes the build state every
+# merged tree declares in its own sandbox.yml, held or not: no commit lives in a
+# build directory. --targets needs `bee`, and refuses without it rather than
+# guessing at `target/` alone.
+#
+# Remove the merged, clean lane worktrees and refuse everything else
 worktrees-prune *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail

@@ -49,6 +49,11 @@ struct Layout {
 }
 
 impl Layout {
+    /// The temporary directory everything in this layout sits under.
+    fn root(&self) -> &Path {
+        self.repo.parent().expect("parent")
+    }
+
     fn holder(&self) -> PathBuf {
         self.repo.parent().expect("parent").join("proj.worktrees")
     }
@@ -424,12 +429,40 @@ fn prune_script() -> PathBuf {
 }
 
 fn run_prune(layout: &Layout, args: &[&str]) -> (bool, String) {
+    run_prune_with_bee(layout, args, None)
+}
+
+/// A stand-in for `bee sandbox reclaim-paths`, which is what tells the script
+/// what a project calls build state.
+///
+/// The script must not re-derive that list — four copies of it is how it came
+/// to disagree with itself — so these tests supply the reader rather than
+/// hardcoding the answer, and `PATH` is never consulted: a `bee` that happens
+/// to be installed on a developer's machine must not decide what a test proves.
+fn stub_bee(dir: &Path, records: &[(&str, &str)]) -> PathBuf {
+    let path = dir.join("stub-bee");
+    let mut body = String::from("#!/usr/bin/env bash\nprintf '");
+    for (relative, action) in records {
+        body.push_str(&format!("{relative}\\0{action}\\0"));
+    }
+    body.push_str("'\n");
+    std::fs::write(&path, body).expect("write the stub");
+    let mut permissions = std::fs::metadata(&path).expect("stat").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&path, permissions).expect("chmod");
+    path
+}
+
+fn run_prune_with_bee(layout: &Layout, args: &[&str], bee: Option<&Path>) -> (bool, String) {
     let mut command = Command::new("bash");
     command
         .arg(prune_script())
         .arg("--repo")
         .arg(&layout.repo)
         .args(args)
+        // Never the ambient PATH: see `stub_bee`.
+        .env("PATH", "/usr/bin:/bin")
+        .env("BUZZ_BEE", bee.map(Path::as_os_str).unwrap_or_default())
         // The script measures "merged" against a real trunk, and the tests
         // build a repository with no remote, so a local `main` is the trunk.
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -536,8 +569,9 @@ fn targets_removes_build_output_and_leaves_git_and_sources_untouched() {
     let dirty = layout.holder().join("lane-merged-dirty");
     std::fs::create_dir_all(dirty.join("target/debug")).expect("mkdir");
     std::fs::write(dirty.join("target/debug/blob"), vec![5_u8; 2048]).expect("write");
+    let bee = stub_bee(layout.root(), &[("target", "delete")]);
 
-    let (ok, output) = run_prune(&layout, &["--targets"]);
+    let (ok, output) = run_prune_with_bee(&layout, &["--targets"], Some(&bee));
     assert!(ok, "{output}");
 
     assert!(!dirty.join("target").exists(), "{output}");
@@ -551,6 +585,55 @@ fn targets_removes_build_output_and_leaves_git_and_sources_untouched() {
         "uncommitted work is never deleted"
     );
     assert!(dirty.join("README").is_file(), "sources survive");
+}
+
+/// Without `bee` there is nothing to read the project's declaration, and the
+/// script refuses rather than falling back to `target/` alone. A half-reclaim
+/// that prints a whole-reclaim summary is the failure this guards.
+#[test]
+fn targets_refuses_without_the_reader_rather_than_guessing_at_target() {
+    let layout = prune_layout();
+    let dirty = layout.holder().join("lane-merged-dirty");
+    std::fs::create_dir_all(dirty.join("target/debug")).expect("mkdir");
+
+    let (ok, output) = run_prune_with_bee(&layout, &["--targets"], None);
+    assert!(!ok, "the script must refuse, not guess: {output}");
+    assert!(
+        output.contains("sandbox.yml"),
+        "and say what it could not read: {output}"
+    );
+    assert!(
+        dirty.join("target").is_dir(),
+        "nothing is removed when the list could not be read: {output}"
+    );
+}
+
+/// A declared directory that turns out to be a link has the link removed and
+/// whatever it points at left alone — whatever the declaration says.
+#[test]
+fn targets_unlinks_a_link_and_never_deletes_through_it() {
+    let layout = prune_layout();
+    let dirty = layout.holder().join("lane-merged-dirty");
+    let elsewhere = layout.root().join("somebody-elses-build");
+    std::fs::create_dir_all(elsewhere.join("debug")).expect("mkdir");
+    std::fs::write(elsewhere.join("debug/blob"), b"not this lane's").expect("write");
+    std::os::unix::fs::symlink(&elsewhere, dirty.join("target")).expect("symlink");
+    let bee = stub_bee(layout.root(), &[("target", "delete")]);
+
+    let (ok, output) = run_prune_with_bee(&layout, &["--targets"], Some(&bee));
+    assert!(ok, "{output}");
+    assert!(
+        std::fs::symlink_metadata(dirty.join("target")).is_err(),
+        "the link itself is removed: {output}"
+    );
+    assert!(
+        elsewhere.join("debug/blob").is_file(),
+        "what it pointed at survives: {output}"
+    );
+    assert!(
+        output.contains("frees nothing"),
+        "and the summary does not claim it freed anything: {output}"
+    );
 }
 
 #[test]

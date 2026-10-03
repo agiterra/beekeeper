@@ -134,6 +134,7 @@ impl Fixture {
                     agents_clone: None,
                     commit_identity: None,
                     actor_pubkey: None,
+                    seeding: None,
                 },
             )
             .expect("recorded seat worktree");
@@ -320,6 +321,7 @@ fn a_cut_worktrees_actor_pubkey_is_recorded_and_the_read_returns_it() {
                 agents_clone: None,
                 commit_identity: None,
                 actor_pubkey: Some(actor.clone()),
+                seeding: None,
             },
         )
         .expect("recorded seat worktree with an actor");
@@ -356,6 +358,7 @@ fn a_cut_worktrees_actor_pubkey_is_recorded_and_the_read_returns_it() {
                 agents_clone: None,
                 commit_identity: None,
                 actor_pubkey: None,
+                seeding: None,
             },
         )
         .expect("recorded a legacy seat worktree");

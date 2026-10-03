@@ -195,13 +195,18 @@ pub fn classify_seat_worktree(facts: &SeatWorktreeFacts) -> SeatWorktreeDisposit
     }
 }
 
-/// Whether `target/` and `desktop/node_modules` may be reclaimed now.
+/// Whether this tree's build output may be reclaimed now.
+///
+/// *Which* directories those are is a separate question, answered by
+/// [`crate::sandbox_manifest::reclaim_plan`] from the project's own
+/// declaration, or by [`RECLAIMABLE_BUILD_DIRS`] when it declares none. This
+/// decides only the timing.
 ///
 /// Build output is rebuildable, so it is removable the moment the session
 /// settles or is deleted — independently of [`SeatWorktreeDisposition::Held`],
-/// of the grace window, and of whether anything was pushed. No commit can be lost in
-/// either directory: both are ignored by git, which is exactly why they never
-/// appear in `dirty_files`.
+/// of the grace window, and of whether anything was pushed. No commit can be
+/// lost in any of those directories: all of them are ignored by git, which is
+/// exactly why they never appear in `dirty_files`.
 ///
 /// A live execution still blocks it: deleting `target/` under a running build
 /// breaks the build rather than losing work, but breaking it is not this
@@ -210,10 +215,18 @@ pub fn build_output_reclaimable(facts: &SeatWorktreeFacts) -> bool {
     (facts.session_settled || facts.session_deleted) && !facts.execution_live && !facts.is_protected
 }
 
-/// The names of the build directories [`build_output_reclaimable`] covers.
+/// The build directories [`build_output_reclaimable`] covers in a project
+/// that declares none of its own.
 ///
-/// Repository-relative, and a closed list: anything not named here is source
-/// until someone proves otherwise.
+/// Repository-relative, and still a closed list: anything not named here is
+/// source until someone proves otherwise. But this is now the **fallback**,
+/// not the answer. A project that ships a `sandbox.yml` is reclaimed by what
+/// it declares there, because the directories worth freeing are the same ones
+/// worth seeding and one declaration should not disagree with itself — see
+/// [`crate::sandbox_manifest::reclaim_plan`], which names which of the two it
+/// used. This list stayed `["target", "desktop/node_modules"]` while a second
+/// cargo workspace grew under `desktop/src-tauri/target`, so a built tree had
+/// roughly half of its build output freed by something reporting success.
 pub const RECLAIMABLE_BUILD_DIRS: &[&str] = &["target", "desktop/node_modules"];
 
 /// Render a byte count as the `{N} GB` a person reads, one decimal.

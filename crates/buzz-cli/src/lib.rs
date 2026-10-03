@@ -268,6 +268,9 @@ pub enum OutputFormat {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Seed a sandbox's build state, or say what this project calls build state
+    #[command(subcommand)]
+    Sandbox(SandboxCmd),
     /// Draft owner-reviewed agent creation and updates
     #[command(subcommand)]
     Agents(AgentsCmd),
@@ -3978,6 +3981,62 @@ pub enum TeamDecisionCmd {
     },
 }
 
+/// `bee sandbox` — the project's own declaration of how a fresh sandbox gets
+/// its build state, and what counts as build state when one is reclaimed.
+///
+/// Entirely local: none of these verbs talk to a relay.
+#[derive(Subcommand)]
+pub enum SandboxCmd {
+    /// What this project declares in sandbox.yml, and what reclaim would do
+    #[command(
+        after_help = "Examples:\n  bee sandbox plan\n  bee --format compact sandbox plan --checkout /path/to/checkout"
+    )]
+    Plan {
+        /// The checkout to read sandbox.yml from. Defaults to this one.
+        #[arg(long)]
+        checkout: Option<String>,
+    },
+    /// Seed a sandbox's build state from a checkout. Without --confirm, prints only
+    #[command(
+        after_help = "Examples:\n  bee sandbox seed --tree /path/to/worktree\n  bee sandbox seed --tree /path/to/worktree --run-recipes --confirm"
+    )]
+    Seed {
+        /// The sandbox to seed. Its own sandbox.yml is the declaration that applies.
+        #[arg(long)]
+        tree: String,
+        /// The checkout to seed from. Defaults to this one.
+        #[arg(long)]
+        from: Option<String>,
+        /// Where this machine keeps one shared pool per repository.
+        ///
+        /// Without it, a per-repository directory under this user's cache is
+        /// used. A `share` entry with nowhere to share is carried out as a
+        /// clone, and the receipt says so rather than calling a per-tree
+        /// directory shared.
+        #[arg(long = "pool-root")]
+        pool_root: Option<String>,
+        /// Also run the project's own setup recipes, unconfined.
+        ///
+        /// This is a person on their own machine asking for it, and the receipt
+        /// records that nothing confined them. The Beekeeper launcher runs the
+        /// same entries inside the new tree's boundary instead.
+        #[arg(long = "run-recipes")]
+        run_recipes: bool,
+        /// Actually seed. Without it nothing is written.
+        #[arg(long)]
+        confirm: bool,
+    },
+    /// Print what this project calls build state, NUL-separated, for a script
+    #[command(
+        after_help = "Examples:\n  bee sandbox reclaim-paths\n  bee sandbox reclaim-paths --checkout /path/to/worktree"
+    )]
+    ReclaimPaths {
+        /// The checkout to read sandbox.yml from. Defaults to this one.
+        #[arg(long)]
+        checkout: Option<String>,
+    },
+}
+
 /// `bee sessions worktree` — the host's record of the trees it cut, and what
 /// may be done with each one.
 #[derive(Subcommand)]
@@ -4024,7 +4083,7 @@ pub enum SessionWorktreeCmd {
         #[arg(long = "execution-live")]
         execution_live: bool,
     },
-    /// Remove target/ and desktop/node_modules. Without --confirm, prints only
+    /// Remove what the project's sandbox.yml calls build state. Without --confirm, prints only
     #[command(
         after_help = "Examples:\n  bee sessions worktree reclaim --session <uuid>\n  bee sessions worktree reclaim --session <uuid> --confirm"
     )]
@@ -5621,6 +5680,33 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         return commands::host::dispatch(sub, false).await;
     }
 
+    // Entirely local: nothing here reaches a relay, so it runs before any
+    // client is built and works in a checkout with no credentials at all.
+    if let Cmd::Sandbox(ref sub) = cli.command {
+        return match sub {
+            SandboxCmd::Plan { checkout } => {
+                commands::sandbox::plan(checkout.as_deref(), cli.format)
+            }
+            SandboxCmd::Seed {
+                tree,
+                from,
+                pool_root,
+                run_recipes,
+                confirm,
+            } => commands::sandbox::seed(
+                tree,
+                from.as_deref(),
+                pool_root.as_deref(),
+                *run_recipes,
+                *confirm,
+                cli.format,
+            ),
+            SandboxCmd::ReclaimPaths { checkout } => {
+                commands::sandbox::reclaim_paths(checkout.as_deref())
+            }
+        };
+    }
+
     if let Cmd::Session(ref sub) = cli.command {
         let caller = cli
             .private_key
@@ -5793,7 +5879,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Packs(sub) => commands::packs_cli::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
         Cmd::Git(_) => unreachable!("handled above"),
-        Cmd::Host(_) | Cmd::Session(_) => unreachable!("handled above"),
+        Cmd::Host(_) | Cmd::Session(_) | Cmd::Sandbox(_) => unreachable!("handled above"),
     }
 }
 
@@ -6466,6 +6552,7 @@ mod tests {
             "pulse",
             "reactions",
             "repos",
+            "sandbox",
             "session",
             "sessions",
             "social",

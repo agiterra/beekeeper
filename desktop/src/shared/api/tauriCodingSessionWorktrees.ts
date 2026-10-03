@@ -54,6 +54,47 @@ export type CodingSessionWorktreeCreated = {
   path: string;
   branch: string;
   repoRoot: string;
+  /**
+   * What the project's `sandbox.yml` seeded into this tree, entry by entry,
+   * and what it did not. Absent when the project declares no `sandbox.yml`.
+   *
+   * Shaped by Rust (`buzz_core::sandbox_seed::SeedReceipt`) and carried
+   * through as-is: nothing here decides anything from it, it is shown. The
+   * reason it is shown at all is that a sandbox which started cold, or whose
+   * setup recipe failed, otherwise looks exactly like one that worked — right
+   * up until the first build takes twenty minutes.
+   */
+  seeding?: CodingSessionWorktreeSeeding | null;
+};
+
+/** One entry's line in a seeding receipt. */
+export type CodingSessionWorktreeSeedingEntry = {
+  id: string;
+  declared: string;
+  used?: string | null;
+  destination?: string | null;
+  /** `seeded`, `alreadyPresent`, `downgraded`, `skipped`, `unavailable`, `refused` or `failed`. */
+  disposition: { state: string; code?: string; to?: string };
+  detail: string;
+  notes?: string[];
+};
+
+/** What a seed did, as the host recorded it. */
+export type CodingSessionWorktreeSeeding = {
+  /** Absent when the project ships no manifest, which is not a failure. */
+  declares?: boolean;
+  /** Which manifest ran. */
+  manifestSha256?: string | null;
+  /** False when any entry did not land, or a setup recipe was not reported. */
+  complete?: boolean;
+  /**
+   * How the project's own setup recipes were confined. Absent means nobody
+   * said — which is not a claim that anything was bounded.
+   */
+  boundary?: { state: string; backend?: string; reason?: string } | null;
+  outcomes?: CodingSessionWorktreeSeedingEntry[];
+  /** Present instead of `outcomes` when the manifest itself was refused. */
+  detail?: string;
 };
 
 /**
@@ -181,6 +222,16 @@ export async function createCodingSessionWorktree(input: {
   seatRole?: string | null;
   /** The project or session the seat was hired into, for the same name. */
   project?: string | null;
+  /**
+   * The project's canonical coordinate, `30621:<owner-hex>:<dtag>`.
+   *
+   * Distinct from `project` above, which is prose for a commit author name.
+   * This one keys the project's own scope, which is where a shared dependency
+   * pool lives — so without it a `share` entry in `sandbox.yml` has nowhere
+   * project-wide to share and is carried out as a per-tree clone instead. That
+   * downgrade is disclosed in the receipt rather than silently called shared.
+   */
+  projectRef?: string | null;
 }): Promise<CodingSessionWorktreeCreated> {
   return invokeTauri<CodingSessionWorktreeCreated>(
     "create_coding_session_worktree",
@@ -195,6 +246,7 @@ export async function createCodingSessionWorktree(input: {
       seatPubkey: input.seatPubkey ?? null,
       seatRole: input.seatRole ?? null,
       project: input.project ?? null,
+      projectRef: input.projectRef ?? null,
     },
   );
 }

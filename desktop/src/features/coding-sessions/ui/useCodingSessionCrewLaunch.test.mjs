@@ -241,7 +241,9 @@ test("ordinary governed worktree creation remembers the checkout, not the new ex
   });
   assert.equal(host.result.ok, true, host.result.failureReason ?? "");
   assert.deepEqual(host.worktrees, [
-    { workdir: checkout, name: "fresh-work", source: "main" },
+    // `projectRef` rides along so the host can key the project's own
+    // dependency pool; null here because this launch names no project.
+    { workdir: checkout, name: "fresh-work", source: "main", projectRef: null },
   ]);
   assert.deepEqual(host.hints, [
     {

@@ -86,6 +86,10 @@ pub struct CodingSessionWorktreeCreated {
     pub path: String,
     pub branch: String,
     pub repo_root: String,
+    /// What the project's `sandbox.yml` seeded here, and what it did not.
+    /// `None` when the project declares none. See [`super::worktree_seed`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeding: Option<serde_json::Value>,
 }
 
 /// Reduce a free-text name to the slug a directory and a branch can share.
@@ -651,6 +655,8 @@ fn create(
         path,
         branch,
         repo_root,
+        // Filled in by the caller, which has the app handle the seeder needs.
+        seeding: None,
     })
 }
 
@@ -682,12 +688,30 @@ pub async fn create_coding_session_worktree(
     seat_pubkey: Option<String>,
     seat_role: Option<String>,
     project: Option<String>,
+    project_ref: Option<String>,
 ) -> Result<CodingSessionWorktreeCreated, String> {
-    let created = tauri::async_runtime::spawn_blocking(move || {
+    // The donor for seeding: the checkout this tree was cut from, which is the
+    // warm tree somebody actually builds in. Captured before `workdir` moves
+    // into the cut.
+    let donor = workdir.clone();
+    // Resolved here because a `State` guard does not cross a blocking boundary.
+    let relay_url = crate::relay::relay_ws_url_with_override(&state);
+    let mut created = tauri::async_runtime::spawn_blocking(move || {
         create(&workdir, &name, parent.as_deref(), source.as_deref())
     })
     .await
     .map_err(|error| format!("worktree create task failed: {error}"))??;
+    // Seed before the identity and the record, so nothing runs in the tree
+    // before it is seeded and the record carries what happened.
+    created.seeding = super::worktree_seed::seed_for_created(
+        &app,
+        relay_url,
+        donor,
+        created.repo_root.clone(),
+        created.path.clone(),
+        project_ref.clone(),
+    )
+    .await;
     // Before anything runs in it. A tree with no identity is a tree whose
     // occupant has to decide what to author as, and the one that did stopped
     // and asked a founder (ledger 236(a), 239). The hire path names the seat;
@@ -813,6 +837,7 @@ fn record_created_worktree(
             agents_clone: None,
             commit_identity: seat_identity.commit_identity,
             actor_pubkey: seat_identity.actor_pubkey,
+            seeding: created.seeding.clone(),
         },
     )?;
     store.version = WORKDIR_STORE_VERSION;
@@ -885,9 +910,10 @@ pub async fn record_coding_session_worktree(
             agents_clone: None,
             // An observation, not a cut: this records a tree that already
             // exists, so it says nothing about an identity it did not write,
-            // and it names no actor for the same reason.
+            // it names no actor for the same reason, and it seeded nothing.
             commit_identity: None,
             actor_pubkey: None,
+            seeding: None,
         },
     )?;
     store.version = WORKDIR_STORE_VERSION;

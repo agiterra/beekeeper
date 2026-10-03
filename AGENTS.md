@@ -199,6 +199,21 @@ just ci                   # run before any PR
 
 See CONTRIBUTING.md for full setup details and dependency requirements.
 
+**In a worktree you just cut, seed it instead of rebuilding from cold.**
+`sandbox.yml` at the repository root declares this project's build state, and
+`just sandbox-seed <tree> --confirm` carries it out: the two `target/`
+directories and the four `node_modules` are copy-on-write clones (85 GB of
+logical directories for under 500 MB of real disk), `CARGO_HOME` is a link into
+one pool per repository rather than a fresh registry download, and the two
+setup steps that otherwise read as product bugs — the sidecar stubs and the
+`desktop/` install — are recipes it runs for you. `just sandbox-plan` prints
+what is declared without touching anything. The Beekeeper launcher does the
+same thing for a seat's worktree, so a hire's receipt says what it got and what
+it did not. See [docs/INTEGRATION.md](docs/INTEGRATION.md) § Seeding a sandbox
+for the five things about it that will mislead you — chiefly that `du` is not
+what a clone costs, and that `CARGO_HOME` cannot be redirected with an
+environment variable in a hermit project.
+
 ---
 
 ## Working agreements

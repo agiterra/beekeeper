@@ -334,6 +334,7 @@ export function AddCodingSessionProviderForm({
             workdir: checkout,
             name: worktreeName.trim(),
             source: worktreeSource,
+            projectRef,
           });
           effectiveWorkdir = created.path;
         } catch (error) {
@@ -366,6 +367,7 @@ export function AddCodingSessionProviderForm({
     channelId,
     effectiveModel,
     initialTurn,
+    projectRef,
     seatDraft.actor,
     seatDraft.label,
     seatDraft.role,

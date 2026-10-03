@@ -19,8 +19,10 @@
 #   scripts/worktrees-prune.sh [--dry-run] [--targets] [--repo <path>]
 #
 #   --dry-run   print the plan and stop. Nothing is removed.
-#   --targets   also delete target/ in every non-protected merged tree, held
-#               or not: no commit lives in a build directory.
+#   --targets   also delete the build state every non-protected merged tree
+#               declares in its own sandbox.yml, held or not: no commit lives
+#               in a build directory. Needs `bee` to read that declaration,
+#               and refuses without it rather than guessing at target/ alone.
 #   --repo      operate on this repository instead of the current one. Used by
 #               the tests, which build a throwaway layout under a temp dir.
 
@@ -159,7 +161,8 @@ print_group "merged but dirty — kept, listed for you:" ${PLAN_HELD+"${PLAN_HEL
 print_group "unmerged — refused, however old:" ${PLAN_REFUSE+"${PLAN_REFUSE[@]}"}
 
 if [ "$DO_TARGETS" -eq 1 ]; then
-  echo "--targets: target/ will also be removed from every merged tree above"
+  echo "--targets: build state will also be removed from every merged tree above"
+  echo "           (what counts as build state comes from each tree's sandbox.yml)"
   echo
 fi
 
@@ -169,13 +172,51 @@ if [ "$DRY_RUN" -eq 1 ]; then
 fi
 
 # ── act ──────────────────────────────────────────────────────────────────────
+#
+# What counts as build state is the project's to declare, in its own
+# sandbox.yml, and `bee sandbox reclaim-paths` is the one reader of it. This
+# script used to hardcode `target/`, which is how four copies of one list came
+# to disagree: the list missed desktop/src-tauri/target, so a built tree had
+# roughly half its build output freed by something printing success.
+#
+# Without `bee`, this REFUSES rather than falling back to `target/` alone. A
+# half-reclaim that prints a whole-reclaim summary is the failure this exists
+# to prevent.
 if [ "$DO_TARGETS" -eq 1 ]; then
+  BEE="${BUZZ_BEE:-$(command -v bee 2>/dev/null || true)}"
+  if [ -z "$BEE" ] || [ ! -x "$BEE" ]; then
+    echo "worktrees-prune: --targets needs 'bee' to read each tree's sandbox.yml," >&2
+    echo "  which is what says any of this is build state. Build it with" >&2
+    echo "  'cargo build -p buzz-cli', install the app, or set BUZZ_BEE." >&2
+    echo "  Refusing rather than guessing at 'target/' alone." >&2
+    exit 1
+  fi
   for entry in ${PLAN_REMOVE+"${PLAN_REMOVE[@]}"} ${PLAN_HELD+"${PLAN_HELD[@]}"}; do
     path="${entry%% (*}"
-    if [ -d "$path/target" ]; then
-      rm -rf "$path/target"
-      echo "removed $path/target"
-    fi
+    # NUL-separated `path\0action` pairs, so a path with a space cannot split.
+    while IFS= read -r -d '' relative && IFS= read -r -d '' action; do
+      # `${var:?}` on every removal: an empty $path or $relative would make
+      # these `rm -rf /`, and the shell must stop rather than find out.
+      case "$action" in
+        delete)
+          # Never follow a link: a path declared a directory that turns out to
+          # be a link is unlinked, not deleted through.
+          if [ -L "${path:?}/${relative:?}" ]; then
+            rm -f "${path:?}/${relative:?}"
+            echo "unlinked $path/$relative (a link, so this frees nothing)"
+          elif [ -d "${path:?}/${relative:?}" ]; then
+            rm -rf "${path:?}/${relative:?}"
+            echo "removed $path/$relative"
+          fi
+          ;;
+        unlink)
+          if [ -L "${path:?}/${relative:?}" ]; then
+            rm -f "${path:?}/${relative:?}"
+            echo "unlinked $path/$relative (frees nothing)"
+          fi
+          ;;
+      esac
+    done < <("$BEE" sandbox reclaim-paths --checkout "$path")
   done
 fi
 

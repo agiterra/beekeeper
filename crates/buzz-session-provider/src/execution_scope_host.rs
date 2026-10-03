@@ -147,18 +147,48 @@ impl HostLaunchPlan {
     /// fsmonitor off (disclosed as not enforced by the caller's plan).
     #[must_use]
     pub fn git_command(&self, dir: &Path, args: &[&str]) -> std::process::Command {
+        match self {
+            Self::Bounded(_) => self.program_command(dir, "git", args),
+            Self::Unenforced { .. } => {
+                let mut command = crate::host_command::metadata_git_command(dir);
+                command.args(args);
+                command
+            }
+        }
+    }
+
+    /// Any program in `dir`, as a blocking command, inside the boundary when
+    /// one is prepared.
+    ///
+    /// The general form of [`HostLaunchPlan::git_command`], for the host work
+    /// that is not git: a project's own setup recipe, say, which must run
+    /// inside the new tree's boundary rather than beside it. Blocking on
+    /// purpose — the desktop's worktree creation is synchronous inside a
+    /// blocking task, and giving it an async-only path would mean a second way
+    /// to run a host command.
+    ///
+    /// Where no backend exists this is an ordinary host command. That is not a
+    /// silent downgrade: the plan says `Unenforced` with its reason, and every
+    /// caller records that in what it discloses.
+    #[must_use]
+    pub fn program_command(
+        &self,
+        dir: &Path,
+        program: &str,
+        args: &[&str],
+    ) -> std::process::Command {
         let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
         match self {
             Self::Bounded(launch) => {
-                let (program, argv) = launch.boundary().wrap("git", &args);
-                let mut command = std::process::Command::new(program);
+                let (wrapped, argv) = launch.boundary().wrap(program, &args);
+                let mut command = std::process::Command::new(wrapped);
                 command.args(argv).current_dir(dir);
                 launch.env().apply_to_std(&mut command);
                 command
             }
             Self::Unenforced { .. } => {
-                let mut command = crate::host_command::metadata_git_command(dir);
-                command.args(args);
+                let mut command = std::process::Command::new(program);
+                command.args(args).current_dir(dir);
                 command
             }
         }

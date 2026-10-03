@@ -18,14 +18,19 @@
 //!   branch tip is on the relay, the row says it could not confirm it — it
 //!   does not say the branch was never pushed.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
+use buzz_core_pkg::sandbox_manifest::reclaim_plan_for;
+use buzz_core_pkg::sandbox_seed::{
+    estimate_reclaimable, reclaim, render_reclaim_estimate, ReclaimDisposition,
+};
+use buzz_core_pkg::sandbox_seed_fs::{NoGitAnswers, StdSeedOps};
 use buzz_core_pkg::worktree_lifecycle::{
     build_output_reclaimable, classify_seat_worktree, render_reclaimable_bytes,
-    SeatWorktreeDisposition, SeatWorktreeFacts, RECLAIMABLE_BUILD_DIRS,
+    SeatWorktreeDisposition, SeatWorktreeFacts,
 };
 
 use crate::app_state::AppState;
@@ -171,36 +176,20 @@ pub(crate) fn count_dirty_files(path: &Path) -> u32 {
     }
 }
 
-/// Bytes held by one directory, or `None` when it cannot be measured.
-fn directory_bytes(path: &Path) -> Option<u64> {
-    if !path.is_dir() {
-        return Some(0);
-    }
-    // The path is always absolute, so it can never read as an option and no
-    // `--` separator is needed (BSD and GNU `du` disagree about accepting one).
-    let output = std::process::Command::new("du")
-        .arg("-sk")
-        .arg(path)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let kilobytes: u64 = text.split_whitespace().next()?.parse().ok()?;
-    kilobytes.checked_mul(1024)
-}
-
-/// Bytes of rebuildable build output under one worktree.
+/// What reclaiming one worktree would free, and how a person should read it.
 ///
-/// `None` when any one directory could not be measured: a partial total
-/// reported as a whole one would be a number nobody could act on.
-pub(crate) fn reclaimable_bytes(path: &Path) -> Option<u64> {
-    let mut total: u64 = 0;
-    for name in RECLAIMABLE_BUILD_DIRS {
-        total = total.checked_add(directory_bytes(&path.join(name))?)?;
-    }
-    Some(total)
+/// Which directories count is the project's to declare, in its own
+/// `sandbox.yml`; the built-in list is the fallback for a project that declares
+/// none. Reclaim asks git nothing, so this carries no git.
+///
+/// The label is not just the number formatted: a cloned build directory
+/// measures its full logical size while freeing it releases only what this
+/// sandbox itself wrote, so the number alone would overstate the gain.
+pub(crate) fn reclaimable(path: &Path) -> (Option<u64>, String) {
+    let (plan, _) = reclaim_plan_for(path);
+    let estimate =
+        estimate_reclaimable(&plan, path, &StdSeedOps::new(NoGitAnswers).measuring(true));
+    (estimate.bytes, render_reclaim_estimate(estimate))
 }
 
 /// The one sentence a surface shows for a disposition.
@@ -282,10 +271,10 @@ pub(crate) fn build_row(
         settled_for_secs: session.settled_for_secs,
     };
     let disposition = classify_seat_worktree(&facts);
-    let bytes = if exists {
-        reclaimable_bytes(&entry.path)
+    let (bytes, reclaimable_label) = if exists {
+        reclaimable(&entry.path)
     } else {
-        Some(0)
+        (Some(0), render_reclaimable_bytes(Some(0)))
     };
     let (seat_label, session_ref) = split_key(key, &session.session_ref);
     let detail = worktree_detail(
@@ -306,7 +295,7 @@ pub(crate) fn build_row(
         disposition: disposition.token().to_string(),
         dirty_files,
         reclaimable_bytes: bytes,
-        reclaimable_label: render_reclaimable_bytes(bytes),
+        reclaimable_label,
         reclaimable_now: build_output_reclaimable(&facts),
         grace_remaining_secs: match disposition {
             SeatWorktreeDisposition::WithinGrace { remaining_secs } => Some(remaining_secs),
@@ -397,23 +386,58 @@ pub async fn reclaim_coding_session_seat_worktree(
     .map_err(|error| format!("worktree reclaim task failed: {error}"))?
 }
 
-/// Remove the rebuildable directories under one worktree path.
+/// Remove what this project calls build state under one worktree path.
+///
+/// One implementation, shared with `bee sessions worktree reclaim`, reading the
+/// project's own `sandbox.yml` — so the two surfaces cannot free different sets
+/// of directories. A declared path that turns out to be a link has the link
+/// removed and whatever it points at left alone.
 pub(crate) fn reclaim_build_output(path: &Path) -> Result<CodingSessionWorktreeReclaimed, String> {
-    let before = reclaimable_bytes(path);
-    let mut removed: Vec<String> = Vec::new();
-    for name in RECLAIMABLE_BUILD_DIRS {
-        let target: PathBuf = path.join(name);
-        if !target.is_dir() {
-            continue;
-        }
-        std::fs::remove_dir_all(&target)
-            .map_err(|error| format!("failed to remove {}: {error}", target.display()))?;
-        removed.push(target.to_string_lossy().into_owned());
+    let (plan, refusal) = reclaim_plan_for(path);
+    let receipt = reclaim(&plan, path, &StdSeedOps::new(NoGitAnswers).measuring(true));
+    let refused: Vec<&str> = receipt
+        .outcomes
+        .iter()
+        .filter(|outcome| matches!(outcome.disposition, ReclaimDisposition::Refused { .. }))
+        .map(|outcome| outcome.detail.as_str())
+        .collect();
+    if !refused.is_empty() {
+        return Err(refused.join("; "));
+    }
+    let removed = receipt
+        .outcomes
+        .iter()
+        .filter(|outcome| {
+            matches!(
+                outcome.disposition,
+                ReclaimDisposition::Removed | ReclaimDisposition::Unlinked
+            )
+        })
+        .map(|outcome| path.join(&outcome.path).to_string_lossy().into_owned())
+        .collect();
+    let (freed, any_unmeasurable) = receipt.freed();
+    // `at least`, not a flat number: what a clone releases is unknown, so a
+    // total that silently counted its logical size would overstate the gain.
+    let freed_label = if any_unmeasurable {
+        format!(
+            "at least {} — some of what was removed was cloned, so its exclusive share could \
+             not be measured",
+            render_reclaimable_bytes(Some(freed))
+        )
+    } else {
+        render_reclaimable_bytes(Some(freed))
+    };
+    if let Some(refusal) = refusal {
+        tracing::warn!(
+            target: "beekeeper::sandbox",
+            %refusal,
+            "the project's sandbox.yml was not used; reclaimed the fallback list instead"
+        );
     }
     Ok(CodingSessionWorktreeReclaimed {
         removed,
-        freed_bytes: before,
-        freed_label: render_reclaimable_bytes(before),
+        freed_bytes: Some(freed),
+        freed_label,
     })
 }
 

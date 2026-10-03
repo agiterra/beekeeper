@@ -799,11 +799,10 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         name: plan.worktreeName,
         source: null,
         // The hire targets a mission that already exists, so — unlike the
-        // lead's own worktree at launch — both halves of the L11 record's
-        // key are already known. Passing them here is what lets the host
-        // record this worktree durably instead of only staging it as a
-        // one-shot hint the create's own settling never promotes (finding
-        // 60).
+        // lead's own worktree at launch — both halves of the L11 record's key
+        // are already known. Passing them here is what lets the host record
+        // this worktree durably instead of only staging it as a one-shot hint
+        // the create's own settling never promotes (finding 60).
         sessionRef: plan.sessionRef,
         seatLabel: plan.seatLabel,
         // The tree gets its commit identity here, before a turn opens in it.
@@ -813,6 +812,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
         seatPubkey: plan.actor,
         seatRole: plan.role,
         project: plan.title,
+        projectRef,
       });
       const cwdRefusal = await stageHiredSeatWorkdirOrRefuse(
         request,

@@ -78,11 +78,37 @@ if [[ -e "$PROD_ROOT" ]]; then
     exit 1
   fi
 fi
+
+# Seed the build tree's heavy build state from the source checkout, as the
+# project's own sandbox.yml declares it. Non-fatal by construction: an unseeded
+# tree is cold, which is slow, not wrong — so a failure here reports and the
+# build carries on from scratch.
+seed_build_tree() {
+  local tree="$1" source="$2"
+  local bee="${BUZZ_BEE:-$(command -v bee 2>/dev/null || true)}"
+  for candidate in \
+      "$source/target/release/bee" \
+      "$source/target/debug/bee" \
+      "/Applications/Beekeeper.app/Contents/MacOS/bee"; do
+    [[ -n "$bee" && -x "$bee" ]] && break
+    bee="$candidate"
+  done
+  if [[ -z "$bee" || ! -x "$bee" ]]; then
+    echo "note: no 'bee' to seed $tree from $source; this build starts cold" >&2
+    return 0
+  fi
+  if ! "$bee" sandbox seed --tree "$tree" --from "$source" --run-recipes --confirm; then
+    echo "warning: seeding $tree did not finish; this build starts cold" >&2
+  fi
+}
+
 if [[ ! -d "$PROD_ROOT" ]]; then
   git -C "$SRC_ROOT" worktree add --detach "$PROD_ROOT" "$SHA"
 else
   git -C "$PROD_ROOT" checkout --detach --quiet "$SHA"
 fi
+
+seed_build_tree "$PROD_ROOT" "$SRC_MAIN"
 
 cd "$PROD_ROOT"
 export PATH="$PROD_ROOT/bin:$PATH"

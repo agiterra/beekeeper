@@ -516,6 +516,95 @@ pre-push instead, where it resolves its base from `origin/main` directly. If it
 is ever added to the gate, raise the clone depth so that merge-base is
 reachable.
 
+## Seeding a sandbox — `sandbox.yml`
+
+A fresh sandbox — a seat's worktree, an action step's detached tree, or one you
+cut by hand — arrives with its tracked files and nothing else. The code takes
+seconds; the build state does not. Measured on one developer's machine: `target/`
+36 GB, a *second* cargo workspace under `desktop/src-tauri/target` 19 GB, a
+1.3 GB `CARGO_HOME` at `.hermit/rust`, and `node_modules` in four places. Nothing
+seeded any of it, so every sandbox re-downloaded the registry and rebuilt from
+cold, and fourteen worktrees accumulated 331 GB of duplicates.
+
+`sandbox.yml` at the repository root is how the project says what to seed and
+how. One declaration, one parser (`buzz_core::sandbox_manifest`), three
+consumers: the desktop's worktree creation, the session provider's action steps,
+and `just sandbox-seed`. The same declaration also tells
+`bee sessions worktree reclaim` what counts as build state, so the set cannot
+differ between seeding and freeing.
+
+```bash
+just sandbox-plan                                  # what this project declares
+just sandbox-seed ../beekeeper-wt-mine             # print the plan, write nothing
+just sandbox-seed ../beekeeper-wt-mine --confirm   # seed it
+just sandbox-seed ../beekeeper-wt-mine --run-recipes --confirm
+```
+
+Five entry kinds, chosen per entry because no single mechanism is right for all
+of them:
+
+| Kind | What it does | Used here for |
+|------|--------------|---------------|
+| `clone` | Copy-on-write clone (`cp -Rc`) | the two `target/` dirs, the four `node_modules` |
+| `copy` | A real, independent copy | `.env` |
+| `symlink` | A link into the source checkout | — |
+| `share` | A link into one pool per project | `.hermit/rust`, i.e. `CARGO_HOME` |
+| `run` | The project's own recipe or script | the sidecar stubs, the mobile overrides |
+
+Measured on this repository, seeding a freshly cut worktree: **103 GB** of
+logical build directories, **419 MiB** of real disk, 85 s wall clock, and
+`git status --porcelain` empty afterwards. The first `cargo build` in it took
+20 s against 1298 crates reached through the shared registry, with no network.
+
+Five things that will mislead you:
+
+- **`du` is not what a clone costs.** A cloned `target/` measures its full
+  logical size while its blocks are shared with the source until one side
+  writes. Every receipt says `up to N GB — shared with the source, so the
+  exclusive share is unknown`, and the only measurement that proves clone-on-write
+  is the free-space delta. A size nobody paid to measure reads `unknown`, never
+  `0`.
+- **An ignore rule written with a trailing slash hides a directory, not a
+  link.** `.gitignore` says `node_modules/`, so a *symlink* there is staged and
+  the sandbox's `git status` is never empty — which is what a seat's push gate
+  reads. The seeder refuses such an entry and names `link: entries`, whose
+  destination is a real directory. It does **not** write to `info/exclude`:
+  that file is shared by the main checkout and every linked worktree.
+- **A sandbox is seeded before these paths exist.** `git check-ignore target`
+  does not match `/target/` for a path that is not there, because git evaluates
+  the query as a non-directory. The question has to be asked as `target/`. The
+  one implementation of this rule is
+  `buzz_core::sandbox_seed_fs::ignored_from_patterns`.
+- **`CARGO_HOME` cannot be redirected by an environment variable here.**
+  Hermit's rustup package pins `CARGO_HOME="${HERMIT_ENV}/.hermit/rust"` in its
+  own package environment and `hermit exec` applies that over the ambient value,
+  so for every `cargo` reached through a `bin/` shim the exported value does
+  nothing. What redirects it is the **path**: a sandbox's `.hermit/rust` is a
+  link into `project_scope_pool_dir`, inside the directory the project's
+  executions are already granted. That is why the entry is `share` and not an
+  env var.
+- **A shared `target/` serializes your lanes.** CI gets away with one shared
+  target directory only because `WOODPECKER_MAX_WORKFLOWS=1` runs one workflow
+  at a time (see the cache-mount table above). Local sandboxes build in parallel
+  and would block each other on cargo's build lock, so `clone` is the mechanism
+  for a target directory and `share` on one emits a warning.
+
+And one rule that is not obvious: **`node_modules` is cloned and re-rooted,
+never linked.** pnpm keys its workspace state by absolute path, so a tree
+pointing at another checkout's `node_modules` reads as a stale install on every
+script and purges the content-addressed store every concurrent sandbox resolves
+through. The seeder rewrites `.pnpm-workspace-state-v1.json` onto the new tree,
+and a rewrite that matches nothing is a **failure** that undoes the entry rather
+than a silent no-op.
+
+Seeding never fails the tree it was asked to seed. An unseeded sandbox is
+*cold*, which is slow; a sandbox that is not the commit it claims is *wrong*.
+And `sandbox.yml` is a tracked file an agent may edit, so letting it fail a hire
+would hand whoever can edit it a lever to fail every hire. Every skipped,
+refused or failed entry is instead named in the receipt, which the desktop
+returns from the create, stores in `coding-session-workdirs.json`, and an action
+step leaves at `<artifact dir>/seed.json`.
+
 ## Deploying
 
 The relay deploys itself. **One deployer script,

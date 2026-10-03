@@ -1,0 +1,148 @@
+# sandbox.yml — how a fresh sandbox of this repository is seeded with build
+# state, and what counts as build state when that sandbox is reclaimed.
+#
+# ONE declaration, read by three consumers and one parser
+# (`buzz_core::sandbox_manifest`):
+#
+#   * the Beekeeper launcher, when it cuts a seat's worktree;
+#   * the session provider, when an action step cuts a detached tree;
+#   * `just sandbox-seed <tree>`, for a worktree you cut by hand.
+#
+# And `bee sessions worktree reclaim` frees exactly what this file calls build
+# state, and nothing else. A path that is not named here is source.
+#
+# Why this file exists: a sandbox arrives with its tracked files and nothing
+# else, so every one of them re-downloaded the cargo registry and rebuilt from
+# cold. Fourteen worktrees had accumulated 331 GB of duplicates before anything
+# could seed them.
+#
+# Rules the parser enforces, so they are worth knowing before editing:
+#   * Unknown keys are refused — a typo cannot silently mean the default.
+#   * A path may not be absolute, may not climb out of the checkout, may not be
+#     the checkout itself, and may not be under .git.
+#   * No entry may name a donor. The source checkout is resolved by the host;
+#     this file only ever says what to seed and how.
+#   * `symlink` and `share` have no `reclaim` key at all, because deleting
+#     through a link would delete what it points at.
+#
+# The mechanism is per entry because no single one is right for all of them:
+# a 36 GB target/ wants a copy-on-write clone, CARGO_HOME wants one shared
+# pool, generated files want the recipe that generates them, and .env wants a
+# real copy.
+
+schema: beekeeper-sandbox/v1
+
+# Namespace for this project's `share` pools. A slug, never a path: the host
+# computes the pool root inside the project's own scope, and this only names
+# the pool within it.
+pool: beekeeper-build
+
+entries:
+  # ── The workspace target directory: 36-44 GB, cold on every new sandbox. ──
+  # `clone` and not `share`: sharing one target directory would be warmer
+  # still, but every concurrent sandbox would then block on cargo's build lock.
+  # CI gets away with one shared target directory only because it runs a single
+  # workflow at a time (docs/INTEGRATION.md § Host cache mounts).
+  #
+  # `on_unsupported: refuse` is load-bearing. A clone of 36 GB is seconds and
+  # almost no disk; a *copy* of 36 GB is neither, and must never happen because
+  # someone ran this on a filesystem that cannot clone.
+  - path: target
+    kind: clone
+    on_unsupported: refuse
+    reclaim: delete
+
+  # ── The second, separate cargo workspace: 19-49 GB. ──────────────────────
+  # `cargo clean` at the root does not touch this one, and neither did reclaim
+  # before this file existed.
+  - path: desktop/src-tauri/target
+    kind: clone
+    on_unsupported: refuse
+    reclaim: delete
+
+  # ── CARGO_HOME, ~1.3 GB per tree. ────────────────────────────────────────
+  # A path-level link, deliberately, and not an environment variable: hermit's
+  # rustup package pins CARGO_HOME="${HERMIT_ENV}/.hermit/rust" in its own
+  # package env, which `hermit exec` applies inside every bin/ shim, so an
+  # ambient CARGO_HOME does not stick (docs/INTEGRATION.md § Host cache
+  # mounts). The only way to share this cache is to share the path.
+  #
+  # `lock: none` is a declaration about cargo, not a measurement: the registry
+  # uses per-file locks, so sandboxes are expected to coexist here. Every
+  # receipt prints it as a declared value.
+  - path: .hermit/rust
+    kind: share
+    id: cargo-home
+    link: self
+    lock: none
+
+  # ── node_modules, in four places. ────────────────────────────────────────
+  # Cloned and re-rooted, never linked. pnpm keys its workspace state by
+  # absolute path, so a tree linked to another checkout's node_modules reads as
+  # a stale install on every script and purges the content-addressed store that
+  # every concurrent sandbox resolves through. The setting that suppresses the
+  # check lives in the tracked pnpm-workspace.yaml, which must not be edited
+  # for one sandbox's convenience — so the state file is rewritten instead.
+  #
+  # `on_unsupported: copy` here and not `refuse`: these are hundreds of
+  # megabytes of hardlinks into the global store, so a real copy is tolerable
+  # where a 36 GB one is not.
+  - path: node_modules
+    kind: clone
+    on_unsupported: copy
+    rewrite: [".pnpm-workspace-state-v1.json"]
+    env: { PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false" }
+    reclaim: delete
+
+  - path: desktop/node_modules
+    kind: clone
+    on_unsupported: copy
+    reclaim: delete
+
+  - path: web/node_modules
+    kind: clone
+    on_unsupported: copy
+    reclaim: delete
+
+  - path: admin-web/node_modules
+    kind: clone
+    on_unsupported: copy
+    reclaim: delete
+
+  # ── Flutter build output, ~109 MB. Reclaim-only. ─────────────────────────
+  # Cheap enough to rebuild that seeding it buys little, and a stale copy
+  # misleads. But it is still build state, so reclaim must free it — which is
+  # exactly what a `seed: never` entry is for.
+  - path: mobile/build
+    kind: copy
+    seed: never
+    reclaim: delete
+
+  # ── Generated files: run the recipe, never copy the output. ──────────────
+  # Without the stubs, the Tauri build script panics on a missing sidecar
+  # binary. Copying those binaries from a live checkout is the wrong answer and
+  # the recipe exists for exactly this.
+  - kind: run
+    recipe: _ensure-sidecar-stubs
+    produces: ["desktop/src-tauri/binaries"]
+    reclaim: delete
+
+  # Per-worktree mobile identity, so debug builds from several sandboxes
+  # install side by side instead of overwriting each other.
+  - kind: run
+    script: scripts/mobile-worktree-overrides.sh
+    produces:
+      - mobile/ios/Flutter/WorktreeOverrides.xcconfig
+      - mobile/android/worktree.properties
+    reclaim: delete
+
+  # ── .env, by explicit declaration only. ──────────────────────────────────
+  # Nothing sweeps sibling env files and nothing exports every tracked one.
+  # This entry is why a sandbox has one at all, `required: false` so a checkout
+  # that never had one is not an error, and the receipt always says that a
+  # sandbox received it. It is configuration, not build output, so reclaim
+  # never touches it.
+  - path: .env
+    kind: copy
+    required: false
+    reclaim: never

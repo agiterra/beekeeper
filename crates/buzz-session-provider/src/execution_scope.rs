@@ -59,6 +59,45 @@ pub(crate) const BOUNDARIES_DIR: &str = "boundaries";
 /// Directory under the provider state dir holding each project scope's own
 /// dependency caches.
 pub(crate) const SCOPE_CACHES_DIR: &str = "scope-caches";
+
+/// Where this project's own dependency caches live.
+///
+/// Keyed on the project coordinate when there is one, and on the tree when
+/// there is not — in which case the directory is that one tree's, not the
+/// project's, which is why anything claiming to *share* across sandboxes needs
+/// a real coordinate.
+///
+/// Public because the sandbox seeder resolves the same directory: a pool it
+/// links a sandbox into has to land inside the one the grant below covers, or
+/// the link would point somewhere the project's executions cannot read.
+#[must_use]
+pub fn project_scope_cache_dir(
+    state_dir: &Path,
+    project_ref: Option<&str>,
+    tree: &Path,
+) -> PathBuf {
+    let key = hex::encode(Sha256::digest(
+        project_ref
+            .map_or_else(|| tree.to_string_lossy().into_owned(), str::to_owned)
+            .as_bytes(),
+    ));
+    state_dir.join(SCOPE_CACHES_DIR).join(&key[..24])
+}
+
+/// Where a sandbox's shared pools live, inside [`project_scope_cache_dir`].
+///
+/// This is what makes sharing a `CARGO_HOME` work at all. Hermit's rustup
+/// package pins `CARGO_HOME="${HERMIT_ENV}/.hermit/rust"` in its own package
+/// environment and `hermit exec` applies that over the ambient value, so the
+/// `CARGO_HOME` this module exports is simply overridden for every `cargo`
+/// reached through a `bin/` shim. The way to redirect it is therefore the
+/// *path*: a sandbox's `.hermit/rust` is a link into a pool here, so the
+/// pinned path resolves inside the project's own granted cache. See the
+/// project's `sandbox.yml`.
+#[must_use]
+pub fn project_scope_pool_dir(state_dir: &Path, project_ref: Option<&str>, tree: &Path) -> PathBuf {
+    project_scope_cache_dir(state_dir, project_ref, tree).join("shared")
+}
 /// Directory under the provider state dir holding each runtime's empty
 /// model-discovery working directory.
 pub(crate) const DISCOVERY_DIR: &str = "discovery";
@@ -847,14 +886,9 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
     }
 
     // This project's own dependency caches: shared by its executions, never
-    // by another project's.
-    let cache_key = hex::encode(Sha256::digest(
-        inputs
-            .project_ref
-            .map_or_else(|| tree.to_string_lossy().into_owned(), str::to_owned)
-            .as_bytes(),
-    ));
-    let caches = state_dir.join(SCOPE_CACHES_DIR).join(&cache_key[..24]);
+    // by another project's. Derived in one place, so the grant below and
+    // whatever else resolves the directory cannot disagree about where it is.
+    let caches = project_scope_cache_dir(&state_dir, inputs.project_ref, &tree);
     std::fs::create_dir_all(&caches).map_err(|error| {
         refuse(
             EXECUTION_BOUNDARY_UNAVAILABLE,
@@ -1597,9 +1631,21 @@ fn resolve_command(command: &str) -> Option<PathBuf> {
 ///
 /// Only tool binaries: no dependency caches (a Cargo git cache or private
 /// registry can hold private repositories), no global configuration (mise,
-/// Cargo or Git configuration can name unrelated projects). Dependency caches
-/// are the project's own (see `SCOPE_CACHES_DIR`); Git configuration is staged
-/// per execution ([`crate::execution_scope_git::stage_git_config`]).
+/// Cargo or Git configuration can name unrelated projects). Git configuration
+/// is staged per execution
+/// ([`crate::execution_scope_git::stage_git_config`]).
+///
+/// Dependency caches are the project's own, by two mechanisms that are both
+/// needed and neither of which is sufficient:
+///
+/// * the environment this module exports ([`SCOPE_CACHES_DIR`]), which holds
+///   for a tool that reads its ambient environment; and
+/// * the *path*, for a tool whose own launcher pins it. Hermit's rustup
+///   package pins `CARGO_HOME="${HERMIT_ENV}/.hermit/rust"` and `hermit exec`
+///   applies that over the ambient value, so for every `cargo` reached through
+///   a `bin/` shim — which is all of them in a hermit project — the exported
+///   `CARGO_HOME` below does nothing at all. What redirects it is a sandbox
+///   whose `.hermit/rust` is a link into [`project_scope_pool_dir`].
 const TOOLCHAIN_INSTALLATIONS: &[(&str, &str)] = &[
     (".rustup/toolchains", "installed Rust toolchains"),
     (
@@ -1836,6 +1882,13 @@ fn resolve_env(
         ("GIT_CONFIG_GLOBAL", text(scope.git_config)),
         // The staged file is the whole selection (system entries included).
         ("GIT_CONFIG_NOSYSTEM", "1".to_owned()),
+        // Effective for a cargo that reads its ambient environment, and
+        // *overridden* for one reached through a hermit shim, which pins
+        // CARGO_HOME to `${HERMIT_ENV}/.hermit/rust` in its own package
+        // environment. Kept because dropping it would send a non-hermit cargo
+        // to the operator's `~/.cargo`, outside the boundary; it is not by
+        // itself what keeps a hermit project's registry project-scoped. See
+        // `project_scope_pool_dir`.
         ("CARGO_HOME", text(&scope.caches.join("cargo"))),
         // clang and swiftc otherwise build modules under the per-user Darwin
         // cache directory, outside the boundary.

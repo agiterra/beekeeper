@@ -28,6 +28,7 @@ fn seat(path: &str) -> CodingSessionSeatWorktree {
         agents_clone: None,
         commit_identity: None,
         actor_pubkey: None,
+        seeding: None,
     }
 }
 

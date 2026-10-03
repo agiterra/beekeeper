@@ -268,6 +268,7 @@ export function useCodingSessionFoundedStart(input: {
                   name: worktreeName,
                   source: setup.worktreeSource,
                   sessionRef,
+                  projectRef,
                 })
               ).path;
             } catch (error) {

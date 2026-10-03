@@ -32,8 +32,10 @@ use buzz_core::kind::KIND_CODING_SESSION_CLOSURE;
 const KIND_DELETION: u32 = 5;
 use buzz_core::worktree_lifecycle::{
     build_output_reclaimable, classify_seat_worktree, render_reclaimable_bytes,
-    SeatWorktreeDisposition, SeatWorktreeFacts, RECLAIMABLE_BUILD_DIRS,
+    SeatWorktreeDisposition, SeatWorktreeFacts,
 };
+
+use crate::commands::sandbox;
 
 use crate::client::BuzzClient;
 use crate::error::CliError;
@@ -208,33 +210,6 @@ pub fn is_protected(repo_root: &Path, path: &Path) -> bool {
         Ok(cwd) => cwd.starts_with(path),
         Err(_) => true,
     }
-}
-
-/// Bytes under one directory, or `None` when they cannot be measured.
-fn directory_bytes(path: &Path) -> Option<u64> {
-    if !path.is_dir() {
-        return Some(0);
-    }
-    // Absolute paths only, so nothing here can read as an option.
-    let output = Command::new("du").arg("-sk").arg(path).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.split_whitespace()
-        .next()?
-        .parse::<u64>()
-        .ok()?
-        .checked_mul(1024)
-}
-
-/// Bytes of rebuildable build output under one worktree, or `None`.
-pub fn reclaimable_bytes(path: &Path) -> Option<u64> {
-    let mut total: u64 = 0;
-    for name in RECLAIMABLE_BUILD_DIRS {
-        total = total.checked_add(directory_bytes(&path.join(name))?)?;
-    }
-    Some(total)
 }
 
 /// The repository id the relay files a worktree's repo under.
@@ -438,6 +413,10 @@ pub struct WorktreeRow {
     pub dirty_files: u32,
     /// Rebuildable bytes, when measurable.
     pub reclaimable: Option<u64>,
+    /// How that size should be read. A cloned build directory measures its
+    /// full logical size while freeing it releases only what this sandbox
+    /// wrote, so the number alone would overstate what reclaiming buys.
+    pub reclaimable_label: String,
     /// Whether that build output may go right now.
     pub reclaimable_now: bool,
     /// Whether the relay's ref state was established at all.
@@ -466,10 +445,7 @@ impl WorktreeRow {
         object.insert("disposition".into(), json!(self.disposition.token()));
         object.insert("dirtyFiles".into(), json!(self.dirty_files));
         object.insert("reclaimableBytes".into(), json!(self.reclaimable));
-        object.insert(
-            "reclaimable".into(),
-            json!(render_reclaimable_bytes(self.reclaimable)),
-        );
+        object.insert("reclaimable".into(), json!(self.reclaimable_label));
         object.insert("reclaimableNow".into(), json!(self.reclaimable_now));
         object.insert("tipOnRelayKnown".into(), json!(self.tip_known));
         object.insert("tipOnRelayLimit".into(), json!(TIP_ON_RELAY_LIMIT));
@@ -575,16 +551,20 @@ pub fn row_for(
         is_protected: protected,
         settled_for_secs: facts.settled_for_secs,
     };
+    // What this project calls build state, from its own sandbox.yml, with the
+    // built-in list as the fallback for a project that declares none.
+    let reclaimable = if exists {
+        sandbox::reclaimable(&record.path)
+    } else {
+        (Some(0), render_reclaimable_bytes(Some(0)))
+    };
     WorktreeRow {
         key: key.to_string(),
         record: record.clone(),
         disposition: classify_seat_worktree(&seat_facts),
         dirty_files,
-        reclaimable: if exists {
-            reclaimable_bytes(&record.path)
-        } else {
-            Some(0)
-        },
+        reclaimable: reclaimable.0,
+        reclaimable_label: reclaimable.1,
         reclaimable_now: build_output_reclaimable(&seat_facts),
         tip_known: tip.is_some(),
         exists,
@@ -794,23 +774,22 @@ pub async fn cmd_reclaim(
                 row.detail()
             )));
         }
-        let freed = reclaimable_bytes(&row.record.path);
-        let mut removed = Vec::new();
-        for name in RECLAIMABLE_BUILD_DIRS {
-            let directory = row.record.path.join(name);
-            if !directory.is_dir() {
-                continue;
-            }
-            std::fs::remove_dir_all(&directory).map_err(|error| {
-                CliError::Other(format!("failed to remove {}: {error}", directory.display()))
-            })?;
-            removed.push(directory.to_string_lossy().into_owned());
-        }
+        let receipt = sandbox::reclaim_build_output(&row.record.path);
+        let (freed, any_unmeasurable) = receipt.freed();
         results.push(json!({
             "key": row.key,
-            "removed": removed,
+            "declaration": receipt.source,
+            "paths": receipt.outcomes,
             "freedBytes": freed,
-            "freed": render_reclaimable_bytes(freed),
+            "freed": if any_unmeasurable {
+                format!(
+                    "at least {} — some of what was removed was cloned from the source \
+                     checkout, so its exclusive share could not be measured",
+                    render_reclaimable_bytes(Some(freed))
+                )
+            } else {
+                render_reclaimable_bytes(Some(freed))
+            },
         }));
     }
     println!(

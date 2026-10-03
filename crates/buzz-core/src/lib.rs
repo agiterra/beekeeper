@@ -163,6 +163,15 @@ pub mod relay;
 /// Who founded a repository — signer, NIP-34 maintainers, project owners.
 pub mod repository_founders;
 pub mod repository_protection;
+/// `sandbox.yml` — how a project's build state is seeded into a fresh sandbox,
+/// and what counts as build state when that sandbox is reclaimed.
+pub mod sandbox_manifest;
+/// Carrying out a `sandbox.yml` declaration, and the inverse verb that frees
+/// what it seeded.
+pub mod sandbox_seed;
+/// [`sandbox_seed::SeedOps`] over a real filesystem, with git delegated to
+/// whoever is allowed to run it.
+pub mod sandbox_seed_fs;
 /// The git identity a seat's commits are authored as — derived from its own
 /// key, its role and its project, never asked of a person.
 pub mod seat_commit_identity;

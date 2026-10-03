@@ -599,6 +599,9 @@ test("the lead's create runs in the worktree the launch cut for it", async () =>
       workdir: "/Users/b/Projects/bk/bk",
       name: "ui-lead",
       source: "main",
+      // Keys the project's own dependency pool; null for a launch with no
+      // project, which makes a shared entry a per-tree clone instead.
+      projectRef: null,
     },
   ]);
   assert.equal(workdir, "/Users/b/Projects/bk/bk-ui-lead");

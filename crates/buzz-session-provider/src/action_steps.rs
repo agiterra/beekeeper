@@ -1338,6 +1338,19 @@ impl Provider {
                     host_command::materialize_worktree(&plan, worktree, commit).await;
                 let host_env: HashMap<String, String> = std::env::vars().collect();
                 let prepared = materialized.and_then(|()| {
+                    // Seed the tree's build state before the step runs in it.
+                    // Never fatal: a step in an unseeded tree builds from cold,
+                    // which is slow, not wrong — and `sandbox.yml` is a tracked
+                    // file, so letting it fail a step would hand whoever can
+                    // edit it a lever to fail every step.
+                    seed_step_worktree(
+                        &plan,
+                        &checkout,
+                        worktree,
+                        Some(&record.project),
+                        &self.config.state_dir,
+                        &artifact_dir,
+                    );
                     host_command::prepare(&spec, worktree, &host_env)
                         .map_err(|refusal| refusal.message)
                 });
@@ -1536,6 +1549,51 @@ impl Provider {
 
     fn action_artifact_dir(&self, run_id: &str, step_id: &str) -> PathBuf {
         artifact_dir(&self.config.state_dir, run_id, step_id)
+    }
+}
+
+/// Seed a step's detached worktree, and leave the receipt beside its logs.
+///
+/// Never fails the step. What it does instead is *say*: the receipt lands at
+/// `<artifact dir>/seed.json`, beside the step's stdout and stderr, and a line
+/// a lead can read goes to the log — so a step that took twenty minutes because
+/// its tree started cold is explicable rather than mysterious.
+fn seed_step_worktree(
+    plan: &crate::execution_scope_host::HostLaunchPlan,
+    checkout: &Path,
+    worktree: &Path,
+    project_ref: Option<&str>,
+    state_dir: &Path,
+    artifact_dir: &Path,
+) {
+    // Inside the directory this project's executions are already granted, so a
+    // link into a pool resolves for the step without widening anything.
+    let pool_root =
+        crate::execution_scope::project_scope_pool_dir(state_dir, project_ref, worktree);
+    let receipt =
+        match crate::sandbox_seed_host::seed_tree(plan, checkout, worktree, Some(&pool_root)) {
+            // The project declares nothing to seed.
+            Ok(None) => return,
+            Ok(Some(receipt)) => receipt,
+            Err(refusal) => {
+                tracing::warn!(
+                    target: "csp::seed",
+                    code = refusal.code,
+                    message = %refusal.message,
+                    "the project's sandbox.yml was refused; this step's tree starts cold"
+                );
+                return;
+            }
+        };
+    let summary = crate::sandbox_seed_host::summarize(&receipt);
+    if receipt.complete {
+        tracing::info!(target: "csp::seed", summary = %summary, "seeded a step worktree");
+    } else {
+        tracing::warn!(target: "csp::seed", summary = %summary, "a step worktree is cold");
+    }
+    if let Ok(body) = serde_json::to_vec_pretty(&receipt) {
+        let _ = std::fs::create_dir_all(artifact_dir);
+        let _ = std::fs::write(artifact_dir.join("seed.json"), body);
     }
 }
 

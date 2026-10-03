@@ -166,6 +166,8 @@ export type CodingSessionCrewLaunchDeps = {
     workdir: string;
     name: string;
     source: string | null;
+    /** Keys the project's scope, where a sandbox's shared pool lives. */
+    projectRef: string | null;
   }) => Promise<{ path: string }>;
   publishSeatCreate: (input: {
     seat: ResolvedCodingSessionCrewSeat;
@@ -460,11 +462,15 @@ export function planCodingSessionCrewLaunch(
  * four seats and created one.
  */
 export function leadWorktreeRequest(
-  input: Pick<CodingSessionCrewLaunchInput, "leadWorktree" | "workdir">,
+  input: Pick<
+    CodingSessionCrewLaunchInput,
+    "leadWorktree" | "workdir" | "projectRef"
+  >,
 ): {
   workdir: string;
   name: string;
   source: string | null;
+  projectRef: string | null;
 } | null {
   const workdir = input.workdir?.trim() ?? "";
   const name = input.leadWorktree?.name.trim() ?? "";
@@ -473,6 +479,7 @@ export function leadWorktreeRequest(
     workdir,
     name,
     source: input.leadWorktree?.source ?? null,
+    projectRef: input.projectRef ?? null,
   };
 }
 

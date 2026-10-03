@@ -305,8 +305,13 @@ fn a_session_that_is_neither_closed_nor_deleted_is_still_not_settled() {
     }));
 }
 
+/// The no-manifest fallback stays a closed list. What a project that *does*
+/// declare its own build state reclaims is pinned separately, by
+/// `sandbox_manifest`'s `the_fallback_list_is_a_subset_of_what_this_repository_declares`
+/// — which is also what stops this list from quietly freeing more than the
+/// declaration does.
 #[test]
-fn the_reclaimable_directories_are_a_closed_list() {
+fn the_fallback_reclaimable_directories_are_a_closed_list() {
     assert_eq!(RECLAIMABLE_BUILD_DIRS, &["target", "desktop/node_modules"]);
 }
 

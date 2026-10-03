@@ -485,6 +485,7 @@ fn seat_worktree_record(
         agents_clone: None,
         commit_identity: None,
         actor_pubkey: None,
+        seeding: None,
     }
 }
 

@@ -208,6 +208,10 @@ test("Solo: flush first, then the worktree, then one create joined to the umbrel
     name: "fresh-work",
     source: "main",
     sessionRef: SESSION_REF,
+    // The real coordinate, not null: this session has a project, so its
+    // sandboxes can share one dependency pool across the project rather than
+    // each cloning their own.
+    projectRef: "30621:owner:beekeeper",
   });
   const [, submitted] = run.calls[2];
   assert.equal(submitted.sessionRef, SESSION_REF);
