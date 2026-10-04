@@ -14,16 +14,16 @@ use buzz_core::kind::{
     event_kind_u32, is_identity_archive_request_kind, is_parameterized_replaceable,
     is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_TURN_METRIC,
     KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
-    KIND_CANVAS, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
-    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
-    KIND_CODING_SESSION_HANDOVER, KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
-    KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
-    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TEAM_TRANSACTION,
-    KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST, KIND_DELETION, KIND_DM_ADD_MEMBER,
-    KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET, KIND_EVENT_REMINDER,
-    KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_GIFT_WRAP,
-    KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+    KIND_CANVAS, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CHECKPOINT,
+    KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_HANDOVER, KIND_CODING_SESSION_LEASE,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME, KIND_CODING_SESSION_OBSERVATION,
+    KIND_CODING_SESSION_POLICY, KIND_CODING_SESSION_PROVIDER_CATALOG,
+    KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST,
+    KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
+    KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
+    KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
     KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HOST_STEP_CLAIM, KIND_HOST_STEP_RESULT,
     KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES, KIND_HUDDLE_PARTICIPANT_JOINED,
@@ -353,8 +353,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         // Coding sessions: the operator-signed session origin, goal/name
         // revisions, authority-chain transitions, closure facts (44226–44230),
         // signed team transactions (44244), session policies (44245),
-        // observations (44246) and handover records (44247),
-        // the operator-authored commands (44220/44221), and the
+        // observations (44246), handover records (44247), turn checkpoints
+        // (44231, NIP-CSCK), the operator-authored commands (44220/44221), and the
         // provider-authored facts they produce (44222-44225). All are
         // durable, channel-scoped writes consumed by an out-of-relay
         // provider adapter — the relay validates and stores them, and
@@ -367,6 +367,7 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         | KIND_CODING_SESSION_AUTHORITY_TRANSITION
         | KIND_CODING_SESSION_NAME
         | KIND_CODING_SESSION_CLOSURE
+        | KIND_CODING_SESSION_CHECKPOINT
         | KIND_CODING_SESSION_PROVIDER_CATALOG
         | KIND_CODING_SESSION_METADATA
         | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
@@ -834,6 +835,7 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_CODING_SESSION_AUTHORITY_TRANSITION
             | KIND_CODING_SESSION_NAME
             | KIND_CODING_SESSION_CLOSURE
+            | KIND_CODING_SESSION_CHECKPOINT
             | KIND_CODING_SESSION_TEAM_TRANSACTION
             | KIND_CODING_SESSION_POLICY
             | KIND_CODING_SESSION_OBSERVATION
@@ -862,6 +864,7 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_AUTHORITY_TRANSITION
             | KIND_CODING_SESSION_NAME
             | KIND_CODING_SESSION_CLOSURE
+            | KIND_CODING_SESSION_CHECKPOINT
             | KIND_CODING_SESSION_TEAM_TRANSACTION
             | KIND_CODING_SESSION_POLICY
             | KIND_CODING_SESSION_OBSERVATION
@@ -4254,6 +4257,20 @@ async fn ingest_event_inner(
             .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
     }
 
+    // NIP-CSCK, structure only once more. A turn checkpoint is a provider
+    // fact like a transcript item, but unlike those four it has a closed,
+    // bounded shape (exact keys, path refusals, oid widths, the csck tags and
+    // the length-prefixed semantic key) that is answerable from this event
+    // alone, so the relay refuses a malformed one rather than storing it for
+    // every reader to refuse separately. Whether the signer was the
+    // generation's provider key is the consuming fold's question, as for
+    // 44246. No content-cap entry: `decode_coding_session_checkpoint` already
+    // refuses content over MAX_CODING_SESSION_CHECKPOINT_CONTENT_BYTES.
+    if kind_u32 == KIND_CODING_SESSION_CHECKPOINT {
+        buzz_core::coding_session_checkpoint::validate_coding_session_checkpoint_event(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
     // The four provider-authored coding-session kinds get no envelope
     // validator: their content is the provider's own account of what a session
     // did, and a relay that parsed it would be asserting authority over facts
@@ -5136,6 +5153,10 @@ mod coding_session_observation_tests;
 #[cfg(test)]
 #[path = "ingest_coding_session_handover_tests.rs"]
 mod coding_session_handover_tests;
+
+#[cfg(test)]
+#[path = "ingest_coding_session_checkpoint_tests.rs"]
+mod coding_session_checkpoint_tests;
 
 #[cfg(test)]
 mod tests {
@@ -8064,7 +8085,7 @@ mod tests {
 
     /// Every coding-session kind, in kind order. Kept next to the tests that
     /// sweep it so the next kind lands in the sweep the moment it exists.
-    const CODING_SESSION_TEST_KINDS: [u32; 16] = [
+    const CODING_SESSION_TEST_KINDS: [u32; 17] = [
         KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -8076,6 +8097,7 @@ mod tests {
         KIND_CODING_SESSION_AUTHORITY_TRANSITION,
         KIND_CODING_SESSION_NAME,
         KIND_CODING_SESSION_CLOSURE,
+        KIND_CODING_SESSION_CHECKPOINT,
         KIND_CODING_SESSION_TEAM_TRANSACTION,
         KIND_CODING_SESSION_POLICY,
         KIND_CODING_SESSION_OBSERVATION,
@@ -8088,7 +8110,7 @@ mod tests {
         for kind in 0..=u16::MAX as u32 {
             assert_eq!(
                 is_coding_session_kind(kind),
-                (44220..=44230).contains(&kind)
+                (44220..=44231).contains(&kind)
                     || kind == KIND_CODING_SESSION_TEAM_TRANSACTION
                     || kind == KIND_CODING_SESSION_POLICY
                     || kind == KIND_CODING_SESSION_OBSERVATION

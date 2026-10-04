@@ -44,9 +44,9 @@ use buzz_core::coding_session_payload::{
     LifecycleReceipt, ReceiptStatus, SessionMetadata, TranscriptEnvelope,
 };
 use buzz_core::kind::{
-    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
-    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
-    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_NAME,
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CHECKPOINT,
+    KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_SYSTEM_MESSAGE,
 };
 use buzz_sdk::kind::{
@@ -1289,6 +1289,7 @@ const SESSION_OWNED_KINDS: &[u32] = &[
     KIND_CODING_SESSION_CLOSURE,
     KIND_CODING_SESSION_METADATA,
     KIND_CODING_SESSION_TRANSCRIPT,
+    KIND_CODING_SESSION_CHECKPOINT,
     KIND_CODING_SESSION_GOAL,
     KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_TEAM_TRANSACTION,
@@ -1335,6 +1336,9 @@ const SESSION_D_TAG_KINDS: &[u32] = &[
 ///   names both, so a transcript reaches its umbrella in two hops. An
 ///   execution whose metadata never landed contributes no transcript,
 ///   correctly: nothing on the wire ties one to this session.
+/// * **44231 turn checkpoint** — `cs-target`, exactly as a transcript item.
+///   It names repo paths, branches and head SHAs, so leaving it behind would
+///   make "deleted" untrue.
 ///
 /// Returns `(event_id, kind)` pairs so the caller can report a breakdown
 /// before deleting anything. Deterministic so a dry run and the delete that
@@ -1368,7 +1372,7 @@ pub fn session_owned_events(events: &[Value], session_ref: &str) -> Vec<(String,
         }
     }
 
-    // Second pass: the transcript of each execution the metadata attributed
+    // Second pass: the transcript and checkpoints of each execution the metadata attributed
     // to this umbrella. Needs the first pass's `cs-target` set, so it cannot
     // merge into the loop above.
     if !targets.is_empty() {
@@ -1376,7 +1380,7 @@ pub fn session_owned_events(events: &[Value], session_ref: &str) -> Vec<(String,
             let Some(kind) = event.get("kind").and_then(Value::as_u64).map(|k| k as u32) else {
                 continue;
             };
-            if kind != KIND_CODING_SESSION_TRANSCRIPT {
+            if kind != KIND_CODING_SESSION_TRANSCRIPT && kind != KIND_CODING_SESSION_CHECKPOINT {
                 continue;
             }
             let Some(id) = event.get("id").and_then(Value::as_str) else {
@@ -3209,6 +3213,34 @@ mod tests {
         assert!(ids.contains(&"t-1".to_string()));
         assert!(!ids.contains(&"t-9".to_string()));
         assert!(!ids.contains(&"m-b".to_string()));
+    }
+
+    /// A turn checkpoint reaches its umbrella by `cs-target`, like a
+    /// transcript item, and goes with the session that owns it — never with
+    /// another umbrella's.
+    #[test]
+    fn a_checkpoint_is_reached_through_its_executions_metadata() {
+        let checkpoint = |id: &str, target: &str| {
+            json!({
+                "id": id,
+                "kind": KIND_CODING_SESSION_CHECKPOINT,
+                "content": "{}",
+                "tags": [["h", "chan"], ["csck-v", "csck1-1"], ["cs-target", target]],
+            })
+        };
+        assert!(SESSION_OWNED_KINDS.contains(&KIND_CODING_SESSION_CHECKPOINT));
+        let events = vec![
+            del_genesis("g-a", SESSION_A),
+            del_metadata("m-a", SESSION_A, TARGET_A),
+            del_metadata("m-b", SESSION_B, TARGET_B),
+            checkpoint("ck-1", TARGET_A),
+            checkpoint("ck-9", TARGET_B),
+        ];
+        let ids: Vec<String> = session_owned_events(&events, SESSION_A)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, vec!["ck-1", "g-a", "m-a"]);
     }
 
     /// Nothing on the wire ties an orphan transcript to this umbrella, so

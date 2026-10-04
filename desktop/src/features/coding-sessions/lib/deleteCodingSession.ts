@@ -6,6 +6,7 @@ import {
 } from "@/shared/api/tauriCodingSessionWorktrees";
 import type { RelayEvent } from "@/shared/api/types";
 import {
+  KIND_CODING_SESSION_CHECKPOINT,
   KIND_CODING_SESSION_CLOSURE,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
@@ -31,6 +32,7 @@ export const SESSION_OWNED_KINDS = [
   KIND_CODING_SESSION_CLOSURE,
   KIND_CODING_SESSION_METADATA,
   KIND_CODING_SESSION_TRANSCRIPT,
+  KIND_CODING_SESSION_CHECKPOINT,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_NAME,
   KIND_CODING_SESSION_TEAM_TRANSACTION,
@@ -49,6 +51,7 @@ export const SESSION_OWNED_KINDS = [
  * | 44227 goal, 44229 name, 44230 closure, 44244 team txn | `["d", sessionRef]` |
  * | 44223 metadata | `sessionRef` in its **content**; its tags carry only `cs-target` |
  * | 44225 transcript | `["cs-target", …]` only — no sessionRef anywhere on it |
+ * | 44231 checkpoint | `["cs-target", …]`, the same way a transcript item does |
  *
  * So a transcript reaches its umbrella in two hops: the metadata for an
  * execution names both that execution's `cs-target` and the umbrella's
@@ -81,6 +84,12 @@ const D_TAG_KINDS: readonly number[] = [
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_NAME,
   KIND_CODING_SESSION_TEAM_TRANSACTION,
+];
+
+/** Kinds that reach their umbrella through an execution's `cs-target`. */
+const CS_TARGET_KINDS: readonly number[] = [
+  KIND_CODING_SESSION_TRANSCRIPT,
+  KIND_CODING_SESSION_CHECKPOINT,
 ];
 
 /**
@@ -148,11 +157,13 @@ export function sessionOwnedEventIds(
     }
   }
 
-  // Pass two: the transcript of each execution the metadata attributed to
-  // this umbrella. Needs pass one's `cs-target` set, so it cannot merge.
+  // Pass two: the transcript and turn checkpoints of each execution the
+  // metadata attributed to this umbrella. Needs pass one's `cs-target` set, so
+  // it cannot merge. A checkpoint names repo paths, branches and head SHAs;
+  // leaving it behind would make "deleted" untrue.
   if (targets.size > 0) {
     for (const event of events) {
-      if (event.kind !== KIND_CODING_SESSION_TRANSCRIPT || !event.id) continue;
+      if (!event.id || !CS_TARGET_KINDS.includes(event.kind)) continue;
       const target = tagValue(event, "cs-target");
       if (target && targets.has(target)) ids.add(event.id);
     }

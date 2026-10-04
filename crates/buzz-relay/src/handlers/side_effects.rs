@@ -731,6 +731,7 @@ fn coding_session_scoped_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_CLOSURE
             | buzz_core::kind::KIND_CODING_SESSION_METADATA
             | buzz_core::kind::KIND_CODING_SESSION_TRANSCRIPT
+            | buzz_core::kind::KIND_CODING_SESSION_CHECKPOINT
             | buzz_core::kind::KIND_CODING_SESSION_GOAL
             | buzz_core::kind::KIND_CODING_SESSION_NAME
             | buzz_core::kind::KIND_CODING_SESSION_TEAM_TRANSACTION
@@ -776,7 +777,7 @@ struct AuthorizedSessionDeletion {
 ///
 /// The exemption above is by kind, and a kind is not an identity. Without
 /// this, "delete session A" would also delete any 44227, 44229, 44230,
-/// 44223, 44225 or 44244 named alongside it — including another project's,
+/// 44223, 44225, 44231 or 44244 named alongside it — including another project's,
 /// signed by someone else, in a channel the actor has no standing in. That
 /// was unreachable only for as long as the ingest gate refused every
 /// multi-target `kind:5`; admitting the session shape is what makes it
@@ -791,6 +792,7 @@ struct AuthorizedSessionDeletion {
 /// | 44230, 44227, 44229, 44244 | `["d", sessionRef]` |
 /// | 44223 metadata | `sessionRef` in its content |
 /// | 44225 transcript | a `cs-target` some named metadata attributed here |
+/// | 44231 checkpoint | the same `cs-target` set — it names its execution as a transcript does |
 /// | 44224 lifecycle receipt | the target key in its payload, same set |
 ///
 /// The channel is checked first and for every kind. `kind:5` derives its
@@ -812,7 +814,12 @@ fn session_deletion_admits(event: &Event, session: &AuthorizedSessionDeletion) -
         return content_session_ref(&event.content).as_deref()
             == Some(session.session_ref.as_str());
     }
-    if kind == buzz_core::kind::KIND_CODING_SESSION_TRANSCRIPT {
+    // A checkpoint carries repo-relative paths, branch names and head SHAs of
+    // the session's working tree. Leaving it behind would tell the person the
+    // session was deleted while its file list stayed readable on the relay.
+    if kind == buzz_core::kind::KIND_CODING_SESSION_TRANSCRIPT
+        || kind == buzz_core::kind::KIND_CODING_SESSION_CHECKPOINT
+    {
         return extract_tag_value(event, "cs-target")
             .is_some_and(|target| session.execution_targets.contains(&target));
     }
@@ -4919,3 +4926,7 @@ mod tests {
 #[cfg(test)]
 #[path = "side_effects_project_owner_delete_tests.rs"]
 mod project_owner_delete_tests;
+
+#[cfg(test)]
+#[path = "side_effects_session_checkpoint_delete_tests.rs"]
+mod session_checkpoint_delete_tests;

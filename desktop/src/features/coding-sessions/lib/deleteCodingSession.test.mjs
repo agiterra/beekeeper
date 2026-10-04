@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   findGenesis,
+  SESSION_OWNED_KINDS,
   selectionHasGenesis,
   sessionOwnedEventIds,
 } from "./deleteCodingSession.ts";
@@ -71,6 +72,23 @@ function transcript(id, target, seq) {
       ["cst-v", "cst1-1"],
       ["cs-target", target],
       ["cst-seq", String(seq)],
+    ],
+  };
+}
+
+/** kind:44231 — the NIP-CSCK envelope; reaches its umbrella by `cs-target`. */
+function checkpoint(id, target, seq) {
+  return {
+    ...base,
+    id,
+    kind: 44231,
+    content: "{}",
+    tags: [
+      ["h", CHANNEL],
+      ["csck-v", "csck1-1"],
+      ["cs-target", target],
+      ["csck-seq", String(seq)],
+      ["csck-key", `coding-session-checkpoint/v1|${target}|turn|${seq}`],
     ],
   };
 }
@@ -205,5 +223,28 @@ test("a kind the session does not own is never selected", () => {
     ],
   };
   const events = [genesis("g-a", SESSION_A), message];
+  assert.deepEqual(sessionOwnedEventIds(events, SESSION_A, "g-a"), ["g-a"]);
+});
+
+test("turn checkpoints are fetched and deleted with their session", () => {
+  // A checkpoint names repo paths, branches and head SHAs. A session reported
+  // as deleted must not leave them on the relay, and it can only go if the
+  // fetch asks for the kind at all.
+  assert.ok(SESSION_OWNED_KINDS.includes(44231));
+  const events = [
+    genesis("g-a", SESSION_A),
+    metadata("m-a", SESSION_A, TARGET_A),
+    metadata("m-b", SESSION_B, TARGET_B),
+    transcript("t-1", TARGET_A, 1),
+    checkpoint("ck-1", TARGET_A, 1),
+    checkpoint("ck-9", TARGET_B, 1),
+  ];
+  const ids = sessionOwnedEventIds(events, SESSION_A, "g-a");
+  assert.deepEqual(ids, ["ck-1", "g-a", "m-a", "t-1"]);
+  assert.ok(!ids.includes("ck-9"), "another umbrella's checkpoint must not go");
+});
+
+test("an orphan checkpoint with no metadata is not swept in", () => {
+  const events = [genesis("g-a", SESSION_A), checkpoint("ck-1", TARGET_A, 1)];
   assert.deepEqual(sessionOwnedEventIds(events, SESSION_A, "g-a"), ["g-a"]);
 });
