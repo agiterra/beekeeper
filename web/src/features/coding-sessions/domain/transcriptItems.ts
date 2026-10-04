@@ -31,6 +31,8 @@ export type TranscriptItemIdentity = {
   turnId: string | null;
   timestamp: number;
   eventSeq: number;
+  /** Relay event id of the piece this row was built from. */
+  eventId: string;
 };
 
 const MAX_PROMPT_COMMAND_ID_BYTES = 256;
@@ -244,22 +246,8 @@ export function buildNonToolItem(
       meta,
     };
   }
-  if (kind === "assistant_text") {
-    return {
-      ...base,
-      role: "assistant",
-      title: "Assistant",
-      text: typeof item.text === "string" ? item.text : "",
-    };
-  }
-  if (kind === "reasoning") {
-    return {
-      ...base,
-      role: "assistant",
-      title: "Reasoning",
-      text: typeof item.text === "string" ? item.text : "",
-      folded: true,
-    };
+  if (kind === "assistant_text" || kind === "reasoning") {
+    return buildProseItem(item, kind, base, identity);
   }
   if (kind === "plan") {
     return {
@@ -363,6 +351,64 @@ export function buildNonToolItem(
     title: `Unsupported item (${safeString(kind, 64)})`,
     text: "",
     unknownKind: safeString(kind, 64),
+  };
+}
+
+/**
+ * The subagent tool call a prose piece names, or null for the agent's own.
+ * Unbounded on purpose for the join (it compares byte-for-byte); the rendered
+ * chip is bounded separately.
+ */
+export function readParentToolId(item: Record<string, unknown>): string | null {
+  return typeof item.parentToolId === "string" && item.parentToolId.length > 0
+    ? item.parentToolId
+    : null;
+}
+
+/** The provider message id a prose piece carries, or null. */
+export function readProseMessageId(
+  item: Record<string, unknown>,
+): string | null {
+  return typeof item.messageId === "string" && item.messageId.length > 0
+    ? item.messageId
+    : null;
+}
+
+/**
+ * One `assistant_text` or `reasoning` piece. Subagent prose is titled as the
+ * subagent's and carries the tool call it answers to as a chip: attribution
+ * is never folded into the agent's own voice. Pieces are joined afterwards by
+ * `joinTranscriptProse`.
+ */
+function buildProseItem(
+  item: Record<string, unknown>,
+  kind: "assistant_text" | "reasoning",
+  base: ProjectedTranscriptItem,
+  identity: TranscriptItemIdentity,
+): ProjectedTranscriptItem {
+  const parentToolId = readParentToolId(item);
+  const subagent = parentToolId !== null;
+  const reasoning = kind === "reasoning";
+  return {
+    ...base,
+    role: "assistant",
+    title: reasoning
+      ? subagent
+        ? "Subagent reasoning"
+        : "Reasoning"
+      : subagent
+        ? "Subagent"
+        : "Assistant",
+    text: typeof item.text === "string" ? item.text : "",
+    folded: reasoning,
+    meta: subagent
+      ? [`tool ${safeString(parentToolId, MAX_METADATA_ARRAY_ITEM_LENGTH)}`]
+      : [],
+    parentToolId,
+    firstEventId: identity.eventId,
+    lastEventId: identity.eventId,
+    awaitingTurnEnd: false,
+    arriving: false,
   };
 }
 

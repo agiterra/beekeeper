@@ -23,11 +23,17 @@ function envelope(eventSeq, item, extra = {}) {
   };
 }
 
+// Distinct `messageId`s keep these pieces separate rows (prose-join rule 5),
+// so the order of each piece stays observable.
+function prose(text, messageId = text) {
+  return { kind: "assistant_text", text, messageId };
+}
+
 test("eventSeq orders numerically, not lexicographically", () => {
   const items = projectCodingSessionTranscript([
-    envelope(10, { kind: "assistant_text", text: "ten" }),
-    envelope(9, { kind: "assistant_text", text: "nine" }),
-    envelope(2, { kind: "assistant_text", text: "two" }),
+    envelope(10, prose("ten")),
+    envelope(9, prose("nine")),
+    envelope(2, prose("two")),
   ]);
   assert.deepEqual(
     items.map((item) => item.text),
@@ -35,14 +41,60 @@ test("eventSeq orders numerically, not lexicographically", () => {
   );
 });
 
+test("adjacent pieces join in eventSeq order, never arrival order", () => {
+  const items = projectCodingSessionTranscript([
+    envelope(10, { kind: "assistant_text", text: "ten" }),
+    envelope(9, { kind: "assistant_text", text: "nine " }),
+    envelope(2, { kind: "assistant_text", text: "two " }),
+  ]);
+  assert.deepEqual(
+    items.map((item) => item.text),
+    ["two nine ten"],
+  );
+  assert.equal(items[0].firstEventId, "e002");
+  assert.equal(items[0].lastEventId, "e010");
+});
+
+test("one event delivered twice is one piece", () => {
+  const once = envelope(1, { kind: "assistant_text", text: "para\n\n" });
+  const items = projectCodingSessionTranscript([
+    once,
+    envelope(2, { kind: "assistant_text", text: "end" }),
+    { ...once },
+  ]);
+  assert.deepEqual(
+    items.map((item) => item.text),
+    ["para\n\nend"],
+  );
+});
+
+test("subagent prose is titled as the subagent's and never joins the agent's", () => {
+  const items = projectCodingSessionTranscript([
+    envelope(1, { kind: "assistant_text", text: "mine " }),
+    envelope(2, {
+      kind: "assistant_text",
+      text: "theirs",
+      parentToolId: "task-1",
+    }),
+  ]);
+  assert.deepEqual(
+    items.map((item) => [item.title, item.text, item.parentToolId]),
+    [
+      ["Assistant", "mine ", null],
+      ["Subagent", "theirs", "task-1"],
+    ],
+  );
+  assert.deepEqual(items[1].meta, ["tool task-1"]);
+});
+
 test("a tie on eventSeq breaks on event id, never on arrival order", () => {
   const forward = projectCodingSessionTranscript([
-    { ...envelope(1, { kind: "assistant_text", text: "b" }), eventId: "bbb" },
-    { ...envelope(1, { kind: "assistant_text", text: "a" }), eventId: "aaa" },
+    { ...envelope(1, prose("b")), eventId: "bbb" },
+    { ...envelope(1, prose("a")), eventId: "aaa" },
   ]);
   const reversed = projectCodingSessionTranscript([
-    { ...envelope(1, { kind: "assistant_text", text: "a" }), eventId: "aaa" },
-    { ...envelope(1, { kind: "assistant_text", text: "b" }), eventId: "bbb" },
+    { ...envelope(1, prose("a")), eventId: "aaa" },
+    { ...envelope(1, prose("b")), eventId: "bbb" },
   ]);
   assert.deepEqual(
     forward.map((item) => item.text),

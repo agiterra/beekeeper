@@ -79,14 +79,38 @@ function ToolDetails({
   );
 }
 
+/**
+ * The muted line under a message that is still arriving.
+ *
+ * `arriving` is set only from the turn's own state (no `result` yet) and a
+ * live kind:24223 lease for the exact target — never from the provider saying
+ * it is streaming — so the line goes away when the turn ends, the session
+ * ends, or the lease lapses, whichever comes first.
+ */
+function ArrivingLine() {
+  return (
+    <p
+      className="mt-1 text-xs italic text-black/50 dark:text-white/50"
+      data-testid="coding-session-transcript-arriving"
+      aria-live="polite"
+    >
+      Writing…
+    </p>
+  );
+}
+
 function RowBody({ item }: { item: ProjectedTranscriptItem }) {
   return (
     <>
       {item.text.length > 0 && (
-        <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed">
+        <p
+          className="mt-1 whitespace-pre-wrap text-sm leading-relaxed"
+          data-testid="coding-session-transcript-row-text"
+        >
           {item.text}
         </p>
       )}
+      {item.arriving === true && !item.folded && <ArrivingLine />}
       {item.tool !== null && <ToolDetails tool={item.tool} />}
     </>
   );
@@ -120,6 +144,15 @@ export function CodingSessionTranscriptRow({
       )}
       {item.lifecycle !== null && <LifecycleFacts lifecycle={item.lifecycle} />}
       <MetaChips meta={item.meta} />
+      {item.arriving === true && item.folded && (
+        // A folded row (reasoning) still says it is arriving while closed.
+        <span
+          className="ml-2 text-xs italic text-black/50 dark:text-white/50"
+          data-testid="coding-session-transcript-arriving"
+        >
+          Writing…
+        </span>
+      )}
     </>
   );
 
@@ -130,6 +163,7 @@ export function CodingSessionTranscriptRow({
         data-testid="coding-session-transcript-row"
         data-role={item.role}
         data-folded="true"
+        data-arriving={item.arriving === true ? "true" : undefined}
       >
         <summary className="flex cursor-pointer list-none items-center gap-1.5">
           <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
@@ -148,6 +182,7 @@ export function CodingSessionTranscriptRow({
       data-testid="coding-session-transcript-row"
       data-role={item.role}
       data-folded="false"
+      data-arriving={item.arriving === true ? "true" : undefined}
     >
       <div className="flex items-baseline">
         <span className="min-w-0 flex-1">{heading}</span>

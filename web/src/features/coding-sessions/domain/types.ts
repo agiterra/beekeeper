@@ -186,4 +186,35 @@ export type ProjectedTranscriptItem = {
   meta: string[];
   /** Set when the item's `kind` was not one this reader knows. */
   unknownKind: string | null;
+  /**
+   * Prose rows only (`assistant_text`, `reasoning`): the tool call whose
+   * subagent wrote this prose, or null for the agent's own. Part of the join
+   * key, and the row's attribution — subagent prose is never titled as the
+   * agent's.
+   */
+  parentToolId?: string | null;
+  /**
+   * Prose rows only: the event id of the first piece of the joined message.
+   * The message's identity (NIP-CST amendment 3, Join key) — the row id is
+   * derived from the same piece, so the row stays mounted as paragraphs
+   * arrive.
+   */
+  firstEventId?: string;
+  /** Prose rows only: the event id of the piece the message currently ends at. */
+  lastEventId?: string;
+  /**
+   * Prose rows only, a turn-state fact: this message is the last item of a
+   * turn that has no `result` or `interrupted` item yet. It is NOT a claim
+   * that anybody is still writing — a crashed provider leaves this true for
+   * ever. Only {@link arriving} may be rendered as "still writing".
+   */
+  awaitingTurnEnd?: boolean;
+  /**
+   * True only when {@link awaitingTurnEnd} holds AND the exact target is
+   * proven live: a live, unexpired kind:24223 lease, no higher generation,
+   * and no session-ending status (`conformance/transcript-prose-join/CONTRACT.md`
+   * rule 7). Never derived from anything the provider asserts. Absent or
+   * false means "not known to be arriving".
+   */
+  arriving?: boolean;
 };

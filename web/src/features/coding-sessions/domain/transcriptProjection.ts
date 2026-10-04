@@ -20,10 +20,16 @@ import {
   buildOrphanToolResultItem,
   buildPairedToolItem,
   buildToolCallItem,
+  readParentToolId,
+  readProseMessageId,
   toolIdFromToolCall,
   toolIdFromToolResult,
   type TranscriptItemIdentity,
 } from "./transcriptItems.ts";
+import {
+  joinTranscriptProse,
+  type ProseJoinEntry,
+} from "./transcriptProseJoin.ts";
 import type { CodingSessionTarget, ProjectedTranscriptItem } from "./types.ts";
 import { hasOwnKey } from "./wireDecode.ts";
 
@@ -57,16 +63,31 @@ export type ProjectCodingSessionTranscriptOptions = {
  *
  * Order is by `eventSeq` **numerically**, ties broken by event id — a
  * lexicographic sort on the sequence would put item 10 before item 9.
+ *
+ * A second copy of one event id (backfill and a live subscription both
+ * delivering it) is the same piece and is dropped before anything else, and
+ * consecutive same-attribution prose pieces are then joined into one row
+ * (`joinTranscriptProse`, NIP-CST amendment 3 Join key). Rows come back with
+ * `arriving` false: only a caller holding the target's lease may set it.
  */
 export function projectCodingSessionTranscript(
   envelopes: unknown,
   options: ProjectCodingSessionTranscriptOptions = {},
 ): ProjectedTranscriptItem[] {
   if (!Array.isArray(envelopes)) return [];
+  const seenEventIds = new Set<string>();
   const ordered = [...envelopes]
     .filter((envelope): envelope is CodingSessionTranscriptEnvelope =>
       isRecord(envelope),
     )
+    .filter((envelope) => {
+      // Rule 0: one event, one piece. Only a real id can prove a repeat.
+      const eventId = envelope.eventId;
+      if (typeof eventId !== "string" || eventId.length === 0) return true;
+      if (seenEventIds.has(eventId)) return false;
+      seenEventIds.add(eventId);
+      return true;
+    })
     .sort(
       (left, right) =>
         numericSeq(left.eventSeq) - numericSeq(right.eventSeq) ||
@@ -74,10 +95,20 @@ export function projectCodingSessionTranscript(
     );
   const withTurns = assignTurnPresentation(ordered, options);
   const result: ProjectedTranscriptItem[] = [];
+  const joinEntries: ProseJoinEntry[] = [];
   const pendingToolCalls = new Map<string, number>();
 
   for (const entry of withTurns) {
     const item = entry.item;
+    const joinEntry: ProseJoinEntry = {
+      rowIndex: result.length,
+      targetKey: entry.identity.targetKey,
+      turnId: entry.identity.turnId,
+      kind: isRecord(item) && typeof item.kind === "string" ? item.kind : null,
+      parentToolId: isRecord(item) ? readParentToolId(item) : null,
+      messageId: isRecord(item) ? readProseMessageId(item) : null,
+    };
+    joinEntries.push(joinEntry);
     if (isRecord(item) && item.kind === "tool_call") {
       result.push(buildToolCallItem(item, entry.identity));
       const toolId = toolIdFromToolCall(item);
@@ -100,6 +131,8 @@ export function projectCodingSessionTranscript(
       if (index !== undefined && pairingKey !== null) {
         result[index] = buildPairedToolItem(result[index], item);
         pendingToolCalls.delete(pairingKey);
+        // Folded into its call, but it still sat between two pieces.
+        joinEntry.rowIndex = null;
         continue;
       }
       result.push(buildOrphanToolResultItem(item, entry.identity));
@@ -107,7 +140,7 @@ export function projectCodingSessionTranscript(
     }
     result.push(buildNonToolItem(item, entry.identity));
   }
-  return result;
+  return joinTranscriptProse(result, joinEntries);
 }
 
 type TurnedEnvelope = {
@@ -176,6 +209,7 @@ function assignTurnPresentation(
           ? envelope.timestamp
           : 0,
       eventSeq: Number.isFinite(eventSeq) ? eventSeq : 0,
+      eventId: String(envelope.eventId ?? ""),
     };
     if (kind === "result" || kind === "interrupted") active = undefined;
     return { item, identity };

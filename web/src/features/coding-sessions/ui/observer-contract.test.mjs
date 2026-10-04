@@ -217,7 +217,11 @@ test("one execution's rows collapse into a single labelled block", () => {
   const view = viewOf([
     ...execution(operator, provider, { target: executionTarget }),
     transcriptEvent(provider, { target: executionTarget, eventSeq: 1 }),
-    transcriptEvent(provider, { target: executionTarget, eventSeq: 2 }),
+    transcriptEvent(provider, {
+      target: executionTarget,
+      eventSeq: 2,
+      item: { kind: "status", status: "idle" },
+    }),
   ]);
   const [session] = view.sessions;
   const [item] = session.executions;

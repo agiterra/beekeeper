@@ -23,6 +23,7 @@ import {
   generationExecutionLabel,
   orderCodingSessionTranscriptBlocks,
 } from "../domain/index.ts";
+import { codingSessionGenerationTranscript } from "../domain/transcriptProseJoin.ts";
 
 /** Where the live relay subscription stands, as the UI is allowed to say it. */
 export type CodingSessionObserverConnection =
@@ -143,11 +144,19 @@ function executionGenerations(
  */
 export function buildCodingSessionTranscriptBlocks(
   execution: CodingSessionExecution,
+  reachabilityByGenerationId: ReadonlyMap<
+    string,
+    CodingSessionReachabilityReport
+  > = new Map(),
 ): CodingSessionTranscriptBlock[] {
   const blocks = new Map<string, CodingSessionTranscriptBlock>();
   for (const generation of executionGenerations(execution)) {
     const label = generationExecutionLabel(generation);
-    for (const item of generation.transcript) {
+    const transcript = codingSessionGenerationTranscript(
+      generation,
+      reachabilityByGenerationId.get(generation.generationId),
+    );
+    for (const item of transcript) {
       const existing = blocks.get(item.blockKey);
       if (existing === undefined) {
         blocks.set(item.blockKey, {
@@ -197,7 +206,10 @@ export function codingSessionObserverViewFromSnapshot(
       executions.set(execution.executionKey, execution);
       transcriptBlocksByExecution.set(
         execution.executionKey,
-        buildCodingSessionTranscriptBlocks(execution),
+        buildCodingSessionTranscriptBlocks(
+          execution,
+          snapshot.reachabilityByGenerationId,
+        ),
       );
     }
   }
