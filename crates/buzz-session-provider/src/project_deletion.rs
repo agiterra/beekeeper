@@ -24,6 +24,20 @@
 //! tombstones on every connect and liveness probe, and idle while the set is
 //! empty. A candidate is checked off the provider's loop; the provider stops
 //! the affected executions. Starts and resumes re-check the same facts.
+//!
+//! **Not done here yet: turn checkpoint refs.** The checkpoints brief
+//! (Host/provider step 6) says a project's deletion also deletes its sessions'
+//! `refs/beekeeper/checkpoints/<session>/…`. This module only stops
+//! executions; it deletes no ref. Three consequences, until the provider's
+//! checkpoint writer (`turn_checkpoint.rs`, its first caller) also retires
+//! what it wrote:
+//!
+//! * refs of a session that ran in the project's own checkout are never
+//!   retired — no seat worktree prune ever names them;
+//! * refs of a seat worktree whose record carries no `session_id` stay after
+//!   that tree is pruned (`worktree_prune.rs` will not guess whose they were);
+//! * a deletion observed while the project has no open execution is never
+//!   seen at all, since the subscription above names only those projects.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

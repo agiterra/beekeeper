@@ -92,6 +92,7 @@ pub mod situation_card;
 pub mod state;
 mod team_wake;
 pub mod transcript;
+mod turn_checkpoint_git;
 pub mod verification_input;
 pub mod wake_relevance;
 pub mod work_brief;
