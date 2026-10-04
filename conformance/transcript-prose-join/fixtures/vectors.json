@@ -1,0 +1,2752 @@
+{
+  "contract": "conformance/transcript-prose-join/CONTRACT.md",
+  "generator": {
+    "coalesceFlushBytes": 24576,
+    "minParagraphFlushBytes": 512,
+    "regenerate": "BUZZ_REGEN_PROSE_JOIN_VECTORS=1 cargo test -p buzz-session-provider transcript_prose_join",
+    "test": "crates/buzz-session-provider/src/transcript_prose_join_vectors_tests.rs",
+    "translator": "TranscriptTranslator::new(true).with_paragraph_flush(true)"
+  },
+  "schema": "buzz.conformance/transcript-prose-join@1",
+  "vectors": [
+    {
+      "description": "Three paragraphs flushed one by one join back into one message whose text is exactly the streamed answer.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "4b555c80e36f021e7957247f165339e953f14d1aff5891017d35ec49f6b45e2a",
+          "latestAssistantFirstEventId": "b8a8889647bcdb110ff430c6b45de9fed270ce0b43981c677151fb4238a0f002",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "b8a8889647bcdb110ff430c6b45de9fed270ce0b43981c677151fb4238a0f002",
+          "kind": "assistant_text",
+          "lastEventId": "4b555c80e36f021e7957247f165339e953f14d1aff5891017d35ec49f6b45e2a",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "first: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\nsecond: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\nthird: and that is all.",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "commandId": "cmd",
+              "content": "Explain the change.",
+              "kind": "user_prompt",
+              "operatorPubkey": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+              "steered": false
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "378a6822bd7091ca24affb98a7015cd3172373869b6a464a066aefb80a097659",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "assistant_text",
+              "text": "first: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "b8a8889647bcdb110ff430c6b45de9fed270ce0b43981c677151fb4238a0f002",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 3,
+            "item": {
+              "kind": "assistant_text",
+              "text": "second: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512980000,
+            "turnId": "turn-1"
+          },
+          "eventId": "33e388af61251216bd719726650a4d3f8e1ac08256153e82193c4dd05d8b5cf3",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 4,
+            "item": {
+              "kind": "assistant_text",
+              "text": "third: and that is all."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512981000,
+            "turnId": "turn-1"
+          },
+          "eventId": "4b555c80e36f021e7957247f165339e953f14d1aff5891017d35ec49f6b45e2a",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 5,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512982000,
+            "turnId": "turn-1"
+          },
+          "eventId": "f78639067a484c57202b46cea1a7aca994ca7ba00b742a4cf7df4c54cc2ecc95",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "three-paragraphs-one-turn",
+      "sessionLease": [],
+      "sessionStatus": [],
+      "source": "translator"
+    },
+    {
+      "description": "A code fence longer than the 24 KiB size cut is split inside the fence; the pieces still join into one message with every byte in place.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "61ef4073da5066fd0793d2d6e159fdd968e4ad7b41a83c72c59adfbf8bbdca17",
+          "latestAssistantFirstEventId": "cc409dfa9465fe00a92010f36f33041b65356e00684c1393113061d8951a5c82",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "cc409dfa9465fe00a92010f36f33041b65356e00684c1393113061d8951a5c82",
+          "kind": "assistant_text",
+          "lastEventId": "61ef4073da5066fd0793d2d6e159fdd968e4ad7b41a83c72c59adfbf8bbdca17",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "Here is the log: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n```text\nlog line 00000: nothing to see here\nlog line 00001: nothing to see here\nlog line 00002: nothing to see here\nlog line 00003: nothing to see here\nlog line 00004: nothing to see here\nlog line 00005: nothing to see here\nlog line 00006: nothing to see here\nlog line 00007: nothing to see here\nlog line 00008: nothing to see here\nlog line 00009: nothing to see here\nlog line 00010: nothing to see here\nlog line 00011: nothing to see here\nlog line 00012: nothing to see here\nlog line 00013: nothing to see here\nlog line 00014: nothing to see here\nlog line 00015: nothing to see here\nlog line 00016: nothing to see here\nlog line 00017: nothing to see here\nlog line 00018: nothing to see here\nlog line 00019: nothing to see here\nlog line 00020: nothing to see here\nlog line 00021: nothing to see here\nlog line 00022: nothing to see here\nlog line 00023: nothing to see here\nlog line 00024: nothing to see here\nlog line 00025: nothing to see here\nlog line 00026: nothing to see here\nlog line 00027: nothing to see here\nlog line 00028: nothing to see here\nlog line 00029: nothing to see here\nlog line 00030: nothing to see here\nlog line 00031: nothing to see here\nlog line 00032: nothing to see here\nlog line 00033: nothing to see here\nlog line 00034: nothing to see here\nlog line 00035: nothing to see here\nlog line 00036: nothing to see here\nlog line 00037: nothing to see here\nlog line 00038: nothing to see here\nlog line 00039: nothing to see here\nlog line 00040: nothing to see here\nlog line 00041: nothing to see here\nlog line 00042: nothing to see here\nlog line 00043: nothing to see here\nlog line 00044: nothing to see here\nlog line 00045: nothing to see here\nlog line 00046: nothing to see here\nlog line 00047: nothing to see here\nlog line 00048: nothing to see here\nlog line 00049: nothing to see here\nlog line 00050: nothing to see here\nlog line 00051: nothing to see here\nlog line 00052: nothing to see here\nlog line 00053: nothing to see here\nlog line 00054: nothing to see here\nlog line 00055: nothing to see here\nlog line 00056: nothing to see here\nlog line 00057: nothing to see here\nlog line 00058: nothing to see here\nlog line 00059: nothing to see here\nlog line 00060: nothing to see here\nlog line 00061: nothing to see here\nlog line 00062: nothing to see here\nlog line 00063: nothing to see here\nlog line 00064: nothing to see here\nlog line 00065: nothing to see here\nlog line 00066: nothing to see here\nlog line 00067: nothing to see here\nlog line 00068: nothing to see here\nlog line 00069: nothing to see here\nlog line 00070: nothing to see here\nlog line 00071: nothing to see here\nlog line 00072: nothing to see here\nlog line 00073: nothing to see here\nlog line 00074: nothing to see here\nlog line 00075: nothing to see here\nlog line 00076: nothing to see here\nlog line 00077: nothing to see here\nlog line 00078: nothing to see here\nlog line 00079: nothing to see here\nlog line 00080: nothing to see here\nlog line 00081: nothing to see here\nlog line 00082: nothing to see here\nlog line 00083: nothing to see here\nlog line 00084: nothing to see here\nlog line 00085: nothing to see here\nlog line 00086: nothing to see here\nlog line 00087: nothing to see here\nlog line 00088: nothing to see here\nlog line 00089: nothing to see here\nlog line 00090: nothing to see here\nlog line 00091: nothing to see here\nlog line 00092: nothing to see here\nlog line 00093: nothing to see here\nlog line 00094: nothing to see here\nlog line 00095: nothing to see here\nlog line 00096: nothing to see here\nlog line 00097: nothing to see here\nlog line 00098: nothing to see here\nlog line 00099: nothing to see here\nlog line 00100: nothing to see here\nlog line 00101: nothing to see here\nlog line 00102: nothing to see here\nlog line 00103: nothing to see here\nlog line 00104: nothing to see here\nlog line 00105: nothing to see here\nlog line 00106: nothing to see here\nlog line 00107: nothing to see here\nlog line 00108: nothing to see here\nlog line 00109: nothing to see here\nlog line 00110: nothing to see here\nlog line 00111: nothing to see here\nlog line 00112: nothing to see here\nlog line 00113: nothing to see here\nlog line 00114: nothing to see here\nlog line 00115: nothing to see here\nlog line 00116: nothing to see here\nlog line 00117: nothing to see here\nlog line 00118: nothing to see here\nlog line 00119: nothing to see here\nlog line 00120: nothing to see here\nlog line 00121: nothing to see here\nlog line 00122: nothing to see here\nlog line 00123: nothing to see here\nlog line 00124: nothing to see here\nlog line 00125: nothing to see here\nlog line 00126: nothing to see here\nlog line 00127: nothing to see here\nlog line 00128: nothing to see here\nlog line 00129: nothing to see here\nlog line 00130: nothing to see here\nlog line 00131: nothing to see here\nlog line 00132: nothing to see here\nlog line 00133: nothing to see here\nlog line 00134: nothing to see here\nlog line 00135: nothing to see here\nlog line 00136: nothing to see here\nlog line 00137: nothing to see here\nlog line 00138: nothing to see here\nlog line 00139: nothing to see here\nlog line 00140: nothing to see here\nlog line 00141: nothing to see here\nlog line 00142: nothing to see here\nlog line 00143: nothing to see here\nlog line 00144: nothing to see here\nlog line 00145: nothing to see here\nlog line 00146: nothing to see here\nlog line 00147: nothing to see here\nlog line 00148: nothing to see here\nlog line 00149: nothing to see here\nlog line 00150: nothing to see here\nlog line 00151: nothing to see here\nlog line 00152: nothing to see here\nlog line 00153: nothing to see here\nlog line 00154: nothing to see here\nlog line 00155: nothing to see here\nlog line 00156: nothing to see here\nlog line 00157: nothing to see here\nlog line 00158: nothing to see here\nlog line 00159: nothing to see here\nlog line 00160: nothing to see here\nlog line 00161: nothing to see here\nlog line 00162: nothing to see here\nlog line 00163: nothing to see here\nlog line 00164: nothing to see here\nlog line 00165: nothing to see here\nlog line 00166: nothing to see here\nlog line 00167: nothing to see here\nlog line 00168: nothing to see here\nlog line 00169: nothing to see here\nlog line 00170: nothing to see here\nlog line 00171: nothing to see here\nlog line 00172: nothing to see here\nlog line 00173: nothing to see here\nlog line 00174: nothing to see here\nlog line 00175: nothing to see here\nlog line 00176: nothing to see here\nlog line 00177: nothing to see here\nlog line 00178: nothing to see here\nlog line 00179: nothing to see here\nlog line 00180: nothing to see here\nlog line 00181: nothing to see here\nlog line 00182: nothing to see here\nlog line 00183: nothing to see here\nlog line 00184: nothing to see here\nlog line 00185: nothing to see here\nlog line 00186: nothing to see here\nlog line 00187: nothing to see here\nlog line 00188: nothing to see here\nlog line 00189: nothing to see here\nlog line 00190: nothing to see here\nlog line 00191: nothing to see here\nlog line 00192: nothing to see here\nlog line 00193: nothing to see here\nlog line 00194: nothing to see here\nlog line 00195: nothing to see here\nlog line 00196: nothing to see here\nlog line 00197: nothing to see here\nlog line 00198: nothing to see here\nlog line 00199: nothing to see here\nlog line 00200: nothing to see here\nlog line 00201: nothing to see here\nlog line 00202: nothing to see here\nlog line 00203: nothing to see here\nlog line 00204: nothing to see here\nlog line 00205: nothing to see here\nlog line 00206: nothing to see here\nlog line 00207: nothing to see here\nlog line 00208: nothing to see here\nlog line 00209: nothing to see here\nlog line 00210: nothing to see here\nlog line 00211: nothing to see here\nlog line 00212: nothing to see here\nlog line 00213: nothing to see here\nlog line 00214: nothing to see here\nlog line 00215: nothing to see here\nlog line 00216: nothing to see here\nlog line 00217: nothing to see here\nlog line 00218: nothing to see here\nlog line 00219: nothing to see here\nlog line 00220: nothing to see here\nlog line 00221: nothing to see here\nlog line 00222: nothing to see here\nlog line 00223: nothing to see here\nlog line 00224: nothing to see here\nlog line 00225: nothing to see here\nlog line 00226: nothing to see here\nlog line 00227: nothing to see here\nlog line 00228: nothing to see here\nlog line 00229: nothing to see here\nlog line 00230: nothing to see here\nlog line 00231: nothing to see here\nlog line 00232: nothing to see here\nlog line 00233: nothing to see here\nlog line 00234: nothing to see here\nlog line 00235: nothing to see here\nlog line 00236: nothing to see here\nlog line 00237: nothing to see here\nlog line 00238: nothing to see here\nlog line 00239: nothing to see here\nlog line 00240: nothing to see here\nlog line 00241: nothing to see here\nlog line 00242: nothing to see here\nlog line 00243: nothing to see here\nlog line 00244: nothing to see here\nlog line 00245: nothing to see here\nlog line 00246: nothing to see here\nlog line 00247: nothing to see here\nlog line 00248: nothing to see here\nlog line 00249: nothing to see here\nlog line 00250: nothing to see here\nlog line 00251: nothing to see here\nlog line 00252: nothing to see here\nlog line 00253: nothing to see here\nlog line 00254: nothing to see here\nlog line 00255: nothing to see here\nlog line 00256: nothing to see here\nlog line 00257: nothing to see here\nlog line 00258: nothing to see here\nlog line 00259: nothing to see here\nlog line 00260: nothing to see here\nlog line 00261: nothing to see here\nlog line 00262: nothing to see here\nlog line 00263: nothing to see here\nlog line 00264: nothing to see here\nlog line 00265: nothing to see here\nlog line 00266: nothing to see here\nlog line 00267: nothing to see here\nlog line 00268: nothing to see here\nlog line 00269: nothing to see here\nlog line 00270: nothing to see here\nlog line 00271: nothing to see here\nlog line 00272: nothing to see here\nlog line 00273: nothing to see here\nlog line 00274: nothing to see here\nlog line 00275: nothing to see here\nlog line 00276: nothing to see here\nlog line 00277: nothing to see here\nlog line 00278: nothing to see here\nlog line 00279: nothing to see here\nlog line 00280: nothing to see here\nlog line 00281: nothing to see here\nlog line 00282: nothing to see here\nlog line 00283: nothing to see here\nlog line 00284: nothing to see here\nlog line 00285: nothing to see here\nlog line 00286: nothing to see here\nlog line 00287: nothing to see here\nlog line 00288: nothing to see here\nlog line 00289: nothing to see here\nlog line 00290: nothing to see here\nlog line 00291: nothing to see here\nlog line 00292: nothing to see here\nlog line 00293: nothing to see here\nlog line 00294: nothing to see here\nlog line 00295: nothing to see here\nlog line 00296: nothing to see here\nlog line 00297: nothing to see here\nlog line 00298: nothing to see here\nlog line 00299: nothing to see here\nlog line 00300: nothing to see here\nlog line 00301: nothing to see here\nlog line 00302: nothing to see here\nlog line 00303: nothing to see here\nlog line 00304: nothing to see here\nlog line 00305: nothing to see here\nlog line 00306: nothing to see here\nlog line 00307: nothing to see here\nlog line 00308: nothing to see here\nlog line 00309: nothing to see here\nlog line 00310: nothing to see here\nlog line 00311: nothing to see here\nlog line 00312: nothing to see here\nlog line 00313: nothing to see here\nlog line 00314: nothing to see here\nlog line 00315: nothing to see here\nlog line 00316: nothing to see here\nlog line 00317: nothing to see here\nlog line 00318: nothing to see here\nlog line 00319: nothing to see here\nlog line 00320: nothing to see here\nlog line 00321: nothing to see here\nlog line 00322: nothing to see here\nlog line 00323: nothing to see here\nlog line 00324: nothing to see here\nlog line 00325: nothing to see here\nlog line 00326: nothing to see here\nlog line 00327: nothing to see here\nlog line 00328: nothing to see here\nlog line 00329: nothing to see here\nlog line 00330: nothing to see here\nlog line 00331: nothing to see here\nlog line 00332: nothing to see here\nlog line 00333: nothing to see here\nlog line 00334: nothing to see here\nlog line 00335: nothing to see here\nlog line 00336: nothing to see here\nlog line 00337: nothing to see here\nlog line 00338: nothing to see here\nlog line 00339: nothing to see here\nlog line 00340: nothing to see here\nlog line 00341: nothing to see here\nlog line 00342: nothing to see here\nlog line 00343: nothing to see here\nlog line 00344: nothing to see here\nlog line 00345: nothing to see here\nlog line 00346: nothing to see here\nlog line 00347: nothing to see here\nlog line 00348: nothing to see here\nlog line 00349: nothing to see here\nlog line 00350: nothing to see here\nlog line 00351: nothing to see here\nlog line 00352: nothing to see here\nlog line 00353: nothing to see here\nlog line 00354: nothing to see here\nlog line 00355: nothing to see here\nlog line 00356: nothing to see here\nlog line 00357: nothing to see here\nlog line 00358: nothing to see here\nlog line 00359: nothing to see here\nlog line 00360: nothing to see here\nlog line 00361: nothing to see here\nlog line 00362: nothing to see here\nlog line 00363: nothing to see here\nlog line 00364: nothing to see here\nlog line 00365: nothing to see here\nlog line 00366: nothing to see here\nlog line 00367: nothing to see here\nlog line 00368: nothing to see here\nlog line 00369: nothing to see here\nlog line 00370: nothing to see here\nlog line 00371: nothing to see here\nlog line 00372: nothing to see here\nlog line 00373: nothing to see here\nlog line 00374: nothing to see here\nlog line 00375: nothing to see here\nlog line 00376: nothing to see here\nlog line 00377: nothing to see here\nlog line 00378: nothing to see here\nlog line 00379: nothing to see here\nlog line 00380: nothing to see here\nlog line 00381: nothing to see here\nlog line 00382: nothing to see here\nlog line 00383: nothing to see here\nlog line 00384: nothing to see here\nlog line 00385: nothing to see here\nlog line 00386: nothing to see here\nlog line 00387: nothing to see here\nlog line 00388: nothing to see here\nlog line 00389: nothing to see here\nlog line 00390: nothing to see here\nlog line 00391: nothing to see here\nlog line 00392: nothing to see here\nlog line 00393: nothing to see here\nlog line 00394: nothing to see here\nlog line 00395: nothing to see here\nlog line 00396: nothing to see here\nlog line 00397: nothing to see here\nlog line 00398: nothing to see here\nlog line 00399: nothing to see here\nlog line 00400: nothing to see here\nlog line 00401: nothing to see here\nlog line 00402: nothing to see here\nlog line 00403: nothing to see here\nlog line 00404: nothing to see here\nlog line 00405: nothing to see here\nlog line 00406: nothing to see here\nlog line 00407: nothing to see here\nlog line 00408: nothing to see here\nlog line 00409: nothing to see here\nlog line 00410: nothing to see here\nlog line 00411: nothing to see here\nlog line 00412: nothing to see here\nlog line 00413: nothing to see here\nlog line 00414: nothing to see here\nlog line 00415: nothing to see here\nlog line 00416: nothing to see here\nlog line 00417: nothing to see here\nlog line 00418: nothing to see here\nlog line 00419: nothing to see here\nlog line 00420: nothing to see here\nlog line 00421: nothing to see here\nlog line 00422: nothing to see here\nlog line 00423: nothing to see here\nlog line 00424: nothing to see here\nlog line 00425: nothing to see here\nlog line 00426: nothing to see here\nlog line 00427: nothing to see here\nlog line 00428: nothing to see here\nlog line 00429: nothing to see here\nlog line 00430: nothing to see here\nlog line 00431: nothing to see here\nlog line 00432: nothing to see here\nlog line 00433: nothing to see here\nlog line 00434: nothing to see here\nlog line 00435: nothing to see here\nlog line 00436: nothing to see here\nlog line 00437: nothing to see here\nlog line 00438: nothing to see here\nlog line 00439: nothing to see here\nlog line 00440: nothing to see here\nlog line 00441: nothing to see here\nlog line 00442: nothing to see here\nlog line 00443: nothing to see here\nlog line 00444: nothing to see here\nlog line 00445: nothing to see here\nlog line 00446: nothing to see here\nlog line 00447: nothing to see here\nlog line 00448: nothing to see here\nlog line 00449: nothing to see here\nlog line 00450: nothing to see here\nlog line 00451: nothing to see here\nlog line 00452: nothing to see here\nlog line 00453: nothing to see here\nlog line 00454: nothing to see here\nlog line 00455: nothing to see here\nlog line 00456: nothing to see here\nlog line 00457: nothing to see here\nlog line 00458: nothing to see here\nlog line 00459: nothing to see here\nlog line 00460: nothing to see here\nlog line 00461: nothing to see here\nlog line 00462: nothing to see here\nlog line 00463: nothing to see here\nlog line 00464: nothing to see here\nlog line 00465: nothing to see here\nlog line 00466: nothing to see here\nlog line 00467: nothing to see here\nlog line 00468: nothing to see here\nlog line 00469: nothing to see here\nlog line 00470: nothing to see here\nlog line 00471: nothing to see here\nlog line 00472: nothing to see here\nlog line 00473: nothing to see here\nlog line 00474: nothing to see here\nlog line 00475: nothing to see here\nlog line 00476: nothing to see here\nlog line 00477: nothing to see here\nlog line 00478: nothing to see here\nlog line 00479: nothing to see here\nlog line 00480: nothing to see here\nlog line 00481: nothing to see here\nlog line 00482: nothing to see here\nlog line 00483: nothing to see here\nlog line 00484: nothing to see here\nlog line 00485: nothing to see here\nlog line 00486: nothing to see here\nlog line 00487: nothing to see here\nlog line 00488: nothing to see here\nlog line 00489: nothing to see here\nlog line 00490: nothing to see here\nlog line 00491: nothing to see here\nlog line 00492: nothing to see here\nlog line 00493: nothing to see here\nlog line 00494: nothing to see here\nlog line 00495: nothing to see here\nlog line 00496: nothing to see here\nlog line 00497: nothing to see here\nlog line 00498: nothing to see here\nlog line 00499: nothing to see here\nlog line 00500: nothing to see here\nlog line 00501: nothing to see here\nlog line 00502: nothing to see here\nlog line 00503: nothing to see here\nlog line 00504: nothing to see here\nlog line 00505: nothing to see here\nlog line 00506: nothing to see here\nlog line 00507: nothing to see here\nlog line 00508: nothing to see here\nlog line 00509: nothing to see here\nlog line 00510: nothing to see here\nlog line 00511: nothing to see here\nlog line 00512: nothing to see here\nlog line 00513: nothing to see here\nlog line 00514: nothing to see here\nlog line 00515: nothing to see here\nlog line 00516: nothing to see here\nlog line 00517: nothing to see here\nlog line 00518: nothing to see here\nlog line 00519: nothing to see here\nlog line 00520: nothing to see here\nlog line 00521: nothing to see here\nlog line 00522: nothing to see here\nlog line 00523: nothing to see here\nlog line 00524: nothing to see here\nlog line 00525: nothing to see here\nlog line 00526: nothing to see here\nlog line 00527: nothing to see here\nlog line 00528: nothing to see here\nlog line 00529: nothing to see here\nlog line 00530: nothing to see here\nlog line 00531: nothing to see here\nlog line 00532: nothing to see here\nlog line 00533: nothing to see here\nlog line 00534: nothing to see here\nlog line 00535: nothing to see here\nlog line 00536: nothing to see here\nlog line 00537: nothing to see here\nlog line 00538: nothing to see here\nlog line 00539: nothing to see here\nlog line 00540: nothing to see here\nlog line 00541: nothing to see here\nlog line 00542: nothing to see here\nlog line 00543: nothing to see here\nlog line 00544: nothing to see here\nlog line 00545: nothing to see here\nlog line 00546: nothing to see here\nlog line 00547: nothing to see here\nlog line 00548: nothing to see here\nlog line 00549: nothing to see here\nlog line 00550: nothing to see here\nlog line 00551: nothing to see here\nlog line 00552: nothing to see here\nlog line 00553: nothing to see here\nlog line 00554: nothing to see here\nlog line 00555: nothing to see here\nlog line 00556: nothing to see here\nlog line 00557: nothing to see here\nlog line 00558: nothing to see here\nlog line 00559: nothing to see here\nlog line 00560: nothing to see here\nlog line 00561: nothing to see here\nlog line 00562: nothing to see here\nlog line 00563: nothing to see here\nlog line 00564: nothing to see here\nlog line 00565: nothing to see here\nlog line 00566: nothing to see here\nlog line 00567: nothing to see here\nlog line 00568: nothing to see here\nlog line 00569: nothing to see here\nlog line 00570: nothing to see here\nlog line 00571: nothing to see here\nlog line 00572: nothing to see here\nlog line 00573: nothing to see here\nlog line 00574: nothing to see here\nlog line 00575: nothing to see here\nlog line 00576: nothing to see here\nlog line 00577: nothing to see here\nlog line 00578: nothing to see here\nlog line 00579: nothing to see here\nlog line 00580: nothing to see here\nlog line 00581: nothing to see here\nlog line 00582: nothing to see here\nlog line 00583: nothing to see here\nlog line 00584: nothing to see here\nlog line 00585: nothing to see here\nlog line 00586: nothing to see here\nlog line 00587: nothing to see here\nlog line 00588: nothing to see here\nlog line 00589: nothing to see here\nlog line 00590: nothing to see here\nlog line 00591: nothing to see here\nlog line 00592: nothing to see here\nlog line 00593: nothing to see here\nlog line 00594: nothing to see here\nlog line 00595: nothing to see here\nlog line 00596: nothing to see here\nlog line 00597: nothing to see here\nlog line 00598: nothing to see here\nlog line 00599: nothing to see here\nlog line 00600: nothing to see here\nlog line 00601: nothing to see here\nlog line 00602: nothing to see here\nlog line 00603: nothing to see here\nlog line 00604: nothing to see here\nlog line 00605: nothing to see here\nlog line 00606: nothing to see here\nlog line 00607: nothing to see here\nlog line 00608: nothing to see here\nlog line 00609: nothing to see here\nlog line 00610: nothing to see here\nlog line 00611: nothing to see here\nlog line 00612: nothing to see here\nlog line 00613: nothing to see here\nlog line 00614: nothing to see here\nlog line 00615: nothing to see here\nlog line 00616: nothing to see here\nlog line 00617: nothing to see here\nlog line 00618: nothing to see here\nlog line 00619: nothing to see here\nlog line 00620: nothing to see here\nlog line 00621: nothing to see here\nlog line 00622: nothing to see here\nlog line 00623: nothing to see here\nlog line 00624: nothing to see here\nlog line 00625: nothing to see here\nlog line 00626: nothing to see here\nlog line 00627: nothing to see here\nlog line 00628: nothing to see here\nlog line 00629: nothing to see here\nlog line 00630: nothing to see here\nlog line 00631: nothing to see here\nlog line 00632: nothing to see here\nlog line 00633: nothing to see here\nlog line 00634: nothing to see here\nlog line 00635: nothing to see here\nlog line 00636: nothing to see here\nlog line 00637: nothing to see here\nlog line 00638: nothing to see here\nlog line 00639: nothing to see here\nlog line 00640: nothing to see here\nlog line 00641: nothing to see here\nlog line 00642: nothing to see here\nlog line 00643: nothing to see here\nlog line 00644: nothing to see here\nlog line 00645: nothing to see here\nlog line 00646: nothing to see here\nlog line 00647: nothing to see here\nlog line 00648: nothing to see here\nlog line 00649: nothing to see here\nlog line 00650: nothing to see here\nlog line 00651: nothing to see here\nlog line 00652: nothing to see here\nlog line 00653: nothing to see here\nlog line 00654: nothing to see here\nlog line 00655: nothing to see here\nlog line 00656: nothing to see here\nlog line 00657: nothing to see here\nlog line 00658: nothing to see here\nlog line 00659: nothing to see here\nlog line 00660: nothing to see here\nlog line 00661: nothing to see here\nlog line 00662: nothing to see here\nlog line 00663: nothing to see here\nlog line 00664: nothing to see here\nlog line 00665: nothing to see here\nlog line 00666: nothing to see here\nlog line 00667: nothing to see here\nlog line 00668: nothing to see here\nlog line 00669: nothing to see here\nlog line 00670: nothing to see here\nlog line 00671: nothing to see here\nlog line 00672: nothing to see here\nlog line 00673: nothing to see here\nlog line 00674: nothing to see here\nlog line 00675: nothing to see here\nlog line 00676: nothing to see here\nlog line 00677: nothing to see here\nlog line 00678: nothing to see here\nlog line 00679: nothing to see here\nlog line 00680: nothing to see here\nlog line 00681: nothing to see here\nlog line 00682: nothing to see here\nlog line 00683: nothing to see here\nlog line 00684: nothing to see here\nlog line 00685: nothing to see here\nlog line 00686: nothing to see here\nlog line 00687: nothing to see here\nlog line 00688: nothing to see here\nlog line 00689: nothing to see here\nlog line 00690: nothing to see here\nlog line 00691: nothing to see here\nlog line 00692: nothing to see here\nlog line 00693: nothing to see here\nlog line 00694: nothing to see here\nlog line 00695: nothing to see here\nlog line 00696: nothing to see here\n```\n\nThat is the whole log.",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "commandId": "cmd",
+              "content": "Show the log.",
+              "kind": "user_prompt",
+              "operatorPubkey": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+              "steered": false
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "060e113b2a24ba9f80ec3fde26460c75f15a0d9364c93d84f763b137238bd701",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "assistant_text",
+              "text": "Here is the log: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "cc409dfa9465fe00a92010f36f33041b65356e00684c1393113061d8951a5c82",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 3,
+            "item": {
+              "kind": "assistant_text",
+              "text": "```text\nlog line 00000: nothing to see here\nlog line 00001: nothing to see here\nlog line 00002: nothing to see here\nlog line 00003: nothing to see here\nlog line 00004: nothing to see here\nlog line 00005: nothing to see here\nlog line 00006: nothing to see here\nlog line 00007: nothing to see here\nlog line 00008: nothing to see here\nlog line 00009: nothing to see here\nlog line 00010: nothing to see here\nlog line 00011: nothing to see here\nlog line 00012: nothing to see here\nlog line 00013: nothing to see here\nlog line 00014: nothing to see here\nlog line 00015: nothing to see here\nlog line 00016: nothing to see here\nlog line 00017: nothing to see here\nlog line 00018: nothing to see here\nlog line 00019: nothing to see here\nlog line 00020: nothing to see here\nlog line 00021: nothing to see here\nlog line 00022: nothing to see here\nlog line 00023: nothing to see here\nlog line 00024: nothing to see here\nlog line 00025: nothing to see here\nlog line 00026: nothing to see here\nlog line 00027: nothing to see here\nlog line 00028: nothing to see here\nlog line 00029: nothing to see here\nlog line 00030: nothing to see here\nlog line 00031: nothing to see here\nlog line 00032: nothing to see here\nlog line 00033: nothing to see here\nlog line 00034: nothing to see here\nlog line 00035: nothing to see here\nlog line 00036: nothing to see here\nlog line 00037: nothing to see here\nlog line 00038: nothing to see here\nlog line 00039: nothing to see here\nlog line 00040: nothing to see here\nlog line 00041: nothing to see here\nlog line 00042: nothing to see here\nlog line 00043: nothing to see here\nlog line 00044: nothing to see here\nlog line 00045: nothing to see here\nlog line 00046: nothing to see here\nlog line 00047: nothing to see here\nlog line 00048: nothing to see here\nlog line 00049: nothing to see here\nlog line 00050: nothing to see here\nlog line 00051: nothing to see here\nlog line 00052: nothing to see here\nlog line 00053: nothing to see here\nlog line 00054: nothing to see here\nlog line 00055: nothing to see here\nlog line 00056: nothing to see here\nlog line 00057: nothing to see here\nlog line 00058: nothing to see here\nlog line 00059: nothing to see here\nlog line 00060: nothing to see here\nlog line 00061: nothing to see here\nlog line 00062: nothing to see here\nlog line 00063: nothing to see here\nlog line 00064: nothing to see here\nlog line 00065: nothing to see here\nlog line 00066: nothing to see here\nlog line 00067: nothing to see here\nlog line 00068: nothing to see here\nlog line 00069: nothing to see here\nlog line 00070: nothing to see here\nlog line 00071: nothing to see here\nlog line 00072: nothing to see here\nlog line 00073: nothing to see here\nlog line 00074: nothing to see here\nlog line 00075: nothing to see here\nlog line 00076: nothing to see here\nlog line 00077: nothing to see here\nlog line 00078: nothing to see here\nlog line 00079: nothing to see here\nlog line 00080: nothing to see here\nlog line 00081: nothing to see here\nlog line 00082: nothing to see here\nlog line 00083: nothing to see here\nlog line 00084: nothing to see here\nlog line 00085: nothing to see here\nlog line 00086: nothing to see here\nlog line 00087: nothing to see here\nlog line 00088: nothing to see here\nlog line 00089: nothing to see here\nlog line 00090: nothing to see here\nlog line 00091: nothing to see here\nlog line 00092: nothing to see here\nlog line 00093: nothing to see here\nlog line 00094: nothing to see here\nlog line 00095: nothing to see here\nlog line 00096: nothing to see here\nlog line 00097: nothing to see here\nlog line 00098: nothing to see here\nlog line 00099: nothing to see here\nlog line 00100: nothing to see here\nlog line 00101: nothing to see here\nlog line 00102: nothing to see here\nlog line 00103: nothing to see here\nlog line 00104: nothing to see here\nlog line 00105: nothing to see here\nlog line 00106: nothing to see here\nlog line 00107: nothing to see here\nlog line 00108: nothing to see here\nlog line 00109: nothing to see here\nlog line 00110: nothing to see here\nlog line 00111: nothing to see here\nlog line 00112: nothing to see here\nlog line 00113: nothing to see here\nlog line 00114: nothing to see here\nlog line 00115: nothing to see here\nlog line 00116: nothing to see here\nlog line 00117: nothing to see here\nlog line 00118: nothing to see here\nlog line 00119: nothing to see here\nlog line 00120: nothing to see here\nlog line 00121: nothing to see here\nlog line 00122: nothing to see here\nlog line 00123: nothing to see here\nlog line 00124: nothing to see here\nlog line 00125: nothing to see here\nlog line 00126: nothing to see here\nlog line 00127: nothing to see here\nlog line 00128: nothing to see here\nlog line 00129: nothing to see here\nlog line 00130: nothing to see here\nlog line 00131: nothing to see here\nlog line 00132: nothing to see here\nlog line 00133: nothing to see here\nlog line 00134: nothing to see here\nlog line 00135: nothing to see here\nlog line 00136: nothing to see here\nlog line 00137: nothing to see here\nlog line 00138: nothing to see here\nlog line 00139: nothing to see here\nlog line 00140: nothing to see here\nlog line 00141: nothing to see here\nlog line 00142: nothing to see here\nlog line 00143: nothing to see here\nlog line 00144: nothing to see here\nlog line 00145: nothing to see here\nlog line 00146: nothing to see here\nlog line 00147: nothing to see here\nlog line 00148: nothing to see here\nlog line 00149: nothing to see here\nlog line 00150: nothing to see here\nlog line 00151: nothing to see here\nlog line 00152: nothing to see here\nlog line 00153: nothing to see here\nlog line 00154: nothing to see here\nlog line 00155: nothing to see here\nlog line 00156: nothing to see here\nlog line 00157: nothing to see here\nlog line 00158: nothing to see here\nlog line 00159: nothing to see here\nlog line 00160: nothing to see here\nlog line 00161: nothing to see here\nlog line 00162: nothing to see here\nlog line 00163: nothing to see here\nlog line 00164: nothing to see here\nlog line 00165: nothing to see here\nlog line 00166: nothing to see here\nlog line 00167: nothing to see here\nlog line 00168: nothing to see here\nlog line 00169: nothing to see here\nlog line 00170: nothing to see here\nlog line 00171: nothing to see here\nlog line 00172: nothing to see here\nlog line 00173: nothing to see here\nlog line 00174: nothing to see here\nlog line 00175: nothing to see here\nlog line 00176: nothing to see here\nlog line 00177: nothing to see here\nlog line 00178: nothing to see here\nlog line 00179: nothing to see here\nlog line 00180: nothing to see here\nlog line 00181: nothing to see here\nlog line 00182: nothing to see here\nlog line 00183: nothing to see here\nlog line 00184: nothing to see here\nlog line 00185: nothing to see here\nlog line 00186: nothing to see here\nlog line 00187: nothing to see here\nlog line 00188: nothing to see here\nlog line 00189: nothing to see here\nlog line 00190: nothing to see here\nlog line 00191: nothing to see here\nlog line 00192: nothing to see here\nlog line 00193: nothing to see here\nlog line 00194: nothing to see here\nlog line 00195: nothing to see here\nlog line 00196: nothing to see here\nlog line 00197: nothing to see here\nlog line 00198: nothing to see here\nlog line 00199: nothing to see here\nlog line 00200: nothing to see here\nlog line 00201: nothing to see here\nlog line 00202: nothing to see here\nlog line 00203: nothing to see here\nlog line 00204: nothing to see here\nlog line 00205: nothing to see here\nlog line 00206: nothing to see here\nlog line 00207: nothing to see here\nlog line 00208: nothing to see here\nlog line 00209: nothing to see here\nlog line 00210: nothing to see here\nlog line 00211: nothing to see here\nlog line 00212: nothing to see here\nlog line 00213: nothing to see here\nlog line 00214: nothing to see here\nlog line 00215: nothing to see here\nlog line 00216: nothing to see here\nlog line 00217: nothing to see here\nlog line 00218: nothing to see here\nlog line 00219: nothing to see here\nlog line 00220: nothing to see here\nlog line 00221: nothing to see here\nlog line 00222: nothing to see here\nlog line 00223: nothing to see here\nlog line 00224: nothing to see here\nlog line 00225: nothing to see here\nlog line 00226: nothing to see here\nlog line 00227: nothing to see here\nlog line 00228: nothing to see here\nlog line 00229: nothing to see here\nlog line 00230: nothing to see here\nlog line 00231: nothing to see here\nlog line 00232: nothing to see here\nlog line 00233: nothing to see here\nlog line 00234: nothing to see here\nlog line 00235: nothing to see here\nlog line 00236: nothing to see here\nlog line 00237: nothing to see here\nlog line 00238: nothing to see here\nlog line 00239: nothing to see here\nlog line 00240: nothing to see here\nlog line 00241: nothing to see here\nlog line 00242: nothing to see here\nlog line 00243: nothing to see here\nlog line 00244: nothing to see here\nlog line 00245: nothing to see here\nlog line 00246: nothing to see here\nlog line 00247: nothing to see here\nlog line 00248: nothing to see here\nlog line 00249: nothing to see here\nlog line 00250: nothing to see here\nlog line 00251: nothing to see here\nlog line 00252: nothing to see here\nlog line 00253: nothing to see here\nlog line 00254: nothing to see here\nlog line 00255: nothing to see here\nlog line 00256: nothing to see here\nlog line 00257: nothing to see here\nlog line 00258: nothing to see here\nlog line 00259: nothing to see here\nlog line 00260: nothing to see here\nlog line 00261: nothing to see here\nlog line 00262: nothing to see here\nlog line 00263: nothing to see here\nlog line 00264: nothing to see here\nlog line 00265: nothing to see here\nlog line 00266: nothing to see here\nlog line 00267: nothing to see here\nlog line 00268: nothing to see here\nlog line 00269: nothing to see here\nlog line 00270: nothing to see here\nlog line 00271: nothing to see here\nlog line 00272: nothing to see here\nlog line 00273: nothing to see here\nlog line 00274: nothing to see here\nlog line 00275: nothing to see here\nlog line 00276: nothing to see here\nlog line 00277: nothing to see here\nlog line 00278: nothing to see here\nlog line 00279: nothing to see here\nlog line 00280: nothing to see here\nlog line 00281: nothing to see here\nlog line 00282: nothing to see here\nlog line 00283: nothing to see here\nlog line 00284: nothing to see here\nlog line 00285: nothing to see here\nlog line 00286: nothing to see here\nlog line 00287: nothing to see here\nlog line 00288: nothing to see here\nlog line 00289: nothing to see here\nlog line 00290: nothing to see here\nlog line 00291: nothing to see here\nlog line 00292: nothing to see here\nlog line 00293: nothing to see here\nlog line 00294: nothing to see here\nlog line 00295: nothing to see here\nlog line 00296: nothing to see here\nlog line 00297: nothing to see here\nlog line 00298: nothing to see here\nlog line 00299: nothing to see here\nlog line 00300: nothing to see here\nlog line 00301: nothing to see here\nlog line 00302: nothing to see here\nlog line 00303: nothing to see here\nlog line 00304: nothing to see here\nlog line 00305: nothing to see here\nlog line 00306: nothing to see here\nlog line 00307: nothing to see here\nlog line 00308: nothing to see here\nlog line 00309: nothing to see here\nlog line 00310: nothing to see here\nlog line 00311: nothing to see here\nlog line 00312: nothing to see here\nlog line 00313: nothing to see here\nlog line 00314: nothing to see here\nlog line 00315: nothing to see here\nlog line 00316: nothing to see here\nlog line 00317: nothing to see here\nlog line 00318: nothing to see here\nlog line 00319: nothing to see here\nlog line 00320: nothing to see here\nlog line 00321: nothing to see here\nlog line 00322: nothing to see here\nlog line 00323: nothing to see here\nlog line 00324: nothing to see here\nlog line 00325: nothing to see here\nlog line 00326: nothing to see here\nlog line 00327: nothing to see here\nlog line 00328: nothing to see here\nlog line 00329: nothing to see here\nlog line 00330: nothing to see here\nlog line 00331: nothing to see here\nlog line 00332: nothing to see here\nlog line 00333: nothing to see here\nlog line 00334: nothing to see here\nlog line 00335: nothing to see here\nlog line 00336: nothing to see here\nlog line 00337: nothing to see here\nlog line 00338: nothing to see here\nlog line 00339: nothing to see here\nlog line 00340: nothing to see here\nlog line 00341: nothing to see here\nlog line 00342: nothing to see here\nlog line 00343: nothing to see here\nlog line 00344: nothing to see here\nlog line 00345: nothing to see here\nlog line 00346: nothing to see here\nlog line 00347: nothing to see here\nlog line 00348: nothing to see here\nlog line 00349: nothing to see here\nlog line 00350: nothing to see here\nlog line 00351: nothing to see here\nlog line 00352: nothing to see here\nlog line 00353: nothing to see here\nlog line 00354: nothing to see here\nlog line 00355: nothing to see here\nlog line 00356: nothing to see here\nlog line 00357: nothing to see here\nlog line 00358: nothing to see here\nlog line 00359: nothing to see here\nlog line 00360: nothing to see here\nlog line 00361: nothing to see here\nlog line 00362: nothing to see here\nlog line 00363: nothing to see here\nlog line 00364: nothing to see here\nlog line 00365: nothing to see here\nlog line 00366: nothing to see here\nlog line 00367: nothing to see here\nlog line 00368: nothing to see here\nlog line 00369: nothing to see here\nlog line 00370: nothing to see here\nlog line 00371: nothing to see here\nlog line 00372: nothing to see here\nlog line 00373: nothing to see here\nlog line 00374: nothing to see here\nlog line 00375: nothing to see here\nlog line 00376: nothing to see here\nlog line 00377: nothing to see here\nlog line 00378: nothing to see here\nlog line 00379: nothing to see here\nlog line 00380: nothing to see here\nlog line 00381: nothing to see here\nlog line 00382: nothing to see here\nlog line 00383: nothing to see here\nlog line 00384: nothing to see here\nlog line 00385: nothing to see here\nlog line 00386: nothing to see here\nlog line 00387: nothing to see here\nlog line 00388: nothing to see here\nlog line 00389: nothing to see here\nlog line 00390: nothing to see here\nlog line 00391: nothing to see here\nlog line 00392: nothing to see here\nlog line 00393: nothing to see here\nlog line 00394: nothing to see here\nlog line 00395: nothing to see here\nlog line 00396: nothing to see here\nlog line 00397: nothing to see here\nlog line 00398: nothing to see here\nlog line 00399: nothing to see here\nlog line 00400: nothing to see here\nlog line 00401: nothing to see here\nlog line 00402: nothing to see here\nlog line 00403: nothing to see here\nlog line 00404: nothing to see here\nlog line 00405: nothing to see here\nlog line 00406: nothing to see here\nlog line 00407: nothing to see here\nlog line 00408: nothing to see here\nlog line 00409: nothing to see here\nlog line 00410: nothing to see here\nlog line 00411: nothing to see here\nlog line 00412: nothing to see here\nlog line 00413: nothing to see here\nlog line 00414: nothing to see here\nlog line 00415: nothing to see here\nlog line 00416: nothing to see here\nlog line 00417: nothing to see here\nlog line 00418: nothing to see here\nlog line 00419: nothing to see here\nlog line 00420: nothing to see here\nlog line 00421: nothing to see here\nlog line 00422: nothing to see here\nlog line 00423: nothing to see here\nlog line 00424: nothing to see here\nlog line 00425: nothing to see here\nlog line 00426: nothing to see here\nlog line 00427: nothing to see here\nlog line 00428: nothing to see here\nlog line 00429: nothing to see here\nlog line 00430: nothing to see here\nlog line 00431: nothing to see here\nlog line 00432: nothing to see here\nlog line 00433: nothing to see here\nlog line 00434: nothing to see here\nlog line 00435: nothing to see here\nlog line 00436: nothing to see here\nlog line 00437: nothing to see here\nlog line 00438: nothing to see here\nlog line 00439: nothing to see here\nlog line 00440: nothing to see here\nlog line 00441: nothing to see here\nlog line 00442: nothing to see here\nlog line 00443: nothing to see here\nlog line 00444: nothing to see here\nlog line 00445: nothing to see here\nlog line 00446: nothing to see here\nlog line 00447: nothing to see here\nlog line 00448: nothing to see here\nlog line 00449: nothing to see here\nlog line 00450: nothing to see here\nlog line 00451: nothing to see here\nlog line 00452: nothing to see here\nlog line 00453: nothing to see here\nlog line 00454: nothing to see here\nlog line 00455: nothing to see here\nlog line 00456: nothing to see here\nlog line 00457: nothing to see here\nlog line 00458: nothing to see here\nlog line 00459: nothing to see here\nlog line 00460: nothing to see here\nlog line 00461: nothing to see here\nlog line 00462: nothing to see here\nlog line 00463: nothing to see here\nlog line 00464: nothing to see here\nlog line 00465: nothing to see here\nlog line 00466: nothing to see here\nlog line 00467: nothing to see here\nlog line 00468: nothing to see here\nlog line 00469: nothing to see here\nlog line 00470: nothing to see here\nlog line 00471: nothing to see here\nlog line 00472: nothing to see here\nlog line 00473: nothing to see here\nlog line 00474: nothing to see here\nlog line 00475: nothing to see here\nlog line 00476: nothing to see here\nlog line 00477: nothing to see here\nlog line 00478: nothing to see here\nlog line 00479: nothing to see here\nlog line 00480: nothing to see here\nlog line 00481: nothing to see here\nlog line 00482: nothing to see here\nlog line 00483: nothing to see here\nlog line 00484: nothing to see here\nlog line 00485: nothing to see here\nlog line 00486: nothing to see here\nlog line 00487: nothing to see here\nlog line 00488: nothing to see here\nlog line 00489: nothing to see here\nlog line 00490: nothing to see here\nlog line 00491: nothing to see here\nlog line 00492: nothing to see here\nlog line 00493: nothing to see here\nlog line 00494: nothing to see here\nlog line 00495: nothing to see here\nlog line 00496: nothing to see here\nlog line 00497: nothing to see here\nlog line 00498: nothing to see here\nlog line 00499: nothing to see here\nlog line 00500: nothing to see here\nlog line 00501: nothing to see here\nlog line 00502: nothing to see here\nlog line 00503: nothing to see here\nlog line 00504: nothing to see here\nlog line 00505: nothing to see here\nlog line 00506: nothing to see here\nlog line 00507: nothing to see here\nlog line 00508: nothing to see here\nlog line 00509: nothing to see here\nlog line 00510: nothing to see here\nlog line 00511: nothing to see here\nlog line 00512: nothing to see here\nlog line 00513: nothing to see here\nlog line 00514: nothing to see here\nlog line 00515: nothing to see here\nlog line 00516: nothing to see here\nlog line 00517: nothing to see here\nlog line 00518: nothing to see here\nlog line 00519: nothing to see here\nlog line 00520: nothing to see here\nlog line 00521: nothing to see here\nlog line 00522: nothing to see here\nlog line 00523: nothing to see here\nlog line 00524: nothing to see here\nlog line 00525: nothing to see here\nlog line 00526: nothing to see here\nlog line 00527: nothing to see here\nlog line 00528: nothing to see here\nlog line 00529: nothing to see here\nlog line 00530: nothing to see here\nlog line 00531: nothing to see here\nlog line 00532: nothing to see here\nlog line 00533: nothing to see here\nlog line 00534: nothing to see here\nlog line 00535: nothing to see here\nlog line 00536: nothing to see here\nlog line 00537: nothing to see here\nlog line 00538: nothing to see here\nlog line 00539: nothing to see here\nlog line 00540: nothing to see here\nlog line 00541: nothing to see here\nlog line 00542: nothing to see here\nlog line 00543: nothing to see here\nlog line 00544: nothing to see here\nlog line 00545: nothing to see here\nlog line 00546: nothing to see here\nlog line 00547: nothing to see here\nlog line 00548: nothing to see here\nlog line 00549: nothing to see here\nlog line 00550: nothing to see here\nlog line 00551: nothing to see here\nlog line 00552: nothing to see here\nlog line 00553: nothing to see here\nlog line 00554: nothing to see here\nlog line 00555: nothing to see here\nlog line 00556: nothing to see here\nlog line 00557: nothing to see here\nlog line 00558: nothing to see here\nlog line 00559: nothing to see here\nlog line 00560: nothing to see here\nlog line 00561: nothing to see here\nlog line 00562: nothing to see here\nlog line 00563: nothing to see here\nlog line 00564: nothing to see here\nlog line 00565: nothing to see here\nlog line 00566: nothing to see here\nlog line 00567: nothing to see here\nlog line 00568: nothing to see here\nlog line 00569: nothing to see here\nlog line 00570: nothing to see here\nlog line 00571: nothing to see here\nlog line 00572: nothing to see here\nlog line 00573: nothing to see here\nlog line 00574: nothing to see here\nlog line 00575: nothing to see here\nlog line 00576: nothing to see here\nlog line 00577: nothing to see here\nlog line 00578: nothing to see here\nlog line 00579: nothing to see here\nlog line 00580: nothing to see here\nlog line 00581: nothing to see here\nlog line 00582: nothing to see here\nlog line 00583: nothing to see here\nlog line 00584: nothing to see here\nlog line 00585: nothing to see here\nlog line 00586: nothing to see here\nlog line 00587: nothing to see here\nlog line 00588: nothing to see here\nlog line 00589: nothing to see here\nlog line 00590: nothing to see here\nlog line 00591: nothing to see here\nlog line 00592: nothing to see here\nlog line 00593: nothing to see here\nlog line 00594: nothing to see here\nlog line 00595: nothing to see here\nlog line 00596: nothing to see here\nlog line 00597: nothing to see here\nlog line 00598: nothing to see here\nlog line 00599: nothing to see here\nlog line 00600: nothing to see here\nlog line 00601: nothing to see here\nlog line 00602: nothing to see here\nlog line 00603: nothing to see here\nlog line 00604: nothing to see here\nlog line 00605: nothing to see here\nlog line 00606: nothing to see here\nlog line 00607: nothing to see here\nlog line 00608: nothing to see here\nlog line 00609: nothing to see here\nlog line 00610: nothing to see here\nlog line 00611: nothing to see here\nlog line 00612: nothing to see here\nlog line 00613: nothing to see here\nlog line 00614: nothing to see here\nlog line 00615: nothing to see here\nlog line 00616: nothing to see here\nlog line 00617: nothing to see here\nlog line 00618: nothing to see here\nlog line 00619: nothing to see here\nlog line 00620: nothing to see here\nlog line 00621: nothing to see here\nlog line 00622: nothing to see here\nlog line 00623: nothing to see here\nlog line 00624: nothing to see here\nlog line 00625: nothing to see here\nlog line 00626: nothing to see here\nlog line 00627: nothing to see here\nlog line 00628: nothing to see here\nlog line 00629: nothing to see here\nlog line 00630: nothing to see here\nlog line 00631: nothing to see here\nlog line 00632: nothing to see here\nlog line 00633: nothing to see here\nlog line 00634: nothing to see here\nlog line 00635: nothing to see here\nlog line 00636: nothing to see here\nlog line 00637: nothing to see here\nlog line 00638: nothing to see here\nlog line 00639: nothing to see here\nlog line 00640: nothing to see here\nlog line 00641: nothing to see here\nlog line 00642: nothing to see here\nlog line 00643: nothing to see here\nlog line 00644: nothing to see here\nlog line 00645: nothing to see here\nlog line 00646: nothing to see here\nlog line 00647: nothing to see here\nlog line 00648: nothing to see here\nlog line 00649: nothing to see here\nlog line 00650: nothing to see here\nlog line 00651: nothing to see here\nlog line 00652: nothing to see here\nlog line 00653: nothing to see here\nlog line 00654: nothing to see here\nlog line 00655: nothing to see here\nlog line 00656: nothing to see here\nlog line 00657: nothing to see here\nlog line 00658: nothing to see here\nlog line 00659: nothing to see here\nlog line 00660: nothing to see here\nlog line 00661: nothing to see here\nlog line 00662: nothing to see here\nlog line 00663: nothing to see here\nlog line 00664: nothing to see here\nlog line 00665: nothing to see here\nlog line 00666: nothing to see here\nlog line 00667: nothing to see here\nlog line 00668: nothing to see here\nlog line 00669: nothing to see here\nlog line 00670: nothing to see here\nlog line 00671: nothing to see here\nlog line 00672: nothing to see here\nlog line 00673: nothing to see here\nlog line 00674: nothing to see here\nlog line 00675: nothing to see here\nlog line 00676: nothing to see here\nlog line 00677: nothing to see here\nlog line 00678: nothing to see here\nlog line 00679: nothing to see here\nlog line 00680: nothing to see here\nlog line 00681: nothing to see here\nlog line 00682: "
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512980000,
+            "turnId": "turn-1"
+          },
+          "eventId": "ad1506b5bf1a352d0903b558d35586b63a2b6c0bd34e49d0b910e3ffe1a7f553",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 4,
+            "item": {
+              "kind": "assistant_text",
+              "text": "nothing to see here\nlog line 00683: nothing to see here\nlog line 00684: nothing to see here\nlog line 00685: nothing to see here\nlog line 00686: nothing to see here\nlog line 00687: nothing to see here\nlog line 00688: nothing to see here\nlog line 00689: nothing to see here\nlog line 00690: nothing to see here\nlog line 00691: nothing to see here\nlog line 00692: nothing to see here\nlog line 00693: nothing to see here\nlog line 00694: nothing to see here\nlog line 00695: nothing to see here\nlog line 00696: nothing to see here\n```\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512981000,
+            "turnId": "turn-1"
+          },
+          "eventId": "c1d3b2dd903dfc1e84af1d439defffd89efea6aedaa231c6bf442e41e760874e",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 5,
+            "item": {
+              "kind": "assistant_text",
+              "text": "That is the whole log."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512982000,
+            "turnId": "turn-1"
+          },
+          "eventId": "61ef4073da5066fd0793d2d6e159fdd968e4ad7b41a83c72c59adfbf8bbdca17",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 6,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512983000,
+            "turnId": "turn-1"
+          },
+          "eventId": "c07a5f4e1697c72bf8636a4d287976f3c0a525d653eec75f417e3fd27a116a6d",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "fence-straddles-size-cut",
+      "sessionLease": [],
+      "sessionStatus": [],
+      "source": "translator"
+    },
+    {
+      "description": "A tool call and its result between two runs of prose end the first message: a reasoning message and two prose messages, never one.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "0a14f6f73e2afedab38f0478af5aaa7679dc56f532fd9862f1388da49473080e",
+          "latestAssistantFirstEventId": "df5552ac73e9b8fdc7c07ae33e238b9b59260b8acec8b3c91be73292ea8a087d",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "fac3c33c4198097b5963343eb654513ec9fd961b0f97e70ca09a8e62486eb9cf",
+          "kind": "reasoning",
+          "lastEventId": "fac3c33c4198097b5963343eb654513ec9fd961b0f97e70ca09a8e62486eb9cf",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "I should run the tests first.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "8b8c91aacc60771ed51399db59c13659bc6b22c53253a61760770c424aaaae8e",
+          "kind": "assistant_text",
+          "lastEventId": "0e5a7d3928d914559d7824eed0bafbd031995a5f5c73a0f77bd0144cf0c62c93",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "Running the tests: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\nStarting now.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "df5552ac73e9b8fdc7c07ae33e238b9b59260b8acec8b3c91be73292ea8a087d",
+          "kind": "assistant_text",
+          "lastEventId": "0a14f6f73e2afedab38f0478af5aaa7679dc56f532fd9862f1388da49473080e",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "All tests pass: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\nNothing else changed.",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "commandId": "cmd",
+              "content": "Run the tests.",
+              "kind": "user_prompt",
+              "operatorPubkey": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+              "steered": false
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "164e2b1130c44a1aab27900b8d78328442df9f3365353bc69f9c2c7b9518a3e5",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "reasoning",
+              "text": "I should run the tests first."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "fac3c33c4198097b5963343eb654513ec9fd961b0f97e70ca09a8e62486eb9cf",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 3,
+            "item": {
+              "kind": "assistant_text",
+              "text": "Running the tests: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512980000,
+            "turnId": "turn-1"
+          },
+          "eventId": "8b8c91aacc60771ed51399db59c13659bc6b22c53253a61760770c424aaaae8e",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 4,
+            "item": {
+              "kind": "assistant_text",
+              "text": "Starting now."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512981000,
+            "turnId": "turn-1"
+          },
+          "eventId": "0e5a7d3928d914559d7824eed0bafbd031995a5f5c73a0f77bd0144cf0c62c93",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 5,
+            "item": {
+              "kind": "tool_call",
+              "tool": {
+                "input": {
+                  "command": "cargo test"
+                },
+                "toolId": "call-1",
+                "toolKind": "execute",
+                "toolName": "Run cargo test"
+              }
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512982000,
+            "turnId": "turn-1"
+          },
+          "eventId": "601acaa5d64e6fe9fd8c0479dac3803705e5529fcd6db798efe51a82645fc882",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 6,
+            "item": {
+              "content": "ok",
+              "input": {
+                "command": "cargo test"
+              },
+              "isError": false,
+              "kind": "tool_result",
+              "toolId": "call-1",
+              "toolKind": "execute",
+              "toolName": "Run cargo test"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512983000,
+            "turnId": "turn-1"
+          },
+          "eventId": "62d1e9e01d5ad47cce0927f5cc07c6da20403f3668679e837da86d458ce1075b",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 7,
+            "item": {
+              "kind": "assistant_text",
+              "text": "All tests pass: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512984000,
+            "turnId": "turn-1"
+          },
+          "eventId": "df5552ac73e9b8fdc7c07ae33e238b9b59260b8acec8b3c91be73292ea8a087d",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 8,
+            "item": {
+              "kind": "assistant_text",
+              "text": "Nothing else changed."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512985000,
+            "turnId": "turn-1"
+          },
+          "eventId": "0a14f6f73e2afedab38f0478af5aaa7679dc56f532fd9862f1388da49473080e",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 9,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512986000,
+            "turnId": "turn-1"
+          },
+          "eventId": "d68b7341f5f72793a1ebb63e5e615e4a4bcaf37762f03bdbcc29c7b1c780c240",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "prose-tool-prose",
+      "sessionLease": [],
+      "sessionStatus": [],
+      "source": "translator"
+    },
+    {
+      "description": "Adjacent pieces with different parentToolId never join. Own, subagent, own, subagent: four messages; the brief names the last of the agent's own, never the subagent's.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "dbabaf5aaecb903483ff218faa375e7756396127878820011d21ebcbb47f59e2",
+          "latestAssistantFirstEventId": "cd134e8977722a43401a225304749f1961470a1088d8df276be89e2d76324f4c",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "67d66652a7378bd8dd860d91fa50a0e16bab256ce551cf37783390df10855c75",
+          "kind": "assistant_text",
+          "lastEventId": "d11924bcbd294e5dd1c0e13465e3c706057fefe3dea88d7d429ad8b7fd7e4ca9",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "I will ask a subagent.\n\nIt knows the codebase.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "e473a1d015371d014bd8335c12c8492336c0b987747ae21185497a5c0c4ec281",
+          "kind": "assistant_text",
+          "lastEventId": "e473a1d015371d014bd8335c12c8492336c0b987747ae21185497a5c0c4ec281",
+          "parentToolId": "task-1",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "Subagent: looking around.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "cd134e8977722a43401a225304749f1961470a1088d8df276be89e2d76324f4c",
+          "kind": "assistant_text",
+          "lastEventId": "dbabaf5aaecb903483ff218faa375e7756396127878820011d21ebcbb47f59e2",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "While it works, a note.\n\nEnd of note.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "1527f29de0d43b06d728ab282ff068ca09385d6d5121eb11e15f4945fede9fbd",
+          "kind": "assistant_text",
+          "lastEventId": "1527f29de0d43b06d728ab282ff068ca09385d6d5121eb11e15f4945fede9fbd",
+          "parentToolId": "task-1",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "Subagent: done.",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "content": "Delegate it.",
+              "kind": "user_prompt",
+              "steered": false
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "e8c962d8acaabb0ffd0efa25347eeb014da8c6622a9cdb4a0e9f9b6bf27903f3",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "assistant_text",
+              "text": "I will ask a subagent.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "67d66652a7378bd8dd860d91fa50a0e16bab256ce551cf37783390df10855c75",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 3,
+            "item": {
+              "kind": "assistant_text",
+              "text": "It knows the codebase."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512980000,
+            "turnId": "turn-1"
+          },
+          "eventId": "d11924bcbd294e5dd1c0e13465e3c706057fefe3dea88d7d429ad8b7fd7e4ca9",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 4,
+            "item": {
+              "kind": "assistant_text",
+              "parentToolId": "task-1",
+              "text": "Subagent: looking around."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512981000,
+            "turnId": "turn-1"
+          },
+          "eventId": "e473a1d015371d014bd8335c12c8492336c0b987747ae21185497a5c0c4ec281",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 5,
+            "item": {
+              "kind": "assistant_text",
+              "text": "While it works, a note.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512982000,
+            "turnId": "turn-1"
+          },
+          "eventId": "cd134e8977722a43401a225304749f1961470a1088d8df276be89e2d76324f4c",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 6,
+            "item": {
+              "kind": "assistant_text",
+              "text": "End of note."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512983000,
+            "turnId": "turn-1"
+          },
+          "eventId": "dbabaf5aaecb903483ff218faa375e7756396127878820011d21ebcbb47f59e2",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 7,
+            "item": {
+              "kind": "assistant_text",
+              "parentToolId": "task-1",
+              "text": "Subagent: done."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512984000,
+            "turnId": "turn-1"
+          },
+          "eventId": "1527f29de0d43b06d728ab282ff068ca09385d6d5121eb11e15f4945fede9fbd",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 8,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512985000,
+            "turnId": "turn-1"
+          },
+          "eventId": "5a00e828cfd274e1d1d62629129934d0680a09a97e3e39fd45b002545aa9da61",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "own-prose-around-subagent-prose",
+      "sessionLease": [],
+      "sessionStatus": [],
+      "source": "hand-written"
+    },
+    {
+      "description": "Two generations that reuse a turnId are different targets: their prose never joins, though each is a lone piece with eventSeq 1.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "a7a5988ce240753038e8309f493791b0da8a56e1e64cdc3850688dba106eaa57",
+          "latestAssistantFirstEventId": "a7a5988ce240753038e8309f493791b0da8a56e1e64cdc3850688dba106eaa57",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        },
+        {
+          "latestAssistantEventId": "09272684d407e76e163c3c96f61bc280fe6ba91db058ee5a64ba20bb33b816d2",
+          "latestAssistantFirstEventId": "09272684d407e76e163c3c96f61bc280fe6ba91db058ee5a64ba20bb33b816d2",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 2,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "a7a5988ce240753038e8309f493791b0da8a56e1e64cdc3850688dba106eaa57",
+          "kind": "assistant_text",
+          "lastEventId": "a7a5988ce240753038e8309f493791b0da8a56e1e64cdc3850688dba106eaa57",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "Generation one, cut off ",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "09272684d407e76e163c3c96f61bc280fe6ba91db058ee5a64ba20bb33b816d2",
+          "kind": "assistant_text",
+          "lastEventId": "09272684d407e76e163c3c96f61bc280fe6ba91db058ee5a64ba20bb33b816d2",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 2,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "generation two starts fresh.",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "kind": "assistant_text",
+              "text": "Generation one, cut off "
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "a7a5988ce240753038e8309f493791b0da8a56e1e64cdc3850688dba106eaa57",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "interrupted"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "cb8c15860abd9f10becd180a347291cb454c1058e827a2ccdfe7580ce71dcf87",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "kind": "assistant_text",
+              "text": "generation two starts fresh."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 2,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "09272684d407e76e163c3c96f61bc280fe6ba91db058ee5a64ba20bb33b816d2",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 2,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "19bb9d5190cd24ab9802ff12b8cb3ef1d74557a01a6a3c4c9e36ea0322ffe5a7",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "two-generations-share-turn-id",
+      "sessionLease": [],
+      "sessionStatus": [],
+      "source": "hand-written"
+    },
+    {
+      "description": "When a piece and the message so far both carry a messageId and they differ, the piece starts a new message, joined with nothing inserted. A piece without one joins; a message takes the first messageId any of its pieces carries.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "d757317d9e7c06f3cead36fefb70560b41bffc4e49908709e5a3abc362da4439",
+          "latestAssistantFirstEventId": "d757317d9e7c06f3cead36fefb70560b41bffc4e49908709e5a3abc362da4439",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "d3957bf4ea3063a93147cd6020e55db1ce874843738684776ed26610d023da76",
+          "kind": "assistant_text",
+          "lastEventId": "d3957bf4ea3063a93147cd6020e55db1ce874843738684776ed26610d023da76",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "Done.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "171b3bc5a12fe992a1833ca9a5ff49f28dc598d369e47d3560ebce3ad236b875",
+          "kind": "assistant_text",
+          "lastEventId": "d54c483262e6859a3408fe791d00f7ecc7a7add0d34fe27c253f648abb1400d2",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "Next part, no id, same id again.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "d702f0f27672b2c7826db78696c79d19ce71878c4f1c7bd4b59457b00e3a4f9e",
+          "kind": "assistant_text",
+          "lastEventId": "490fa4b4634901b222502c97947602a31fbe6729c42045d71bafc627e1c40b1f",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "No id yet, then m3.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "d757317d9e7c06f3cead36fefb70560b41bffc4e49908709e5a3abc362da4439",
+          "kind": "assistant_text",
+          "lastEventId": "d757317d9e7c06f3cead36fefb70560b41bffc4e49908709e5a3abc362da4439",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "Then m4.",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "kind": "assistant_text",
+              "messageId": "m1",
+              "text": "Done."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "d3957bf4ea3063a93147cd6020e55db1ce874843738684776ed26610d023da76",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "assistant_text",
+              "messageId": "m2",
+              "text": "Next"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "171b3bc5a12fe992a1833ca9a5ff49f28dc598d369e47d3560ebce3ad236b875",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 3,
+            "item": {
+              "kind": "assistant_text",
+              "text": " part, no id,"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512980000,
+            "turnId": "turn-1"
+          },
+          "eventId": "cef49ca1ee261eabd0c1e2f6d2a9dd7e6725bdbf2f937631eba6079ecea50d29",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 4,
+            "item": {
+              "kind": "assistant_text",
+              "messageId": "m2",
+              "text": " same id again."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512981000,
+            "turnId": "turn-1"
+          },
+          "eventId": "d54c483262e6859a3408fe791d00f7ecc7a7add0d34fe27c253f648abb1400d2",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 5,
+            "item": {
+              "kind": "tool_call",
+              "tool": {
+                "input": {
+                  "command": "ls"
+                },
+                "toolId": "call-1",
+                "toolName": "Bash"
+              }
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512982000,
+            "turnId": "turn-1"
+          },
+          "eventId": "1f91e8ac7f71cdaf831fd0817723fe029df46f5b66cb534a43105fd68d12f887",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 6,
+            "item": {
+              "kind": "assistant_text",
+              "text": "No id yet, "
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512983000,
+            "turnId": "turn-1"
+          },
+          "eventId": "d702f0f27672b2c7826db78696c79d19ce71878c4f1c7bd4b59457b00e3a4f9e",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 7,
+            "item": {
+              "kind": "assistant_text",
+              "messageId": "m3",
+              "text": "then m3."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512984000,
+            "turnId": "turn-1"
+          },
+          "eventId": "490fa4b4634901b222502c97947602a31fbe6729c42045d71bafc627e1c40b1f",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 8,
+            "item": {
+              "kind": "assistant_text",
+              "messageId": "m4",
+              "text": "Then m4."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512985000,
+            "turnId": "turn-1"
+          },
+          "eventId": "d757317d9e7c06f3cead36fefb70560b41bffc4e49908709e5a3abc362da4439",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 9,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512986000,
+            "turnId": "turn-1"
+          },
+          "eventId": "58fc2375bc4d08697a5de207acd3f033166dc172128c9a6d469bd9e1e5fc9392",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "distinct-message-ids",
+      "sessionLease": [],
+      "sessionStatus": [],
+      "source": "hand-written"
+    },
+    {
+      "description": "The prose-tool-prose stream delivered out of order: a reader sorts by eventSeq within the exact target before joining, and gets the same messages.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "90229ab4bb301076765114f8d4af89e790f02cfec909e172ead2949cdaf8a6c7",
+          "latestAssistantFirstEventId": "e3513bce6f27a116c47b19cb811d1178dd82685f1a15ba9f03334aa750ceae05",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "295b40fa26b232b2ac73fbe5950ec5168533d9a4b28c8c62073a14187cdf2455",
+          "kind": "reasoning",
+          "lastEventId": "295b40fa26b232b2ac73fbe5950ec5168533d9a4b28c8c62073a14187cdf2455",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "I should run the tests first.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "b6b32ac3522d10085f38681073ccad5556ebd754b2b30492ccf0b9d41bb42e60",
+          "kind": "assistant_text",
+          "lastEventId": "262bcfea3f17f26b08b9ac8c4211af57bb31ae24a1c5ad674b9b60dd361151b5",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "Running the tests: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\nStarting now.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "e3513bce6f27a116c47b19cb811d1178dd82685f1a15ba9f03334aa750ceae05",
+          "kind": "assistant_text",
+          "lastEventId": "90229ab4bb301076765114f8d4af89e790f02cfec909e172ead2949cdaf8a6c7",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "All tests pass: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\nNothing else changed.",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 5,
+            "item": {
+              "kind": "tool_call",
+              "tool": {
+                "input": {
+                  "command": "cargo test"
+                },
+                "toolId": "call-1",
+                "toolKind": "execute",
+                "toolName": "Run cargo test"
+              }
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512982000,
+            "turnId": "turn-1"
+          },
+          "eventId": "9b400bf3897db44982ea880d4ebd08076a9796400ca4016db54473fa28f3f85d",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 8,
+            "item": {
+              "kind": "assistant_text",
+              "text": "Nothing else changed."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512985000,
+            "turnId": "turn-1"
+          },
+          "eventId": "90229ab4bb301076765114f8d4af89e790f02cfec909e172ead2949cdaf8a6c7",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 7,
+            "item": {
+              "kind": "assistant_text",
+              "text": "All tests pass: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512984000,
+            "turnId": "turn-1"
+          },
+          "eventId": "e3513bce6f27a116c47b19cb811d1178dd82685f1a15ba9f03334aa750ceae05",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 6,
+            "item": {
+              "content": "ok",
+              "input": {
+                "command": "cargo test"
+              },
+              "isError": false,
+              "kind": "tool_result",
+              "toolId": "call-1",
+              "toolKind": "execute",
+              "toolName": "Run cargo test"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512983000,
+            "turnId": "turn-1"
+          },
+          "eventId": "27d8b1bb03fe4ec6c5b36e3d55a15859cffaf0a07db93bf3fc5fe8718ea9bb01",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 9,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512986000,
+            "turnId": "turn-1"
+          },
+          "eventId": "e6964300c9bd66b9577528b63b87a4ab41346c5f8371344ae2debd71ffb2cca8",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 4,
+            "item": {
+              "kind": "assistant_text",
+              "text": "Starting now."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512981000,
+            "turnId": "turn-1"
+          },
+          "eventId": "262bcfea3f17f26b08b9ac8c4211af57bb31ae24a1c5ad674b9b60dd361151b5",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 3,
+            "item": {
+              "kind": "assistant_text",
+              "text": "Running the tests: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512980000,
+            "turnId": "turn-1"
+          },
+          "eventId": "b6b32ac3522d10085f38681073ccad5556ebd754b2b30492ccf0b9d41bb42e60",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "reasoning",
+              "text": "I should run the tests first."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "295b40fa26b232b2ac73fbe5950ec5168533d9a4b28c8c62073a14187cdf2455",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "commandId": "cmd",
+              "content": "Run the tests.",
+              "kind": "user_prompt",
+              "operatorPubkey": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+              "steered": false
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "fb7c6fcc67b5ad8a21a1a69bb0af52a8f42454d65a572e5298c107c06fd2762b",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "out-of-order-arrival",
+      "sessionLease": [],
+      "sessionStatus": [],
+      "source": "translator"
+    },
+    {
+      "description": "A turn with no result yet, in a target whose latest metadata status is running and whose kind:24223 lease the reader holds live: its trailing joined message is arriving; the finished turn before it is not.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "37cadd7fa4d1e8c75e36d3bd8b05ba5318aff22eabda44d71f853ed5e94120da",
+          "latestAssistantFirstEventId": "37cadd7fa4d1e8c75e36d3bd8b05ba5318aff22eabda44d71f853ed5e94120da",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        },
+        {
+          "latestAssistantEventId": "374df2dd45dea76ab169a5f36c5a3b7d6f484eb2c980790a2007573d260879ab",
+          "latestAssistantFirstEventId": "159857111ee42e236030aa64e4c25943253703e9fec46bce01e4ad6c06c78810",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-2"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "37cadd7fa4d1e8c75e36d3bd8b05ba5318aff22eabda44d71f853ed5e94120da",
+          "kind": "assistant_text",
+          "lastEventId": "37cadd7fa4d1e8c75e36d3bd8b05ba5318aff22eabda44d71f853ed5e94120da",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "A short, finished answer.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": true,
+          "firstEventId": "159857111ee42e236030aa64e4c25943253703e9fec46bce01e4ad6c06c78810",
+          "kind": "assistant_text",
+          "lastEventId": "374df2dd45dea76ab169a5f36c5a3b7d6f484eb2c980790a2007573d260879ab",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "one: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\ntwo: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n",
+          "turnId": "turn-2"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "commandId": "cmd",
+              "content": "First question.",
+              "kind": "user_prompt",
+              "operatorPubkey": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+              "steered": false
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "3ab361335bcdc2fee56a0214de0398ca58065fa2fe8fb6f7ba08a6214377246b",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "assistant_text",
+              "text": "A short, finished answer."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "37cadd7fa4d1e8c75e36d3bd8b05ba5318aff22eabda44d71f853ed5e94120da",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 3,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512980000,
+            "turnId": "turn-1"
+          },
+          "eventId": "9e0475483dfc00dfb68e20597c69b583f180f52ec00b5bb848d024d9733a37b3",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 4,
+            "item": {
+              "commandId": "cmd",
+              "content": "Second question.",
+              "kind": "user_prompt",
+              "operatorPubkey": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+              "steered": false
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512981000,
+            "turnId": "turn-2"
+          },
+          "eventId": "adbaa49299514743ada421bcef2d2d92d1141eb4fdd0863a31059d7c3351ae23",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 5,
+            "item": {
+              "kind": "assistant_text",
+              "text": "one: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512982000,
+            "turnId": "turn-2"
+          },
+          "eventId": "159857111ee42e236030aa64e4c25943253703e9fec46bce01e4ad6c06c78810",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 6,
+            "item": {
+              "kind": "assistant_text",
+              "text": "two: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512983000,
+            "turnId": "turn-2"
+          },
+          "eventId": "374df2dd45dea76ab169a5f36c5a3b7d6f484eb2c980790a2007573d260879ab",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "open-turn-arriving",
+      "sessionLease": [
+        {
+          "lease": "live",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          }
+        }
+      ],
+      "sessionStatus": [
+        {
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "status": "running",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          }
+        }
+      ],
+      "source": "translator"
+    },
+    {
+      "description": "Generation 1 dies mid-answer and never ends its turn; generation 2 of the same signer, driver, instance and session publishes a prompt. A higher generation with any item supersedes the lower one: its trailing message is not arriving, even while the reader still holds generation 1's last live lease.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "ed6809f720f91a58c04b6702c3ea46d015ce6192a65a527f323819b2faae93ed",
+          "latestAssistantFirstEventId": "43315c54d06f9e15bfa933ca19a0a3b31f9a791038b685b3dfc31d93802abe2e",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        },
+        {
+          "latestAssistantEventId": null,
+          "latestAssistantFirstEventId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 2,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-2"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "43315c54d06f9e15bfa933ca19a0a3b31f9a791038b685b3dfc31d93802abe2e",
+          "kind": "assistant_text",
+          "lastEventId": "ed6809f720f91a58c04b6702c3ea46d015ce6192a65a527f323819b2faae93ed",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "one: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\ntwo: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "commandId": "cmd",
+              "content": "Answer at length.",
+              "kind": "user_prompt",
+              "operatorPubkey": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+              "steered": false
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "e13c4a7aec2437a7fad89cf4b031ad82030086e568d83c9dfc3f1f3a370681f2",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "assistant_text",
+              "text": "one: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "43315c54d06f9e15bfa933ca19a0a3b31f9a791038b685b3dfc31d93802abe2e",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 3,
+            "item": {
+              "kind": "assistant_text",
+              "text": "two: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512980000,
+            "turnId": "turn-1"
+          },
+          "eventId": "ed6809f720f91a58c04b6702c3ea46d015ce6192a65a527f323819b2faae93ed",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "commandId": "cmd",
+              "content": "Carry on.",
+              "kind": "user_prompt",
+              "operatorPubkey": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+              "steered": false
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 2,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-2"
+          },
+          "eventId": "415114fab559171cacad297de5edcfe371ea2fb194c06ac944a14a1008794d87",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "abandoned-generation-not-arriving",
+      "sessionLease": [
+        {
+          "lease": "live",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          }
+        }
+      ],
+      "sessionStatus": [],
+      "source": "translator"
+    },
+    {
+      "description": "An open turn with no result, in a target whose latest metadata status is stopped: the session has ended, so its trailing message is not arriving, even while the reader still holds a live lease. Only the session-terminal statuses (completed, stopped, disconnected) do the same. interrupted and failed do not: the producer publishes them at the end of an ordinary turn while the session goes on, and that turn's own result or interrupted item already ends its message.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "6f1f5415907ade221936daca95bc37b886f5df72877f2e2c644a1379d645c688",
+          "latestAssistantFirstEventId": "6f1f5415907ade221936daca95bc37b886f5df72877f2e2c644a1379d645c688",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "6f1f5415907ade221936daca95bc37b886f5df72877f2e2c644a1379d645c688",
+          "kind": "assistant_text",
+          "lastEventId": "6f1f5415907ade221936daca95bc37b886f5df72877f2e2c644a1379d645c688",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "one: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "commandId": "cmd",
+              "content": "Answer at length.",
+              "kind": "user_prompt",
+              "operatorPubkey": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+              "steered": false
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "3fcc0ddf2074ff4561da2d1e012e82d2b95dcbcb51571875f750dcf7de7dac1c",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "assistant_text",
+              "text": "one: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "6f1f5415907ade221936daca95bc37b886f5df72877f2e2c644a1379d645c688",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "terminal-status-not-arriving",
+      "sessionLease": [
+        {
+          "lease": "live",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          }
+        }
+      ],
+      "sessionStatus": [
+        {
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "status": "stopped",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          }
+        }
+      ],
+      "source": "translator"
+    },
+    {
+      "description": "An open turn with no result, latest metadata status running, no higher generation — and the reader's kind:24223 lease for the target has lapsed: the provider is not proven reachable (its machine slept, lost power or lost the network), so its trailing message is not arriving. A released lease, or no lease the reader holds at all, does the same; only an unexpired live lease keeps it arriving.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "0c2a01b5de710ff67d41791f1e1d00f2fd935a325ef6e9116e93a6a30315855d",
+          "latestAssistantFirstEventId": "0c2a01b5de710ff67d41791f1e1d00f2fd935a325ef6e9116e93a6a30315855d",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "0c2a01b5de710ff67d41791f1e1d00f2fd935a325ef6e9116e93a6a30315855d",
+          "kind": "assistant_text",
+          "lastEventId": "0c2a01b5de710ff67d41791f1e1d00f2fd935a325ef6e9116e93a6a30315855d",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "one: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "commandId": "cmd",
+              "content": "Answer at length.",
+              "kind": "user_prompt",
+              "operatorPubkey": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+              "steered": false
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "67b063d6991efda668c5ea621c722477c03bd7c405b46dfa0dbcdce157c13b50",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "assistant_text",
+              "text": "one: words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer words of the answer.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "0c2a01b5de710ff67d41791f1e1d00f2fd935a325ef6e9116e93a6a30315855d",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "lapsed-lease-not-arriving",
+      "sessionLease": [
+        {
+          "lease": "lapsed",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          }
+        }
+      ],
+      "sessionStatus": [
+        {
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "status": "running",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          }
+        }
+      ],
+      "source": "translator"
+    },
+    {
+      "description": "The signer is part of the exact target: a piece from another signer on the same session never joins the provider's, even at the next eventSeq. Turn state (and so arriving) is read per exact target too.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "e12bdc400665c18d52c0f97e7afdda09c7a6973d81ccf1c03f73300c71cf22dc",
+          "latestAssistantFirstEventId": "e12bdc400665c18d52c0f97e7afdda09c7a6973d81ccf1c03f73300c71cf22dc",
+          "signer": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        },
+        {
+          "latestAssistantEventId": "eeb087604f69ecd72a236a472eff6fbe64853035d16f60c63130d5b64bb33875",
+          "latestAssistantFirstEventId": "eeb087604f69ecd72a236a472eff6fbe64853035d16f60c63130d5b64bb33875",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "e12bdc400665c18d52c0f97e7afdda09c7a6973d81ccf1c03f73300c71cf22dc",
+          "kind": "assistant_text",
+          "lastEventId": "e12bdc400665c18d52c0f97e7afdda09c7a6973d81ccf1c03f73300c71cf22dc",
+          "parentToolId": null,
+          "signer": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "From another signer.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "eeb087604f69ecd72a236a472eff6fbe64853035d16f60c63130d5b64bb33875",
+          "kind": "assistant_text",
+          "lastEventId": "eeb087604f69ecd72a236a472eff6fbe64853035d16f60c63130d5b64bb33875",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "From the provider. ",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "kind": "assistant_text",
+              "text": "From the provider. "
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "eeb087604f69ecd72a236a472eff6fbe64853035d16f60c63130d5b64bb33875",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "f8fab21e104a2822b56dd14549596efb002c40eb20ede2f400a4be0cd7ab488e",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "assistant_text",
+              "text": "From another signer."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "e12bdc400665c18d52c0f97e7afdda09c7a6973d81ccf1c03f73300c71cf22dc",
+          "signer": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+        },
+        {
+          "content": {
+            "eventSeq": 3,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512980000,
+            "turnId": "turn-1"
+          },
+          "eventId": "59300b5b1e33e125bbb68ccbe50434015798a55ca14874a48f3549651d673f8d",
+          "signer": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+        }
+      ],
+      "name": "two-signers-one-target",
+      "sessionLease": [],
+      "sessionStatus": [],
+      "source": "hand-written"
+    },
+    {
+      "description": "Reasoning pieces join by the same key; a reasoning item between two prose pieces ends the prose message, and prose ends a reasoning one.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "c56a3dcb3d3cc3554e6b5d81da45aa21c5bd7197bd8203e126b32a43f22a53fa",
+          "latestAssistantFirstEventId": "c56a3dcb3d3cc3554e6b5d81da45aa21c5bd7197bd8203e126b32a43f22a53fa",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "641404831cc8fc193c268c7880affaa6d7b8a92755d99ad164085f96548470a3",
+          "kind": "reasoning",
+          "lastEventId": "42ea450fbf0711065e2beb0983070903053297c198268cc34ad2161ee9db97a7",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "Thinking, part one; part two.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "09be085749ce8222f3f1f15a5321b86abd342a37ad32f314b3f68b9b9b999b72",
+          "kind": "assistant_text",
+          "lastEventId": "09be085749ce8222f3f1f15a5321b86abd342a37ad32f314b3f68b9b9b999b72",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "An answer.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "1a38849ed833ab5af36988e7fda168fedb829763441f11d1e000479a7b02ff02",
+          "kind": "reasoning",
+          "lastEventId": "1a38849ed833ab5af36988e7fda168fedb829763441f11d1e000479a7b02ff02",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "More thought.",
+          "turnId": "turn-1"
+        },
+        {
+          "arriving": false,
+          "firstEventId": "c56a3dcb3d3cc3554e6b5d81da45aa21c5bd7197bd8203e126b32a43f22a53fa",
+          "kind": "assistant_text",
+          "lastEventId": "c56a3dcb3d3cc3554e6b5d81da45aa21c5bd7197bd8203e126b32a43f22a53fa",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "A second answer.",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "kind": "reasoning",
+              "text": "Thinking, part one; "
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "641404831cc8fc193c268c7880affaa6d7b8a92755d99ad164085f96548470a3",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "reasoning",
+              "text": "part two."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "42ea450fbf0711065e2beb0983070903053297c198268cc34ad2161ee9db97a7",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 3,
+            "item": {
+              "kind": "assistant_text",
+              "text": "An answer."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512980000,
+            "turnId": "turn-1"
+          },
+          "eventId": "09be085749ce8222f3f1f15a5321b86abd342a37ad32f314b3f68b9b9b999b72",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 4,
+            "item": {
+              "kind": "reasoning",
+              "text": "More thought."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512981000,
+            "turnId": "turn-1"
+          },
+          "eventId": "1a38849ed833ab5af36988e7fda168fedb829763441f11d1e000479a7b02ff02",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 5,
+            "item": {
+              "kind": "assistant_text",
+              "text": "A second answer."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512982000,
+            "turnId": "turn-1"
+          },
+          "eventId": "c56a3dcb3d3cc3554e6b5d81da45aa21c5bd7197bd8203e126b32a43f22a53fa",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 6,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512983000,
+            "turnId": "turn-1"
+          },
+          "eventId": "dc77ae3d2b246e66af274f4537cc7bf09b0b669ea4b766916aa2ea5e9299b4f8",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "reasoning-joins-like-prose",
+      "sessionLease": [],
+      "sessionStatus": [],
+      "source": "hand-written"
+    },
+    {
+      "description": "A lost sequence number (permitted by NIP-CST) is not an item: the pieces on either side are adjacent and join.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "547795d7076188a5ba08834ff6905cbcf5835f068179f87a269ee39726c33211",
+          "latestAssistantFirstEventId": "13720f7a29b25747b7b2e00a2154cd4592790b595db2929adf663e509057f9ed",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "13720f7a29b25747b7b2e00a2154cd4592790b595db2929adf663e509057f9ed",
+          "kind": "assistant_text",
+          "lastEventId": "547795d7076188a5ba08834ff6905cbcf5835f068179f87a269ee39726c33211",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "Before the gap, after the gap.",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "kind": "assistant_text",
+              "text": "Before the gap, "
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "13720f7a29b25747b7b2e00a2154cd4592790b595db2929adf663e509057f9ed",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 3,
+            "item": {
+              "kind": "assistant_text",
+              "text": "after the gap."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512980000,
+            "turnId": "turn-1"
+          },
+          "eventId": "547795d7076188a5ba08834ff6905cbcf5835f068179f87a269ee39726c33211",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 4,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512981000,
+            "turnId": "turn-1"
+          },
+          "eventId": "ebafee122d2797355fe174d188df3f1227a5d3ecd87c1209151f14a58fac5792",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "event-seq-gap-is-not-a-boundary",
+      "sessionLease": [],
+      "sessionStatus": [],
+      "source": "hand-written"
+    },
+    {
+      "description": "One signed piece delivered twice verbatim (relay backfill plus a live subscription): a piece is identified by its event id, so the second copy is the same piece, not a second one. Readers deduplicate by event id before joining; the paragraph appears once.",
+      "expectedBrief": [
+        {
+          "latestAssistantEventId": "24453fbb07f16fe17db2ca996279d2b021c673d1dfd3dd029ebc4df9d5c14425",
+          "latestAssistantFirstEventId": "32cb4bcdbee320c5717380dea0e07a03ec685d0b5bda6a7eef9d7d32257ec153",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "turnId": "turn-1"
+        }
+      ],
+      "expectedMessages": [
+        {
+          "arriving": false,
+          "firstEventId": "32cb4bcdbee320c5717380dea0e07a03ec685d0b5bda6a7eef9d7d32257ec153",
+          "kind": "assistant_text",
+          "lastEventId": "24453fbb07f16fe17db2ca996279d2b021c673d1dfd3dd029ebc4df9d5c14425",
+          "parentToolId": null,
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+          "target": {
+            "driver": "claude-agent-acp",
+            "generation": 1,
+            "instanceId": "vector-instance",
+            "sessionId": "vector-session"
+          },
+          "text": "Backfill and live both carry this paragraph.\n\nAnd this one only once.",
+          "turnId": "turn-1"
+        }
+      ],
+      "input": [
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "kind": "assistant_text",
+              "text": "Backfill and live both carry this paragraph.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "32cb4bcdbee320c5717380dea0e07a03ec685d0b5bda6a7eef9d7d32257ec153",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 2,
+            "item": {
+              "kind": "assistant_text",
+              "text": "And this one only once."
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512979000,
+            "turnId": "turn-1"
+          },
+          "eventId": "24453fbb07f16fe17db2ca996279d2b021c673d1dfd3dd029ebc4df9d5c14425",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 3,
+            "item": {
+              "costUsd": null,
+              "durationMs": 1234,
+              "isError": false,
+              "kind": "result",
+              "result": "completed",
+              "subtype": "success"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512980000,
+            "turnId": "turn-1"
+          },
+          "eventId": "384584d2e52074ea9484fc665a1d8a4a970e4f81569f8bf544dde9ec072ce89d",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        },
+        {
+          "content": {
+            "eventSeq": 1,
+            "item": {
+              "kind": "assistant_text",
+              "text": "Backfill and live both carry this paragraph.\n\n"
+            },
+            "schema": "buzz-coding-session-transcript/v1",
+            "session": {
+              "driver": "claude-agent-acp",
+              "generation": 1,
+              "instanceId": "vector-instance",
+              "sessionId": "vector-session"
+            },
+            "timestamp": 1785512978000,
+            "turnId": "turn-1"
+          },
+          "eventId": "32cb4bcdbee320c5717380dea0e07a03ec685d0b5bda6a7eef9d7d32257ec153",
+          "signer": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+        }
+      ],
+      "name": "duplicate-delivery-is-one-piece",
+      "sessionLease": [],
+      "sessionStatus": [],
+      "source": "hand-written"
+    }
+  ]
+}

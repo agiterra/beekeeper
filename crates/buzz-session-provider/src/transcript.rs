@@ -1740,6 +1740,10 @@ fn truncate_first_string_of_len(value: &mut Value, len: usize, target: usize) ->
 mod paragraph_tests;
 
 #[cfg(test)]
+#[path = "transcript_prose_join_vectors_tests.rs"]
+mod prose_join_vectors_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
