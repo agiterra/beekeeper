@@ -12,10 +12,12 @@ import {
   isCompletedSuccessfulTool,
   isDiagnosticItem,
   isErrorItem,
+  isCodingSessionSessionFactItem,
   isInterrupted,
   isSystemInitMetadata,
   isTurnResult,
   isTurnTerminal,
+  leavesCodingSessionTranscript,
   normalizeContent,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModelPredicates";
 import { joinConsecutiveCodingSessionProse } from "@/features/coding-sessions/lib/codingSessionTranscriptModelText";
@@ -33,7 +35,10 @@ export {
   deriveCodingSessionChangedFiles,
   deriveCodingSessionObservedChanges,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModelChanges";
-export { deriveCodingSessionTurnFold } from "@/features/coding-sessions/lib/codingSessionTranscriptModelFold";
+export {
+  deriveCodingSessionTurnFold,
+  formatFoldedFailures,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptModelFold";
 export {
   formatCodingSessionCompletionOutcome,
   formatCodingSessionCost,
@@ -41,6 +46,13 @@ export {
   formatCodingSessionDuration,
   parseCodingSessionTurnResult,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModelFormat";
+export {
+  isCodingSessionBoundaryItem,
+  isCodingSessionContinuityItem,
+  isCodingSessionContinuityLoss,
+  isCodingSessionSessionFactItem,
+  leavesCodingSessionTranscript,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptModelPredicates";
 export { stabilizeCodingSessionTranscriptModel } from "@/features/coding-sessions/lib/codingSessionTranscriptModelStability";
 export {
   joinCodingSessionProseText,
@@ -60,7 +72,14 @@ export {
   type CodingSessionTranscriptTurn,
   type CodingSessionTurnCompletion,
   type CodingSessionTurnFold,
+  type CodingSessionTurnRestingStatus,
+  type CodingSessionTurnSettlement,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModelTypes";
+export {
+  resolveCodingSessionExecutionRestingStatus,
+  resolveCodingSessionTurnSettlement,
+  resolveCodingSessionUmbrellaBlockRestingStatuses,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptModelSettlement";
 
 type MutableTurn = {
   id: string;
@@ -77,9 +96,17 @@ export function deriveCodingSessionTranscriptModel(
   // lead's reading order. They still join their turn, so its changed files
   // and start time count them.
   const subagents = partitionCodingSessionSubagentItems(transcript);
+  // Continuity and boundary rows describe the session, not a turn (SV-16):
+  // all of them are kept for Details and the composer's sandbox chip, and
+  // the routine ones leave the reading order.
+  const sessionFacts: TranscriptItem[] = [];
 
   for (const item of transcript) {
     if (isSystemInitMetadata(item)) continue;
+    if (isCodingSessionSessionFactItem(item)) {
+      sessionFacts.push(item);
+      if (leavesCodingSessionTranscript(item)) continue;
+    }
     if (subagents.nested.has(item) && !item.turnId) continue;
 
     if (!item.turnId) {
@@ -109,6 +136,7 @@ export function deriveCodingSessionTranscriptModel(
       const turn = deriveTurn(
         candidate,
         options.isWorking && candidate === lastTurn,
+        candidate !== lastTurn,
         subagents,
       );
       if (
@@ -136,7 +164,7 @@ export function deriveCodingSessionTranscriptModel(
     });
   }
 
-  return { blocks, diagnostics };
+  return { blocks, diagnostics, sessionFacts };
 }
 
 /**
@@ -213,6 +241,7 @@ function coalesceStandaloneSettledTurns(
 function deriveTurn(
   turn: MutableTurn,
   canBeWorking: boolean,
+  superseded: boolean,
   subagents: CodingSessionSubagentPartition,
 ): CodingSessionTranscriptTurn {
   const visible: TranscriptItem[] = [];
@@ -314,6 +343,10 @@ function deriveTurn(
     diagnostics,
     completion,
     isWorking,
+    // Only a turn with no completion of its own needs a later turn to end it.
+    // Keeping the flag off a completed turn keeps that turn's object stable
+    // when the next prompt arrives.
+    superseded: superseded && completion === null,
     startedAt,
     fold: deriveCodingSessionTurnFold({
       completion,

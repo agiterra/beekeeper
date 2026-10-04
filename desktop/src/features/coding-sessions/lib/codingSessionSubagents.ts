@@ -280,13 +280,6 @@ export function buildCodingSessionSubagentSpawn(
   };
 }
 
-const STATUS_LABEL_PREFIX: Record<CodingSessionSubagentStatus, string> = {
-  running: "Running subagent",
-  stopped: "Stopped subagent",
-  done: "Subagent",
-  failed: "Subagent",
-};
-
 /** What the person reads as the subagent's name: its Task description. */
 export function codingSessionSubagentTitle(call: ToolTranscriptItem): string {
   const description = call.args.description;
@@ -297,15 +290,26 @@ export function codingSessionSubagentTitle(call: ToolTranscriptItem): string {
 }
 
 /**
- * The stream row's label: one spawn reads as itself, several consecutive
- * spawns in a turn read as the group.
+ * The stream row's label, one sentence for any number of spawns (SV-06, after
+ * T3's `agentSpawnSummary.ts`): "Ran 1 subagent", "Ran 4 subagents", and
+ * while any still runs "Running 2 subagents" — or "Running 1 of 3
+ * subagents" when only some do, so the count never claims more work in
+ * flight than there is.
+ *
+ * The subagent's own description is no longer on the row; it is one click
+ * away, on the spawn's header inside the opened row and in the Agents panel
+ * (`codingSessionSubagentTitle`). How the batch ended — failed, stopped —
+ * is the row's status icon, which this sentence does not replace.
  */
 export function formatCodingSessionSubagentGroupLabel(
   spawns: readonly CodingSessionSubagentSpawn[],
 ): string {
-  if (spawns.length !== 1) return `Kicked off ${spawns.length} subagents`;
-  const [spawn] = spawns;
-  return `${STATUS_LABEL_PREFIX[spawn.status]} ${codingSessionSubagentTitle(spawn.call)}`;
+  const total = spawns.length;
+  const running = spawns.filter((spawn) => spawn.status === "running").length;
+  const noun = (count: number) => (count === 1 ? "subagent" : "subagents");
+  if (running === 0) return `Ran ${total} ${noun(total)}`;
+  if (running === total) return `Running ${total} ${noun(total)}`;
+  return `Running ${running} of ${total} ${noun(total)}`;
 }
 
 // ---------------------------------------------------------------------------

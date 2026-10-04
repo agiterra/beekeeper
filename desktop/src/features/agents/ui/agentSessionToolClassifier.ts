@@ -26,6 +26,11 @@ export type ToolClassificationInput = {
   args: Record<string, unknown>;
   result: string;
   isError: boolean;
+  /**
+   * ACP's tool discriminant (`"execute"`, `"read"`, …) when the producer sent
+   * one. Optional: callers that never had it classify exactly as before.
+   */
+  toolKind?: string | null;
 };
 
 type ToolClassifierProvider = (
@@ -106,8 +111,45 @@ const providers: ToolClassifierProvider[] = [
   classifySessionContextTool,
   classifyLoadSkillTool,
   classifyDeveloperHarnessTool,
+  classifyProviderShellTool,
   classifyBuzzTool,
 ];
+
+/**
+ * Claude Code's `Bash`, and any ACP call whose discriminant is `execute`, ran
+ * a command (SV-03) — T3 maps the same call to `command_execution`
+ * (`apps/server/src/provider/Layers/ClaudeAdapter.ts`). Without this they
+ * fell through to "Ran tool" and a fold read "ran 5 tool calls".
+ *
+ * A `bee` invocation still reads as the relay operation it performed.
+ */
+function classifyProviderShellTool(
+  input: ToolClassificationInput,
+): AgentActivityDescriptor | null {
+  const isBash = [input.toolName, input.title].some(
+    (value) => value && normalizeToolNameText(value) === "bash",
+  );
+  if (!isBash && input.toolKind !== "execute") return null;
+  const command = getToolString(input.args, ["command", "cmd"]);
+  return (
+    (command ? parseBuzzCliCommand(command) : null) ??
+    shellDescriptor(command, "acp")
+  );
+}
+
+function shellDescriptor(
+  command: string | null,
+  source: AgentActivityDescriptor["source"],
+): AgentActivityDescriptor {
+  return {
+    renderClass: "shell",
+    label: "Ran command",
+    preview: command,
+    action: { verb: "Ran", object: command ?? "command" },
+    source,
+    groupKey: "shell:command",
+  };
+}
 
 function classifySessionContextTool(
   input: ToolClassificationInput,
@@ -181,6 +223,7 @@ export function classifyToolItem(item: ToolItem): AgentActivityDescriptor {
     args: item.args,
     result: item.result,
     isError: item.isError,
+    toolKind: item.toolKind ?? null,
   });
 }
 
@@ -222,14 +265,7 @@ function classifyDeveloperHarnessTool(
     if (buzzCli) {
       return buzzCli;
     }
-    return {
-      renderClass: "shell",
-      label: "Ran command",
-      preview: command,
-      action: { verb: "Ran", object: command ?? "command" },
-      source: "harness",
-      groupKey: "shell:command",
-    };
+    return shellDescriptor(command, "harness");
   }
 
   if (kind === "read_file") {

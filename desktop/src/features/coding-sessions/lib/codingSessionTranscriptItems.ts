@@ -324,6 +324,7 @@ export function buildToolCallItem(
     args,
     result: "",
     isError: false,
+    toolKind,
   });
 
   return {
@@ -375,6 +376,7 @@ export function buildToolResultItem(
     args,
     result,
     isError,
+    toolKind,
   });
 
   return {
@@ -436,6 +438,7 @@ export function buildPairedToolResultItem(
     args,
     result,
     isError,
+    toolKind,
   });
 
   return {

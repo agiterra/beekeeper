@@ -215,3 +215,67 @@ test("classifyTool falls back once to a generic descriptor", () => {
   assert.equal(descriptor.preview, "notes.md");
   assert.equal(descriptor.source, "fallback");
 });
+
+test("classifyTool reads Claude Code's Bash as a command (SV-03)", () => {
+  const descriptor = classifyTool({
+    title: "Bash",
+    toolName: "Bash",
+    buzzToolName: null,
+    args: { command: "cargo test", description: "Run tests" },
+    result: "",
+    isError: false,
+  });
+  assert.equal(descriptor.renderClass, "shell");
+  assert.equal(descriptor.label, "Ran command");
+  assert.deepEqual(descriptor.action, { verb: "Ran", object: "cargo test" });
+
+  const failed = classifyTool({
+    title: "Bash",
+    toolName: "Bash",
+    buzzToolName: null,
+    args: { command: "false" },
+    result: "",
+    isError: true,
+  });
+  assert.equal(failed.renderClass, "error");
+  assert.equal(failed.label, "Ran command failed");
+  assert.deepEqual(failed.action, { verb: "Ran", object: "false" });
+});
+
+test("classifyTool reads an ACP execute call as a command whatever its title", () => {
+  const descriptor = classifyTool({
+    title: "`ls -la`",
+    toolName: "`ls -la`",
+    buzzToolName: null,
+    args: { command: "ls -la" },
+    result: "",
+    isError: false,
+    toolKind: "execute",
+  });
+  assert.equal(descriptor.renderClass, "shell");
+  assert.equal(descriptor.preview, "ls -la");
+  // Without the discriminant the same title stays a generic tool.
+  assert.equal(
+    classifyTool({
+      title: "`ls -la`",
+      toolName: "`ls -la`",
+      buzzToolName: null,
+      args: {},
+      result: "",
+      isError: false,
+    }).renderClass,
+    "generic",
+  );
+});
+
+test("a Bash call that runs bee still reads as its relay operation", () => {
+  const descriptor = classifyTool({
+    title: "Bash",
+    toolName: "Bash",
+    buzzToolName: null,
+    args: { command: "bee messages send --channel x --content hi" },
+    result: "",
+    isError: false,
+  });
+  assert.equal(descriptor.renderClass, "message");
+});

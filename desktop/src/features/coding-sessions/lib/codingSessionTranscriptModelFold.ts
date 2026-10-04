@@ -12,21 +12,25 @@ import type {
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModelTypes";
 
 /**
- * How a settled turn folds behind one "Worked for …" row.
+ * How a settled turn folds behind one "Worked for …" row (SV-02, decision D2).
  *
  * Nothing folds while the turn is live — that is when the work is being
- * watched. Once it settles, the work that produced the answer (tool calls,
- * thoughts, plan snapshots, intermediate prose) folds; the reader keeps
- * what the turn *says* and anything that went wrong:
+ * watched. Once it settles, the work that produced the answer folds, as T3
+ * Code's `deriveTurnFolds` does: tool calls, thoughts, plan snapshots and
+ * intermediate prose — and, before the answer, failed and unfinished tool
+ * calls too. A step that failed on the way to an answer is a step, not the
+ * turn's outcome; the fold row names it ("· 1 step failed") so the folded
+ * failure is never silent, and opening the fold shows it in place.
+ *
+ * The reader always keeps:
  *
  * - every prompt, including a steered one (attribution);
  * - the final assistant message (the answer);
- * - failures — a failed tool call, a lifecycle error;
- * - anything that asked the person something (permission rows) and every
- *   other non-error lifecycle row, which is continuity rather than work;
- * - subagent batches, which name who did the work;
- * - a tool call that never finished, which is a truth about the turn, not
- *   detail.
+ * - a failed or unfinished tool call *after* the answer, or in a turn that
+ *   never answered — a failure the agent did not recover from;
+ * - lifecycle errors, permission rows and every other non-error lifecycle
+ *   row, which are continuity rather than work;
+ * - subagent batches, which name who did the work.
  *
  * A turn whose only foldable entries are thoughts does not fold: a "Worked
  * for" row that hides nothing but reasoning would be ceremony.
@@ -48,7 +52,7 @@ export function deriveCodingSessionTurnFold(
   // visible too, but it never displaces the agent's own last message.
   let terminalAnswerIndex = -1;
   turn.entries.forEach((entry, index) => {
-    if (isAssistantMessageEntry(entry) && !isResultBodyEntry(entry)) {
+    if (isAssistantAnswerEntry(entry) && !isResultBodyEntry(entry)) {
       terminalAnswerIndex = index;
     }
   });
@@ -56,30 +60,58 @@ export function deriveCodingSessionTurnFold(
   const hiddenIndexes: number[] = [];
   const hiddenTools: CodingSessionTranscriptToolItem[] = [];
   let hidesWork = false;
+  let failedCount = 0;
+  let unfinishedCount = 0;
   turn.entries.forEach((entry, index) => {
     if (index === terminalAnswerIndex || isResultBodyEntry(entry)) return;
-    const fold = classifyFoldable(entry);
+    const beforeAnswer = index < terminalAnswerIndex;
+    const fold = classifyFoldable(entry, beforeAnswer);
     if (fold === "keep") return;
     hiddenIndexes.push(index);
     if (fold !== "thought") hidesWork = true;
     if (entry.kind === "tool-group") hiddenTools.push(...entry.items);
     else if (entry.kind === "item" && entry.item.type === "tool") {
       hiddenTools.push(entry.item);
+      if (isFailedTool(entry.item)) failedCount += 1;
+      else if (!isSettledTool(entry.item)) unfinishedCount += 1;
     }
   });
 
   const anchorIndex = hiddenIndexes[0];
   if (!hidesWork || anchorIndex === undefined) return null;
+  const workSummary = summarizeCodingSessionTools(hiddenTools);
+  const failureSummary = formatFoldedFailures(failedCount, unfinishedCount);
   return {
     anchorIndex,
     hiddenIndexes,
     durationMs: turnDurationMs(turn),
-    summary: summarizeCodingSessionTools(hiddenTools),
+    summary: [workSummary, failureSummary].filter(Boolean).join(" · "),
+    workSummary,
+    failureSummary,
+    failedCount,
+    unfinishedCount,
   };
+}
+
+/**
+ * The muted clause naming what went wrong inside the fold: "1 step failed",
+ * "2 steps failed and 1 did not finish". Empty when nothing did.
+ */
+export function formatFoldedFailures(
+  failedCount: number,
+  unfinishedCount: number,
+): string {
+  const steps = (count: number) => `${count} ${count === 1 ? "step" : "steps"}`;
+  const failed = failedCount > 0 ? `${steps(failedCount)} failed` : "";
+  if (unfinishedCount === 0) return failed;
+  return failed
+    ? `${failed} and ${unfinishedCount} did not finish`
+    : `${steps(unfinishedCount)} did not finish`;
 }
 
 function classifyFoldable(
   entry: CodingSessionTranscriptEntry,
+  beforeAnswer: boolean,
 ): "keep" | "work" | "thought" {
   if (entry.kind === "tool-group") return "work";
   if (entry.kind === "subagents") return "keep";
@@ -92,6 +124,10 @@ function classifyFoldable(
     case "plan":
       return "work";
     case "tool":
+      // Before the answer every call folds, failed or unfinished included —
+      // the fold row names those. After it (or in a turn that never
+      // answered) only a call that settled successfully does.
+      if (beforeAnswer) return "work";
       return isCompletedSuccessfulTool(item) && !isErrorItem(item)
         ? "work"
         : "keep";
@@ -100,15 +136,29 @@ function classifyFoldable(
   }
 }
 
+function isFailedTool(item: CodingSessionTranscriptToolItem): boolean {
+  return isErrorItem(item);
+}
+
+function isSettledTool(item: CodingSessionTranscriptToolItem): boolean {
+  return item.status === "completed" || item.status === "failed";
+}
+
 function isResultBodyEntry(entry: CodingSessionTranscriptEntry) {
   return entry.kind === "item" && entry.item.id.endsWith(":assistant-result");
 }
 
-function isAssistantMessageEntry(entry: CodingSessionTranscriptEntry) {
+/**
+ * An assistant message that says something. A blank or whitespace-only
+ * message is not an answer — it matches `findCodingSessionAnswerIndex`, so a
+ * turn that ended on an empty message keeps its failures on screen.
+ */
+function isAssistantAnswerEntry(entry: CodingSessionTranscriptEntry) {
   return (
     entry.kind === "item" &&
     entry.item.type === "message" &&
-    entry.item.role === "assistant"
+    entry.item.role === "assistant" &&
+    entry.item.text.trim() !== ""
   );
 }
 

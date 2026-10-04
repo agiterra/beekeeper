@@ -1,4 +1,13 @@
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
+import {
+  CODING_SESSION_BOUNDARY_TITLE,
+  CODING_SESSION_ISOLATION_TITLE,
+} from "@/features/coding-sessions/lib/codingSessionBoundaryStatus";
+import {
+  CODING_SESSION_CONTINUITY_REASONS,
+  CODING_SESSION_CONTINUITY_STATUSES,
+  CODING_SESSION_CONTINUITY_TITLE,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptItems";
 
 /**
  * Item classifiers shared by the transcript model's derivation, grouping and
@@ -112,4 +121,88 @@ const COMPLETION_CEREMONY_VALUES = new Set([
 
 export function normalizeContent(value: string): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * A "Session continuity" row: how this generation's agent came by (or did
+ * not come by) the session's history.
+ */
+export function isCodingSessionContinuityItem(item: TranscriptItem): boolean {
+  return (
+    item.type === "lifecycle" && item.title === CODING_SESSION_CONTINUITY_TITLE
+  );
+}
+
+/**
+ * A "Project boundary" or "Session isolation" row: what the host enforced
+ * around this generation, full access included.
+ */
+export function isCodingSessionBoundaryItem(item: TranscriptItem): boolean {
+  return (
+    item.type === "lifecycle" &&
+    (item.title === CODING_SESSION_BOUNDARY_TITLE ||
+      item.title === CODING_SESSION_ISOLATION_TITLE)
+  );
+}
+
+/**
+ * Facts about the session rather than about a turn (SV-16, decision D3):
+ * continuity and the boundary. Details and the composer's sandbox chip read
+ * them from `CodingSessionTranscriptModel.sessionFacts`, whether or not the
+ * transcript also shows them.
+ */
+export function isCodingSessionSessionFactItem(item: TranscriptItem): boolean {
+  return (
+    isCodingSessionContinuityItem(item) || isCodingSessionBoundaryItem(item)
+  );
+}
+
+/** The continuity prose that reports nothing lost, minted by the same maps. */
+const ROUTINE_CONTINUITY_TEXTS: ReadonlySet<string> = new Set(
+  [
+    CODING_SESSION_CONTINUITY_STATUSES.get("session_fresh"),
+    joinContinuityReason(
+      CODING_SESSION_CONTINUITY_STATUSES.get("session_fresh"),
+      CODING_SESSION_CONTINUITY_REASONS.get("no_prior_execution"),
+    ),
+    CODING_SESSION_CONTINUITY_STATUSES.get("session_rehydrated"),
+    CODING_SESSION_CONTINUITY_STATUSES.get("session_resumed"),
+    CODING_SESSION_CONTINUITY_STATUSES.get("session_loaded"),
+  ].filter((text): text is string => typeof text === "string"),
+);
+
+function joinContinuityReason(
+  continuity: string | undefined,
+  clause: string | undefined,
+): string | undefined {
+  return continuity && clause ? `${continuity} — ${clause}` : undefined;
+}
+
+/**
+ * A continuity row that reports lost context: a restart without it, a fresh
+ * start for any reason other than "first execution", or any prose this build
+ * does not recognise as routine. It stays in the reading order — the agent
+ * forgetting the session is news about the turn that follows.
+ */
+export function isCodingSessionContinuityLoss(item: TranscriptItem): boolean {
+  return (
+    isCodingSessionContinuityItem(item) &&
+    item.type === "lifecycle" &&
+    !ROUTINE_CONTINUITY_TEXTS.has(item.text)
+  );
+}
+
+/**
+ * Whether a session fact leaves the transcript's reading order (SV-16).
+ *
+ * Every boundary row goes: the composer's sandbox chip states it, full access
+ * included (SV-17). Routine continuity goes to Details. A continuity loss
+ * stays. Nothing here deletes an item — the model keeps all of them in
+ * `sessionFacts`.
+ */
+export function leavesCodingSessionTranscript(item: TranscriptItem): boolean {
+  if (isCodingSessionBoundaryItem(item)) return true;
+  return (
+    isCodingSessionContinuityItem(item) && !isCodingSessionContinuityLoss(item)
+  );
 }

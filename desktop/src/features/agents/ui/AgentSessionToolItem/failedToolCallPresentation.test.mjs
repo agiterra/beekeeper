@@ -8,6 +8,7 @@ import { parseShellToolOutput } from "../agentSessionUtils.ts";
 import {
   CompactToolSummaryRow,
   compactSummaryTone,
+  describeCompactToolFailure,
 } from "./CompactToolSummaryRow.tsx";
 import { ShellCommandBlock, shellBlockOutput } from "./ShellCommandBlock.tsx";
 
@@ -150,4 +151,95 @@ test("compactToolSummaryRow_succeeded_keepsTheFileEditSummary", () => {
   });
   assert.doesNotMatch(markup, /Tool call failed/);
   assert.match(markup, /foo\.rs/);
+});
+
+// ── quiet failure inside a fold (SV-02, D2) ─────────────────────────────────
+
+test("compactSummaryTone_quietFailure_readsAsAnOrdinaryRow", () => {
+  assert.equal(compactSummaryTone(true, "quiet"), compactSummaryTone(false));
+  assert.match(compactSummaryTone(true, "alarm"), /text-destructive/);
+});
+
+test("compactToolSummaryRow_quietFailure_dimsTheIconAndStillSaysFailed", () => {
+  const markup = renderRow({
+    action: { verb: "Ran", object: "python3 demo/does_not_exist.py" },
+    failed: true,
+    failureDetail: "exit 2",
+    failureTone: "quiet",
+    label: "Ran command failed",
+    preview: "python3 demo/does_not_exist.py",
+  });
+  assert.doesNotMatch(markup, /Tool call failed/);
+  assert.match(markup, /data-failure-tone="quiet"/);
+  assert.match(markup, /text-destructive\/40/);
+  assert.match(markup, /aria-label="Failed"/);
+  assert.match(markup, />Ran</);
+  assert.match(markup, /python3 demo\/does_not_exist\.py/);
+  assert.match(markup, /exit 2/);
+  // The row text itself is not painted destructive.
+  assert.doesNotMatch(markup, /class="[^"]*\btext-destructive\b(?!\/)/);
+});
+
+test("compactToolSummaryRow_quietFailure_defaultsTheSuffixToFailed", () => {
+  const markup = renderRow({
+    action: { verb: "Ran", object: "cargo test" },
+    failed: true,
+    failureTone: "quiet",
+  });
+  assert.match(markup, /· failed/);
+});
+
+test("compactToolSummaryRow_quietFailedEdit_neverClaimsTheEdit", () => {
+  const markup = renderRow({
+    action: { verb: "Edited", object: "foo.rs" },
+    failed: true,
+    failureTone: "quiet",
+    fileEditSummary: {
+      additions: 3,
+      deletions: 1,
+      filename: "foo.rs",
+      path: "src/foo.rs",
+    },
+    kind: "file-edit",
+    label: "Edit failed",
+    preview: "foo.rs",
+  });
+  assert.doesNotMatch(markup, /Edited/);
+  assert.match(markup, /Edit failed/);
+  assert.doesNotMatch(markup, /\+3/);
+});
+
+test("describeCompactToolFailure names an exit code, a timeout, or just failed", () => {
+  assert.equal(
+    describeCompactToolFailure(JSON.stringify({ stdout: "", exit_code: 2 })),
+    "exit 2",
+  );
+  assert.equal(
+    describeCompactToolFailure(JSON.stringify({ timed_out: true })),
+    "timed out",
+  );
+  assert.equal(describeCompactToolFailure("No such file"), "failed");
+  assert.equal(
+    describeCompactToolFailure(JSON.stringify({ exit_code: 0 })),
+    "failed",
+  );
+});
+
+test("describeCompactToolFailure reads Claude's plain-text Bash exit code", () => {
+  // Claude's Bash tool reports a failure as text, not a JSON shell result —
+  // the same form the transcript fixture uses ("Exit code 1\ncompiler failed").
+  assert.equal(
+    describeCompactToolFailure("Exit code 1\ncompiler failed"),
+    "exit 1",
+  );
+  assert.equal(
+    describeCompactToolFailure("Error: Exit code 127\nzsh: command not found"),
+    "exit 127",
+  );
+  // Only a leading status line counts; output quoting one is not a status.
+  assert.equal(
+    describeCompactToolFailure("tests failed\nExit code 3 expected"),
+    "failed",
+  );
+  assert.equal(describeCompactToolFailure("Exit code 0\n"), "failed");
 });

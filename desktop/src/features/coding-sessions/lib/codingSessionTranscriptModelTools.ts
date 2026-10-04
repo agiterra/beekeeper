@@ -1,4 +1,5 @@
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
+import { classifyTool } from "@/features/agents/ui/agentSessionToolClassifier";
 import { getToolString } from "@/features/agents/ui/agentSessionUtils";
 import {
   buildCodingSessionSubagentSpawn,
@@ -166,8 +167,12 @@ export function summarizeCodingSessionTools(
 }
 
 function classifyToolAction(tool: CodingSessionTranscriptToolItem): ToolAction {
-  const renderClass = tool.descriptor?.renderClass ?? tool.renderClass;
-  if (renderClass === "file-edit" || tool.toolKind === "edit") return "edit";
+  // ACP's own discriminant outranks any name rule: claude-agent-acp titles a
+  // Bash call with its command, so only `toolKind` says it ran one (SV-03).
+  if (tool.toolKind === "execute") return "command";
+  if (tool.toolKind === "edit") return "edit";
+  const renderClass = baseRenderClass(tool);
+  if (renderClass === "file-edit") return "edit";
   if (renderClass === "file-read") return "read";
   if (renderClass === "shell") return "command";
   if (renderClass === "skill-read") return "skill";
@@ -178,7 +183,26 @@ function classifyToolAction(tool: CodingSessionTranscriptToolItem): ToolAction {
   ) {
     return "search";
   }
+  if (tool.toolKind === "read") return "read";
   return "other";
+}
+
+/**
+ * What the call was, regardless of how it ended. A failed call's descriptor
+ * says only `error`; the fold counts it as the command (or read, or edit) it
+ * attempted and names the failure separately.
+ */
+function baseRenderClass(tool: CodingSessionTranscriptToolItem) {
+  const renderClass = tool.descriptor?.renderClass ?? tool.renderClass;
+  if (renderClass !== "error") return renderClass;
+  return classifyTool({
+    title: tool.title,
+    toolName: tool.toolName,
+    buzzToolName: tool.buzzToolName,
+    args: tool.args,
+    result: tool.result,
+    isError: false,
+  }).renderClass;
 }
 
 function toolFileKey(tool: CodingSessionTranscriptToolItem): string | null {

@@ -37,13 +37,21 @@ export function stabilizeCodingSessionTranscriptModel(
     ? previous.diagnostics
     : next.diagnostics;
 
+  const sessionFacts = arraysReferenceEqual(
+    previous.sessionFacts,
+    next.sessionFacts,
+  )
+    ? previous.sessionFacts
+    : next.sessionFacts;
+
   if (
     arraysReferenceEqual(previous.blocks, blocks) &&
-    diagnostics === previous.diagnostics
+    diagnostics === previous.diagnostics &&
+    sessionFacts === previous.sessionFacts
   ) {
     return previous;
   }
-  return { blocks, diagnostics };
+  return { blocks, diagnostics, sessionFacts };
 }
 
 function transcriptBlocksEqual(
@@ -59,6 +67,7 @@ function transcriptBlocksEqual(
   // mean an equal fold and the prior block's fold is kept with it.
   return (
     left.isWorking === right.isWorking &&
+    left.superseded === right.superseded &&
     left.startedAt === right.startedAt &&
     completionsEqual(left.completion, right.completion) &&
     changedFilesEqual(left.changedFiles, right.changedFiles) &&

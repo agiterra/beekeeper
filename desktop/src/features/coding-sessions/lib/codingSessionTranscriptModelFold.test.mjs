@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   deriveCodingSessionTranscriptModel,
+  formatFoldedFailures,
   joinCodingSessionProseText,
   joinConsecutiveCodingSessionProse,
   stabilizeCodingSessionTranscriptModel,
@@ -98,7 +99,7 @@ function visibleKeys(turn) {
   );
 }
 
-test("a settled turn folds its work and keeps the answer, prompt and failures", () => {
+test("a settled turn folds its work, failures before the answer included, and names them", () => {
   const turn = onlyTurn([
     message({ id: "prompt", role: "user", text: "Fix the build" }),
     thought("think-1", "Look at the logs first."),
@@ -120,22 +121,110 @@ test("a settled turn folds its work and keeps the answer, prompt and failures", 
 
   assert.ok(turn.fold, "a settled turn with work folds");
   assert.equal(turn.fold.durationMs, 134000);
-  assert.equal(turn.fold.summary, "Read 1 file and ran 2 commands");
+  // SV-02 (D2): the failed and the unfinished call fold with the rest, and
+  // the fold sentence names them. A failed Bash still counts as a command.
+  assert.equal(turn.fold.workSummary, "Read 1 file and ran 4 commands");
+  assert.equal(turn.fold.failureSummary, "1 step failed and 1 did not finish");
+  assert.equal(
+    turn.fold.summary,
+    "Read 1 file and ran 4 commands · 1 step failed and 1 did not finish",
+  );
+  assert.equal(turn.fold.failedCount, 1);
+  assert.equal(turn.fold.unfinishedCount, 1);
   // The fold row sits where the first hidden entry was.
   assert.equal(keyOf(turn.entries[turn.fold.anchorIndex]), "think-1");
-  assert.deepEqual(visibleKeys(turn), [
-    "prompt",
-    "run-failed",
-    "permission",
-    "stuck",
-    "answer",
-  ]);
+  assert.deepEqual(visibleKeys(turn), ["prompt", "permission", "answer"]);
   // Opening the fold restores every hidden entry in its own position.
   assert.deepEqual(
     turn.fold.hiddenIndexes.map((index) => keyOf(turn.entries[index])),
-    ["think-1", "commentary", "tools:read-1", "run-2"],
+    ["think-1", "commentary", "tools:read-1", "run-failed", "run-2", "stuck"],
   );
   assert.equal(turn.completion.state, "completed");
+});
+
+test("a failure after the answer stays visible; ordinary trailing work folds", () => {
+  const turn = onlyTurn([
+    message({ id: "prompt", role: "user", text: "Ship it" }),
+    tool({ id: "run-1" }),
+    message({ id: "answer", role: "assistant", text: "Shipped." }),
+    tool({ id: "after-ok" }),
+    tool({ id: "after-failed", status: "failed" }),
+    tool({ id: "after-stuck", status: "executing" }),
+    result("Shipped. (1000ms)"),
+  ]);
+  assert.ok(turn.fold);
+  assert.deepEqual(visibleKeys(turn), [
+    "prompt",
+    "answer",
+    "after-failed",
+    "after-stuck",
+  ]);
+  assert.equal(turn.fold.failedCount, 0);
+  assert.equal(turn.fold.failureSummary, "");
+  assert.equal(turn.fold.summary, "Ran 2 commands");
+});
+
+test("a turn that never answered keeps its failures on screen", () => {
+  const turn = onlyTurn([
+    message({ id: "prompt", role: "user", text: "Fix it" }),
+    tool({ id: "run-1" }),
+    tool({ id: "run-failed", status: "failed" }),
+    lifecycle({
+      id: "stop",
+      title: "Interrupted",
+      text: "",
+      at: "2026-07-30T12:00:05.000Z",
+    }),
+  ]);
+  assert.ok(turn.fold);
+  assert.deepEqual(visibleKeys(turn), ["prompt", "run-failed"]);
+  assert.equal(turn.fold.failureSummary, "");
+});
+
+test("a blank closing message is not an answer: the failure before it stays loud", () => {
+  const turn = onlyTurn([
+    message({ id: "prompt", role: "user", text: "Fix it" }),
+    tool({ id: "run-1" }),
+    tool({ id: "run-failed", status: "failed" }),
+    message({ id: "blank", role: "assistant", text: "  \n\t " }),
+    lifecycle({
+      id: "stop",
+      title: "Interrupted",
+      text: "",
+      at: "2026-07-30T12:00:05.000Z",
+    }),
+  ]);
+  assert.ok(turn.fold);
+  // SV-02 (D2): the turn never answered, so the failure is kept on screen
+  // rather than folded and counted as a quiet step.
+  assert.ok(visibleKeys(turn).includes("run-failed"));
+  assert.ok(!visibleKeys(turn).includes("run-1"));
+  assert.equal(turn.fold.failedCount, 0);
+  assert.equal(turn.fold.failureSummary, "");
+});
+
+test("a fold that hides only failures still names them", () => {
+  const turn = onlyTurn([
+    message({ id: "prompt", role: "user", text: "Try" }),
+    tool({ id: "f-1", status: "failed" }),
+    tool({ id: "f-2", status: "failed" }),
+    message({ id: "answer", role: "assistant", text: "Worked around it." }),
+    result("Worked around it. (1000ms)"),
+  ]);
+  assert.equal(turn.fold.summary, "Ran 2 commands · 2 steps failed");
+  assert.deepEqual(visibleKeys(turn), ["prompt", "answer"]);
+});
+
+test("formatFoldedFailures names failed and unfinished steps", () => {
+  assert.equal(formatFoldedFailures(0, 0), "");
+  assert.equal(formatFoldedFailures(1, 0), "1 step failed");
+  assert.equal(formatFoldedFailures(3, 0), "3 steps failed");
+  assert.equal(formatFoldedFailures(0, 1), "1 step did not finish");
+  assert.equal(formatFoldedFailures(0, 2), "2 steps did not finish");
+  assert.equal(
+    formatFoldedFailures(2, 1),
+    "2 steps failed and 1 did not finish",
+  );
 });
 
 test("a result body that repeats nothing stays visible beside the agent's own answer", () => {

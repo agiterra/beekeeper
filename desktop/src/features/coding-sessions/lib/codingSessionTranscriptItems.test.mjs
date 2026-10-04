@@ -21,7 +21,9 @@ import {
   CODING_SESSION_BOUNDARY_REASONS,
   CODING_SESSION_BOUNDARY_STATUSES,
   CODING_SESSION_BOUNDARY_TITLE,
+  codingSessionSandboxFromTranscript,
 } from "./codingSessionBoundaryStatus.ts";
+import { deriveCodingSessionTranscriptModel } from "./codingSessionTranscriptModel.ts";
 
 const IDENTITY = {
   id: "item-1",
@@ -243,7 +245,10 @@ async function renderTranscriptMarkup(items) {
   return renderToStaticMarkup(React.createElement(RouterProvider, { router }));
 }
 
-test("the transcript shows the boundary row a reader sees, in both states", async () => {
+test("the boundary row leaves the transcript and reaches the sandbox chip, in both states", async () => {
+  // SV-16/SV-17 (plans/SESSION_VIEW_PARITY_PLAN.md, D3): the composer's
+  // sandbox chip owns the boundary; the reading order no longer shows it, and
+  // the item itself is kept for the chip and Details.
   const prompt = {
     ...IDENTITY,
     id: "prompt-1",
@@ -254,25 +259,45 @@ test("the transcript shows the boundary row a reader sees, in both states", asyn
     text: "Plan the work",
     turnId: "turn-1",
   };
-  const unenforced = await renderTranscriptMarkup([
+  const unenforcedItems = [
     { ...render(NOT_ENFORCED, "no-backend-for-platform"), turnId: "turn-1" },
     prompt,
-  ]);
-  assert.match(unenforced, /Project boundary/);
+  ];
+  const unenforced = await renderTranscriptMarkup(unenforcedItems);
+  assert.doesNotMatch(unenforced, /Project boundary/);
+  const unenforcedReport = codingSessionSandboxFromTranscript(unenforcedItems);
+  assert.equal(unenforcedReport.state, "not-sandboxed");
   assert.match(
-    unenforced,
-    /Not enforced — this session is not isolated from other projects(&#x27;|')? ?files/,
+    unenforcedReport.boundaryText,
+    /Not enforced — this session is not isolated from other projects' ?files/,
   );
-  assert.match(unenforced, /this platform has no boundary backend/);
-  assert.doesNotMatch(unenforced, /execution_boundary_not_enforced/);
+  assert.match(
+    unenforcedReport.boundaryText,
+    /this platform has no boundary backend/,
+  );
+  assert.doesNotMatch(
+    unenforcedReport.boundaryText,
+    /execution_boundary_not_enforced/,
+  );
+  assert.equal(
+    deriveCodingSessionTranscriptModel(unenforcedItems, { isWorking: false })
+      .sessionFacts[0].text,
+    unenforcedReport.boundaryText,
+  );
 
-  const enforced = await renderTranscriptMarkup([
+  const enforcedItems = [
     { ...render(ENFORCED, "macos-seatbelt"), turnId: "turn-1" },
     prompt,
-  ]);
-  assert.match(enforced, /Enforced — this session and every process it starts/);
-  assert.match(enforced, /macOS Seatbelt/);
-  assert.doesNotMatch(enforced, /Not enforced/);
+  ];
+  const enforced = await renderTranscriptMarkup(enforcedItems);
+  assert.doesNotMatch(enforced, /Project boundary/);
+  const enforcedReport = codingSessionSandboxFromTranscript(enforcedItems);
+  assert.match(
+    enforcedReport.boundaryText,
+    /Enforced — this session and every process it starts/,
+  );
+  assert.match(enforcedReport.boundaryText, /macOS Seatbelt/);
+  assert.doesNotMatch(enforcedReport.boundaryText, /Not enforced/);
 });
 
 test("other statuses are untouched by the boundary renderer", () => {

@@ -15,16 +15,31 @@ import {
   splitActivityRowLabel,
   type ActivityRowLabelParts,
 } from "../activityRenderClasses/ActivityRow";
+import { useCompactToolFailureTone } from "./CompactToolFailureToneContext";
+import type { CompactToolFailureTone } from "./CompactToolSummaryRowFailure";
+
+export {
+  CompactToolFailureToneContext,
+  useCompactToolFailureTone,
+} from "./CompactToolFailureToneContext";
+export {
+  type CompactToolFailureTone,
+  describeCompactToolFailure,
+} from "./CompactToolSummaryRowFailure";
 
 /**
  * Tone for a collapsed tool row.
  *
  * A failed call keeps its destructive tone in every state — the usual
  * hover/open brightening would make failure read as an ordinary row the moment
- * the pointer crossed it.
+ * the pointer crossed it. A `quiet` failure (a step inside a settled turn's
+ * fold, SV-02) reads as an ordinary row; its icon and suffix mark it.
  */
-export function compactSummaryTone(failed = false) {
-  return failed
+export function compactSummaryTone(
+  failed = false,
+  failureTone: CompactToolFailureTone = "alarm",
+) {
+  return failed && failureTone === "alarm"
     ? "text-destructive transition-colors"
     : "text-muted-foreground/60 transition-colors group-hover/row:text-foreground group-open:text-foreground";
 }
@@ -33,6 +48,8 @@ export function CompactToolSummaryRow({
   action,
   duration,
   failed,
+  failureDetail = null,
+  failureTone: failureToneProp,
   fileEditSummary,
   kind,
   label,
@@ -42,6 +59,16 @@ export function CompactToolSummaryRow({
   action: AgentActivityAction | null;
   duration: string | null;
   failed: boolean;
+  /**
+   * The quiet row's suffix, e.g. `describeCompactToolFailure(item.result)`
+   * ("exit 2"). Defaults to "failed"; ignored by the alarm row.
+   */
+  failureDetail?: string | null;
+  /**
+   * `quiet` inside a settled turn's fold; `alarm` everywhere else. Omitted,
+   * it comes from `CompactToolFailureToneContext`, which the fold provides.
+   */
+  failureTone?: CompactToolFailureTone;
   fileEditSummary: CompactFileEditSummary | null;
   kind: CompactToolKind;
   label: string;
@@ -50,8 +77,10 @@ export function CompactToolSummaryRow({
 }) {
   const [thumbnailFailed, setThumbnailFailed] = React.useState(false);
   const variant = useAgentSessionTranscriptVariant();
+  const contextFailureTone = useCompactToolFailureTone();
+  const failureTone = failureToneProp ?? contextFailureTone;
   const isCompactPreview = variant === "compactPreview";
-  const tone = compactSummaryTone(failed);
+  const tone = compactSummaryTone(failed, failureTone);
   const resolvedThumbnail = React.useMemo(() => {
     if (!thumbnailSrc || thumbnailFailed) return null;
     return resolveToolImageSrc(thumbnailSrc);
@@ -62,7 +91,14 @@ export function CompactToolSummaryRow({
 
   return (
     <>
-      {failed ? (
+      {failed && failureTone === "quiet" ? (
+        <QuietFailedToolLabel
+          action={action}
+          detail={failureDetail}
+          label={label}
+          preview={preview}
+        />
+      ) : failed ? (
         <span className="inline-flex min-w-0 items-center gap-1.5 font-semibold text-destructive">
           <CircleX className="size-3.5 shrink-0" />
           <span className="shrink-0">Tool call failed</span>
@@ -124,6 +160,58 @@ export function CompactToolSummaryRow({
         )}
       />
     </>
+  );
+}
+
+/**
+ * A failed step inside a fold: dimmed red icon, the call in row text, then
+ * "· failed" (or "· exit 2"). A call that ran a command keeps its "Ran …"
+ * wording, which stays true of a command that exited non-zero; anything else
+ * keeps its "… failed" label, because "Edited foo.rs" beside a failure would
+ * claim an edit that did not happen.
+ */
+function QuietFailedToolLabel({
+  action,
+  detail,
+  label,
+  preview,
+}: {
+  action: AgentActivityAction | null;
+  detail: string | null;
+  label: string;
+  preview: string | null;
+}) {
+  const ran = action?.verb === "Ran" && action.object ? action : null;
+  const object = ran ? ran.object : preview;
+  return (
+    // The row sets its own colour: a caller that tones the whole <summary>
+    // with `compactSummaryTone(failed)` would otherwise repaint it red.
+    <span
+      className={cn(
+        "inline-flex min-w-0 items-center gap-1.5",
+        compactSummaryTone(true, "quiet"),
+      )}
+      data-failure-tone="quiet"
+    >
+      <CircleX
+        aria-label="Failed"
+        className="size-3.5 shrink-0 text-destructive/40"
+        role="img"
+      />
+      <span className="shrink-0 font-semibold">
+        <RedactedText text={ran ? ran.verb : label} />
+      </span>
+      {object ? (
+        <span className="min-w-0 truncate font-normal" title={object}>
+          <RedactedText text={object} />
+        </span>
+      ) : null}
+      {ran || detail ? (
+        <span className="shrink-0 font-normal text-muted-foreground/70">
+          · {detail ?? "failed"}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

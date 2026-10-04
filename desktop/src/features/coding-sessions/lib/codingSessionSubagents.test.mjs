@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  codingSessionSubagentTitle,
   deriveCodingSessionSubagentPanel,
+  formatCodingSessionSubagentGroupLabel,
   formatCodingSessionSubagentFooter,
   formatCodingSessionSubagentMeta,
   formatCodingSessionSubagentTokens,
@@ -123,7 +125,11 @@ test("a subagent's items nest under its call and leave the lead's reading order"
   const [prompt, spawnEntry, lead] = entries;
   assert.equal(prompt.item.role, "user");
   assert.equal(lead.item.text, "The lead's own answer.");
-  assert.equal(spawnEntry.label, "Subagent Map the call sites");
+  assert.equal(spawnEntry.label, "Ran 1 subagent");
+  assert.equal(
+    codingSessionSubagentTitle(spawnEntry.spawns[0].call),
+    "Map the call sites",
+  );
   assert.equal(spawnEntry.spawns.length, 1);
   assert.deepEqual(
     spawnEntry.spawns[0].children.map((child) => child.type),
@@ -152,9 +158,12 @@ test("a running spawn reads as running; consecutive spawns group", () => {
     { kind: "user_prompt", content: "Go" },
     taskCall("task-1", "Survey tests"),
   ]);
+  const runningEntry = turnEntries(running, true).at(-1);
+  assert.equal(runningEntry.label, "Running 1 subagent");
+  // The description left the row (SV-06) but stays one click away.
   assert.equal(
-    turnEntries(running, true).at(-1).label,
-    "Running subagent Survey tests",
+    codingSessionSubagentTitle(runningEntry.spawns[0].call),
+    "Survey tests",
   );
 
   const several = project([
@@ -167,7 +176,7 @@ test("a running spawn reads as running; consecutive spawns group", () => {
   const entries = turnEntries(several, true);
   assert.equal(entries.length, 2);
   assert.equal(entries[1].kind, "subagents");
-  assert.equal(entries[1].label, "Kicked off 3 subagents");
+  assert.equal(entries[1].label, "Running 3 subagents");
   assert.deepEqual(
     entries[1].spawns.map((spawn) => spawn.children.length),
     [0, 1, 0],
@@ -295,7 +304,8 @@ test("an open spawn is stopped once its own turn ends", () => {
   assert.equal(row.status, "stopped");
   assert.equal(row.latest, null);
   const entry = turnEntries(transcript).find((e) => e.kind === "subagents");
-  assert.equal(entry.label, "Stopped subagent Never answered");
+  assert.equal(entry.label, "Ran 1 subagent");
+  assert.equal(entry.spawns[0].status, "stopped");
 });
 
 test("an open spawn is stopped when a later turn begins, and counts as settled", () => {
@@ -350,5 +360,29 @@ test("without turn identity a later prompt or terminal stops the spawn", () => {
   assert.equal(
     deriveCodingSessionSubagentPanel([stillOpen]).rows[0].status,
     "running",
+  );
+});
+
+test("the group label counts spawns and only the ones still running (SV-06)", () => {
+  const spawn = (status) => ({ call: {}, children: [], status });
+  assert.equal(
+    formatCodingSessionSubagentGroupLabel([spawn("done")]),
+    "Ran 1 subagent",
+  );
+  assert.equal(
+    formatCodingSessionSubagentGroupLabel(
+      ["done", "failed", "stopped", "done"].map(spawn),
+    ),
+    "Ran 4 subagents",
+  );
+  assert.equal(
+    formatCodingSessionSubagentGroupLabel(["running", "running"].map(spawn)),
+    "Running 2 subagents",
+  );
+  assert.equal(
+    formatCodingSessionSubagentGroupLabel(
+      ["running", "done", "failed"].map(spawn),
+    ),
+    "Running 1 of 3 subagents",
   );
 });

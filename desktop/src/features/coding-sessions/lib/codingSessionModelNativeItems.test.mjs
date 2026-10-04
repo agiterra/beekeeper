@@ -153,7 +153,7 @@ test("an elided item stays visible in reading order, not folded into diagnostics
   assert.deepEqual(turn.diagnostics, []);
 });
 
-test("continuity statuses read as prose in the transcript, never as slugs in a fold", () => {
+test("routine continuity leaves the transcript for Details; a restart without context stays in it", () => {
   const expected = new Map([
     ["session_fresh", "Started fresh — no prior session context"],
     [
@@ -190,10 +190,23 @@ test("continuity statuses read as prose in the transcript, never as slugs in a f
         entry.kind === "item" &&
         entry.item.title === CODING_SESSION_CONTINUITY_TITLE,
     );
-    assert.ok(row, `${slug} must render in the reading order`);
-    assert.equal(row.item.text, prose);
-    assert.equal(row.item.type, "lifecycle");
-    assert.equal(row.item.renderClass, "status");
+    // SV-16 (plans/SESSION_VIEW_PARITY_PLAN.md, D3): routine continuity is
+    // kept in model.sessionFacts for Details; a loss of context is news
+    // about the next turn and stays in the reading order.
+    const fact = model.sessionFacts.find(
+      (item) => item.title === CODING_SESSION_CONTINUITY_TITLE,
+    );
+    assert.ok(fact, `${slug} must be kept in the session facts`);
+    assert.equal(fact.text, prose);
+    assert.equal(fact.type, "lifecycle");
+    if (slug === "session_restarted_without_context") {
+      assert.ok(row, `${slug} must render in the reading order`);
+      assert.equal(row.item.text, prose);
+      assert.equal(row.item.type, "lifecycle");
+      assert.equal(row.item.renderClass, "status");
+    } else {
+      assert.equal(row, undefined, `${slug} must leave the transcript`);
+    }
   }
 });
 

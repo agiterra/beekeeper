@@ -22,6 +22,28 @@ export type CodingSessionTurnCompletion = {
   state: "completed" | "failed" | "interrupted";
 };
 
+/**
+ * Whether a turn's unended tool calls are still running, as far as anything
+ * on screen can vouch for.
+ *
+ * - `live`: the turn is the one the session is working on now.
+ * - `settled`: the turn is over — it reported a completion, a later turn
+ *   exists, or the caller knows the session stopped. An unended call in it
+ *   did not finish.
+ * - `unknown`: nothing says either. The session is neither known to be
+ *   working nor known to have stopped (waiting, disconnected, unread), so the
+ *   honest reading of an unended call is that its status is not known.
+ */
+export type CodingSessionTurnSettlement = "live" | "settled" | "unknown";
+
+/**
+ * What the caller knows about the session when its latest turn has no
+ * completion and is not the turn being worked on: `running` (the producer is
+ * still on it), `stopped` (the session is idle, ended or otherwise definitely
+ * not running), or `unknown`.
+ */
+export type CodingSessionTurnRestingStatus = "running" | "stopped" | "unknown";
+
 export type CodingSessionTranscriptToolItem = Extract<
   TranscriptItem,
   { type: "tool" }
@@ -53,17 +75,34 @@ export type CodingSessionTranscriptEntry =
  *
  * Indexes point into the turn's own `entries`. The row sits at
  * `anchorIndex`; opening it shows every hidden entry again in its original
- * position. A fold never hides the final answer, a prompt, a failure, a
- * permission request, a subagent batch, or a tool that never finished — see
- * `deriveCodingSessionTurnFold`.
+ * position. A fold never hides the final answer, a prompt, a permission
+ * request, a subagent batch, or a failed or unfinished tool call after the
+ * answer. Failed and unfinished calls *before* the answer do fold, and the
+ * fold names them (SV-02) — see `deriveCodingSessionTurnFold`.
  */
 export type CodingSessionTurnFold = {
   anchorIndex: number;
   hiddenIndexes: readonly number[];
   /** The turn's own measured duration, or start-to-terminal when unmeasured. */
   durationMs: number | null;
-  /** Sentence summary of the tool calls the fold hides; empty when none. */
+  /**
+   * The whole fold sentence: `workSummary`, then `failureSummary` after
+   * " · " when there is one ("Ran 5 commands · 1 step failed"). Empty when
+   * the fold hides no tool call.
+   */
   summary: string;
+  /** Sentence summary of the tool calls the fold hides; empty when none. */
+  workSummary: string;
+  /**
+   * The folded failures, named: "1 step failed", "2 steps failed and 1 did
+   * not finish". Empty when every folded call succeeded. A renderer that
+   * truncates `workSummary` must keep this on screen whole.
+   */
+  failureSummary: string;
+  /** Failed tool calls among the hidden entries. */
+  failedCount: number;
+  /** Tool calls among the hidden entries that never settled. */
+  unfinishedCount: number;
 };
 
 export type CodingSessionTranscriptTurn = {
@@ -74,6 +113,14 @@ export type CodingSessionTranscriptTurn = {
   diagnostics: TranscriptItem[];
   completion: CodingSessionTurnCompletion | null;
   isWorking: boolean;
+  /**
+   * The turn reported no completion and a later turn exists in the same
+   * transcript. The producer moved on, so this turn is over although its own
+   * end was never reported — a fact of the items, never of the session's
+   * current status. Always `false` on a turn with a completion, which is
+   * settled by that alone.
+   */
+  superseded: boolean;
   startedAt: string | null;
   /** Always `null` while the turn is live: nothing folds while it is watched. */
   fold: CodingSessionTurnFold | null;
@@ -105,6 +152,13 @@ export type CodingSessionTranscriptBlock =
 export type CodingSessionTranscriptModel = {
   blocks: CodingSessionTranscriptBlock[];
   diagnostics: TranscriptItem[];
+  /**
+   * Every continuity and boundary row, in transcript order (SV-16). The
+   * routine ones are not in `blocks`; a continuity loss is in both. Details
+   * and the composer's sandbox chip read these — never an empty list as
+   * "no boundary": absence here means nothing was published.
+   */
+  sessionFacts: TranscriptItem[];
 };
 
 /**
