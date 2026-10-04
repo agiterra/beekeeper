@@ -25,17 +25,25 @@ CodingSessionTranscriptEnvelope _envelope({
 
 void main() {
   group('ordering', () {
+    // Each row is its own turn here: adjacent prose in one turn joins into
+    // one message (NIP-CST amendment 3), which `prose join` covers below.
     test('eventSeq orders numerically: 10 comes after 9', () {
       final blocks = projectCodingSessionTranscript([
         _envelope(
           eventSeq: 10,
+          turnId: 'turn-10',
           item: {'kind': 'assistant_text', 'text': 'ten'},
         ),
         _envelope(
           eventSeq: 9,
+          turnId: 'turn-9',
           item: {'kind': 'assistant_text', 'text': 'nine'},
         ),
-        _envelope(eventSeq: 2, item: {'kind': 'assistant_text', 'text': 'two'}),
+        _envelope(
+          eventSeq: 2,
+          turnId: 'turn-2',
+          item: {'kind': 'assistant_text', 'text': 'two'},
+        ),
       ]);
       expect(blocks.single.items.map((item) => item.eventSeq).toList(), [
         2,
@@ -49,12 +57,14 @@ void main() {
       final blocks = projectCodingSessionTranscript([
         _envelope(
           eventSeq: 1,
+          turnId: 'turn-b',
           item: {'kind': 'assistant_text', 'text': 'second'},
           id: '${'0' * 63}b',
           forTarget: target(),
         ),
         _envelope(
           eventSeq: 1,
+          turnId: 'turn-a',
           item: {'kind': 'assistant_text', 'text': 'first'},
           id: '${'0' * 63}a',
           forTarget: target(),
@@ -64,12 +74,126 @@ void main() {
     });
   });
 
+  group('prose join', () {
+    test('adjacent pieces of one turn join in eventSeq order, keyed on the '
+        'first piece', () {
+      final blocks = projectCodingSessionTranscript([
+        _envelope(
+          eventSeq: 3,
+          turnId: 'turn-1',
+          id: '${'0' * 63}3',
+          item: {'kind': 'assistant_text', 'text': 'three.'},
+        ),
+        _envelope(
+          eventSeq: 1,
+          turnId: 'turn-1',
+          id: '${'0' * 63}1',
+          item: {'kind': 'assistant_text', 'text': 'one.\n\n'},
+        ),
+        _envelope(
+          eventSeq: 2,
+          turnId: 'turn-1',
+          id: '${'0' * 63}2',
+          item: {'kind': 'assistant_text', 'text': 'two.\n\n'},
+        ),
+      ]);
+      final item = blocks.single.items.single;
+      expect(item.text, 'one.\n\ntwo.\n\nthree.');
+      expect(item.eventId, '${'0' * 63}1');
+      expect(item.lastEventId, '${'0' * 63}3');
+      expect(item.title, 'Response');
+      expect(item.parentToolId, isNull);
+      // No lease is held for the target, so nothing is arriving.
+      expect(item.arriving, isFalse);
+    });
+
+    test('a paired tool result between two pieces ends the message', () {
+      final blocks = projectCodingSessionTranscript([
+        _envelope(
+          eventSeq: 1,
+          turnId: 'turn-1',
+          item: {'kind': 'assistant_text', 'text': 'before'},
+        ),
+        _envelope(
+          eventSeq: 2,
+          turnId: 'turn-1',
+          item: {
+            'kind': 'tool_call',
+            'tool': {'toolId': 'call-1', 'toolName': 'Bash', 'input': {}},
+          },
+        ),
+        _envelope(
+          eventSeq: 3,
+          turnId: 'turn-1',
+          item: {'kind': 'tool_result', 'toolId': 'call-1', 'content': 'ok'},
+        ),
+        _envelope(
+          eventSeq: 4,
+          turnId: 'turn-1',
+          item: {'kind': 'assistant_text', 'text': 'after'},
+        ),
+      ]);
+      expect(blocks.single.items.map((item) => item.text).toList(), [
+        'before',
+        '',
+        'after',
+      ]);
+    });
+
+    test(
+      'subagent prose is titled as the subagent\'s, never as the answer',
+      () {
+        final blocks = projectCodingSessionTranscript([
+          _envelope(
+            eventSeq: 1,
+            turnId: 'turn-1',
+            item: {'kind': 'assistant_text', 'text': 'mine'},
+          ),
+          _envelope(
+            eventSeq: 2,
+            turnId: 'turn-1',
+            item: {
+              'kind': 'assistant_text',
+              'text': 'theirs',
+              'parentToolId': 'task-1',
+            },
+          ),
+        ]);
+        final items = blocks.single.items;
+        expect(items.map((item) => item.title).toList(), [
+          'Response',
+          codingSessionSubagentResponseTitle,
+        ]);
+        expect(items.last.parentToolId, 'task-1');
+      },
+    );
+
+    test('a joined message is bounded once, after the join', () {
+      final piece = 'x' * 5000;
+      final blocks = projectCodingSessionTranscript([
+        _envelope(
+          eventSeq: 1,
+          turnId: 'turn-1',
+          item: {'kind': 'assistant_text', 'text': piece},
+        ),
+        _envelope(
+          eventSeq: 2,
+          turnId: 'turn-1',
+          item: {'kind': 'assistant_text', 'text': piece},
+        ),
+      ]);
+      final text = blocks.single.items.single.text;
+      expect(text, '${'x' * codingSessionTranscriptMaxTextChars}…');
+    });
+  });
+
   group('blocks', () {
     test('two executions interleave as blocks, never as items', () {
       final blocks = projectCodingSessionTranscript(
         [
           _envelope(
             eventSeq: 1,
+            turnId: 'turn-a1',
             item: {'kind': 'assistant_text', 'text': 'a1'},
             createdAt: 100,
           ),
@@ -82,6 +206,7 @@ void main() {
           ),
           _envelope(
             eventSeq: 2,
+            turnId: 'turn-a2',
             item: {'kind': 'assistant_text', 'text': 'a2'},
             createdAt: 300,
           ),

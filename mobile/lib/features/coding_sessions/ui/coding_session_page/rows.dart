@@ -55,6 +55,10 @@ class _MessageRow extends StatelessWidget {
             ),
           if (item.text.isNotEmpty)
             SelectableText(item.text, style: context.textTheme.bodyMedium),
+          // The answer is still arriving: its turn has no result yet and its
+          // target holds a live lease. Derived from wire facts, so it clears
+          // when the result lands or the provider stops answering.
+          if (item.arriving) _WritingLine(itemKey: item.eventId),
         ],
       ),
     );
@@ -141,15 +145,50 @@ class _FoldedTextRow extends HookWidget {
         expanded: expanded.value,
         onTap: () => expanded.value = !expanded.value,
       ),
-      child: expanded.value && item.text.isNotEmpty
-          ? SelectableText(
-              item.text,
-              key: ValueKey('coding-session-reasoning-body-${item.eventId}'),
-              style: context.textTheme.bodySmall,
-            )
-          : null,
+      child: _foldedChild(context, showBody: expanded.value),
     );
   }
+
+  Widget? _foldedChild(BuildContext context, {required bool showBody}) {
+    final body = showBody && item.text.isNotEmpty;
+    if (!body && !item.arriving) return null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (body)
+          SelectableText(
+            item.text,
+            key: ValueKey('coding-session-reasoning-body-${item.eventId}'),
+            style: context.textTheme.bodySmall,
+          ),
+        // Reasoning still arriving says so even while folded, as web's
+        // details row does: the fold hides the words, never the fact that
+        // they are still being written.
+        if (item.arriving) _WritingLine(itemKey: item.eventId, topGap: body),
+      ],
+    );
+  }
+}
+
+/// The muted "Writing…" line under an answer or reasoning still arriving.
+class _WritingLine extends StatelessWidget {
+  final String itemKey;
+  final bool topGap;
+
+  const _WritingLine({required this.itemKey, this.topGap = true});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.only(top: topGap ? Grid.quarter : 0),
+    child: Text(
+      codingSessionWritingLabel,
+      key: ValueKey('coding-session-writing-$itemKey'),
+      style: context.textTheme.labelSmall?.copyWith(
+        color: context.colors.onSurfaceVariant,
+        fontStyle: FontStyle.italic,
+      ),
+    ),
+  );
 }
 
 /// A tool call folded to one line, expandable to its arguments and result.

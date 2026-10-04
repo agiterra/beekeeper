@@ -155,8 +155,13 @@ class CodingSessionTranscriptItem {
   /// Stable per-item identity: `(generation, eventSeq)`.
   final String id;
 
-  /// The event this row came from.
+  /// The event this row came from — for joined prose, its **first** piece,
+  /// so the row keeps its identity as later paragraphs arrive.
   final String eventId;
+
+  /// The event the row currently ends at: [eventId] for a single-event row,
+  /// the last joined piece for prose (NIP-CST amendment 3, Join key).
+  final String lastEventId;
 
   /// The signer of that event.
   final String signerPubkey;
@@ -203,9 +208,22 @@ class CodingSessionTranscriptItem {
   /// provider payload verbatim is how a transcript starts lying.
   final String? unknownKind;
 
+  /// The subagent tool call this prose belongs to, or `null` for the agent's
+  /// own words. Prose with one is titled as a subagent's, never as the
+  /// agent's answer (attribution, invariant 5).
+  final String? parentToolId;
+
+  /// True while this joined message is still being written: its last piece
+  /// is the last item of a turn with no `result`/`interrupted` yet, and its
+  /// exact target is neither superseded, nor ended by status, nor without a
+  /// live lease this reader holds (CONTRACT rule 7). Derived from wire facts
+  /// only — never from a provider claiming it is streaming.
+  final bool arriving;
+
   const CodingSessionTranscriptItem({
     required this.id,
     required this.eventId,
+    String? lastEventId,
     required this.signerPubkey,
     required this.target,
     required this.eventSeq,
@@ -222,7 +240,9 @@ class CodingSessionTranscriptItem {
     this.result,
     this.foldedByDefault = false,
     this.unknownKind,
-  });
+    this.parentToolId,
+    this.arriving = false,
+  }) : lastEventId = lastEventId ?? eventId;
 }
 
 /// A contiguous run of rows sharing one turn id.

@@ -360,6 +360,7 @@ void main() {
           session.emit(
             transcriptEvent(
               eventSeq: seq,
+              turnId: 'turn-$seq',
               item: {'kind': 'assistant_text', 'text': 'row $seq'},
             ),
           );

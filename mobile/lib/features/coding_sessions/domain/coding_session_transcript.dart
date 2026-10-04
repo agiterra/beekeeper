@@ -2,7 +2,18 @@ import 'dart:convert';
 
 import 'coding_session_keys.dart';
 import 'coding_session_models.dart';
+import 'coding_session_prose_join.dart';
 import 'coding_session_transcript_item.dart';
+
+export 'coding_session_prose_join.dart'
+    show
+        CodingSessionProseLiveness,
+        codingSessionProseLivenessFor,
+        codingSessionProseStreamKey,
+        codingSessionSessionEndingStatuses,
+        codingSessionSubagentReasoningTitle,
+        codingSessionSubagentResponseTitle,
+        codingSessionWritingLabel;
 
 /// Provider continuity slugs, in the reader's terms.
 ///
@@ -49,7 +60,11 @@ const codingSessionIsolationStatuses = <String, String>{
 const codingSessionIsolationTitle = 'Session isolation';
 
 const _maxSummaryChars = 200;
-const _maxTextChars = 8000;
+
+/// The longest body a row shows before it is cut and marked `…`. Joined
+/// prose is bounded as one message, after the join, never piece by piece.
+const codingSessionTranscriptMaxTextChars = 8000;
+const _maxTextChars = codingSessionTranscriptMaxTextChars;
 
 /// Project decoded transcript envelopes into renderable blocks.
 ///
@@ -61,20 +76,46 @@ const _maxTextChars = 8000;
 /// Turn boundaries come from the envelope's `turnId`. The wire envelope always
 /// carries the key, and an explicit `null` means "this item belongs to no
 /// turn" — a claim the projector honours rather than overwriting with a guess.
+///
+/// Consecutive prose pieces join into one message per NIP-CST amendment 3
+/// (`conformance/transcript-prose-join/CONTRACT.md`): a repeated delivery of
+/// one event is one piece; adjacent `assistant_text` (or `reasoning`) items
+/// with the same `turnId`, `parentToolId` and a compatible `messageId` are
+/// concatenated, and anything else between them ends the message.
+/// [livenessByStream], keyed by [codingSessionProseStreamKey], is what this
+/// reader knows about each target's status and lease; a target missing from
+/// it has no live lease here, so nothing in it is ever `arriving`.
 List<CodingSessionTranscriptBlock> projectCodingSessionTranscript(
   Iterable<CodingSessionTranscriptEnvelope> envelopes, {
   Map<String, String> labelsByTargetKey = const {},
+  Map<String, CodingSessionProseLiveness> livenessByStream = const {},
 }) {
   final grouped = <String, List<CodingSessionTranscriptEnvelope>>{};
+  final seen = <String, Set<String>>{};
   for (final envelope in envelopes) {
-    final key = '${envelope.ref.signerPubkey}\u0000${envelope.target.key}';
+    final key = codingSessionProseStreamKey(
+      envelope.ref.signerPubkey,
+      envelope.target,
+    );
+    // Rule 0: one event, one piece. Backfill and a live subscription can both
+    // deliver it; the second copy must not repeat a paragraph.
+    if (!seen.putIfAbsent(key, () => {}).add(envelope.ref.eventId)) continue;
     grouped.putIfAbsent(key, () => []).add(envelope);
   }
+  final superseded = codingSessionSupersededStreams(
+    grouped.values.expand((stream) => stream),
+  );
 
   final blocks = <CodingSessionTranscriptBlock>[];
   for (final entry in grouped.entries) {
     final ordered = [...entry.value]..sort(_byEventSeqThenEventId);
-    final items = _projectStream(ordered);
+    final liveness = livenessByStream[entry.key];
+    final targetAlive =
+        !superseded.contains(entry.key) && liveness != null && !liveness.ended;
+    final items = _projectStream(
+      ordered,
+      openTails: targetAlive ? codingSessionOpenTurnTails(ordered) : const {},
+    );
     var lastActivityAt = 0;
     for (final envelope in ordered) {
       if (envelope.ref.createdAt > lastActivityAt) {
@@ -111,13 +152,39 @@ int _byEventSeqThenEventId(
 }
 
 List<CodingSessionTranscriptItem> _projectStream(
-  List<CodingSessionTranscriptEnvelope> ordered,
-) {
+  List<CodingSessionTranscriptEnvelope> ordered, {
+  required Set<String> openTails,
+}) {
   final items = <CodingSessionTranscriptItem>[];
   final pendingToolCalls = <String, int>{};
+  CodingSessionProseRun? run;
+  void closeRun() {
+    final closing = run;
+    if (closing == null) return;
+    items[closing.index] = _proseItem(
+      closing,
+      arriving: openTails.contains(closing.last.ref.eventId),
+    );
+    run = null;
+  }
+
   for (final envelope in ordered) {
     final item = envelope.item;
     final kind = envelope.itemKind;
+    if (codingSessionJoinedProseKinds.contains(kind)) {
+      final open = run;
+      if (open != null && open.accepts(envelope)) {
+        open.add(envelope);
+        continue;
+      }
+      closeRun();
+      run = CodingSessionProseRun.start(envelope, items.length);
+      // A placeholder the run's close replaces with the joined message.
+      items.add(_buildItem(envelope));
+      continue;
+    }
+    // Any other item — a paired tool result included — ends the message.
+    closeRun();
     if (kind == 'tool_result') {
       final toolId = _stringOrNull(item['toolId']);
       final pendingIndex = toolId == null ? null : pendingToolCalls[toolId];
@@ -136,7 +203,38 @@ List<CodingSessionTranscriptItem> _projectStream(
       if (toolId != null) pendingToolCalls[toolId] = items.length - 1;
     }
   }
+  closeRun();
   return items;
+}
+
+/// One joined prose message: identity from its first piece, the joined text
+/// bounded as a whole (a cut is still marked `…`), attribution from
+/// `parentToolId`.
+CodingSessionTranscriptItem _proseItem(
+  CodingSessionProseRun run, {
+  required bool arriving,
+}) {
+  final first = run.first;
+  final parentToolId = codingSessionParentToolId(first.item);
+  final isReasoning = first.itemKind == 'reasoning';
+  return _base(
+    first,
+    type: isReasoning
+        ? CodingSessionItemType.thought
+        : CodingSessionItemType.message,
+    role: isReasoning ? null : CodingSessionItemRole.assistant,
+    title: switch ((isReasoning, parentToolId != null)) {
+      (true, true) => codingSessionSubagentReasoningTitle,
+      (true, false) => 'Reasoning',
+      (false, true) => codingSessionSubagentResponseTitle,
+      (false, false) => 'Response',
+    },
+    text: _boundedText(run.text),
+    foldedByDefault: isReasoning,
+    lastEventId: run.last.ref.eventId,
+    parentToolId: parentToolId,
+    arriving: arriving,
+  );
 }
 
 List<CodingSessionTranscriptTurn> _groupTurns(
@@ -410,6 +508,9 @@ CodingSessionTranscriptItem _base(
   CodingSessionTurnResult? result,
   bool foldedByDefault = false,
   String? unknownKind,
+  String? lastEventId,
+  String? parentToolId,
+  bool arriving = false,
 }) => CodingSessionTranscriptItem(
   id: encodeStructuredKey('coding-session-transcript-item/v1', [
     envelope.ref.signerPubkey,
@@ -436,6 +537,9 @@ CodingSessionTranscriptItem _base(
   result: result,
   foldedByDefault: foldedByDefault,
   unknownKind: unknownKind,
+  lastEventId: lastEventId,
+  parentToolId: parentToolId,
+  arriving: arriving,
 );
 
 /// A bounded one-line rendering of a tool call's arguments.

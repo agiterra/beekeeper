@@ -83,8 +83,9 @@ class CodingSessionChannelView {
 
   /// The transcript of [session], as interleaved per-execution blocks.
   List<CodingSessionTranscriptBlock> transcriptFor(
-    CodingSessionUmbrella session,
-  ) {
+    CodingSessionUmbrella session, {
+    DateTime? now,
+  }) {
     final targetKeys = {
       for (final execution in session.executions) execution.targetKey,
     };
@@ -97,6 +98,12 @@ class CodingSessionChannelView {
         (envelope) => targetKeys.contains(envelope.target.key),
       ),
       labelsByTargetKey: labels,
+      livenessByStream: codingSessionProseLivenessFor(
+        executions: session.executions,
+        leases: facts.leases,
+        now: now ?? DateTime.now(),
+        leasesRead: leasesRead,
+      ),
     );
   }
 
