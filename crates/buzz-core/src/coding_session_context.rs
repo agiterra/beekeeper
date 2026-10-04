@@ -479,17 +479,36 @@ pub fn coding_session_context_role_for_item_kind(
 /// labelled `ended_normally`, never `task_finished`: transport completion is
 /// evidence about execution, not proof that the user's objective is done.
 pub fn coding_session_first_turn_brief(package: &CodingSessionContextPackage) -> Value {
-    let mut turns = BTreeMap::<(String, String), BriefTurn>::new();
+    // Joined prose runs (NIP-CST amendment 3, "Join key"): one message per
+    // run of pieces, however many paragraphs or size cuts it was published in.
+    let prose_pieces = brief_prose_pieces(&package.history);
+    let mut turns = BTreeMap::<(String, String, String), BriefTurn>::new();
     for (history_offset, item) in package.history.iter().enumerate() {
         let Some(turn_id) = item.turn_id.as_ref() else {
             continue;
         };
+        let piece = prose_pieces
+            .get(history_offset)
+            .copied()
+            .unwrap_or(BriefProsePiece::NotProse);
+        if piece == BriefProsePiece::Repeat {
+            continue;
+        }
+        // The exact target includes its signer: another signer's items on the
+        // same session are never this turn's evidence.
         let target_key = coding_session_target_key(&item.target);
-        let key = (target_key, turn_id.clone());
+        let key = (item.author.clone(), target_key, turn_id.clone());
         let turn = turns.entry(key).or_insert_with(|| {
             BriefTurn::new(item.target.clone(), turn_id.clone(), history_offset)
         });
-        turn.observe(item);
+        let run_first_event_id = match piece {
+            BriefProsePiece::Continues(first) => package
+                .history
+                .get(first)
+                .map(|first| first.event_id.as_str()),
+            _ => Some(item.event_id.as_str()),
+        };
+        turn.observe(item, piece, run_first_event_id);
     }
     let mut turns = turns.into_values().collect::<Vec<_>>();
     turns.sort_by(|left, right| {
@@ -633,7 +652,9 @@ struct BriefTurn {
     request: Option<String>,
     request_omitted: bool,
     request_event_id: Option<String>,
-    latest_assistant_event_id: Option<String>,
+    /// The turn's latest own (`parentToolId` absent) prose piece by
+    /// `eventSeq`, with the first piece of the joined message it ends.
+    latest_assistant: Option<BriefAssistantMessage>,
     latest_plan_event_id: Option<String>,
     terminal_event_id: Option<String>,
     outcome: &'static str,
@@ -653,7 +674,7 @@ impl BriefTurn {
             request: None,
             request_omitted: false,
             request_event_id: None,
-            latest_assistant_event_id: None,
+            latest_assistant: None,
             latest_plan_event_id: None,
             terminal_event_id: None,
             outcome: "in_progress_or_unclosed",
@@ -664,8 +685,16 @@ impl BriefTurn {
         }
     }
 
-    fn observe(&mut self, item: &CodingSessionContextHistoryItem) {
-        if self.evidence_event_ids.len() < MAX_CONTEXT_BRIEF_EVIDENCE_IDS {
+    fn observe(
+        &mut self,
+        item: &CodingSessionContextHistoryItem,
+        piece: BriefProsePiece,
+        run_first_event_id: Option<&str>,
+    ) {
+        // A joined prose run spends one evidence slot, its first piece's: a
+        // ten-paragraph answer must not crowd the turn's tool evidence out.
+        let continues_run = matches!(piece, BriefProsePiece::Continues(_));
+        if !continues_run && self.evidence_event_ids.len() < MAX_CONTEXT_BRIEF_EVIDENCE_IDS {
             self.evidence_event_ids.push(item.event_id.clone());
         }
         match item.item_kind.as_str() {
@@ -680,8 +709,10 @@ impl BriefTurn {
                 self.request = content.and_then(safe_brief_text);
                 self.request_omitted = content.is_some() && self.request.is_none();
             }
-            "assistant_text" => {
-                self.latest_assistant_event_id = Some(item.event_id.clone());
+            // Subagent prose (`parentToolId` present) is not the agent's own
+            // answer and never counts as the turn's latest.
+            "assistant_text" if brief_parent_tool_id(item).is_none() => {
+                self.observe_own_prose(item, run_first_event_id);
             }
             "tool_call" if self.tool_attempts.len() < MAX_CONTEXT_BRIEF_TOOL_ATTEMPTS => {
                 let tool = item.content.get("tool").and_then(Value::as_object);
@@ -761,6 +792,10 @@ impl BriefTurn {
     }
 
     fn finish(self) -> Value {
+        let (latest_assistant_event_id, latest_assistant_first_event_id) = self
+            .latest_assistant
+            .map(|latest| (latest.last_event_id, latest.first_event_id))
+            .unzip();
         serde_json::json!({
             "target": self.target,
             "turnId": self.turn_id,
@@ -768,7 +803,8 @@ impl BriefTurn {
             "request": self.request,
             "requestOmittedForSafety": self.request_omitted,
             "requestEventId": self.request_event_id,
-            "latestAssistantEventId": self.latest_assistant_event_id,
+            "latestAssistantEventId": latest_assistant_event_id,
+            "latestAssistantFirstEventId": latest_assistant_first_event_id,
             "latestPlanEventId": self.latest_plan_event_id,
             "terminalEventId": self.terminal_event_id,
             "outcome": self.outcome,
@@ -2068,6 +2104,16 @@ fn validate_lower_hex(field: &str, value: &str, length: usize) -> Result<(), Str
     Ok(())
 }
 
+#[path = "coding_session_context_prose_join.rs"]
+mod prose_join;
+use prose_join::{
+    brief_parent_tool_id, brief_prose_pieces, BriefAssistantMessage, BriefProsePiece,
+};
+
 #[cfg(test)]
 #[path = "coding_session_context_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "coding_session_context_prose_join_tests.rs"]
+mod prose_join_tests;
