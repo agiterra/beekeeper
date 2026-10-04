@@ -564,3 +564,121 @@ fn git_itself_refuses_to_remove_a_dirty_tree_because_nothing_passes_force() {
         "the file survives the refusal: {error}"
     );
 }
+
+// ── checkpoint-ref retention (checkpoints brief, Host/provider step 6) ─────
+
+fn refs_under(repo: &Path, prefix: &str) -> Vec<String> {
+    let output = Command::new("git")
+        .args(["for-each-ref", "--format=%(refname)", prefix])
+        .current_dir(repo)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("for-each-ref");
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+fn with_session(
+    mut record: CodingSessionSeatWorktree,
+    id: Option<&str>,
+) -> CodingSessionSeatWorktree {
+    record.session_id = id.map(str::to_string);
+    record
+}
+
+#[test]
+fn pruning_a_seat_takes_only_its_own_sessions_checkpoint_refs() {
+    let layout = layout();
+    let tree = add_worktree(&layout, "lane-checkpoints");
+    // Refs the provider would write (`<sessionId>/<generation>/<throughSeq>`
+    // and a baseline), for this session, a prefix-sharing neighbour, and
+    // another session — all in the shared refs namespace.
+    for name in [
+        "refs/beekeeper/checkpoints/exec-1/0/12",
+        "refs/beekeeper/checkpoints/exec-1/0/base-3",
+        "refs/beekeeper/checkpoints/exec-1/1/40",
+        "refs/beekeeper/checkpoints/exec-10/0/7",
+        "refs/beekeeper/checkpoints/exec-2/0/9",
+    ] {
+        git(&["update-ref", name, "HEAD"], &tree);
+    }
+    let entry = with_session(
+        seat_record(&layout.repo, &tree, "lane-checkpoints"),
+        Some("exec-1"),
+    );
+    let remaining = std::collections::BTreeMap::new();
+
+    retire_checkpoint_refs_after_prune(&entry, &remaining);
+
+    assert_eq!(
+        refs_under(&layout.repo, "refs/beekeeper/checkpoints/"),
+        [
+            "refs/beekeeper/checkpoints/exec-10/0/7",
+            "refs/beekeeper/checkpoints/exec-2/0/9",
+        ]
+    );
+    assert!(layout.repo.join("README").is_file());
+}
+
+#[test]
+fn a_record_with_no_session_id_leaves_every_checkpoint_ref() {
+    let layout = layout();
+    let tree = add_worktree(&layout, "lane-no-session");
+    git(
+        &[
+            "update-ref",
+            "refs/beekeeper/checkpoints/exec-1/0/1",
+            "HEAD",
+        ],
+        &tree,
+    );
+    let entry = with_session(seat_record(&layout.repo, &tree, "lane-no-session"), None);
+
+    assert_eq!(checkpoint_refs_to_retire(&entry, &Default::default()), None);
+    retire_checkpoint_refs_after_prune(&entry, &Default::default());
+
+    assert_eq!(
+        refs_under(&layout.repo, "refs/beekeeper/checkpoints/"),
+        ["refs/beekeeper/checkpoints/exec-1/0/1"]
+    );
+}
+
+#[test]
+fn refs_still_named_by_another_record_or_unnameable_ids_are_not_retired() {
+    let layout = layout();
+    let tree = add_worktree(&layout, "lane-shared-session");
+    let entry = with_session(
+        seat_record(&layout.repo, &tree, "lane-shared-session"),
+        Some("exec-1"),
+    );
+    let mut remaining = std::collections::BTreeMap::new();
+    remaining.insert(
+        "s/Moved".to_string(),
+        with_session(seat_record(&layout.repo, &tree, "moved"), Some("exec-1")),
+    );
+    assert_eq!(checkpoint_refs_to_retire(&entry, &remaining), None);
+    assert_eq!(
+        checkpoint_refs_to_retire(&entry, &Default::default()),
+        Some("exec-1")
+    );
+    let dotted = with_session(seat_record(&layout.repo, &tree, "d"), Some("claude.v2-1"));
+    assert_eq!(
+        checkpoint_refs_to_retire(&dotted, &Default::default()),
+        Some("claude.v2-1"),
+        "an id the provider may write is one the prune may retire"
+    );
+    for bad in [
+        "", "../heads", "a/b", "x y", "*", "..", ".hidden", "x.lock", "a..b",
+    ] {
+        let entry = with_session(seat_record(&layout.repo, &tree, "b"), Some(bad));
+        assert_eq!(
+            checkpoint_refs_to_retire(&entry, &Default::default()),
+            None,
+            "{bad:?}"
+        );
+        assert!(delete_session_checkpoint_refs(&layout.repo, bad).is_err());
+    }
+}

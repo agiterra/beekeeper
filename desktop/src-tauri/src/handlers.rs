@@ -82,6 +82,7 @@ pub(crate) fn invoke_handler(
         get_project_repo_snapshot,
         get_project_repo_diff,
         get_project_local_repo_diff,
+        coding_session_checkpoint_diff,
         get_project_local_repo_snapshot,
         get_project_repo_sync_status,
         list_project_local_repositories,

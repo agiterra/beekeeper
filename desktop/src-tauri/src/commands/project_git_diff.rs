@@ -329,7 +329,7 @@ fn local_diff_range(
 }
 
 /// Caps a patch at [`MAX_PATCH_LINES`], reporting whether it was cut.
-fn truncate_patch(patch: String) -> (String, bool) {
+pub(super) fn truncate_patch(patch: String) -> (String, bool) {
     let mut line_starts = patch
         .char_indices()
         .filter(|(_, c)| *c == '\n')

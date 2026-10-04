@@ -354,13 +354,138 @@ pub async fn prune_coding_session_seat_worktree(
     session_ref: String,
     seat_label: String,
 ) -> Result<String, String> {
-    remove_recorded_seat_worktree(
+    // Read before the removal: the record is forgotten with the tree, and it
+    // is the only thing that names the provider session whose checkpoints
+    // live in the repository's shared refs.
+    let key = seat_worktree_key(&session_ref, &seat_label);
+    let entry = load_workdir_store(&app)
+        .ok()
+        .and_then(|store| store.worktrees.get(&key).cloned());
+    let removed = remove_recorded_seat_worktree(
         &app,
         &state,
         &session_ref,
         &seat_label,
         "removed on a person's own click, after the path and file count were shown",
-    )
+    )?;
+    if let Some(entry) = entry {
+        let remaining = load_workdir_store(&app).map(|store| store.worktrees);
+        match remaining {
+            Ok(remaining) => retire_checkpoint_refs_after_prune(&entry, &remaining),
+            Err(error) => tracing::warn!(
+                target: "worktree",
+                %error,
+                "checkpoint refs left in place: the record could not be re-read after the prune"
+            ),
+        }
+    }
+    Ok(removed)
+}
+
+/// The namespace one provider session's turn checkpoints live under
+/// (checkpoints brief, Host/provider step 2).
+pub(crate) const CHECKPOINT_REF_ROOT: &str = "refs/beekeeper/checkpoints";
+
+/// Whether `session_id` can name a checkpoint ref directory without any
+/// reading of it being a guess: one path component of ASCII letters, digits,
+/// `-`, `_` and `.`, with no `..`, no leading or trailing `.` and no `.lock`
+/// suffix. This is exactly the rule the provider applies before writing one
+/// (`buzz-session-provider` `turn_checkpoint_git::checkpoint_ref`), so every
+/// directory it can write is one this can retire; anything else could never
+/// have been written, so nothing is deleted for it.
+fn is_checkpoint_session_component(session_id: &str) -> bool {
+    !session_id.is_empty()
+        && session_id.len() <= 128
+        && !session_id.starts_with('.')
+        && !session_id.ends_with('.')
+        && !session_id.ends_with(".lock")
+        && !session_id.contains("..")
+        && session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+/// Which session's checkpoint refs a removed seat worktree takes with it.
+///
+/// `None` — leave every ref — when the record names no provider session
+/// (a tree cut before its execution had one: the host does not guess which
+/// session's refs were its own), when the id cannot be a ref component, or
+/// when another surviving record still names the same session (a relocated
+/// tree still diffs against them).
+pub(crate) fn checkpoint_refs_to_retire<'a>(
+    entry: &'a CodingSessionSeatWorktree,
+    remaining: &std::collections::BTreeMap<String, CodingSessionSeatWorktree>,
+) -> Option<&'a str> {
+    let session_id = entry.session_id.as_deref()?.trim();
+    if !is_checkpoint_session_component(session_id) {
+        return None;
+    }
+    let still_named = remaining
+        .values()
+        .any(|other| other.session_id.as_deref().map(str::trim) == Some(session_id));
+    (!still_named).then_some(session_id)
+}
+
+/// Delete `refs/beekeeper/checkpoints/<session_id>/…` from the repository
+/// whose common directory `repo_root` names, and answer how many went.
+///
+/// Reads and deletes refs only — no repository code runs — so this is
+/// ordinary host Git with hooks off. Another session's refs are outside the
+/// prefix and are never listed.
+///
+/// # Errors
+/// The id is not a ref component, or Git failed to list or delete.
+pub(crate) fn delete_session_checkpoint_refs(
+    repo_root: &Path,
+    session_id: &str,
+) -> Result<usize, String> {
+    if !is_checkpoint_session_component(session_id) {
+        return Err("the session id cannot name a checkpoint ref".to_string());
+    }
+    let auth = crate::commands::project_git_exec::build_local_git_auth_config()?;
+    let prefix = format!("{CHECKPOINT_REF_ROOT}/{session_id}/");
+    let listed = crate::commands::project_git_exec::run_git(
+        &["for-each-ref", "--format=%(refname)", &prefix],
+        Some(repo_root),
+        &auth,
+    )?;
+    let mut deleted = 0;
+    for name in listed.lines().map(str::trim) {
+        if !name.starts_with(&prefix) {
+            continue;
+        }
+        crate::commands::project_git_exec::run_git(
+            &["update-ref", "-d", name],
+            Some(repo_root),
+            &auth,
+        )?;
+        deleted += 1;
+    }
+    Ok(deleted)
+}
+
+/// Retention (checkpoints brief, Host/provider step 6): once a seat's tree is
+/// gone, its session's checkpoint refs go too. Never fails the prune that
+/// already happened; a ref that would not go is logged, and a record with no
+/// session id leaves every ref where it is.
+pub(crate) fn retire_checkpoint_refs_after_prune(
+    entry: &CodingSessionSeatWorktree,
+    remaining: &std::collections::BTreeMap<String, CodingSessionSeatWorktree>,
+) {
+    let Some(session_id) = checkpoint_refs_to_retire(entry, remaining) else {
+        tracing::info!(
+            target: "worktree",
+            "checkpoint refs left in place: the pruned record names no provider session this host may retire"
+        );
+        return;
+    };
+    if let Err(error) = delete_session_checkpoint_refs(&entry.repo_root, session_id) {
+        tracing::warn!(
+            target: "worktree",
+            %error,
+            "the pruned session's checkpoint refs could not be deleted"
+        );
+    }
 }
 
 /// Remove `target/` and `desktop/node_modules` from one recorded worktree.
