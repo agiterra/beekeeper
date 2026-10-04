@@ -276,7 +276,7 @@ jobs:
       - name: Desktop E2E build
         run: pnpm -C desktop build:e2e
       - name: Desktop smoke e2e
-        run: cd desktop && pnpm exec playwright test --project=smoke --shard=${{ matrix.shard }}/4
+        run: cd desktop && pnpm exec playwright test --project=smoke --project=smoke-serial --shard=${{ matrix.shard }}/4
       - name: Summarize flaky tests
         if: ${{ !cancelled() }}
         run: node scripts/summarize-flaky-tests.mjs playwright-report.json "Desktop Smoke E2E (${{ matrix.shard }})"

@@ -498,6 +498,38 @@ desktop-e2e-smoke:
 # run it before landing anything that touches desktop UI.
 smoke: desktop-e2e-smoke
 
+# Build the e2e bundle once and run only the smoke specs a change can reach
+# (by the `data-testid`s and visible strings its files hold) plus a fixed core
+# set — app boot, send a message, open a coding session. A global change
+# (tailwind, styles, markdown, main.tsx, App.tsx, the shell, the mock bridge,
+# the Playwright config) runs the whole project. Failures are sorted against
+# desktop/tests/e2e/known-failures.json; the recipe fails on a NEW failure and
+# on a run it cannot trust (a spec that does not load, no tests run, a core test
+# missing). The preview port is per-worktree unless E2E_PORT sets it. `base`
+# defaults to the nearest main (local or any remote's). This is the per-round
+# check; `just smoke` is still the landing gate.
+e2e-affected base="":
+    #!/usr/bin/env bash
+    set -uo pipefail
+    cd {{desktop_dir}}
+    base_arg=()
+    if [ -n '{{base}}' ]; then base_arg=('{{base}}'); fi
+    selection="$(node scripts/e2e-affected.mjs ${base_arg[@]+"${base_arg[@]}"})" || exit $?
+    pnpm build:e2e || exit $?
+    reports="$(mktemp -d)"
+    if [ "$selection" = FULL ]; then filters=(); else filters=($selection); fi
+    if [ "$selection" = FULL ]; then scope="the whole smoke project"; else scope="${#filters[@]} filter(s)"; fi
+    echo "e2e-affected: running $scope on port $(node scripts/e2e-affected.mjs port)"
+    # Two passes: the parallel smoke project, then smoke-serial alone.
+    codes=()
+    for project in smoke smoke-serial; do
+        PLAYWRIGHT_JSON_OUTPUT_NAME="$reports/$project.json" pnpm exec playwright test \
+            --project="$project" --pass-with-no-tests --reporter=list,json ${filters[@]+"${filters[@]}"}
+        codes+=("$?")
+    done
+    node scripts/e2e-affected.mjs compare --require-core --exit-codes "$(IFS=,; echo "${codes[*]}")" \
+        "$reports/smoke.json" "$reports/smoke-serial.json"
+
 # Run desktop relay-backed e2e tests
 desktop-e2e-integration: _ensure-migrations
     cd {{desktop_dir}} && pnpm test:e2e:integration
@@ -798,12 +830,15 @@ desktop-screenshot *ARGS:
     set -euo pipefail
     pnpm -C {{desktop_dir}} build:e2e
     cd {{desktop_dir}}
-    if ! curl -sf http://127.0.0.1:4173/ >/dev/null 2>&1; then
-        python3 -m http.server 4173 -d dist >/dev/null 2>&1 &
+    # This worktree's preview port (E2E_PORT, else derived from the checkout
+    # path), so a sibling worktree's server on 4173 is never photographed.
+    port="$(node scripts/e2e-affected.mjs port)"
+    if ! curl -sf "http://127.0.0.1:$port/" >/dev/null 2>&1; then
+        python3 -m http.server "$port" -d dist >/dev/null 2>&1 &
         trap "kill $! 2>/dev/null || true" EXIT
-        for i in $(seq 1 20); do curl -sf http://127.0.0.1:4173/ >/dev/null && break; sleep 0.5; done
+        for i in $(seq 1 20); do curl -sf "http://127.0.0.1:$port/" >/dev/null && break; sleep 0.5; done
     fi
-    node tests/helpers/screenshot.mjs {{ARGS}}
+    BUZZ_SCREENSHOT_BASE_URL="${BUZZ_SCREENSHOT_BASE_URL:-http://127.0.0.1:$port}" node tests/helpers/screenshot.mjs {{ARGS}}
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
 

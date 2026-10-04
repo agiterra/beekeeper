@@ -1,17 +1,47 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Overridable because several worktrees are usually checked out at once and
-// `reuseExistingServer` will happily adopt whichever one already answers on
-// 4173 — serving a *sibling's* `dist` against this worktree's specs, which
-// fails as though the code under test were broken.
-const PREVIEW_PORT = process.env.BUZZ_E2E_PORT ?? "4173";
-const PREVIEW_URL = `http://127.0.0.1:${PREVIEW_PORT}`;
+import { PREVIEW_ORIGIN, PREVIEW_PORT } from "./tests/helpers/previewOrigin";
+
+// Several worktrees are usually checked out at once and `reuseExistingServer`
+// will happily adopt whichever server already answers on the port — serving a
+// *sibling's* `dist` against this worktree's specs, which fails as though the
+// code under test were broken. So the port is per-worktree: `E2E_PORT` if set,
+// else derived from this checkout's path (4173 under CI). See
+// `tests/helpers/previewOrigin.ts`.
+const PREVIEW_URL = PREVIEW_ORIGIN;
+
+// The mock smoke project runs four files at once locally (each file stays on
+// one worker, in order — `fullyParallel` is off): the full project took 27 min
+// at 4 workers on 2026-10-04 against 1.6 h at 1 (ledger 311(s)). CI keeps 1
+// until a nightly proves the container can take more. Override with
+// `E2E_WORKERS=<n>`. The relay-backed integration project shares one database
+// and stays at one worker regardless.
+function smokeWorkers(): number {
+  const raw = process.env.E2E_WORKERS;
+  if (raw === undefined || raw.trim() === "") return process.env.CI ? 1 : 4;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`E2E_WORKERS must be a positive integer, got "${raw}"`);
+  }
+  return n;
+}
+const SMOKE_WORKERS = smokeWorkers();
+
+const SMOKE_USE = {
+  ...devices["Desktop Chrome"],
+  // Chromium denies `navigator.clipboard.write`/`writeText` unless the
+  // context is granted these. The Tauri webview the app actually ships in
+  // does not, so without the grant the harness tests a permission state
+  // production never sees: the copy path rejects, and specs fail on
+  // symptoms (`Copy link` never flips to `Copied`) that no user hits.
+  permissions: ["clipboard-read", "clipboard-write"],
+};
 
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 30_000,
   retries: process.env.CI ? 2 : 0,
-  workers: 1,
+  workers: SMOKE_WORKERS,
   reporter: [
     ["list"],
     ["html", { open: "never", outputFolder: "playwright-report" }],
@@ -158,7 +188,6 @@ export default defineConfig({
         "**/cold-switch-longtask.perf.ts",
         "**/timeline-no-shift.spec.ts",
         "**/human-edit-agent-content.spec.ts",
-        "**/empty-edit-delete.spec.ts",
         "**/reaction-order.spec.ts",
         "**/reaction-names.spec.ts",
         "**/inbox-reactions.spec.ts",
@@ -196,7 +225,6 @@ export default defineConfig({
         "**/onboarding-avatar-skip.spec.ts",
         "**/onboarding-backup.spec.ts",
         "**/onboarding-agent-defaults.spec.ts",
-        "**/nostr-bind.spec.ts",
         "**/mobile-pairing-qr.spec.ts",
         "**/profile-nsec-reveal.spec.ts",
         "**/profile-backup-settings.spec.ts",
@@ -222,18 +250,29 @@ export default defineConfig({
         "**/mock-bridge-global-config-shape.spec.ts",
         "**/needs-restart-screenshots.spec.ts",
       ],
-      use: {
-        ...devices["Desktop Chrome"],
-        // Chromium denies `navigator.clipboard.write`/`writeText` unless the
-        // context is granted these. The Tauri webview the app actually ships in
-        // does not, so without the grant the harness tests a permission state
-        // production never sees: the copy path rejects, and specs fail on
-        // symptoms (`Copy link` never flips to `Copied`) that no user hits.
-        permissions: ["clipboard-read", "clipboard-write"],
-      },
+      use: SMOKE_USE,
+    },
+    {
+      // Smoke files that pass alone but fail beside three other workers — not
+      // a reason to lower `workers` for everything. Run them as their own pass,
+      // after `smoke` and with nothing else running (`pnpm test:e2e`,
+      // `pnpm test:e2e:smoke` and `just e2e-affected` do, via
+      // `scripts/e2e-passes.sh`): Playwright skips a project's dependents when
+      // the dependency has any failure, so `dependencies` cannot order them.
+      // A bare `playwright test` runs it beside the other projects. CI runs
+      // one worker, so there it is serial anyway.
+      // Evidence, 2026-10-04 at dad4726ba: empty-edit-delete failed 2 of 3 in
+      // the four-worker full run and 1 of 12 alone at four, 0 of 21 at one;
+      // nostr-bind :247 failed in the four-worker full run, 0 of 4 alone at
+      // four and 0 of 7 at one.
+      name: "smoke-serial",
+      workers: 1,
+      testMatch: ["**/empty-edit-delete.spec.ts", "**/nostr-bind.spec.ts"],
+      use: SMOKE_USE,
     },
     {
       name: "integration",
+      workers: 1,
       testMatch: [
         "**/agents.spec.ts",
         "**/agent-snapshot-recipient.spec.ts",

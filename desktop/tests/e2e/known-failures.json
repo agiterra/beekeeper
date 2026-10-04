@@ -1,0 +1,142 @@
+{
+  "$comment": [
+    "Tests known to fail on main, so a gate can tell a new failure from an old one without rebuilding main.",
+    "Matched by spec file + title (describe titles joined with ' › '); line is informational and drifts.",
+    "Add an entry only after running the test on an untouched main, and record that commit in verifiedOn.",
+    "`node scripts/e2e-affected.mjs compare <report>` names entries that pass: re-verify on main and remove them.",
+    "project-team-setup.spec.ts fails a different subset per run (6 of 8 at four workers in the full run, 7 of 8 with the file alone at one), so all eight are listed with intermittent: true — a pass of one is not a fix.",
+    "Checked 2026-10-04 at dad4726ba and NOT listed because they passed: ledger 111/115's six (coding-session-founder-acts:380, coding-session-observations:33/114/144, coding-sessions:458, project-packs:40) and the dense-history case (channel-dense-second-reach:28).",
+    "The baseline came from three four-worker full runs; a fourth may find more. An intermittent entry is a blind spot: a real regression in that test is reported as known. project-team-setup.spec.ts is wholly blind this way — every test in it is listed — so a change that reaches that file must be checked by hand (run it alone at E2E_WORKERS=1 and read the failures)."
+  ],
+  "failures": [
+    {
+      "spec": "agentProgress.spec.ts",
+      "title": "every coordination state renders, each from the evidence that proves it",
+      "line": 576,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: failed",
+      "ledger": "311(s)"
+    },
+    {
+      "spec": "project-team-setup.spec.ts",
+      "title": "open is read-only; explicit preparation and validation stay separate from publication; reopening resumes",
+      "line": 418,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: failed",
+      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "project-team-setup.spec.ts",
+      "title": "saving and reopening reverify the same separate copy; failed retry clears success",
+      "line": 494,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: failed",
+      "ledger": "311(s)",
+      "intermittent": true
+    },
+    {
+      "spec": "project-team-setup.spec.ts",
+      "title": "checked draft publishes, installs the adopted source, and starts one project lead",
+      "line": 597,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: failed",
+      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "project-team-setup.spec.ts",
+      "title": "a failed saved-draft read stays actionable and retry never creates a draft",
+      "line": 698,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: passed",
+      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "project-team-setup.spec.ts",
+      "title": "setup form and draft remain usable at narrow",
+      "line": 730,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: failed",
+      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "project-team-setup.spec.ts",
+      "title": "setup form and draft remain usable at text zoom 250%",
+      "line": 730,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: failed",
+      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "project-team-setup.spec.ts",
+      "title": "authoring opens read-only, provisions explicitly and retries one durable request",
+      "line": 817,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "full smoke at 4 workers: passed; file alone at 1 worker: failed",
+      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "project-team-setup.spec.ts",
+      "title": "runtime discovery failure gives a recoverable setup blocker without provisioning",
+      "line": 898,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "full smoke at 4 workers: passed; file alone at 1 worker: failed",
+      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "messaging.spec.ts",
+      "title": "sends a thread message to its parent channel with a root-thread link",
+      "line": 2043,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "failed in 1 of 2 four-worker full runs (predicate timeout at :2235); 0 of 8 alone at one worker, 0 of 8 alone at four. A load flake, not moved to smoke-serial: the file is 62 tests.",
+      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "agentProgress.spec.ts",
+      "title": "a failed session and lease bundle is incomplete, never a quiet fleet",
+      "line": 678,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "failed in the third four-worker full run (SV-39 verifier, port 4178); alone at one worker failed 1 of 3. Intermittent on main, not a parallel effect.",
+      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "badge.spec.ts",
+      "title": "interested thread reply shows the channel preview dot without incrementing Inbox",
+      "line": 471,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "failed in the third four-worker full run (SV-39 verifier); passed 3 of 3 alone at one worker. A parallel-load flake.",
+      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "channel-activity-popover.spec.ts",
+      "title": "channel activity hover preview › removes the dot and preview after the final activity is read",
+      "line": 379,
+      "verifiedOn": "dad4726ba",
+      "verifiedAt": "2026-10-04",
+      "observed": "failed in the third four-worker full run (SV-39 verifier); passed 3 of 3 alone at one worker. A parallel-load flake.",
+      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    }
+  ]
+}

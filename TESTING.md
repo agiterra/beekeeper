@@ -44,6 +44,83 @@ at 75 failing tests that no green `just ci` ever mentioned. So run `just smoke`
 deliberately: before landing a change that touches desktop UI, and before a
 desktop release. Do not add it to `just ci`.
 
+### Per-round E2E: `just e2e-affected`
+
+```bash
+just e2e-affected                  # changes since the nearest main
+just e2e-affected main~3           # or any other base
+node desktop/scripts/e2e-affected.mjs --explain   # the selection alone, with reasons
+node desktop/scripts/e2e-affected.mjs port        # this worktree's preview port
+```
+
+Between rounds, run only the smoke specs a change can reach. The selector
+(`desktop/scripts/e2e-affected.mjs`) lists the files changed since
+`merge-base(base, HEAD)`, untracked files included. The default base is the
+nearest main: of `main` and every `<remote>/main`, the one whose merge-base
+with HEAD is newest, so neither a remote name nor a stale local `main` is
+baked in. For each changed source file it collects the `data-testid` values
+the file renders — for a hook or model that renders none, the values of the
+nearest components importing it, up to two levels up — and the user-visible
+string literals the file itself holds (a spec that clicks "In 30 minutes" by
+text). It selects every smoke spec naming one of them, every changed spec,
+every spec importing a changed test helper (through other helpers too), and a
+fixed core set: app boot (`boot-splash.spec.ts`, the shell test in
+`smoke.spec.ts`), sending a message (`messaging.spec.ts`), and opening and
+prompting a coding session (two tests in `coding-sessions.spec.ts`).
+
+A change to a global file prints `FULL` and runs the whole project: Tailwind,
+PostCSS and Vite config, `index.html`, `desktop/package.json`, the lockfile,
+`desktop/public/`, `src/shared/styles/`, the shared markdown renderer,
+`main.tsx`, `App.tsx`, `AppShell*`, the router, everything under
+`src/testing/` (the whole mock bridge), `tests/helpers/bridge.ts` and
+`previewOrigin.ts`, `tests/fixtures/`, the preview server, and the Playwright
+config other than spec registration. On stderr the selector names a source
+file no spec reaches, a non-source file under `src/` (JSON, images — not
+traced), and a file reached only through its importers' ids, since that path
+stops at the first component that renders ids and can miss a spec. Read those
+lines; the selection is a heuristic.
+
+The recipe builds the e2e bundle once and runs the selection in two passes
+(`smoke`, then `smoke-serial`).
+
+**Judging the run.** `desktop/tests/e2e/known-failures.json` lists the tests
+that fail on `main`, each with the commit it was verified on and its ledger
+item. The recipe sorts every failure against it and fails on a new one, so a
+gate does not rebuild `main` to learn its baseline. It also fails a run it
+cannot trust, even with no failing test: a top-level Playwright error (a spec
+or helper that does not load, a server that does not start), no test results
+in either pass, a non-zero Playwright exit that no failing test explains, or a
+core-set test that did not run. A known failure that passes is reported so it
+can be re-verified and removed; add an entry only after running the test on an
+untouched `main`.
+
+An entry marked `intermittent` is a blind spot: a real regression in that test
+reads as known. Every test in `project-team-setup.spec.ts` is listed that way,
+so the gate cannot see a regression in that file at all — when a change
+reaches it, run it alone (`E2E_WORKERS=1 pnpm -C desktop test:e2e:smoke --
+project-team-setup.spec.ts`) and read the failures yourself. The list came
+from three four-worker full runs at `dad4726ba` on 2026-10-04; each of the
+second and third found entries the earlier ones missed, so a fourth may too.
+
+**Ports.** The preview port is `E2E_PORT` if set (`BUZZ_E2E_PORT` is the older
+spelling), 4173 under `CI`, and otherwise derived from the checkout's path
+(4300–4999), so two worktrees never share a server by default and one worktree
+reuses its own. `tests/helpers/previewOrigin.ts` gives the port and origin to
+`playwright.config.ts`, `playwright.perf.config.ts`, and every spec that needs
+the absolute origin; `just desktop-screenshot` uses it too.
+
+**Workers.** The smoke project runs `E2E_WORKERS` files at once (default 4
+locally, 1 under `CI`; each file stays on one worker, in order; any other value
+than a positive integer is an error). The whole project took 27 minutes at four
+workers on 2026-10-04 (1,369 tests, `dad4726ba`) against 1.6 hours at one
+(ledger 311(s)). The integration project stays at one. A file that fails only
+in parallel goes in the `smoke-serial` project, which `pnpm test:e2e`,
+`pnpm test:e2e:smoke` and `just e2e-affected` run as a second pass with nothing
+else running (`desktop/scripts/e2e-passes.sh`); a bare `playwright test` runs it
+beside the others. Do not lower the global count.
+`just e2e-affected` is the per-round check; `just smoke` is still the run
+before landing.
+
 ---
 
 ## Live Local Relay

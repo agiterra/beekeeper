@@ -8,7 +8,7 @@ import { parseArgs } from "node:util";
 const { values: a } = parseArgs({
   options: {
     name: { type: "string", default: "shot" },
-    port: { type: "string", default: "4173" },
+    port: { type: "string", default: process.env.E2E_PORT || "4173" },
     channel: { type: "string", default: "general" },
     zoom: { type: "string", default: "1" },
     "open-thread": { type: "boolean", default: false },

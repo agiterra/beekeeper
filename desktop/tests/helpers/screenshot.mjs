@@ -83,8 +83,11 @@ function bail(msg) {
 // each wants its own preview server: 4173 is frequently already serving some
 // *other* worktree's `dist`, and the recipe reuses whatever answers there. A
 // screenshot taken against a sibling's build looks like a product bug.
+// `just desktop-screenshot` passes this worktree's port; run directly, the
+// script honours E2E_PORT before falling back to 4173.
 const BASE_URL =
-  process.env.BUZZ_SCREENSHOT_BASE_URL ?? "http://127.0.0.1:4173";
+  process.env.BUZZ_SCREENSHOT_BASE_URL ??
+  `http://127.0.0.1:${process.env.E2E_PORT || "4173"}`;
 const DEFAULT_MOCK_PUBKEY = "deadbeef".repeat(8);
 const ONBOARDING_PREFIX = "buzz-onboarding-complete.v1:";
 
