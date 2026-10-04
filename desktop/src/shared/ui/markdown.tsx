@@ -1536,16 +1536,12 @@ export function createMarkdownComponents(
     strong: ({ children }) => (
       <strong className="font-semibold">{children}</strong>
     ),
-    table: ({ children }) => <MarkdownTable>{children}</MarkdownTable>,
-    td: ({ children }) => (
-      <td className="border-t border-border/70 px-3 py-2 align-top">
-        {children}
-      </td>
+    table: ({ children }) => (
+      <MarkdownTable interactive={interactive}>{children}</MarkdownTable>
     ),
+    td: ({ children }) => <td className="px-3 py-2 align-top">{children}</td>,
     th: ({ children }) => (
-      <th className="bg-muted/60 px-3 py-2 font-semibold text-foreground">
-        {children}
-      </th>
+      <th className="px-3 py-2 font-semibold text-foreground">{children}</th>
     ),
     ul: ({ children }) => (
       <ul className={cn("list-disc", listClassName)}>{children}</ul>

@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "../tooltip.tsx";
 import { MarkdownCodeBlock, StaticCodeBlock } from "./CodeBlock.tsx";
+import { codeBlockLanguageIcon } from "./CodeBlockLanguage.tsx";
 
 function css(name) {
   return readFileSync(
@@ -15,14 +16,14 @@ function css(name) {
   );
 }
 
-function renderBlock() {
+function renderBlock(language = "bash") {
   return renderToStaticMarkup(
     React.createElement(
       TooltipProvider,
       null,
       React.createElement(
         MarkdownCodeBlock,
-        { language: "bash" },
+        { language },
         "bee --format compact messages thread --channel 00000000-0000-0000-0000-000000000000\n",
       ),
     ),
@@ -95,4 +96,128 @@ test("the code scrollbar is styled with webkit pseudos, not scrollbar-color", ()
   // Setting the standard property makes engines drop the pseudo styles and
   // fall back to overlay scrollbars — the bug this class exists to avoid.
   assert.doesNotMatch(block, /scrollbar-color/);
+});
+
+// ── SV-12: code-block chrome, app-wide (D4) ─────────────────────────────
+
+test("SV-12: the header names the fence's language with an icon and the name", () => {
+  const html = renderBlock("bash");
+  assert.match(html, /data-code-block-header=""/);
+  assert.match(html, /data-code-block-language="bash"/);
+  // The name is printed, not hidden behind a hover: the icon is only a family.
+  assert.match(html, /<span class="truncate">bash<\/span>/);
+  assert.match(html, /<svg[^>]*aria-hidden="true"/);
+});
+
+test("SV-12: a fence with no language draws no language label", () => {
+  const html = renderBlock("");
+  assert.match(html, /data-code-block-header=""/);
+  assert.doesNotMatch(html, /data-code-block-language=/);
+  assert.doesNotMatch(html, /data-language=/);
+});
+
+test("SV-12: wrap and copy are always visible, never hover-revealed", () => {
+  const html = renderBlock();
+  assert.match(
+    html,
+    /role="toolbar"[^>]*aria-label="Code block actions"|aria-label="Code block actions"[^>]*role="toolbar"/,
+  );
+  assert.match(html, /data-testid="code-block-copy"/);
+  // The old chrome hid both buttons until the block was hovered.
+  assert.doesNotMatch(html, /opacity-0/);
+  assert.doesNotMatch(html, /group-hover:opacity-100/);
+});
+
+test("SV-12: the pre stays the direct child of [data-code-block], after the header", () => {
+  const html = renderBlock();
+  // `[data-code-block] > pre` is addressed by the session column and the width
+  // audit; the overflow fade masks only the pre, never the header.
+  assert.match(
+    html,
+    /^(?:<[^>]+>)*?<div[^>]*data-code-block=""[^>]*><div[^>]*data-code-block-header=""[\s\S]*<\/div><\/div><pre[^>]*>[\s\S]*<\/pre><\/div>$/,
+  );
+  assert.match(
+    css("markdown.css"),
+    /\[data-code-block\]\[data-overflow="true"\] > pre/,
+  );
+});
+
+test("SV-12: no line-number counter; diff markers keep a glyph gutter", () => {
+  const markdownCss = css("markdown.css");
+  assert.doesNotMatch(markdownCss, /counter\(code-line\)/);
+  assert.doesNotMatch(markdownCss, /counter-increment/);
+  assert.match(
+    markdownCss,
+    /\.code-block-lines:has\(> \.code-line-diff-add, > \.code-line-diff-remove\)\s*\[data-line\]::before/,
+  );
+  assert.match(
+    markdownCss,
+    /\.code-block-lines \[data-line\]\.code-line-diff-add::before \{\s*content: "\+";/,
+  );
+  assert.match(
+    markdownCss,
+    /\.code-block-lines \[data-line\]\.code-line-diff-remove::before \{\s*content: "-";/,
+  );
+});
+
+test("SV-12: language families map onto the existing icon set", () => {
+  const shell = codeBlockLanguageIcon("bash");
+  assert.ok(shell);
+  assert.equal(codeBlockLanguageIcon("ZSH"), shell);
+  assert.equal(codeBlockLanguageIcon("powershell"), shell);
+  assert.equal(codeBlockLanguageIcon("json"), codeBlockLanguageIcon("jsonc"));
+  assert.notEqual(codeBlockLanguageIcon("json"), shell);
+  // Anything else still gets a code-file mark, with its name beside it.
+  const generic = codeBlockLanguageIcon("rust");
+  assert.ok(generic);
+  assert.equal(codeBlockLanguageIcon("haskell"), generic);
+  assert.equal(codeBlockLanguageIcon(""), null);
+  assert.equal(codeBlockLanguageIcon("   "), null);
+});
+
+// ── SV-10: inline code as bordered pills ────────────────────────────────
+
+test("SV-10: inline code is a bordered pill sized to its sentence", () => {
+  const markdownCss = css("markdown.css");
+  const rule = [
+    ...markdownCss.matchAll(
+      /\.message-markdown \.inline-code-chip,\s*\.message-markdown :not\(pre\) > code \{[^}]*\}/g,
+    ),
+  ].find((match) => match[0].includes("font-family: ui-monospace"));
+  assert.ok(rule, "inline code rule present");
+  assert.match(rule[0], /border: 1px solid hsl\(var\(--border\)\)/);
+  assert.match(rule[0], /border-radius: 0\.375rem/);
+  assert.match(rule[0], /padding-inline: 0\.35rem/);
+  // Relative to the sentence, not a fixed step: zoom-safe and never towering.
+  assert.match(markdownCss, /--inline-code-font-size: 0\.857em;/);
+});
+
+// ── SV-09: answers read as documents ────────────────────────────────────
+
+test("SV-09: document rhythm is scoped to session answers, not channel chat", () => {
+  const markdownCss = css("markdown.css");
+  const docStart = markdownCss.indexOf("Answers read as documents (SV-09)");
+  assert.ok(docStart > 0);
+  const doc = markdownCss.slice(
+    docStart,
+    markdownCss.indexOf("Tables (SV-11)"),
+  );
+  // Every rule in the block is scoped; nothing restyles bare .message-markdown.
+  for (const selector of doc.matchAll(/^([^\s/*][^{]*)\{/gm)) {
+    assert.match(
+      selector[1],
+      /\[data-role="assistant-message"\] > \.message-markdown|\.message-markdown\.markdown-document|^\s*\)/,
+    );
+  }
+  assert.match(doc, /line-height: 1\.625;/);
+  assert.match(doc, /> h1 \{\s*font-size: 1\.5rem;/);
+  assert.match(doc, /> h2 \{\s*font-size: 1\.25rem;/);
+  assert.match(doc, /> h3 \{\s*font-size: 1\.125rem;/);
+  // Bold list leads stand out against slightly softer prose.
+  assert.match(
+    doc,
+    /:is\(strong, h1, h2, h3, h4, h5, th\) \{\s*color: hsl\(var\(--foreground\)\);/,
+  );
+  // rem, never px, so Cmd +/- zoom keeps scaling the document.
+  assert.doesNotMatch(doc, /font-size: [0-9.]+px/);
 });

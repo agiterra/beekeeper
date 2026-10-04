@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Copy, WrapText } from "lucide-react";
+import { Check, Copy, WrapText } from "lucide-react";
 import { toast } from "sonner";
 import {
   getSingletonHighlighter,
@@ -16,6 +16,7 @@ import { Button } from "@/shared/ui/button";
 import { useSmoothCorners } from "@/shared/ui/smoothCorners";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
+import { CodeBlockLanguageLabel } from "./CodeBlockLanguage";
 import { useHorizontalOverflow } from "./useHorizontalOverflow";
 import { getReactNodeText } from "./utils";
 
@@ -30,9 +31,13 @@ const MAX_LOADED_LANGUAGES = 30;
 const MAX_HIGHLIGHT_LINES = 150;
 export const CODE_BLOCK_CLASS =
   "code-block-lines block min-w-full whitespace-pre font-mono text-sm font-medium text-foreground";
-/** Shared chrome for the hover-revealed code-block actions (wrap, copy). */
+/**
+ * Shared chrome for the code-block header actions (wrap, copy). Always
+ * visible (SV-12): an action that appears only on hover is invisible to anyone
+ * who has not already found it. A pressed wrap toggle keeps a filled state.
+ */
 const CODE_BLOCK_ACTION_CLASS =
-  "h-7 w-7 bg-background/80 text-muted-foreground opacity-0 shadow-xs ring-1 ring-border/60 backdrop-blur-sm transition-opacity hover:bg-background hover:text-foreground hover:opacity-100 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 aria-pressed:opacity-100 disabled:opacity-60";
+  "text-muted-foreground hover:bg-accent/60 hover:text-foreground aria-pressed:bg-accent aria-pressed:text-foreground disabled:opacity-60";
 const DIFF_ADD_RE = /\s*\/\/\s*\[!code\s*\+\+\]\s*$/;
 const DIFF_REMOVE_RE = /\s*\/\/\s*\[!code\s*--\]\s*$/;
 
@@ -76,6 +81,20 @@ export function StaticCodeBlock({ children }: { children?: React.ReactNode }) {
   );
 }
 
+/** How long the copy button shows its check after a successful copy. */
+const COPIED_FEEDBACK_MS = 1200;
+
+/**
+ * A fenced code block, everywhere markdown renders — channels, threads and
+ * coding sessions alike (SV-12, decision D4).
+ *
+ * The header carries the fence's language (icon and name) and the block's two
+ * actions, wrap and copy, always visible rather than revealed on hover, the
+ * way T3 Code draws them. The `pre` stays the direct child of
+ * `[data-code-block]` because the session column and the width audit both
+ * address it as `[data-code-block] > pre`, and the overflow fade masks only
+ * the `pre`, never the header.
+ */
 export function MarkdownCodeBlock({
   children,
   language,
@@ -84,16 +103,28 @@ export function MarkdownCodeBlock({
   language?: string;
 }) {
   const [isCopying, setIsCopying] = React.useState(false);
+  const [isCopied, setIsCopied] = React.useState(false);
   // Default off: a wide block scrolls (t3code's default too). The toggle is
   // per block and deliberately not persisted — Beekeeper has no settings surface
   // for a global word-wrap preference yet.
   const [isWrapped, setIsWrapped] = React.useState(false);
+  const blockRef = React.useRef<HTMLDivElement | null>(null);
   const codeBlockRef = React.useRef<HTMLPreElement | null>(null);
+  const copiedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const code = React.useMemo(() => getCodeBlockText(children), [children]);
-  useSmoothCorners(codeBlockRef);
+  useSmoothCorners(blockRef);
   const [hasHiddenOverflow, measureOverflow] = useHorizontalOverflow(
     codeBlockRef,
     [code, isWrapped],
+  );
+
+  React.useEffect(
+    () => () => {
+      if (copiedTimerRef.current != null) clearTimeout(copiedTimerRef.current);
+    },
+    [],
   );
 
   const handleCopy = React.useCallback(
@@ -104,8 +135,16 @@ export function MarkdownCodeBlock({
 
       try {
         await copyCodeBlockToClipboard(code);
-        toast.success("Copied code to clipboard");
+        if (copiedTimerRef.current != null) {
+          clearTimeout(copiedTimerRef.current);
+        }
+        setIsCopied(true);
+        copiedTimerRef.current = setTimeout(() => {
+          setIsCopied(false);
+          copiedTimerRef.current = null;
+        }, COPIED_FEEDBACK_MS);
       } catch (error) {
+        // A failed copy is said out loud; only success is quiet.
         console.error("Failed to copy code block", error);
         toast.error("Failed to copy code");
       } finally {
@@ -124,73 +163,80 @@ export function MarkdownCodeBlock({
     [],
   );
 
+  const wrapLabel = isWrapped
+    ? "Stop wrapping long lines in this code block"
+    : "Wrap long lines in this code block";
+
   return (
     <div
-      className="group relative min-w-0"
+      ref={blockRef}
+      className="relative min-w-0 overflow-hidden rounded-2xl border border-border/70 bg-muted/60 shadow-xs"
       data-code-block=""
+      data-language={language || undefined}
       data-overflow={hasHiddenOverflow ? "true" : "false"}
       data-wrap={isWrapped ? "true" : "false"}
+      style={{ borderRadius: "1rem" }}
     >
+      <div
+        className="flex select-none items-center justify-between gap-2 pb-0 pl-3 pr-1.5 pt-1.5"
+        data-code-block-header=""
+      >
+        <CodeBlockLanguageLabel language={language ?? ""} />
+        <div
+          aria-label="Code block actions"
+          className="flex shrink-0 items-center gap-0.5"
+          role="toolbar"
+        >
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label={wrapLabel}
+                aria-pressed={isWrapped}
+                className={CODE_BLOCK_ACTION_CLASS}
+                data-testid="code-block-wrap-toggle"
+                onClick={handleToggleWrap}
+                size="icon-xs"
+                type="button"
+                variant="ghost"
+              >
+                <WrapText aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {isWrapped ? "Scroll long lines" : "Wrap long lines"}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label="Copy code block"
+                className={CODE_BLOCK_ACTION_CLASS}
+                data-copied={isCopied ? "true" : "false"}
+                data-testid="code-block-copy"
+                disabled={isCopying}
+                onClick={handleCopy}
+                size="icon-xs"
+                type="button"
+                variant="ghost"
+              >
+                {isCopied ? (
+                  <Check aria-hidden="true" />
+                ) : (
+                  <Copy aria-hidden="true" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{isCopied ? "Copied" : "Copy code"}</TooltipContent>
+          </Tooltip>
+        </div>
+      </div>
       <pre
         onScroll={measureOverflow}
         ref={codeBlockRef}
-        className="buzz-code-scrollbar max-h-[400px] max-w-full overflow-x-auto overflow-y-auto rounded-2xl border border-border/70 bg-muted/60 px-3 py-1.5 pr-20 shadow-xs"
-        style={{ borderRadius: "1rem" }}
+        className="buzz-code-scrollbar max-h-[400px] max-w-full overflow-x-auto overflow-y-auto px-3 pb-2 pt-0.5"
       >
-        {language && (
-          <div className="mb-1 text-xs text-muted-foreground/70">
-            {language}
-          </div>
-        )}
         {children}
       </pre>
-      <div className="absolute right-2 top-2 flex items-center gap-1">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              aria-label={
-                isWrapped
-                  ? "Stop wrapping long lines in this code block"
-                  : "Wrap long lines in this code block"
-              }
-              aria-pressed={isWrapped}
-              className={CODE_BLOCK_ACTION_CLASS}
-              data-testid="code-block-wrap-toggle"
-              onClick={handleToggleWrap}
-              size="icon"
-              type="button"
-              variant="ghost"
-            >
-              <WrapText className="h-4 w-4" />
-              <span className="sr-only">
-                {isWrapped
-                  ? "Stop wrapping long lines in this code block"
-                  : "Wrap long lines in this code block"}
-              </span>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            {isWrapped ? "Scroll long lines" : "Wrap long lines"}
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              aria-label="Copy code block"
-              className={CODE_BLOCK_ACTION_CLASS}
-              disabled={isCopying}
-              onClick={handleCopy}
-              size="icon"
-              type="button"
-              variant="ghost"
-            >
-              <Copy className="h-4 w-4" />
-              <span className="sr-only">Copy code block</span>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Copy code</TooltipContent>
-        </Tooltip>
-      </div>
     </div>
   );
 }

@@ -37,12 +37,16 @@ export default {
       spacing: {
         4.5: "1.125rem",
       },
+      // SV-04 (D1): the platform's own UI face app-wide — SF Pro on macOS,
+      // Segoe UI on Windows — the same stack T3 Code uses. `font-mono` keeps
+      // Tailwind's default monospace stack. Mirrored on `body` in
+      // `src/shared/styles/globals/theme.css`; keep the two in step.
       fontFamily: {
         sans: [
-          '"Inter Variable"',
-          "Inter",
-          '"Avenir Next"',
+          "-apple-system",
+          "BlinkMacSystemFont",
           '"Segoe UI"',
+          "system-ui",
           "sans-serif",
         ],
       },

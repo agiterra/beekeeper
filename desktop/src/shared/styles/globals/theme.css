@@ -152,7 +152,10 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: "Inter Variable", Inter, "Avenir Next", "Segoe UI", sans-serif;
+    /* SV-04 (D1): system UI font app-wide; mirrors `fontFamily.sans` in
+       tailwind.config.js. */
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   }
 
   /*
