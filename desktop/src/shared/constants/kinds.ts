@@ -131,7 +131,7 @@ export const KIND_PROJECT_PUT_MEMBER = 9010;
 export const KIND_PROJECT_REMOVE_MEMBER = 9011;
 export const KIND_PROJECT_MEMBERS = 39010;
 
-// ── Coding sessions (44220–44230) ────────────────────────────────────────────
+// ── Coding sessions (44220–44231) ────────────────────────────────────────────
 //
 // Provider-neutral kinds for driving a coding agent against a working
 // directory. All thirteen, including the ephemeral 24223 lease, are
@@ -179,6 +179,9 @@ export const KIND_CODING_SESSION_NAME = 44229;
 // NIP-CSCL: member-authored append-only session-closure revision (`cscl1-1`).
 // Closing is founder-only; any relay-accepted member may reopen.
 export const KIND_CODING_SESSION_CLOSURE = 44230;
+// NIP-CSCK: provider-authored turn checkpoint (`csck1-1`) — the working tree
+// at the end of one turn, keyed by `cs-target` like a transcript item.
+export const KIND_CODING_SESSION_CHECKPOINT = 44231;
 // NIP-CSTX: actor-authored portable team transactions folded canonically by
 // buzz-core (`buzz-coding-session-team-transaction/v1`).
 export const KIND_CODING_SESSION_TEAM_TRANSACTION = 44244;

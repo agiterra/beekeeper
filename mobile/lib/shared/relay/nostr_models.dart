@@ -114,7 +114,7 @@ abstract final class EventKind {
   /// input bytes for the owner's PTY, ≤ 8 KiB of base64 per event.
   static const shellInput = 24312;
 
-  // --- Coding sessions (44220-44230, 44244-44247, 24223) --------------------
+  // --- Coding sessions (44220-44231, 44244-44247, 24223) --------------------
   // Keep in sync with `desktop/src/shared/constants/kinds.ts`. Mobile reads
   // the fact kinds and, since 2026-09-07, also publishes the member-signed
   // command kinds (44220 turns, 44221 stop, 44227/44229/44230 goal, name,
@@ -154,6 +154,15 @@ abstract final class EventKind {
 
   /// Kind:44230 umbrella-session closure marker (addressable by `d`).
   static const codingSessionClosure = 44230;
+
+  /// Kind:44231 turn checkpoint (NIP-CSCK) — the provider-measured working
+  /// tree at the end of one turn: tree and commit SHAs, the transcript range
+  /// it covers, and the files the turn changed, or why none could be read.
+  ///
+  /// Mobile neither writes nor reads the record yet; the integer is mirrored
+  /// here because this table and
+  /// `desktop/src/shared/constants/kinds.ts` must not drift (CLAUDE.md).
+  static const codingSessionCheckpoint = 44231;
 
   /// Kind:44244 signed, append-only team transaction within a session.
   static const codingSessionTeamTransaction = 44244;

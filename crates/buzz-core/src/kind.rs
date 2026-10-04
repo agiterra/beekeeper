@@ -732,6 +732,42 @@ pub const KIND_CODING_SESSION_NAME: u32 = 44229;
 /// canonical genesis event id. See `docs/nips/NIP-CSG.md`.
 pub const KIND_CODING_SESSION_CLOSURE: u32 = 44230;
 
+/// NIP-CSCK: Coding-session turn checkpoint — what the working tree was when
+/// one turn ended, measured by the provider and signed by it.
+///
+/// Regular stored event (append-only), channel-scoped via `h`, signed by the
+/// same key that signs the generation's 44225 transcript items. Content is
+/// strict public JSON
+/// ([`crate::coding_session_checkpoint::CodingSessionCheckpointPayload`])
+/// naming the exact generation, the turn, the transcript range it covers
+/// (`coverage {fromSeq, throughSeq}`), the tree and checkpoint-commit SHAs
+/// with the parent `HEAD`, and the files the turn changed — or, with `git`
+/// null, the closed reason none could be read. Ordered tags, mirroring
+/// NIP-CST: `h`, `csck-v`, `cs-target`, `csck-seq`, `csck-key`. The relay
+/// validates structure only; whether the signer is the generation's provider
+/// is the consumer's check against the 44225 signer.
+///
+/// **Only SHAs travel.** The checkpoint commit lives under a host-local ref
+/// (`refs/beekeeper/checkpoints/<sessionId>/<generation>/<throughSeq>`) that is
+/// never pushed, because a capture includes untracked files.
+///
+/// **Why this is not a 44246 observation.** An observation is seat prose,
+/// declared or observed, folded newest-wins per author; a checkpoint is a fact
+/// the host measured about one exact generation, keyed by its transcript seq
+/// exactly as a 44225 item is, and later rewinds name it by event id.
+///
+/// **Allocation.** 44231 was reserved for a session checkpoint by the
+/// continuity research (`coverage {fromSeq, throughSeq}` and a context
+/// summary); this kind claims that reservation for its intended use, keeps
+/// `coverage` identical and holds `summary` at `null` in v1 for the context
+/// use. 44232 (native snapshot), 44233/44234 (git transition/check) and
+/// 44235–44239 stay reserved. `git grep 44231` was re-run on 2026-10-04
+/// before this constant: it matched only those reservation notes and an
+/// unrelated signature hex in `docs/nips/NIP-IA.md`.
+///
+/// The wire contract is `docs/nips/NIP-CSCK.md`.
+pub const KIND_CODING_SESSION_CHECKPOINT: u32 = 44231;
+
 /// NIP-CSTX: Coding-session team transaction — one typed semantic record in a
 /// multi-participant session.
 ///
@@ -758,9 +794,10 @@ pub const KIND_CODING_SESSION_TEAM_TRANSACTION: u32 = 44244;
 /// against the accepted NIP-CSAT chain — the relay validates structure only.
 ///
 /// **Allocation.** 44245 is the lowest unused and unreserved kind in this fork
-/// and in vanilla: 44231 (checkpoint), 44232 (native snapshot), 44233/44234
-/// (git transition/check) and 44235–44239 (headroom) are reserved by the
-/// continuity research, 44240 is the shipped Pulse entry with 44241–44243
+/// and in vanilla: 44231 (checkpoint — reserved then, now the NIP-CSCK turn
+/// checkpoint), 44232 (native snapshot), 44233/44234 (git transition/check)
+/// and 44235–44239 (headroom) are reserved by the continuity research,
+/// 44240 is the shipped Pulse entry with 44241–44243
 /// reserved by the Pulse plan, and 44244 is the team transaction.
 ///
 /// The wire contract is `docs/nips/NIP-CSP.md`, the companion to
@@ -795,9 +832,10 @@ pub const KIND_CODING_SESSION_POLICY: u32 = 44245;
 /// observation's defect become a governance disclosure.
 ///
 /// **Allocation.** 44246 is the lowest unused and unreserved kind in this fork
-/// and in vanilla: 44231 (checkpoint), 44232 (native snapshot), 44233/44234
-/// (git transition/check) and 44235–44239 (headroom) are reserved by the
-/// continuity research, 44240 is the shipped Pulse entry with 44241–44243
+/// and in vanilla: 44231 (checkpoint — reserved then, now the NIP-CSCK turn
+/// checkpoint), 44232 (native snapshot), 44233/44234 (git transition/check)
+/// and 44235–44239 (headroom) are reserved by the continuity research,
+/// 44240 is the shipped Pulse entry with 44241–44243
 /// reserved by the Pulse plan, 44244 is the team transaction and 44245 the
 /// policy. A grep for `44246` over this tree and over `vanilla/main` matched
 /// nothing but lockfile hashes before this constant.
@@ -833,9 +871,10 @@ pub const KIND_CODING_SESSION_OBSERVATION: u32 = 44246;
 /// fold does or should do.
 ///
 /// **Allocation.** 44247 is the lowest unused and unreserved kind in this fork
-/// and in vanilla: 44231 (checkpoint), 44232 (native snapshot), 44233/44234
-/// (git transition/check) and 44235–44239 (headroom) are reserved by the
-/// continuity research, 44240 is the shipped Pulse entry with 44241–44243
+/// and in vanilla: 44231 (checkpoint — reserved then, now the NIP-CSCK turn
+/// checkpoint), 44232 (native snapshot), 44233/44234 (git transition/check)
+/// and 44235–44239 (headroom) are reserved by the continuity research,
+/// 44240 is the shipped Pulse entry with 44241–44243
 /// reserved by the Pulse plan, 44244 is the team transaction, 44245 the policy
 /// and 44246 the observation. Both greps were run on 2026-09-08 before this
 /// constant existed: `git grep -c 44247` over this tree matched nothing but
@@ -867,7 +906,8 @@ pub const KIND_CODING_SESSION_HANDOVER: u32 = 44247;
 /// different fields of one item both survive.
 ///
 /// **Allocation.** 44248 is the lowest unused and unreserved kind in this fork
-/// and in vanilla: 44231–44239 are reserved by the continuity research, 44240
+/// and in vanilla: 44231 is now the NIP-CSCK turn checkpoint and 44232–44239
+/// are reserved by the continuity research, 44240
 /// is the shipped Pulse entry with 44241–44243 reserved by the Pulse plan, and
 /// 44244–44247 are the team transaction, policy, observation and handover.
 /// Both greps were run on 2026-09-17 before this constant existed:
@@ -919,7 +959,8 @@ pub const KIND_PROJECT_TODO_OP: u32 = 44248;
 /// into one fold would make it unsayable.
 ///
 /// **Allocation.** 44249 is the lowest unused and unreserved kind in this fork
-/// and in vanilla: 44231–44239 are reserved by the continuity research, 44240
+/// and in vanilla: 44231 is now the NIP-CSCK turn checkpoint and 44232–44239
+/// are reserved by the continuity research, 44240
 /// is the shipped Pulse entry with 44241–44243 reserved by the Pulse plan, and
 /// 44244–44248 are the team transaction, policy, observation, handover and
 /// to-do op. Both greps were run on 2026-09-20 before this constant existed:
@@ -955,7 +996,8 @@ pub const KIND_PROJECT_WORK_RECORD: u32 = 44249;
 /// `main` of the agents repository stays the only thing seats stage from.
 ///
 /// **Allocation.** 44250 is the lowest unused and unreserved kind in this fork
-/// and in vanilla: 44231–44239 are reserved by the continuity research, 44240
+/// and in vanilla: 44231 is now the NIP-CSCK turn checkpoint and 44232–44239
+/// are reserved by the continuity research, 44240
 /// is the shipped Pulse entry with 44241–44243 reserved by the Pulse plan,
 /// 44244–44247 are the team transaction, policy, observation and handover,
 /// 44248 is the to-do op and 44249 the project work record. This op was
@@ -992,7 +1034,8 @@ pub const KIND_AGENTS_REPO_DRAFT_OP: u32 = 44250;
 /// by `conformance/project-artifact-pin-fold/`.
 ///
 /// **Allocation.** 44251 is the lowest unused and unreserved kind in this fork
-/// and in vanilla: 44231–44239 are reserved by the continuity research, 44240
+/// and in vanilla: 44231 is now the NIP-CSCK turn checkpoint and 44232–44239
+/// are reserved by the continuity research, 44240
 /// is Pulse with 44241–44243 reserved by the Pulse plan, 44244–44247 are the
 /// team transaction, policy, observation and handover, 44248 is the to-do op,
 /// 44249 the project work record and 44250 the agents-repository draft op.
@@ -1840,6 +1883,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_CODING_SESSION_AUTHORITY_TRANSITION,
     KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_CLOSURE,
+    KIND_CODING_SESSION_CHECKPOINT,
     KIND_CODING_SESSION_TEAM_TRANSACTION,
     KIND_CODING_SESSION_POLICY,
     KIND_CODING_SESSION_OBSERVATION,
@@ -2190,6 +2234,20 @@ const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_HANDOVER
 const _: () = assert!(KIND_CODING_SESSION_HANDOVER <= u16::MAX as u32);
 // The next free number, and nothing between it and the observation.
 const _: () = assert!(KIND_CODING_SESSION_HANDOVER == KIND_CODING_SESSION_OBSERVATION + 1);
+// A turn checkpoint is append-only for the reason a transcript item is: it is
+// keyed by the generation's own transcript seq, a later rewind names it by
+// event id, and a replaceable one would let a newer capture change the tree a
+// person already rewound to. Its number is the continuity research's
+// reservation, claimed for the use it was reserved for.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_CHECKPOINT));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_CHECKPOINT));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_CHECKPOINT
+));
+const _: () = assert!(KIND_CODING_SESSION_CHECKPOINT <= u16::MAX as u32);
+const _: () = assert!(KIND_CODING_SESSION_CHECKPOINT == KIND_CODING_SESSION_CLOSURE + 1);
+// Channel-gated through `h` like every coding-session fact, never project-`a`.
+const _: () = assert!(!is_project_a_scoped_kind(KIND_CODING_SESSION_CHECKPOINT));
 // A work record is append-only for the reason the whole 4424x block is: an
 // adoption, a binding and an evidence association are what a later reader
 // reconstructs "what remains" from, and a replaceable one would let a lead's

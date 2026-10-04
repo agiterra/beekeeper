@@ -9,6 +9,7 @@ import {
   isConversationalUnreadKind,
   KIND_CODING_SESSION_AUTHORITY_TRANSITION,
   KIND_CODING_SESSION_COMMAND,
+  KIND_CODING_SESSION_CHECKPOINT,
   KIND_CODING_SESSION_CLOSURE,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
@@ -102,6 +103,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
     {
       command: KIND_CODING_SESSION_COMMAND,
       closure: KIND_CODING_SESSION_CLOSURE,
+      checkpoint: KIND_CODING_SESSION_CHECKPOINT,
       lifecycleCommand: KIND_CODING_SESSION_LIFECYCLE_COMMAND,
       lease: KIND_CODING_SESSION_LEASE,
       providerCatalog: KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -117,6 +119,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
     {
       command: 44220,
       closure: 44230,
+      checkpoint: 44231,
       lifecycleCommand: 44221,
       lease: 24223,
       providerCatalog: 44222,

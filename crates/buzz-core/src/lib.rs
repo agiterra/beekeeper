@@ -31,6 +31,9 @@ pub mod coding_session_authority_transition;
 /// NIP-CSPC: the kind:44222 provider catalog wire schema and its canonical
 /// reader — the only list of models this product offers.
 pub mod coding_session_catalog;
+/// NIP-CSCK: provider-signed turn checkpoints (44231) — the tree and commit
+/// SHAs at a turn's end, its transcript range, and the files it changed.
+pub mod coding_session_checkpoint;
 /// Append-only coding-session closure revisions (44230): provider-independent
 /// shared close/reopen state rooted at the session genesis.
 pub mod coding_session_closure;
