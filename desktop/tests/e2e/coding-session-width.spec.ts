@@ -490,8 +490,8 @@ async function openSession(page: Page) {
 
 /**
  * 1100 is the width where the alignment question has teeth. Above ~1130 the
- * expanded measure starts binding. It catches both edge alignment and the
- * responsive rule: 72rem while no side surface is open, 48rem while one is.
+ * measure starts binding. It catches both edge alignment and the reading
+ * measure: 48rem whether or not a side surface is open (SV-13).
  */
 const WIDTHS = [1100, 1280, 1920, 2560, 3440] as const;
 
@@ -560,16 +560,16 @@ for (const width of WIDTHS) {
       "content wider than its box must live in a scrollable box",
     ).toEqual([]);
     expect(result.pageScrollsSideways).toBe(false);
-    // With no side surface open the transcript earns the wider 72rem reading
-    // measure; the viewport remains the binding constraint at smaller widths.
-    expect(result.measure.column).toBeLessThanOrEqual(1152);
-    if (width >= 1920) expect(result.measure.column).toBe(1152);
+    // SV-13: Narrow reads at 48rem whether or not a side surface is open; the
+    // viewport remains the binding constraint at smaller widths.
+    expect(result.measure.column).toBeLessThanOrEqual(768);
+    if (width >= 1920) expect(result.measure.column).toBe(768);
     // The goal pill, the transcript and the composer are one column. Whichever
     // constraint binds, it must bind identically for all three.
     expect(result.edges.composer).toEqual(result.edges.column);
     expect(result.edges.goalPill).toEqual(result.edges.column);
     expect(result.affordance.codeBlocksOverflowing).toBeGreaterThan(0);
-    // Tables may fit naturally once the clear workspace expands to 72rem.
+    // Tables wrap to the column by default (SV-11), so none is asserted.
   });
 }
 
@@ -587,7 +587,8 @@ for (const width of WIDTHS) {
  * apart before. So every surface is measured in the same pass.
  */
 const SESSION_WIDTHS = [
-  { choice: "narrow", cap: 1152, gutter: 32 },
+  // SV-13: Narrow is 48rem with or without a side surface.
+  { choice: "narrow", cap: 768, gutter: 32 },
   { choice: "wide", cap: 1280, gutter: 32 },
   // 20px is the DM timeline's inset; Full is meant to line up with it.
   { choice: "full", cap: null, gutter: 20 },
@@ -779,7 +780,7 @@ test("the measure scales with root font size, so Cmd+ widens the column", async 
   const workspace = await openSession(page);
   const base = await audit(page);
   expect(base.measure.rootFontSize).toBe(16);
-  expect(base.measure.column).toBe(1152);
+  expect(base.measure.column).toBe(768); // 48rem × 16px (SV-13)
 
   await page.evaluate(() => {
     document.documentElement.style.fontSize = "24px";
@@ -787,7 +788,7 @@ test("the measure scales with root font size, so Cmd+ widens the column", async 
   await waitForAnimations(page);
   const zoomed = await audit(page);
   expect(zoomed.measure.rootFontSize).toBe(24);
-  expect(zoomed.measure.column).toBe(1728); // 72rem × 24px
+  expect(zoomed.measure.column).toBe(1152); // 48rem × 24px
   expect(zoomed.escapees).toEqual([]);
   await workspace.screenshot({ path: `${SHOTS}/3440-zoomed-24px.png` });
   // eslint-disable-next-line no-console

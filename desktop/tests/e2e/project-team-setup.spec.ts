@@ -91,7 +91,30 @@ async function openRoles(
         ) {
           if (command === "provision_coding_session_provider")
             provisioned = true;
+          // `host` is required on the wire, and the app-wide
+          // AgentHostInstallPrompt reads `host.login` on every refetch of
+          // this shared query. An answer without it threw in that prompt
+          // whenever the query refetched mid-test, took the route to its
+          // error boundary and detached every control under test — the
+          // "button never becomes stable" failures. Same shape as the mock
+          // bridge's default host, consistent with `provisioned`.
+          const host = {
+            reachability: { state: "reachable" },
+            socket: "/home/e2e/.local/state/buzz/host/host.sock",
+            autostart: {
+              installed: true,
+              path: "/home/e2e/Library/LaunchAgents/io.agiterra.beekeeper.host.plist",
+            },
+            login: "granted",
+            providerState: provisioned
+              ? { state: "live", pid: 4242, startedAt: "2026-09-30T00:00:00Z" }
+              : { state: "notSupervised" },
+            message: provisioned
+              ? "the provider is running as pid 4242"
+              : "no provider is commissioned on this machine",
+          };
           return {
+            host,
             provisioned,
             running: provisioned,
             ...(provisioned

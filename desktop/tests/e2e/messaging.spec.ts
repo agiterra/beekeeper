@@ -510,6 +510,13 @@ test("markdown tables overflow wide content and fill the message when narrow", a
   await expect(wideTable).toBeVisible();
   await expect(narrowTable).toBeVisible();
 
+  // SV-11: tables open expanded (cells wrap to the column); collapsing keeps
+  // each cell on one line and the table scrolls sideways instead.
+  await page
+    .getByTestId("message-row")
+    .filter({ hasText: "WIDE TABLE COLUMN VALUE" })
+    .getByLabel("Collapse table cells")
+    .click();
   await expect
     .poll(() =>
       wideTable.evaluate(
@@ -1728,12 +1735,13 @@ test("copy a rendered code block and paste it back as code", async ({
 
   const codeBlock = page.locator("[data-code-block]");
   await expect(codeBlock).toHaveCount(1);
-  await expectCornerRadiusPx(codeBlock.locator("pre"), 16);
-  await expectSmoothCorners(codeBlock.locator("pre"));
+  // SV-12: the rounded, smoothed chrome is on the block (header + pre), and
+  // the copy button is always visible rather than revealed on hover.
+  await expectCornerRadiusPx(codeBlock, 16);
+  await expectSmoothCorners(codeBlock);
 
   const copyButton = page.getByLabel("Copy code block");
-  await expect(copyButton).toHaveCSS("opacity", "0");
-  await codeBlock.hover();
+  await expect(copyButton).toBeVisible();
   await expect(copyButton).toHaveCSS("opacity", "1");
   await copyButton.click();
   await expect

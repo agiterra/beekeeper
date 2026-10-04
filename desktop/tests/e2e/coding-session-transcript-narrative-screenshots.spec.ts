@@ -323,17 +323,16 @@ test("captures the busy transcript narrative collapsed and expanded", async ({
   page,
 }) => {
   const workspace = await openSeededSession(page, events());
-  // Settled, the turn folds its work behind one "Worked for …" row. The
-  // answer and the failed check stay on screen; the six successful calls and
-  // the intermediate prose do not.
+  // Settled, the turn folds its work behind one "Worked for …" row. Since
+  // SV-02 (decision D2) a failure before the answer folds with the rest, and
+  // the fold sentence names it, so the failed check is never silent; the
+  // answer stays on screen.
   const fold = page.getByTestId("coding-session-worked-fold");
   await expect(fold).toHaveCount(1);
   await expect(fold).toHaveAttribute("aria-expanded", "false");
   await expect(fold).toContainText("Worked for 1m 16s");
-  await expect(
-    page.getByText("Tool call failed", { exact: false }),
-  ).toBeVisible();
-  await expect(page.getByTestId("transcript-tool-item")).toHaveCount(1);
+  await expect(fold).toContainText("1 step failed");
+  await expect(page.getByTestId("transcript-tool-item")).toHaveCount(0);
   await expect(page.getByTestId("coding-session-tool-group")).toHaveCount(0);
   // The agent's final message — the answer — is never folded.
   await expect(
@@ -343,7 +342,8 @@ test("captures the busy transcript narrative collapsed and expanded", async ({
   await workspace.screenshot({ path: `${SHOTS}/01-collapsed.png` });
 
   // Opening the fold puts the work back in place: the six consecutive
-  // successful calls read as one sentence-summary row, itself closed.
+  // successful calls read as one sentence-summary row, itself closed, and
+  // the failed check is its own row beside them.
   await fold.click();
   await expect(fold).toHaveAttribute("aria-expanded", "true");
   const group = page.getByTestId("coding-session-tool-group");

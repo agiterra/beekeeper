@@ -178,8 +178,15 @@ test("an enforced boundary shows what it covers and the backend that enforced it
     page,
     events({ status: "execution_boundary_enforced", reason: "macos-seatbelt" }),
   );
-  await expect(workspace.getByText("Project boundary")).toBeVisible();
-  await expect(workspace.getByText(ENFORCED_TEXT)).toBeVisible();
+  // SV-16/SV-17: the boundary left the transcript for the composer's
+  // sandbox chip; its full text is one click away in the chip's popover.
+  await expect(workspace).not.toContainText("Project boundary");
+  const chip = workspace.getByTestId("coding-session-control-sandbox");
+  await expect(chip).toContainText("Sandboxed");
+  await chip.click();
+  await expect(
+    page.getByTestId("coding-session-sandbox-boundary"),
+  ).toContainText(ENFORCED_TEXT);
   await expect(workspace).not.toContainText("Not enforced");
   await expect(workspace).not.toContainText("execution_boundary_enforced");
 });
@@ -194,8 +201,15 @@ test("an unenforced boundary says the session is not isolated, and why", async (
       reason: "no-backend-for-platform",
     }),
   );
-  await expect(workspace.getByText("Project boundary")).toBeVisible();
-  await expect(workspace.getByText(NOT_ENFORCED_TEXT)).toBeVisible();
+  // SV-17: an unenforced boundary is a warning on the chip itself, never a
+  // detail hidden behind it.
+  await expect(workspace).not.toContainText("Project boundary");
+  const chip = workspace.getByTestId("coding-session-control-sandbox");
+  await expect(chip).toContainText("Not sandboxed");
+  await chip.click();
+  await expect(
+    page.getByTestId("coding-session-sandbox-boundary"),
+  ).toContainText(NOT_ENFORCED_TEXT);
   await expect(workspace).not.toContainText("Enforced — ");
   await expect(workspace).not.toContainText("execution_boundary_not_enforced");
 });
@@ -205,5 +219,9 @@ test("without the provider's disclosure no boundary row claims anything", async 
 }) => {
   const workspace = await openSeededSession(page, events(null));
   await expect(workspace).not.toContainText("Project boundary");
+  // SV-17: with no disclosure the chip says so; it never reads "Sandboxed".
+  await expect(
+    workspace.getByTestId("coding-session-control-sandbox"),
+  ).toContainText("Sandbox unreported");
   await expect(workspace).not.toContainText("Enforced — ");
 });

@@ -515,8 +515,20 @@ async function boot(page: Page, options: { rejectKinds?: number[] } = {}) {
     { rejectKinds: options.rejectKinds ?? null },
   );
   await installMockBridge(page);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("open-agent-progress-view")).toBeVisible({
+  // Boot on the channel, not the Dashboard. The Dashboard's overview card runs
+  // the coordination read the moment it mounts, and since ledger 310 every
+  // later read is a delta: `since` the newest held row (or the read's own
+  // start) minus the relay's 960 s ingest window. A real relay refuses any
+  // event stamped more than 900 s from its clock, so nothing hours old can
+  // arrive after a read — but this fixture's facts are hours old by design
+  // (the reachable lane's observation is three hours stale), and seeding them
+  // after an empty first read leaves every one of them below the delta's
+  // `since`. Seeding before anything reads matches the world the fixture
+  // depicts: facts the relay already held when the panel first looked.
+  await page.goto(`/#/channels/${CHANNEL_ID}`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(page.getByTestId("open-dashboard-view")).toBeVisible({
     timeout: 10_000,
   });
 }
@@ -683,8 +695,11 @@ test("a failed session and lease bundle is incomplete, never a quiet fleet", asy
   await openPanel(page);
 
   // The notice says what failed, and refuses the reassuring reading.
+  // The panel's own read is the first coordination read (boot no longer opens
+  // the Dashboard overview, see `boot`), so it queues behind boot's reads in
+  // the client's read budget like the activity line in the test above.
   const notice = page.getByTestId("agent-progress-incomplete");
-  await expect(notice).toBeVisible();
+  await expect(notice).toBeVisible({ timeout: 30_000 });
   await expect(notice).toContainText("did not complete");
   await expect(notice).toContainText("not a claim that nothing is running");
 

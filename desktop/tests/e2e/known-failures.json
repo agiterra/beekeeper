@@ -137,6 +137,26 @@
       "observed": "failed in the third four-worker full run (SV-39 verifier); passed 3 of 3 alone at one worker. A parallel-load flake.",
       "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
       "intermittent": true
+    },
+    {
+      "spec": "people-setup.spec.ts",
+      "title": "S9: opening, filtering and paging People mutates nothing",
+      "line": 501,
+      "verifiedOn": "cf2791efa",
+      "verifiedAt": "2026-10-04",
+      "observed": "Wave A gate round 2: failed in the four-worker full run and 3 of 4 alone on the Wave A tree; on an untouched cf2791efa build it failed 3 of 6 alone at one file, with the same error (browse People issued commands outside the read-only allowlist: nip44_encrypt_to_self, sign_event). Pre-existing on main; an unrequested write races the read-only window.",
+      "ledger": "none yet: first recorded by SV-39 gate round 2 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "project-pulse-declared-work.spec.ts",
+      "title": "Open session navigates to the execution and publishes nothing",
+      "line": 232,
+      "verifiedOn": "cf2791efa",
+      "verifiedAt": "2026-10-04",
+      "observed": "Wave A gate round 2: failed in the four-worker full run, then 1 of 4 alone on the Wave A tree; on an untouched cf2791efa build it failed 1 of 6 alone, with the same error (navigation invoked commands outside the read-only set: coding_session_provider_runtimes). Pre-existing on main.",
+      "ledger": "none yet: first recorded by SV-39 gate round 2 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
     }
   ]
 }

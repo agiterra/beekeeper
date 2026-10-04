@@ -236,6 +236,34 @@ async function waitForTimelineSettled(page: import("@playwright/test").Page) {
   await expect(page.locator("[data-render-pending]")).toHaveCount(0);
 }
 
+// The non-member invite prompt only fires once the channel's member list has
+// resolved: until then `useMentionSendFlow` cannot tell a non-member from a
+// member and sends without prompting. A loaded full smoke run can reach the
+// send click before `get_channel_members` settles, so specs that expect the
+// Invite prompt wait for the members query to succeed first.
+async function waitForChannelMembersResolved(
+  page: import("@playwright/test").Page,
+  channelId: string,
+) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          (
+            window.__BUZZ_E2E_QUERY_CLIENT__ as unknown as
+              | {
+                  getQueryState: (
+                    queryKey: readonly unknown[],
+                  ) => { status?: string } | undefined;
+                }
+              | undefined
+          )?.getQueryState(["channels", id, "members"])?.status ?? null,
+        channelId,
+      ),
+    )
+    .toBe("success");
+}
+
 async function expectOwnedAgentProfileActions(
   profilePopover: import("@playwright/test").Locator,
   pubkey: string,
@@ -1363,6 +1391,7 @@ test("selected relay agents revoked after the invite prompt cause no side effect
   await quinnRow.click();
   await expect(input).toHaveText("@quinn ");
   await page.keyboard.type("hello");
+  await waitForChannelMembersResolved(page, GENERAL_CHANNEL_ID);
   await page.getByTestId("send-message").click();
   const inviteButton = page.getByRole("button", {
     name: "Invite",
@@ -1426,6 +1455,7 @@ test("selected relay agents revoked during send emit no p tag", async ({
     window.__BUZZ_E2E__.mock ??= {};
     window.__BUZZ_E2E__.mock.agentListDelayMs = 300;
   });
+  await waitForChannelMembersResolved(page, GENERAL_CHANNEL_ID);
   await page.getByTestId("send-message").click();
   await page.getByRole("button", { name: "Invite", exact: true }).click();
   await page.evaluate(() => {

@@ -90,6 +90,10 @@ export default defineConfig({
         "**/coding-session-transcript-narrative-screenshots.spec.ts",
         // The provider's project execution boundary disclosure, both states.
         "**/coding-session-project-boundary.spec.ts",
+        // Session-view parity wave A: one hash-distinct shot per UI ID, and
+        // the mission view's sandbox chip (SV-17).
+        "**/coding-session-parity-screenshots.spec.ts",
+        "**/coding-session-umbrella-sandbox.spec.ts",
         "**/coding-session-elision-screenshots.spec.ts",
         "**/coding-session-seat-bee.spec.ts",
         "**/coding-session-surface-host-screenshots.spec.ts",

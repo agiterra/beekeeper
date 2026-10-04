@@ -525,9 +525,8 @@ test("a seeded signed session is discoverable, opens, and renders its turn", asy
   await expect(fold).toHaveAttribute("aria-expanded", "false");
   await expect(fold).toHaveAttribute("data-hidden-count", "1");
   await expect(fold).toContainText("Worked for 3.6s");
-  // The shared tool classifier does not class Claude's `Bash` as a shell
-  // tool, so the sentence counts it as a generic call.
-  await expect(fold).toContainText("Ran 1 tool call");
+  // SV-03: Claude's `Bash` is a command, so the sentence counts it as one.
+  await expect(fold).toContainText("Ran 1 command");
   await expect(page.getByTestId("transcript-tool-item")).toHaveCount(0);
   await fold.click();
   await expect(fold).toHaveAttribute("aria-expanded", "true");

@@ -65,8 +65,17 @@ async function openNostrBind(
         }
       ).__BUZZ_E2E_INVOKE_MOCK_COMMAND__ === "function",
   );
-  await emitNostrBind(page, payload);
-  await expect(page.getByTestId("nostr-bind-page")).toBeVisible();
+  // The mock bridge exists before React mounts, but the consent dialog's
+  // `listen("deep-link-nostr-bind")` registers from an effect after that, and
+  // the mocked event bus drops an emit with no listener. Under a loaded full
+  // smoke run the first emit can land in that gap, so re-emit the (idempotent,
+  // pre-interaction) opening request until the page proves it was received.
+  await expect(async () => {
+    await emitNostrBind(page, payload);
+    await expect(page.getByTestId("nostr-bind-page")).toBeVisible({
+      timeout: 1_000,
+    });
+  }).toPass({ timeout: 10_000 });
 }
 
 async function pasteCode(input: Locator, code: string) {

@@ -951,7 +951,11 @@ test("concurrent installs each keep their own state — one fails, one succeeds"
       // Per-runtime config lets both be in flight simultaneously.
       installAcpRuntimeByRuntime: {
         claude: {
-          delayMs: 600,
+          // Long enough to outlast the second click: at 600ms the Claude
+          // install could settle before the in-flight assertion ran once the
+          // app moved to the system font (SV-04) — 3 of 5 runs, 0 of 4 on
+          // dad4726ba. The behaviour asserted is unchanged.
+          delayMs: 1_500,
           result: {
             success: false,
             steps: [
