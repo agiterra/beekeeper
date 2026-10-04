@@ -108,6 +108,10 @@ mod operations_precheck;
 pub(crate) mod operations_reads;
 mod operations_verifier_gate;
 pub mod policy;
+// SV-36: join a streamed answer's pieces back into one message.
+pub mod prose_join;
+#[cfg(test)]
+mod prose_join_tests;
 pub mod registry;
 pub mod registry_measure;
 pub mod registry_propose;
@@ -780,9 +784,34 @@ fn item_text(item: &Value, key: &str) -> Option<String> {
 /// Turns are the unit a reader thinks in, so items are grouped by `turnId` in
 /// sequence order; items outside any turn (session init, status) open the
 /// document instead of inventing a turn for themselves.
+///
+/// Prose is joined first (NIP-CST amendment 3 Join key, [`prose_join`]): an
+/// answer the producer cut into several items prints under one heading. With
+/// no lease evidence nothing is marked as still being written; see
+/// [`render_markdown_with_evidence`].
+#[cfg(test)]
 pub fn render_markdown(row: Option<&SessionRow>, records: &[TranscriptRecord]) -> String {
-    let mut sorted: Vec<TranscriptRecord> = records.to_vec();
+    render_markdown_with_evidence(row, records, &prose_join::ArrivalEvidence::none())
+}
+
+/// Render one generation's transcript, with the wire facts (lease, status,
+/// newer generation) that let a trailing message of an open turn say it is
+/// still being written.
+pub fn render_markdown_with_evidence(
+    row: Option<&SessionRow>,
+    records: &[TranscriptRecord],
+    evidence: &prose_join::ArrivalEvidence,
+) -> String {
+    // One event, one piece: a repeated delivery is not a second item.
+    let mut seen_ids: HashSet<&str> = HashSet::new();
+    let mut sorted: Vec<TranscriptRecord> = records
+        .iter()
+        .filter(|record| seen_ids.insert(record.id.as_str()))
+        .cloned()
+        .collect();
     sort_transcripts(&mut sorted);
+    let joined = prose_join::join_prose(&sorted, evidence);
+    let prose_places = prose_join::index_by_event(&joined, &sorted);
 
     // Results are joined back to their calls so each call line can say how it
     // ended without the reader scrolling to find out.
@@ -827,6 +856,12 @@ pub fn render_markdown(row: Option<&SessionRow>, records: &[TranscriptRecord]) -
     let mut current_turn: Option<Option<String>> = None;
     let mut turn_index = 0usize;
     for record in &sorted {
+        if matches!(
+            prose_places.get(&record.id),
+            Some(prose_join::ProsePlace::Continuation)
+        ) {
+            continue;
+        }
         let turn = record.envelope.turn_id.clone();
         if current_turn.as_ref() != Some(&turn) {
             current_turn = Some(turn.clone());
@@ -838,7 +873,12 @@ pub fn render_markdown(row: Option<&SessionRow>, records: &[TranscriptRecord]) -
                 None => out.push_str("## Session\n\n"),
             }
         }
-        out.push_str(&render_item(&record.envelope.item, &result_by_id));
+        match prose_places.get(&record.id) {
+            Some(prose_join::ProsePlace::Start(message)) => {
+                out.push_str(&prose_join::render_joined(message));
+            }
+            _ => out.push_str(&render_item(&record.envelope.item, &result_by_id)),
+        }
     }
 
     condense_redaction_markers(&out)
@@ -998,13 +1038,12 @@ fn render_item(item: &Value, result_by_id: &HashMap<String, bool>) -> String {
                 .unwrap_or_default();
             format!("**User**{command_note}\n\n{content}\n\n")
         }
-        "assistant_text" => {
+        "assistant_text" | "reasoning" => {
+            // Normally reached only through a joined run; a lone piece still
+            // names a subagent as its author.
             let text = item_text(item, "text").unwrap_or_default();
-            format!("**Assistant**\n\n{text}\n\n")
-        }
-        "reasoning" => {
-            let text = item_text(item, "text").unwrap_or_default();
-            format!("**Reasoning**\n\n{text}\n\n")
+            let parent = item.get("parentToolId").and_then(Value::as_str);
+            format!("{}\n\n{text}\n\n", prose_join::prose_heading(kind, parent))
         }
         "tool_call" => {
             let tool = item.get("tool");
@@ -1576,8 +1615,12 @@ async fn cmd_transcript(
     validate_uuid(channel_id)?;
     let (target_key, row) = resolve_target(client, channel_id, target, session).await?;
 
-    let events =
-        fetch_channel_events(client, channel_id, &[KIND_CODING_SESSION_TRANSCRIPT]).await?;
+    let events = fetch_channel_events(
+        client,
+        channel_id,
+        &[KIND_CODING_SESSION_TRANSCRIPT, KIND_CODING_SESSION_METADATA],
+    )
+    .await?;
     let (all, _) = decode_transcripts(&events);
     let mut records = filter_transcripts_by_target(&all, &target_key);
     sort_transcripts(&mut records);
@@ -1589,7 +1632,27 @@ async fn cmd_transcript(
             }
         }
         crate::TranscriptFormat::Md => {
-            print!("{}", render_markdown(row.as_ref(), &records));
+            // Whether a trailing answer is still being written is read from
+            // the wire (contract rule 7): a lease read that fails is no lease,
+            // so the transcript then claims nothing is arriving.
+            let (metadata, _) = decode_metadata(&events);
+            let lease_events = client
+                .query_all(json!({
+                    "kinds": [buzz_core::kind::KIND_CODING_SESSION_LEASE],
+                    "#h": [channel_id],
+                }))
+                .await
+                .unwrap_or_default();
+            let evidence = prose_join::ArrivalEvidence::from_wire(
+                &all,
+                &metadata,
+                &lease_events,
+                chrono::Utc::now().timestamp(),
+            );
+            print!(
+                "{}",
+                render_markdown_with_evidence(row.as_ref(), &records, &evidence)
+            );
         }
     }
     Ok(())
