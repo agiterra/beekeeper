@@ -32,6 +32,7 @@ import { cn } from "@/shared/lib/cn";
 import { isCodingSessionMissionExecutionItem } from "@/features/coding-sessions/lib/codingSessionMissionExecutionBundle";
 import { codingSessionAgentAccent } from "./CodingSessionAgentFocus";
 import { CodingSessionMissionExecutionBundle } from "./CodingSessionMissionExecutionBundle";
+import type { CodingSessionTurnRestingStatus } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import type { CodingSessionUmbrellaComposerPrefill } from "./CodingSessionUmbrellaComposer";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
@@ -58,6 +59,7 @@ export function CodingSessionUmbrellaTurnBlock({
   operatorProfiles,
   resolvePromptSeat,
   record,
+  restingStatus = "unknown",
   resolveFactLocation,
   showProvenance,
   stickyProvenance,
@@ -130,6 +132,14 @@ export function CodingSessionUmbrellaTurnBlock({
    */
   resolvePromptSeat?: CodingSessionPromptSeatResolver;
   record: CodingSessionCatalogRecord | null;
+  /**
+   * What this block's seat is known to be doing when the block has no
+   * completion and is not the working one — resolved by the surface from the
+   * timeline and the seat's signed status
+   * (`resolveCodingSessionUmbrellaBlockRestingStatuses`). Omitted is
+   * `unknown`: an unended call then reads "Status unknown", never a verdict.
+   */
+  restingStatus?: CodingSessionTurnRestingStatus;
   resolveFactLocation: (link: CodingSessionHandoffLink) => string | null;
   showProvenance: boolean;
   stickyProvenance: boolean;
@@ -205,6 +215,16 @@ export function CodingSessionUmbrellaTurnBlock({
   const executionItems = bundleExecution
     ? missionItems.filter(isCodingSessionMissionExecutionItem)
     : [];
+  // The bundle holds only the turn's tool items, so its own model never sees
+  // the Turn result: whether those calls are running is the block's fact,
+  // handed down — the block's real `isWorking`, settled by its completion
+  // exactly as the narrative's model settles it, and the block's resting
+  // status otherwise. A hard-coded `false` here once told a reader watching
+  // a working seat that its running call "Did not finish".
+  const bundleWorking = isWorking && !completed;
+  const blockRestingStatus: CodingSessionTurnRestingStatus = completed
+    ? "stopped"
+    : restingStatus;
   const accent = codingSessionAgentAccent(block.executionKey);
   const foldedSummary = isFolded ? foldedTurnSummary(block) : null;
   // Per block, in memory, and never persisted: a reader who opened one turn
@@ -490,6 +510,7 @@ export function CodingSessionUmbrellaTurnBlock({
         items={narrativeItems}
         operatorProfiles={operatorProfiles}
         resolveSeat={resolvePromptSeat}
+        restingStatus={blockRestingStatus}
         wakeOperations={wakeOperations}
       />
       {bundleExecution ? (
@@ -502,10 +523,12 @@ export function CodingSessionUmbrellaTurnBlock({
             currentUserPubkey={currentUserPubkey}
             generationId={block.generationId}
             hireDispatch={hireDispatch}
-            isWorking={false}
+            isWorking={bundleWorking}
             items={executionItems}
             operatorProfiles={operatorProfiles}
             resolveSeat={resolvePromptSeat}
+            restingStatus={blockRestingStatus}
+            showWorkingIndicator={false}
             wakeOperations={wakeOperations}
           />
         </CodingSessionMissionExecutionBundle>

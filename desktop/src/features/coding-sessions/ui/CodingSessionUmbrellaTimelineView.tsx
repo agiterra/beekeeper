@@ -29,6 +29,7 @@ import type {
   CodingSessionCatalogRecord,
   CodingSessionUmbrellaRecord,
 } from "@/features/coding-sessions/lib/codingSessionTypes";
+import { resolveCodingSessionUmbrellaBlockRestingStatuses } from "@/features/coding-sessions/lib/codingSessionTranscriptModelSettlement";
 import {
   buildUmbrellaTimeline,
   codingSessionUmbrellaEntryKey,
@@ -251,8 +252,19 @@ export function CodingSessionUmbrellaTimelineView({
     ),
     sessionRef: umbrella.sessionRef,
   });
+  const chronological = React.useMemo(
+    () => buildUmbrellaTimeline(umbrella, laneMessages),
+    [laneMessages, umbrella],
+  );
+  // What each block's latest unended calls can honestly say: settled by the
+  // timeline's own facts first, and only then by its seat's signed status.
+  // Read off the chronology, before a density can drop the evidence.
+  const restingStatusByKey = React.useMemo(
+    () =>
+      resolveCodingSessionUmbrellaBlockRestingStatuses(umbrella, chronological),
+    [chronological, umbrella],
+  );
   const entries = React.useMemo(() => {
-    const chronological = buildUmbrellaTimeline(umbrella, laneMessages);
     return missionDensity
       ? projectCodingSessionMissionTimeline(
           chronological,
@@ -260,7 +272,7 @@ export function CodingSessionUmbrellaTimelineView({
           transactionRows,
         )
       : chronological;
-  }, [laneMessages, missionDensity, transactionRows, umbrella]);
+  }, [chronological, missionDensity, transactionRows]);
   // Provenance, working-block resolution and handoff sources are facts about
   // the narrative alone; a transaction row is never one of their neighbours.
   const narrativeEntries = React.useMemo(
@@ -610,6 +622,7 @@ export function CodingSessionUmbrellaTimelineView({
                 focusedExecutionKey !== entry.executionKey
               }
               isWorking={workingBlockKeys.has(key)}
+              restingStatus={restingStatusByKey.get(key) ?? "unknown"}
               label={labelsByExecutionKey.get(entry.executionKey) ?? null}
               labelsByExecutionKey={labelsByExecutionKey}
               liveness={

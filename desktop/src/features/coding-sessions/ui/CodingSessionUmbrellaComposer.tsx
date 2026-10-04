@@ -39,8 +39,20 @@ import { shouldSubmitCodingSessionComposerKey } from "@/features/coding-sessions
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/cn";
 import { CodingSessionComposer } from "./CodingSessionComposer";
+import {
+  type CodingSessionComposerSandbox,
+  CodingSessionComposerSandboxChip,
+} from "./CodingSessionComposerSandboxChip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { codingSessionAgentAccent } from "./CodingSessionAgentFocus";
+import {
+  CodingSessionOtherSeatsSandboxBadge,
+  CodingSessionSeatSandboxTag,
+  type CodingSessionSeatSandboxWarning,
+  codingSessionOtherSeatsSandboxLabel,
+  useCodingSessionSeatSandboxWarnings,
+} from "./CodingSessionComposerSeatSandbox";
+import { useCodingSessionExecutionSandboxes } from "./codingSessionUmbrellaExecutionSandbox";
 
 /** A staged handoff: select the target execution and pre-load its editor. */
 export type CodingSessionUmbrellaComposerPrefill = {
@@ -161,6 +173,26 @@ export function CodingSessionUmbrellaComposer({
     null;
   const selectedParticipantKey =
     selected === null ? null : codingSessionUmbrellaParticipantKey(selected);
+  // The boundary rows left the transcript (SV-16/SV-17), so whichever
+  // execution this composer addresses carries its sandbox chip on every path
+  // — controllable, gated, or untargeted — or full access and an unenforced
+  // boundary would vanish from the mission view for a teammate who can only
+  // watch. Read from every generation's transcript, which every viewer has —
+  // the reading the closed footer makes, so a seat that ran with full access
+  // before a resume says so open or closed — and cached per generation, so a
+  // streamed item does not re-read the seats' history. The local grant toggle
+  // stays with the header, which knows which execution this computer answers
+  // for.
+  const sandboxReports = useCodingSessionExecutionSandboxes(participants);
+  const selectedReport =
+    selected?.kind === "execution"
+      ? (sandboxReports.get(selected.executionKey) ?? null)
+      : null;
+  const sandbox = React.useMemo<CodingSessionComposerSandbox | null>(
+    () =>
+      selectedReport === null ? null : { report: selectedReport, local: null },
+    [selectedReport],
+  );
   React.useEffect(() => {
     onSelectedParticipantChange?.(selectedParticipantKey);
   }, [onSelectedParticipantChange, selectedParticipantKey]);
@@ -194,12 +226,15 @@ export function CodingSessionUmbrellaComposer({
       }),
     [participants, selectedParticipantKey],
   );
+  const seatSandboxWarnings =
+    useCodingSessionSeatSandboxWarnings(sandboxReports);
   const recipientControl =
     participants.length > 1 ? (
       <CodingSessionParticipantPicker
         authority={authority}
         onSelect={selectParticipant}
         participants={participants}
+        sandboxWarnings={seatSandboxWarnings}
         selected={selected}
       />
     ) : undefined;
@@ -232,8 +267,11 @@ export function CodingSessionUmbrellaComposer({
           data-testid="coding-session-umbrella-composer-gated"
         >
           <p className="text-sm text-muted-foreground">{authority.reason}</p>
-          <div className="mt-4 flex min-h-10 items-center">
+          <div className="mt-4 flex min-h-10 items-center gap-2 text-xs">
             {recipientControl}
+            {sandbox ? (
+              <CodingSessionComposerSandboxChip sandbox={sandbox} />
+            ) : null}
           </div>
         </div>
       ) : (
@@ -264,6 +302,7 @@ export function CodingSessionUmbrellaComposer({
           }
           recipientControl={recipientControl}
           resolveReachability={resolveReachability}
+          sandbox={sandbox}
         />
       )}
     </div>
@@ -284,6 +323,7 @@ function ExecutionComposer({
   prefill,
   recipientControl,
   resolveReachability,
+  sandbox,
 }: {
   authority: ReturnType<typeof resolveCodingSessionUmbrellaComposerAuthority>;
   canStopExecution: boolean;
@@ -298,6 +338,7 @@ function ExecutionComposer({
   prefill: { id: string; text: string } | null;
   recipientControl?: React.ReactNode;
   resolveReachability: CodingSessionReachabilityResolver;
+  sandbox: CodingSessionComposerSandbox | null;
 }) {
   const record = participant.execution.activeGeneration;
   const target = record.commandTarget;
@@ -343,12 +384,19 @@ function ExecutionComposer({
     : null;
   if (!target) {
     return (
-      <p
-        className="rounded-3xl border border-border/70 bg-background/95 p-4 text-sm text-muted-foreground shadow-lg backdrop-blur-xl"
+      <div
+        className="flex flex-wrap items-center gap-2 rounded-3xl border border-border/70 bg-background/95 p-4 text-sm text-muted-foreground shadow-lg backdrop-blur-xl"
         data-testid="coding-session-umbrella-composer-untargeted"
       >
-        This execution has not published a governed command target yet.
-      </p>
+        <p className="min-w-0 flex-1">
+          This execution has not published a governed command target yet.
+        </p>
+        {sandbox ? (
+          <span className="text-xs">
+            <CodingSessionComposerSandboxChip sandbox={sandbox} />
+          </span>
+        ) : null}
+      </div>
     );
   }
   return (
@@ -371,6 +419,7 @@ function ExecutionComposer({
         model: record.model,
         providerLabel,
         runtimeLabel,
+        sandbox,
         status,
         turnBudget: record.turnBudget,
       }}
@@ -400,16 +449,24 @@ function CodingSessionParticipantPicker({
   authority,
   onSelect,
   participants,
+  sandboxWarnings,
   selected,
 }: {
   authority: ReturnType<typeof resolveCodingSessionUmbrellaComposerAuthority>;
   onSelect: (participantKey: string) => void;
   participants: readonly CodingSessionUmbrellaParticipant[];
+  sandboxWarnings: ReadonlyMap<string, CodingSessionSeatSandboxWarning>;
   selected: CodingSessionUmbrellaParticipant | null;
 }) {
   const selectedPresentation = selected
     ? participantPresentation(selected)
     : { title: "Choose recipient", detail: null };
+  // The sandbox chip shows the addressed seat; the trigger counts the rest.
+  const selectedKey =
+    selected === null ? null : codingSessionUmbrellaParticipantKey(selected);
+  const otherUnsandboxed = [...sandboxWarnings.keys()].filter(
+    (key) => key !== selectedKey,
+  ).length;
   const selectedAccent =
     selected?.kind === "execution"
       ? codingSessionAgentAccent(selected.executionKey)
@@ -419,7 +476,11 @@ function CodingSessionParticipantPicker({
       <Popover>
         <PopoverTrigger asChild>
           <button
-            aria-label={`Send to ${selectedPresentation.title}`}
+            aria-label={
+              otherUnsandboxed > 0
+                ? `Send to ${selectedPresentation.title}. ${codingSessionOtherSeatsSandboxLabel(otherUnsandboxed)}`
+                : `Send to ${selectedPresentation.title}`
+            }
             className="flex min-w-0 max-w-72 items-center gap-2 rounded-lg py-1.5 pr-2 text-foreground/80 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             data-testid="coding-session-participant-picker-trigger"
             type="button"
@@ -442,6 +503,7 @@ function CodingSessionParticipantPicker({
             <span className="truncate">
               Send to {selectedPresentation.title}
             </span>
+            <CodingSessionOtherSeatsSandboxBadge count={otherUnsandboxed} />
             <ChevronDown aria-hidden className="size-3.5 shrink-0 opacity-60" />
           </button>
         </PopoverTrigger>
@@ -463,6 +525,7 @@ function CodingSessionParticipantPicker({
                 participant.kind === "execution" &&
                 !authority.canPromptExecutions;
               const presentation = participantPresentation(participant);
+              const sandboxWarning = sandboxWarnings.get(key);
               const accent =
                 participant.kind === "execution"
                   ? codingSessionAgentAccent(participant.executionKey)
@@ -497,8 +560,13 @@ function CodingSessionParticipantPicker({
                     ) : null}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-foreground">
-                      {presentation.title}
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-sm font-medium text-foreground">
+                        {presentation.title}
+                      </span>
+                      {sandboxWarning ? (
+                        <CodingSessionSeatSandboxTag warning={sandboxWarning} />
+                      ) : null}
                     </span>
                     {presentation.detail ? (
                       <span className="mt-0.5 block truncate text-xs text-muted-foreground">

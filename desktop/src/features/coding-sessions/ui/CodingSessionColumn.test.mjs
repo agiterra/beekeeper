@@ -58,7 +58,7 @@ test("the measure box carries min-w-0 so wide content scrolls instead of clippin
   assert.match(CODING_SESSION_COLUMN_CLASS, /\bmx-auto\b/);
 });
 
-test("a hidden side surface gives the narrative the wider workspace measure", () => {
+test("Narrow keeps the 48rem reading measure with no side surface open (SV-13)", () => {
   const expanded = renderToStaticMarkup(
     React.createElement(
       CodingSessionColumn,
@@ -66,15 +66,22 @@ test("a hidden side surface gives the narrative the wider workspace measure", ()
       "body",
     ),
   );
-  // Server snapshot is the default width, so this renders Narrow's two caps.
-  assert.match(expanded, /\bmax-w-6xl\b/);
-  assert.doesNotMatch(expanded, /\bmax-w-3xl\b/);
+  // Server snapshot is the default width. Closing a rail no longer widens
+  // the default measure: line length is the thing a measure exists to cap.
+  assert.match(expanded, /\bmax-w-3xl\b/);
+  assert.doesNotMatch(expanded, /\bmax-w-6xl\b/);
 });
 
-test("a side surface open earns a narrower cap at every width", () => {
-  // A rail takes real width; a column sized for an empty workspace would be
-  // cramped beside one. Full is the exception — it caps nothing either way.
+test("a side surface open earns a narrower cap where the choice asked for room", () => {
+  // A rail takes real width; a Wide column sized for an empty workspace would
+  // be cramped beside one. Full caps nothing either way, and Narrow is the
+  // reading measure either way (SV-13).
   for (const [width, caps] of Object.entries(CODING_SESSION_MEASURE_CLASSES)) {
+    if (width === "narrow") {
+      assert.equal(caps.default, "max-w-3xl");
+      assert.equal(caps.expanded, "max-w-3xl");
+      continue;
+    }
     if (width === "full") {
       assert.equal(caps.default, "max-w-none");
       assert.equal(caps.expanded, "max-w-none");
@@ -111,7 +118,7 @@ test("the gutter lives outside the measure, never inside it", () => {
 test("Narrow is the default, so the app looks unchanged until asked", () => {
   assert.equal(DEFAULT_CODING_SESSION_WIDTH, "narrow");
   assert.equal(CODING_SESSION_MEASURE_CLASSES.narrow.default, "max-w-3xl");
-  assert.equal(CODING_SESSION_MEASURE_CLASSES.narrow.expanded, "max-w-6xl");
+  assert.equal(CODING_SESSION_MEASURE_CLASSES.narrow.expanded, "max-w-3xl");
   assert.match(CODING_SESSION_GUTTER_CLASSES.narrow, /\bpx-5\b/);
   assert.match(CODING_SESSION_GUTTER_CLASSES.narrow, /\bsm:px-8\b/);
 });

@@ -32,7 +32,45 @@ export type CodingSessionDockReserve = {
   className: string | undefined;
   /** Measured reserve, or `undefined` before the first measurement. */
   style: { paddingBottom: string } | undefined;
+  /**
+   * The dock's measured border-box height in px, or `null` before the first
+   * measurement and whenever no dock is mounted. Read by the jump-to-latest
+   * pill, which must sit above the composer at every dock height (SV-14).
+   */
+  dockHeight: number | null;
 };
+
+/** Space between the top of the composer dock and the jump-to-latest pill. */
+export const CODING_SESSION_JUMP_PILL_GAP_PX = 12;
+
+/**
+ * Where the jump-to-latest pill sits, measured up from the transcript pane's
+ * bottom edge (SV-14).
+ *
+ * With a measured dock: its height plus a gap, so the pill clears the
+ * composer however tall the composer has grown — a delivery hint, an
+ * attachment strip, a wrapped deck, larger text. With a dock that has not
+ * been measured yet (first frame, no `ResizeObserver`), the old fixed
+ * `bottom-32`. With no dock at all (a closed or
+ * untargeted session), just above the sandbox footer that takes its place.
+ */
+export function codingSessionJumpPillPosition(input: {
+  dockHeight: number | null;
+  hasDock: boolean;
+}): { className: string; style: { bottom: string } | undefined } {
+  // No dock means the sandbox footer (`CodingSessionWorkspaceSandboxFooter`,
+  // one 2.5rem row) holds the foot of the pane instead: clear it.
+  if (!input.hasDock) return { className: "bottom-16", style: undefined };
+  if (input.dockHeight === null) {
+    return { className: "bottom-32", style: undefined };
+  }
+  return {
+    className: "",
+    style: {
+      bottom: `${Math.round(input.dockHeight + CODING_SESSION_JUMP_PILL_GAP_PX)}px`,
+    },
+  };
+}
 
 /**
  * Reserve the dock's measured height at the foot of the scroll column.
@@ -48,7 +86,13 @@ export function useCodingSessionDockReserve(
   const [height, setHeight] = React.useState<number | null>(null);
   React.useEffect(() => {
     const dock = ref.current;
-    if (!dock || typeof ResizeObserver === "undefined") return;
+    if (!dock) {
+      // The dock unmounted (the session closed): a stale height would hold
+      // the pill above a composer that is no longer there.
+      setHeight(null);
+      return;
+    }
+    if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(([entry]) => {
       const measured = entry?.borderBoxSize?.[0]?.blockSize;
       setHeight(
@@ -60,9 +104,17 @@ export function useCodingSessionDockReserve(
     observer.observe(dock);
     return () => observer.disconnect();
   });
-  if (railReserve) return { ref, className: railReserve, style: undefined };
+  if (railReserve) {
+    return {
+      ref,
+      className: railReserve,
+      style: undefined,
+      dockHeight: height,
+    };
+  }
   return {
     ref,
+    dockHeight: height,
     className:
       height === null ? CODING_SESSION_DOCK_RESERVE_FALLBACK : undefined,
     style:

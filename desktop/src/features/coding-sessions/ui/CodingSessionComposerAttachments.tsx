@@ -1,4 +1,5 @@
 import { FileText, ImageIcon, Paperclip, X } from "lucide-react";
+import type * as React from "react";
 
 import {
   attachmentLabel,
@@ -47,18 +48,34 @@ function pastedTextDetail(attachment: CodingSessionAttachment): string {
     : `${counted} · ${formatAttachmentSize(attachment.size)}`;
 }
 
-/** Attach control plus the strip of what this turn is carrying. */
+/**
+ * The strip of what this turn is carrying: thumbnails, pasted files, upload
+ * progress and the last error.
+ *
+ * It draws nothing while there is nothing to show — the attach control itself
+ * is {@link CodingSessionComposerAttachButton}, an icon beside send (SV-19),
+ * so an empty draft no longer spends a row on an "Image" button.
+ */
 export function CodingSessionComposerAttachments({
-  canAttach,
   controller,
-  disabled,
-  runtimeLabel,
-}: CodingSessionComposerAttachmentsProps) {
+  attachControl,
+}: {
+  controller: CodingSessionAttachmentController;
+  /**
+   * Where the caller has no deck to seat the icon in (the compact lane
+   * composer), it passes the button here and the strip keeps it on its row.
+   */
+  attachControl?: React.ReactNode;
+}) {
   const { attachments, error } = controller;
-  const atCapacity =
+  if (
+    attachments.length === 0 &&
     !controller.isUploading &&
-    attachments.length >= MAX_CODING_SESSION_ATTACHMENTS;
-  const attachDisabled = disabled || !canAttach || atCapacity;
+    !error &&
+    !attachControl
+  ) {
+    return null;
+  }
 
   return (
     <div
@@ -132,72 +149,95 @@ export function CodingSessionComposerAttachments({
         </ul>
       ) : null}
 
-      <div className="flex items-center gap-2">
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              {/* A disabled button fires no pointer events, so the tooltip
-                needs a wrapper that still receives them — otherwise the one
-                state that most needs an explanation is the one that cannot
-                show it. */}
-              <span className="inline-flex">
-                <Button
-                  aria-label="Attach an image"
-                  className="h-7 gap-1.5 px-2 text-2xs text-muted-foreground"
-                  data-testid="coding-session-composer-attach"
-                  disabled={attachDisabled}
-                  onClick={controller.pick}
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Paperclip aria-hidden="true" className="h-3.5 w-3.5" />
-                  Image
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-72" side="top">
-              {canAttach ? (
-                atCapacity ? (
-                  `A turn can carry at most ${MAX_CODING_SESSION_ATTACHMENTS} attachments.`
-                ) : (
-                  <>
-                    Attach a PNG, JPEG, GIF or WebP — or paste and drop one
-                    straight into the composer. A pasted blob of text becomes a
-                    file too, so a long log does not have to fit in the message.
-                  </>
-                )
-              ) : (
-                <>
-                  {runtimeLabel
-                    ? `${runtimeLabel} on this execution`
-                    : "This execution's runtime"}{" "}
-                  did not advertise image prompts, so an attached image would
-                  never reach the agent. Pasting a long blob of text still works
-                  — that arrives as a file the agent can read.
-                </>
-              )}
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+      {attachControl || controller.isUploading || error ? (
+        <div className="flex items-center gap-2">
+          {attachControl}
 
-        {controller.isUploading ? (
-          <span className="inline-flex items-center gap-1.5 text-2xs text-muted-foreground">
-            <Spinner className="h-3 w-3" />
-            Uploading…
-          </span>
-        ) : null}
+          {controller.isUploading ? (
+            <span className="inline-flex items-center gap-1.5 text-2xs text-muted-foreground">
+              <Spinner className="h-3 w-3" />
+              Uploading…
+            </span>
+          ) : null}
 
-        {error ? (
-          <span
-            className="inline-flex items-center gap-1.5 text-2xs text-destructive"
-            data-testid="coding-session-attachment-error"
-          >
-            <ImageIcon aria-hidden="true" className="h-3 w-3" />
-            {error}
-          </span>
-        ) : null}
-      </div>
+          {error ? (
+            <span
+              className="inline-flex items-center gap-1.5 text-2xs text-destructive"
+              data-testid="coding-session-attachment-error"
+            >
+              <ImageIcon aria-hidden="true" className="h-3 w-3" />
+              {error}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * The attach control: a paperclip icon, seated beside send (SV-19).
+ *
+ * Disabled — never hidden — when the runtime did not advertise image prompts,
+ * with the reason in its tooltip: an operator who cannot find a button learns
+ * nothing, and one who is told learns which runtime would take the image.
+ */
+export function CodingSessionComposerAttachButton({
+  canAttach,
+  controller,
+  disabled,
+  runtimeLabel,
+}: CodingSessionComposerAttachmentsProps) {
+  const atCapacity =
+    !controller.isUploading &&
+    controller.attachments.length >= MAX_CODING_SESSION_ATTACHMENTS;
+  const attachDisabled = disabled || !canAttach || atCapacity;
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {/* A disabled button fires no pointer events, so the tooltip
+            needs a wrapper that still receives them — otherwise the one
+            state that most needs an explanation is the one that cannot
+            show it. */}
+          <span className="inline-flex">
+            <Button
+              aria-label="Attach an image"
+              className="size-8 rounded-full text-muted-foreground hover:text-foreground"
+              data-testid="coding-session-composer-attach"
+              disabled={attachDisabled}
+              onClick={controller.pick}
+              size="icon"
+              type="button"
+              variant="ghost"
+            >
+              <Paperclip aria-hidden="true" className="size-4" />
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-72" side="top">
+          {canAttach ? (
+            atCapacity ? (
+              `A turn can carry at most ${MAX_CODING_SESSION_ATTACHMENTS} attachments.`
+            ) : (
+              <>
+                Attach a PNG, JPEG, GIF or WebP — or paste and drop one straight
+                into the composer. A pasted blob of text becomes a file too, so
+                a long log does not have to fit in the message.
+              </>
+            )
+          ) : (
+            <>
+              {runtimeLabel
+                ? `${runtimeLabel} on this execution`
+                : "This execution's runtime"}{" "}
+              did not advertise image prompts, so an attached image would never
+              reach the agent. Pasting a long blob of text still works — that
+              arrives as a file the agent can read.
+            </>
+          )}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

@@ -57,6 +57,7 @@ import { CodingSessionHandoverHost } from "./CodingSessionHandoverHost";
 import { cn } from "@/shared/lib/cn";
 
 import {
+  codingSessionJumpPillPosition,
   useCodingSessionDockReserve,
   useCodingSessionReflow,
   useNarrowCodingSessionWorkspace,
@@ -69,13 +70,19 @@ import {
   CodingSessionColumn,
 } from "./CodingSessionColumn";
 import { CodingSessionWorkspaceGoalRow } from "./CodingSessionWorkspaceGoalRow";
+import { useCodingSessionWorkspaceSessionFacts } from "./CodingSessionWorkspaceSessionFacts";
+import { CodingSessionWorkspaceSandboxFooter } from "./CodingSessionWorkspaceSandboxFooter";
+import { CodingSessionDetailsContinuityProvider } from "./CodingSessionHeaderDetailsContinuity";
 import { useCodingSessionWorkspaceDerivations } from "./CodingSessionWorkspaceDerivations";
 import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { useCodingSessionExport } from "./useCodingSessionExport";
 import { CodingSessionTaskRail } from "./CodingSessionTaskRail";
 import { useCodingSessionTaskDock } from "./useCodingSessionTaskDock";
 import { buildCodingSessionPromptHistory } from "@/features/coding-sessions/lib/codingSessionPromptHistory";
-import { CodingSessionTranscript } from "./CodingSessionTranscript";
+import {
+  CodingSessionTranscript,
+  useStableCodingSessionTranscriptModel,
+} from "./CodingSessionTranscript";
 import {
   CodingSessionPendingTurnList,
   useVisibleCodingSessionPendingTurns,
@@ -622,8 +629,27 @@ function ReadyCodingSessionWorkspace({
     [surfaces],
   );
   const surfaceHost = useCodingSessionSurfaceHostState(surfaceIds);
+  // SV-06: a subagent row opens the Agents surface where the workspace offers
+  // one; without it the row expands inline.
+  const selectSurface = surfaceHost.select;
+  const hasAgentsSurface = surfaceIds.includes("agents");
+  const openAgentsSurface = React.useMemo(
+    () => (hasAgentsSurface ? () => selectSurface("agents") : undefined),
+    [hasAgentsSurface, selectSurface],
+  );
   const surfaceHostId = React.useId();
   const isWorking = status.kind === "working";
+  // One derivation of the transcript model, shared with the transcript, so
+  // Details and the sandbox chip read its `sessionFacts` rather than scanning
+  // the whole transcript again on every streamed item.
+  const transcriptModel = useStableCodingSessionTranscriptModel(
+    transcript,
+    isWorking,
+  );
+  const sessionFacts = useCodingSessionWorkspaceSessionFacts(
+    transcriptModel.sessionFacts,
+    fullAccess,
+  );
   const taskDock = useCodingSessionTaskDock({
     isNarrow,
     isWorking,
@@ -637,6 +663,11 @@ function ReadyCodingSessionWorkspace({
   );
   const reflow = useCodingSessionReflow(workspaceRef, dockReserve.ref);
   const narrativeExpanded = surfaceHost.activeTab === null;
+  // SV-14: the pill rides the measured dock, so it never lands on the composer.
+  const jumpPill = codingSessionJumpPillPosition({
+    dockHeight: dockReserve.dockHeight,
+    hasDock: Boolean(session.commandTarget) && !sessionClosed,
+  });
 
   // Use the sidebar's project resolution for the breadcrumb too.
   const { goProject } = useAppNavigation();
@@ -673,74 +704,76 @@ function ReadyCodingSessionWorkspace({
       ref={workspaceRef}
     >
       <div className="shrink-0" data-testid="coding-session-authority-summary">
-        <CodingSessionHeader
-          channelName={channelName}
-          compact={isNarrow}
-          // Keep the provenance popover consistent with the visible founder.
-          founderDetails={
-            founderPubkey ? (
-              <CodingSessionFounderLine
-                founderPubkey={founderPubkey}
-                genesisRef={genesisRef}
-                variant="label"
-              />
-            ) : undefined
-          }
-          generationLabel={session.label}
-          seat={seatLabel ? { label: seatLabel } : null}
-          fullAccess={fullAccess}
-          isExporting={isExporting}
-          model={session.model}
-          onAddProvider={onAddProvider}
-          onClose={onClose}
-          onCloseSession={onCloseSession}
-          onExport={exportEnabled ? exportTranscript : undefined}
-          onOpenPeople={onOpenPeople}
-          peopleCount={peopleCount}
-          onOpenProject={
-            // A pop-out is its own window with no app shell to navigate; the
-            // project still shows, it just is not a link there.
-            owningProject && surface === "main"
-              ? () => void goProject(owningProject.id)
-              : undefined
-          }
-          onPopout={surface === "main" ? handlePopout : undefined}
-          onRename={canRename ? () => setRenameOpen(true) : undefined}
-          onReopenSession={onReopenSession}
-          onToggleTaskRail={
-            taskDock.activeModel
-              ? () => {
-                  surfaceHost.close();
-                  taskDock.toggle();
-                }
-              : undefined
-          }
-          onToggleSurface={(id) => {
-            taskDock.close();
-            surfaceHost.toggle(id);
-          }}
-          projectName={owningProject?.name ?? null}
-          providerAuthorityPubkey={session.providerAuthorityPubkey}
-          runtimeLabel={runtimeLabel}
-          sessionTitle={authoritativeTitle}
-          sessionClosed={sessionClosed}
-          status={status}
-          surfaceHostId={surfaceHostId}
-          surfaceTabs={surfaces.map((surfaceEntry) => ({
-            id: surfaceEntry.id,
-            label: surfaceEntry.label,
-            icon: surfaceEntry.id === "agents" ? "agents" : "changes",
-            count: surfaceEntry.count ?? 0,
-            active: surfaceHost.activeTab === surfaceEntry.id,
-          }))}
-          taskCount={taskDock.activeModel?.tasks.length ?? 0}
-          taskRailOpen={taskDock.open}
-          workspaceReuse={{
-            channelId,
-            sessionRef,
-            sourceRepoRef: session.repoRef ?? null,
-          }}
-        />
+        <CodingSessionDetailsContinuityProvider value={sessionFacts.continuity}>
+          <CodingSessionHeader
+            channelName={channelName}
+            compact={isNarrow}
+            // Keep the provenance popover consistent with the visible founder.
+            founderDetails={
+              founderPubkey ? (
+                <CodingSessionFounderLine
+                  founderPubkey={founderPubkey}
+                  genesisRef={genesisRef}
+                  variant="label"
+                />
+              ) : undefined
+            }
+            generationLabel={session.label}
+            seat={seatLabel ? { label: seatLabel } : null}
+            fullAccess={fullAccess}
+            isExporting={isExporting}
+            model={session.model}
+            onAddProvider={onAddProvider}
+            onClose={onClose}
+            onCloseSession={onCloseSession}
+            onExport={exportEnabled ? exportTranscript : undefined}
+            onOpenPeople={onOpenPeople}
+            peopleCount={peopleCount}
+            onOpenProject={
+              // A pop-out is its own window with no app shell to navigate; the
+              // project still shows, it just is not a link there.
+              owningProject && surface === "main"
+                ? () => void goProject(owningProject.id)
+                : undefined
+            }
+            onPopout={surface === "main" ? handlePopout : undefined}
+            onRename={canRename ? () => setRenameOpen(true) : undefined}
+            onReopenSession={onReopenSession}
+            onToggleTaskRail={
+              taskDock.activeModel
+                ? () => {
+                    surfaceHost.close();
+                    taskDock.toggle();
+                  }
+                : undefined
+            }
+            onToggleSurface={(id) => {
+              taskDock.close();
+              surfaceHost.toggle(id);
+            }}
+            projectName={owningProject?.name ?? null}
+            providerAuthorityPubkey={session.providerAuthorityPubkey}
+            runtimeLabel={runtimeLabel}
+            sessionTitle={authoritativeTitle}
+            sessionClosed={sessionClosed}
+            status={status}
+            surfaceHostId={surfaceHostId}
+            surfaceTabs={surfaces.map((surfaceEntry) => ({
+              id: surfaceEntry.id,
+              label: surfaceEntry.label,
+              icon: surfaceEntry.id === "agents" ? "agents" : "changes",
+              count: surfaceEntry.count ?? 0,
+              active: surfaceHost.activeTab === surfaceEntry.id,
+            }))}
+            taskCount={taskDock.activeModel?.tasks.length ?? 0}
+            taskRailOpen={taskDock.open}
+            workspaceReuse={{
+              channelId,
+              sessionRef,
+              sourceRepoRef: session.repoRef ?? null,
+            }}
+          />
+        </CodingSessionDetailsContinuityProvider>
       </div>
       {sessionRef ? (
         <CodingSessionNameDialog
@@ -803,6 +836,8 @@ function ReadyCodingSessionWorkspace({
                     generationId={generationId}
                     isWorking={isWorking}
                     items={transcript}
+                    model={transcriptModel}
+                    onOpenAgentsSurface={openAgentsSurface}
                     operatorProfiles={operatorProfiles}
                     scrollRef={scrollRef}
                   />
@@ -816,11 +851,14 @@ function ReadyCodingSessionWorkspace({
           </div>
           {!isAtBottom ? (
             <div
-              className={
+              className={cn(
                 reflow.active
                   ? "flex justify-center py-2"
-                  : "pointer-events-none absolute inset-x-0 bottom-32 z-30 flex justify-center"
-              }
+                  : "pointer-events-none absolute inset-x-0 z-30 flex justify-center",
+                !reflow.active && jumpPill.className,
+              )}
+              data-testid="coding-session-scroll-to-latest-slot"
+              style={reflow.active ? undefined : jumpPill.style}
             >
               <Button
                 className="pointer-events-auto rounded-full bg-background/90 shadow-md backdrop-blur-xl"
@@ -876,6 +914,7 @@ function ReadyCodingSessionWorkspace({
                       model: session.model,
                       providerLabel,
                       runtimeLabel,
+                      sandbox: sessionFacts.sandbox,
                       status,
                       turnBudget: session.turnBudget,
                     }}
@@ -900,7 +939,12 @@ function ReadyCodingSessionWorkspace({
                 </div>
               </CodingSessionColumn>
             </div>
-          ) : null}
+          ) : (
+            <CodingSessionWorkspaceSandboxFooter
+              sandbox={sessionFacts.sandbox}
+              sessionClosed={sessionClosed}
+            />
+          )}
         </section>
         {surfaceHost.activeTab !== null ? (
           <CodingSessionSurfaceHost

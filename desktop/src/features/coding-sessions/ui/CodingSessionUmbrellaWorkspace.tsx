@@ -50,6 +50,11 @@ import { useElementWidth } from "@/shared/hooks/use-mobile";
 import { cn } from "@/shared/lib/cn";
 import { CodingSessionUmbrellaHeaderRow } from "./CodingSessionUmbrellaHeaderRow";
 import { useCodingSessionFullAccess } from "./useCodingSessionFullAccess";
+import { CodingSessionDetailsContinuityProvider } from "./CodingSessionHeaderDetailsContinuity";
+import {
+  CodingSessionUmbrellaClosedSandboxFooter,
+  useCodingSessionUmbrellaContinuity,
+} from "./CodingSessionUmbrellaSessionFacts";
 import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
 import {
   CODING_SESSION_COMPOSER_DOCK_FADE,
@@ -178,6 +183,10 @@ export function UmbrellaCodingSessionWorkspace({
     channelId,
     record: focusedExecution.activeGeneration,
   });
+  // SV-16: Details reads the focused execution's continuity, which left the
+  // Mission transcript like the single workspace's did.
+  const focusedContinuity =
+    useCodingSessionUmbrellaContinuity(focusedExecution);
   const teamWake = useCodingSessionTeamWake({
     catalogSettled,
     channelId,
@@ -714,53 +723,55 @@ export function UmbrellaCodingSessionWorkspace({
       className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
       data-testid="coding-session-umbrella-workspace"
     >
-      <CodingSessionUmbrellaHeaderRow
-        agentFocusItems={agentFocusItems}
-        authoritativeTitle={authoritativeTitle}
-        canRename={canRename}
-        channelId={channelId}
-        channelName={channelName}
-        composerTaskDock={composerTaskDock}
-        contextLoads={contextLoads}
-        focusedExecution={focusedExecution}
-        fullAccess={fullAccess}
-        focusedExecutionKey={focusedExecutionKey}
-        goal={goal}
-        handleFocusExecution={handleFocusExecution}
-        handleLensChange={handleLensChange}
-        handleMissionDensityChange={handleMissionDensityChange}
-        handlePopout={handlePopout}
-        handleStopAll={handleStopAll}
-        handleToggleRouteRail={handleToggleRouteRail}
-        headerCompact={headerCompact}
-        isMultiExecution={isMultiExecution}
-        isNarrow={isNarrow}
-        lens={lens}
-        mission={mission}
-        missionDensity={missionDensity}
-        onAddProvider={onAddProvider}
-        onClose={onClose}
-        onCloseSession={onCloseSession}
-        onOpenPeople={onOpenPeople}
-        onReopenSession={onReopenSession}
-        peopleCount={peopleCount}
-        resolveReachability={resolveReachability}
-        routedSeats={routedSeats}
-        routeRail={routeRail}
-        seatBeeStamps={seatBeeStamps}
-        seatPackRefs={seatPackRefs}
-        sessionClosed={sessionClosed}
-        setRenameOpen={setRenameOpen}
-        streamParticipants={streamPresence.participants}
-        stopAll={stopAll}
-        surface={surface}
-        surfaceHost={surfaceHost}
-        surfaceHostId={surfaceHostId}
-        surfaces={surfaces}
-        teamWake={teamWake}
-        umbrella={umbrella}
-        workspaceActorName={workspaceActorName}
-      />
+      <CodingSessionDetailsContinuityProvider value={focusedContinuity}>
+        <CodingSessionUmbrellaHeaderRow
+          agentFocusItems={agentFocusItems}
+          authoritativeTitle={authoritativeTitle}
+          canRename={canRename}
+          channelId={channelId}
+          channelName={channelName}
+          composerTaskDock={composerTaskDock}
+          contextLoads={contextLoads}
+          focusedExecution={focusedExecution}
+          fullAccess={fullAccess}
+          focusedExecutionKey={focusedExecutionKey}
+          goal={goal}
+          handleFocusExecution={handleFocusExecution}
+          handleLensChange={handleLensChange}
+          handleMissionDensityChange={handleMissionDensityChange}
+          handlePopout={handlePopout}
+          handleStopAll={handleStopAll}
+          handleToggleRouteRail={handleToggleRouteRail}
+          headerCompact={headerCompact}
+          isMultiExecution={isMultiExecution}
+          isNarrow={isNarrow}
+          lens={lens}
+          mission={mission}
+          missionDensity={missionDensity}
+          onAddProvider={onAddProvider}
+          onClose={onClose}
+          onCloseSession={onCloseSession}
+          onOpenPeople={onOpenPeople}
+          onReopenSession={onReopenSession}
+          peopleCount={peopleCount}
+          resolveReachability={resolveReachability}
+          routedSeats={routedSeats}
+          routeRail={routeRail}
+          seatBeeStamps={seatBeeStamps}
+          seatPackRefs={seatPackRefs}
+          sessionClosed={sessionClosed}
+          setRenameOpen={setRenameOpen}
+          streamParticipants={streamPresence.participants}
+          stopAll={stopAll}
+          surface={surface}
+          surfaceHost={surfaceHost}
+          surfaceHostId={surfaceHostId}
+          surfaces={surfaces}
+          teamWake={teamWake}
+          umbrella={umbrella}
+          workspaceActorName={workspaceActorName}
+        />
+      </CodingSessionDetailsContinuityProvider>
       {umbrella.sessionRef ? (
         <CodingSessionNameDialog
           channelId={channelId}
@@ -933,7 +944,15 @@ export function UmbrellaCodingSessionWorkspace({
                     taskDock={composerTaskDock}
                     umbrella={umbrella}
                   />
-                ) : null}
+                ) : (
+                  // A closed umbrella mounts no composer, so every seat's
+                  // boundary (full access, unenforced) is recorded in a
+                  // footer instead (SV-17).
+                  <CodingSessionUmbrellaClosedSandboxFooter
+                    focusedExecution={focusedExecution}
+                    participants={composerParticipants}
+                  />
+                )}
               </section>
               {surfaceHost.activeTab !== null ? (
                 <CodingSessionSurfaceHost

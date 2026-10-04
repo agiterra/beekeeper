@@ -10,6 +10,10 @@ import {
   type CodingSessionContextRow,
   type CodingSessionRoutedSeatRow,
 } from "./CodingSessionHeaderProvenance";
+import {
+  CodingSessionDetailsContinuity,
+  useCodingSessionDetailsContinuity,
+} from "./CodingSessionHeaderDetailsContinuity";
 
 /**
  * One `Details` control for the session header: who has access, and where
@@ -26,6 +30,11 @@ import {
  * toggle` is now the popover's People row, which opens the same People
  * dialog it always did. The roster itself stays in that dialog: it is where
  * invites and revokes happen, and a popover is too small to manage access in.
+ *
+ * Session continuity lives here too (SV-16): each execution start's "fresh /
+ * resumed / restarted without context" disclosure, read from the transcript
+ * by the workspace. A start that lost context puts a warning dot on the
+ * trigger, so moving the row out of the transcript does not hide it.
  */
 export function CodingSessionHeaderDetails({
   channelName,
@@ -53,18 +62,29 @@ export function CodingSessionHeaderDetails({
   const [open, setOpen] = React.useState(false);
   const showCount = Boolean(onOpenPeople) && peopleCount > 0;
   const peopleNoun = peopleCount === 1 ? "person" : "people";
+  const continuity = useCodingSessionDetailsContinuity();
+  const contextLost = continuity[0]?.lost === true;
+  const triggerLabel = [
+    showCount
+      ? `Show session details: ${peopleCount} ${peopleNoun} with access`
+      : "Show session details",
+    contextLost ? "the latest start lost prior context" : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
   return (
     <Popover onOpenChange={setOpen} open={open}>
       <PopoverTrigger asChild>
         <Button
-          aria-label={
-            showCount
-              ? `Show session details: ${peopleCount} ${peopleNoun} with access`
-              : "Show session details"
-          }
+          aria-label={triggerLabel}
           data-testid="coding-session-provenance-toggle"
+          className={contextLost ? "relative" : undefined}
           size={compact && !showCount ? "icon" : "sm"}
-          title="People with access, and where this session came from"
+          title={
+            contextLost
+              ? "This agent restarted without its prior context. Details has the continuity record, people with access, and provenance."
+              : "People with access, session continuity, and where this session came from"
+          }
           type="button"
           variant={open ? "secondary" : "ghost"}
         >
@@ -79,6 +99,13 @@ export function CodingSessionHeaderDetails({
               <Users className="size-3" />
               {peopleCount}
             </span>
+          ) : null}
+          {contextLost ? (
+            <span
+              aria-hidden
+              className="absolute top-1 right-1 size-1.5 rounded-full bg-amber-500"
+              data-testid="coding-session-details-continuity-dot"
+            />
           ) : null}
         </Button>
       </PopoverTrigger>
@@ -112,6 +139,7 @@ export function CodingSessionHeaderDetails({
             />
           </button>
         ) : null}
+        <CodingSessionDetailsContinuity rows={continuity} />
         <CodingSessionProvenanceDetails
           channelName={channelName}
           contextLoads={contextLoads}

@@ -119,8 +119,15 @@ export function codingSessionUmbrellaParticipantKey(
   participant: CodingSessionUmbrellaParticipant,
 ): string {
   return participant.kind === "execution"
-    ? `execution:${participant.executionKey}`
+    ? codingSessionUmbrellaExecutionParticipantKey(participant.executionKey)
     : "session";
+}
+
+/** {@link codingSessionUmbrellaParticipantKey} of the execution seat with this key. */
+export function codingSessionUmbrellaExecutionParticipantKey(
+  executionKey: string,
+): string {
+  return `execution:${executionKey}`;
 }
 
 /**

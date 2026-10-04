@@ -1,4 +1,4 @@
-import { ArrowUp, Bot, Ellipsis, ShieldCheck, Square } from "lucide-react";
+import { ArrowUp, Ellipsis, ShieldCheck, Square } from "lucide-react";
 
 import { codingSessionTurnBudgetUsage } from "@/features/coding-sessions/lib/codingSessionCapacity";
 import type { CodingSessionChannelAccessCopy } from "@/features/coding-sessions/lib/codingSessionChannelAccess";
@@ -14,6 +14,14 @@ import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/li
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
+import {
+  CodingSessionComposerProviderMark,
+  codingSessionProviderMarkKind,
+} from "./CodingSessionComposerProviderMark";
+import {
+  type CodingSessionComposerSandbox,
+  CodingSessionComposerSandboxChip,
+} from "./CodingSessionComposerSandboxChip";
 import { useCodingSessionMissionLens } from "./CodingSessionUmbrellaWorkspaceModel";
 
 export type CodingSessionComposerControlContext = {
@@ -37,6 +45,12 @@ export type CodingSessionComposerControlContext = {
    * rather than claiming a session has no ceiling when nobody said so.
    */
   turnBudget?: CodingSessionTurnBudget | null;
+  /**
+   * The session's sandbox, shown as the composer's "Sandboxed ▾" /
+   * "Full access ▾" chip (SV-17). Absent where the caller has no transcript
+   * to read it from; the chip is then not drawn at all rather than guessed.
+   */
+  sandbox?: CodingSessionComposerSandbox | null;
 };
 
 type CodingSessionComposerDeckProps = {
@@ -68,6 +82,8 @@ type CodingSessionComposerDeckProps = {
   /** The second delivery choice, or `null` when the primary is the only one. */
   secondaryLabel: string | null;
   recipientControl?: React.ReactNode;
+  /** The attach icon, drawn immediately before send (SV-19). */
+  attachControl?: React.ReactNode;
 };
 
 /**
@@ -101,6 +117,7 @@ export function CodingSessionComposerDeck({
   primaryDisabled,
   secondaryLabel,
   recipientControl,
+  attachControl,
 }: CodingSessionComposerDeckProps) {
   const mission = useCodingSessionMissionLens();
   const model = context?.model
@@ -147,6 +164,11 @@ export function CodingSessionComposerDeck({
       : authorityUnresolved
         ? "Access unresolved"
         : "View only";
+  const providerMark = codingSessionProviderMarkKind(
+    context?.runtimeLabel,
+    context?.providerLabel,
+    context?.model,
+  );
   const availableCapabilities = context
     ? capabilityLabels(context.capabilities)
     : [];
@@ -170,7 +192,7 @@ export function CodingSessionComposerDeck({
                   data-testid="coding-session-control-identity"
                   type="button"
                 >
-                  <Bot aria-hidden className="size-3 shrink-0" />
+                  <CodingSessionComposerProviderMark kind={providerMark} />
                   <span className="max-w-48 truncate">{identityLabel}</span>
                 </button>
               </PopoverTrigger>
@@ -256,6 +278,10 @@ export function CodingSessionComposerDeck({
             </PopoverContent>
           </Popover>
 
+          {context?.sandbox ? (
+            <CodingSessionComposerSandboxChip sandbox={context.sandbox} />
+          ) : null}
+
           {deckTraits ? (
             <span
               className="hidden shrink-0 rounded-full px-2 py-0.5 sm:inline"
@@ -305,6 +331,8 @@ export function CodingSessionComposerDeck({
           {contextWindow ? (
             <CodingSessionContextMeter usage={contextWindow} />
           ) : null}
+
+          {attachControl}
 
           {!isUnavailable ? (
             <button

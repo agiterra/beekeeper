@@ -35,10 +35,14 @@ export const DEFAULT_CODING_SESSION_WIDTH: CodingSessionWidth = "narrow";
 /**
  * The measure cap for each choice.
  *
- * `expanded` is the cap when no side surface is sharing the workspace, which
- * is why every choice has two: a rail takes real width, and a column sized for
- * an empty workspace would be cramped beside one. `full` caps nothing — the
- * gutter alone holds the text off the edge.
+ * `expanded` is the cap when no side surface is sharing the workspace.
+ * `narrow` — the default — is the reading measure, 48rem (`max-w-3xl`, about
+ * 880px of text at 1x), *whether or not* a side surface is open (SV-13): a
+ * measure is about line length, and closing a rail does not make a 72rem line
+ * any easier to read. It used to widen to `max-w-6xl` with no rail open, so
+ * the default transcript ran edge to edge on most windows. `wide` keeps two
+ * caps — choosing it is asking for the room. `full` caps nothing — the gutter
+ * alone holds the text off the edge.
  *
  * These are rem quantities, never px. The desktop app implements Cmd +/- by
  * scaling the root font size, so a rem cap widens with the glyphs and holds a
@@ -48,7 +52,7 @@ export const CODING_SESSION_MEASURE_CLASSES: Record<
   CodingSessionWidth,
   { default: string; expanded: string }
 > = {
-  narrow: { default: "max-w-3xl", expanded: "max-w-6xl" },
+  narrow: { default: "max-w-3xl", expanded: "max-w-3xl" },
   wide: { default: "max-w-5xl", expanded: "max-w-7xl" },
   full: { default: "max-w-none", expanded: "max-w-none" },
 };

@@ -15,7 +15,10 @@ import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Textarea } from "@/shared/ui/textarea";
 import type { CodingSessionAttachmentController } from "@/features/coding-sessions/lib/useCodingSessionTurnAttachments";
-import { CodingSessionComposerAttachments } from "./CodingSessionComposerAttachments";
+import {
+  CodingSessionComposerAttachButton,
+  CodingSessionComposerAttachments,
+} from "./CodingSessionComposerAttachments";
 import {
   useCodingSessionComposerRecipient,
   useCodingSessionMissionLens,
@@ -153,6 +156,16 @@ export function CodingSessionComposerSurface({
   const recipientLabel = useCodingSessionComposerRecipient();
   const canWriteChannel = codingSessionChannelAccessAllowsSend(channelAccess);
   const accessCopy = describeCodingSessionChannelAccess(channelAccess);
+  // SV-19: one attach control, an icon. Immersive seats it beside send in the
+  // deck; the compact lane composer keeps it on the strip's row.
+  const attachButton = attachments ? (
+    <CodingSessionComposerAttachButton
+      canAttach={canAttachImages}
+      controller={attachments}
+      disabled={editorDisabled}
+      runtimeLabel={runtimeLabel}
+    />
+  ) : null;
   return (
     <div
       className={cn(
@@ -213,13 +226,11 @@ export function CodingSessionComposerSurface({
       ) : null}
       {attachments && !immersive ? (
         <CodingSessionComposerAttachments
-          canAttach={canAttachImages}
+          attachControl={attachButton}
           controller={attachments}
-          disabled={editorDisabled}
-          runtimeLabel={runtimeLabel}
         />
       ) : null}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only drop target; the Image button is the keyboard-accessible path */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only drop target; the attach button is the keyboard-accessible path */}
       <div
         className={cn(
           immersive
@@ -238,12 +249,7 @@ export function CodingSessionComposerSurface({
             seat the thumbnails beside the textarea, so it goes above instead
             (rendered below the container's closing tag). */}
         {attachments && immersive ? (
-          <CodingSessionComposerAttachments
-            canAttach={canAttachImages}
-            controller={attachments}
-            disabled={editorDisabled}
-            runtimeLabel={runtimeLabel}
-          />
+          <CodingSessionComposerAttachments controller={attachments} />
         ) : null}
         <Textarea
           aria-label="Coding-session instruction"
@@ -283,6 +289,7 @@ export function CodingSessionComposerSurface({
           placeholder={composerPlaceholder({
             authorityReason,
             authorityUnresolved,
+            canAttachImages: attachments !== undefined && canAttachImages,
             canControl,
             canSteer,
             isDisconnected,
@@ -314,6 +321,7 @@ export function CodingSessionComposerSurface({
           />
         ) : (
           <CodingSessionComposerDeck
+            attachControl={attachButton}
             authorityReason={authorityReason}
             authorityUnresolved={authorityUnresolved}
             canControl={canControl}
@@ -738,6 +746,7 @@ function CompactComposerNotices({
 function composerPlaceholder({
   authorityReason,
   authorityUnresolved,
+  canAttachImages,
   canControl,
   canSteer,
   isDisconnected,
@@ -747,6 +756,7 @@ function composerPlaceholder({
 }: {
   authorityReason: string | null;
   authorityUnresolved: boolean;
+  canAttachImages: boolean;
   canControl: boolean;
   canSteer: boolean;
   isDisconnected: boolean;
@@ -763,5 +773,9 @@ function composerPlaceholder({
   if (!canControl) return "View only — ask for collaborator access.";
   if (isWorking && !canSteer) return "Send the next turn…";
   if (isWorking) return "Steer this coding session…";
-  return "Send a message…";
+  // SV-19: name only what this composer does. No `@`, `$` or `/` — none of
+  // them is built here — and images only where the runtime takes them.
+  return canAttachImages
+    ? "Ask anything, or paste or drop an image…"
+    : "Ask anything…";
 }
