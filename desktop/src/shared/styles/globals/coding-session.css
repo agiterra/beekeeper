@@ -84,22 +84,28 @@
   animation-play-state: paused;
 }
 
-/* Turn metadata (time, cost, copy) waits for the pointer or keyboard focus;
-   it is never hidden from assistive technology. A failure or a stop is not
-   metadata and does not use this class. */
-.coding-session-turn-meta {
+/* Block metadata waits for the pointer or keyboard focus (SV-07): copy, time
+   and cost under an answer show while the answer block is hovered, and the
+   time at the right of a "Worked for …" row while that row is. Neither is
+   ever hidden from assistive technology or find-in-page. A failure or a stop
+   is not metadata and does not use these classes. */
+.coding-session-turn-meta,
+.coding-session-row-time {
   opacity: 0;
   transition: opacity 120ms ease-out;
 }
 
-.group\/turn:hover .coding-session-turn-meta,
+.group\/answer:hover .coding-session-turn-meta,
 .coding-session-turn-meta:focus-within,
-.coding-session-turn-meta[data-pinned="true"] {
+.coding-session-turn-meta[data-pinned="true"],
+.group\/fold-row:hover .coding-session-row-time,
+.group\/fold-row:focus-visible .coding-session-row-time {
   opacity: 1;
 }
 
 @media (hover: none) {
-  .coding-session-turn-meta {
+  .coding-session-turn-meta,
+  .coding-session-row-time {
     opacity: 1;
   }
 }

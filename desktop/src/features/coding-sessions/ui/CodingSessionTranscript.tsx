@@ -6,6 +6,7 @@ import {
   deriveCodingSessionTranscriptModel,
   stabilizeCodingSessionTranscriptModel,
   type CodingSessionTranscriptModel,
+  type CodingSessionTurnRestingStatus,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { useTextSettledCodingSessionEchoes } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import type {
@@ -30,7 +31,18 @@ import {
 } from "./CodingSessionTranscriptItem";
 import { CodingSessionDiagnostics } from "./CodingSessionTranscriptParts";
 import {
+  CODING_SESSION_TURN_GAP,
+  CODING_SESSION_VIRTUAL_ROW_PAD_CLASS,
+  codingSessionEntryRowKind,
+  codingSessionRowGap,
+  codingSessionTurnTailGap,
+  type CodingSessionRowKind,
+} from "./CodingSessionTranscriptRhythm";
+import { CodingSessionOpenAgentsSurfaceContext } from "./CodingSessionTranscriptAgentsSurface";
+import { shouldClampCodingSessionUserMessage } from "./CodingSessionTranscriptUserMessage";
+import {
   CodingSessionEntry,
+  CodingSessionTranscriptTurnPolicyContext,
   CodingSessionTurn,
 } from "./CodingSessionTranscriptTurn";
 
@@ -89,6 +101,34 @@ type CodingSessionTranscriptProps = {
    * transcripts. Read once, at mount.
    */
   disclosureStore?: CodingSessionDisclosureStore;
+  /**
+   * Opens the workspace's Agents surface (SV-06). When given, a subagent row
+   * opens it; omitted, the row expands inline instead.
+   */
+  onOpenAgentsSurface?: () => void;
+  /**
+   * The model of exactly these `items` at this `isWorking`, when the caller
+   * already derived it with {@link useStableCodingSessionTranscriptModel} —
+   * the single workspace does, to read `sessionFacts` for Details and the
+   * sandbox chip without a second pass over the transcript per streamed item.
+   * Omitted, the transcript derives its own.
+   */
+  model?: CodingSessionTranscriptModel;
+  /**
+   * What the caller knows about the session when its latest turn has no
+   * completion and is not the one being worked on: `running`, `stopped`
+   * (idle, ended — an unended call there "Did not finish"), or `unknown`.
+   * Omitted is `unknown`, so an unended call reads "Status unknown" until a
+   * caller that holds the status vouches for more. A turn that reported a
+   * completion or was followed by another is settled regardless.
+   */
+  restingStatus?: CodingSessionTurnRestingStatus;
+  /**
+   * `false` for a transcript that is a fragment of a turn whose working line
+   * is already on screen (Mission Live's execution bundle): no second working
+   * line, and no second live announcement. Defaults to `true`.
+   */
+  showWorkingIndicator?: boolean;
 };
 
 export const CODING_SESSION_VIRTUALIZATION_THRESHOLD = 40;
@@ -113,11 +153,20 @@ export function CodingSessionTranscript({
   generationId,
   isWorking,
   items,
+  model: sharedModel,
+  onOpenAgentsSurface,
   resolveSeat,
+  restingStatus = "unknown",
   scrollRef,
+  showWorkingIndicator = true,
   wakeOperations,
 }: CodingSessionTranscriptProps) {
-  const model = useStableCodingSessionTranscriptModel(items, isWorking);
+  const ownModel = useStableCodingSessionTranscriptModel(
+    sharedModel ? null : items,
+    isWorking,
+  );
+  // One of the two is always set: `ownModel` is null only when shared.
+  const model = (sharedModel ?? ownModel) as CodingSessionTranscriptModel;
   // Only ever non-empty on the machine whose provider signed these items; see
   // `useRedactionDictionary`. A context rather than a prop because the pill
   // that reads it is produced inside cached markdown element trees.
@@ -146,6 +195,19 @@ export function CodingSessionTranscript({
   // row the virtualizer unmounts comes back as it was left.
   const [ownStore] = React.useState(
     () => disclosureStore ?? createCodingSessionDisclosureStore(),
+  );
+  // One stable opener for the transcript's lifetime, calling whatever the
+  // caller passed last, so an inline arrow there re-renders no row.
+  const openAgentsSurfaceRef = React.useRef(onOpenAgentsSurface);
+  openAgentsSurfaceRef.current = onOpenAgentsSurface;
+  const hasAgentsSurface = onOpenAgentsSurface !== undefined;
+  const openAgentsSurface = React.useMemo(
+    () => (hasAgentsSurface ? () => openAgentsSurfaceRef.current?.() : null),
+    [hasAgentsSurface],
+  );
+  const turnPolicy = React.useMemo(
+    () => ({ restingStatus, showWorkingRow: showWorkingIndicator }),
+    [restingStatus, showWorkingIndicator],
   );
   const rows = React.useMemo(
     () => buildCodingSessionTranscriptRows(model),
@@ -199,50 +261,75 @@ export function CodingSessionTranscript({
       <CodingSessionPromptAttributionContext.Provider value={promptAttribution}>
         <CodingSessionTranscriptGenerationContext.Provider value={generationId}>
           <CodingSessionDisclosureContext.Provider value={ownStore}>
-            <div
-              aria-label="Live coding-session conversation"
-              aria-live="off"
-              data-transcript-renderer={
-                shouldVirtualize ? "virtualized" : "static"
-              }
-              data-testid="coding-session-transcript"
-              role="log"
+            <CodingSessionOpenAgentsSurfaceContext.Provider
+              value={openAgentsSurface}
             >
-              {shouldVirtualize ? (
-                <VirtualizedList
-                  estimateSize={averageEstimatedRowSize}
-                  getItemKey={getCodingSessionTranscriptRowKey}
-                  innerClassName="w-full"
-                  items={rows}
-                  overscan={6}
-                  renderItem={renderCodingSessionTranscriptVirtualRow}
-                  scrollRef={scrollRef}
-                />
-              ) : (
-                <div className="flex flex-col gap-5">
-                  {rows.map((row) => (
-                    <CodingSessionTranscriptRowContent
-                      key={row.key}
-                      row={row}
-                    />
-                  ))}
-                </div>
-              )}
-              <span
-                aria-atomic="true"
-                aria-live="polite"
-                className="sr-only"
-                data-testid="coding-session-live-status"
-                role="status"
+              <CodingSessionTranscriptTurnPolicyContext.Provider
+                value={turnPolicy}
               >
-                {isWorking ? "Coding session working" : "Coding session idle"}
-              </span>
-            </div>
+                <div
+                  aria-label="Live coding-session conversation"
+                  aria-live="off"
+                  data-transcript-renderer={
+                    shouldVirtualize ? "virtualized" : "static"
+                  }
+                  data-testid="coding-session-transcript"
+                  role="log"
+                >
+                  {shouldVirtualize ? (
+                    <VirtualizedList
+                      estimateSize={averageEstimatedRowSize}
+                      getItemKey={getCodingSessionTranscriptRowKey}
+                      innerClassName="w-full"
+                      items={rows}
+                      overscan={6}
+                      renderItem={renderCodingSessionTranscriptVirtualRow}
+                      scrollRef={scrollRef}
+                    />
+                  ) : (
+                    <div
+                      className={`flex flex-col ${CODING_SESSION_TURN_GAP.className}`}
+                    >
+                      {rows.map((row) => (
+                        <CodingSessionTranscriptRowContent
+                          key={row.key}
+                          row={row}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {showWorkingIndicator ? (
+                    <span
+                      aria-atomic="true"
+                      aria-live="polite"
+                      className="sr-only"
+                      data-testid="coding-session-live-status"
+                      role="status"
+                    >
+                      {codingSessionLiveStatusText(isWorking, restingStatus)}
+                    </span>
+                  ) : null}
+                </div>
+              </CodingSessionTranscriptTurnPolicyContext.Provider>
+            </CodingSessionOpenAgentsSurfaceContext.Provider>
           </CodingSessionDisclosureContext.Provider>
         </CodingSessionTranscriptGenerationContext.Provider>
       </CodingSessionPromptAttributionContext.Provider>
     </RedactionDictionaryContext.Provider>
   );
+}
+
+/**
+ * The screen-reader status line. "Idle" only when the caller vouches the
+ * session stopped; a session nobody can vouch for is announced as such.
+ */
+function codingSessionLiveStatusText(
+  isWorking: boolean,
+  restingStatus: CodingSessionTurnRestingStatus,
+): string {
+  if (isWorking || restingStatus === "running") return "Coding session working";
+  if (restingStatus === "stopped") return "Coding session idle";
+  return "Coding session status unknown";
 }
 
 /**
@@ -254,7 +341,7 @@ function renderCodingSessionTranscriptVirtualRow(
   row: CodingSessionTranscriptRow,
 ): React.ReactNode {
   return (
-    <div className="pb-5">
+    <div className={CODING_SESSION_VIRTUAL_ROW_PAD_CLASS}>
       <CodingSessionTranscriptRowContent row={row} />
     </div>
   );
@@ -290,24 +377,61 @@ export function estimateCodingSessionTranscriptRowSize(
   if (row.kind === "diagnostics") return 48;
   if (row.block.kind === "standalone") return 96;
   const turn = row.block;
-  // A settled turn is estimated as it first renders: folded.
+  // A settled turn is estimated as it first renders: folded. The gaps come
+  // from the same table the turn renders with (SV-08), so a change to the
+  // rhythm moves the estimate with it.
   const fold = turn.fold;
   const hidden = new Set(fold?.hiddenIndexes ?? []);
-  const entryEstimate = turn.entries.reduce((height, entry, index) => {
-    if (hidden.has(index)) return height;
-    if (entry.kind !== "item") return height + 28;
-    if (entry.item.type === "message") {
-      return height + Math.min(320, 52 + entry.item.text.length / 3);
+  let previous: CodingSessionRowKind | null = null;
+  let height = 0;
+  for (const [index, entry] of turn.entries.entries()) {
+    if (fold && index === fold.anchorIndex) {
+      height += codingSessionRowGap(previous, "fold").px + 36;
+      previous = "fold";
     }
-    return height + 32;
-  }, 0);
-  const stateEstimate =
-    (fold ? 28 : 0) +
-    (turn.isWorking ? 28 : 0) +
-    (turn.completion ? 24 : 0) +
-    (turn.changedFiles.length > 0 ? 48 : 0);
-  return Math.max(88, Math.min(720, entryEstimate + stateEstimate + 20));
+    if (hidden.has(index)) continue;
+    const kind = codingSessionEntryRowKind(entry);
+    height += codingSessionRowGap(previous, kind).px;
+    previous = kind;
+    if (entry.kind !== "item") {
+      height += 28;
+    } else if (entry.item.type === "message") {
+      height +=
+        entry.item.role === "user"
+          ? estimateCodingSessionUserMessageHeight(entry.item.text)
+          : Math.min(320, 52 + entry.item.text.length / 3);
+    } else {
+      height += 28;
+    }
+  }
+  if (turn.isWorking) {
+    height += codingSessionTurnTailGap(previous, "working").px + 28;
+  }
+  if (turn.changedFiles.length > 0) {
+    height += codingSessionTurnTailGap(previous, "changed-files").px + 48;
+  }
+  if (!turn.isWorking && (turn.completion || turn.diagnostics.length > 0)) {
+    height += codingSessionTurnTailGap(previous, "meta").px + 24;
+  }
+  return Math.max(88, Math.min(720, height));
 }
+
+/**
+ * A prompt's bubble: its text, capped where a long prompt clamps (SV-15),
+ * plus the author line, plus the "Show full message" control when clamped.
+ */
+function estimateCodingSessionUserMessageHeight(text: string): number {
+  const body = Math.min(52 + text.length / 3, CLAMPED_USER_MESSAGE_BODY_PX);
+  return (
+    body +
+    (shouldClampCodingSessionUserMessage(text) ? CLAMP_TOGGLE_PX : 0) +
+    AUTHOR_LINE_PX
+  );
+}
+
+const CLAMPED_USER_MESSAGE_BODY_PX = 176 + 24;
+const CLAMP_TOGGLE_PX = 28;
+const AUTHOR_LINE_PX = 20;
 
 /**
  * One row of the transcript. Rows are rebuilt as objects whenever the model
@@ -368,15 +492,38 @@ function CodingSessionSessionDiagnostics({
   );
 }
 
-function useStableCodingSessionTranscriptModel(
+/**
+ * The transcript model of `items`, derived once per change of `items` or
+ * `isWorking` and stabilised against the previous one, so an unchanged
+ * block, diagnostics list or `sessionFacts` list keeps its reference.
+ *
+ * `null` items derive nothing and return `null` — the transcript passes that
+ * when its caller shared a model it already derived.
+ */
+export function useStableCodingSessionTranscriptModel(
   items: TranscriptItem[],
   isWorking: boolean,
-): CodingSessionTranscriptModel {
+): CodingSessionTranscriptModel;
+export function useStableCodingSessionTranscriptModel(
+  items: TranscriptItem[] | null,
+  isWorking: boolean,
+): CodingSessionTranscriptModel | null;
+export function useStableCodingSessionTranscriptModel(
+  items: TranscriptItem[] | null,
+  isWorking: boolean,
+): CodingSessionTranscriptModel | null {
   const previousRef = React.useRef<CodingSessionTranscriptModel | null>(null);
   const next = React.useMemo(
-    () => deriveCodingSessionTranscriptModel(items, { isWorking }),
+    () =>
+      items === null
+        ? null
+        : deriveCodingSessionTranscriptModel(items, { isWorking }),
     [isWorking, items],
   );
+  if (next === null) {
+    previousRef.current = null;
+    return null;
+  }
   const stable = stabilizeCodingSessionTranscriptModel(
     previousRef.current,
     next,

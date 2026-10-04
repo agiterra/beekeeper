@@ -3,7 +3,9 @@ import {
   Check,
   ChevronDown,
   Circle,
+  CircleDashed,
   CircleDot,
+  CircleHelp,
   Clock3,
   FileDiff,
   LoaderCircle,
@@ -15,7 +17,15 @@ import {
   hasFileEditLineDiff,
 } from "@/features/agents/ui/FileEditDiffView";
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
-import type { CodingSessionChangedFile } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import {
+  ACTIVITY_ROW_ICON_CLASS,
+  ACTIVITY_ROW_LABEL_CLASS,
+  ACTIVITY_ROW_LINE_CLASS,
+} from "@/features/agents/ui/AgentSessionToolItem/ToolItemRowClasses";
+import type {
+  CodingSessionChangedFile,
+  CodingSessionTurnSettlement,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import type {
   CodingSessionTask,
   CodingSessionTaskModel,
@@ -40,27 +50,62 @@ export function CodingSessionActiveTool({
   item,
   onOpenChange,
   open,
+  settlement = "live",
 }: {
   disclosureId: string;
   item: Extract<TranscriptItem, { type: "tool" }>;
   onOpenChange: (id: string, open: boolean) => void;
   open: boolean;
+  /**
+   * Where the turn this call belongs to stands. `settled`: the turn is over
+   * while the call never reported an end, so it reads as a static, muted
+   * "Did not finish" — never a spinner over work that stopped. `unknown`:
+   * nothing says whether the turn is still going, so it reads "Status
+   * unknown" — neither a spinner nor a verdict. `live` keeps the provider's
+   * own "Running" or "Queued".
+   */
+  settlement?: CodingSessionTurnSettlement;
 }) {
   const label = formatActiveToolLabel(item);
-  const statusLabel = item.status === "pending" ? "Queued" : "Running";
+  const unfinished = settlement === "settled";
+  const statusUnknown = settlement === "unknown";
+  const statusLabel = unfinished
+    ? "Did not finish"
+    : statusUnknown
+      ? "Status unknown"
+      : item.status === "pending"
+        ? "Queued"
+        : "Running";
   const hasDetails =
     Object.keys(item.args).length > 0 || item.result.trim().length > 0;
   const summary = (
     <>
-      {item.status === "pending" ? (
-        <Clock3 className="size-3.5 shrink-0" />
+      {unfinished ? (
+        <CircleDashed
+          aria-hidden
+          className={cn(ACTIVITY_ROW_ICON_CLASS, "opacity-70")}
+        />
+      ) : statusUnknown ? (
+        <CircleHelp
+          aria-hidden
+          className={cn(ACTIVITY_ROW_ICON_CLASS, "opacity-70")}
+        />
+      ) : item.status === "pending" ? (
+        <Clock3 className={ACTIVITY_ROW_ICON_CLASS} />
       ) : (
-        <LoaderCircle className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+        <LoaderCircle
+          className={cn(
+            ACTIVITY_ROW_ICON_CLASS,
+            "animate-spin motion-reduce:animate-none",
+          )}
+        />
       )}
-      <span className="min-w-0 truncate font-medium text-foreground/85">
+      <span className={ACTIVITY_ROW_LABEL_CLASS}>
         <RedactedText text={label} />
       </span>
-      <span className="ml-auto shrink-0 text-xs">{statusLabel}</span>
+      <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+        {statusLabel}
+      </span>
       {hasDetails ? (
         <ChevronDown className="size-3.5 shrink-0 transition-transform group-open/active-tool:rotate-180" />
       ) : null}
@@ -70,10 +115,12 @@ export function CodingSessionActiveTool({
   if (!hasDetails) {
     return (
       <div
-        className="flex min-h-7 items-center gap-2 px-0.5 text-sm text-muted-foreground"
+        className="flex min-h-7 w-full items-center gap-2 px-1 text-sm text-muted-foreground"
         data-testid="coding-session-active-tool"
         data-tool-status={item.status}
-        role="status"
+        data-tool-status-unknown={statusUnknown ? "" : undefined}
+        data-tool-unfinished={unfinished ? "" : undefined}
+        role={settlement === "live" ? "status" : undefined}
       >
         {summary}
       </div>
@@ -82,17 +129,21 @@ export function CodingSessionActiveTool({
 
   return (
     <details
-      className="group/active-tool px-0.5 text-sm text-muted-foreground"
+      className="group/active-tool text-sm text-muted-foreground"
       data-testid="coding-session-active-tool"
       data-tool-status={item.status}
+      data-tool-status-unknown={statusUnknown ? "" : undefined}
+      data-tool-unfinished={unfinished ? "" : undefined}
       onToggle={(event) => onOpenChange(disclosureId, event.currentTarget.open)}
       open={open}
     >
-      <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2">
+      <summary
+        className={cn("cursor-pointer list-none", ACTIVITY_ROW_LINE_CLASS)}
+      >
         {summary}
       </summary>
       {open ? (
-        <div className="mt-1 ml-1 min-w-0 border-l border-border/60 pl-4">
+        <div className="mt-1 ml-3 min-w-0 border-l border-border/60 pl-4">
           {Object.keys(item.args).length > 0 ? (
             <pre className="buzz-code-scrollbar max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
               <RedactedText text={safeFormatToolArgs(item.args)} />
@@ -129,14 +180,24 @@ export function CodingSessionInlinePlan({
 
   return (
     <details
-      className="group/plan text-xs"
+      className="group/plan text-sm"
       data-plan-state={model.state}
       data-testid="coding-session-inline-plan"
       onToggle={(event) => onOpenChange(disclosureId, event.currentTarget.open)}
       open={open}
     >
-      <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-md px-0.5 text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground">
-        <ChevronDown className="size-3.5 shrink-0 -rotate-90 transition-transform group-open/plan:rotate-0" />
+      <summary
+        className={cn(
+          "cursor-pointer list-none text-muted-foreground",
+          ACTIVITY_ROW_LINE_CLASS,
+        )}
+      >
+        <ChevronDown
+          className={cn(
+            ACTIVITY_ROW_ICON_CLASS,
+            "-rotate-90 transition-transform group-open/plan:rotate-0",
+          )}
+        />
         {model.tasks.length > 1 ? (
           <span
             aria-hidden
@@ -161,22 +222,20 @@ export function CodingSessionInlinePlan({
         ) : null}
         <span
           className={cn(
-            "min-w-0 truncate",
-            model.state === "complete"
-              ? "text-muted-foreground/70"
-              : "font-medium text-foreground/85",
+            ACTIVITY_ROW_LABEL_CLASS,
+            model.state === "complete" && "text-muted-foreground/70",
           )}
         >
           {label}
         </span>
         {model.tasks.length > 1 ? (
-          <span className="ml-auto shrink-0 tabular-nums text-muted-foreground/70">
+          <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground/70">
             {model.completedCount}/{model.tasks.length}
           </span>
         ) : null}
       </summary>
       {open && model.tasks.length > 0 ? (
-        <div className="mt-1 ml-1 flex flex-col gap-0.5 border-l border-border/60 pl-4">
+        <div className="mt-1 ml-3 flex flex-col gap-0.5 border-l border-border/60 pl-4 text-xs">
           {model.explanation ? (
             <p className="mb-1 text-muted-foreground">{model.explanation}</p>
           ) : null}

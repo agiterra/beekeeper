@@ -15,6 +15,11 @@ import {
   codingSessionSubagentTitle,
 } from "@/features/coding-sessions/lib/codingSessionSubagents";
 import type { CodingSessionTranscriptEntry } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import {
+  ACTIVITY_ROW_ICON_CLASS,
+  ACTIVITY_ROW_LABEL_CLASS,
+  ACTIVITY_ROW_LINE_CLASS,
+} from "@/features/agents/ui/AgentSessionToolItem/ToolItemRowClasses";
 import { cn } from "@/shared/lib/cn";
 import { Markdown } from "@/shared/ui/markdown";
 import { requestCodingSessionUmbrellaItemReveal } from "./CodingSessionUmbrellaTimelineWindow";
@@ -70,28 +75,50 @@ export function CodingSessionSubagentStatusIcon({
       <X aria-label="Failed" className="size-3.5 shrink-0 text-destructive" />
     );
   }
-  return <Check aria-label="Done" className="size-3.5 shrink-0" />;
+  // Done is the quiet state: said, but dimmed below the label, so the row
+  // reads as the other settled activity rows do.
+  return (
+    <Check
+      aria-label="Done"
+      className="size-3.5 shrink-0 text-muted-foreground/60"
+    />
+  );
 }
 
 /**
  * A Task/Agent spawn in the lead's stream: one compact row, with the
  * subagent's own items behind it. Several spawns in a row share the row.
  * The items are built only while the row is open.
+ *
+ * SV-06: where the workspace has an Agents surface (`onOpenAgentsSurface`),
+ * clicking the row opens it, as T3 Code's subagent row does; the chevron at
+ * its right still expands the steps in place. Without one, the row itself
+ * expands. Either way the row stays a `<details>`, so "Show in
+ * conversation" from the Agents panel can still open it here.
  */
 export function CodingSessionSubagentEntry({
   disclosureId,
   entry,
+  onOpenAgentsSurface = null,
   onOpenChange,
   open,
   renderChild,
 }: {
   disclosureId: string;
   entry: SubagentsEntry;
+  /** Opens the workspace's Agents surface; `null` when there is none. */
+  onOpenAgentsSurface?: (() => void) | null;
   onOpenChange: (id: string, open: boolean) => void;
   open: boolean;
   renderChild: CodingSessionSubagentChildRenderer;
 }) {
   const status = groupStatus(entry.spawns);
+  // Attribution: every spawn's own description, on the row's tooltip, so a
+  // "Ran 1 subagent" row still says which one without being opened.
+  const spawnTitles = entry.spawns
+    .map((spawn) => codingSessionSubagentTitle(spawn.call))
+    .join("\n");
+  const opensSurface = onOpenAgentsSurface !== null;
   return (
     <details
       className="group/subagents"
@@ -100,27 +127,69 @@ export function CodingSessionSubagentEntry({
       data-subagent-call-ids={entry.spawns
         .map((spawn) => spawn.call.id)
         .join(" ")}
+      data-opens-surface={opensSurface ? "agents" : undefined}
       data-status={status}
       data-testid="coding-session-subagents"
       onToggle={(event) => onOpenChange(disclosureId, event.currentTarget.open)}
       open={open}
     >
+      {/* SV-01/SV-06: the activity-row pattern — full width, a soft fill on
+          hover, a 16px muted robot and a dimmed label. The group's status
+          icon stays on the row in every state; a failure keeps its colour. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: a <summary> is natively interactive (Enter/Space activate it as a click); the handler only redirects that activation to the Agents surface. */}
       <summary
-        aria-label={entry.label}
-        className="flex min-h-7 max-w-full w-fit cursor-pointer list-none items-center gap-2 rounded-md px-0.5 text-sm text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
+        aria-label={
+          opensSurface ? `${entry.label} — open in Agents` : entry.label
+        }
+        className={cn(
+          "group/row cursor-pointer list-none",
+          ACTIVITY_ROW_LINE_CLASS,
+        )}
+        onClick={
+          opensSurface
+            ? (event) => {
+                event.preventDefault();
+                onOpenAgentsSurface?.();
+              }
+            : undefined
+        }
+        title={spawnTitles || undefined}
       >
-        <Bot className="size-3.5 shrink-0" />
-        <span className="min-w-0 truncate font-medium">{entry.label}</span>
+        <Bot aria-hidden className={ACTIVITY_ROW_ICON_CLASS} />
+        <span className={ACTIVITY_ROW_LABEL_CLASS}>{entry.label}</span>
         <CodingSessionSubagentStatusIcon status={status} />
-        <ChevronDown className="size-3.5 shrink-0 transition-transform group-open/subagents:rotate-180" />
+        {opensSurface ? (
+          <button
+            aria-expanded={open}
+            aria-label={open ? "Hide steps here" : "Show steps here"}
+            className="ms-auto inline-flex shrink-0 cursor-pointer items-center rounded-sm p-0.5 text-muted-foreground/0 transition hover:bg-accent/60 focus-visible:text-muted-foreground/70 group-hover/row:text-muted-foreground/70 group-open/subagents:text-muted-foreground/70"
+            data-testid="coding-session-subagents-inline-toggle"
+            onClick={(event) => {
+              // The row opens the surface; this alone toggles in place.
+              event.preventDefault();
+              event.stopPropagation();
+              onOpenChange(disclosureId, !open);
+            }}
+            title={open ? "Hide steps here" : "Show steps here"}
+            type="button"
+          >
+            <ChevronDown
+              aria-hidden
+              className="size-3.5 transition group-open/subagents:rotate-180"
+            />
+          </button>
+        ) : (
+          <ChevronDown className="ms-auto size-3.5 shrink-0 text-muted-foreground/0 transition group-hover/row:text-muted-foreground/70 group-open/subagents:rotate-180 group-open/subagents:text-muted-foreground/70" />
+        )}
       </summary>
       {open ? (
-        <div className="mt-1 ml-1 flex flex-col gap-3 border-l border-border/60 pl-4">
+        <div className="mt-1 ml-3 flex flex-col gap-3 border-l border-border/60 pl-4">
           {entry.spawns.map((spawn) => (
             <CodingSessionSubagentSpawnDetail
               key={spawn.call.id}
               renderChild={renderChild}
-              showHeader={entry.spawns.length > 1}
+              // Always named: "Ran 1 subagent" says how many, not which.
+              showHeader
               spawn={spawn}
             />
           ))}

@@ -43,7 +43,9 @@ export function ToolDetailBlocks({
   const showParameters = hasArgs && !showFileContent;
 
   return (
-    <div className="space-y-4 py-2 text-popover-foreground outline-hidden">
+    // `px-1` aligns the detail with the row line above it (SV-01), whose
+    // hover fill is inset by the same amount.
+    <div className="space-y-3 px-1 pt-1 pb-2 text-popover-foreground outline-hidden">
       {description ? (
         <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
           {description}

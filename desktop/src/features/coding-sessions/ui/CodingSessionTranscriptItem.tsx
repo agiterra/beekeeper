@@ -6,6 +6,7 @@ import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import { ThoughtDisclosure } from "@/features/agents/ui/activityRenderClasses/ThoughtActivity";
 import { TranscriptActivityItem } from "@/features/agents/ui/activityRenderClasses/TranscriptActivityItem";
 import {
+  type CodingSessionTurnSettlement,
   isCodingSessionTranscriptError,
   isCompletedSuccessfulCodingSessionTool,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
@@ -33,6 +34,7 @@ import {
   CodingSessionActiveTool,
   CodingSessionInlinePlan,
 } from "./CodingSessionTranscriptParts";
+import { CodingSessionClampedUserMessage } from "./CodingSessionTranscriptUserMessage";
 
 /**
  * One transcript item — a prompt, the agent's prose, a tool call, a plan, a
@@ -95,6 +97,21 @@ export const CodingSessionPromptAttributionContext = React.createContext<{
  */
 export const CodingSessionTranscriptGenerationContext =
   React.createContext<string>("");
+
+/**
+ * Whether the turn these rows belong to is live, settled, or of unknown
+ * status (`resolveCodingSessionTurnSettlement`). `CodingSessionTurn` provides
+ * it, so a call that never reported an end reads "Running" only while its
+ * turn is live, "Did not finish" once the turn is known to be over, and
+ * "Status unknown" when nothing on screen says either. The default is
+ * `live`: a row outside any turn keeps reporting the status the provider
+ * last sent.
+ *
+ * A React context, not a module-level cache: nothing here outlives a render
+ * tree, so `resetCommunityState()` has nothing to reset.
+ */
+export const CodingSessionTurnSettlementContext =
+  React.createContext<CodingSessionTurnSettlement>("live");
 
 const GENERIC_AGENT_IDENTITY = {
   agentAvatarUrl: null,
@@ -173,7 +190,12 @@ export const CodingSessionItem = React.memo(function CodingSessionItem({
         >
           <div className="min-w-0 max-w-[80%] rounded-2xl bg-muted px-4 py-3 text-base leading-6 text-foreground shadow-sm ring-1 ring-border/40">
             {wakeLine === null ? (
-              <Markdown content={item.text.trim() || " "} mediaInset />
+              <CodingSessionClampedUserMessage
+                itemId={item.id}
+                text={item.text}
+              >
+                <Markdown content={item.text.trim() || " "} mediaInset />
+              </CodingSessionClampedUserMessage>
             ) : (
               <p data-testid="coding-session-user-message-wake">{wakeLine}</p>
             )}
@@ -312,6 +334,7 @@ export function CodingSessionToolRow({
     [setOpen],
   );
   const disclosure = { disclosureId, open, onOpenChange };
+  const settlement = React.useContext(CodingSessionTurnSettlementContext);
   const planModel = React.useMemo(
     () =>
       isCompletedSuccessfulCodingSessionTool(item)
@@ -323,7 +346,13 @@ export function CodingSessionToolRow({
     return <CodingSessionInlinePlan {...disclosure} model={planModel} />;
   }
   if (item.status === "executing" || item.status === "pending") {
-    return <CodingSessionActiveTool {...disclosure} item={item} />;
+    return (
+      <CodingSessionActiveTool
+        {...disclosure}
+        item={item}
+        settlement={settlement}
+      />
+    );
   }
   return (
     <ToolItem

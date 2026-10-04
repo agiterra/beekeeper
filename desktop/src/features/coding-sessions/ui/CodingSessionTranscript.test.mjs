@@ -187,7 +187,12 @@ test("folds a settled turn's work behind one Worked row and keeps the answer", a
   assert.match(markup, />Operator not recorded</);
   assert.match(markup, /bg-muted/);
   assert.match(markup, /data-transcript-renderer="static"/);
-  assert.match(markup, /first:border-t-0/);
+  // SV-08: no rule above each turn; the hairline sits under the fold row.
+  assert.doesNotMatch(markup, /border-t/);
+  assert.match(
+    markup,
+    /class="border-b border-border\/60[^"]*" data-testid="coding-session-worked-fold-row"/,
+  );
   assert.match(markup, /Fix the reconnect bug/);
   assert.match(markup, /coding-session-assistant-message/);
   assert.match(markup, /Reconnect now recovers cleanly/);
@@ -551,6 +556,153 @@ test("keeps executing and pending tools as individual active rows", async () => 
   assert.match(markup, /Running/);
   assert.match(markup, /Queued/);
   assert.doesNotMatch(markup, /coding-session-tool-group|Ran 2 commands/);
+});
+
+test("a settled turn's unfinished call reads 'Did not finish', never Running", async () => {
+  // The session is known to have stopped while one call never reported an
+  // end: it must not show a spinner and "Running"/"Queued" over work that
+  // stopped.
+  const markup = await renderTranscript({
+    generationId: "generation-1",
+    isWorking: false,
+    restingStatus: "stopped",
+    items: [
+      message("prompt", "user", "Run both checks"),
+      tool("executing-1", "executing"),
+      tool("pending-1", "pending"),
+      message("answer", "assistant", "Both checks were started."),
+    ],
+    open: ["fold:turn-1"],
+  });
+
+  assert.equal(markup.match(/data-tool-unfinished=""/g)?.length, 2);
+  assert.equal(markup.match(/Did not finish/g)?.length, 2);
+  assert.doesNotMatch(markup, /animate-spin/);
+  assert.doesNotMatch(markup, />Running</);
+  assert.doesNotMatch(markup, />Queued</);
+  assert.doesNotMatch(markup, /role="status"[^>]*coding-session-active-tool/);
+});
+
+function turnResult(id, turnId = "turn-1") {
+  return {
+    id,
+    type: "lifecycle",
+    renderClass: "status",
+    title: "Turn result",
+    text: "Completed in 2s",
+    timestamp,
+    turnId,
+    durationMs: 2_000,
+    costUsd: null,
+  };
+}
+
+const UNFINISHED = /data-tool-unfinished=""/g;
+const STATUS_UNKNOWN = /data-tool-status-unknown=""/g;
+
+test("settled is a fact: a completed turn's unended call did not finish, whatever the session says", async () => {
+  for (const restingStatus of ["running", "unknown", "stopped"]) {
+    const markup = await renderTranscript({
+      generationId: "generation-1",
+      isWorking: false,
+      restingStatus,
+      items: [
+        message("prompt", "user", "Run the check"),
+        tool("executing-1", "executing"),
+        turnResult("result"),
+      ],
+      open: ["fold:turn-1"],
+    });
+    assert.equal(markup.match(UNFINISHED)?.length, 1, restingStatus);
+    assert.doesNotMatch(markup, />Running</, restingStatus);
+    assert.doesNotMatch(markup, />Status unknown</, restingStatus);
+  }
+});
+
+test("settled is a fact: a turn a later turn followed did not finish, even while the session works", async () => {
+  const markup = await renderTranscript({
+    generationId: "generation-1",
+    isWorking: true,
+    items: [
+      message("prompt", "user", "Run the check"),
+      tool("executing-1", "executing"),
+      message("prompt-2", "user", "Now do the next thing", "turn-2"),
+      { ...tool("executing-2", "executing"), turnId: "turn-2" },
+    ],
+  });
+  // turn-1 is over; turn-2 is the one being worked on.
+  assert.equal(markup.match(UNFINISHED)?.length, 1);
+  assert.equal(markup.match(/>Running</g)?.length, 1);
+  assert.doesNotMatch(markup, STATUS_UNKNOWN);
+});
+
+test("an unended call in the working turn reads Running", async () => {
+  const markup = await renderTranscript({
+    generationId: "generation-1",
+    isWorking: true,
+    items: [
+      message("prompt", "user", "Run the check"),
+      tool("executing-1", "executing"),
+    ],
+  });
+  assert.match(markup, />Running</);
+  assert.doesNotMatch(markup, UNFINISHED);
+  assert.doesNotMatch(markup, STATUS_UNKNOWN);
+});
+
+test("with no completion and a status nobody vouches for, an unended call says its status is unknown", async () => {
+  // Waiting, disconnected or unread: neither a spinner nor a verdict. Omitted
+  // `restingStatus` is the same as `unknown`.
+  for (const restingStatus of [undefined, "unknown"]) {
+    const markup = await renderTranscript({
+      generationId: "generation-1",
+      isWorking: false,
+      ...(restingStatus ? { restingStatus } : {}),
+      items: [
+        message("prompt", "user", "Run both checks"),
+        tool("executing-1", "executing"),
+        tool("pending-1", "pending"),
+      ],
+    });
+    assert.equal(markup.match(STATUS_UNKNOWN)?.length, 2);
+    assert.equal(markup.match(/>Status unknown</g)?.length, 2);
+    assert.doesNotMatch(markup, UNFINISHED);
+    assert.doesNotMatch(markup, />Running</);
+    assert.doesNotMatch(markup, />Queued</);
+    assert.doesNotMatch(markup, /animate-spin/);
+    assert.match(markup, />Coding session status unknown</);
+    assert.doesNotMatch(markup, />Coding session idle</);
+  }
+});
+
+test("a resting status of running keeps an unended call Running", async () => {
+  const markup = await renderTranscript({
+    generationId: "generation-1",
+    isWorking: false,
+    restingStatus: "running",
+    items: [
+      message("prompt", "user", "Run the check"),
+      tool("executing-1", "executing"),
+    ],
+  });
+  assert.match(markup, />Running</);
+  assert.doesNotMatch(markup, UNFINISHED);
+  assert.doesNotMatch(markup, STATUS_UNKNOWN);
+});
+
+test("a fragment transcript draws no second working line or live status", async () => {
+  const markup = await renderTranscript({
+    generationId: "generation-1",
+    isWorking: true,
+    showWorkingIndicator: false,
+    items: [
+      message("prompt", "user", "Run the check"),
+      tool("executing-1", "executing"),
+    ],
+  });
+  assert.match(markup, />Running</);
+  assert.doesNotMatch(markup, /data-testid="coding-session-live-status"/);
+  assert.doesNotMatch(markup, /data-testid="coding-session-working"/);
 });
 
 test("renders failed tools as compact semantic rows while preserving lifecycle errors", async () => {
