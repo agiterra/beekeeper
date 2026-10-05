@@ -250,3 +250,20 @@ fn checkpoint_files_is_absent_until_the_owning_lane_lands_it() {
     .expect("sign");
     assert_eq!(pulse_checkpoint_files(&hostile), None);
 }
+
+/// SV-41: a gate start is a phase row, so it names no files and can never
+/// stand in for a checkpoint in an overlap row.
+#[test]
+fn a_gate_start_names_no_files() {
+    let provider = nostr::Keys::generate();
+    let start = crate::coding_session_observation::test_gate_start_event(
+        &provider,
+        "d3e440ea-89f8-4aee-8a02-17edc3e7272e",
+        LEFT_SESSION,
+        "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b",
+        "cargo test",
+        1_759_572_120_000,
+        None,
+    );
+    assert_eq!(pulse_checkpoint_files(&start), None);
+}

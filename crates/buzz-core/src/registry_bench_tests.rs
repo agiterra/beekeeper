@@ -773,3 +773,28 @@ fn a_rubric_whose_finding_id_would_not_fit_the_name_cap_is_refused_at_parse_time
     };
     assert!(validate_finding_id_lengths("verifier", "planted-defect", 1, &ok).is_ok());
 }
+
+/// SV-41: a gate start is a `phase` observation, so a bench reader that takes
+/// rows from `gate` bodies finds none in it, and its `gate:` name is no
+/// registry-bench gate either.
+#[test]
+fn a_gate_start_is_never_a_bench_run() {
+    use crate::coding_session_observation::{
+        decode_coding_session_observation, CodingSessionObservationBody,
+    };
+    let start = crate::coding_session_observation::test_gate_start_event(
+        &nostr::Keys::generate(),
+        "d3e440ea-89f8-4aee-8a02-17edc3e7272e",
+        "dc580cfb-6c80-4fc2-8f4e-dfc328acf222",
+        "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b",
+        "registry-bench/builder/t1#1",
+        1_759_572_120_000,
+        None,
+    );
+    let payload = decode_coding_session_observation(&start.content).expect("a valid start");
+    assert!(matches!(
+        payload.body,
+        CodingSessionObservationBody::Phase(_)
+    ));
+    assert!(parse_bench_gate("gate:registry-bench/builder/t1#1").is_err());
+}

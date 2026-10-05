@@ -333,3 +333,72 @@ fn an_empty_provider_set_is_an_answer_and_verifies_nobody() {
         vec!["Prov · bench: passed (self-reported measurement) · bee bench run --task-set v1"],
     );
 }
+
+// ── SV-41: a gate start is neither a gate line nor a timing line ─────────────
+
+#[test]
+fn pulse_timing_never_lists_a_gate_start() {
+    let stage = stage();
+    let phase = |name: &str, started: u64, ended: Option<u64>| {
+        json!({
+            "phase": name,
+            "startedAtMs": started,
+            "endedAtMs": ended.map_or(Value::Null, |end| json!(end)),
+            "durationMs": ended.map_or(Value::Null, |end| json!(end - started)),
+        })
+    };
+    let observations = vec![
+        // The provider's start and its close for the same call.
+        observation_with_source(
+            &stage.provider,
+            "phase",
+            "observed",
+            None,
+            phase("gate:cargo test", 1_000, None),
+            2,
+        ),
+        observation_with_source(
+            &stage.provider,
+            "phase",
+            "observed",
+            None,
+            phase("gate:cargo test", 1_000, Some(181_000)),
+            3,
+        ),
+        // A start nobody closed.
+        observation_with_source(
+            &stage.provider,
+            "phase",
+            "observed",
+            None,
+            phase("gate:cargo clippy", 2_000, None),
+            4,
+        ),
+        // The seat's own phase, which is timing.
+        observation_with_source(
+            &stage.actor,
+            "phase",
+            "declared",
+            None,
+            phase("red", 1_000, Some(5_000)),
+            5,
+        ),
+    ];
+    let providers = stage.providers();
+    let (facts, row) = stage.render(&observations, Some(&providers));
+    let timing: Vec<&str> = facts
+        .timing
+        .iter()
+        .map(|line| line.phase.as_str())
+        .collect();
+    assert_eq!(timing, vec!["red"], "a start is not a phase anybody timed");
+    for seat in &facts.seats {
+        assert!(
+            seat.gates.is_empty(),
+            "a start is never a gate outcome: {:?}",
+            seat.gates
+        );
+    }
+    assert!(gate_texts(&row, &stage.actor.public_key().to_hex()).is_empty());
+    assert!(gate_texts(&row, &stage.provider.public_key().to_hex()).is_empty());
+}

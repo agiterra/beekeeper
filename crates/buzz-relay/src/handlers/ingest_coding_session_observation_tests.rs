@@ -141,3 +141,98 @@ fn a_malformed_observation_is_refused_by_the_relay_gate() {
         .expect_err("a sixth tag is refused");
     assert!(error.contains("exactly five two-field tags"), "{error}");
 }
+
+fn gate_start(
+    session: &str,
+    genesis: &str,
+    phase: &str,
+    ended_at_ms: Option<u64>,
+    duration_ms: Option<u64>,
+) -> CodingSessionObservationPayload {
+    CodingSessionObservationPayload {
+        schema: CODING_SESSION_OBSERVATION_SCHEMA.to_owned(),
+        session_ref: session.to_owned(),
+        genesis_ref: genesis.to_owned(),
+        observation_type: CodingSessionObservationType::Phase,
+        source: CodingSessionObservationSource::Observed,
+        assignment_ref: None,
+        body: CodingSessionObservationBody::Phase(
+            buzz_core::coding_session_observation::CodingSessionObservationPhaseTiming {
+                phase: phase.to_owned(),
+                started_at_ms: 1_759_572_120_000,
+                ended_at_ms,
+                duration_ms,
+            },
+        ),
+    }
+}
+
+/// SV-41. The provider's gate start and its close are ordinary phase rows on
+/// the existing kind, so the relay's gate accepts both with no schema change.
+#[test]
+fn the_relay_gate_accepts_a_gate_start_and_its_close() {
+    let channel = Uuid::new_v4().to_string();
+    let session = Uuid::new_v4().to_string();
+    let genesis = "cd".repeat(32);
+    for (ended, duration) in [
+        (None, None),
+        (Some(1_759_572_300_000), Some(180_000)),
+        (Some(1_759_572_120_000), None),
+    ] {
+        let event = build_coding_session_observation(
+            &channel,
+            gate_start(&session, &genesis, "gate:cargo test", ended, duration),
+        )
+        .expect("a well-formed start builds")
+        .sign_with_keys(&nostr::Keys::generate())
+        .expect("sign start");
+        validate_coding_session_observation_envelope(&event).expect("the relay accepts it");
+    }
+}
+
+/// SV-41. A malformed start is refused with `buzz-core`'s sentence: no gate
+/// after the prefix, a padded gate name, a duration on a row still open, and a
+/// close that ends before it started.
+#[test]
+fn the_relay_gate_refuses_a_malformed_gate_start() {
+    let channel = Uuid::new_v4().to_string();
+    let session = Uuid::new_v4().to_string();
+    let genesis = "cd".repeat(32);
+    let valid = build_coding_session_observation(
+        &channel,
+        gate_start(&session, &genesis, "gate:cargo test", None, None),
+    )
+    .expect("a well-formed start builds")
+    .sign_with_keys(&nostr::Keys::generate())
+    .expect("sign start");
+    let cases: [(serde_json::Value, &str); 4] = [
+        (
+            serde_json::json!({"phase": "gate:", "startedAtMs": 5, "endedAtMs": null, "durationMs": null}),
+            "must name a gate",
+        ),
+        (
+            serde_json::json!({"phase": "gate:cargo test ", "startedAtMs": 5, "endedAtMs": null, "durationMs": null}),
+            "whitespace",
+        ),
+        (
+            serde_json::json!({"phase": "gate:cargo test", "startedAtMs": 5, "endedAtMs": null, "durationMs": 9}),
+            "durationMs must be null",
+        ),
+        (
+            serde_json::json!({"phase": "gate:cargo test", "startedAtMs": 5, "endedAtMs": 4, "durationMs": null}),
+            "must not precede",
+        ),
+    ];
+    for (body, expected) in cases {
+        let mut content: serde_json::Value =
+            serde_json::from_str(&valid.content).expect("start content");
+        content["body"] = body;
+        let event = EventBuilder::new(valid.kind, content.to_string())
+            .tags(valid.tags.iter().cloned())
+            .sign_with_keys(&nostr::Keys::generate())
+            .expect("sign malformed start");
+        let error = validate_coding_session_observation_envelope(&event)
+            .expect_err("a malformed start is refused");
+        assert!(error.contains(expected), "{expected}: {error}");
+    }
+}

@@ -18,9 +18,9 @@ import { hasExactKeys, isPlainRecord } from "./codingSessionWireDecode";
 export const CODING_SESSION_OBSERVATION_FOLD_COMMAND =
   "fold_coding_session_observations_command";
 export const CODING_SESSION_OBSERVATION_FOLD_REQUEST_SCHEMA =
-  "buzz-coding-session-observation-fold-request/v1";
+  "buzz-coding-session-observation-fold-request/v2";
 export const CODING_SESSION_OBSERVATION_FOLD_RESPONSE_SCHEMA =
-  "buzz-coding-session-observation-fold-adapter/v1";
+  "buzz-coding-session-observation-fold-adapter/v2";
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -138,6 +138,31 @@ export type CodingSessionObservationPhaseRow = {
   readonly durationMs: number | null;
 };
 
+/**
+ * One gate start the provider signed (SV-41): an observed `gate:<gate>` phase
+ * row saying a recognised gate command is running, paired by `buzz-core` with
+ * its own closing row when the page holds one.
+ *
+ * Not an outcome. The close fields are all `null` while the start is open;
+ * whether an open start has gone stale is a question about "now", answered by
+ * `selectCodingSessionRunningGates` against `gateStartStaleAfterMs`.
+ */
+export type CodingSessionObservationGateStartRow = {
+  readonly eventId: string;
+  /** The provider instance that watched the call — never the seat. */
+  readonly authorPubkey: string;
+  /** The provider's table name for the gate, e.g. `cargo test`. */
+  readonly gate: string;
+  /** When the call began, by the provider's clock. */
+  readonly startedAtMs: number;
+  readonly assignmentRef: string | null;
+  readonly closeEventId: string | null;
+  /** When the call ended, by the provider's clock; `null` while open. */
+  readonly endedAtMs: number | null;
+  /** The provider's measured span; `null` while open or when unmeasured. */
+  readonly durationMs: number | null;
+};
+
 export type CodingSessionObservationUnresolvedRow = {
   readonly eventId: string;
   readonly assignmentRef: string;
@@ -161,6 +186,10 @@ export type CodingSessionObservationTruncation = {
   readonly displacedGates: number;
   /** Findings a later disposition by the same author and provenance replaced. */
   readonly displacedFindings: number;
+  /** Gate starts not listed (the oldest fall off first). */
+  readonly gateStarts: number;
+  /** Closing rows whose start the page does not hold. A disclosure. */
+  readonly gateStartClosesUnmatched: number;
 };
 
 /** One row that claimed `observed` without a provider instance behind it. */
@@ -178,7 +207,15 @@ export type CodingSessionObservationFold = {
   readonly checkpoints: readonly CodingSessionObservationCheckpointRow[];
   readonly gates: readonly CodingSessionObservationGateRow[];
   readonly findings: readonly CodingSessionObservationFindingRow[];
+  /** Phase timings. Never a gate start: those arrive in `gateStarts`. */
   readonly phases: readonly CodingSessionObservationPhaseRow[];
+  /** Gate starts, open or closed, in the order of their start rows. */
+  readonly gateStarts: readonly CodingSessionObservationGateStartRow[];
+  /**
+   * How long an unclosed start may read as running, from `buzz-core`
+   * (`GATE_START_STALE_AFTER_MS`). Never copied into TypeScript.
+   */
+  readonly gateStartStaleAfterMs: number;
   readonly unresolved: readonly CodingSessionObservationUnresolvedRow[];
   readonly ignored: readonly CodingSessionObservationIgnoredRow[];
   /**
@@ -554,6 +591,45 @@ function decodePhase(
   });
 }
 
+const GATE_START_KEYS = [
+  "eventId",
+  "authorPubkey",
+  "gate",
+  "startedAtMs",
+  "assignmentRef",
+  "closeEventId",
+  "endedAtMs",
+  "durationMs",
+] as const;
+
+function decodeGateStart(
+  value: unknown,
+  at: string,
+): CodingSessionObservationGateStartRow {
+  const object = exact(value, GATE_START_KEYS, at);
+  const closeEventId = nullableEventId(object, "closeEventId", at);
+  const endedAtMs = nullableCount(object, "endedAtMs", at);
+  const durationMs = nullableCount(object, "durationMs", at);
+  // A close is all-or-nothing: an end with no closing row (or the reverse)
+  // would let a reader call a start finished on half a record.
+  if ((closeEventId === null) !== (endedAtMs === null)) {
+    refuse(`${at} must carry "closeEventId" and "endedAtMs" together`);
+  }
+  if (endedAtMs === null && durationMs !== null) {
+    refuse(`${at} field "durationMs" must be null while the start is open`);
+  }
+  return Object.freeze({
+    eventId: eventId(object, "eventId", at),
+    authorPubkey: eventId(object, "authorPubkey", at),
+    gate: text(object, "gate", at),
+    startedAtMs: count(object, "startedAtMs", at),
+    assignmentRef: nullableEventId(object, "assignmentRef", at),
+    closeEventId,
+    endedAtMs,
+    durationMs,
+  });
+}
+
 function decodeUnresolved(
   value: unknown,
   at: string,
@@ -598,6 +674,8 @@ const TRUNCATION_KEYS = [
   "entryEventIds",
   "displacedGates",
   "displacedFindings",
+  "gateStarts",
+  "gateStartClosesUnmatched",
 ] as const;
 
 function decodeTruncation(value: unknown): CodingSessionObservationTruncation {
@@ -614,6 +692,8 @@ function decodeTruncation(value: unknown): CodingSessionObservationTruncation {
     entryEventIds: count(object, "entryEventIds", at),
     displacedGates: count(object, "displacedGates", at),
     displacedFindings: count(object, "displacedFindings", at),
+    gateStarts: count(object, "gateStarts", at),
+    gateStartClosesUnmatched: count(object, "gateStartClosesUnmatched", at),
   });
 }
 
@@ -627,6 +707,8 @@ const RESPONSE_KEYS = [
   "gates",
   "findings",
   "phases",
+  "gateStarts",
+  "gateStartStaleAfterMs",
   "unresolved",
   "ignored",
   "misclaimedObserved",
@@ -663,6 +745,8 @@ export function decodeCodingSessionObservationFold(
     gates: rows(object, "gates", decodeGate),
     findings: rows(object, "findings", decodeFinding),
     phases: rows(object, "phases", decodePhase),
+    gateStarts: rows(object, "gateStarts", decodeGateStart),
+    gateStartStaleAfterMs: count(object, "gateStartStaleAfterMs", "response"),
     unresolved: rows(object, "unresolved", decodeUnresolved),
     ignored: rows(object, "ignored", decodeIgnored),
     misclaimedObserved: rows(object, "misclaimedObserved", decodeMisclaimed),

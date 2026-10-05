@@ -43,6 +43,7 @@ Published, replaced, and closed by the session owner. Addressed by `(pubkey, 306
 - `title` (optional, ≤200 chars). The announce deliberately carries **no cwd and no shell path**.
 - `dims` (optional): the owner's grid as `<rows>x<cols>`.
 - `p` (0 to 64): one **roster** entry each — see below.
+- `session` (optional; at most one, non-empty, ≤256 chars with no control characters — relays refuse any other shape at ingest): the coding session this terminal was opened for — see [Session terminals](#session-terminals).
 
 ### Roster tags
 
@@ -60,6 +61,18 @@ The announce carries the session's per-invitee roster as `p` tags:
 Roster membership is independent of project membership: an owner may invite someone entirely outside the project (the roster admits them to watching and — for collaborators — typing), or share with a project without any roster at all. A stored announce is **visible to its roster members even outside a private project**: a per-session invite grants the announce itself, or the invitee could hold a grant they cannot discover.
 
 The owner republishes on rename, resize (debounced), resume, close, share-toggle, roster change, and project reassignment, and reconciles at startup (publishing `status:closed` for sessions that no longer exist) so a crashed client's announces converge. Clients MUST NOT treat `status:open` alone as "live": a session is live when frames arrive; a watch that produces no frames within ~10 s should render as "owner not streaming".
+
+### Session terminals
+
+*Amendment, 2026-10-04 (session-view parity Wave B, DB11).* A terminal opened from a coding session's view carries one extra tag naming that session:
+
+```json
+["session", "<sessionRef>"]
+```
+
+The value is the session view's key: the umbrella `sessionRef` the provider echoes in its kind:44223 metadata, or, for a session that has none, the same implicit key every member's client derives from the execution. It lets the session's other members list "the terminals of this session" from the project's announces (`#a` query, then filter by `session` client-side; relays index single-letter tags only, so there is no `#session` filter). Watching is unchanged: 24310/24311 exactly as below, and input stays roster-gated.
+
+The tag adds no new disclosure. The announce still carries **no cwd, no shell path and no hostname**: the session terminal's directory is the session's working tree as the owner's machine recorded it, resolved and kept on that machine. Clients label a teammate's session terminal by its owner and liveness ("Brian's computer · live"), never by host. An older client ignores the tag and lists the terminal as a plain project terminal. A relay enforces the tag's shape at ingest — at most one `session` tag, non-empty, at most 256 characters, no control characters — and refuses the announce otherwise; it does not check that the value names a real session.
 
 ## Watch — `kind:24310` (ephemeral)
 

@@ -831,3 +831,9 @@ async fn b_a_seats_first_red_row_does_not_outrank_its_later_green_rows() {
          must not outrank them (body: {body})"
     );
 }
+
+/// SV-41 — a provider-signed gate start is never an outcome — through the real
+/// `git-receive-pack` policy handler, reusing this module's fixture. Attached
+/// here rather than in `verdict_admission.rs`, which sits at the file ceiling.
+#[path = "verdict_admission_gate_start_tests.rs"]
+mod gate_start_tests;

@@ -346,6 +346,28 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
             Some(&dangling),
             phase_body("green"),
         ),
+        // SV-41: one start the provider closed, and one still open.
+        observation(
+            &provider,
+            "phase",
+            "observed",
+            None,
+            gate_start_body("cargo test", 1_756_800_000_000, None),
+        ),
+        observation(
+            &provider,
+            "phase",
+            "observed",
+            None,
+            gate_start_body("cargo test", 1_756_800_000_000, Some(1_756_800_180_000)),
+        ),
+        observation(
+            &provider,
+            "phase",
+            "observed",
+            None,
+            gate_start_body("cargo clippy", 1_756_800_200_000, None),
+        ),
     ];
     // Written oldest-first above so it reads as a session unfolding; handed
     // over newest-first, the relay's page order, which is what the adapter
@@ -380,8 +402,75 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
     );
     assert_eq!(wire["findings"].as_array().map(Vec::len), Some(1));
     assert_eq!(wire["phases"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        wire["gateStarts"].as_array().map(Vec::len),
+        Some(2),
+        "one closed start and one open"
+    );
     assert_eq!(wire["unresolved"].as_array().map(Vec::len), Some(1));
     assert_eq!(wire["ignored"], json!([]));
+}
+
+/// The body of a provider's gate start (`ended: None`) or its close.
+fn gate_start_body(gate: &str, started: u64, ended: Option<u64>) -> Value {
+    json!({
+        "phase": format!("gate:{gate}"),
+        "startedAtMs": started,
+        "endedAtMs": ended.map_or(Value::Null, |end| json!(end)),
+        "durationMs": ended.map_or(Value::Null, |end| json!(end - started)),
+    })
+}
+
+/// SV-41 at the adapter: an observed `gate:` phase leaves `phases`, arrives in
+/// `gateStarts` paired with its close, and the stale rule's number rides along
+/// so TypeScript never copies it.
+#[test]
+fn a_gate_start_reaches_the_screen_paired_and_never_as_a_phase() {
+    let provider = fixed_keys(0x66);
+    let open = observation(
+        &provider,
+        "phase",
+        "observed",
+        None,
+        gate_start_body("cargo clippy", 1_756_800_200_000, None),
+    );
+    let started = observation(
+        &provider,
+        "phase",
+        "observed",
+        None,
+        gate_start_body("cargo test", 1_756_800_000_000, None),
+    );
+    let closed = observation(
+        &provider,
+        "phase",
+        "observed",
+        None,
+        gate_start_body("cargo test", 1_756_800_000_000, Some(1_756_800_180_000)),
+    );
+    let close_id = closed.id.to_hex();
+    // Newest first, as the relay pages: the close ahead of its own start.
+    let response = fold_adapter(request(&[open, closed, started], Vec::new())).expect("fold");
+    let wire = serde_json::to_value(&response).expect("serialize");
+    assert_eq!(
+        wire["phases"],
+        json!([]),
+        "a start is not a phase anybody timed"
+    );
+    assert_eq!(wire["gates"], json!([]), "a start is never a gate outcome");
+    assert_eq!(wire["gateStartStaleAfterMs"], json!(30 * 60 * 1_000));
+    let starts = wire["gateStarts"].as_array().expect("gateStarts");
+    assert_eq!(starts.len(), 2);
+    assert_eq!(starts[0]["gate"], json!("cargo test"));
+    assert_eq!(starts[0]["closeEventId"], json!(close_id));
+    assert_eq!(starts[0]["endedAtMs"], json!(1_756_800_180_000u64));
+    assert_eq!(starts[0]["durationMs"], json!(180_000));
+    assert_eq!(starts[1]["gate"], json!("cargo clippy"));
+    assert_eq!(starts[1]["closeEventId"], Value::Null);
+    assert_eq!(starts[1]["endedAtMs"], Value::Null);
+    assert_eq!(starts[1]["durationMs"], Value::Null);
+    assert_eq!(wire["truncated"]["gateStarts"], json!(0));
+    assert_eq!(wire["truncated"]["gateStartClosesUnmatched"], json!(0));
 }
 
 /// REVIEW-L5 **F2** at the adapter: a seat-signed `observed` row arrives as

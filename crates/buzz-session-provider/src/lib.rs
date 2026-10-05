@@ -674,6 +674,9 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 provider.witness_relay_identity().await;
                 provider.retry_pending_claim_verification().await;
                 provider.prune_stale_pending_hints();
+                // SV-41: a gate that has run long enough to watch is signed
+                // as started; nothing else wakes the loop while it runs.
+                provider.publish_due_gate_starts();
                 provider.sync_project_deletion_listener();
                 while provider.git_probe_tasks.try_join_next().is_some() {}
             }
@@ -10203,6 +10206,21 @@ impl Provider {
                 usage,
                 tool_calls,
             } => {
+                // SV-41: a gate call still pending when its turn ends is not
+                // running any more; every start it published is closed now.
+                // Before the locate return, as the Exited arm does: a turn end
+                // the provider can no longer place still ends the observer's
+                // turn, so no pending call publishes a start after it.
+                let gate_start_closes = self
+                    .gate_observers
+                    .get_mut(&session_id)
+                    .map(|observer| observer.end_turn(now_ms()))
+                    .unwrap_or_default();
+                if let Some(channel_id) = self.state.session(&session_id).map(|r| r.channel_id) {
+                    for close in gate_start_closes {
+                        self.publish_gate_start(&session_id, channel_id, close);
+                    }
+                }
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     return Ok(());
                 };
@@ -10345,6 +10363,16 @@ impl Provider {
                         // The tool outcome is observed; its execution-time
                         // tree is not. Never join later Git state onto it.
                         self.spawn_gate_observation(&session_id, observed);
+                    }
+                    // SV-41: a call that ended here (its result, or eviction
+                    // from the window) closes any start it published.
+                    let gate_start_closes = self
+                        .gate_observers
+                        .get_mut(&session_id)
+                        .map(gate_observer::GateObserver::take_start_closes)
+                        .unwrap_or_default();
+                    for close in gate_start_closes {
+                        self.publish_gate_start(&session_id, channel_id, close);
                     }
                     self.enqueue_transcript(
                         channel_id,
@@ -10495,8 +10523,18 @@ impl Provider {
                 self.prompt_image.remove(&session_id);
                 // A half-paired gate call whose result this process will now
                 // never see is not a gate anybody ran: forgotten, never
-                // resolved into a row.
-                self.gate_observers.remove(&session_id);
+                // resolved into a row. A start it published is closed (SV-41),
+                // so it never reads as running past the process that ran it.
+                let gate_start_closes = self
+                    .gate_observers
+                    .remove(&session_id)
+                    .map(|mut observer| observer.close_all(now_ms()))
+                    .unwrap_or_default();
+                if let Some(channel_id) = self.state.session(&session_id).map(|r| r.channel_id) {
+                    for close in gate_start_closes {
+                        self.publish_gate_start(&session_id, channel_id, close);
+                    }
+                }
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     self.sessions.forget(&session_id);
                     return Ok(());
@@ -10714,6 +10752,85 @@ impl Provider {
             event,
         )?;
         Ok(())
+    }
+
+    /// Sign and queue every gate start that has become due (SV-41).
+    ///
+    /// Called on the runtime tick: a start is a call still pending
+    /// [`gate_observer::GATE_START_PUBLISH_DELAY_MS`] after it opened, so a
+    /// tick is the only moment that can notice one — nothing else happens
+    /// while a long gate runs.
+    pub(crate) fn publish_due_gate_starts(&mut self) {
+        self.publish_due_gate_starts_at(now_ms());
+    }
+
+    /// [`Self::publish_due_gate_starts`] with the clock supplied.
+    pub(crate) fn publish_due_gate_starts_at(&mut self, now: i64) {
+        let due: Vec<(String, Vec<gate_observer::ObservedGateStart>)> = self
+            .gate_observers
+            .iter_mut()
+            .map(|(session_id, observer)| (session_id.clone(), observer.due_starts(now)))
+            .filter(|(_, starts)| !starts.is_empty())
+            .collect();
+        for (session_id, starts) in due {
+            let Some(channel_id) = self.state.session(&session_id).map(|r| r.channel_id) else {
+                continue;
+            };
+            for start in starts {
+                self.publish_gate_start(&session_id, channel_id, start);
+            }
+        }
+    }
+
+    /// Sign one gate start, or its close, as an observed kind 44246 phase row.
+    ///
+    /// Same scoping and key as [`Self::publish_observed_gate_row`]: an
+    /// umbrella-less session publishes nothing, the signer is this provider,
+    /// and `assignmentRef` is null. Never fails the caller: a start is a
+    /// disclosure, and a refusal is logged and dropped.
+    fn publish_gate_start(
+        &mut self,
+        session_id: &str,
+        channel_id: Uuid,
+        start: gate_observer::ObservedGateStart,
+    ) {
+        let Some((session_ref, genesis_ref)) = self
+            .state
+            .session(session_id)
+            .and_then(|record| Some((record.session_ref.clone()?, record.genesis_ref.clone()?)))
+        else {
+            return;
+        };
+        let Some(payload) =
+            gate_observer::start::gate_start_payload(&session_ref, &genesis_ref, &start)
+        else {
+            tracing::warn!(target: "csp", %session_id, gate = start.gate, "gate start not buildable");
+            return;
+        };
+        let event = match build_coding_session_observation(&channel_id.to_string(), payload)
+            .map_err(|error| error.to_string())
+            .and_then(|builder| {
+                builder
+                    .sign_with_keys(&self.config.keys)
+                    .map_err(|error| error.to_string())
+            }) {
+            Ok(event) => event,
+            Err(error) => {
+                tracing::warn!(target: "csp", %session_id, "gate start refused before signing: {error}");
+                return;
+            }
+        };
+        let key = gate_observer::start::gate_start_semantic_key(session_id, &start);
+        // Normal, like the gate row: a disclosure about running work never
+        // sits ahead of a receipt a consumer is blocking on.
+        if let Err(error) = self.outbox.enqueue(
+            KIND_CODING_SESSION_OBSERVATION,
+            &key,
+            Priority::Normal,
+            event,
+        ) {
+            tracing::warn!(target: "csp", %session_id, "gate start could not be queued: {error}");
+        }
     }
 
     /// Resolve a session id to the channel it publishes into and its wire target.

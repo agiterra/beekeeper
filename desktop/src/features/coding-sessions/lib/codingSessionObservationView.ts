@@ -23,8 +23,10 @@ import {
   type CodingSessionObservationFindingRow,
   type CodingSessionObservationFold,
   type CodingSessionObservationGateRow,
+  type CodingSessionObservationGateStartRow,
   type CodingSessionObservationSource,
 } from "./codingSessionObservationWire";
+import type { CodingSessionObservationNotLive } from "./codingSessionObservationLiveness";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 
 /** Rows one seat block will show per section before it truncates visibly. */
@@ -229,6 +231,13 @@ export type CodingSessionObservationSeatBlock = {
   readonly gates: readonly CodingSessionObservationGateView[];
   readonly findings: readonly CodingSessionObservationFindingView[];
   readonly phases: readonly CodingSessionObservationPhaseView[];
+  /**
+   * The gate runs this key signed as started (SV-41), open or closed, in fold
+   * order. Raw rows: whether an open one still reads "running" is a question
+   * about now, answered where it renders against the view's
+   * `gateStartStaleAfterMs`. Already bounded by `buzz-core` (64).
+   */
+  readonly gateStarts: readonly CodingSessionObservationGateStartRow[];
   /** Per-section counts dropped by this surface's own bound; 0 when none. */
   readonly hidden: {
     readonly checkpoints: number;
@@ -277,6 +286,11 @@ export type CodingSessionObservationView = {
    */
   readonly provenanceChecked: boolean;
   readonly disclosure: string;
+  /**
+   * `buzz-core`'s stale threshold for an unclosed gate start, carried through
+   * so a renderer never copies the constant. `null` when there is no fold.
+   */
+  readonly gateStartStaleAfterMs: number | null;
 };
 
 /** Resolve an author key to the name a surface already shows for it. */
@@ -308,6 +322,7 @@ export function deriveCodingSessionObservationView(input: {
       misclaimedObserved: Object.freeze([]),
       provenanceChecked: false,
       disclosure: "",
+      gateStartStaleAfterMs: null,
     });
   }
   const decisions = new Set(input.knownDecisionRefs ?? []);
@@ -321,6 +336,9 @@ export function deriveCodingSessionObservationView(input: {
   for (const row of fold.gates) remember(row.authorPubkey);
   for (const row of fold.findings) remember(row.authorPubkey);
   for (const row of fold.phases) remember(row.authorPubkey);
+  // A watcher whose only rows are gate starts still gets its block: the starts
+  // left `phases` (SV-41), and they must stay one click away.
+  for (const row of fold.gateStarts) remember(row.authorPubkey);
 
   const allGates: CodingSessionObservationGateView[] = [];
   const seats = authors.map((authorPubkey) => {
@@ -382,6 +400,9 @@ export function deriveCodingSessionObservationView(input: {
       gates: bound(gates),
       findings: bound(findings),
       phases: bound(phases),
+      gateStarts: Object.freeze(
+        fold.gateStarts.filter((row) => row.authorPubkey === authorPubkey),
+      ),
       hidden: Object.freeze({
         checkpoints: hiddenCount(checkpoints),
         gates: hiddenCount(gates),
@@ -424,6 +445,7 @@ export function deriveCodingSessionObservationView(input: {
     ),
     provenanceChecked: fold.provenanceChecked,
     disclosure: fold.disclosure,
+    gateStartStaleAfterMs: fold.gateStartStaleAfterMs,
   });
 }
 
@@ -521,6 +543,142 @@ function findingView(
 }
 
 /**
+ * One gate a provider signed as started and has not signed as ended (SV-41).
+ *
+ * The record names the provider's table gate and the provider's clock — no
+ * command line and no commit — so neither is here.
+ */
+export type CodingSessionRunningGate = {
+  /** `${authorPubkey}:${gate}:${startedAtMs}` — the wire's own pairing key. */
+  readonly key: string;
+  /** The provider's table name, e.g. `cargo test`. */
+  readonly gate: string;
+  /** When the call began, by the provider's clock; render it as such. */
+  readonly startedAtMs: number;
+  /** The provider instance that watched it — never the seat. */
+  readonly authorPubkey: string;
+  /** The start event, for "find it on the wire". */
+  readonly eventId: string;
+  /**
+   * No close after `fold.gateStartStaleAfterMs`: reads "no result observed",
+   * never "running". A start dated in the viewer's future is not stale.
+   */
+  readonly stale: boolean;
+  /**
+   * Set when the read this came from is not being kept live: the line is a
+   * snapshot, and every surface that renders it says so. Absent when live.
+   */
+  readonly notLive?: CodingSessionObservationNotLive | null;
+};
+
+/**
+ * What a running-gate line's title must disclose until SV-41 S5 lands.
+ *
+ * A provider that restarts mid-gate signs no close, so the line keeps reading
+ * "running" until the stale rule turns it into "no result observed". Any
+ * surface that renders a {@link CodingSessionRunningGate} as running puts this
+ * sentence in its title (hover), one step away rather than hidden.
+ */
+export const CODING_SESSION_RUNNING_GATE_RESTART_NOTE =
+  "Observed by the provider. A provider restart is not observed: if it restarted mid-gate, this line can outlive the process that ran the gate until it goes stale.";
+
+/**
+ * Every open gate start in the fold, in fold order — running or stale.
+ *
+ * Open means `buzz-core` paired no closing row with it. A finished gate row
+ * does **not** close a start (it names no start, and two seats on one
+ * provider run the same gate at once), so nothing here looks at `fold.gates`.
+ * There is no head filter either: a start names no commit, and filtering on a
+ * value the record does not carry would keep every start or drop every one.
+ * Callers that need provenance read `fold.provenanceChecked`, as they do for
+ * gate rows.
+ */
+export function selectCodingSessionRunningGates(
+  fold: CodingSessionObservationFold | null,
+  options: {
+    readonly nowMs: number;
+    /** The read's not-live note; null or absent while it is kept live. */
+    readonly notLive?: CodingSessionObservationNotLive | null;
+  },
+): readonly CodingSessionRunningGate[] {
+  if (fold === null) return Object.freeze([]);
+  return Object.freeze(
+    fold.gateStarts
+      .filter((start) => start.closeEventId === null)
+      .map((start) =>
+        Object.freeze({
+          key: `${start.authorPubkey}:${start.gate}:${start.startedAtMs}`,
+          gate: start.gate,
+          startedAtMs: start.startedAtMs,
+          authorPubkey: start.authorPubkey,
+          eventId: start.eventId,
+          // The core rule (`gate_start_is_stale`): at or past the threshold,
+          // and never for a start dated after now.
+          stale:
+            options.nowMs >= start.startedAtMs + fold.gateStartStaleAfterMs,
+          // Present only on a snapshot, so a live read's gates are unchanged.
+          ...(options.notLive ? { notLive: options.notLive } : {}),
+        }),
+      ),
+  );
+}
+
+/**
+ * What a paired close says about a gate run (NIP-CSOB § Gate start, reader
+ * rule). Only a measured close (`durationMs` set) is the gate ending. A close
+ * with `durationMs: null` and `endedAtMs > startedAtMs` is the provider no
+ * longer watching — evicted from its window, pending at turn end or session
+ * exit — and the command may still be running, so it never reads as ended.
+ * A null-duration close at `startedAtMs` (a clock that ran backwards) cannot
+ * say which it was and claims neither. `null` while the start has no close.
+ */
+export type CodingSessionGateCloseKind =
+  | "ended"
+  | "stopped-watching"
+  | "unmeasured";
+
+export function codingSessionGateCloseKind(
+  start: CodingSessionObservationGateStartRow,
+): CodingSessionGateCloseKind | null {
+  if (start.closeEventId === null || start.endedAtMs === null) return null;
+  if (start.durationMs !== null) return "ended";
+  return start.endedAtMs > start.startedAtMs
+    ? "stopped-watching"
+    : "unmeasured";
+}
+
+/**
+ * A closed run's tail in words: `ended 14:05 (3m)`, `stopped watching 14:05 ·
+ * end not observed`, or `closed 14:05 · no measured span`. `null` while open.
+ */
+export function describeCodingSessionGateClose(
+  start: CodingSessionObservationGateStartRow,
+  formatTime: (ms: number) => string,
+): string | null {
+  const kind = codingSessionGateCloseKind(start);
+  if (kind === null || start.endedAtMs === null) return null;
+  const at = formatTime(start.endedAtMs);
+  if (kind === "stopped-watching") {
+    return `stopped watching ${at} · end not observed`;
+  }
+  if (kind === "unmeasured") return `closed ${at} · no measured span`;
+  const span = describeDuration(start.durationMs);
+  return `ended ${at}${span === null ? "" : ` (${span})`}`;
+}
+
+/** The hover text for a closed run, by what its close says. */
+export const CODING_SESSION_GATE_CLOSE_TITLE: Readonly<
+  Record<CodingSessionGateCloseKind, string>
+> = {
+  ended:
+    "The provider signed that this gate started and that it ended. Times are the provider's clock; the outcome is the gate row above, not this line.",
+  "stopped-watching":
+    "The provider stopped watching this call; it did not see it end. The command may still have been running. Times are the provider's clock.",
+  unmeasured:
+    "The provider signed a close for this call with no measured span, so it cannot say whether the gate ended or the provider stopped watching it. Times are the provider's clock.",
+};
+
+/**
  * The author's own measured span, in words — or `null`.
  *
  * `null` renders as `not reported`, never as `0s`: a span nobody measured is
@@ -564,6 +722,7 @@ function truncationNotices(
     ["gates", fold.truncated.gates, "gate rows"],
     ["findings", fold.truncated.findings, "findings"],
     ["phases", fold.truncated.phases, "phase timings"],
+    ["gate-starts", fold.truncated.gateStarts, "gate starts"],
     ["unresolved", fold.truncated.unresolved, "unresolved pointers"],
     ["ignored", fold.truncated.ignored, "unreadable events"],
   ];
@@ -592,6 +751,15 @@ function truncationNotices(
       notice: `${fold.truncated.displacedFindings} earlier finding${
         fold.truncated.displacedFindings === 1 ? " was" : "s were"
       } replaced by a later disposition from the same author.`,
+    });
+  }
+  if (fold.truncated.gateStartClosesUnmatched > 0) {
+    const closes = fold.truncated.gateStartClosesUnmatched;
+    notices.push({
+      id: "fold-gate-start-closes-unmatched",
+      notice: `${closes} gate run${closes === 1 ? "" : "s"} ended whose start${
+        closes === 1 ? " is" : "s are"
+      } not in this fold, so ${closes === 1 ? "it is" : "they are"} not listed.`,
     });
   }
   if (fold.truncated.misclaimedObserved > 0) {

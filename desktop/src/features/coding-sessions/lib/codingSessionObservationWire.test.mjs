@@ -64,6 +64,8 @@ test("the adapter's own output decodes, field for field", () => {
     entryEventIds: 0,
     displacedGates: 0,
     displacedFindings: 0,
+    gateStarts: 0,
+    gateStartClosesUnmatched: 0,
   });
   // REVIEW-L5 F2: this fixture's caller resolved the provider set, so the
   // provider's `observed` row is honoured and nothing is misclaimed.
@@ -205,4 +207,72 @@ test("REVIEW-L5 F1: the displacement counts are required too", () => {
       new RegExp(`truncated is missing "${key}"`),
     );
   }
+});
+
+// ── SV-41: gate starts ──────────────────────────────────────────────────────
+
+test("gate starts decode with exact keys, and the stale rule's number rides along", () => {
+  const fold = decodeCodingSessionObservationFold(clone());
+  assert.equal(fold.gateStarts.length, 2);
+  const [closed, open] = fold.gateStarts;
+  assert.equal(closed.gate, "cargo test");
+  assert.match(closed.closeEventId, /^[0-9a-f]{64}$/);
+  assert.equal(closed.durationMs, 180_000);
+  assert.equal(open.gate, "cargo clippy");
+  assert.equal(open.closeEventId, null);
+  assert.equal(open.endedAtMs, null);
+  assert.equal(open.durationMs, null);
+  assert.equal(fold.gateStartStaleAfterMs, 30 * 60 * 1_000);
+  assert.ok(
+    fold.phases.every((phase) => !phase.phase.startsWith("gate:")),
+    "a start never arrives as a phase",
+  );
+});
+
+test("an unknown gate-start key is refused by name", () => {
+  const response = clone();
+  response.gateStarts[0].running = true;
+  assert.throws(
+    () => decodeCodingSessionObservationFold(response),
+    /gateStarts\[0\] carries unsupported "running"/,
+  );
+});
+
+test("a missing gateStarts or stale constant is refused, never read as empty", () => {
+  const withoutStarts = clone();
+  delete withoutStarts.gateStarts;
+  assert.throws(
+    () => decodeCodingSessionObservationFold(withoutStarts),
+    /missing "gateStarts"/,
+  );
+  const withoutStale = clone();
+  delete withoutStale.gateStartStaleAfterMs;
+  assert.throws(
+    () => decodeCodingSessionObservationFold(withoutStale),
+    /missing "gateStartStaleAfterMs"/,
+  );
+});
+
+test("half a close is refused", () => {
+  const response = clone();
+  response.gateStarts[1].endedAtMs = response.gateStarts[1].startedAtMs + 1;
+  assert.throws(
+    () => decodeCodingSessionObservationFold(response),
+    /"closeEventId" and "endedAtMs" together/,
+  );
+  const durationWhileOpen = clone();
+  durationWhileOpen.gateStarts[1].durationMs = 5;
+  assert.throws(
+    () => decodeCodingSessionObservationFold(durationWhileOpen),
+    /"durationMs" must be null while the start is open/,
+  );
+});
+
+test("the v1 adapter schema is refused", () => {
+  const response = clone();
+  response.schema = "buzz-coding-session-observation-fold-adapter/v1";
+  assert.throws(
+    () => decodeCodingSessionObservationFold(response),
+    /"schema" must be/,
+  );
 });

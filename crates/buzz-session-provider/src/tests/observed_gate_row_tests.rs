@@ -477,3 +477,176 @@ async fn observed_gate_credentials_are_neither_published_nor_retained_in_the_vau
         .get(&session_id)
         .is_none_or(|entries| entries.is_empty()));
 }
+
+// ── SV-41: the provider says a gate is running, and says when it stopped ─────
+
+/// Every observed `gate:` phase row the provider has queued, decoded, with its
+/// signer.
+async fn published_gate_starts(
+    provider: &mut Provider,
+) -> Vec<(
+    String,
+    buzz_core::coding_session_observation::CodingSessionObservationPayload,
+)> {
+    let sink = CollectingSink::new();
+    provider.flush(&sink).await.expect("flush");
+    sink.all()
+        .into_iter()
+        .filter(|event| u32::from(event.kind.as_u16()) == KIND_CODING_SESSION_OBSERVATION)
+        .filter_map(|event| {
+            let payload = parse_coding_session_observation(&event).expect("a valid 44246");
+            matches!(payload.body, CodingSessionObservationBody::Phase(_))
+                .then(|| (event.pubkey.to_hex(), payload))
+        })
+        .collect()
+}
+
+fn phase_of(
+    payload: &buzz_core::coding_session_observation::CodingSessionObservationPayload,
+) -> &buzz_core::coding_session_observation::CodingSessionObservationPhaseTiming {
+    match &payload.body {
+        CodingSessionObservationBody::Phase(body) => body,
+        _ => panic!("a gate start is a phase row"),
+    }
+}
+
+#[tokio::test]
+async fn a_gate_running_past_the_delay_is_signed_as_started_and_closed_by_its_result() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut provider, _channel_id, session_id) = observed_fixture(&dir, true);
+
+    feed(
+        &mut provider,
+        &session_id,
+        vec![tool_call("t1", "cargo test -p buzz-core")],
+    );
+    // Before the delay: nothing.
+    provider.publish_due_gate_starts();
+    assert!(published_gate_starts(&mut provider).await.is_empty());
+
+    provider.publish_due_gate_starts_at(
+        now_ms() + crate::gate_observer::GATE_START_PUBLISH_DELAY_MS + 1_000,
+    );
+    let starts = published_gate_starts(&mut provider).await;
+    assert_eq!(starts.len(), 1, "one start for one gate");
+    let (signer, payload) = &starts[0];
+    assert_eq!(
+        signer,
+        &provider.config.keys.public_key().to_hex(),
+        "the provider signs it; the seat is never asked"
+    );
+    assert_eq!(payload.source, CodingSessionObservationSource::Observed);
+    assert_eq!(payload.assignment_ref, None);
+    let start = phase_of(payload).clone();
+    assert_eq!(
+        start.phase, "gate:cargo test",
+        "the table name, never the command"
+    );
+    assert_eq!(start.ended_at_ms, None);
+    assert_eq!(start.duration_ms, None);
+
+    feed(
+        &mut provider,
+        &session_id,
+        vec![tool_result("t1", false, "test result: ok. 9 passed")],
+    );
+    pump_until_gate_observed(&mut provider).await;
+    let closes = published_gate_starts(&mut provider).await;
+    assert_eq!(closes.len(), 1);
+    let close = phase_of(&closes[0].1);
+    assert_eq!(close.phase, start.phase);
+    assert_eq!(close.started_at_ms, start.started_at_ms, "the pairing key");
+    assert!(close
+        .ended_at_ms
+        .is_some_and(|end| end >= start.started_at_ms));
+    assert!(
+        close.duration_ms.is_some(),
+        "the result is the end the provider saw: its span is measured"
+    );
+}
+
+#[tokio::test]
+async fn exit_closes_a_published_start() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut provider, _channel_id, session_id) = observed_fixture(&dir, true);
+    feed(&mut provider, &session_id, vec![tool_call("t1", "just ci")]);
+    provider.publish_due_gate_starts_at(now_ms() + 60_000);
+    assert_eq!(published_gate_starts(&mut provider).await.len(), 1);
+    provider
+        .handle_session_event(session::SessionEvent::Exited {
+            session_id: session_id.clone(),
+            reason: session::ExitReason::Requested,
+        })
+        .expect("exit");
+    let closes = published_gate_starts(&mut provider).await;
+    assert_eq!(
+        closes.len(),
+        1,
+        "the start never outlives the process that ran it"
+    );
+    let close = phase_of(&closes[0].1);
+    assert!(close.ended_at_ms.is_some());
+    assert_eq!(
+        close.duration_ms, None,
+        "the provider stopped watching; it measured no span"
+    );
+}
+
+#[tokio::test]
+async fn a_session_with_no_umbrella_publishes_no_gate_start() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state_dir = dir.path().join("state");
+    let cwd = dir.path().join("checkout");
+    std::fs::create_dir_all(&cwd).expect("mkdir");
+    let mut provider = provider(&state_dir, None);
+    let mut record = governed_record(Uuid::new_v4(), &cwd, &"ab".repeat(32));
+    record.session_ref = None;
+    record.genesis_ref = None;
+    let session_id = record.session_id.clone();
+    provider.state.insert_session(record).expect("insert");
+    feed(
+        &mut provider,
+        &session_id,
+        vec![tool_call("t1", "cargo test")],
+    );
+    provider.publish_due_gate_starts_at(now_ms() + 60_000);
+    assert!(published_gate_starts(&mut provider).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_turn_end_the_provider_cannot_place_still_ends_the_observers_turn() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut provider, _channel_id, session_id) = observed_fixture(&dir, true);
+    feed(
+        &mut provider,
+        &session_id,
+        vec![tool_call("t1", "cargo test")],
+    );
+    // The observer outlives the record it was fed under: the turn end below
+    // names a session `locate` cannot resolve.
+    let observer = provider
+        .gate_observers
+        .remove(&session_id)
+        .expect("the call was remembered");
+    let ghost = "session-that-no-longer-locates".to_owned();
+    provider.gate_observers.insert(ghost.clone(), observer);
+    provider
+        .handle_session_event(session::SessionEvent::TurnFinished {
+            session_id: ghost.clone(),
+            turn_id: "turn-1".to_owned(),
+            outcome: session::TurnOutcome::Cancelled,
+            duration_ms: 1,
+            usage: None,
+            tool_calls: 1,
+        })
+        .expect("turn finished");
+    let observer = provider
+        .gate_observers
+        .get_mut(&ghost)
+        .expect("the observer is kept for a late result");
+    assert!(
+        observer.due_starts(now_ms() + 60_000).is_empty(),
+        "the turn ended: a call still pending never publishes a start after it"
+    );
+    assert!(observer.take_start_closes().is_empty());
+}

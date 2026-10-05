@@ -246,6 +246,80 @@ is computed from this key and refuses every row that does not carry it.
 
 `endedAtMs` MUST NOT precede `startedAtMs`.
 
+#### Gate start — the reserved `gate:` phase (SV-41, 2026-10-04)
+
+A `phase` whose name begins `gate:` and whose `source` is `observed` is a
+**gate start**: the provider instance watching a seat says a recognised gate
+command is running. It is not a gate outcome and never becomes one.
+
+```json
+{"phase": "gate:cargo test", "startedAtMs": 1759572120000,
+ "endedAtMs": null, "durationMs": null}
+```
+
+- **The name.** `gate:` followed by the provider's closed-table gate name
+  (`cargo fmt`, `cargo clippy`, `cargo test`, `pnpm test`, `pnpm typecheck`,
+  `pnpm lint`, `just check`, `just test`, `just ci`) — never the command line,
+  so no path or argument reaches the wire through it. The full command still
+  arrives, redacted, on the finished gate row.
+- **Structure.** On top of every phase's rules, a `gate:` phase that claims
+  `source: "observed"` MUST name a non-empty gate with no leading or trailing
+  whitespace, and MUST carry `durationMs: null` while `endedAtMs` is null. The
+  relay refuses anything else at ingest, with the same validator the decoder
+  runs. A declared `gate:` phase is not held to this rule — it keeps the
+  ordinary phase rules it had before this amendment, so a declared row signed
+  earlier still decodes and folds as a phase.
+- **The close.** When the call ends — its result arrives (whether or not a gate
+  row follows), it falls out of the provider's 32-call window, the turn ends,
+  or the session exits — the provider signs a second phase row with the same
+  author, the same `phase` and the same `startedAtMs`, and `endedAtMs` set.
+  `durationMs` is the provider's measured span, or `null` when it measured
+  none. Only a close produced by the call's result is a measured span: a close
+  for a call evicted from the window, still pending at turn end, or pending
+  when the session exits is the provider no longer watching — the command may
+  still be running — so its `endedAtMs` is when the provider stopped watching
+  and its `durationMs` is `null`. A clock that ran backwards writes
+  `endedAtMs = startedAtMs` and `durationMs: null`, never a zero.
+- **Reading a close.** Only a close with `durationMs` set is the gate ending.
+  A close with `durationMs: null` and `endedAtMs > startedAtMs` is a
+  stop-watching close and MUST NOT be rendered as the gate ending: it reads
+  as "stopped watching … end not observed" (the reference CLI prints
+  `stopped watching <endedAtMs> (end not observed)`). A `durationMs: null`
+  close at `endedAtMs = startedAtMs` cannot say which it was and claims
+  neither (`closed <endedAtMs> (no measured span)`).
+- **Pairing.** A reader pairs a start with its close on
+  `(author, gate, startedAtMs)`, in **either** supplied order: a gate that ends
+  within the second it began may page ahead of its start. This is the one use
+  of an author's time this kind allows, and it orders nothing: it can only
+  join an author's row to the same author's other row. **The finished gate row
+  does not close a start** — it names no start, and two seats on one provider
+  routinely run the same gate at once. A later start of the same gate never
+  closes an earlier one either.
+- **Stale rule.** A start with no close for 30 minutes after its `startedAtMs`
+  (`GATE_START_STALE_AFTER_MS`, three times the longest call any harness here
+  allows) reads **"no result observed"**, never "running". A start dated in the
+  reader's future is not stale. Both times are the provider's clock and are
+  rendered as such.
+- **When a producer signs one.** Only for a call whose command is known when it
+  opens, names at least one recognised gate, and that the observer would not
+  refuse at its result (`;`, a `cd` segment, unsupported syntax); a composed
+  `a && b` line signs one start per recognised segment, all at the line's
+  start. Only once the call has run for at least 5 seconds — a faster call
+  produces no start and no close — and only for a session with a `sessionRef`
+  and `genesisRef`. `assignmentRef` is `null`, as on observed gate rows.
+- **Consumers.** A `gate:` phase whose effective source is `observed` (after
+  the provider-set check) is routed out of `phases` into `gate_starts`; a
+  declared or misclaimed one stays an ordinary phase, its author's own words.
+  **No consumer may count a start as an outcome**: verdict admission, the push
+  gate, `bee git`'s prediction, Pulse gate lines and timing, and registry-bench
+  readers read gate rows only. A reader that predates this amendment decodes a
+  start as a phase still running; it never reaches a gate path there either.
+- **A seat may not write one.** `bee sessions observe phase --phase gate:…` is
+  refused; a seat states a gate with `observe gate`.
+- **Restart.** A provider that dies mid-gate signs no close; the stale rule is
+  the backstop. (A persisted boot sweep that closes such starts with
+  `durationMs: null` is specified as SV-41 S5 and not yet built.)
+
 ## Bounds and reference grammar
 
 | Field | Bound |
@@ -271,6 +345,11 @@ a reader can verify. They MUST be rendered as the author's own measurement and
 MUST NOT be used for ordering, discovery or dedupe. "Newest" in this kind's fold
 means *last in the order the caller supplied*, and nothing an author writes can
 change where its record sits.
+
+The one narrow exception is a gate start's pairing (§ `phase`, "Gate start"):
+an author's close is matched to that same author's start on
+`(author, gate, startedAtMs)`. It joins two of one author's rows and moves
+nothing else.
 
 ## Authority matrix
 

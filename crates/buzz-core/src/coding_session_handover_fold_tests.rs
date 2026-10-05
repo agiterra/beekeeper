@@ -708,3 +708,21 @@ fn a_chain_of_three_leaves_only_its_end_standing() {
         Some(cycle.id.to_hex().as_str())
     );
 }
+
+/// SV-41: a gate start is kind 44246, and the handover fold reads 44247 only.
+/// Handed one anyway, it refuses the set rather than counting it as anything.
+#[test]
+fn a_gate_start_is_never_a_handover_fact() {
+    let start = crate::coding_session_observation::test_gate_start_event(
+        &fixed_keys(0x44),
+        CHANNEL,
+        SESSION,
+        GENESIS,
+        "cargo test",
+        1_759_572_120_000,
+        None,
+    );
+    let error = fold_coding_session_handover(&[start], &context(ClaimState::NoClaim))
+        .expect_err("a 44246 row is not a handover record");
+    assert!(error.contains("is invalid"), "{error}");
+}

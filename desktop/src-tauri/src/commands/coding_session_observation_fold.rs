@@ -18,17 +18,17 @@ use buzz_core_pkg::coding_session_observation::{
     fold_coding_session_observation_page, CodingSessionObservationDisposition,
     CodingSessionObservationFold, CodingSessionObservationFoldContext,
     CodingSessionObservationGateOutcome, CodingSessionObservationPhase,
-    CodingSessionObservationSource,
+    CodingSessionObservationSource, GATE_START_STALE_AFTER_MS,
 };
 use nostr::Event;
 use serde::{Deserialize, Serialize};
 
 /// Closed wire-schema identifier accepted by this boundary.
 pub const CODING_SESSION_OBSERVATION_FOLD_REQUEST_SCHEMA: &str =
-    "buzz-coding-session-observation-fold-request/v1";
+    "buzz-coding-session-observation-fold-request/v2";
 /// Closed wire-schema identifier this native adapter answers with.
 pub const CODING_SESSION_OBSERVATION_FOLD_ADAPTER_SCHEMA: &str =
-    "buzz-coding-session-observation-fold-adapter/v1";
+    "buzz-coding-session-observation-fold-adapter/v2";
 
 /// The one sentence every surface rendering an observation owes its reader.
 ///
@@ -186,6 +186,34 @@ pub struct CodingSessionObservationFoldPhase {
     pub duration_ms: Option<u64>,
 }
 
+/// One gate start the provider signed (SV-41), open or closed.
+///
+/// Not an outcome: a start is the provider saying a recognised gate command
+/// is running. Its close, when the page holds one, is flattened beside it;
+/// `closeEventId`, `endedAtMs` and `durationMs` are all `null` while it is
+/// open. Whether an open start has gone stale is the reader's question
+/// against `gateStartStaleAfterMs`, because it depends on "now".
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionObservationFoldGateStart {
+    /// The start row.
+    pub event_id: String,
+    /// The provider instance that watched the call.
+    pub author_pubkey: String,
+    /// The provider's table name for the gate, e.g. `cargo test`.
+    pub gate: String,
+    /// When the provider says the call began. Its own clock.
+    pub started_at_ms: u64,
+    /// As written; observed starts carry `null`.
+    pub assignment_ref: Option<String>,
+    /// The closing row, or null while the start is open.
+    pub close_event_id: Option<String>,
+    /// When the provider says the call ended, or null while open.
+    pub ended_at_ms: Option<u64>,
+    /// The provider's measured span, or null when open or unmeasured.
+    pub duration_ms: Option<u64>,
+}
+
 /// One observation whose `assignmentRef` named nothing the caller supplied.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -240,6 +268,10 @@ pub struct CodingSessionObservationFoldTruncation {
     pub displaced_gates: usize,
     /// Findings a later disposition by the same author and provenance replaced.
     pub displaced_findings: usize,
+    /// Gate starts not listed (the oldest fall off first).
+    pub gate_starts: usize,
+    /// Closing rows whose start this page does not hold. A disclosure.
+    pub gate_start_closes_unmatched: usize,
 }
 
 /// The four observation facts, plus what the fold could not resolve or read.
@@ -262,8 +294,13 @@ pub struct CodingSessionObservationFoldResponse {
     pub gates: Vec<CodingSessionObservationFoldGate>,
     /// Findings, one per `(author, source, findingId)`, in first-seen order.
     pub findings: Vec<CodingSessionObservationFoldFinding>,
-    /// Phase timings, in supplied order.
+    /// Phase timings, in supplied order. Never a gate start.
     pub phases: Vec<CodingSessionObservationFoldPhase>,
+    /// Gate starts, in the supplied order of their start rows (SV-41).
+    pub gate_starts: Vec<CodingSessionObservationFoldGateStart>,
+    /// How long an unclosed start may read as running, from `buzz-core`, so
+    /// TypeScript never copies the number.
+    pub gate_start_stale_after_ms: u64,
     /// Pointers that resolved to nothing the caller supplied.
     pub unresolved: Vec<CodingSessionObservationFoldUnresolved>,
     /// Events this fold could not read at all.
@@ -393,6 +430,31 @@ fn flatten(
                 })
             })
             .collect::<Result<Vec<_>, String>>()?,
+        gate_starts: fold
+            .gate_starts
+            .into_iter()
+            .map(|entry| {
+                let (close_event_id, ended_at_ms, duration_ms) = match entry.close {
+                    Some(close) => (
+                        Some(close.event_id),
+                        Some(close.ended_at_ms),
+                        close.duration_ms,
+                    ),
+                    None => (None, None, None),
+                };
+                CodingSessionObservationFoldGateStart {
+                    event_id: entry.event_id,
+                    author_pubkey: entry.author_pubkey,
+                    gate: entry.gate,
+                    started_at_ms: entry.started_at_ms,
+                    assignment_ref: entry.assignment_ref,
+                    close_event_id,
+                    ended_at_ms,
+                    duration_ms,
+                }
+            })
+            .collect(),
+        gate_start_stale_after_ms: GATE_START_STALE_AFTER_MS,
         unresolved: fold
             .unresolved
             .into_iter()
@@ -429,6 +491,8 @@ fn flatten(
             entry_event_ids: fold.truncated.entry_event_ids,
             displaced_gates: fold.truncated.displaced_gates,
             displaced_findings: fold.truncated.displaced_findings,
+            gate_starts: fold.truncated.gate_starts,
+            gate_start_closes_unmatched: fold.truncated.gate_start_closes_unmatched,
         },
         disclosure: OBSERVATION_DISCLOSURE.to_owned(),
     })

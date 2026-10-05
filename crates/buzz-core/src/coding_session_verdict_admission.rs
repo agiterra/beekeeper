@@ -953,3 +953,8 @@ mod hardening_tests;
 #[cfg(test)]
 #[path = "coding_session_verdict_admission_commission_tests.rs"]
 mod commission_tests;
+
+/// SV-41: a gate start is never an outcome, in its own file.
+#[cfg(test)]
+#[path = "coding_session_verdict_admission_gate_start_tests.rs"]
+mod gate_start_tests;

@@ -67,6 +67,17 @@ use crate::kind::KIND_CODING_SESSION_OBSERVATION;
 mod fold;
 pub use fold::*;
 
+// The reserved `gate:` phase (SV-41): a gate start, and its pairing rule.
+#[path = "coding_session_observation_gate_start.rs"]
+mod gate_start;
+#[cfg(test)]
+pub(crate) use gate_start::test_gate_start_event;
+pub use gate_start::{
+    gate_of_start_phase, gate_start_is_stale, gate_start_phase_name,
+    CodingSessionObservationGateStartClose, CodingSessionObservationGateStartEntry,
+    GATE_START_PHASE_PREFIX, GATE_START_STALE_AFTER_MS, MAX_OBSERVATION_GATE_STARTS,
+};
+
 /// Exact v1 schema identifier, carried in content and in the `csob-v` tag.
 pub const CODING_SESSION_OBSERVATION_SCHEMA: &str = "buzz-coding-session-observation/v1";
 
@@ -417,7 +428,7 @@ impl CodingSessionObservationPayload {
             CodingSessionObservationBody::Checkpoint(body) => body.validate(),
             CodingSessionObservationBody::Gate(body) => body.validate(),
             CodingSessionObservationBody::Finding(body) => body.validate(),
-            CodingSessionObservationBody::Phase(body) => body.validate(),
+            CodingSessionObservationBody::Phase(body) => body.validate(self.source),
         }
     }
 }
@@ -532,12 +543,19 @@ impl CodingSessionObservationFinding {
 }
 
 impl CodingSessionObservationPhaseTiming {
-    fn validate(&self) -> Result<(), String> {
+    /// Every phase's rule, plus the gate-start rule for a row that **claims**
+    /// `observed` (SV-41). A declared `gate:` phase stays an ordinary phase in
+    /// its author's own words, held to the phase rules it always was, so a
+    /// declared `gate: x` signed before the gate-start rule still decodes.
+    fn validate(&self, source: CodingSessionObservationSource) -> Result<(), String> {
         validate_text("phase phase", &self.phase, MAX_OBSERVATION_NAME_BYTES)?;
         if let Some(ended) = self.ended_at_ms {
             if ended < self.started_at_ms {
                 return Err("phase endedAtMs must not precede startedAtMs".into());
             }
+        }
+        if source == CodingSessionObservationSource::Observed {
+            gate_start::validate_gate_start_phase(self)?;
         }
         Ok(())
     }

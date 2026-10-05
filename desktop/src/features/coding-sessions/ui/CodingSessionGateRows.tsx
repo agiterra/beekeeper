@@ -36,10 +36,20 @@ import { cn } from "@/shared/lib/cn";
  */
 export function CodingSessionGateRows({
   emptyCopy = CODING_SESSION_OBSERVATION_EMPTY.gates,
+  leadFor,
   rows,
   testId,
 }: {
   emptyCopy?: React.ReactNode;
+  /**
+   * List items to place directly above a row (Landing's running line for
+   * that gate, SV-41 S3), or null for none.
+   */
+  leadFor?: (
+    row: CodingSessionObservationGateView,
+    index: number,
+    rows: readonly CodingSessionObservationGateView[],
+  ) => React.ReactNode;
   rows: readonly CodingSessionObservationGateView[];
   testId?: string;
 }) {
@@ -56,8 +66,11 @@ export function CodingSessionGateRows({
       className="space-y-2"
       data-testid={testId}
     >
-      {rows.map((row) => (
-        <CodingSessionGateRow key={row.key} row={row} />
+      {rows.map((row, index) => (
+        <React.Fragment key={row.key}>
+          {leadFor?.(row, index, rows) ?? null}
+          <CodingSessionGateRow row={row} />
+        </React.Fragment>
       ))}
     </ul>
   );

@@ -64,7 +64,10 @@ test("the request carries the closed schema and the events it was handed", async
   assert.deepEqual(calls[0].args.request.knownAssignmentRefs, [
     "cd".repeat(32),
   ]);
-  assert.equal(calls[0].args.request.events.length, 5);
+  assert.equal(
+    calls[0].args.request.events.length,
+    FIXTURE.inputEventIds.length,
+  );
   assert.equal(result.fold.gates.length, 2);
 });
 
@@ -79,7 +82,7 @@ test("the signed created_at rides beside the fold, never inside it", async () =>
   });
   // The fold itself reads no clock, so a caller that wants to *place* a row on
   // a time axis joins it here, from the events it fetched.
-  assert.equal(result.signedAt.size, 5);
+  assert.equal(result.signedAt.size, FIXTURE.inputEventIds.length);
   assert.equal(result.signedAt.get(FIXTURE.inputEventIds[0]), 1_756_800_000);
   assert.equal(Object.hasOwn(result.fold, "createdAt"), false);
 });

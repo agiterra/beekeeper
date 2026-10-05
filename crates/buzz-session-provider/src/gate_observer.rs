@@ -71,6 +71,32 @@
 //! outcomes: a later command can mask an earlier failure. Unsupported shell
 //! syntax is refused by the matcher. Run gates separately for unambiguous
 //! outcomes in both directions.
+//!
+//! # Gate starts (SV-41)
+//!
+//! The observer also says a gate is **running**, not only how it ended. When a
+//! call's own `tool_call` already names a command the result path would accept
+//! — one or more recognised gates, no `;`, no `cd` segment — the call carries
+//! the gate names it will start. Once it has been pending for
+//! [`GATE_START_PUBLISH_DELAY_MS`], [`GateObserver::due_starts`] hands each one
+//! back once, and the provider signs it as an observed `gate:<gate>` phase row
+//! with `endedAtMs: null`. Every start handed out is ended exactly once, by a
+//! closing row with the same `startedAtMs`: when the result arrives (whether or
+//! not it yields a gate row), when the call falls out of the window, at turn
+//! end ([`GateObserver::end_turn`]) and on exit ([`GateObserver::close_all`]).
+//! Only the result is the command seen to end, so only that close carries a
+//! measured span; the other three are the provider no longer watching the
+//! call — which may still be running — and sign `durationMs: null`.
+//! A call that names no command when it opens (finding 69's bare call) starts
+//! nothing; its result still closes into a row exactly as before. Nothing about
+//! a start is asked of the seat. A dropped turn (`TurnDropped`) needs no close
+//! of its own: it never ran, so it opened no call and no start.
+//!
+//! **Not covered yet: a provider restart (SV-41 S5).** Starts live only in this
+//! process's memory, so a provider that crashes or restarts mid-gate never
+//! signs their close; viewers see the start as running until it goes stale
+//! (`gateStartStaleAfterMs`). NIP-CSOB discloses this; the planned fix persists
+//! each published start and closes it at the next boot.
 
 use std::collections::VecDeque;
 
@@ -89,6 +115,36 @@ use serde_json::Value;
 /// the window has to be wider than one call regardless — but it is a window,
 /// not a map that grows with the session.
 pub const MAX_PENDING_GATE_CALLS: usize = 32;
+
+/// How long a recognised gate call must have been pending before its start is
+/// handed out to be signed.
+///
+/// A call that ends sooner was not running long enough for anyone to watch, and
+/// signing a start and a close for it would spend two events of the admission
+/// page (512 newest 44246 per scope) on nothing (spec Decision 5). The provider
+/// polls on its 2-second runtime tick, so a start is signed 5–7 s after open.
+pub const GATE_START_PUBLISH_DELAY_MS: i64 = 5_000;
+
+/// One gate start the provider signs, or the end of one it signed.
+///
+/// `ended_at_ms` is `None` for the start and `Some` for its close. Both carry
+/// the same `started_at_ms`, which is what pairs them on the wire. `measured`
+/// says whether the close is the call's result (a span the provider watched)
+/// or the provider no longer watching it (eviction, turn end, exit), in which
+/// case the row carries no duration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedGateStart {
+    /// The table's gate name (`cargo test`) — never the command line.
+    pub gate: &'static str,
+    /// When the call opened, by the provider's clock.
+    pub started_at_ms: i64,
+    /// When the call ended, by the provider's clock; `None` on the start.
+    pub ended_at_ms: Option<i64>,
+    /// `true` only on a close produced by the call's own result: the one end
+    /// the provider saw happen. `false` on the start and on every close that
+    /// is the provider stopping watching, so no span is claimed for it.
+    pub measured: bool,
+}
 
 /// One gate row the provider watched, and the moment it started.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,12 +252,41 @@ struct PendingGate {
     /// Milliseconds since the epoch, from the provider's own clock — the same
     /// `now_ms()` every other provider row is stamped with.
     started_at_ms: i64,
+    /// The gates a start would name, decided from the call's own command with
+    /// the rules `close` applies. Empty when the call names no command yet, or
+    /// one the result path would refuse: such a call never starts anything.
+    start_gates: Vec<&'static str>,
+    /// Whether [`GateObserver::due_starts`] handed this call's start out. A
+    /// close is owed exactly when this is true.
+    start_published: bool,
+    /// The turn ended with this call unanswered: it will never be started.
+    start_suppressed: bool,
+}
+
+impl PendingGate {
+    /// The closes this call owes, if its start was handed out, at `now_ms`.
+    /// `measured` is true only when the call's result is what ended it.
+    fn closes(&self, now_ms: i64, measured: bool) -> impl Iterator<Item = ObservedGateStart> + '_ {
+        self.start_gates
+            .iter()
+            .copied()
+            .filter(|_| self.start_published)
+            .map(move |gate| ObservedGateStart {
+                gate,
+                started_at_ms: self.started_at_ms,
+                ended_at_ms: Some(now_ms),
+                measured,
+            })
+    }
 }
 
 /// Pairs gate tool calls with their results, one seat at a time.
 #[derive(Debug, Default)]
 pub struct GateObserver {
     pending: VecDeque<PendingGate>,
+    /// Closes owed by calls that ended inside [`Self::on_item`] (their result,
+    /// or eviction from the window), waiting for [`Self::take_start_closes`].
+    closes: Vec<ObservedGateStart>,
 }
 
 impl GateObserver {
@@ -243,15 +328,98 @@ impl GateObserver {
         // on the result. Either way it is remembered now, in case the result
         // needs it as a fallback — see `resolve_command`.
         let call_command = command_of(tool.get("input"));
+        let start_gates = call_command
+            .as_deref()
+            .map(start_gates_of)
+            .unwrap_or_default();
+        // The same call announced again (an update frame) is the same call:
+        // it keeps its slot and its clock, and learns a command it lacked.
+        if let Some(existing) = self.pending.iter_mut().find(|p| p.tool_id == tool_id) {
+            if existing.call_command.is_none() && !existing.start_published {
+                existing.call_command = call_command;
+                existing.start_gates = start_gates;
+            }
+            return Some(());
+        }
         if self.pending.len() >= MAX_PENDING_GATE_CALLS {
-            self.pending.pop_front();
+            if let Some(evicted) = self.pending.pop_front() {
+                // Forgotten, so its result can never close it: end the start
+                // now rather than leave it reading as running. The command
+                // may still be running, so no span is measured.
+                self.closes.extend(evicted.closes(now_ms, false));
+            }
         }
         self.pending.push_back(PendingGate {
             tool_id,
             call_command,
             started_at_ms: now_ms,
+            start_gates,
+            start_published: false,
+            start_suppressed: false,
         });
         Some(())
+    }
+
+    /// The starts that have become due at `now_ms`, each handed out once.
+    ///
+    /// A call is due when it names a gate at open, is still pending, its turn
+    /// has not ended, and it has run for [`GATE_START_PUBLISH_DELAY_MS`]. A
+    /// composed line yields one start per recognised segment, all at the
+    /// line's own start: the provider cannot see when a later segment begins.
+    pub fn due_starts(&mut self, now_ms: i64) -> Vec<ObservedGateStart> {
+        let mut due = Vec::new();
+        for pending in &mut self.pending {
+            if pending.start_published
+                || pending.start_suppressed
+                || pending.start_gates.is_empty()
+                || now_ms.saturating_sub(pending.started_at_ms) < GATE_START_PUBLISH_DELAY_MS
+            {
+                continue;
+            }
+            pending.start_published = true;
+            due.extend(
+                pending
+                    .start_gates
+                    .iter()
+                    .copied()
+                    .map(|gate| ObservedGateStart {
+                        gate,
+                        started_at_ms: pending.started_at_ms,
+                        ended_at_ms: None,
+                        measured: false,
+                    }),
+            );
+        }
+        due
+    }
+
+    /// Closes owed by calls that ended since the last take.
+    pub fn take_start_closes(&mut self) -> Vec<ObservedGateStart> {
+        std::mem::take(&mut self.closes)
+    }
+
+    /// The turn ended. A call still pending will never be watched running from
+    /// here: every start it published is closed now, and none it has not yet
+    /// published ever will be. The call itself stays remembered, so a late
+    /// result still becomes the gate row it always would have.
+    pub fn end_turn(&mut self, now_ms: i64) -> Vec<ObservedGateStart> {
+        let mut closes = self.take_start_closes();
+        for pending in &mut self.pending {
+            closes.extend(pending.closes(now_ms, false));
+            pending.start_published = false;
+            pending.start_suppressed = true;
+        }
+        closes
+    }
+
+    /// The session exited: every published start is closed and every pending
+    /// call forgotten, exactly as dropping the observer always forgot them.
+    pub fn close_all(&mut self, now_ms: i64) -> Vec<ObservedGateStart> {
+        let mut closes = self.take_start_closes();
+        for pending in self.pending.drain(..) {
+            closes.extend(pending.closes(now_ms, false));
+        }
+        closes
     }
 
     fn close(&mut self, item: &Value, now_ms: i64) -> Vec<ObservedGateRow> {
@@ -261,7 +429,13 @@ impl GateObserver {
         let Some(index) = self.pending.iter().position(|p| p.tool_id == tool_id) else {
             return Vec::new();
         };
-        let pending = self.pending.remove(index).expect("index just found");
+        let Some(pending) = self.pending.remove(index) else {
+            return Vec::new();
+        };
+        // Whatever this result goes on to say, the call has ended: a start it
+        // published is closed now, even when no gate row follows (no exit
+        // evidence, a refused composition, a call that ran no gate).
+        self.closes.extend(pending.closes(now_ms, true));
         // ACP completion does not imply shell success. Prefer typed exit
         // evidence when present; neither an exit failure nor a tool failure
         // may become a pass when the other signal disagrees.
@@ -496,6 +670,34 @@ fn match_gate_segments(command: &str) -> Option<Vec<PendingSegment>> {
     (!gates.is_empty()).then_some(gates)
 }
 
+/// The gates a call would start, from the command on its own `tool_call`.
+///
+/// The `close` rules that can be applied before the result exists: the line
+/// must split, contain no `cd` segment and no `;`, and every segment must be a
+/// wrapper or a recognised gate. (`close` also refuses a *failed* `&&` line;
+/// that cannot be known while it runs, and a start claims only that the line
+/// is running.) Anything else starts nothing.
+fn start_gates_of(command: &str) -> Vec<&'static str> {
+    let Some(parts) = split_top_level_segments(command) else {
+        return Vec::new();
+    };
+    if parts.iter().any(|part| segment_is_cd(part)) {
+        return Vec::new();
+    }
+    let Some(tokens) = shell_split(command) else {
+        return Vec::new();
+    };
+    if tokens
+        .iter()
+        .any(|token| matches!(token, ShellToken::Semicolon))
+    {
+        return Vec::new();
+    }
+    match_gate_segments(command)
+        .map(|segments| segments.into_iter().map(|segment| segment.gate).collect())
+        .unwrap_or_default()
+}
+
 /// Whether a segment is exactly `cd <path>` — nothing else, nothing more.
 fn segment_is_cd(segment: &str) -> bool {
     let Some(tokens) = shell_split(segment) else {
@@ -663,7 +865,7 @@ fn split_top_level_segments(command: &str) -> Option<Vec<&str>> {
                 if chars.peek().map(|&(_, next)| next) != Some('&') {
                     return None;
                 }
-                let (next_pos, next_char) = chars.next().expect("peeked Some above");
+                let (next_pos, next_char) = chars.next()?;
                 let segment = command[start..pos].trim();
                 if segment.is_empty() {
                     return None;
@@ -727,6 +929,14 @@ fn string_at(value: &Value, key: &str) -> Option<String> {
     (!text.is_empty()).then(|| text.to_owned())
 }
 
+/// The rows a gate start becomes on the wire (SV-41).
+#[path = "gate_observer_start.rs"]
+pub(crate) mod start;
+
 #[cfg(test)]
 #[path = "gate_observer_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "gate_observer_start_tests.rs"]
+mod start_tests;

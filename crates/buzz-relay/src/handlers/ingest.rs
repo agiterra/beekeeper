@@ -2483,9 +2483,15 @@ pub(crate) fn validate_shell_session_envelope(event: &Event) -> Result<String, S
     let mut statuses = Vec::new();
     let mut titles = Vec::new();
     let mut dims = Vec::new();
+    let mut sessions = Vec::new();
     for tag in event.tags.iter() {
         let parts = tag.as_slice();
         if parts.len() < 2 {
+            // A bare `["session"]` names nothing: refused below rather than
+            // skipped, so a malformed session tag never passes as absent.
+            if parts.first().map(String::as_str) == Some("session") {
+                sessions.push(String::new());
+            }
             continue;
         }
         let value = parts[1].as_str().to_string();
@@ -2495,6 +2501,7 @@ pub(crate) fn validate_shell_session_envelope(event: &Event) -> Result<String, S
             "status" => statuses.push(value),
             "title" => titles.push(value),
             "dims" => dims.push(value),
+            "session" => sessions.push(value),
             _ => {}
         }
     }
@@ -2545,6 +2552,24 @@ pub(crate) fn validate_shell_session_envelope(event: &Event) -> Result<String, S
 
     if dims.len() > 1 {
         return Err("shell-session event must have at most one `dims` tag".into());
+    }
+
+    // NIP-ST "Session terminals" (Wave B, DB11): at most one `session` tag,
+    // non-empty, at most 256 chars (the NIP's unit, and the publisher's
+    // `MAX_SESSION_TAG_CHARS`), no control characters.
+    if sessions.len() > 1 {
+        return Err("shell-session event must have at most one `session` tag".into());
+    }
+    if let Some(session) = sessions.first() {
+        if session.is_empty() {
+            return Err("shell-session `session` tag must not be empty".into());
+        }
+        if session.chars().count() > 256 {
+            return Err("shell-session `session` too long (max 256 chars)".into());
+        }
+        if session.chars().any(char::is_control) {
+            return Err("shell-session `session` must not contain control characters".into());
+        }
     }
     if let Some(dims) = dims.first() {
         let valid = dims.split_once('x').is_some_and(|(rows, cols)| {
@@ -7370,6 +7395,52 @@ mod tests {
             &["dims", "34x120"],
         ]);
         assert_eq!(validate_shell_session_envelope(&ev).expect("valid"), coord);
+    }
+
+    #[test]
+    fn shell_session_envelope_accepts_the_session_tag() {
+        // Wave B (DB11): a coding session's shells carry one optional
+        // `["session", <sessionRef>]` tag; the validator must not refuse it.
+        let coord = format!("30621:{HEX64}:platform");
+        let session = format!("44226:{}:sess", "ab".repeat(32));
+        let ev = make_shell_session(&[
+            &["d", "a4f6c8e0-1111-2222-3333-444455556666"],
+            &["a", &coord],
+            &["status", "open"],
+            &["title", "Terminal 1"],
+            &["dims", "24x80"],
+            &["session", &session],
+        ]);
+        assert_eq!(validate_shell_session_envelope(&ev).expect("valid"), coord);
+    }
+
+    #[test]
+    fn shell_session_envelope_refuses_a_malformed_session_tag() {
+        let coord = format!("30621:{HEX64}:platform");
+        let session = format!("44226:{}:sess", "ab".repeat(32));
+        let base: [&[&str]; 3] = [
+            &["d", "a4f6c8e0-1111-2222-3333-444455556666"],
+            &["a", &coord],
+            &["status", "open"],
+        ];
+        let with = |extra: &[&[&str]]| {
+            let mut tags: Vec<&[&str]> = base.to_vec();
+            tags.extend_from_slice(extra);
+            validate_shell_session_envelope(&make_shell_session(&tags))
+        };
+        let err = with(&[&["session", &session], &["session", &session]]).unwrap_err();
+        assert!(err.contains("at most one `session` tag"), "got: {err}");
+        let err = with(&[&["session", ""]]).unwrap_err();
+        assert!(err.contains("must not be empty"), "got: {err}");
+        let err = with(&[&["session"]]).unwrap_err();
+        assert!(err.contains("must not be empty"), "got: {err}");
+        let long = "s".repeat(257);
+        let err = with(&[&["session", &long]]).unwrap_err();
+        assert!(err.contains("max 256 chars"), "got: {err}");
+        let err = with(&[&["session", "sess\u{7}ion"]]).unwrap_err();
+        assert!(err.contains("control characters"), "got: {err}");
+        let at_bound = "s".repeat(256);
+        assert_eq!(with(&[&["session", &at_bound]]).expect("valid"), coord);
     }
 
     #[test]

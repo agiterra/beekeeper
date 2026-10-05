@@ -508,3 +508,152 @@ fn the_reader_renders_the_newest_row_when_the_page_arrives_newest_first() {
         "the displaced red row is counted on screen: {rows:?}"
     );
 }
+
+// ── SV-41: gate starts ───────────────────────────────────────────────────────
+
+const STARTED: u64 = 1_759_572_120_000;
+
+fn gate_start(keys: &Keys, gate: &str, started: u64, ended: Option<u64>) -> Event {
+    observation_from(
+        keys,
+        "phase",
+        "observed",
+        json!({
+            "phase": format!("gate:{gate}"),
+            "startedAtMs": started,
+            "endedAtMs": ended.map_or(Value::Null, |end| json!(end)),
+            "durationMs": ended.map_or(Value::Null, |end| json!(end - started)),
+        }),
+    )
+}
+
+#[test]
+fn the_reader_prints_a_gate_start_in_all_three_states() {
+    let provider = Keys::generate();
+    let page = vec![
+        // Newest first: the close, then both starts.
+        gate_start(&provider, "cargo test", STARTED, Some(STARTED + 180_000)),
+        gate_start(&provider, "cargo clippy", STARTED + 1_000, None),
+        gate_start(&provider, "cargo test", STARTED, None),
+    ];
+    let fold = folded(&page);
+    assert!(fold.phases.is_empty(), "a start is not a phase line");
+    let author = short(&provider.public_key().to_hex());
+
+    let soon = compact_rows_at(&fold, STARTED + 60_000);
+    assert!(
+        soon.contains(&format!(
+            "gate-start {author} observed cargo test started {STARTED} (author's own measurement) \
+             ended {}",
+            STARTED + 180_000
+        )),
+        "{soon:?}"
+    );
+    assert!(
+        soon.contains(&format!(
+            "gate-start {author} observed cargo clippy started {} (author's own measurement) \
+             running",
+            STARTED + 1_000
+        )),
+        "{soon:?}"
+    );
+
+    let late = compact_rows_at(&fold, STARTED + 1_000 + GATE_START_STALE_AFTER_MS);
+    assert!(
+        late.iter()
+            .any(|row| row.contains("cargo clippy") && row.ends_with("no result observed")),
+        "past the stale rule an unclosed start never reads running: {late:?}"
+    );
+    assert!(!late.iter().any(|row| row.ends_with("running")), "{late:?}");
+
+    let wire = fold_json_at(&fold, STARTED + 60_000);
+    assert_eq!(wire["gateStarts"].as_array().map(Vec::len), Some(2));
+    assert_eq!(
+        wire["gateStarts"][0]["state"],
+        json!(format!("ended {}", STARTED + 180_000))
+    );
+    assert_eq!(wire["gateStarts"][0]["durationMs"], json!(180_000));
+    assert_eq!(wire["gateStarts"][1]["state"], json!("running"));
+    assert_eq!(wire["gateStarts"][1]["closeEventId"], Value::Null);
+    assert_eq!(
+        wire["gateStartStaleAfterMs"],
+        json!(GATE_START_STALE_AFTER_MS)
+    );
+    assert_eq!(wire["truncated"]["gateStarts"], json!(0));
+    assert_eq!(wire["truncated"]["gateStartClosesUnmatched"], json!(0));
+}
+
+fn unmeasured_close(keys: &Keys, gate: &str, started: u64, ended: u64) -> Event {
+    observation_from(
+        keys,
+        "phase",
+        "observed",
+        json!({
+            "phase": format!("gate:{gate}"),
+            "startedAtMs": started,
+            "endedAtMs": ended,
+            "durationMs": Value::Null,
+        }),
+    )
+}
+
+#[test]
+fn an_unmeasured_close_reads_as_stopped_watching_never_ended() {
+    let provider = Keys::generate();
+    let page = vec![
+        // Evicted / turn end / exit: the provider stopped watching.
+        unmeasured_close(&provider, "cargo test", STARTED, STARTED + 180_000),
+        gate_start(&provider, "cargo test", STARTED, None),
+        // A clock that ran backwards: endedAtMs = startedAtMs, no span.
+        unmeasured_close(&provider, "cargo clippy", STARTED + 1_000, STARTED + 1_000),
+        gate_start(&provider, "cargo clippy", STARTED + 1_000, None),
+    ];
+    let fold = folded(&page);
+    let rows = compact_rows_at(&fold, STARTED + 200_000);
+    assert!(
+        rows.iter().any(|row| row.contains("cargo test")
+            && row.ends_with(&format!(
+                "stopped watching {} (end not observed)",
+                STARTED + 180_000
+            ))),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("cargo clippy")
+            && row.ends_with(&format!("closed {} (no measured span)", STARTED + 1_000))),
+        "{rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|row| row.contains(" ended ")),
+        "no unmeasured close says the gate ended: {rows:?}"
+    );
+
+    let wire = fold_json_at(&fold, STARTED + 200_000);
+    let starts = wire["gateStarts"].as_array().cloned().unwrap_or_default();
+    let test = starts
+        .iter()
+        .find(|entry| entry["gate"] == json!("cargo test"))
+        .expect("cargo test start");
+    assert_eq!(
+        test["state"],
+        json!(format!(
+            "stopped watching {} (end not observed)",
+            STARTED + 180_000
+        ))
+    );
+    assert_eq!(test["durationMs"], Value::Null);
+    assert_eq!(test["endedAtMs"], json!(STARTED + 180_000));
+}
+
+#[test]
+fn a_seat_may_not_write_a_gate_phase() {
+    let error = refuse_reserved_gate_phase("gate:cargo test").expect_err("reserved");
+    assert!(
+        error
+            .to_string()
+            .contains("the gate: prefix is the provider's"),
+        "{error}"
+    );
+    refuse_reserved_gate_phase("red").expect("an ordinary phase is the seat's own");
+    refuse_reserved_gate_phase("gates").expect("the checkpoint word is not the prefix");
+}

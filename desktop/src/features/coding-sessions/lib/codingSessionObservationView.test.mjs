@@ -7,8 +7,13 @@ import {
   CODING_SESSION_GATE_SUMMARY_LINE_CEILING,
   CODING_SESSION_OBSERVATION_EMPTY,
   CODING_SESSION_OBSERVATION_SECTION_LIMIT,
+  CODING_SESSION_RUNNING_GATE_RESTART_NOTE,
   deriveCodingSessionObservationView,
+  selectCodingSessionRunningGates,
   describeDuration,
+  CODING_SESSION_GATE_CLOSE_TITLE,
+  codingSessionGateCloseKind,
+  describeCodingSessionGateClose,
 } from "./codingSessionObservationView.ts";
 import { decodeCodingSessionObservationFold } from "./codingSessionObservationWire.ts";
 
@@ -31,7 +36,7 @@ const DECISION = "9a".repeat(32);
 
 function fold(overrides = {}) {
   return {
-    schema: "buzz-coding-session-observation-fold-adapter/v1",
+    schema: "buzz-coding-session-observation-fold-adapter/v2",
     implementation: "buzz-core",
     inputEventIds: [],
     sessionRef: "dc580cfb-6c80-4fc2-8f4e-dfc328acf222",
@@ -40,6 +45,8 @@ function fold(overrides = {}) {
     gates: [],
     findings: [],
     phases: [],
+    gateStarts: [],
+    gateStartStaleAfterMs: 30 * 60 * 1_000,
     unresolved: [],
     ignored: [],
     misclaimedObserved: [],
@@ -55,6 +62,8 @@ function fold(overrides = {}) {
       entryEventIds: 0,
       displacedGates: 0,
       displacedFindings: 0,
+      gateStarts: 0,
+      gateStartClosesUnmatched: 0,
     },
     disclosure: "an observation is something its author saw",
     ...overrides,
@@ -451,4 +460,204 @@ test("REVIEW-L5 F2: an unchecked fold says so rather than implying it verified",
 
 test("a null fold has not checked provenance either", () => {
   assert.equal(view({ fold: null }).provenanceChecked, false);
+});
+
+// ── SV-41: selectCodingSessionRunningGates ──────────────────────────────────
+
+const PROVIDER = "66".repeat(32);
+const STARTED = 1_759_572_120_000;
+const STALE_AFTER = 30 * 60 * 1_000;
+
+function gateStart(gateName, startedAtMs, close = null, author = PROVIDER) {
+  return {
+    eventId: `${startedAtMs % 10}`.repeat(64).slice(0, 64),
+    authorPubkey: author,
+    gate: gateName,
+    startedAtMs,
+    assignmentRef: null,
+    closeEventId: close === null ? null : "ee".repeat(32),
+    endedAtMs: close,
+    durationMs: close === null ? null : close - startedAtMs,
+  };
+}
+
+test("no fold, no running gate", () => {
+  assert.deepEqual(
+    selectCodingSessionRunningGates(null, { nowMs: STARTED }),
+    [],
+  );
+});
+
+test("an open start reads as running, keyed by the wire's own pairing key", () => {
+  const running = selectCodingSessionRunningGates(
+    fold({ gateStarts: [gateStart("cargo test", STARTED)] }),
+    { nowMs: STARTED + 60_000 },
+  );
+  assert.deepEqual(running, [
+    {
+      key: `${PROVIDER}:cargo test:${STARTED}`,
+      gate: "cargo test",
+      startedAtMs: STARTED,
+      authorPubkey: PROVIDER,
+      eventId: gateStart("cargo test", STARTED).eventId,
+      stale: false,
+    },
+  ]);
+});
+
+test("its closing row ends it; the finished gate row alone does not", () => {
+  const closed = selectCodingSessionRunningGates(
+    fold({ gateStarts: [gateStart("cargo test", STARTED, STARTED + 180_000)] }),
+    { nowMs: STARTED + 200_000 },
+  );
+  assert.deepEqual(closed, [], "closed by its own close row");
+  // A finished gate row for the same gate beside an open start: still running,
+  // because a gate row names no start (spec Decision 2).
+  const stillOpen = selectCodingSessionRunningGates(
+    fold({
+      gateStarts: [gateStart("cargo test", STARTED)],
+      gates: [gate(PROVIDER, "observed", "cargo test", "passed")],
+    }),
+    { nowMs: STARTED + 200_000 },
+  );
+  assert.equal(stillOpen.length, 1);
+});
+
+test("stale flips exactly at gateStartStaleAfterMs, and a future start is never stale", () => {
+  const one = fold({ gateStarts: [gateStart("cargo test", STARTED)] });
+  assert.equal(
+    selectCodingSessionRunningGates(one, {
+      nowMs: STARTED + STALE_AFTER - 1,
+    })[0].stale,
+    false,
+  );
+  assert.equal(
+    selectCodingSessionRunningGates(one, { nowMs: STARTED + STALE_AFTER })[0]
+      .stale,
+    true,
+  );
+  assert.equal(
+    selectCodingSessionRunningGates(one, { nowMs: STARTED - 5_000 })[0].stale,
+    false,
+    "the provider's clock is ahead: a disclosure, not an expiry",
+  );
+  // The threshold is the fold's own number, never a copy.
+  assert.equal(
+    selectCodingSessionRunningGates(
+      fold({
+        gateStarts: [gateStart("cargo test", STARTED)],
+        gateStartStaleAfterMs: 10,
+      }),
+      { nowMs: STARTED + 10 },
+    )[0].stale,
+    true,
+  );
+});
+
+test("a start names no commit, so a gate row on another head changes nothing", () => {
+  const running = selectCodingSessionRunningGates(
+    fold({
+      gateStarts: [gateStart("cargo test", STARTED)],
+      gates: [
+        gate(PROVIDER, "observed", "cargo test", "failed", {
+          headSha: "3a".repeat(20),
+          dirty: false,
+        }),
+      ],
+    }),
+    { nowMs: STARTED + 1_000 },
+  );
+  assert.equal(running.length, 1);
+  assert.equal(Object.hasOwn(running[0], "headSha"), false);
+  assert.equal(Object.hasOwn(running[0], "command"), false);
+});
+
+test("fold order is kept, and two seats running one gate are two lines", () => {
+  const running = selectCodingSessionRunningGates(
+    fold({
+      gateStarts: [
+        gateStart("cargo test", STARTED + 2_000),
+        gateStart("cargo clippy", STARTED + 1_000, STARTED + 9_000),
+        gateStart("cargo test", STARTED + 3_000),
+      ],
+    }),
+    { nowMs: STARTED + 10_000 },
+  );
+  assert.deepEqual(
+    running.map((entry) => entry.startedAtMs),
+    [STARTED + 2_000, STARTED + 3_000],
+  );
+});
+
+test("dropped gate starts are disclosed, never silent", () => {
+  const derived = view({
+    fold: fold({
+      truncated: { ...fold().truncated, gateStarts: 3 },
+    }),
+  });
+  assert.ok(
+    derived.truncations.some((notice) =>
+      /3 more gate starts/.test(notice.notice),
+    ),
+    JSON.stringify(derived.truncations),
+  );
+});
+
+test("a running line discloses that a provider restart is not observed (S5 unbuilt)", () => {
+  assert.match(
+    CODING_SESSION_RUNNING_GATE_RESTART_NOTE,
+    /restart is not observed/,
+  );
+  assert.match(CODING_SESSION_RUNNING_GATE_RESTART_NOTE, /outlive/);
+});
+
+test("SV-41: only a measured close reads as the gate ending", () => {
+  const base = {
+    eventId: "a".repeat(64),
+    authorPubkey: "b".repeat(64),
+    gate: "cargo test",
+    startedAtMs: 1_000_000,
+    assignmentRef: null,
+    closeEventId: "c".repeat(64),
+  };
+  const clock = (ms) => `t${ms}`;
+  const measured = { ...base, endedAtMs: 1_180_000, durationMs: 180_000 };
+  const stopped = { ...base, endedAtMs: 1_180_000, durationMs: null };
+  const backwards = { ...base, endedAtMs: 1_000_000, durationMs: null };
+  const open = {
+    ...base,
+    closeEventId: null,
+    endedAtMs: null,
+    durationMs: null,
+  };
+
+  assert.equal(codingSessionGateCloseKind(measured), "ended");
+  assert.equal(codingSessionGateCloseKind(stopped), "stopped-watching");
+  assert.equal(codingSessionGateCloseKind(backwards), "unmeasured");
+  assert.equal(codingSessionGateCloseKind(open), null);
+
+  assert.equal(
+    describeCodingSessionGateClose(measured, clock),
+    "ended t1180000 (3m)",
+  );
+  assert.equal(
+    describeCodingSessionGateClose(stopped, clock),
+    "stopped watching t1180000 · end not observed",
+  );
+  assert.equal(
+    describeCodingSessionGateClose(backwards, clock),
+    "closed t1000000 · no measured span",
+  );
+  assert.equal(describeCodingSessionGateClose(open, clock), null);
+  for (const kind of ["stopped-watching", "unmeasured"]) {
+    assert.doesNotMatch(
+      CODING_SESSION_GATE_CLOSE_TITLE[kind],
+      /that it ended/,
+      `${kind} never says the gate ended`,
+    );
+  }
+  assert.match(
+    CODING_SESSION_GATE_CLOSE_TITLE["stopped-watching"],
+    /stopped watching this call; it did not see it end/,
+  );
 });

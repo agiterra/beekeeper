@@ -30,9 +30,10 @@ use buzz_core::coding_session_observation::{
     fold_coding_session_observation_page, CodingSessionObservationBody,
     CodingSessionObservationCheckpoint, CodingSessionObservationFinding,
     CodingSessionObservationFold, CodingSessionObservationFoldContext,
-    CodingSessionObservationGate, CodingSessionObservationGateRow, CodingSessionObservationPayload,
+    CodingSessionObservationGate, CodingSessionObservationGateRow,
+    CodingSessionObservationGateStartEntry, CodingSessionObservationPayload,
     CodingSessionObservationPhaseTiming, CodingSessionObservationSource,
-    CODING_SESSION_OBSERVATION_SCHEMA,
+    CODING_SESSION_OBSERVATION_SCHEMA, GATE_START_PHASE_PREFIX, GATE_START_STALE_AFTER_MS,
 };
 use buzz_core::kind::{KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_TEAM_TRANSACTION};
 use buzz_sdk::coding_session_observation::build_coding_session_observation;
@@ -152,6 +153,7 @@ async fn cmd_observe_inner(
             .await
         }
         SessionObserveCmd::Phase(args) => {
+            refuse_reserved_gate_phase(&args.phase)?;
             let body = CodingSessionObservationBody::Phase(CodingSessionObservationPhaseTiming {
                 phase: args.phase.clone(),
                 started_at_ms: args.started_at_ms,
@@ -170,6 +172,20 @@ async fn cmd_observe_inner(
             .await
         }
     }
+}
+
+/// SV-41: `gate:` phases are the provider's gate starts.
+///
+/// A seat's own `gate:` phase would fold as an ordinary declared phase and
+/// never as a start, so writing one could only confuse a reader comparing the
+/// two; a seat states a gate's result with `observe gate`.
+pub(super) fn refuse_reserved_gate_phase(phase: &str) -> Result<(), CliError> {
+    if phase.starts_with(GATE_START_PHASE_PREFIX) {
+        return Err(CliError::Usage(
+            "the gate: prefix is the provider's; a seat states a gate with `observe gate`".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Build the gate rows from the repeated `--gate name:outcome:command` flag.
@@ -414,6 +430,50 @@ pub async fn cmd_observations(
 
 /// One line per fact, for a reader that wants the shape at a glance.
 pub(super) fn compact_rows(fold: &CodingSessionObservationFold) -> Vec<String> {
+    compact_rows_at(fold, now_ms())
+}
+
+/// The reader's own clock, for the gate-start stale rule only.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
+/// What a gate start reads as at `now_ms`: `running`, `ended <ms>`, or — past
+/// the stale rule with no close — `no result observed`, never `running`.
+///
+/// Only a measured close (`durationMs` set) is the gate ending. A close with
+/// `durationMs: null` and `endedAtMs > startedAtMs` is the provider no longer
+/// watching (evicted, turn end, session exit; NIP-CSOB § Gate start) — the
+/// command may still be running — so it reads `stopped watching <ms> (end not
+/// observed)`. A null-duration close at `startedAtMs` (a clock that ran
+/// backwards) cannot say which it was and claims neither.
+pub(super) fn gate_start_state(
+    entry: &CodingSessionObservationGateStartEntry,
+    now_ms: u64,
+) -> String {
+    match &entry.close {
+        Some(close) if close.duration_ms.is_some() => format!("ended {}", close.ended_at_ms),
+        Some(close) if close.ended_at_ms > entry.started_at_ms => {
+            format!("stopped watching {} (end not observed)", close.ended_at_ms)
+        }
+        Some(close) => format!("closed {} (no measured span)", close.ended_at_ms),
+        None if buzz_core::coding_session_observation::gate_start_is_stale(
+            entry.started_at_ms,
+            now_ms,
+        ) =>
+        {
+            "no result observed".to_owned()
+        }
+        None => "running".to_owned(),
+    }
+}
+
+/// [`compact_rows`] with the clock supplied.
+pub(super) fn compact_rows_at(fold: &CodingSessionObservationFold, now_ms: u64) -> Vec<String> {
     let mut rows = Vec::new();
     for entry in &fold.checkpoints {
         rows.push(format!(
@@ -459,6 +519,15 @@ pub(super) fn compact_rows(fold: &CodingSessionObservationFold) -> Vec<String> {
             entry.body.started_at_ms
         ));
     }
+    for entry in &fold.gate_starts {
+        rows.push(format!(
+            "gate-start {} observed {} started {} (author's own measurement) {}",
+            short(&entry.author_pubkey),
+            entry.gate,
+            entry.started_at_ms,
+            gate_start_state(entry, now_ms)
+        ));
+    }
     for entry in &fold.unresolved {
         rows.push(format!(
             "unresolved {} assignmentRef {}",
@@ -476,7 +545,8 @@ pub(super) fn compact_rows(fold: &CodingSessionObservationFold) -> Vec<String> {
     if fold.truncated.any() {
         rows.push(format!(
             "truncated checkpoints {} gates {} findings {} phases {} unresolved {} ignored {} \
-             entryEventIds {} displacedGates {} displacedFindings {} misclaimedObserved {}",
+             entryEventIds {} displacedGates {} displacedFindings {} misclaimedObserved {} \
+             gateStarts {}",
             fold.truncated.checkpoints,
             fold.truncated.gates,
             fold.truncated.findings,
@@ -486,7 +556,14 @@ pub(super) fn compact_rows(fold: &CodingSessionObservationFold) -> Vec<String> {
             fold.truncated.entry_event_ids,
             fold.truncated.displaced_gates,
             fold.truncated.displaced_findings,
-            fold.truncated.misclaimed_observed
+            fold.truncated.misclaimed_observed,
+            fold.truncated.gate_starts
+        ));
+    }
+    if fold.truncated.gate_start_closes_unmatched > 0 {
+        rows.push(format!(
+            "gate-start closes with no start on this page {}",
+            fold.truncated.gate_start_closes_unmatched
         ));
     }
     rows
@@ -549,6 +626,11 @@ fn disposition_word(
 /// Every collection is present even when empty, and truncation is a number
 /// rather than a silence: unknown is not empty, and empty is not zero-dropped.
 pub(super) fn fold_json(fold: &CodingSessionObservationFold) -> Value {
+    fold_json_at(fold, now_ms())
+}
+
+/// [`fold_json`] with the clock supplied.
+pub(super) fn fold_json_at(fold: &CodingSessionObservationFold, now_ms: u64) -> Value {
     json!({
         "checkpoints": fold.checkpoints.iter().map(|entry| json!({
             "eventId": entry.event_id,
@@ -604,6 +686,19 @@ pub(super) fn fold_json(fold: &CodingSessionObservationFold) -> Value {
             "endedAtMs": entry.body.ended_at_ms,
             "durationMs": entry.body.duration_ms,
         })).collect::<Vec<_>>(),
+        "gateStarts": fold.gate_starts.iter().map(|entry| json!({
+            "eventId": entry.event_id,
+            "author": entry.author_pubkey,
+            "source": "observed",
+            "assignmentRef": entry.assignment_ref,
+            "gate": entry.gate,
+            "startedAtMs": entry.started_at_ms,
+            "closeEventId": entry.close.as_ref().map(|close| close.event_id.clone()),
+            "endedAtMs": entry.close.as_ref().map(|close| close.ended_at_ms),
+            "durationMs": entry.close.as_ref().and_then(|close| close.duration_ms),
+            "state": gate_start_state(entry, now_ms),
+        })).collect::<Vec<_>>(),
+        "gateStartStaleAfterMs": GATE_START_STALE_AFTER_MS,
         "unresolved": fold.unresolved.iter().map(|entry| json!({
             "eventId": entry.event_id,
             "assignmentRef": entry.assignment_ref,
@@ -623,6 +718,8 @@ pub(super) fn fold_json(fold: &CodingSessionObservationFold) -> Value {
             "unresolved": fold.truncated.unresolved,
             "ignored": fold.truncated.ignored,
             "entryEventIds": fold.truncated.entry_event_ids,
+            "gateStarts": fold.truncated.gate_starts,
+            "gateStartClosesUnmatched": fold.truncated.gate_start_closes_unmatched,
         },
         "misclaimedObserved": fold.misclaimed_observed.iter().map(|entry| json!({
             "eventId": entry.event_id,

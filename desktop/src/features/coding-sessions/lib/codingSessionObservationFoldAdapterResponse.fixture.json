@@ -1,7 +1,10 @@
 {
-  "schema": "buzz-coding-session-observation-fold-adapter/v1",
+  "schema": "buzz-coding-session-observation-fold-adapter/v2",
   "implementation": "buzz-core",
   "inputEventIds": [
+    "af19203573296334046078b0b0954c354874d2beb67101d052f93d2ac5c0db8b",
+    "e504a34251398a42840c7ca6e61e2956c6e80f96ff76855740620709f82bdc75",
+    "c67f1b575c4dd691dc29117393216549aa320aaccb5345699e1b4de4c94d53d8",
     "f084100708f1842a6f59ce3c7ae9898456eb3cc283ad7088c3b3b410f01e4f29",
     "96413b4e30b36e50ba12d433caabf7d55e334d8dd4ec2021e8af147bf70cbf61",
     "ff8f335001cb13840bedc981b9138d7b9062969a305c787833fc8512fdfc62aa",
@@ -90,6 +93,29 @@
       "durationMs": 180000
     }
   ],
+  "gateStarts": [
+    {
+      "eventId": "c67f1b575c4dd691dc29117393216549aa320aaccb5345699e1b4de4c94d53d8",
+      "authorPubkey": "5ab4689e400a4a160cf01cd44730845a54768df8547dcdf073d964f109f18c30",
+      "gate": "cargo test",
+      "startedAtMs": 1756800000000,
+      "assignmentRef": null,
+      "closeEventId": "e504a34251398a42840c7ca6e61e2956c6e80f96ff76855740620709f82bdc75",
+      "endedAtMs": 1756800180000,
+      "durationMs": 180000
+    },
+    {
+      "eventId": "af19203573296334046078b0b0954c354874d2beb67101d052f93d2ac5c0db8b",
+      "authorPubkey": "5ab4689e400a4a160cf01cd44730845a54768df8547dcdf073d964f109f18c30",
+      "gate": "cargo clippy",
+      "startedAtMs": 1756800200000,
+      "assignmentRef": null,
+      "closeEventId": null,
+      "endedAtMs": null,
+      "durationMs": null
+    }
+  ],
+  "gateStartStaleAfterMs": 1800000,
   "unresolved": [
     {
       "eventId": "f084100708f1842a6f59ce3c7ae9898456eb3cc283ad7088c3b3b410f01e4f29",
@@ -109,7 +135,9 @@
     "misclaimedObserved": 0,
     "entryEventIds": 0,
     "displacedGates": 0,
-    "displacedFindings": 0
+    "displacedFindings": 0,
+    "gateStarts": 0,
+    "gateStartClosesUnmatched": 0
   },
   "disclosure": "an observation is something its author saw, not a decision: it settles nothing, authorizes nothing and excludes nothing, and every duration in it is the author's own measurement"
 }

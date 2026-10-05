@@ -21,6 +21,11 @@
 //! ordering, discovery or dedupe would let an author reorder somebody else's
 //! record by writing a number.
 //!
+//! One narrow exception, and it orders nothing: a gate start (SV-41) is paired
+//! with its own closing row on `(author, gate, startedAtMs)`. That match can
+//! only ever join an author's row to the same author's other row, so nobody
+//! can move anyone else's record with it (`coding_session_observation_gate_start.rs`).
+//!
 //! **The contract, stated once: callers hand
 //! [`fold_coding_session_observations`] a relay page oldest-first; a page read
 //! newest-first must be reversed — finding 79.** The order comes from the
@@ -236,6 +241,15 @@ pub struct CodingSessionObservationTruncation {
     pub displaced_gates: usize,
     /// Findings a later disposition by the same author and provenance replaced.
     pub displaced_findings: usize,
+    /// Gate starts not listed at [`MAX_OBSERVATION_GATE_STARTS`] (the oldest
+    /// fall off; the running ones are what a reader came for).
+    pub gate_starts: usize,
+    /// Closing rows whose start this page does not hold.
+    ///
+    /// A disclosure, not a drop, so [`Self::any`] does not read it: the start
+    /// fell off the page or was never published, and the close alone states
+    /// nothing a reader is missing.
+    pub gate_start_closes_unmatched: usize,
 }
 
 impl CodingSessionObservationTruncation {
@@ -251,6 +265,7 @@ impl CodingSessionObservationTruncation {
             || self.entry_event_ids > 0
             || self.displaced_gates > 0
             || self.displaced_findings > 0
+            || self.gate_starts > 0
     }
 }
 
@@ -264,7 +279,17 @@ pub struct CodingSessionObservationFold {
     /// Findings, one per `(author, findingId)`, in first-seen order.
     pub findings: Vec<CodingSessionObservationFindingEntry>,
     /// Phase timings, in the caller's supplied order.
+    ///
+    /// Never a gate start: an observed `gate:` phase is routed to
+    /// [`Self::gate_starts`] instead (SV-41). A declared or misclaimed one
+    /// stays here, because it is its author's own words.
     pub phases: Vec<CodingSessionObservationPhaseEntry>,
+    /// Gate starts the provider signed, open or closed, in the supplied order
+    /// of their start rows, bounded at [`MAX_OBSERVATION_GATE_STARTS`].
+    ///
+    /// Not outcomes. No verdict, push, Pulse or bench path reads this; a start
+    /// can never become a gate row.
+    pub gate_starts: Vec<CodingSessionObservationGateStartEntry>,
     /// Pointers that resolved to nothing the caller supplied.
     pub unresolved: Vec<CodingSessionObservationUnresolvedRef>,
     /// Events this fold could not read at all.
@@ -355,6 +380,7 @@ fn fold_in_order<'a>(
         CodingSessionObservationFindingEntry,
     > = BTreeMap::new();
     let mut finding_order: Vec<(String, &'static str, String)> = Vec::new();
+    let mut gate_starts = super::gate_start::GateStartCollector::default();
 
     for event in events {
         let event_id = event.id.to_hex();
@@ -451,17 +477,29 @@ fn fold_in_order<'a>(
                     body,
                 },
             ),
-            CodingSessionObservationBody::Phase(body) => push_bounded(
-                &mut fold.phases,
-                &mut fold.truncated.phases,
-                CodingSessionObservationPhaseEntry {
-                    event_id,
-                    author_pubkey: author,
-                    source,
-                    assignment_ref: payload.assignment_ref,
-                    body,
-                },
-            ),
+            CodingSessionObservationBody::Phase(body) => {
+                // SV-41: only the *effective* source counts, so a seat's own
+                // `gate:` phase, and an `observed` claim folded down above,
+                // stay ordinary phases.
+                let routed = if source == CodingSessionObservationSource::Observed {
+                    gate_starts.take(event_id, &author, payload.assignment_ref, body)
+                } else {
+                    Some((event_id, payload.assignment_ref, body))
+                };
+                if let Some((event_id, assignment_ref, body)) = routed {
+                    push_bounded(
+                        &mut fold.phases,
+                        &mut fold.truncated.phases,
+                        CodingSessionObservationPhaseEntry {
+                            event_id,
+                            author_pubkey: author,
+                            source,
+                            assignment_ref,
+                            body,
+                        },
+                    );
+                }
+            }
             CodingSessionObservationBody::Gate(body) => {
                 for row in body.rows {
                     let key = (author.clone(), source.as_str(), row.gate.clone());
@@ -539,6 +577,7 @@ fn fold_in_order<'a>(
             push_bounded(&mut fold.findings, &mut fold.truncated.findings, entry);
         }
     }
+    gate_starts.finish(&mut fold);
     fold
 }
 

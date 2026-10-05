@@ -6,68 +6,45 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   CodingSessionSurfaceHost,
   nextCodingSessionSurfaceTabIndex,
-  reconcileCodingSessionSurfaceTab,
 } from "./CodingSessionSurfaceHost.tsx";
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail.tsx";
+import { codingSessionSurfaceTabsToClose } from "./CodingSessionSurfaceTabStrip.tsx";
 import {
   clampCodingSessionRailWidth,
   parsePersistedCodingSessionRailWidth,
 } from "./useCodingSessionRailWidth.ts";
 
 // ---------------------------------------------------------------------------
-// Stale-tab reconciliation: closed or {tab}, never content with no tab.
+// The tab context menu (T3's close / others / right / all).
 // ---------------------------------------------------------------------------
 
-test("closed stays closed regardless of available surfaces", () => {
-  assert.equal(
-    reconcileCodingSessionSurfaceTab({
-      availableIds: ["agents", "changes"],
-      lastTab: "changes",
-      requestedTab: null,
-    }),
-    null,
-  );
-});
-
-test("a still-offered requested tab is kept", () => {
-  assert.equal(
-    reconcileCodingSessionSurfaceTab({
-      availableIds: ["agents", "changes"],
-      lastTab: null,
-      requestedTab: "changes",
-    }),
-    "changes",
-  );
-});
-
-test("a vanished tab falls back to the remembered tab, then the first offered", () => {
-  assert.equal(
-    reconcileCodingSessionSurfaceTab({
-      availableIds: ["agents", "changes"],
-      lastTab: "changes",
-      requestedTab: "terminal",
-    }),
-    "changes",
-  );
-  assert.equal(
-    reconcileCodingSessionSurfaceTab({
-      availableIds: ["agents", "changes"],
-      lastTab: "browser",
-      requestedTab: "terminal",
-    }),
+test("the tab context menu closes this, the others, those to the right, or all", () => {
+  const ids = ["diff", "agents", "files"];
+  assert.deepEqual(codingSessionSurfaceTabsToClose(ids, "agents", "close"), [
     "agents",
+  ]);
+  assert.deepEqual(
+    codingSessionSurfaceTabsToClose(ids, "agents", "close-others"),
+    ["diff", "files"],
   );
-});
-
-test("no offered surfaces means closed, never content with no selected tab", () => {
-  assert.equal(
-    reconcileCodingSessionSurfaceTab({
-      availableIds: [],
-      lastTab: "changes",
-      requestedTab: "changes",
-    }),
-    null,
+  assert.deepEqual(
+    codingSessionSurfaceTabsToClose(ids, "agents", "close-right"),
+    ["files"],
   );
+  assert.deepEqual(
+    codingSessionSurfaceTabsToClose(ids, "files", "close-right"),
+    [],
+    "nothing to the right of the last tab: the item is disabled",
+  );
+  assert.deepEqual(
+    codingSessionSurfaceTabsToClose(["diff"], "diff", "close-others"),
+    [],
+  );
+  assert.deepEqual(
+    codingSessionSurfaceTabsToClose(ids, "diff", "close-all"),
+    ids,
+  );
+  assert.deepEqual(codingSessionSurfaceTabsToClose(ids, "nope", "close"), []);
 });
 
 // ---------------------------------------------------------------------------
@@ -117,75 +94,114 @@ test("widths clamp to the container's bounds", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Host chrome: tabs, panel, resizer semantics, close control, landmarks.
+// Host chrome: tabs, launcher, panel, resizer semantics, controls, landmarks.
 // ---------------------------------------------------------------------------
 
-function hostMarkup(overrides = {}) {
+const Icon = () => null;
+
+function definition(id, label, shortcut, Panel) {
+  return {
+    definition: {
+      id,
+      label,
+      icon: Icon,
+      shortcut,
+      order: 0,
+      placement: "right",
+      lenses: ["conversation"],
+      availability: () => ({ available: true }),
+      Panel,
+    },
+    availability: { available: true },
+  };
+}
+
+const SURFACES = [
+  definition("agents", "Agents", "A", () =>
+    React.createElement("p", null, "agents content"),
+  ),
+  definition("diff", "Diff", "D", () =>
+    React.createElement(CodingSessionChangesRail, { files: [] }),
+  ),
+];
+
+function hostMarkup({ state = {}, ...overrides } = {}) {
   return renderToStaticMarkup(
     React.createElement(CodingSessionSurfaceHost, {
-      activeSurfaceId: "agents",
+      ctx: {},
       hostId: "host-under-test",
       layout: "inline",
-      onClose() {},
-      onSelectSurface() {},
-      surfaces: [
-        {
-          id: "agents",
-          label: "Agents",
-          count: 2,
-          content: React.createElement("p", null, "agents content"),
+      panels: {
+        state: {
+          rightOpen: true,
+          tabs: ["agents", "diff"],
+          active: "agents",
+          expanded: false,
+          bottomOpen: false,
+          ...state,
         },
-        {
-          id: "changes",
-          label: "Observed changes",
-          count: 0,
-          content: React.createElement(CodingSessionChangesRail, {
-            files: [],
-          }),
-        },
-      ],
+        actions: {},
+      },
+      surfaces: SURFACES,
       widthContainerRef: { current: null },
       ...overrides,
     }),
   );
 }
 
-test("the inline host renders one tab strip, the active panel, and one close control", () => {
+test("the inline host renders the open tabs, the active panel and its controls", () => {
   const markup = hostMarkup();
   assert.match(markup, /role="tablist"/);
+  assert.match(markup, /aria-label="Session surface tabs"/);
   assert.match(markup, /data-testid="coding-session-surface-tab-agents"/);
-  assert.match(markup, /data-testid="coding-session-surface-tab-changes"/);
-  assert.match(markup, />Agents</);
-  assert.match(markup, />Observed changes</);
-  // Only the active surface's content mounts.
+  assert.match(markup, /data-testid="coding-session-surface-tab-diff"/);
+  // Only the active surface's panel mounts; no launcher beside it.
   assert.match(markup, /agents content/);
   assert.doesNotMatch(markup, /No observed changes yet/);
-  // Roving tabindex: active tab is the only tab stop.
+  assert.doesNotMatch(markup, /Open a surface/);
+  // Roving tabindex: the active tab is the only tab stop.
   assert.match(
     markup,
-    /data-testid="coding-session-surface-tab-agents"[^>]*tabindex="0"/,
+    /data-testid="coding-session-surface-tab-agents"[^>]*tabindex="0"|tabindex="0"[^>]*data-testid="coding-session-surface-tab-agents"/,
   );
+  // Each tab closes on its own; "+" adds; expand and close sit top right.
+  assert.match(markup, /data-testid="coding-session-surface-tab-close-diff"/);
+  assert.match(markup, /aria-label="Close Diff"/);
+  // The close control sits in the icon slot, before the tab's label, and
+  // its X shows only on hover or focus (T3's PanelTabCloseButton).
   assert.match(
     markup,
-    /tabindex="-1"[^>]*data-testid="coding-session-surface-tab-changes"|data-testid="coding-session-surface-tab-changes"[^>]*tabindex="-1"/,
+    /data-testid="coding-session-surface-tab-close-diff"[\s\S]*?group-hover\/tab:block[\s\S]*?data-testid="coding-session-surface-tab-diff"/,
   );
-  // Exactly one close control.
+  assert.doesNotMatch(markup, /opacity-60/);
+  assert.match(markup, /data-testid="coding-session-surface-add"/);
+  assert.match(markup, /data-testid="coding-session-surface-expand"/);
   assert.equal(
     markup.match(/data-testid="coding-session-surface-close"/g)?.length,
     1,
   );
-  // Count badge renders for nonzero counts only.
-  assert.match(markup, />2</);
 });
 
 test("switching the active surface swaps the mounted panel", () => {
-  const markup = hostMarkup({ activeSurfaceId: "changes" });
+  const markup = hostMarkup({ state: { active: "diff" } });
   assert.match(markup, /No observed changes yet/);
   assert.doesNotMatch(markup, /agents content/);
   assert.match(
     markup,
-    /data-testid="coding-session-surface-tab-changes"[^>]*aria-selected="true"|aria-selected="true"[^>]*data-testid="coding-session-surface-tab-changes"/,
+    /data-testid="coding-session-surface-tab-diff"[^>]*aria-selected="true"|aria-selected="true"[^>]*data-testid="coding-session-surface-tab-diff"/,
   );
+});
+
+test("an open panel with no active tab shows the launcher", () => {
+  const markup = hostMarkup({ state: { tabs: [], active: null } });
+  assert.match(markup, /data-testid="coding-session-surface-launcher"/);
+  assert.match(markup, />Open a surface</);
+  assert.match(
+    markup,
+    /data-testid="coding-session-surface-launcher-row-agents"/,
+  );
+  // No tabs means no "+" (T3 shows it only beside tabs).
+  assert.doesNotMatch(markup, /data-testid="coding-session-surface-add"/);
 });
 
 test("the resizer is a vertical separator with honest value semantics", () => {
@@ -201,8 +217,15 @@ test("the resizer is a vertical separator with honest value semantics", () => {
   assert.match(resizer[0], /aria-valuenow="\d+"/);
 });
 
+test("an expanded panel fills the body and drops the resizer", () => {
+  const markup = hostMarkup({ state: { expanded: true } });
+  assert.match(markup, /data-expanded="true"/);
+  assert.doesNotMatch(markup, /coding-session-surface-resize/);
+  assert.match(markup, /aria-label="Restore panel size"/);
+});
+
 test("the host is the only aside landmark — surfaces contribute none", () => {
-  const markup = hostMarkup({ activeSurfaceId: "changes" });
+  const markup = hostMarkup({ state: { active: "diff" } });
   assert.equal(markup.match(/<aside/g)?.length, 1);
   assert.match(markup, /aria-label="Session surfaces"/);
   assert.match(markup, /id="host-under-test"/);
