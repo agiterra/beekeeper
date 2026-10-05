@@ -50,6 +50,9 @@ use buzz_core::coding_session_context::validate_coding_session_first_turn_brief_
 use crate::payload::{PROVIDER_AUTH_REQUIRED, PROVIDER_UNAVAILABLE};
 use crate::transcript::TranscriptTranslator;
 
+#[path = "session_autonomous.rs"]
+mod autonomous;
+
 /// Mailbox depth for one session. Turns beyond this are refused rather than
 /// buffered without bound — an operator who cannot see a queue cannot reason
 /// about one.
@@ -740,6 +743,15 @@ pub enum SessionEvent {
         /// The turn's attachments as sent, so a first turn that is only a
         /// pasted image can still be titled from their metadata (SV-31).
         attachments: Vec<TurnAttachment>,
+    },
+    /// The agent began a turn nobody prompted (SV-77): output with no prompt
+    /// in flight, e.g. Claude Code waking on a background task. Ended by an
+    /// ordinary [`TurnFinished`](Self::TurnFinished) with the same `turn_id`.
+    AutonomousTurnStarted {
+        /// Which session.
+        session_id: String,
+        /// Producer-minted turn id, distinct from every prompted turn's.
+        turn_id: String,
     },
     /// A turn ended.
     TurnFinished {
@@ -3103,6 +3115,8 @@ impl SessionActor {
             if *shutdown.borrow() {
                 break 'actor;
             }
+            // SV-77: output the agent produces with no prompt in flight.
+            let mut woke = None;
             let next = match queued.pop_front() {
                 Some(turn) => Some(turn),
                 None => {
@@ -3114,6 +3128,12 @@ impl SessionActor {
                             changed = shutdown.changed() => {
                                 let _ = changed;
                                 break 'actor;
+                            }
+                            item = self.client.next_unsolicited() => {
+                                if item.opens_turn() {
+                                    woke = Some(item);
+                                    break None;
+                                }
                             }
                             command = rx.recv() => break command,
                             late = self.late_steers.recv(), if !self.late_sink_closed => {
@@ -3138,6 +3158,18 @@ impl SessionActor {
                     }
                 }
             };
+            if let Some(first) = woke {
+                match self
+                    .run_autonomous_turn(first, &mut rx, &mut shutdown, &mut queued)
+                    .await
+                {
+                    Some(exit_reason) => {
+                        reason = exit_reason;
+                        break 'actor;
+                    }
+                    None => continue,
+                }
+            }
             let (next, guarded_ci) = unwrap_ci_turn(next);
             match next {
                 Some(SessionCommand::GuardedCiTurn { .. }) => continue,
@@ -3336,6 +3368,15 @@ impl SessionActor {
                         continue;
                     }
                     let _custody = custody.into_guard();
+                    // SV-77: an unprompted turn already under way runs to its
+                    // end first; this prompt waits behind it.
+                    if let Some(exit_reason) = self
+                        .run_waiting_autonomous_turns(&mut rx, &mut shutdown, &mut queued)
+                        .await
+                    {
+                        reason = exit_reason;
+                        break 'actor;
+                    }
                     let outcome = self
                         .run_turn(
                             &mut rx,

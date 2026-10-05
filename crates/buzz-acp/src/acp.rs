@@ -28,8 +28,13 @@ use crate::usage::{
 /// [`idle_clock::TurnClock`].
 #[path = "acp_idle_clock.rs"]
 mod idle_clock;
+#[path = "acp_router.rs"]
+mod router;
 #[path = "acp_steer_write.rs"]
 mod steer_write;
+
+pub use router::Unsolicited;
+use router::{permission_reply, Inbound, Router};
 
 use idle_clock::{SystemTurnClock, TurnClock};
 
@@ -663,12 +668,21 @@ fn build_initialize_params() -> serde_json::Value {
 pub struct AcpClient {
     /// The agent child process (kept alive to prevent zombie).
     child: Child,
-    /// Write end of the agent's stdin pipe.
-    stdin: ChildStdin,
-    /// Framed reader over the agent's stdout pipe (line-oriented, bounded).
-    /// Uses `LinesCodec::new_with_max_length` to enforce MAX_LINE_SIZE at the
-    /// read level — prevents OOM from rogue agents writing infinite non-newline bytes.
-    reader: FramedRead<ChildStdout, LinesCodec>,
+    /// Write end of the agent's stdin pipe, shared with the router's
+    /// answerer so a between-turn request can be answered while nobody holds
+    /// the client.
+    stdin: std::sync::Arc<tokio::sync::Mutex<ChildStdin>>,
+    /// What the stdout reader hands the read loops: every frame while a
+    /// prompt is in flight, and otherwise whatever the router keeps for them
+    /// (see [`router`]). Closed when the stream ends.
+    inbox: tokio::sync::mpsc::UnboundedReceiver<Inbound>,
+    /// The shared half of the one long-lived stdout reader (SV-77).
+    router: Router,
+    /// Frames that arrived with no prompt in flight, once the owner asked for
+    /// them with [`next_unsolicited`](Self::next_unsolicited).
+    unsolicited: Option<tokio::sync::mpsc::UnboundedReceiver<Unsolicited>>,
+    /// The unsolicited feed delivered [`Unsolicited::Exited`] and closed.
+    unsolicited_done: bool,
     /// Monotonically increasing JSON-RPC request id counter.
     /// Harness-generated IDs are always numeric.
     next_id: u64,
@@ -1634,10 +1648,16 @@ impl AcpClient {
             ),
         }
 
+        let stdin = std::sync::Arc::new(tokio::sync::Mutex::new(stdin));
+        let (router, inbox) = Router::start(stdout, std::sync::Arc::clone(&stdin));
+
         Ok(Self {
             child,
             stdin,
-            reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
+            inbox,
+            router,
+            unsolicited: None,
+            unsolicited_done: false,
             next_id: 0,
             pending_permission_id: None,
             permission_responded: false,
@@ -1795,12 +1815,14 @@ impl AcpClient {
 
     /// Attach a local observer feed to this ACP client.
     pub fn set_observer(&mut self, observer: Option<ObserverHandle>, agent_index: usize) {
+        self.router.set_observer(observer.clone(), agent_index);
         self.observer = observer;
         self.observer_agent_index = Some(agent_index);
     }
 
     /// Update metadata that will be attached to subsequent raw wire events.
     pub fn set_observer_context(&mut self, context: ObserverContext) {
+        self.router.set_observer_context(context.clone());
         self.observer_context = context;
     }
 
@@ -2155,6 +2177,12 @@ impl AcpClient {
         let hard_deadline = self.turn_clock.now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
 
+        // From here every frame is this turn's until the prompt resolves.
+        // Attaching also applies any between-turn notifications to the usage
+        // trackers first, so `begin_turn` below never counts them as this
+        // turn's.
+        self.attach();
+
         // Mark the usage tracker as in-flight for this turn BEFORE sending the
         // prompt so that any setup notifications recorded earlier are not
         // misattributed to this turn.
@@ -2176,6 +2204,7 @@ impl AcpClient {
         if let Err(e) = self.write_ndjson(&msg).await {
             self.last_prompt_id = None;
             self.current_hard_deadline = None;
+            self.detach_if_idle();
             return Err(e);
         }
 
@@ -2212,6 +2241,9 @@ impl AcpClient {
                 self.current_hard_deadline = None;
             }
         }
+        // No-op while the prompt is still in flight (a deadline the caller
+        // will cancel): its frames stay with the cancel drain.
+        self.detach_if_idle();
         self.parse_prompt_response(session_id, &result?)
     }
 
@@ -2677,6 +2709,17 @@ impl AcpClient {
         session_id: &str,
         hard_deadline: tokio::time::Instant,
     ) -> Result<StopReason, AcpError> {
+        let result = self.cancel_and_drain(session_id, hard_deadline).await;
+        // The prompt id is gone on every path out of the drain.
+        self.detach_if_idle();
+        result
+    }
+
+    async fn cancel_and_drain(
+        &mut self,
+        session_id: &str,
+        hard_deadline: tokio::time::Instant,
+    ) -> Result<StopReason, AcpError> {
         // The turn is being cancelled: nothing admitted for it may reach the
         // wire after `session/cancel`. The drain below reuses the prompt read
         // loop, which would otherwise take a still-installed steer source and
@@ -2699,6 +2742,9 @@ impl AcpClient {
         let prompt_id = self.last_prompt_id.take().ok_or_else(|| {
             AcpError::Protocol("cancel_with_cleanup called with no in-flight prompt".into())
         })?;
+        // The drain below must see every frame until the cancelled prompt's
+        // answer, as the prompt loop would have.
+        self.attach();
 
         // Step 1: respond to any pending permission request with "cancelled",
         // but only if we haven't already responded (guards against double-response race).
@@ -2746,9 +2792,10 @@ impl AcpClient {
         const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
         let line = serde_json::to_string(value)?;
         tokio::time::timeout(WRITE_TIMEOUT, async {
-            self.stdin.write_all(line.as_bytes()).await?;
-            self.stdin.write_all(b"\n").await?;
-            self.stdin.flush().await?;
+            let mut stdin = self.stdin.lock().await;
+            stdin.write_all(line.as_bytes()).await?;
+            stdin.write_all(b"\n").await?;
+            stdin.flush().await?;
             Ok::<(), std::io::Error>(())
         })
         .await
@@ -2794,16 +2841,33 @@ impl AcpClient {
         // Wrap write + read in a single timeout so a hung agent can't block forever.
         // We cannot use an async block that borrows `self` mutably across two awaits
         // inside timeout(), so we sequence them with early-return on timeout.
+        //
+        // The response is routed to this request by id by the stdout reader;
+        // registering before the write means it cannot arrive unclaimed.
         let timeout = Self::REQUEST_TIMEOUT;
-        match tokio::time::timeout(timeout, self.write_ndjson(&msg)).await {
-            Ok(result) => result?,
-            Err(_) => return Err(AcpError::Timeout(timeout)),
-        }
-
-        match tokio::time::timeout(timeout, self.read_until_response(id)).await {
+        let response = self.router.register(id)?;
+        let written = match tokio::time::timeout(timeout, self.write_ndjson(&msg)).await {
             Ok(result) => result,
             Err(_) => Err(AcpError::Timeout(timeout)),
+        };
+        if let Err(error) = written {
+            self.router.unregister(id);
+            return Err(error);
         }
+
+        let result = match tokio::time::timeout(timeout, response).await {
+            Ok(Ok(result)) => result,
+            // The reader dropped the waiter without answering: it only does
+            // that by closing, which answers first, so this is a stream that
+            // ended under us.
+            Ok(Err(_)) => Err(AcpError::AgentExited),
+            Err(_) => {
+                self.router.unregister(id);
+                Err(AcpError::Timeout(timeout))
+            }
+        };
+        self.settle_after_request();
+        result
     }
 
     /// Drain any buffered lines from the agent's stdout without blocking.
@@ -2825,15 +2889,15 @@ impl AcpClient {
             if remaining.is_zero() {
                 break;
             }
-            let read_result = tokio::time::timeout(remaining, self.reader.next()).await;
+            let read_result = tokio::time::timeout(remaining, self.inbox.recv()).await;
             match read_result {
                 // Timeout or stream ended — buffer is empty or agent exited.
                 Err(_) | Ok(None) => break,
-                Ok(Some(Ok(_))) => {
-                    // Consumed one buffered line; loop to drain more.
+                Ok(Some(Inbound::Frame { .. })) => {
+                    // Consumed one buffered frame; loop to drain more.
                     tracing::debug!(target: "acp::wire", "drained stale buffered line");
                 }
-                Ok(Some(Err(_))) => break,
+                Ok(Some(Inbound::Error(_))) => break,
             }
         }
     }
@@ -2859,117 +2923,7 @@ impl AcpClient {
         Ok(())
     }
 
-    /// Core message loop: read NDJSON lines until we get a response matching `expected_id`.
-    ///
-    /// While waiting, handles:
-    /// - `session/update` notifications → logged via tracing
-    /// - `session/request_permission` requests → auto-approved with `allow_once`
-    /// - Any other messages → debug-logged and ignored; if they carry an `id`
-    ///   (i.e. they are requests, not notifications), a JSON-RPC -32601 error is sent.
-    ///
-    /// Compares the incoming `id` field as a `serde_json::Value` against
-    /// `json!(expected_id)` so that both numeric and string IDs work correctly.
-    async fn read_until_response(
-        &mut self,
-        expected_id: u64,
-    ) -> Result<serde_json::Value, AcpError> {
-        loop {
-            // LinesCodec::new_with_max_length enforces MAX_LINE_SIZE at the
-            // read level — the buffer never grows beyond the limit, preventing
-            // OOM from rogue agents writing infinite non-newline bytes.
-            let line = match self.reader.next().await {
-                None => return Err(AcpError::AgentExited),
-                Some(Err(LinesCodecError::MaxLineLengthExceeded)) => {
-                    return Err(AcpError::Protocol(
-                        "agent stdout line exceeded 10MB limit".into(),
-                    ));
-                }
-                Some(Err(e)) => {
-                    return Err(AcpError::Io(std::io::Error::other(e)));
-                }
-                Some(Ok(line)) => line,
-            };
-
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            // Only log and reset idle after we have a valid non-empty line.
-            tracing::debug!(target: "acp::wire", "← {trimmed}");
-
-            let msg: serde_json::Value = match serde_json::from_str(trimmed) {
-                Ok(v) => v,
-                Err(e) => {
-                    self.observe(
-                        "acp_parse_error",
-                        serde_json::json!({
-                            "line": trimmed,
-                            "error": e.to_string(),
-                        }),
-                    );
-                    tracing::warn!(
-                        target: "acp::wire",
-                        "failed to parse line as JSON: {e} — skipping"
-                    );
-                    continue;
-                }
-            };
-            self.observe("acp_read", msg.clone());
-
-            // Check if this is a response to our expected request (has matching id
-            // AND no `method` field — a `method` field means it's an agent-initiated
-            // request, not a response, even if the id happens to match).
-            if let Some(id) = msg.get("id") {
-                if *id == serde_json::json!(expected_id) && msg.get("method").is_none() {
-                    if let Some(error) = msg.get("error") {
-                        return Err(agent_error_from_json(error));
-                    }
-                    return Ok(msg["result"].clone());
-                }
-                // A response to some other id may be the late answer to a
-                // steer request whose prompt already ended; correlate it
-                // before it is skipped as stray.
-                if self.route_late_steer_ack(&msg) {
-                    continue;
-                }
-            }
-
-            // Dispatch by method name (notifications and agent-initiated requests).
-            if let Some(method) = msg.get("method").and_then(|v| v.as_str()) {
-                match method {
-                    "session/update" => {
-                        let _ = self.handle_session_update(&msg);
-                    }
-                    "_goose/unstable/session/update" => {
-                        self.handle_goose_usage_update(&msg);
-                    }
-                    RAW_SDK_FRAME_METHOD => self.handle_raw_sdk_frame(&msg),
-                    "session/request_permission" => {
-                        self.handle_permission_request(&msg).await?;
-                    }
-                    other => {
-                        // If the unknown message has an id, it's a request expecting a reply.
-                        // Silence would cause the agent to hang waiting for a response.
-                        // Send a JSON-RPC -32601 "Method not found" error.
-                        if msg.get("id").is_some() {
-                            let err_resp = serde_json::json!({
-                                "jsonrpc": "2.0",
-                                "id": msg["id"],
-                                "error": {"code": -32601, "message": format!("Method not found: {other}")}
-                            });
-                            // Surface write failures — a broken pipe means the
-                            // agent process is dead and continuing would hang.
-                            self.write_ndjson(&err_resp).await?;
-                        }
-                        tracing::debug!(target: "acp::wire", "ignoring unknown method: {other}");
-                    }
-                }
-            }
-        }
-    }
-
-    /// Idle-aware message loop: like [`read_until_response`] but resets an idle
+    /// Idle-aware message loop: reads the inbox until the response arrives, resetting an idle
     /// deadline on every stdout line. Fires [`AcpError::IdleTimeout`] on silence
     /// or [`AcpError::HardTimeout`] on absolute wall-clock cap.
     ///
@@ -3008,8 +2962,12 @@ impl AcpClient {
         hard_deadline: tokio::time::Instant,
         max_duration: std::time::Duration,
     ) -> Result<serde_json::Value, AcpError> {
+        // Every frame is this loop's until it returns (a no-op when the
+        // prompt already attached; a test may call the loop directly).
+        self.attach();
+
         // Take the per-turn steer source into a local so it can be borrowed
-        // independently of `self.reader` inside `select!`. Dropped at scope
+        // independently of `self.inbox` inside `select!`. Dropped at scope
         // exit: inputs still queued in it are never answered, which the
         // caller reads as `PromptEndedBeforeWrite` (§3.1 item 7).
         let mut steer_rx = self.steer_rx.take();
@@ -3022,7 +2980,7 @@ impl AcpClient {
         let mut pending_steer: Option<PendingSteer> = None;
 
         // Cloned out of `self` before the loop: the select arms borrow
-        // `self.reader` mutably, so the clock cannot be read through `self`
+        // `self.inbox` mutably, so the clock cannot be read through `self`
         // from inside them.
         let clock = self.turn_clock.clone();
 
@@ -3080,7 +3038,7 @@ impl AcpClient {
             // read level — the buffer never grows beyond the limit.
             let read_result = tokio::select! {
                 biased;
-                read_result = self.reader.next() => Some(read_result),
+                read_result = self.inbox.recv() => Some(read_result),
                 // Steer arm: gated off whenever a steer write is already in
                 // flight so we don't stack two writes against the same
                 // process. The `async { steer_rx.as_mut()?.recv().await }`
@@ -3142,7 +3100,7 @@ impl AcpClient {
                         )
                         .await;
                 }
-                Some(Err(LinesCodecError::MaxLineLengthExceeded)) => {
+                Some(Inbound::Error(LinesCodecError::MaxLineLengthExceeded)) => {
                     return self
                         .leave_prompt_loop(
                             Err(AcpError::Protocol(
@@ -3154,7 +3112,7 @@ impl AcpClient {
                         )
                         .await;
                 }
-                Some(Err(e)) => {
+                Some(Inbound::Error(e)) => {
                     return self
                         .leave_prompt_loop(
                             Err(AcpError::Io(std::io::Error::other(e))),
@@ -3164,38 +3122,16 @@ impl AcpClient {
                         )
                         .await;
                 }
-                Some(Ok(line)) => {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-
-                    tracing::debug!(target: "acp::wire", "← {trimmed}");
-
-                    let msg: serde_json::Value = match serde_json::from_str(trimmed) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            self.observe(
-                                "acp_parse_error",
-                                serde_json::json!({
-                                    "line": trimmed,
-                                    "error": e.to_string(),
-                                }),
-                            );
-                            tracing::warn!(
-                                target: "acp::wire",
-                                "failed to parse line as JSON: {e} — skipping"
-                            );
-                            continue;
-                        }
-                    };
+                Some(Inbound::Frame { msg, len }) => {
+                    // Blank lines and unparseable ones were skipped by the
+                    // reader, which also logged them.
                     self.observe("acp_read", msg.clone());
 
                     let activity_now = clock.now();
                     idle_deadline = activity_now + idle_timeout;
                     last_activity_at = activity_now;
                     stall_watch.observe(&msg, activity_now);
-                    wire.record(&msg, trimmed.len(), activity_now);
+                    wire.record(&msg, len, activity_now);
 
                     // Steer response routing must come BEFORE the prompt
                     // response check: a steer response is a regular
@@ -3406,44 +3342,22 @@ impl AcpClient {
             }
             let read_result = tokio::select! {
                 biased;
-                read_result = self.reader.next() => read_result,
+                read_result = self.inbox.recv() => read_result,
                 _ = clock.sleep_until(deadline) => {
                     pending.abandon(UnknownReason::AckTimeout);
                     return;
                 }
             };
-            let line = match read_result {
+            let msg = match read_result {
                 None => {
                     pending.abandon(UnknownReason::RuntimeExited);
                     return;
                 }
-                Some(Err(_)) => {
+                Some(Inbound::Error(_)) => {
                     pending.abandon(UnknownReason::PromptEndedBeforeAck);
                     return;
                 }
-                Some(Ok(line)) => line,
-            };
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            tracing::debug!(target: "acp::wire", "← {trimmed}");
-            let msg: serde_json::Value = match serde_json::from_str(trimmed) {
-                Ok(v) => v,
-                Err(e) => {
-                    self.observe(
-                        "acp_parse_error",
-                        serde_json::json!({
-                            "line": trimmed,
-                            "error": e.to_string(),
-                        }),
-                    );
-                    tracing::warn!(
-                        target: "acp::wire",
-                        "failed to parse line as JSON: {e} — skipping"
-                    );
-                    continue;
-                }
+                Some(Inbound::Frame { msg, .. }) => msg,
             };
             self.observe("acp_read", msg.clone());
 
@@ -3718,54 +3632,12 @@ impl AcpClient {
             .ok_or_else(|| AcpError::Protocol("permission request missing id".into()))?;
 
         // Store pending permission id so cancel_with_cleanup can respond to it.
-        self.pending_permission_id = Some(id.clone());
+        self.pending_permission_id = Some(id);
         // Mark as not yet responded — guards against double-response race.
         self.permission_responded = false;
 
-        let options = msg["params"]["options"]
-            .as_array()
-            .ok_or_else(|| AcpError::Protocol("permission request missing options".into()))?;
-
-        tracing::debug!(
-            target: "acp::permission",
-            "session/request_permission id={id}, {} options",
-            options.len()
-        );
-
-        // Find allow_once by kind — NEVER hardcode optionId.
-        let allow_once = options
-            .iter()
-            .find(|opt| opt.get("kind").and_then(|k| k.as_str()) == Some("allow_once"));
-
-        let response = if let Some(opt) = allow_once {
-            let option_id = opt["optionId"]
-                .as_str()
-                .ok_or_else(|| AcpError::Protocol("allow_once option missing optionId".into()))?;
-            tracing::info!(
-                target: "acp::permission",
-                "auto-approving permission id={id} with allow_once optionId={option_id:?}"
-            );
-            permission_response_selected(&id, option_id)
-        } else {
-            // No allow_once — fall back to reject_once.
-            tracing::warn!(
-                target: "acp::permission",
-                "no allow_once option found in permission request id={id}, falling back to reject_once"
-            );
-            let reject = options
-                .iter()
-                .find(|opt| opt.get("kind").and_then(|k| k.as_str()) == Some("reject_once"));
-
-            if let Some(opt) = reject {
-                let option_id = opt["optionId"].as_str().unwrap_or("reject");
-                permission_response_selected(&id, option_id)
-            } else {
-                return Err(AcpError::Protocol(
-                    "no suitable permission option found (neither allow_once nor reject_once)"
-                        .into(),
-                ));
-            }
-        };
+        // One policy for every path, prompted or not: see `permission_reply`.
+        let response = permission_reply(msg)?;
 
         // Write the response first, then mark as responded.
         //
@@ -5466,7 +5338,9 @@ mod tests {
         let path = dir.join(file_name);
         std::fs::write(
             &path,
-            format!("#!/bin/sh\nprintf '%s\\n' \"${{{var}:-<unset>}}\"\n"),
+            // One JSON line: the reader parses stdout, and a bare value
+            // would be skipped as unparseable.
+            format!("#!/bin/sh\nprintf '{{\"probe\":\"%s\"}}\\n' \"${{{var}:-<unset>}}\"\n"),
         )
         .expect("write env probe script");
         let mut permissions = std::fs::metadata(&path).expect("stat probe").permissions();
@@ -5481,12 +5355,13 @@ mod tests {
         )
         .await
         .expect("spawn env probe script");
-        let observed = client
-            .reader
-            .next()
-            .await
-            .unwrap_or_else(|| panic!("child produced no output for {var}"))
-            .expect("child stdout was not readable");
+        let observed = match client.inbox.recv().await {
+            Some(Inbound::Frame { msg, .. }) => msg["probe"]
+                .as_str()
+                .expect("probe line carries the value")
+                .to_owned(),
+            other => panic!("child produced no output for {var}: {other:?}"),
+        };
         client.shutdown().await;
         std::fs::remove_dir_all(&dir).expect("remove env probe dir");
         observed

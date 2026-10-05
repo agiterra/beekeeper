@@ -10273,6 +10273,28 @@ impl Provider {
                 self.enqueue_receipt(channel_id, &command_id, &receipt)?;
                 self.publish_metadata(channel_id, &target, SessionStatus::Running)?;
             }
+            SessionEvent::AutonomousTurnStarted {
+                session_id,
+                turn_id,
+            } => {
+                // SV-77: the agent is working with nobody's command behind
+                // it. Its own open turn, so the status reads working and the
+                // turn's end publishes the same terminal a prompted one does;
+                // no command is consumed, charged or receipted.
+                let Some((channel_id, target)) = self.locate(&session_id) else {
+                    return Ok(());
+                };
+                self.state.update_session(&session_id, |record| {
+                    record.open_turn = Some(OpenTurn {
+                        turn_id: turn_id.clone(),
+                        command_id: None,
+                        team_wake_eligible: false,
+                        started_at_ms: now_ms(),
+                        operator_pubkey: None,
+                    });
+                })?;
+                self.publish_metadata(channel_id, &target, SessionStatus::Running)?;
+            }
             SessionEvent::TurnFinished {
                 session_id,
                 turn_id,
