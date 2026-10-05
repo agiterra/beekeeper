@@ -603,6 +603,18 @@ enum SegmentKind {
 ///
 /// This is the single-segment half of [`match_gate_segments`]; a `cd`/`echo`
 /// wrapper or a `&&`/`;` composition is that function's job, not this one's.
+/// The table's own name for `gate`, or `None` when the table has no such gate.
+///
+/// For a gate name read back from disk (SV-41 S5): the observer's rows carry
+/// `&'static str` names from [`GATE_MATCHERS`], and a name this build's table
+/// does not hold is not one it can sign a row for.
+pub(crate) fn table_gate(gate: &str) -> Option<&'static str> {
+    GATE_MATCHERS
+        .iter()
+        .find(|matcher| matcher.gate == gate)
+        .map(|matcher| matcher.gate)
+}
+
 fn match_gate(command: &str) -> Option<&'static str> {
     let tokens = shell_split(command)?;
     let mut words = Vec::with_capacity(tokens.len());

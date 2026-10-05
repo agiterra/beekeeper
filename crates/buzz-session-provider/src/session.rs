@@ -1203,6 +1203,20 @@ pub(crate) struct StartedSession {
     handle: SessionHandle,
 }
 
+impl StartedSession {
+    /// Whether the actor is still running. An adapter that died before it was
+    /// attached must not be attached and advertised as live.
+    pub(crate) fn is_live(&self) -> bool {
+        self.handle.is_live()
+    }
+
+    /// End an actor that will never be attached: the state it was started
+    /// for changed while it started (SV-76, a restore run off the loop).
+    pub(crate) fn discard(self) {
+        self.handle.shutdown();
+    }
+}
+
 impl SessionManager {
     /// A registry that reports actor events to `events`.
     pub fn new(events: mpsc::Sender<SessionEvent>) -> Self {
@@ -1298,6 +1312,10 @@ impl SessionManager {
     }
 
     /// Attach a started actor to the exact-session registry.
+    ///
+    /// Replaces any handle already registered for that session, so a caller
+    /// that started this actor off the run loop must check first that none
+    /// was attached meanwhile (see [`StartedSession::discard`]).
     pub(crate) fn attach(&mut self, started: StartedSession) -> SessionStartup {
         self.live
             .insert(started.handle.session_id.clone(), started.handle);

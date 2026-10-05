@@ -899,3 +899,195 @@ async fn restore_refuses_an_adapter_that_cannot_keep_the_recorded_model() {
         Some("unavailable-model")
     );
 }
+
+// -------------------------------------------------------------------------
+// SV-76: in the run loop the reopen runs off the loop
+// -------------------------------------------------------------------------
+
+/// An adapter that reads every request and never answers one, not even
+/// `initialize`: its startup only ends at a bound.
+const SILENT_AGENT: &str = r#"
+while IFS= read -r line; do
+  :
+done
+"#;
+
+/// Queue one transcript row and prove it publishes within a second.
+async fn publishes_at_once(provider: &mut Provider) {
+    let channel = Uuid::new_v4();
+    let transcript = nostr::EventBuilder::new(nostr::Kind::Custom(44225), "{}")
+        .tags(vec![
+            nostr::Tag::parse(["h", &channel.to_string()]).expect("tag")
+        ])
+        .sign_with_keys(&provider.config.keys)
+        .expect("sign");
+    let transcript_id = transcript.id;
+    provider
+        .outbox
+        .enqueue(44225, "sv76-transcript", Priority::Live, transcript)
+        .expect("enqueue");
+    let sink = CollectingSink::new();
+    tokio::time::timeout(Duration::from_secs(1), provider.flush_one(&sink))
+        .await
+        .expect("publication does not wait on the reopen")
+        .expect("flush");
+    assert!(sink
+        .events
+        .lock()
+        .expect("lock")
+        .iter()
+        .any(|event| event.id == transcript_id));
+}
+
+/// An adapter that never answers `initialize` would hold the loop for the
+/// whole two-minute startup bound. Off the loop, the tick returns at once,
+/// a transcript row publishes while the adapter hangs, and a second tick
+/// starts no second adapter.
+#[tokio::test]
+async fn a_hung_ci_reopen_does_not_hold_transcript_publication() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let killed = register_and_die(dir.path(), None, true).await;
+    let mut restarted = restarted_with(dir.path(), &killed, "silent-agent", SILENT_AGENT);
+    restarted.recover().await.expect("recover");
+    restarted.restore_off_loop = true;
+
+    tokio::time::timeout(Duration::from_secs(5), restarted.run_ci_continuation_tick())
+        .await
+        .expect("the tick does not wait on the adapter")
+        .expect("tick");
+    assert!(restarted.ci_restore_busy(), "the reopen is in flight");
+
+    publishes_at_once(&mut restarted).await;
+
+    tokio::time::timeout(Duration::from_secs(5), restarted.run_ci_continuation_tick())
+        .await
+        .expect("tick")
+        .expect("tick");
+    assert!(restarted.ci_restore_busy());
+    assert!(
+        restarted
+            .sessions
+            .handle(&killed.target.session_id)
+            .is_none(),
+        "nothing attached while the adapter hangs"
+    );
+    let record = restarted
+        .ci_continuations
+        .record("cic-1")
+        .expect("registration");
+    assert!(
+        matches!(record.state, RecordState::Ready(_)),
+        "still owed: {:?}",
+        record.state
+    );
+}
+
+/// The reopen is bounded: an adapter that never answers ends as a named,
+/// durable refusal of the registration, exactly as the inline path's own
+/// startup bound ends it, and the slot is free again.
+#[tokio::test]
+async fn a_ci_reopen_that_never_finishes_is_bounded_and_answered() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let killed = register_and_die(dir.path(), None, true).await;
+    let mut restarted = restarted_with(dir.path(), &killed, "silent-agent", SILENT_AGENT);
+    restarted.recover().await.expect("recover");
+    restarted.restore_off_loop = true;
+    restarted.ci_restore.timeout = Duration::from_millis(300);
+    let mut answers = restarted.take_ci_restore_answers();
+
+    restarted.run_ci_continuation_tick().await.expect("tick");
+    let done = tokio::time::timeout(Duration::from_secs(10), off_loop::next(&mut answers))
+        .await
+        .expect("the bound ends the reopen");
+    restarted.finish_ci_restore(done).await.expect("finish");
+    assert!(!restarted.ci_restore_busy());
+    assert!(restarted
+        .sessions
+        .handle(&killed.target.session_id)
+        .is_none());
+    let sink = CollectingSink::new();
+    restarted.flush(&sink).await.expect("flush");
+    let stages = receipt_stages(&sink, "cic-1");
+    assert!(
+        !stages.contains(&"turn_started".to_owned()),
+        "no turn without a process: {stages:?}"
+    );
+    let record = restarted
+        .ci_continuations
+        .record("cic-1")
+        .expect("registration");
+    assert!(
+        !matches!(record.state, RecordState::Ready(_)),
+        "answered, not left owed forever: {:?}",
+        record.state
+    );
+}
+
+/// Off the loop, the reopen still ends in exactly one turn on the promised
+/// generation, and a replayed result after it starts no second one.
+#[tokio::test]
+async fn an_off_loop_ci_reopen_delivers_one_turn_to_the_promised_generation() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let killed = register_and_die(dir.path(), None, false).await;
+    let log = dir.path().join("checkout").join("restore-methods.log");
+    let mut restarted = restarted_with(
+        dir.path(),
+        &killed,
+        "restorable-agent",
+        &restorable_agent(&log.to_string_lossy()),
+    );
+    restarted.recover().await.expect("recover");
+    restarted.restore_off_loop = true;
+    let mut answers = restarted.take_ci_restore_answers();
+
+    // The listener arm: the result arrives; the reopen starts off the loop.
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        restarted.handle_ci_listener_event(ready_report()),
+    )
+    .await
+    .expect("the listener arm does not wait on the adapter")
+    .expect("the verified result arrives");
+    let done = tokio::time::timeout(Duration::from_secs(60), off_loop::next(&mut answers))
+        .await
+        .expect("the reopen finishes");
+    restarted.finish_ci_restore(done).await.expect("finish");
+    pump_until_turn_started(&mut restarted).await;
+
+    // A replay and another tick: the live handle is found, the fence holds.
+    restarted
+        .handle_ci_listener_event(ready_report())
+        .await
+        .expect("replayed result");
+    restarted.run_ci_continuation_tick().await.expect("tick");
+    pump_available(&mut restarted).await;
+    assert!(!restarted.ci_restore_busy(), "no second reopen was started");
+
+    let sink = CollectingSink::new();
+    restarted.flush(&sink).await.expect("flush");
+    let stages = receipt_stages(&sink, "cic-1");
+    assert_eq!(
+        stages
+            .iter()
+            .filter(|stage| *stage == "turn_started")
+            .count(),
+        1,
+        "{stages:?}"
+    );
+    let record = restarted
+        .state()
+        .session(&killed.target.session_id)
+        .expect("record");
+    assert_eq!(record.generation, killed.target.generation);
+    assert!(statuses(&sink).contains(&SESSION_RESTORED_NATIVE.to_owned()));
+    let asked = methods(&log);
+    assert_eq!(
+        asked
+            .iter()
+            .filter(|method| *method == "session/load")
+            .count(),
+        1,
+        "{asked:?}"
+    );
+    assert!(!asked.contains(&"session/new".to_owned()), "{asked:?}");
+}

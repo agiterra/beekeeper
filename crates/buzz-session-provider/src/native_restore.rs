@@ -60,11 +60,21 @@
 //! custody may still be re-staged before the registration expires) or a
 //! durable, visible refusal.
 
-use buzz_acp::relay::HarnessRelay;
+use std::time::Duration;
+
+use buzz_acp::relay::{HarnessRelay, RestClient};
+use buzz_core::coding_session_command::CodingSessionTarget;
+use buzz_core::coding_session_runtime::RuntimeDescriptor;
+use tokio::sync::mpsc;
 
 use crate::actor_seats::ActorSeatsFile;
+use crate::attachments::MediaFetcher;
+use crate::config::Config;
+use crate::execution_scope::BoundaryState;
 use crate::payload::{self, ACTOR_UNAVAILABLE, PROVIDER_UNAVAILABLE, SESSION_ALREADY_ATTACHED};
-use crate::session::{self, CreateRequest, SessionManager};
+use crate::project_deletion::ProjectFact;
+use crate::session::{self, CreateRequest, SessionManager, StartedSession};
+use crate::state::SessionRecord;
 use crate::{seat_skills, Priority, Provider, SessionStatus};
 
 /// The record names no native session cursor, so there is nothing to reattach
@@ -193,14 +203,37 @@ impl Provider {
         session_id: &str,
         relay: Option<&HarnessRelay>,
     ) -> anyhow::Result<Result<(), RestoreObstacle>> {
+        let job = match self.prepare_restore(session_id) {
+            Ok(job) => job,
+            Err(obstacle) => return Ok(Err(obstacle)),
+        };
+        let run = self
+            .await_with_lease_maintenance(
+                run_restore_job(job),
+                relay.map(HarnessRelay::event_publisher),
+            )
+            .await;
+        self.finish_restore(run)
+    }
+
+    /// Everything a restore decides before it waits on anything: steps 1–5,
+    /// each a named obstacle, and the inputs the slow half needs, owned.
+    ///
+    /// Split from [`Self::finish_restore`] so the slow half — the deletion
+    /// read, the agents clone, the scope, and the adapter's own startup — can
+    /// run off the run loop (SV-76) as [`run_restore_job`].
+    pub(crate) fn prepare_restore(
+        &mut self,
+        session_id: &str,
+    ) -> Result<RestoreJob, RestoreObstacle> {
         // 1. An open record. The delivery path checks this too, so reaching
         //    here without one means the record vanished between the two; the
         //    honest reading is that this host can no longer serve the target.
         let Some(record) = self.state.session(session_id).cloned() else {
-            return Ok(Err(RestoreObstacle::ProviderUnavailable));
+            return Err(RestoreObstacle::ProviderUnavailable);
         };
         if record.closed {
-            return Ok(Err(RestoreObstacle::ProviderUnavailable));
+            return Err(RestoreObstacle::ProviderUnavailable);
         }
         // 1a. The handover fence, before anything is asked of an adapter
         //     (§3). A restore spawns a process and reattaches a conversation;
@@ -214,7 +247,7 @@ impl Provider {
         if let Some(refusal) =
             crate::commands::handover_fence(&record, &self.pubkey_hex, &self.pubkey_hex)
         {
-            return Ok(Err(RestoreObstacle::Fenced(refusal)));
+            return Err(RestoreObstacle::Fenced(refusal));
         }
         // 2. No live process.
         if self
@@ -222,15 +255,15 @@ impl Provider {
             .handle(session_id)
             .is_some_and(session::SessionHandle::is_live)
         {
-            return Ok(Err(RestoreObstacle::AlreadyLive));
+            return Err(RestoreObstacle::AlreadyLive);
         }
         // 3. A cursor to reattach to.
         let Some(resume_cursor) = record.resume_cursor.clone() else {
-            return Ok(Err(RestoreObstacle::NoResumeCursor));
+            return Err(RestoreObstacle::NoResumeCursor);
         };
         // 4. A runtime to reattach with.
         let Some(descriptor) = self.config.runtime(&record.provider_instance_ref).cloned() else {
-            return Ok(Err(RestoreObstacle::ProviderUnavailable));
+            return Err(RestoreObstacle::ProviderUnavailable);
         };
 
         // The *current* target: this reopens a generation, it does not mint
@@ -284,61 +317,76 @@ impl Provider {
                             "no seat custody is staged for this generation yet; the restore \
                              defers rather than reopening it without the agent's identity"
                         );
-                        return Ok(Err(RestoreObstacle::ActorUnavailable));
+                        return Err(RestoreObstacle::ActorUnavailable);
                     }
                 }
             }
         };
 
-        let outbox_before = self.outbox.pending_keys();
         let agent_env: Vec<(String, String)> = descriptor
             .cli_env
             .iter()
             .map(|env| (env.name.clone(), env.value.clone()))
             .collect();
-        // Strict: the recorded binding must match the scope prepared now, or
-        // the restore refuses rather than reopen another scope's history.
-        let unseated_agents = if self.project_deleted(record.project_ref.as_deref()).await {
-            Err(crate::execution_scope::refuse(
-                crate::execution_scope::EXECUTION_SCOPE_INVALID,
-                "this project was deleted, so no execution of it starts",
-            ))
-        } else if record.actor.is_none() {
-            self.stage_unseated_agents(record.project_ref.as_deref(), &record.session_id)
-                .await
-        } else {
-            Ok(None)
+        // The deletion re-check every start and resume makes, read in the slow
+        // half and applied in `finish_restore`.
+        let deletion_check = match (record.project_ref.clone(), self.rest_client.clone()) {
+            (Some(project), Some(rest)) => {
+                let seen = self.seen_project_head(&project);
+                Some((project, rest, seen))
+            }
+            _ => None,
         };
-        let execution = match unseated_agents
-            .as_ref()
-            .map_err(Clone::clone)
-            .and_then(|_| {
-                self.execution_plan(&crate::execution_scope::LaunchFacts {
-                    session_id: &record.session_id,
-                    project_ref: record.project_ref.as_deref(),
-                    association: crate::execution_scope::recorded_association(&record),
-                    unseated_agents: unseated_agents.as_ref().ok().and_then(Option::as_deref),
-                    actor: record.actor.as_deref(),
-                    driver: &record.driver,
-                    cwd: &record.cwd,
-                    agent_command: &descriptor.agent_command,
-                    agent_args: &descriptor.agent_args,
-                    agent_env: &agent_env,
-                    identity_env: &post_fence_env,
-                    seat_skills: seat_skills.as_ref(),
-                    role: record.role.as_deref(),
-                    rehydration: None,
-                    prior: Some((
-                        record.execution_binding.as_ref(),
-                        record.resume_cursor.as_deref(),
-                    )),
-                })
-            }) {
-            Ok(execution) => execution,
-            Err(failure) => {
-                if record.actor.is_some() {
-                    self.forget_actor_seat(&seat_command_id);
-                }
+        Ok(RestoreJob {
+            record,
+            target,
+            seat_command_id,
+            descriptor,
+            resume_cursor,
+            seat_identity,
+            post_fence_env,
+            seat_skills,
+            agent_env,
+            deletion_check,
+            config: self.config.clone(),
+            media: self.media.clone(),
+            events: self.sessions.event_sender(),
+        })
+    }
+
+    /// Apply a restore's slow half on the loop: the deletion fact it read,
+    /// the seat entry it spent, and — when an adapter opened — the attach and
+    /// the one write a restore may make.
+    ///
+    /// `Err` is reserved, as on [`Self::restore_generation`], for a durable
+    /// write that failed after the adapter was attached.
+    pub(crate) fn finish_restore(
+        &mut self,
+        run: RestoreRun,
+    ) -> anyhow::Result<Result<(), RestoreObstacle>> {
+        let RestoreRun {
+            record,
+            target,
+            seat_command_id,
+            project_fact,
+            outcome,
+        } = run;
+        let session_id = record.session_id.clone();
+        if let Some((project, fact)) = project_fact {
+            self.apply_project_fact(&project, &fact);
+            if fact == crate::project_deletion::ProjectFact::Deleted {
+                self.stop_project_executions(&project);
+            }
+        }
+        // One-shot, exactly as the create and resume paths treat it: the entry
+        // has been read and handed to the slow half, so it is spent whether or
+        // not that opened anything. Leaving it would keep a usable key on disk
+        // for a generation that will be answered terminally.
+        if record.actor.is_some() {
+            self.forget_actor_seat(&seat_command_id);
+        }
+        let (started, execution_state) = match outcome {
+            RestoreOutcome::Unplanned(failure) => {
                 tracing::info!(
                     target: "csp::restore",
                     %session_id,
@@ -347,56 +395,16 @@ impl Provider {
                 );
                 return Ok(Err(RestoreObstacle::ProviderUnavailable));
             }
-        };
-        if let Some(reason) = execution.native_refusal() {
-            if record.actor.is_some() {
-                self.forget_actor_seat(&seat_command_id);
+            RestoreOutcome::NativeRefused(reason) => {
+                return Ok(Err(RestoreObstacle::Rejected(reason)));
             }
-            return Ok(Err(RestoreObstacle::Rejected(reason.to_owned())));
-        }
-        let execution_state = execution.state();
-        let request = CreateRequest {
-            execution,
-            media: self.media.clone(),
-            target: target.clone(),
-            channel_id: record.channel_id,
-            cwd: record.cwd.clone(),
-            title: record.title.clone(),
-            model: record.model.clone(),
-            resume_cursor: Some(resume_cursor),
-            // A native reattachment carries its own history. Building a
-            // verified-context package for it would spend the work and then
-            // brief the agent about a past it already remembers.
-            rehydration_mcp: None,
-            strict_native: true,
-            agent_command: descriptor.agent_command.clone(),
-            agent_args: descriptor.agent_args.clone(),
-            agent_env,
-            seat: seat_identity,
-            post_fence_env,
-            seat_skills,
-            idle_timeout: self.config.idle_timeout,
-            answer_stall_timeout: self.config.answer_stall_timeout,
-            emit_raw_sdk_frames: self.config.emit_raw_sdk_frames,
-            max_turn_duration: self.config.max_turn_duration,
-            idle_shutdown: self.config.session_idle_shutdown,
-            include_thoughts: self.config.include_thoughts,
-            transcript_paragraph_flush: self.config.transcript_paragraph_flush,
+            RestoreOutcome::Started {
+                started,
+                execution_state,
+            } => (started, execution_state),
         };
-        let events = self.sessions.event_sender();
-        let startup_future = SessionManager::start(request, events);
-        let started = self
-            .await_with_lease_maintenance(startup_future, relay.map(HarnessRelay::event_publisher))
-            .await;
-        // One-shot, exactly as the create and resume paths treat it: the entry
-        // has been read and handed to a spawn, so it is spent whether or not
-        // that spawn opened anything. Leaving it would keep a usable key on
-        // disk for a generation that will be answered terminally.
-        if record.actor.is_some() {
-            self.forget_actor_seat(&seat_command_id);
-        }
         // 6. What the adapter answered.
-        let started = match started {
+        let started = match *started {
             Ok(started) => started,
             Err(failure) => {
                 let obstacle = match failure.code {
@@ -416,6 +424,36 @@ impl Provider {
                 return Ok(Err(obstacle));
             }
         };
+        // 6a. Still the state the restore was prepared for. When the slow half
+        //     ran off the loop (SV-76) other work ran beside it: the record may
+        //     have closed, been fenced, or moved to a new generation, another
+        //     path may have attached a process, and the adapter may already
+        //     have died. Attaching over any of those would advertise a process
+        //     that is not this generation's, or none at all.
+        let current = self.state.session(&session_id);
+        let still_current = current.is_some_and(|current| {
+            !current.closed
+                && current.generation == record.generation
+                && crate::commands::handover_fence(current, &self.pubkey_hex, &self.pubkey_hex)
+                    .is_none()
+        });
+        let already_attached = self.sessions.handle(&session_id).is_some();
+        if !still_current || already_attached || !started.is_live() {
+            started.discard();
+            tracing::info!(
+                target: "csp::restore",
+                %session_id,
+                still_current,
+                already_attached,
+                "a reopened adapter was discarded: the generation changed while it started"
+            );
+            return Ok(Err(if already_attached {
+                RestoreObstacle::AlreadyLive
+            } else {
+                RestoreObstacle::ProviderUnavailable
+            }));
+        }
+        let outbox_before = self.outbox.pending_keys();
         let startup = self.sessions.attach(started);
         // Per-process capabilities, re-witnessed: this is a different adapter
         // process than the one that opened the generation, and two builds of
@@ -480,6 +518,208 @@ impl Provider {
         );
         Ok(Ok(()))
     }
+}
+
+/// A restore's inputs, decided on the loop by [`Provider::prepare_restore`]
+/// and owned, so [`run_restore_job`] can run anywhere.
+pub(crate) struct RestoreJob {
+    record: SessionRecord,
+    target: CodingSessionTarget,
+    seat_command_id: String,
+    descriptor: RuntimeDescriptor,
+    resume_cursor: String,
+    seat_identity: Option<session::SeatIdentity>,
+    post_fence_env: Vec<(String, String)>,
+    seat_skills: Option<session::SeatSkills>,
+    agent_env: Vec<(String, String)>,
+    /// `(project, reader, head already seen)` when a deletion re-check runs.
+    deletion_check: Option<(String, RestClient, Option<u64>)>,
+    config: Config,
+    media: Option<MediaFetcher>,
+    events: mpsc::Sender<session::SessionEvent>,
+}
+
+/// Who a restore was for, kept beside an off-loop run so a run that never
+/// returns can still be answered ([`RestoreRun::timed_out`]).
+pub(crate) struct RestoreMeta {
+    record: SessionRecord,
+    target: CodingSessionTarget,
+    seat_command_id: String,
+}
+
+impl RestoreJob {
+    /// A copy of who this restore is for.
+    pub(crate) fn meta(&self) -> RestoreMeta {
+        RestoreMeta {
+            record: self.record.clone(),
+            target: self.target.clone(),
+            seat_command_id: self.seat_command_id.clone(),
+        }
+    }
+}
+
+/// What the slow half of a restore produced, for [`Provider::finish_restore`].
+pub(crate) struct RestoreRun {
+    record: SessionRecord,
+    target: CodingSessionTarget,
+    seat_command_id: String,
+    project_fact: Option<(String, ProjectFact)>,
+    outcome: RestoreOutcome,
+}
+
+impl RestoreRun {
+    /// The slow half did not finish in time. Nothing it might have opened
+    /// survives: dropping the startup future ends the adapter it spawned.
+    pub(crate) fn timed_out(meta: RestoreMeta, limit: Duration) -> Self {
+        RestoreRun {
+            record: meta.record,
+            target: meta.target,
+            seat_command_id: meta.seat_command_id,
+            project_fact: None,
+            outcome: RestoreOutcome::Unplanned(crate::session::CreateFailure {
+                code: PROVIDER_UNAVAILABLE,
+                message: format!(
+                    "the generation could not be reopened within {}s",
+                    limit.as_secs()
+                ),
+            }),
+        }
+    }
+}
+
+enum RestoreOutcome {
+    /// Refused before anything was spawned.
+    Unplanned(crate::session::CreateFailure),
+    /// The scope refuses native reattachment.
+    NativeRefused(String),
+    /// An adapter was asked to reattach; this is its answer.
+    Started {
+        started: Box<Result<StartedSession, crate::session::CreateFailure>>,
+        execution_state: BoundaryState,
+    },
+}
+
+/// The slow half of a restore: the deletion re-check, the read-only agents
+/// clone, the execution scope, and the adapter's startup. Touches no provider
+/// state, so it may run off the run loop (SV-76).
+pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
+    let RestoreJob {
+        record,
+        target,
+        seat_command_id,
+        descriptor,
+        resume_cursor,
+        seat_identity,
+        post_fence_env,
+        seat_skills,
+        agent_env,
+        deletion_check,
+        config,
+        media,
+        events,
+    } = job;
+    let project_fact = match deletion_check {
+        Some((project, rest, seen)) => {
+            let fact = crate::project_deletion::revalidate(&rest, &project, seen).await;
+            Some((project, fact))
+        }
+        None => None,
+    };
+    let finish = |outcome| RestoreRun {
+        record: record.clone(),
+        target: target.clone(),
+        seat_command_id: seat_command_id.clone(),
+        project_fact: project_fact.clone(),
+        outcome,
+    };
+    let deleted = project_fact
+        .as_ref()
+        .is_some_and(|(_, fact)| *fact == ProjectFact::Deleted);
+    // Strict: the recorded binding must match the scope prepared now, or
+    // the restore refuses rather than reopen another scope's history.
+    let unseated_agents = if deleted {
+        Err(crate::execution_scope::refuse(
+            crate::execution_scope::EXECUTION_SCOPE_INVALID,
+            "this project was deleted, so no execution of it starts",
+        ))
+    } else if record.actor.is_none() {
+        crate::execution_scope::stage_unseated_agents_for(
+            &config,
+            record.project_ref.as_deref(),
+            &record.session_id,
+        )
+        .await
+    } else {
+        Ok(None)
+    };
+    let execution = match unseated_agents
+        .as_ref()
+        .map_err(Clone::clone)
+        .and_then(|_| {
+            crate::execution_scope::execution_plan_for(
+                &config,
+                &crate::execution_scope::LaunchFacts {
+                    session_id: &record.session_id,
+                    project_ref: record.project_ref.as_deref(),
+                    association: crate::execution_scope::recorded_association(&record),
+                    unseated_agents: unseated_agents.as_ref().ok().and_then(Option::as_deref),
+                    actor: record.actor.as_deref(),
+                    driver: &record.driver,
+                    cwd: &record.cwd,
+                    agent_command: &descriptor.agent_command,
+                    agent_args: &descriptor.agent_args,
+                    agent_env: &agent_env,
+                    identity_env: &post_fence_env,
+                    seat_skills: seat_skills.as_ref(),
+                    role: record.role.as_deref(),
+                    rehydration: None,
+                    prior: Some((
+                        record.execution_binding.as_ref(),
+                        record.resume_cursor.as_deref(),
+                    )),
+                },
+            )
+        }) {
+        Ok(execution) => execution,
+        Err(failure) => return finish(RestoreOutcome::Unplanned(failure)),
+    };
+    if let Some(reason) = execution.native_refusal() {
+        return finish(RestoreOutcome::NativeRefused(reason.to_owned()));
+    }
+    let execution_state = execution.state();
+    let request = CreateRequest {
+        execution,
+        media,
+        target: target.clone(),
+        channel_id: record.channel_id,
+        cwd: record.cwd.clone(),
+        title: record.title.clone(),
+        model: record.model.clone(),
+        resume_cursor: Some(resume_cursor),
+        // A native reattachment carries its own history. Building a
+        // verified-context package for it would spend the work and then
+        // brief the agent about a past it already remembers.
+        rehydration_mcp: None,
+        strict_native: true,
+        agent_command: descriptor.agent_command.clone(),
+        agent_args: descriptor.agent_args.clone(),
+        agent_env,
+        seat: seat_identity,
+        post_fence_env,
+        seat_skills,
+        idle_timeout: config.idle_timeout,
+        answer_stall_timeout: config.answer_stall_timeout,
+        emit_raw_sdk_frames: config.emit_raw_sdk_frames,
+        max_turn_duration: config.max_turn_duration,
+        idle_shutdown: config.session_idle_shutdown,
+        include_thoughts: config.include_thoughts,
+        transcript_paragraph_flush: config.transcript_paragraph_flush,
+    };
+    let started = Box::new(SessionManager::start(request, events).await);
+    finish(RestoreOutcome::Started {
+        started,
+        execution_state,
+    })
 }
 
 /// Transcript status published when a generation is reopened in place.

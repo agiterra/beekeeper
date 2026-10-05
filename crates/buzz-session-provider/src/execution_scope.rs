@@ -2112,50 +2112,7 @@ impl crate::Provider {
         project_ref: Option<&str>,
         session_id: &str,
     ) -> Result<Option<PathBuf>, CreateFailure> {
-        if !cfg!(target_os = "macos") {
-            return Ok(None);
-        }
-        let projects = crate::commands::ProjectsFile::load(self.config.projects_file.as_deref());
-        let Some(record) = project_ref
-            .and_then(|project| projects.agents_repos.get(project))
-            .cloned()
-        else {
-            return Ok(None);
-        };
-        if session_id.is_empty()
-            || !session_id
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        {
-            return Err(refuse(
-                EXECUTION_SCOPE_INVALID,
-                "the session id cannot name a clone",
-            ));
-        }
-        let unavailable = |message: String| {
-            refuse(
-                EXECUTION_BOUNDARY_UNAVAILABLE,
-                format!("the project's agents repository could not be prepared for this session: {message}"),
-            )
-        };
-        let state_dir = canonical(&self.config.state_dir)
-            .ok_or_else(|| unavailable("the provider state directory does not exist".to_owned()))?;
-        let clones = host_dir(&state_dir, AGENTS_CLONES_DIR)?;
-        let dest = clones.join(session_id);
-        if std::fs::symlink_metadata(&dest).is_ok() {
-            host_dir(&clones, session_id)?;
-        }
-        let tip = crate::agents_checkout::stage_read_only_clone(&record, &dest)
-            .await
-            .map_err(|error| unavailable(error.to_string()))?;
-        tracing::info!(
-            target: "csp::scope",
-            %session_id,
-            sha = %tip.sha,
-            stale = tip.stale,
-            "staged the project's agents repository read-only"
-        );
-        Ok(Some(dest))
+        stage_unseated_agents_for(&self.config, project_ref, session_id).await
     }
 
     /// Prepare the execution scope for a create, resume or restore.
@@ -2166,70 +2123,132 @@ impl crate::Provider {
         &self,
         facts: &LaunchFacts<'_>,
     ) -> Result<ExecutionPlan, CreateFailure> {
-        let projects = crate::commands::ProjectsFile::load(self.config.projects_file.as_deref());
-        let project_checkout = facts
-            .project_ref
-            .and_then(|project| projects.projects.get(project))
-            .cloned();
-        let agents = facts
-            .seat_skills
-            .and_then(|skills| skills.agents_checkout.as_ref())
-            .map(|agents| (agents.path.as_path(), agents.writable()))
-            .or_else(|| facts.unseated_agents.map(|path| (path, false)));
-        let role_contract = role_contract(facts.role, facts.seat_skills);
-        let hermit_state = crate::execution_scope_host::host_hermit_state();
-        // Every bounded session gets the host's own `bee`: offline commands
-        // work for all, and relay commands still need the identity only a
-        // seat is given.
-        let bee = crate::seat_bee::host_seat_bee().map(|(bee, _)| bee.path.clone());
-        let mut inputs = ScopeInputs::new(
-            ScopePurpose::Session,
-            &self.config.state_dir,
-            facts.session_id,
-            facts.cwd,
-        );
-        inputs.project_ref = facts.project_ref;
-        inputs.project_checkout = project_checkout.as_deref();
-        inputs.association = facts.association;
-        inputs.actor = facts.actor;
-        inputs.driver = facts.driver;
-        inputs.runtime = self
-            .config
-            .runtime_profile_override
-            .unwrap_or_else(|| RuntimeProfile::for_driver(facts.driver));
-        inputs.agent_command = facts.agent_command;
-        inputs.agent_args = facts.agent_args;
-        inputs.agent_env = facts.agent_env;
-        inputs.identity_env = facts.identity_env;
-        inputs.agents_checkout = agents;
-        inputs.seat_bundle = facts.seat_skills.map(|skills| skills.bundle_dir.as_path());
-        inputs.role_contract = role_contract.as_deref();
-        inputs.context_mcp = facts
-            .rehydration
-            .map(|mcp| (mcp.command.as_path(), mcp.package_dir.as_path()));
-        inputs.seat_bee = bee.as_deref();
-        inputs.hermit_state = hermit_state.as_deref();
-        inputs.prior = facts.prior;
-        inputs.isolation = self.config.session_isolation;
-        let mut plan = prepare(&inputs)?;
-        if let ExecutionPlan::Prepared(prepared) = &mut plan {
-            let granted = crate::full_access::granted(&self.config.state_dir, facts.session_id);
-            // A provider that confines egress runs no session outside the
-            // boundary: full access would remove the network rule with it.
-            // The session then discloses the boundary it actually runs in.
-            if granted && self.config.session_isolation.egress.proxy().is_some() {
-                tracing::warn!(
-                    target: "csp::scope",
-                    session_id = %facts.session_id,
-                    "full access was granted for this session, but this provider confines \
-                     session egress, so it runs inside the boundary"
-                );
-            }
-            prepared.full_access =
-                granted && self.config.session_isolation.egress.proxy().is_none();
-        }
-        Ok(plan)
+        execution_plan_for(&self.config, facts)
     }
+}
+
+/// [`crate::Provider::execution_plan`] from the provider's configuration
+/// alone, so a restore can prepare its scope off the run loop (SV-76).
+pub(crate) fn execution_plan_for(
+    config: &crate::config::Config,
+    facts: &LaunchFacts<'_>,
+) -> Result<ExecutionPlan, CreateFailure> {
+    let projects = crate::commands::ProjectsFile::load(config.projects_file.as_deref());
+    let project_checkout = facts
+        .project_ref
+        .and_then(|project| projects.projects.get(project))
+        .cloned();
+    let agents = facts
+        .seat_skills
+        .and_then(|skills| skills.agents_checkout.as_ref())
+        .map(|agents| (agents.path.as_path(), agents.writable()))
+        .or_else(|| facts.unseated_agents.map(|path| (path, false)));
+    let role_contract = role_contract(facts.role, facts.seat_skills);
+    let hermit_state = crate::execution_scope_host::host_hermit_state();
+    // Every bounded session gets the host's own `bee`: offline commands
+    // work for all, and relay commands still need the identity only a
+    // seat is given.
+    let bee = crate::seat_bee::host_seat_bee().map(|(bee, _)| bee.path.clone());
+    let mut inputs = ScopeInputs::new(
+        ScopePurpose::Session,
+        &config.state_dir,
+        facts.session_id,
+        facts.cwd,
+    );
+    inputs.project_ref = facts.project_ref;
+    inputs.project_checkout = project_checkout.as_deref();
+    inputs.association = facts.association;
+    inputs.actor = facts.actor;
+    inputs.driver = facts.driver;
+    inputs.runtime = config
+        .runtime_profile_override
+        .unwrap_or_else(|| RuntimeProfile::for_driver(facts.driver));
+    inputs.agent_command = facts.agent_command;
+    inputs.agent_args = facts.agent_args;
+    inputs.agent_env = facts.agent_env;
+    inputs.identity_env = facts.identity_env;
+    inputs.agents_checkout = agents;
+    inputs.seat_bundle = facts.seat_skills.map(|skills| skills.bundle_dir.as_path());
+    inputs.role_contract = role_contract.as_deref();
+    inputs.context_mcp = facts
+        .rehydration
+        .map(|mcp| (mcp.command.as_path(), mcp.package_dir.as_path()));
+    inputs.seat_bee = bee.as_deref();
+    inputs.hermit_state = hermit_state.as_deref();
+    inputs.prior = facts.prior;
+    inputs.isolation = config.session_isolation;
+    let mut plan = prepare(&inputs)?;
+    if let ExecutionPlan::Prepared(prepared) = &mut plan {
+        let granted = crate::full_access::granted(&config.state_dir, facts.session_id);
+        // A provider that confines egress runs no session outside the
+        // boundary: full access would remove the network rule with it.
+        // The session then discloses the boundary it actually runs in.
+        if granted && config.session_isolation.egress.proxy().is_some() {
+            tracing::warn!(
+                target: "csp::scope",
+                session_id = %facts.session_id,
+                "full access was granted for this session, but this provider confines \
+                 session egress, so it runs inside the boundary"
+            );
+        }
+        prepared.full_access = granted && config.session_isolation.egress.proxy().is_none();
+    }
+    Ok(plan)
+}
+
+/// [`crate::Provider::stage_unseated_agents`] from the provider's
+/// configuration alone, so a restore can stage off the run loop (SV-76).
+pub(crate) async fn stage_unseated_agents_for(
+    config: &crate::config::Config,
+    project_ref: Option<&str>,
+    session_id: &str,
+) -> Result<Option<PathBuf>, CreateFailure> {
+    if !cfg!(target_os = "macos") {
+        return Ok(None);
+    }
+    let projects = crate::commands::ProjectsFile::load(config.projects_file.as_deref());
+    let Some(record) = project_ref
+        .and_then(|project| projects.agents_repos.get(project))
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    if session_id.is_empty()
+        || !session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(refuse(
+            EXECUTION_SCOPE_INVALID,
+            "the session id cannot name a clone",
+        ));
+    }
+    let unavailable = |message: String| {
+        refuse(
+            EXECUTION_BOUNDARY_UNAVAILABLE,
+            format!(
+                "the project's agents repository could not be prepared for this session: {message}"
+            ),
+        )
+    };
+    let state_dir = canonical(&config.state_dir)
+        .ok_or_else(|| unavailable("the provider state directory does not exist".to_owned()))?;
+    let clones = host_dir(&state_dir, AGENTS_CLONES_DIR)?;
+    let dest = clones.join(session_id);
+    if std::fs::symlink_metadata(&dest).is_ok() {
+        host_dir(&clones, session_id)?;
+    }
+    let tip = crate::agents_checkout::stage_read_only_clone(&record, &dest)
+        .await
+        .map_err(|error| unavailable(error.to_string()))?;
+    tracing::info!(
+        target: "csp::scope",
+        %session_id,
+        sha = %tip.sha,
+        stale = tip.stale,
+        "staged the project's agents repository read-only"
+    );
+    Ok(Some(dest))
 }
 
 #[cfg(test)]

@@ -427,30 +427,9 @@ impl Provider {
 
     /// Rebuild one ready registration's turn and run it through admission.
     pub(crate) async fn deliver_ci_continuation(&mut self, command_id: &str) -> anyhow::Result<()> {
-        let Some(record) = self.ci_continuations.record(command_id).cloned() else {
+        let Some((record, ready)) = self.ci_delivery_due(command_id)? else {
             return Ok(());
         };
-        let RecordState::Ready(ready) = &record.state else {
-            return Ok(());
-        };
-        // Enforce the deadline on listener/recovery delivery too. The actor
-        // repeats admission at its execution boundary after a busy queue.
-        if record.expires_at <= now_secs() {
-            return self.expire_ci_continuation(command_id);
-        }
-        if self
-            .state
-            .session(&record.target.session_id)
-            .and_then(|session| session.project_ref.as_deref())
-            != Some(record.identity.project.as_str())
-        {
-            return self.refuse_ci_continuation(
-                command_id,
-                CI_CONTINUATION_PROJECT_MISMATCH,
-                "the CI result project no longer matches this execution's recorded project",
-                None,
-            );
-        }
         // The restart seam. A registration made before this provider restarted
         // names a target whose adapter died with the previous process: without
         // this, the rebuilt turn reaches a session record with no live handle
@@ -464,45 +443,114 @@ impl Provider {
         // and the registration ends visibly rather than in a fresh chat with an
         // agent that remembers nothing. See `crate::native_restore`.
         if self.sessions.handle(&record.target.session_id).is_none() {
-            match self
+            // In the run loop the reopen runs off the loop (SV-76): an adapter
+            // startup can take two minutes, and nothing — transcript
+            // publication included — may wait on it. The turn is delivered
+            // when the reopen's answer is applied.
+            if self.restore_off_loop {
+                self.start_ci_restore(command_id, &record.target.session_id)?;
+                return Ok(());
+            }
+            let restored = self
                 .restore_generation(&record.target.session_id, None)
-                .await?
-            {
-                // Reopened, or already live — either way there is a process to
-                // deliver into and the ordinary decision runs next.
-                Ok(()) | Err(RestoreObstacle::AlreadyLive) => {}
-                // The one retryable obstacle. Host custody is re-staged by the
-                // desktop shortly after a provider restart, and that can land
-                // after this pass; refusing now would answer a question whose
-                // answer is still changing. The registration's own expiry is
-                // the outer bound, and it will report this obstacle by name.
-                Err(RestoreObstacle::ActorUnavailable) => {
-                    tracing::info!(
-                        target: "csp::ci",
-                        %command_id,
-                        "the continuation's execution has no live process and its agent seat is \
-                         not staged yet; deferring rather than refusing"
-                    );
-                    self.ci_continuations.note_attempt_with_obstacle(
-                        command_id,
-                        now_secs().saturating_add(DELIVERY_RETRY_SECS),
-                        crate::payload::ACTOR_UNAVAILABLE,
-                    )?;
-                    self.sync_ci_listener();
-                    return Ok(());
-                }
-                // Settled: no cursor, no runtime, no native reattachment, or a
-                // rejected one. None of these become true by waiting.
-                Err(obstacle) => {
-                    return self.refuse_ci_continuation(
-                        command_id,
-                        obstacle.code(),
-                        &obstacle.message(),
-                        None,
-                    );
-                }
+                .await?;
+            if !self.settle_ci_restore(command_id, restored)? {
+                return Ok(());
             }
         }
+        self.deliver_ci_turn(command_id, record, ready).await
+    }
+
+    /// The registration if its turn is still owed now: ready, unexpired, and
+    /// for the project its execution still records. Expiry and a project
+    /// mismatch are answered durably here, and yield `None`.
+    pub(crate) fn ci_delivery_due(
+        &mut self,
+        command_id: &str,
+    ) -> anyhow::Result<Option<(CiContinuationRecord, ReadyResult)>> {
+        let Some(record) = self.ci_continuations.record(command_id).cloned() else {
+            return Ok(None);
+        };
+        let RecordState::Ready(ready) = &record.state else {
+            return Ok(None);
+        };
+        let ready = ready.clone();
+        // Enforce the deadline on listener/recovery delivery too. The actor
+        // repeats admission at its execution boundary after a busy queue.
+        if record.expires_at <= now_secs() {
+            self.expire_ci_continuation(command_id)?;
+            return Ok(None);
+        }
+        if self
+            .state
+            .session(&record.target.session_id)
+            .and_then(|session| session.project_ref.as_deref())
+            != Some(record.identity.project.as_str())
+        {
+            self.refuse_ci_continuation(
+                command_id,
+                CI_CONTINUATION_PROJECT_MISMATCH,
+                "the CI result project no longer matches this execution's recorded project",
+                None,
+            )?;
+            return Ok(None);
+        }
+        Ok(Some((record, ready)))
+    }
+
+    /// Answer a reopen's outcome for one registration. `Ok(true)` means there
+    /// is now a process to deliver into.
+    pub(crate) fn settle_ci_restore(
+        &mut self,
+        command_id: &str,
+        restored: Result<(), RestoreObstacle>,
+    ) -> anyhow::Result<bool> {
+        match restored {
+            // Reopened, or already live — either way there is a process to
+            // deliver into and the ordinary decision runs next.
+            Ok(()) | Err(RestoreObstacle::AlreadyLive) => Ok(true),
+            // The one retryable obstacle. Host custody is re-staged by the
+            // desktop shortly after a provider restart, and that can land
+            // after this pass; refusing now would answer a question whose
+            // answer is still changing. The registration's own expiry is
+            // the outer bound, and it will report this obstacle by name.
+            Err(RestoreObstacle::ActorUnavailable) => {
+                tracing::info!(
+                    target: "csp::ci",
+                    %command_id,
+                    "the continuation's execution has no live process and its agent seat is \
+                     not staged yet; deferring rather than refusing"
+                );
+                self.ci_continuations.note_attempt_with_obstacle(
+                    command_id,
+                    now_secs().saturating_add(DELIVERY_RETRY_SECS),
+                    crate::payload::ACTOR_UNAVAILABLE,
+                )?;
+                self.sync_ci_listener();
+                Ok(false)
+            }
+            // Settled: no cursor, no runtime, no native reattachment, or a
+            // rejected one. None of these become true by waiting.
+            Err(obstacle) => {
+                self.refuse_ci_continuation(
+                    command_id,
+                    obstacle.code(),
+                    &obstacle.message(),
+                    None,
+                )?;
+                Ok(false)
+            }
+        }
+    }
+
+    /// Build and admit the turn for a registration whose execution is live.
+    pub(crate) async fn deliver_ci_turn(
+        &mut self,
+        command_id: &str,
+        record: CiContinuationRecord,
+        ready: ReadyResult,
+    ) -> anyhow::Result<()> {
+        let ready = &ready;
         let text = match materialize(&record, ready) {
             Ok(text) => text,
             // The stored result cannot be turned into a prompt. Terminal and

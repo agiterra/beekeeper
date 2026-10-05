@@ -45,8 +45,9 @@ pub enum SessionTitleMode {
     /// (SV-31). The default: it needs no setup.
     #[default]
     Agent,
-    /// The person's own naming model names it, from the desktop; the provider
-    /// stays out of it.
+    /// The person's own naming model only suggests a name in the desktop's
+    /// Name field before Start; nothing titles the session after Start, so
+    /// the provider publishes no generated title.
     MyModel,
     /// Nothing names it.
     Off,

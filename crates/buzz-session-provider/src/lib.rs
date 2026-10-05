@@ -59,7 +59,9 @@ mod auto_title;
 pub mod catalog;
 pub mod ci_continuation;
 pub mod ci_continuation_store;
+mod ci_restore_off_loop;
 pub mod ci_result_listener;
+mod claim_reverify_fetch;
 pub mod commands;
 pub mod config;
 // Assignment wakes held until their seat's input settles (review finding 4).
@@ -69,6 +71,7 @@ mod context_window;
 pub mod deferred_turns;
 mod gate_cwd;
 mod gate_observer;
+mod gate_start_store;
 mod git_exclude;
 mod git_probe;
 pub mod host_command;
@@ -79,12 +82,14 @@ mod model_catalog;
 mod native_output;
 pub mod native_restore;
 mod native_steer_authority;
+mod off_loop;
 pub mod payload;
 pub mod pending_completion;
 mod price_table;
 pub mod publish;
 mod reachability;
 pub mod redaction_vault;
+mod relay_identity_witness;
 pub mod retirement;
 pub mod seat_bee;
 pub mod seat_requests;
@@ -108,6 +113,8 @@ use std::time::{Duration, Instant, SystemTime};
 use nostr::{Event, Kind};
 use tokio::sync::mpsc;
 use uuid::Uuid;
+
+use claim_reverify_fetch::ChainSource;
 
 use buzz_acp::relay::{HarnessRelay, RelayEventPublisher, RestClient};
 use buzz_acp::steer::{NotDeliveredReason, SteerResolution, SteerWriteRefusal, UnknownReason};
@@ -547,6 +554,14 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     // Held out here for the same borrow reason: finished team-wake reads,
     // which run on their own task so a slow relay never holds this loop.
     let mut team_wake_fetches = provider.take_team_wake_fetches();
+    // SV-76, the same shape for the rest of the tick's slow work: the relay
+    // identity retry, the authority-chain re-read, and a CI continuation's
+    // generation reopen each run on their own task, one at a time, bounded,
+    // and are applied in their own arm below.
+    let mut relay_identity_answers = provider.take_relay_identity_answers();
+    let mut claim_reverify_answers = provider.take_claim_reverify_answers();
+    let mut ci_restore_answers = provider.take_ci_restore_answers();
+    provider.restore_off_loop = true;
 
     provider.start_project_deletion_listener();
     let mut project_deletion_events = provider.project_deletion_events.take();
@@ -650,6 +665,25 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                     tracing::warn!(target: "csp::team_wake", "team wake processing failed: {error}");
                 }
             }
+            answer = off_loop::next(&mut relay_identity_answers) => {
+                // Identity first: the chain re-read needs it, so a newly
+                // witnessed identity starts the re-read at once rather than
+                // a tick later.
+                if provider.finish_relay_identity_witness(answer) {
+                    provider.start_claim_reverification();
+                }
+            }
+            answer = off_loop::next(&mut claim_reverify_answers) => {
+                provider.finish_claim_reverification(answer).await;
+            }
+            done = off_loop::next(&mut ci_restore_answers) => {
+                if let Err(error) = provider.finish_ci_restore(done).await {
+                    tracing::error!(target: "csp::ci", "CI continuation delivery failed: {error}");
+                }
+                if let Err(error) = provider.flush_pending_leases(&publisher).await {
+                    tracing::warn!(target: "csp::lease", "lease handoff after a CI reopen failed: {error}");
+                }
+            }
             _ = ticker.tick() => {
                 // Hot-reload: an operator who adds a project to the file should
                 // see it offered without restarting the provider.
@@ -676,6 +710,8 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 // The release side of a deferred assignment wake: a fetch that
                 // finished since the last tick opens its turn here, unaided.
                 provider.release_deferred_turns().await;
+                // A reopen this needs starts off the loop (SV-76); delivery
+                // into a live execution is still decided here.
                 if let Err(error) = provider.run_ci_continuation_tick().await {
                     tracing::warn!(target: "csp::ci", "CI continuation processing failed: {error}");
                 }
@@ -683,9 +719,11 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 // provider that came up before its relay was ready start
                 // verifying without a restart, and the claim retry is what
                 // lets the executions waiting behind an unread chain stop
-                // refusing. Identity first: the chain read needs it.
-                provider.witness_relay_identity().await;
-                provider.retry_pending_claim_verification().await;
+                // refusing. Both only start their relay read here (SV-76);
+                // the answers are applied by the arms above. Identity first:
+                // the chain read waits for it.
+                provider.start_relay_identity_witness();
+                provider.start_claim_reverification();
                 provider.prune_stale_pending_hints();
                 // SV-41: a gate that has run long enough to watch is signed
                 // as started; nothing else wakes the loop while it runs.
@@ -849,6 +887,18 @@ pub struct Provider {
     /// never holds back session events or transcript publication. See
     /// [`team_wake_fetch`].
     team_wake_fetch: team_wake_fetch::TeamWakeFetchSlot,
+    /// The one relay-identity read the tick may have out (SV-76). See
+    /// [`relay_identity_witness`].
+    relay_identity_fetch: relay_identity_witness::RelayIdentitySlot,
+    /// The one authority-chain re-read the tick may have out (SV-76). See
+    /// [`claim_reverify_fetch`].
+    claim_reverify_fetch: claim_reverify_fetch::ClaimReverifySlot,
+    /// The one CI-continuation generation reopen that may be out (SV-76).
+    /// See [`ci_restore_off_loop`].
+    ci_restore: ci_restore_off_loop::CiRestoreSlot,
+    /// Whether a CI continuation's reopen runs off the run loop. Set by
+    /// [`run_with`]; `false` keeps the inline reopen unit tests drive.
+    pub(crate) restore_off_loop: bool,
     sessions: SessionManager,
     session_events: mpsc::Receiver<SessionEvent>,
     /// Sender for the queue [`Provider::next_session_event`] drains.
@@ -998,6 +1048,9 @@ pub struct Provider {
     /// this process never saw is not a gate anybody ran to completion here,
     /// and a durable half-pair would become a row about a run nobody watched.
     gate_observers: HashMap<String, gate_observer::GateObserver>,
+    /// Every gate start published and not yet closed, on disk, so a restart
+    /// can close the starts whose process died with it (SV-41 S5).
+    gate_starts_open: gate_start_store::GateStartStore,
     /// `commandId`s of cancels this process has already handed to an actor's
     /// mailbox but has not yet answered durably.
     ///
@@ -1214,6 +1267,7 @@ impl Provider {
         let host_result_wakes = host_result_wake::HostResultWakeStore::open(&config.state_dir)?;
         let ci_continuations = ci_continuation_store::CiContinuationStore::open(&config.state_dir)?;
         let action_steps = action_step_store::ActionStepStore::open(&config.state_dir)?;
+        let gate_starts_open = gate_start_store::GateStartStore::open(&config.state_dir)?;
         let team_wake_refusals_at_startup = team_wakes.refused_channels().collect();
         let (events_tx, session_events) = mpsc::channel(SESSION_EVENT_CAPACITY);
         let media = attachments::MediaFetcher::new(
@@ -1241,6 +1295,10 @@ impl Provider {
             team_wake_refusal_reprobed: HashSet::new(),
             team_wake_backoff: HashMap::new(),
             team_wake_fetch: team_wake_fetch::TeamWakeFetchSlot::new(),
+            relay_identity_fetch: relay_identity_witness::new_slot(),
+            claim_reverify_fetch: claim_reverify_fetch::new_slot(),
+            ci_restore: ci_restore_off_loop::new_slot(),
+            restore_off_loop: false,
             sessions: SessionManager::new(events_tx.clone()),
             session_events,
             session_events_tx: events_tx,
@@ -1266,6 +1324,7 @@ impl Provider {
             first_lease_prerequisites: HashMap::new(),
             in_flight: HashMap::new(),
             gate_observers: HashMap::new(),
+            gate_starts_open,
             delivered_cancels: VecDeque::new(),
             steering: HashMap::new(),
             prompt_image: HashMap::new(),
@@ -1533,6 +1592,9 @@ impl Provider {
                 Priority::Normal,
             )?;
         }
+        // SV-41 S5: every gate a stranded generation was running died with
+        // it, so its start is closed now rather than read as running.
+        self.close_gate_starts_left_open();
         // Last, and the reason the file exists: this is the moment every open
         // seated generation has lost its process and its one-shot custody, and
         // the desktop's re-stage runs right after this provider comes up. The
@@ -5391,6 +5453,21 @@ impl Provider {
                 tracing::error!(target: "csp::projects", %session_id, "could not stop: {error}");
             }
         }
+        // SV-55: the deleted project's sessions' checkpoint refs go with it,
+        // retired off the loop (git, with a per-repository ceiling).
+        let retirements = project_deletion::checkpoint_retirements(
+            self.state.sessions().map(|record| {
+                (
+                    record.session_id.as_str(),
+                    record.project_ref.as_deref(),
+                    record.cwd.as_path(),
+                )
+            }),
+            project,
+        );
+        if !retirements.is_empty() {
+            tokio::spawn(project_deletion::retire_checkpoint_refs(retirements));
+        }
     }
 
     /// Stop one execution whose own authority was withdrawn, through the same
@@ -7629,6 +7706,18 @@ impl Provider {
         accepted: &authority::AcceptedTransition,
         rest: &RestClient,
     ) -> anyhow::Result<bool> {
+        self.resolve_and_apply_grant_from(session_id, accepted, &ChainSource::Live(rest))
+            .await
+    }
+
+    /// [`Self::resolve_and_apply_grant`] over either a live relay reader or a
+    /// read already taken off the run loop (SV-76).
+    async fn resolve_and_apply_grant_from(
+        &mut self,
+        session_id: &str,
+        accepted: &authority::AcceptedTransition,
+        source: &ChainSource<'_>,
+    ) -> anyhow::Result<bool> {
         let Some(record) = self.state.session(session_id) else {
             return Ok(false);
         };
@@ -7641,13 +7730,7 @@ impl Provider {
             );
             return Ok(false);
         };
-        let transition = match rest
-            .query_event_by_id(
-                &accepted.accepted_event_id,
-                Kind::Custom(KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
-            )
-            .await
-        {
+        let transition = match source.transition(&accepted.accepted_event_id).await {
             Ok(Some(transition)) => transition,
             Ok(None) => {
                 tracing::warn!(
@@ -7787,127 +7870,7 @@ impl Provider {
         genesis_ref: &str,
         rest: &RestClient,
     ) -> AcceptedChain {
-        use nostr::{Alphabet, SingleLetterTag};
-
-        let incomplete = |reason: String| AcceptedChain {
-            links: Vec::new(),
-            incomplete: Some(reason),
-        };
-        let Some(relay_self) = self.relay_self.clone() else {
-            return incomplete("no relay identity is witnessed".to_owned());
-        };
-        let Ok(relay_author) = nostr::PublicKey::from_hex(&relay_self) else {
-            return incomplete("the witnessed relay identity is not a valid pubkey".to_owned());
-        };
-
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut rows: Vec<Event> = Vec::new();
-        let mut until: Option<nostr::Timestamp> = None;
-        let mut pages = 0usize;
-        loop {
-            pages += 1;
-            if pages > AUTHORITY_BACKFILL_MAX_PAGES {
-                return incomplete(format!(
-                    "the channel's history did not end within {AUTHORITY_BACKFILL_MAX_PAGES} pages"
-                ));
-            }
-            let mut filter = nostr::Filter::new()
-                .kind(Kind::Custom(KIND_SYSTEM_MESSAGE as u16))
-                .author(relay_author)
-                .custom_tags(
-                    SingleLetterTag::lowercase(Alphabet::H),
-                    [channel_id.to_string()],
-                )
-                .limit(AUTHORITY_BACKFILL_QUERY_LIMIT);
-            if let Some(until) = until {
-                filter = filter.until(until);
-            }
-            let answer = match rest.query(&[filter]).await {
-                Ok(answer) => answer,
-                Err(error) => return incomplete(format!("the receipt query failed: {error}")),
-            };
-            let Some(page) = answer.as_array() else {
-                return incomplete("the receipt query returned a non-array response".to_owned());
-            };
-            let page_len = page.len();
-            let events: Vec<Event> = page
-                .iter()
-                .filter_map(|row| serde_json::from_value::<Event>(row.clone()).ok())
-                .collect();
-            let oldest = events.iter().map(|event| event.created_at).min();
-            let mut fresh = 0usize;
-            for event in events {
-                if seen.insert(event.id.to_hex()) {
-                    rows.push(event);
-                    fresh += 1;
-                }
-            }
-            // A short page is the end of the history: the relay had nothing
-            // more to give. A full one may or may not be, so it is paged past.
-            if page_len < AUTHORITY_BACKFILL_QUERY_LIMIT {
-                break;
-            }
-            let Some(oldest) = oldest else {
-                return incomplete(
-                    "a full page of receipts could not be decoded, so the read cannot be \
-                     continued past it"
-                        .to_owned(),
-                );
-            };
-            // `until` is inclusive, so a page whose rows all share one second
-            // cannot be paged past — asking again returns the same page
-            // forever. Say so rather than spin or silently truncate.
-            if fresh == 0 {
-                return incomplete(
-                    "a full page of receipts shares one timestamp, so the read cannot be \
-                     continued past it"
-                        .to_owned(),
-                );
-            }
-            until = Some(oldest);
-        }
-
-        let mut links: Vec<authority::AcceptedTransition> = Vec::new();
-        for event in &rows {
-            if !authority::looks_like_acceptance_receipt(&event.content) {
-                continue; // A join, a leave, some other system row.
-            }
-            match authority::verify_acceptance_receipt(event, &relay_self, channel_id) {
-                Ok(accepted) if accepted.genesis_ref == genesis_ref => links.push(accepted),
-                Ok(_) => {} // Another umbrella's chain.
-                Err(error) => {
-                    // Triage only, never authority: read the claimed genesis
-                    // out of the raw content to decide whether this failure is
-                    // about *our* chain. An unreadable receipt for somebody
-                    // else's umbrella is not our problem; one for ours is a
-                    // link we cannot see, and the fence stays up.
-                    if claims_genesis(&event.content, genesis_ref) {
-                        return incomplete(format!(
-                            "a receipt naming this genesis could not be verified: {error}"
-                        ));
-                    }
-                    tracing::debug!(
-                        target: "csp::authority",
-                        "ignoring an unverifiable receipt for another umbrella: {error}"
-                    );
-                }
-            }
-        }
-        links.sort_by_key(|accepted| accepted.seq);
-        links.dedup_by_key(|accepted| accepted.seq);
-        for (index, accepted) in links.iter().enumerate() {
-            let expected = (index + 1) as u32;
-            if accepted.seq != expected {
-                return incomplete(format!(
-                    "the accepted chain is not contiguous: expected seq {expected}, found {}",
-                    accepted.seq
-                ));
-            }
-        }
-        AcceptedChain {
-            links,
-            incomplete: None,
-        }
+        read_accepted_chain_as(self.relay_self.clone(), channel_id, genesis_ref, rest).await
     }
 
     /// Extend one session's operator set from the channel's stored acceptance
@@ -7934,6 +7897,18 @@ impl Provider {
         session_id: &str,
         rest: &RestClient,
     ) -> anyhow::Result<bool> {
+        self.backfill_session_authority_from(session_id, &ChainSource::Live(rest))
+            .await
+    }
+
+    /// [`Self::backfill_session_authority`] over either a live relay reader or
+    /// a read already taken off the run loop (SV-76). The verdict rules are
+    /// the same; only where the bytes come from differs.
+    async fn backfill_session_authority_from(
+        &mut self,
+        session_id: &str,
+        source: &ChainSource<'_>,
+    ) -> anyhow::Result<bool> {
         let Some(record) = self.state.session(session_id) else {
             return Ok(false);
         };
@@ -7945,8 +7920,8 @@ impl Provider {
         let channel_id = record.channel_id;
         let mut applied_seq = record.authority_seq;
 
-        let chain = self
-            .read_accepted_chain(channel_id, &genesis_ref, rest)
+        let chain = source
+            .chain(self.relay_self.clone(), channel_id, &genesis_ref)
             .await;
         if let Some(reason) = &chain.incomplete {
             tracing::warn!(
@@ -7977,7 +7952,7 @@ impl Provider {
                 return Ok(false);
             }
             if self
-                .resolve_and_apply_grant(session_id, &accepted, rest)
+                .resolve_and_apply_grant_from(session_id, &accepted, source)
                 .await?
             {
                 applied_seq = accepted.seq;
@@ -8013,6 +7988,16 @@ impl Provider {
     ///
     /// Returns whether the umbrella is now verified.
     async fn verify_umbrella_chain(&mut self, genesis_ref: &str, rest: &RestClient) -> bool {
+        self.verify_umbrella_chain_from(genesis_ref, &ChainSource::Live(rest))
+            .await
+    }
+
+    /// [`Self::verify_umbrella_chain`] over either source (SV-76).
+    pub(crate) async fn verify_umbrella_chain_from(
+        &mut self,
+        genesis_ref: &str,
+        source: &ChainSource<'_>,
+    ) -> bool {
         let session_ids: Vec<String> = self
             .state
             .sessions()
@@ -8027,7 +8012,10 @@ impl Provider {
         }
         let mut complete = true;
         for session_id in &session_ids {
-            match self.backfill_session_authority(session_id, rest).await {
+            match self
+                .backfill_session_authority_from(session_id, source)
+                .await
+            {
                 Ok(true) => {}
                 Ok(false) => complete = false,
                 Err(error) => {
@@ -8109,47 +8097,51 @@ impl Provider {
             if !self.verify_umbrella_chain(&genesis_ref, &rest).await {
                 continue;
             }
-            let session_ids: Vec<String> = self
-                .state
-                .sessions()
-                .filter(|record| {
-                    !record.closed && record.genesis_ref.as_deref() == Some(genesis_ref.as_str())
-                })
-                .map(|record| record.session_id.clone())
-                .collect();
-            tracing::info!(
-                target: "csp::authority",
-                %genesis_ref,
-                executions = session_ids.len(),
-                "authority chain re-verified; its executions are admitted or fenced by name"
-            );
-            // The metadata `recover` held. Published now with the fence the
-            // chain actually carries, rather than the `disconnected` this
-            // provider would have guessed at when it came up.
-            for session_id in session_ids {
-                let Some(record) = self.state.session(&session_id).cloned() else {
-                    continue;
-                };
-                if record.is_retired() {
-                    continue;
-                }
-                let status = if self
-                    .sessions
-                    .handle(&session_id)
-                    .is_some_and(session::SessionHandle::is_live)
-                {
-                    SessionStatus::Idle
-                } else {
-                    SessionStatus::Disconnected
-                };
-                let target = self.target_for(&record);
-                if let Err(error) = self.publish_metadata(record.channel_id, &target, status) {
-                    tracing::warn!(
-                        target: "csp::authority",
-                        %session_id,
-                        "held metadata could not be published after re-verification: {error}"
-                    );
-                }
+            self.publish_reverified_metadata(&genesis_ref);
+        }
+    }
+
+    /// Publish the metadata `recover` held for an umbrella whose chain now
+    /// reads clean, with the fence the chain actually carries.
+    pub(crate) fn publish_reverified_metadata(&mut self, genesis_ref: &str) {
+        let session_ids: Vec<String> = self
+            .state
+            .sessions()
+            .filter(|record| !record.closed && record.genesis_ref.as_deref() == Some(genesis_ref))
+            .map(|record| record.session_id.clone())
+            .collect();
+        tracing::info!(
+            target: "csp::authority",
+            %genesis_ref,
+            executions = session_ids.len(),
+            "authority chain re-verified; its executions are admitted or fenced by name"
+        );
+        // The metadata `recover` held. Published now with the fence the
+        // chain actually carries, rather than the `disconnected` this
+        // provider would have guessed at when it came up.
+        for session_id in session_ids {
+            let Some(record) = self.state.session(&session_id).cloned() else {
+                continue;
+            };
+            if record.is_retired() {
+                continue;
+            }
+            let status = if self
+                .sessions
+                .handle(&session_id)
+                .is_some_and(session::SessionHandle::is_live)
+            {
+                SessionStatus::Idle
+            } else {
+                SessionStatus::Disconnected
+            };
+            let target = self.target_for(&record);
+            if let Err(error) = self.publish_metadata(record.channel_id, &target, status) {
+                tracing::warn!(
+                    target: "csp::authority",
+                    %session_id,
+                    "held metadata could not be published after re-verification: {error}"
+                );
             }
         }
     }
@@ -10877,17 +10869,26 @@ impl Provider {
         channel_id: Uuid,
         start: gate_observer::ObservedGateStart,
     ) {
+        // A close that cannot be built now never can be (the inputs are the
+        // record and the start), so it is not left for a restart to retry.
+        let unbuildable = |provider: &mut Self| {
+            if start.ended_at_ms.is_some() {
+                provider.forget_open_gate_start(session_id, &start);
+            }
+        };
         let Some((session_ref, genesis_ref)) = self
             .state
             .session(session_id)
             .and_then(|record| Some((record.session_ref.clone()?, record.genesis_ref.clone()?)))
         else {
+            unbuildable(self);
             return;
         };
         let Some(payload) =
             gate_observer::start::gate_start_payload(&session_ref, &genesis_ref, &start)
         else {
             tracing::warn!(target: "csp", %session_id, gate = start.gate, "gate start not buildable");
+            unbuildable(self);
             return;
         };
         let event = match build_coding_session_observation(&channel_id.to_string(), payload)
@@ -10900,10 +10901,33 @@ impl Provider {
             Ok(event) => event,
             Err(error) => {
                 tracing::warn!(target: "csp", %session_id, "gate start refused before signing: {error}");
+                unbuildable(self);
                 return;
             }
         };
         let key = gate_observer::start::gate_start_semantic_key(session_id, &start);
+        // S5: a start is on disk before it is queued, so a provider that dies
+        // mid-gate closes it at its next boot instead of leaving it reading
+        // "running". A start that cannot be recorded is not published: no
+        // running claim beats one a restart could not end.
+        if start.ended_at_ms.is_none() {
+            if let Err(error) = self
+                .gate_starts_open
+                .record(gate_start_store::OpenGateStart {
+                    session_id: session_id.to_owned(),
+                    gate: start.gate.to_owned(),
+                    started_at_ms: start.started_at_ms,
+                })
+            {
+                tracing::warn!(
+                    target: "csp",
+                    %session_id,
+                    gate = start.gate,
+                    "gate start not published: it could not be recorded for a restart to close: {error}"
+                );
+                return;
+            }
+        }
         // Normal, like the gate row: a disclosure about running work never
         // sits ahead of a receipt a consumer is blocking on.
         if let Err(error) = self.outbox.enqueue(
@@ -10913,6 +10937,89 @@ impl Provider {
             event,
         ) {
             tracing::warn!(target: "csp", %session_id, "gate start could not be queued: {error}");
+            // A close that did not queue stays recorded: the next boot closes
+            // the start instead.
+            return;
+        }
+        if start.ended_at_ms.is_some() {
+            self.forget_open_gate_start(session_id, &start);
+        }
+    }
+
+    /// The start `close` ends no longer needs a restart to close it.
+    fn forget_open_gate_start(
+        &mut self,
+        session_id: &str,
+        close: &gate_observer::ObservedGateStart,
+    ) {
+        if let Err(error) = self
+            .gate_starts_open
+            .clear(session_id, close.gate, close.started_at_ms)
+        {
+            // Harmless beyond a log line: the boot sweep re-queues the close
+            // under the same semantic key.
+            tracing::warn!(target: "csp", %session_id, "a closed gate start stayed recorded: {error}");
+        }
+    }
+
+    /// Close every gate start the previous process published and never
+    /// closed (SV-41 S5).
+    ///
+    /// Run once at boot from [`Self::recover`]. No process survives a provider
+    /// restart, so every start still recorded is a gate whose command died
+    /// with the old provider: the true answer is "no result observed", and
+    /// leaving the start open would read "gate running" until the 30-minute
+    /// stale rule. Each is closed with `endedAtMs` = now and `durationMs:
+    /// null` — the provider did not see the gate end and claims no span.
+    /// Idempotent: a cleared entry is gone, and a re-queued close has the
+    /// same semantic key.
+    pub(crate) fn close_gate_starts_left_open(&mut self) {
+        self.close_gate_starts_left_open_at(now_ms());
+    }
+
+    /// [`Self::close_gate_starts_left_open`] with the clock supplied.
+    pub(crate) fn close_gate_starts_left_open_at(&mut self, now: i64) {
+        let open = self.gate_starts_open.entries().to_vec();
+        for entry in open {
+            let gate = gate_observer::table_gate(&entry.gate);
+            let channel_id = self
+                .state
+                .session(&entry.session_id)
+                .map(|record| record.channel_id);
+            let (Some(gate), Some(channel_id)) = (gate, channel_id) else {
+                // No row can be signed for it: a gate this build does not
+                // name, or a session record that is gone. The stale rule is
+                // the only close left; keeping the entry would not add one.
+                tracing::warn!(
+                    target: "csp",
+                    session_id = %entry.session_id,
+                    gate = %entry.gate,
+                    "an open gate start cannot be closed at boot; the stale rule ends it"
+                );
+                if let Err(error) =
+                    self.gate_starts_open
+                        .clear(&entry.session_id, &entry.gate, entry.started_at_ms)
+                {
+                    tracing::warn!(target: "csp", "open gate start not cleared: {error}");
+                }
+                continue;
+            };
+            tracing::info!(
+                target: "csp",
+                session_id = %entry.session_id,
+                gate,
+                "closing a gate start the previous provider left open: its process died with it"
+            );
+            self.publish_gate_start(
+                &entry.session_id,
+                channel_id,
+                gate_observer::ObservedGateStart {
+                    gate,
+                    started_at_ms: entry.started_at_ms,
+                    ended_at_ms: Some(now),
+                    measured: false,
+                },
+            );
         }
     }
 
@@ -11358,9 +11465,162 @@ fn validate_genesis_envelope(
 /// because a read that might have stopped early is byte-for-byte
 /// indistinguishable from a chain with no claim in it, and those two answers
 /// fence in opposite directions.
-struct AcceptedChain {
+#[derive(Debug, Clone)]
+pub(crate) struct AcceptedChain {
     links: Vec<authority::AcceptedTransition>,
     incomplete: Option<String>,
+}
+
+impl AcceptedChain {
+    /// A read that cannot be called the whole chain, and why.
+    pub(crate) fn incomplete(reason: String) -> Self {
+        Self {
+            links: Vec::new(),
+            incomplete: Some(reason),
+        }
+    }
+
+    /// The verified links, ascending by `seq`.
+    pub(crate) fn links(&self) -> &[authority::AcceptedTransition] {
+        &self.links
+    }
+
+    /// A whole-chain read holding `links`.
+    #[cfg(test)]
+    pub(crate) fn complete(links: Vec<authority::AcceptedTransition>) -> Self {
+        Self {
+            links,
+            incomplete: None,
+        }
+    }
+}
+
+/// [`Provider::read_accepted_chain`] with the witnessed identity supplied, so
+/// the read can run off the run loop (SV-76) without borrowing the provider.
+pub(crate) async fn read_accepted_chain_as(
+    relay_self: Option<String>,
+    channel_id: Uuid,
+    genesis_ref: &str,
+    rest: &RestClient,
+) -> AcceptedChain {
+    use nostr::{Alphabet, SingleLetterTag};
+
+    let incomplete = AcceptedChain::incomplete;
+    let Some(relay_self) = relay_self else {
+        return incomplete("no relay identity is witnessed".to_owned());
+    };
+    let Ok(relay_author) = nostr::PublicKey::from_hex(&relay_self) else {
+        return incomplete("the witnessed relay identity is not a valid pubkey".to_owned());
+    };
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut rows: Vec<Event> = Vec::new();
+    let mut until: Option<nostr::Timestamp> = None;
+    let mut pages = 0usize;
+    loop {
+        pages += 1;
+        if pages > AUTHORITY_BACKFILL_MAX_PAGES {
+            return incomplete(format!(
+                "the channel's history did not end within {AUTHORITY_BACKFILL_MAX_PAGES} pages"
+            ));
+        }
+        let mut filter = nostr::Filter::new()
+            .kind(Kind::Custom(KIND_SYSTEM_MESSAGE as u16))
+            .author(relay_author)
+            .custom_tags(
+                SingleLetterTag::lowercase(Alphabet::H),
+                [channel_id.to_string()],
+            )
+            .limit(AUTHORITY_BACKFILL_QUERY_LIMIT);
+        if let Some(until) = until {
+            filter = filter.until(until);
+        }
+        let answer = match rest.query(&[filter]).await {
+            Ok(answer) => answer,
+            Err(error) => return incomplete(format!("the receipt query failed: {error}")),
+        };
+        let Some(page) = answer.as_array() else {
+            return incomplete("the receipt query returned a non-array response".to_owned());
+        };
+        let page_len = page.len();
+        let events: Vec<Event> = page
+            .iter()
+            .filter_map(|row| serde_json::from_value::<Event>(row.clone()).ok())
+            .collect();
+        let oldest = events.iter().map(|event| event.created_at).min();
+        let mut fresh = 0usize;
+        for event in events {
+            if seen.insert(event.id.to_hex()) {
+                rows.push(event);
+                fresh += 1;
+            }
+        }
+        // A short page is the end of the history: the relay had nothing
+        // more to give. A full one may or may not be, so it is paged past.
+        if page_len < AUTHORITY_BACKFILL_QUERY_LIMIT {
+            break;
+        }
+        let Some(oldest) = oldest else {
+            return incomplete(
+                "a full page of receipts could not be decoded, so the read cannot be \
+                 continued past it"
+                    .to_owned(),
+            );
+        };
+        // `until` is inclusive, so a page whose rows all share one second
+        // cannot be paged past — asking again returns the same page
+        // forever. Say so rather than spin or silently truncate.
+        if fresh == 0 {
+            return incomplete(
+                "a full page of receipts shares one timestamp, so the read cannot be \
+                 continued past it"
+                    .to_owned(),
+            );
+        }
+        until = Some(oldest);
+    }
+
+    let mut links: Vec<authority::AcceptedTransition> = Vec::new();
+    for event in &rows {
+        if !authority::looks_like_acceptance_receipt(&event.content) {
+            continue; // A join, a leave, some other system row.
+        }
+        match authority::verify_acceptance_receipt(event, &relay_self, channel_id) {
+            Ok(accepted) if accepted.genesis_ref == genesis_ref => links.push(accepted),
+            Ok(_) => {} // Another umbrella's chain.
+            Err(error) => {
+                // Triage only, never authority: read the claimed genesis
+                // out of the raw content to decide whether this failure is
+                // about *our* chain. An unreadable receipt for somebody
+                // else's umbrella is not our problem; one for ours is a
+                // link we cannot see, and the fence stays up.
+                if claims_genesis(&event.content, genesis_ref) {
+                    return incomplete(format!(
+                        "a receipt naming this genesis could not be verified: {error}"
+                    ));
+                }
+                tracing::debug!(
+                    target: "csp::authority",
+                    "ignoring an unverifiable receipt for another umbrella: {error}"
+                );
+            }
+        }
+    }
+    links.sort_by_key(|accepted| accepted.seq);
+    links.dedup_by_key(|accepted| accepted.seq);
+    for (index, accepted) in links.iter().enumerate() {
+        let expected = (index + 1) as u32;
+        if accepted.seq != expected {
+            return incomplete(format!(
+                "the accepted chain is not contiguous: expected seq {expected}, found {}",
+                accepted.seq
+            ));
+        }
+    }
+    AcceptedChain {
+        links,
+        incomplete: None,
+    }
 }
 
 /// Whether a 40099 body claims to be about `genesis_ref`.
@@ -12433,6 +12693,8 @@ mod tests {
     mod ci_continuation_tests;
     #[path = "founder_wake_framing_tests.rs"]
     mod founder_wake_framing_tests;
+    #[path = "gate_start_sweep_tests.rs"]
+    mod gate_start_sweep_tests;
     #[path = "handover_ci_tests.rs"]
     mod handover_ci_tests;
     #[path = "handover_fence_tests.rs"]
@@ -12465,6 +12727,8 @@ mod tests {
     mod team_wake_pressure_tests;
     #[path = "team_wake_relevance_tests.rs"]
     mod team_wake_relevance_tests;
+    #[path = "tick_off_loop_tests.rs"]
+    mod tick_off_loop_tests;
     #[path = "verification_input_tests.rs"]
     mod verification_input_tests;
     // Stops are shown by process groups disappearing: Unix only.
