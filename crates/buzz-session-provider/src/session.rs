@@ -737,6 +737,9 @@ pub enum SessionEvent {
         command_id: String,
         /// The prompt text, so the provider can record it as a `user_prompt`.
         text: String,
+        /// The turn's attachments as sent, so a first turn that is only a
+        /// pasted image can still be titled from their metadata (SV-31).
+        attachments: Vec<TurnAttachment>,
     },
     /// A turn ended.
     TurnFinished {
@@ -3444,6 +3447,7 @@ impl SessionActor {
                 turn_id: turn_id.clone(),
                 command_id: command_id.clone(),
                 text: text.clone(),
+                attachments: attachments.clone(),
             })
             .await;
 

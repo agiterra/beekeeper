@@ -54,6 +54,7 @@ fn spend_turns(provider: &mut Provider, session_id: &str, count: usize) {
                 turn_id: format!("turn-id-{n}"),
                 command_id: format!("spend-{n}"),
                 text: "work".into(),
+                attachments: Vec::new(),
             })
             .expect("turn started");
     }

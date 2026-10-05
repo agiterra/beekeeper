@@ -43,6 +43,19 @@ reports `relayConnection: unknown` with a reason. The desktop answers that
 question, from its own connection plus the provider's published kind:44222
 catalog. Synthesising "connected" from "the child is alive" would be a guess.
 
+**Names unnamed sessions.** The provider gives a session nobody named a short
+title from the founder's first message, signed with its own key as a
+kind:44252 generated title (SV-31) — never as the person's name. It asks the
+same runtime that runs the turn, in an empty directory with no tools, so no new
+third party sees the message. It is on with nothing to set, and the provider
+log says which way it went at startup (`csp::auto_title`). The provider child
+inherits the host's environment, so the switch is set where the host runs
+(`launchctl setenv`, or `Environment=` in the systemd unit):
+
+| variable | default | effect |
+| --- | --- | --- |
+| `BUZZ_CSP_AUTO_TITLE` | on | `off` stops this host generating titles; a runtime opts out alone with `"titleModel": null` in `BUZZ_CSP_RUNTIMES` |
+
 ## On a Mac
 
 **Beekeeper asks; it does not help itself.** Something that starts at every

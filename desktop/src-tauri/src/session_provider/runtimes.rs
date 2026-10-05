@@ -247,6 +247,7 @@ pub(crate) fn build_runtime_descriptors() -> Vec<RuntimeDescriptor> {
                 });
             Some(RuntimeDescriptor {
                 steer_idle_guard: runtime.steer_idle_guard,
+                title_model: None,
                 instance_ref: runtime.instance_ref.to_string(),
                 driver: runtime.driver.to_string(),
                 runtime: runtime.runtime_id.to_string(),

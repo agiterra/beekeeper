@@ -1,3 +1,5 @@
+use buzz_core_pkg::coding_session_title::MAX_GENERATED_NAME_CHARS;
+
 use super::*;
 
 #[test]
@@ -290,5 +292,17 @@ fn a_generated_goal_keeps_its_sentence_and_loses_its_wrapping() {
     assert_eq!(
         clean_generated_goal(&long).map(|goal| goal.chars().count()),
         Some(200)
+    );
+}
+
+#[test]
+fn the_suggestion_is_cleaned_by_the_hosts_rule() {
+    // The draft-time suggestion and the host's generated title share
+    // buzz-core's cleaner, so a placeholder answer names nothing in either.
+    assert_eq!(clean_generated_name("Untitled session"), None);
+    assert_eq!(clean_generated_name("\"New thread.\""), None);
+    assert_eq!(
+        NamingTask::Name.system_prompt(),
+        buzz_core_pkg::coding_session_title::NAMING_SYSTEM_PROMPT
     );
 }

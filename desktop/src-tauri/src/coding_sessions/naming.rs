@@ -1,11 +1,20 @@
-//! Naming a coding session from its first message, with a model of the
-//! person's choosing.
+//! The draft-time Name-field suggestion and the Solo goal summary, asked of a
+//! model of the person's choosing while the founded page is being filled in.
+//!
+//! Naming a session **after Start** moved to the host (NIP-CSG § Generated
+//! title): the provider that runs the founder's first turn titles it through
+//! the session's own runtime and signs a kind 44252 with its own key. The
+//! desktop no longer publishes a model's words as the founder's 44229. What
+//! stays here runs before Start, so a person sees it in the field and chooses
+//! it; the instruction and the cleaner are buzz-core's
+//! (`buzz_core_pkg::coding_session_title`), the same text the host uses.
 //!
 //! This is the one place in the create flow that can send what someone typed
 //! to a machine that is not theirs, so three things are non-negotiable:
 //!
 //! 1. It is **off** until configured. No default endpoint, no default key, no
-//!    quiet first request. A name is a convenience; a silent egress is not.
+//!    quiet first request. A suggestion is a convenience; a silent egress is
+//!    not.
 //! 2. The **API key never reaches the webview**. It is written here, stored in
 //!    the OS keyring (falling back to the `0o600` record file on builds
 //!    without one), and read only when a request is being built. The settings
@@ -21,16 +30,13 @@
 
 use std::time::Duration;
 
+use buzz_core_pkg::coding_session_title::{clean_generated_name, NAMING_SYSTEM_PROMPT};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::app_state::keyring_service;
 use crate::managed_agents::atomic_write_json_restricted;
 use crate::secret_store::SecretStore;
-
-/// Longest name worth asking for: four words, and the wire cap the session
-/// name event already enforces is far above it.
-const MAX_GENERATED_NAME_CHARS: usize = 64;
 
 /// One request's wall-clock budget. A namer that has not answered in this
 /// long has already lost its race with the person typing.
@@ -43,11 +49,6 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// models, so this has to leave room for reasoning tokens as well as the four
 /// words we actually want — a 64-token cap would return an empty text block.
 const NAMING_MAX_TOKENS: u32 = 1024;
-
-/// The instruction. Deliberately terse and output-shaped: everything about
-/// "no quotes, no trailing period" exists because a title with punctuation in
-/// it looks like a bug in the field it lands in.
-const NAMING_SYSTEM_PROMPT: &str = "You name coding sessions. Given the first message a person sent to a coding agent, reply with a title of one to four words describing the task. Reply with the title alone — no quotes, no punctuation at the end, no explanation. Use sentence case.";
 
 /// Longest goal worth showing on one line above a transcript.
 const MAX_GENERATED_GOAL_CHARS: usize = 200;
@@ -292,40 +293,11 @@ fn validate_base_url(base_url: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Reduce a model's reply to something that can be a session name.
-///
-/// Models answer this prompt well but not perfectly: a stray quote, a
-/// trailing period, a "Title: " prefix, or an unasked-for second line all
-/// show up. Trimming them here is cheaper than a longer prompt and does not
-/// depend on the model obeying it.
-pub fn clean_generated_name(raw: &str) -> Option<String> {
-    let first_line = raw.trim().lines().find(|line| !line.trim().is_empty())?;
-    let mut name = first_line.trim().to_string();
-    for prefix in ["Title:", "title:", "Name:", "name:"] {
-        if let Some(rest) = name.strip_prefix(prefix) {
-            name = rest.trim().to_string();
-        }
-    }
-    name = name
-        .trim_matches(|c: char| c == '"' || c == '\'' || c == '`' || c == '*')
-        .trim()
-        .trim_end_matches(['.', '!', ',', ':', ';'])
-        .trim()
-        .to_string();
-    if name.is_empty() {
-        return None;
-    }
-    if name.chars().count() > MAX_GENERATED_NAME_CHARS {
-        name = name.chars().take(MAX_GENERATED_NAME_CHARS).collect();
-        name = name.trim().to_string();
-    }
-    Some(name)
-}
-
 /// Reduce a model's reply to one line that can be a session goal.
 ///
-/// Like [`clean_generated_name`] but a sentence keeps its full stop: the goal
-/// is prose, and a period is how a line reads as finished rather than cut.
+/// Like buzz-core's [`clean_generated_name`] but a sentence keeps its full
+/// stop: the goal is prose, and a period is how a line reads as finished
+/// rather than cut.
 pub fn clean_generated_goal(raw: &str) -> Option<String> {
     let first_line = raw.trim().lines().find(|line| !line.trim().is_empty())?;
     let mut goal = first_line.trim().to_string();

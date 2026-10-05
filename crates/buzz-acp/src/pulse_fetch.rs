@@ -9,10 +9,11 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use buzz_core::kind::{
-    normalize_project_coordinate, KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_GOAL,
-    KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
-    KIND_NIP29_GROUP_METADATA, KIND_PROJECT, KIND_PULSE_ENTRY,
+    normalize_project_coordinate, KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_GENERATED_TITLE,
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LEASE,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME, KIND_NIP29_GROUP_METADATA,
+    KIND_PROJECT, KIND_PULSE_ENTRY,
 };
 use buzz_core::pulse_fold::{
     fold_pulse_digest, PulseDigest, PulseDigestEntry, PulseDigestError, PulseDigestGeneration,
@@ -48,12 +49,18 @@ const TEXT_LIMIT_CHARS: usize = 240;
 
 /// Per-generation durable facts: each is published once per create, resume,
 /// stop, or rename, so this window stays bounded by generation count.
-const GENERATION_FACT_KINDS: [u32; 5] = [
+///
+/// The genesis (44226, once per umbrella) proves the founder, without whom no
+/// 44229 is a person's name; the generated title (44252, once per umbrella)
+/// is the provider's, and the line says so.
+const GENERATION_FACT_KINDS: [u32; 7] = [
     KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_METADATA,
+    KIND_CODING_SESSION_GENESIS,
     KIND_CODING_SESSION_GOAL,
     KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_CLOSURE,
+    KIND_CODING_SESSION_GENERATED_TITLE,
 ];
 
 /// Receipts read on their own budget.
@@ -503,10 +510,18 @@ fn format_session(session: &PulseDigestSession) -> String {
         .as_deref()
         .or(session.goal.as_deref())
         .unwrap_or(&session.session_key);
+    // A generated title is a model's words, not a name somebody chose.
+    let auto_named =
+        if session.name.is_some() && session.name_origin.as_deref() == Some("generated") {
+            " [auto-named]"
+        } else {
+            ""
+        };
     let Some(generation) = current_generation(session) else {
         return format!(
-            "- \"{}\" ({})",
+            "- \"{}\"{} ({})",
             peer_text(label),
+            auto_named,
             peer_text(&session.session_key)
         );
     };
@@ -541,8 +556,9 @@ fn format_session(session: &PulseDigestSession) -> String {
         .map(|goal| format!("; goal \"{}\"", peer_text(goal)))
         .unwrap_or_default();
     format!(
-        "- \"{}\" ({}): status {}; branch {}; HEAD {}; dirty {}; observed {}; {}{}",
+        "- \"{}\"{} ({}): status {}; branch {}; HEAD {}; dirty {}; observed {}; {}{}",
         peer_text(label),
+        auto_named,
         peer_text(&session.session_key),
         status,
         peer_text(branch),
@@ -778,6 +794,26 @@ mod tests {
         for forbidden in ["nobody is working", "project is quiet", "safe to proceed."] {
             assert!(!rendered.to_ascii_lowercase().contains(forbidden));
         }
+    }
+
+    /// A provider's generated title is marked as one; a person's name is not.
+    #[test]
+    fn a_generated_title_is_marked_auto_named_in_the_prompt() {
+        let mut digest = shared_digest("idle-hours-old-with-live-authorized-lease");
+        digest.sessions[0].name = Some("Fix login redirect".to_owned());
+        digest.sessions[0].name_origin = Some("generated".to_owned());
+        digest.sessions[0].name_model = Some("haiku".to_owned());
+        let rendered = render_digest(&digest);
+        assert!(
+            rendered.contains("\"Fix login redirect\" [auto-named] ("),
+            "{rendered}"
+        );
+
+        digest.sessions[0].name_origin = Some("person".to_owned());
+        digest.sessions[0].name_model = None;
+        let rendered = render_digest(&digest);
+        assert!(rendered.contains("\"Fix login redirect\" ("), "{rendered}");
+        assert!(!rendered.contains("[auto-named]"));
     }
 
     #[test]

@@ -162,6 +162,7 @@ fn sample_runtimes() -> Vec<buzz_core::coding_session_runtime::RuntimeDescriptor
     vec![
         RuntimeDescriptor {
             steer_idle_guard: Some(SteerIdleGuard::PromptRequired),
+            title_model: None,
             instance_ref: "claude-primary".into(),
             driver: "claude-agent-acp".into(),
             runtime: "claude".into(),
@@ -178,6 +179,7 @@ fn sample_runtimes() -> Vec<buzz_core::coding_session_runtime::RuntimeDescriptor
         },
         RuntimeDescriptor {
             steer_idle_guard: None,
+            title_model: None,
             instance_ref: "goose-primary".into(),
             driver: "goose-acp".into(),
             runtime: "goose".into(),
@@ -614,6 +616,7 @@ fn env_declares_the_steer_idle_guard_for_claude_and_omits_it_for_codex() {
         runtimes: vec![
             RuntimeDescriptor {
                 steer_idle_guard: Some(SteerIdleGuard::PromptRequired),
+                title_model: None,
                 instance_ref: "claude-primary".into(),
                 driver: "claude-agent-acp".into(),
                 runtime: "claude".into(),
@@ -627,6 +630,7 @@ fn env_declares_the_steer_idle_guard_for_claude_and_omits_it_for_codex() {
             },
             RuntimeDescriptor {
                 steer_idle_guard: None,
+                title_model: None,
                 instance_ref: "codex-primary".into(),
                 driver: "codex-acp".into(),
                 runtime: "codex".into(),

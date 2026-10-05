@@ -760,22 +760,35 @@ fn group_and_project_session_context_events(
             "no successful create chain links this session and genesis".into(),
         ));
     }
-    let name_revisions = events
-        .iter()
-        .filter(|event| {
-            event_kind_u32(event) == KIND_CODING_SESSION_NAME
-                && tag_value(event, "d").as_deref() == Some(request.session_ref.as_str())
-        })
-        .cloned()
-        .collect();
-    let goal_revisions = events
-        .iter()
-        .filter(|event| {
-            event_kind_u32(event) == KIND_CODING_SESSION_GOAL
-                && tag_value(event, "d").as_deref() == Some(request.session_ref.as_str())
-        })
-        .cloned()
-        .collect();
+    // A 44229 name and a 44230 goal are the founder's by definition, and the
+    // relay checks their structure, not their signer: anyone in the channel
+    // can publish one with this `d`. Fed through unfiltered, a single
+    // stranger's revision failed the whole projection (the strict founder
+    // check in `verify_latest_text_revisions`), denying every seat its
+    // context. So the candidates are the genesis signer's alone —
+    // `verify_genesis` proves that signer is the founder — and what was left
+    // out is disclosed as a count, never silently folded away.
+    let founder_hex = genesis.pubkey.to_hex();
+    let mut founder_revisions = |kind: u32, label: &str| {
+        let (kept, excluded) = founder_text_revisions(
+            events,
+            kind,
+            request.session_ref.as_str(),
+            founder_hex.as_str(),
+        );
+        if excluded.events > 0 {
+            record_note(
+                &mut coverage.notes,
+                format!(
+                    "Ignored {} session {label} revision(s) from {} signer(s) other than the founder",
+                    excluded.events, excluded.signers
+                ),
+            );
+        }
+        kept
+    };
+    let name_revisions = founder_revisions(KIND_CODING_SESSION_NAME, "name");
+    let goal_revisions = founder_revisions(KIND_CODING_SESSION_GOAL, "goal");
     // Addressed by `d`, exactly as the name and goal revisions are: a policy
     // published into this channel for a *different* umbrella was never
     // addressed here, and counting it would make every shared channel look
@@ -814,6 +827,43 @@ fn group_and_project_session_context_events(
         generated_at: request.generated_at,
         limits: request.limits,
     })
+}
+
+/// What [`founder_text_revisions`] left out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct ExcludedRevisions {
+    /// Revisions addressed at this umbrella but signed by someone else.
+    events: usize,
+    /// How many distinct signers those came from.
+    signers: usize,
+}
+
+/// The `kind` revisions (44229 name or 44230 goal) addressed at
+/// `session_ref` that `founder` signed, and a count of the ones another key
+/// signed.
+fn founder_text_revisions(
+    events: &[Event],
+    kind: u32,
+    session_ref: &str,
+    founder: &str,
+) -> (Vec<Event>, ExcludedRevisions) {
+    let mut kept = Vec::new();
+    let mut excluded = ExcludedRevisions::default();
+    let mut foreign_signers = std::collections::BTreeSet::new();
+    for event in events {
+        if event_kind_u32(event) != kind || tag_value(event, "d").as_deref() != Some(session_ref) {
+            continue;
+        }
+        let signer = event.pubkey.to_hex();
+        if signer == founder {
+            kept.push(event.clone());
+        } else {
+            excluded.events += 1;
+            foreign_signers.insert(signer);
+        }
+    }
+    excluded.signers = foreign_signers.len();
+    (kept, excluded)
 }
 
 fn unique_event<'a>(
@@ -4056,6 +4106,143 @@ mod tests {
         .unwrap();
         assert!(collected.saturated);
         assert_eq!(collected.events.len(), 2);
+    }
+
+    /// Ledger risk (SV-31 spec, Risk 1): the relay admits a 44229 from any
+    /// channel member, so a stranger's name used to fail the whole projection.
+    /// It is now left out at collection and disclosed as a count; the
+    /// founder's own name still wins.
+    #[test]
+    fn a_non_founder_session_name_is_excluded_and_counted_not_fatal() {
+        let fixture = fixture(1);
+        let generation = &fixture.input.executions[0].generations[0];
+        let named = |keys: &Keys, content: &str, at: u64| {
+            buzz_sdk::builders::build_coding_session_name(
+                fixture.input.channel_id,
+                SESSION_REF,
+                content,
+            )
+            .unwrap()
+            .custom_created_at(Timestamp::from(at))
+            .sign_with_keys(keys)
+            .unwrap()
+        };
+        let stranger = Keys::generate();
+        let other = Keys::generate();
+        let mut events = vec![
+            fixture.input.genesis.clone(),
+            generation.lifecycle_command.clone(),
+            generation.receipt.clone(),
+            generation.metadata.clone(),
+            named(&fixture.founder, "Founder's name", 1_700_000_100),
+            // Newer than the founder's, so a signer-blind fold would pick it.
+            named(&stranger, "Stranger's name", 1_700_000_200),
+            named(&stranger, "Stranger again", 1_700_000_201),
+            named(&other, "Another stranger", 1_700_000_202),
+        ];
+        events.extend(generation.transcript.iter().cloned());
+        let request = ContextProjectionRequest {
+            allow_no_executions: false,
+            channel_id: fixture.input.channel_id,
+            session_ref: fixture.input.session_ref.clone(),
+            genesis_ref: fixture.input.genesis_ref.clone(),
+            relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
+            generated_at: fixture.input.generated_at,
+            limits: ContextProjectionLimits::default(),
+        };
+
+        let package = group_and_project_session_context_events(
+            &request,
+            &events,
+            ContextSourceCoverage {
+                complete: true,
+                total_history_items: None,
+                notes: Vec::new(),
+            },
+        )
+        .expect("a stranger's 44229 must not fail the projection");
+
+        assert_eq!(package.session.name.as_deref(), Some("Founder's name"));
+        assert!(
+            package.provenance.notes.iter().any(|note| note
+                == "Ignored 3 session name revision(s) from 2 signer(s) other than the founder"),
+            "{:?}",
+            package.provenance.notes
+        );
+
+        let (kept, excluded) = founder_text_revisions(
+            &events,
+            KIND_CODING_SESSION_NAME,
+            SESSION_REF,
+            fixture.founder.public_key().to_hex().as_str(),
+        );
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            excluded,
+            ExcludedRevisions {
+                events: 3,
+                signers: 2
+            }
+        );
+    }
+
+    /// The same hole for goals: the relay admits a 44230 from any channel
+    /// member, and before the founder filter covered goals a stranger's goal
+    /// failed the projection at `verify_latest_text_revisions`.
+    #[test]
+    fn a_non_founder_session_goal_is_excluded_and_counted_not_fatal() {
+        let fixture = fixture(1);
+        let generation = &fixture.input.executions[0].generations[0];
+        let goal = |keys: &Keys, content: &str, at: u64| {
+            buzz_sdk::builders::build_coding_session_goal(
+                fixture.input.channel_id,
+                SESSION_REF,
+                content,
+            )
+            .unwrap()
+            .custom_created_at(Timestamp::from(at))
+            .sign_with_keys(keys)
+            .unwrap()
+        };
+        let stranger = Keys::generate();
+        let mut events = vec![
+            fixture.input.genesis.clone(),
+            generation.lifecycle_command.clone(),
+            generation.receipt.clone(),
+            generation.metadata.clone(),
+            goal(&fixture.founder, "Founder's goal", 1_700_000_100),
+            // Newer than the founder's, so a signer-blind fold would pick it.
+            goal(&stranger, "Stranger's goal", 1_700_000_200),
+        ];
+        events.extend(generation.transcript.iter().cloned());
+        let request = ContextProjectionRequest {
+            allow_no_executions: false,
+            channel_id: fixture.input.channel_id,
+            session_ref: fixture.input.session_ref.clone(),
+            genesis_ref: fixture.input.genesis_ref.clone(),
+            relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
+            generated_at: fixture.input.generated_at,
+            limits: ContextProjectionLimits::default(),
+        };
+
+        let package = group_and_project_session_context_events(
+            &request,
+            &events,
+            ContextSourceCoverage {
+                complete: true,
+                total_history_items: None,
+                notes: Vec::new(),
+            },
+        )
+        .expect("a stranger's 44230 must not fail the projection");
+
+        assert_eq!(package.session.goal.as_deref(), Some("Founder's goal"));
+        assert!(
+            package.provenance.notes.iter().any(|note| note
+                == "Ignored 1 session goal revision(s) from 1 signer(s) other than the founder"),
+            "{:?}",
+            package.provenance.notes
+        );
     }
 
     #[test]

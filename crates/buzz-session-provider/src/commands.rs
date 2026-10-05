@@ -2264,6 +2264,7 @@ mod tests {
     fn runtime(instance_ref: &str, driver: &str, runtime: &str) -> RuntimeDescriptor {
         RuntimeDescriptor {
             steer_idle_guard: None,
+            title_model: None,
             instance_ref: instance_ref.to_owned(),
             driver: driver.to_owned(),
             runtime: runtime.to_owned(),

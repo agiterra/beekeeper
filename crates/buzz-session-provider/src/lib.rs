@@ -54,6 +54,7 @@ pub mod assignment_inputs;
 pub mod attachments;
 pub mod authority;
 mod auto_evidence;
+mod auto_title;
 pub mod catalog;
 pub mod ci_continuation;
 pub mod ci_continuation_store;
@@ -544,6 +545,9 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
 
     provider.start_project_deletion_listener();
     let mut project_deletion_events = provider.project_deletion_events.take();
+    // Held out here for the same borrow reason as `ci_events`.
+    provider.log_auto_title_state();
+    let mut title_ready = provider.auto_title.take_ready();
     provider.refresh_catalog(true)?;
 
     // Grants accepted while this provider was down were re-verified and folded
@@ -614,6 +618,11 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
             }
             event = project_deletion::next_event(&mut project_deletion_events) => {
                 provider.handle_project_deletion_event(event);
+            }
+            ready = auto_title::next_ready(&mut title_ready) => {
+                if let Err(error) = provider.enqueue_generated_title(ready) {
+                    tracing::error!(target: "csp::auto_title", "could not queue a generated title: {error}");
+                }
             }
             event = action_step_listener::next_action_step_event(&mut action_step_events) => {
                 if let Err(error) = provider.handle_action_step_event(event, &publisher).await {
@@ -773,6 +782,9 @@ struct TeamWakeBackoff {
 /// The provider's whole runtime state, minus the relay socket.
 pub struct Provider {
     config: Config,
+    /// SV-31: the host's session namer — its switch, its one slot and the
+    /// queue of finished titles. See [`auto_title`].
+    auto_title: auto_title::AutoTitler,
     pubkey_hex: String,
     state: StateStore,
     outbox: Outbox,
@@ -1183,6 +1195,7 @@ impl Provider {
             config.auth_tag.as_ref(),
         );
         Ok(Self {
+            auto_title: auto_title::AutoTitler::new(config.auto_title),
             config,
             pubkey_hex,
             state,
@@ -10078,7 +10091,8 @@ impl Provider {
                 session_id,
                 turn_id,
                 command_id,
-                text: _,
+                text,
+                attachments,
             } => {
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     return Ok(());
@@ -10147,6 +10161,15 @@ impl Provider {
                 // CI normally retired its promise before actor permission.
                 // Reconciliation here is harmless after those durable claims.
                 self.retire_ci_continuation(&command_id)?;
+                // SV-31: before the D9 charge below, so the umbrella's first
+                // turn still reads as its first. Detached; returns at once.
+                self.maybe_start_auto_title(
+                    &session_id,
+                    &command_id,
+                    &text,
+                    &attachments,
+                    operator_pubkey.as_deref(),
+                );
                 // D9: the umbrella is charged where the turn is consumed, and
                 // for the same reason — this is the moment work actually
                 // began. Charging at accept would bill a crew for turns a
@@ -12992,6 +13015,7 @@ mod tests {
     fn claude_runtime(script: String) -> RuntimeDescriptor {
         RuntimeDescriptor {
             steer_idle_guard: None,
+            title_model: None,
             agent_command: "bash".into(),
             agent_args: vec![script],
             ..claude_runtime_command(String::new())
@@ -13003,6 +13027,7 @@ mod tests {
     fn claude_runtime_command(agent_command: String) -> RuntimeDescriptor {
         RuntimeDescriptor {
             steer_idle_guard: None,
+            title_model: None,
             instance_ref: "claude-primary".into(),
             driver: "claude-agent-acp".into(),
             runtime: "claude".into(),
@@ -13071,6 +13096,9 @@ mod tests {
             runtime_profile_override: Some(crate::execution_scope::RuntimeProfile::TestDouble),
             model_details: Default::default(),
             session_isolation: Default::default(),
+            // Titling spawns a second adapter; these fixtures describe a
+            // host that has not turned it on, so no test sees a stray spawn.
+            auto_title: false,
         }
     }
 
@@ -15470,6 +15498,7 @@ mod tests {
                     turn_id: format!("turn-id-{n}"),
                     command_id: command_id.to_owned(),
                     text: "work".into(),
+                    attachments: Vec::new(),
                 })
                 .expect("turn started");
         }
@@ -17968,6 +17997,7 @@ mod tests {
             claude_runtime_command(dir.path().join("missing-claude").to_string_lossy().into()),
             RuntimeDescriptor {
                 steer_idle_guard: None,
+                title_model: None,
                 instance_ref: "codex-primary".into(),
                 driver: "codex-acp".into(),
                 runtime: "codex".into(),

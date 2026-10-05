@@ -1624,6 +1624,7 @@ async fn simultaneous_ci_start_permissions_reserve_the_shared_turn_allowance() {
             turn_id: "budget-turn".into(),
             command_id: "ci-budget-1".into(),
             text: "go".into(),
+            attachments: Vec::new(),
         })
         .expect("started report");
     assert_eq!(provider.state.turns_used("ci-budget"), 1);
@@ -2054,6 +2055,7 @@ async fn a_claimed_record_is_retired_when_the_turn_actually_starts() {
             turn_id: "claimed-turn".into(),
             command_id: "cic-expiry".into(),
             text: "carry on".into(),
+            attachments: Vec::new(),
         })
         .expect("started report");
 
@@ -2194,6 +2196,7 @@ async fn a_persisted_started_turn_is_not_reported_as_lost_before_prompt() {
             turn_id: "observed-start".into(),
             command_id: "cic-expiry".into(),
             text: "continue".into(),
+            attachments: Vec::new(),
         })
         .expect_err("retirement fails after open_turn was persisted");
     let config = running.config.clone();

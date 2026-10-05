@@ -201,6 +201,16 @@ pub struct Config {
     /// every proxy variable pointed at it. Both absent is today's behaviour;
     /// a malformed value refuses startup. See [`crate::session_isolation`].
     pub session_isolation: crate::session_isolation::SessionIsolation,
+    /// Whether this host names an unnamed session from the founder's first
+    /// message (SV-31, kind 44252).
+    ///
+    /// On by default: there is nothing to set up on any device, and no new
+    /// third party sees the message — the same runtime, account and vendor
+    /// already received it as the turn. `BUZZ_CSP_AUTO_TITLE=off` turns it
+    /// off for the whole host; a runtime can also opt out on its own with an
+    /// explicit `"titleModel": null` in `BUZZ_CSP_RUNTIMES`. The provider
+    /// logs which at startup. See [`crate::auto_title`].
+    pub auto_title: bool,
 }
 
 /// The adapter's own description of one model option value.
@@ -326,6 +336,7 @@ impl Config {
         let transcript_paragraph_flush =
             parse_bool(&lookup, "BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", false)?;
         let emit_raw_sdk_frames = parse_bool(&lookup, "BUZZ_CSP_EMIT_RAW_SDK_FRAMES", false)?;
+        let auto_title = parse_bool(&lookup, crate::auto_title::AUTO_TITLE_ENV, true)?;
         let session_isolation = crate::session_isolation::SessionIsolation::from_lookup(&lookup)?;
         let redaction_retention = crate::redaction_vault::RetentionPolicy::from_setting(
             lookup(crate::redaction_vault::RetentionPolicy::ENV_VAR).as_deref(),
@@ -355,6 +366,7 @@ impl Config {
             runtime_profile_override: None,
             model_details: BTreeMap::new(),
             session_isolation,
+            auto_title,
         })
     }
 
@@ -441,6 +453,7 @@ fn legacy_claude_descriptor(lookup: &impl Fn(&'static str) -> Option<String>) ->
     let allowed_models = parse_allowed_models(configured_allowed_models.as_deref(), &default_model);
     RuntimeDescriptor {
         steer_idle_guard: None,
+        title_model: None,
         instance_ref: PROVIDER_INSTANCE_REF.to_owned(),
         driver: DRIVER.to_owned(),
         runtime: RUNTIME.to_owned(),
@@ -864,6 +877,21 @@ mod tests {
         vars.insert("BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", "1".into());
         assert!(load(&vars).unwrap().transcript_paragraph_flush);
         vars.insert("BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", "sometimes".into());
+        assert!(load(&vars).is_err());
+    }
+
+    /// SV-31: titling is on with nothing set, and `off` (or any false
+    /// spelling) is the host-wide switch. A typo refuses startup rather than
+    /// silently picking a side.
+    #[test]
+    fn auto_title_is_on_unless_switched_off() {
+        assert!(load(&minimal()).unwrap().auto_title);
+        let mut vars = minimal();
+        vars.insert("BUZZ_CSP_AUTO_TITLE", "off".into());
+        assert!(!load(&vars).unwrap().auto_title);
+        vars.insert("BUZZ_CSP_AUTO_TITLE", "on".into());
+        assert!(load(&vars).unwrap().auto_title);
+        vars.insert("BUZZ_CSP_AUTO_TITLE", "sometimes".into());
         assert!(load(&vars).is_err());
     }
 
