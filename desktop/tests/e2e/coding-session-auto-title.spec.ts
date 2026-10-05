@@ -468,11 +468,11 @@ test("sv31: a generated title is marked where rows show it, a rename removes the
 
   // The header: the effective name, the generated title here (S2).
   //
-  // SV-57: at 1280x720 with the handover banner, a header layout bug squeezes
-  // the title column to zero width, so the h1 is in the DOM with the right
-  // text but not visible. That bug belongs to Wave B's header rewrite; this
-  // spec asserts the title's TEXT (what SV-31 owns) without requiring
-  // visibility, and does not widen the viewport to hide the bug.
+  // SV-57: at 1280x720 the header's title column once lost its share of the
+  // row to the status pill and surface buttons, squeezing the h1 to "C..".
+  // The title must be visible at this viewport and, being short, shown whole:
+  // not clipped to a stub (its box holds its full text) and wide enough to
+  // read. The viewport is not widened to hide a regression.
   await entry.getByTestId("channel-coding-session-open").click();
   const header = page.getByTestId("coding-session-header");
   const headerTitle = header.locator("h1");
@@ -480,30 +480,34 @@ test("sv31: a generated title is marked where rows show it, a rename removes the
     headerTitle,
     "S2: the header shows the generated title",
   ).toHaveText(GENERATED_TITLE, { timeout: 15_000 });
+  expect(page.viewportSize()).toEqual({ width: 1280, height: 720 });
+  await expect(headerTitle, "SV-57: the header title is visible").toBeVisible();
+  const titleBox = await headerTitle.boundingBox();
+  expect(
+    titleBox?.width ?? 0,
+    "SV-57: the title column keeps a readable width",
+  ).toBeGreaterThanOrEqual(120);
+  const clip = await headerTitle.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(
+    clip.scrollWidth,
+    `SV-57: "${GENERATED_TITLE}" is shown whole, not truncated (${JSON.stringify(clip)})`,
+  ).toBeLessThanOrEqual(clip.clientWidth + 1);
   await expect(
     header,
     "S2: the header never shows a foreign signer's title",
   ).not.toContainText(IMPOSTOR_TITLE);
   await expect(page.getByText(IMPOSTOR_TITLE)).toHaveCount(0);
   await waitForAnimations(page);
-  // The header shot is of the h1 itself when it can be seen; while SV-57
-  // collapses it there is nothing to photograph, so that one PNG is skipped.
-  if (await headerTitle.isVisible()) {
-    await headerTitle.screenshot({
-      path: `${SHOTS}/sv31-generated-title-header.png`,
-    });
-  } else {
-    test.info().annotations.push({
-      type: "skipped-screenshot",
-      description:
-        "sv31-generated-title-header.png: header title column collapsed (SV-57)",
-    });
-  }
+  await headerTitle.screenshot({
+    path: `${SHOTS}/sv31-generated-title-header.png`,
+  });
 
   // Rename: prefilled with the generated title, attribution one line away.
   // The rename control is reached by keyboard focus, which reveals it the
-  // same as hovering the title does and stays in the tab order; hovering a
-  // zero-width h1 (SV-57) is not possible.
+  // same as hovering the title does and stays in the tab order.
   const renameButton = page.getByTestId("coding-session-rename");
   await renameButton.focus();
   await renameButton.press("Enter");

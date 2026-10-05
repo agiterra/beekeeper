@@ -106,7 +106,13 @@ test("image attachments can be marked and sent as hidden spoilers", async ({
   await composer.getByTestId("composer-media-attachment").hover();
   await page.getByTestId("composer-attachment-annotate").click();
   await page.getByTestId("composer-attachment-spoiler").click();
-  await page.keyboard.press("Escape");
+  // The toggle has a tooltip, and under load it can open before Escape lands:
+  // Escape then dismisses the tooltip, the topmost layer, and the lightbox
+  // stays open over the send button. Press until the lightbox itself closes.
+  await expect(async () => {
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 1_000 });
+  }).toPass();
   await expect(composer.locator("[data-composer-media-spoiler]")).toBeVisible();
 
   await page.getByTestId("send-message").click();

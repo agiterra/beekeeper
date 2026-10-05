@@ -23,6 +23,7 @@ import {
 import type { RelayEvent } from "@/shared/api/types";
 import {
   KIND_CODING_SESSION_CLOSURE,
+  KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_LEASE,
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
@@ -96,12 +97,29 @@ function createAuthorityEvents(input: {
   commandId: string;
   title: string;
 }): RelayEvent[] {
+  // The founding 44226, signed by the operator: the create naming it by
+  // `genesisRef` is what proves the founder, and only the founder's 44229 is
+  // a person's name (`provenSessionFounder`, as `pulse_fold_names.rs`).
+  const genesis = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_GENESIS,
+      created_at: nowSeconds() - 14_410,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["csg-v", "csg1-1"],
+        ["csg-session", input.sessionRef],
+      ],
+      content: JSON.stringify({ sessionRef: input.sessionRef, v: 1 }),
+    },
+    OPERATOR_SECRET,
+  ) as unknown as RelayEvent;
   const command = buildCodingSessionCreateEvent({
     channelId: CHANNEL_ID,
     commandId: input.commandId,
     projectRef: PROJECT_COORDINATE,
     repoRef: null,
     sessionRef: input.sessionRef,
+    genesisRef: genesis.id,
     providerInstanceRef: input.target.instanceId,
     providerAuthorityPubkey: PROVIDER_PUBKEY,
     model: "sonnet",
@@ -109,6 +127,7 @@ function createAuthorityEvents(input: {
     initialTurn: null,
   });
   return [
+    genesis,
     finalizeEvent(
       {
         kind: command.kind,

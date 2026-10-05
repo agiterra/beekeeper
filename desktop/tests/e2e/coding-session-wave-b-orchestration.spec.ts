@@ -55,6 +55,7 @@ type Seat = {
   model: string;
   status: SeatStatus;
   secret: Uint8Array;
+  actor: string;
   target: CodingSessionCommandTarget;
   /** Transcript items in order; `turnId` overrides the first turn. */
   items: ReadonlyArray<{ turnId?: string; item: unknown }>;
@@ -63,6 +64,13 @@ type Seat = {
 // Pinned provider keys, one per seat, so the run is reproducible.
 const SECRETS = ["b6b6b6b6", "b6b6b6b7", "b6b6b6b8", "b6b6b6b9"].map((seed) =>
   hexToBytes(seed.repeat(8)),
+);
+// One seat actor per seat. A metadata `role` travels with its `agentRef`: a
+// role without an actor is malformed and the whole 44223 is refused (the
+// Rust decoder agrees), which once dropped every `sessionRef` here and split
+// the mission into four unrelated sessions (SV-62).
+const ACTORS = ["c6c6c6c6", "c6c6c6c7", "c6c6c6c8", "c6c6c6c9"].map((seed) =>
+  getPublicKey(hexToBytes(seed.repeat(8))),
 );
 
 function seatTarget(instanceId: string, index: number) {
@@ -101,6 +109,7 @@ const SEATS: readonly Seat[] = [
     model: "claude-opus-5-5[1m]",
     status: "completed",
     secret: SECRETS[0],
+    actor: ACTORS[0],
     target: seatTarget("b6-build-1", 1),
     items: [
       call("task-1", "Task", {
@@ -124,6 +133,7 @@ const SEATS: readonly Seat[] = [
     model: "claude-opus-5-5[1m]",
     status: "running",
     secret: SECRETS[1],
+    actor: ACTORS[1],
     target: seatTarget("b6-build-2", 2),
     items: [
       call("read-1", "Read", { file_path: "src/b.ts" }),
@@ -139,6 +149,7 @@ const SEATS: readonly Seat[] = [
     model: "gpt-6",
     status: "running",
     secret: SECRETS[2],
+    actor: ACTORS[2],
     target: seatTarget("b6-gate-1", 3),
     items: [call("out-1", "StructuredOutput", { schema: "gate" })],
   },
@@ -148,6 +159,7 @@ const SEATS: readonly Seat[] = [
     model: "claude-sonnet-5-5",
     status: "failed",
     secret: SECRETS[3],
+    actor: ACTORS[3],
     target: seatTarget("b6-review-1", 4),
     items: [
       call("grep-1", "Grep", { pattern: "TODO" }),
@@ -174,7 +186,7 @@ function metadata(seat: Seat, createdAt: number): RelayEvent {
         projectRef: null,
         repoRef: null,
         title: seat.title,
-        agentRef: null,
+        agentRef: seat.actor,
         provider: "claude-agent-acp",
         runtime: "claude-agent-acp",
         model: seat.model,
@@ -230,9 +242,13 @@ function transcript(seat: Seat, nowSeconds: number): RelayEvent[] {
 
 function missionEvents(): RelayEvent[] {
   const now = Math.floor(Date.now() / 1_000);
+  // Seats act in hire order, ten seconds apart. With no lifecycle create to
+  // date a hire, the umbrella orders executions by their catalog times, so a
+  // seat that went quiet early would otherwise lead the pipeline.
   return SEATS.flatMap((seat, index) => [
     metadata(seat, now - 90 + index),
-    ...transcript(seat, now),
+    // The last seat's last item is `now - 28`: never in the future.
+    ...transcript(seat, now + index * 10),
   ]);
 }
 
@@ -281,8 +297,7 @@ async function openAgentsSurface(page: Page): Promise<Locator> {
   return orchestration;
 }
 
-// Wave B iteration-1 follow-up: the Coding sessions trigger reads "Coding sessions (4)" where the fixture expects (1); the fixture leaks other sessions into the count (deterministic, 2 of 2 runs). Full smoke 2026-10-05 on db4ea4aea + Wave B.
-test.fixme("SV-40: a mission's phase pipeline, an expanded phase and the direct spawns", async ({
+test("SV-40: a mission's phase pipeline, an expanded phase and the direct spawns", async ({
   page,
 }) => {
   test.setTimeout(120_000);

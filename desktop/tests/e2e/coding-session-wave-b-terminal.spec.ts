@@ -389,8 +389,7 @@ test("SV-25 and SV-22: the drawer opens in the session's tree, splits, manages, 
   ).toHaveAttribute("aria-valuenow", "212");
 });
 
-// Wave B iteration-1 follow-up: the teammate's shared-terminal watch row never appears (deterministic, 2 of 2 runs). Full smoke 2026-10-05 on db4ea4aea + Wave B.
-test.fixme("SV-25 remote: no tree here, no New terminal; a teammate's shared terminal is watched read-only by owner and liveness", async ({
+test("SV-25 remote: no tree here, no New terminal; a teammate's shared terminal is watched read-only by owner and liveness", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -442,20 +441,27 @@ test.fixme("SV-25 remote: no tree here, no New terminal; a teammate's shared ter
     },
     secret,
   ) as unknown as RelayEvent;
-  await page.evaluate(
-    ({ event, name }) => {
-      const state = window.__BUZZ_E2E_WAVE_B_TERMINAL__;
-      if (!state) throw new Error("terminal mock is missing");
-      state.announces = [event];
-      window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__?.({
-        channelName: name,
-        event,
-      });
-    },
-    { event: announce, name: channelName },
-  );
+  await page.evaluate((event) => {
+    const state = window.__BUZZ_E2E_WAVE_B_TERMINAL__;
+    if (!state) throw new Error("terminal mock is missing");
+    state.announces = [event];
+  }, announce);
+  // The announce reaches the drawer through its live 30623 subscription,
+  // which only wakes a re-read. A relay replays a stored announce to a
+  // subscription opened after it (`since`); the mock relay replays nothing,
+  // so the announce is re-published until the drawer has read it (SV-66).
   const watch = page.getByTestId("coding-session-terminal-watch");
-  await expect(watch).toBeVisible({ timeout: 15_000 });
+  await expect(async () => {
+    await page.evaluate(
+      ({ event, name }) =>
+        window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__?.({
+          channelName: name,
+          event,
+        }),
+      { event: announce, name: channelName },
+    );
+    await expect(watch).toBeVisible({ timeout: 1_500 });
+  }).toPass({ timeout: 20_000 });
   await expect(watch).toContainText("read-only");
   await expect(page.getByTestId("coding-session-terminal-new")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "New terminal" })).toHaveCount(
@@ -506,8 +512,7 @@ test.fixme("SV-25 remote: no tree here, no New terminal; a teammate's shared ter
   await shoot(page, "SV25-watching-teammate", host);
 });
 
-// Wave B iteration-1 follow-up: needs the SV-25 remote screenshot, whose test is fixme'd above. Smoke 2026-10-05 on db4ea4aea + Wave B.
-test.fixme("SV-25 and SV-22 screenshots are hash-distinct", () => {
+test("SV-25 and SV-22 screenshots are hash-distinct", () => {
   const hashes = new Map<string, string>();
   for (const name of SHOT_NAMES) {
     const png = readFileSync(`${SHOTS}/${name}.png`);

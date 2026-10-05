@@ -665,8 +665,14 @@ test("copy to draft recovers the words at 250% text without sending or settling 
   );
   // Nothing signed: copying is not sending.
   expect(
-    await page.evaluate(() => (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).length),
-  ).toBe(signedBefore);
+    await page.evaluate(
+      (from) =>
+        (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [])
+          .slice(from)
+          .map((event) => ({ kind: event.kind, tags: event.tags })),
+      signedBefore,
+    ),
+  ).toEqual([]);
   // And the original still says what it said: the provider could not
   // establish delivery, and copying did not change that.
   await expect(row).toHaveAttribute("data-pending-state", "unknown");

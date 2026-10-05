@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 
@@ -30,6 +31,7 @@ import {
 } from "@/shared/constants/kinds";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
+import { E2E_IDENTITY_OVERRIDE_STORAGE_KEY } from "../helpers/onboarding";
 
 // Session-view parity Wave B, lane B3: surface badges count what is
 // happening now (SV-22) — running subagents, files changed since this device
@@ -59,11 +61,18 @@ const SECOND_PROVIDER_SECRET = hexToBytes("b4".repeat(32));
 const SECOND_PROVIDER = getPublicKey(SECOND_PROVIDER_SECRET);
 const BUILDER_ACTOR_SECRET = hexToBytes("b5".repeat(32));
 const BUILDER_ACTOR = getPublicKey(BUILDER_ACTOR_SECRET);
-// The founder is the E2E bridge's own identity, so an open report reads as
-// waiting on a ruling from "you" (`codingSessionFounderHoldLabel`).
+// The relay's NIP-11 self key. Mission evidence — the team fold a ruling
+// owed is read from — refuses to project without one (SV-61: with none the
+// decision.request below never reached a badge).
+const RELAY_PUBKEY = getPublicKey(hexToBytes("b7".repeat(32)));
+// The founder is the bridge's real-key identity ("tyler"), which the team
+// test signs in as through the identity override, so a ruling held on the
+// founder reads as waiting on "you" (`codingSessionSurfaceRulingHolderName`).
+// The bridge's default viewer is a different, mock key (SV-61).
 const FOUNDER_SECRET = hexToBytes(
   "3dbaebadb5dfd777ff25149ee230d907a15a9e1294b40b830661e65bb42f6c03",
 );
+const FOUNDER_PUBKEY = getPublicKey(FOUNDER_SECRET);
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1_000);
@@ -151,16 +160,25 @@ function metadata(input: {
   );
 }
 
-async function openSession(page: Page, title: string): Promise<void> {
+async function openSession(
+  page: Page,
+  title: string,
+  workspaceTestId:
+    | "coding-session-workspace"
+    | "coding-session-umbrella-workspace" = "coding-session-workspace",
+): Promise<void> {
   const trigger = page.getByTestId("channel-coding-sessions-trigger");
   await expect(trigger).toHaveAttribute("aria-label", "Coding sessions (1)", {
     timeout: 15_000,
   });
   await trigger.click();
   await page.getByTestId("channel-coding-session-open").first().click();
-  await expect(page.getByTestId("coding-session-workspace")).toContainText(
-    title,
-  );
+  // A session with more than one execution renders the umbrella workspace,
+  // not the single-execution one (SV-61: the team test waited on the wrong
+  // workspace and never saw its title).
+  await expect(page.getByTestId(workspaceTestId)).toContainText(title, {
+    timeout: 15_000,
+  });
 }
 
 async function openLauncher(page: Page): Promise<Locator> {
@@ -514,19 +532,29 @@ function gatePhase(
   );
 }
 
-// Wave B iteration-1 follow-up: the team fixture never renders its "Badges for a team" workspace (coding-session-workspace has no such text; deterministic, 2 of 2 runs incl. alone at 1 worker). Full smoke 2026-10-05 on db4ea4aea + Wave B.
-test.fixme("SV-22, SV-41: Landing shows a gate running; a decision.request turns Agents and Landing amber", async ({
+test("SV-22, SV-41: Landing shows a gate running; a decision.request turns Agents and Landing amber", async ({
   page,
 }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   // Both native folds answer from the events they are handed (lane B3's
   // bridge module), so live seeds drive the badges.
-  await page.addInitScript(() => {
-    (
-      window as Window & { __BUZZ_E2E_WAVE_B_BADGES_FOLDS__?: boolean }
-    ).__BUZZ_E2E_WAVE_B_BADGES_FOLDS__ = true;
-  });
+  await page.addInitScript(
+    ({ storageKey, identity }) => {
+      window.localStorage.setItem(storageKey, JSON.stringify(identity));
+      (
+        window as Window & { __BUZZ_E2E_WAVE_B_BADGES_FOLDS__?: boolean }
+      ).__BUZZ_E2E_WAVE_B_BADGES_FOLDS__ = true;
+    },
+    {
+      storageKey: E2E_IDENTITY_OVERRIDE_STORAGE_KEY,
+      identity: {
+        privateKey: bytesToHex(FOUNDER_SECRET),
+        pubkey: FOUNDER_PUBKEY,
+        username: "tyler",
+      },
+    },
+  );
   await installMockBridge(page, {
     globalAgentConfig: {
       env_vars: {},
@@ -537,6 +565,7 @@ test.fixme("SV-22, SV-41: Landing shows a gate running; a decision.request turns
       ],
     },
     searchProfiles: [{ pubkey: BUILDER_ACTOR, displayName: "Bob" }],
+    relaySelf: RELAY_PUBKEY,
   });
   await page.goto("/");
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
@@ -557,7 +586,7 @@ test.fixme("SV-22, SV-41: Landing shows a gate running; a decision.request turns
     FOUNDER_SECRET,
   );
   await seed(page, [...events, assignment]);
-  await openSession(page, TEAM_TITLE);
+  await openSession(page, TEAM_TITLE, "coding-session-umbrella-workspace");
   let launcher = await openLauncher(page);
   const host = page.getByTestId("coding-session-surface-host");
   // An open assignment is a seat working, not a seat waiting on a person.
@@ -565,6 +594,25 @@ test.fixme("SV-22, SV-41: Landing shows a gate running; a decision.request turns
   await expect(badge(launcher, "landing")).toHaveCount(0);
 
   // SV-41: the provider signs a gate start; Landing reads "gate running".
+  // The Landing read is woken by its live kind-44246 subscription. A relay
+  // replays to a subscription opened after an event (`since`); the mock
+  // relay does not, and the REQ can queue behind the session's opening reads
+  // (the client's send budget), so the start is signed once it is open
+  // (SV-61).
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          ({ channelName, kind }) =>
+            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName,
+              kind,
+            }) ?? false,
+          { channelName: CHANNEL_NAME, kind: KIND_CODING_SESSION_OBSERVATION },
+        ),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
   const startedAtMs = Date.now();
   await seed(page, [gatePhase(genesis.id, startedAtMs, null)]);
   const landing = badge(launcher, "landing");
@@ -671,8 +719,7 @@ test.fixme("SV-22, SV-41: Landing shows a gate running; a decision.request turns
   await shoot(page, "SV22-waiting", host);
 });
 
-// Wave B iteration-1 follow-up: its screenshots come from the SV-22/SV-41 test fixme'd above, so the hashes cannot be compared until that test passes. Smoke 2026-10-05 on db4ea4aea + Wave B.
-test.fixme("SV-22: every badge shot is distinct", () => {
+test("SV-22: every badge shot is distinct", () => {
   const names = [
     "SV22-running",
     "SV22-cleared",

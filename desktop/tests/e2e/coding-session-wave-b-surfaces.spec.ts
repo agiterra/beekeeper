@@ -440,6 +440,12 @@ type Variant = {
   runningGateStale?: boolean;
   land: "ready" | "refused";
   surfaces: WaveBSurfacesMock;
+  /**
+   * The project names an agents repository (kind:30624 at the root). Files
+   * opens on a computer without the tree only when there is one (DB3: "an
+   * agents repo, or a local tree"); without it the row is truthfully dimmed.
+   */
+  agentsRepo?: boolean;
 };
 
 /** A fresh page on one variant of the session, opened on its workspace. */
@@ -460,7 +466,7 @@ async function openVariant(browser: Browser, variant: Variant): Promise<Page> {
   );
   const observed = observations(genesis.id, variant);
   await page.addInitScript(
-    ({ identity, storageKey, surfaces, owner, channelId }) => {
+    ({ identity, storageKey, surfaces, owner, channelId, agentsRepo }) => {
       window.localStorage.setItem(storageKey, JSON.stringify(identity));
       (
         window as Window & { __BUZZ_E2E_WAVE_B_SURFACES__?: unknown }
@@ -487,8 +493,43 @@ async function openVariant(browser: Browser, variant: Variant): Promise<Page> {
           sig: "0".repeat(128),
         },
       ];
+      if (agentsRepo) {
+        window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__.push({
+          id: "wave-b-surfaces-agents-repo".padEnd(64, "0"),
+          pubkey: owner,
+          created_at: Math.floor(Date.now() / 1000) - 3_600,
+          kind: 30624,
+          tags: [
+            ["d", `30621:${owner}:buzz`],
+            ["repo", `30617:${owner}:buzz-agents`],
+            ["ref", "refs/heads/main"],
+            ["path", "."],
+          ],
+          content: "",
+          sig: "0".repeat(128),
+        });
+        window.__BUZZ_E2E_AGENTS_REPO__ = {
+          listing: {
+            repo: `30617:${owner}:buzz-agents`,
+            branch: "main",
+            commit: "5".repeat(40),
+            syncedAt: null,
+            entries: [
+              {
+                path: "team.yml",
+                blob: "7b9a85bbe3dbcc64eadd04d4759783cd555a2b8d",
+                size: 40,
+                kind: "manifest",
+              },
+            ],
+          },
+          files: {},
+          commitResults: [],
+        };
+      }
     },
     {
+      agentsRepo: variant.agentsRepo === true,
       owner: MOCK_OWNER,
       channelId: CHANNEL_ID,
       storageKey: E2E_IDENTITY_OVERRIDE_STORAGE_KEY,
@@ -641,8 +682,7 @@ const LOCAL_TREE: WaveBSurfacesMock = {
   mainCommits: [HEAD, "1".repeat(40), "2".repeat(40)],
 };
 
-// Wave B iteration-1 follow-up: the lead session card shows the session id, not the fixture TITLE "Surface contents" (deterministic, 2 of 2 runs). Full smoke 2026-10-05 on db4ea4aea + Wave B.
-test.fixme("SV-24, SV-23 and SV-41: every surface's contents, both localities, Landing's states", async ({
+test("SV-24, SV-23 and SV-41: every surface's contents, both localities, Landing's states", async ({
   browser,
 }) => {
   test.setTimeout(240_000);
@@ -840,6 +880,7 @@ test.fixme("SV-24, SV-23 and SV-41: every surface's contents, both localities, L
   // ---- Another computer runs it: one line, and a refused landing. ------
   const remote = await openVariant(browser, {
     local: false,
+    agentsRepo: true,
     gates: [{ gate: "cargo test", outcome: "failed" }],
     land: "refused",
     surfaces: {

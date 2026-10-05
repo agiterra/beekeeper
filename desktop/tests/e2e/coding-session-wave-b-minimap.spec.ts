@@ -64,7 +64,11 @@ async function dashPoint(page: Page, index: number) {
   const box = await strip.boundingBox();
   if (!box) throw new Error("minimap strip has no box");
   const progress = count <= 1 ? 0 : index / (count - 1);
-  return { x: box.x + 8, y: box.y + progress * box.height };
+  // The box's bottom edge is outside it: the last dash is aimed one pixel up.
+  return {
+    x: box.x + 8,
+    y: box.y + Math.min(progress * box.height, box.height - 1),
+  };
 }
 
 /** The user message bubble carrying `text`, not the card's echo of it. */
@@ -108,8 +112,7 @@ const hashes = new Map<string, string>();
 
 test.describe.configure({ mode: "serial" });
 
-// Wave B iteration-1 follow-up: the jump to a reply lands on the final "Done." turn instead of "Reply 5: step 5 now backs off" (deterministic, 2 of 2 runs). Full smoke 2026-10-05 on db4ea4aea + Wave B.
-test.fixme("SV-26, SV-27: single layout — 40 dashes, hover card, jumps, two hues", async ({
+test("SV-26, SV-27: single layout — 40 dashes, hover card, jumps, two hues", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -219,8 +222,7 @@ test.fixme("SV-26, SV-27: single layout — 40 dashes, hover card, jumps, two hu
   await shoot("SV27-authors", false);
 });
 
-// Wave B iteration-1 follow-up: the umbrella transcript never shows "Teammate prompt: review the reconnect stages" (it did not run in the full smoke because the serial file stopped at the single-layout test). Smoke 2026-10-05 on db4ea4aea + Wave B.
-test.fixme("SV-26, SV-27: umbrella — marks, card, reveal past the window, since rule, Mission", async ({
+test("SV-26, SV-27: umbrella — marks, card, reveal past the window, since rule, Mission", async ({
   page,
 }) => {
   test.setTimeout(150_000);
@@ -402,8 +404,7 @@ test.fixme("SV-26, SV-27: umbrella — marks, card, reveal past the window, sinc
   await expect(page.getByTestId("coding-session-minimap")).toHaveCount(0);
 });
 
-// Wave B iteration-1 follow-up: both minimap screenshot tests are fixme'd above, so there is nothing to compare. Smoke 2026-10-05 on db4ea4aea + Wave B.
-test.fixme("screenshots are hash-distinct", () => {
+test("screenshots are hash-distinct", () => {
   const expected = [
     "SV26-rail",
     "SV26-hover",

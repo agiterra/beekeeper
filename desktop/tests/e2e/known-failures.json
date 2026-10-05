@@ -7,7 +7,8 @@
     "Checked 2026-10-04 at dad4726ba and NOT listed because they passed: ledger 111/115's six (coding-session-founder-acts:380, coding-session-observations:33/114/144, coding-sessions:458, project-packs:40) and the dense-history case (channel-dense-second-reach:28).",
     "The baseline came from three four-worker full runs; a fourth may find more. An intermittent entry is a blind spot: a real regression in that test is reported as known.",
     "Pruned 2026-10-04 by SV-47 at 623b2c301 (clean export of HEAD, E2E_WORKERS=1, three runs in a row each, all passed): agentProgress.spec.ts 'every coordination state renders…' and all eight project-team-setup.spec.ts entries (8 of 8 passed in each of three file-alone runs).",
-    "Checked 2026-10-04 by SV-48 at 623b2c301 and NOT listed because it passed: channels.spec.ts:2114 'shows and clears activity indicators for active channel agents' (3 of 3 alone at one worker, 2 of 2 under four workers); its Wave A failure was not reproduced on main."
+    "Checked 2026-10-04 by SV-48 at 623b2c301 and NOT listed because it passed: channels.spec.ts:2114 'shows and clears activity indicators for active channel agents' (3 of 3 alone at one worker, 2 of 2 under four workers); its Wave A failure was not reproduced on main.",
+    "Removed 2026-10-05 (ab-stabilize): agentProgress.spec.ts 'every coordination state renders…'. Root cause was the fixture: SV-31 proves a 44229's founder through the 44226 genesis the create names, and the fixture seeded none; it now seeds one per session (signed by OPERATOR_SECRET) and the test passes alone and in the full smoke."
   ],
   "failures": [
     {
@@ -89,15 +90,6 @@
       "observed": "SV-48: alone at one worker failed 1 of 3; with channels/messaging/mentions/badge at four workers failed 1 of 2. Both failures: watercooler unread count 2 where 1 is expected (:2509), so one seeded forum post is still unread after the test opened the forum. Root cause not found in one pass; this entry is a blind spot.",
       "ledger": "none yet: first recorded by SV-48 (plans/SESSION_VIEW_PARITY_PLAN.md)",
       "intermittent": true
-    },
-    {
-      "spec": "agentProgress.spec.ts",
-      "title": "every coordination state renders, each from the evidence that proves it",
-      "line": 589,
-      "verifiedOn": "db4ea4aea",
-      "verifiedAt": "2026-10-05",
-      "observed": "Wave B full smoke at 4 workers: failed; alone at 1 worker on Wave B: failed; alone at 1 worker on a clean export of db4ea4aea (no Wave B): failed ('Reachable' lane coordination not found). Failed 3 of 3. Re-listed after the 2026-10-04 SV-47 prune.",
-      "ledger": "311(s)"
     }
   ]
 }
