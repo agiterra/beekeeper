@@ -107,6 +107,7 @@ export default defineConfig({
         "**/coding-session-wave-b-audit-markdown.spec.ts",
         "**/coding-session-wave-b-audit-transcript-model.spec.ts",
         "**/coding-session-wave-b-audit-transcript-view.spec.ts",
+        "**/coding-session-sv78-background-task.spec.ts",
         "**/coding-session-wave-b-audit-workspace.spec.ts",
         "**/coding-session-wave-b-followups.spec.ts",
         "**/coding-session-wave-b-registry.spec.ts",

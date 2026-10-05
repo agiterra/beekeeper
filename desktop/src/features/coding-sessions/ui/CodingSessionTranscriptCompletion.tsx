@@ -1,4 +1,11 @@
-import { ChevronRight, CircleAlert, CircleStop, Copy, X } from "lucide-react";
+import {
+  ChevronRight,
+  CircleAlert,
+  CircleStop,
+  Copy,
+  Hourglass,
+  X,
+} from "lucide-react";
 
 import { ACTIVITY_ROW_LINE_CLASS } from "@/features/agents/ui/AgentSessionToolItem/ToolItemRowClasses";
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
@@ -35,11 +42,18 @@ import { formatCodingSessionBlockTime } from "./CodingSessionTranscriptRhythm";
  * only once the turn has settled, so nothing here shows while it is live.
  */
 export function CodingSessionWorkedFold({
+  background = null,
   fold,
   onToggle,
   open,
   startedAt,
 }: {
+  /**
+   * SV-78: the turn's background tasks still outstanding, as one clause
+   * ("1 background task running"). A turn that ended with work still going
+   * has not plainly finished, so the clause is never truncated or hidden.
+   */
+  background?: CodingSessionTurnBackgroundClause | null;
   fold: CodingSessionTurnFold;
   onToggle: () => void;
   open: boolean;
@@ -80,6 +94,9 @@ export function CodingSessionWorkedFold({
           >
             · {fold.workSummary}
           </span>
+        ) : null}
+        {background ? (
+          <CodingSessionBackgroundClause clause={background} separated />
         ) : null}
         {fold.failureSummary ? (
           <span
@@ -127,12 +144,18 @@ export function CodingSessionWorkedFold({
  */
 export function CodingSessionTurnCompletion({
   answerText,
+  background = null,
   completion,
   diagnostics,
   durationShownInWorkFold,
   turnId,
 }: {
   answerText: string | null;
+  /**
+   * SV-78: outstanding background tasks, when the fold row is not already
+   * saying so. Always on screen, like a stop or a failure.
+   */
+  background?: CodingSessionTurnBackgroundClause | null;
   completion: CodingSessionTurnCompletionModel | null;
   diagnostics: TranscriptItem[];
   durationShownInWorkFold: boolean;
@@ -141,7 +164,7 @@ export function CodingSessionTurnCompletion({
   const [detailsOpen, setDetailsOpen] = useCodingSessionDisclosure(
     `diagnostics:${turnId}`,
   );
-  if (!completion && diagnostics.length === 0) return null;
+  if (!completion && diagnostics.length === 0 && !background) return null;
 
   const duration =
     completion?.durationMs !== null &&
@@ -205,6 +228,9 @@ export function CodingSessionTurnCompletion({
             {completion?.state === "completed" ? `Ended: ${outcome}` : outcome}
           </span>
         ) : null}
+        {background ? (
+          <CodingSessionBackgroundClause clause={background} />
+        ) : null}
         <span
           className="coding-session-turn-meta flex flex-wrap items-center gap-x-2 text-muted-foreground tabular-nums"
           data-pinned={detailsOpen ? "true" : undefined}
@@ -252,5 +278,34 @@ export function CodingSessionTurnCompletion({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** What a turn row says about its outstanding background tasks (SV-78). */
+export type CodingSessionTurnBackgroundClause = {
+  /** "1 background task running", "2 background tasks never reported finished". */
+  label: string;
+  /** The outstanding tasks' ids, for the hover title. */
+  ids: readonly string[];
+};
+
+function CodingSessionBackgroundClause({
+  clause,
+  separated = false,
+}: {
+  clause: CodingSessionTurnBackgroundClause;
+  /** Lead with " · ", when the clause continues a sentence on the row. */
+  separated?: boolean;
+}) {
+  return (
+    <span
+      className="flex shrink-0 items-center gap-1 whitespace-nowrap text-amber-600 dark:text-amber-400"
+      data-testid="coding-session-turn-background"
+      title={`Background ${clause.ids.length === 1 ? "task" : "tasks"} ${clause.ids.join(", ")}: no completion shown in this transcript`}
+    >
+      {separated ? "·" : null}
+      <Hourglass aria-hidden className="size-3" />
+      {clause.label}
+    </span>
   );
 }

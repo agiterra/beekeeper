@@ -7,6 +7,9 @@ import {
   type CodingSessionTranscriptEntry,
   type CodingSessionTranscriptTurn,
   type CodingSessionTurnRestingStatus,
+  formatCodingSessionBackgroundTasks,
+  isCodingSessionTaskNotificationItem,
+  outstandingCodingSessionBackgroundTaskIds,
   resolveCodingSessionTurnSettlement,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
@@ -20,8 +23,10 @@ import {
 } from "@/features/agents/ui/AgentSessionToolItem/ToolItemRowClasses";
 import { cn } from "@/shared/lib/cn";
 import { CodingSessionSubagentEntry } from "./CodingSessionSubagentEntry";
+import { CodingSessionBackgroundWakeRow } from "./CodingSessionTranscriptBackgroundWake";
 import { useCodingSessionOpenAgentsSurface } from "./CodingSessionTranscriptAgentsSurface";
 import {
+  type CodingSessionTurnBackgroundClause,
   CodingSessionTurnCompletion,
   CodingSessionWorkedFold,
 } from "./CodingSessionTranscriptCompletion";
@@ -61,6 +66,13 @@ import { CodingSessionWorking } from "./CodingSessionTranscriptWorking";
 export type CodingSessionTranscriptTurnPolicy = {
   restingStatus: CodingSessionTurnRestingStatus;
   showWorkingRow: boolean;
+  /**
+   * The caller knows the session is over (closed, ended — not merely idle,
+   * which is exactly when a background task runs). A background task with no
+   * notification then reads "never reported finished" rather than
+   * "running" (SV-78). Omitted is `false`.
+   */
+  sessionEnded?: boolean;
 };
 
 export const CodingSessionTranscriptTurnPolicyContext =
@@ -123,6 +135,13 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
     lastEntry.item.type === "thought"
       ? lastEntry.item.id
       : null;
+  const background = React.useMemo(
+    () =>
+      turn.isWorking
+        ? null
+        : backgroundClause(turn.backgroundTasks, policy.sessionEnded ?? false),
+    [turn.backgroundTasks, turn.isWorking, policy.sessionEnded],
+  );
   const answerEntry = answerIndex >= 0 ? turn.entries[answerIndex] : undefined;
   const answerText =
     answerEntry?.kind === "item" && answerEntry.item.type === "message"
@@ -143,6 +162,7 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
       target.push(
         <div className={gap.className || undefined} key={`fold:${turn.id}`}>
           <CodingSessionWorkedFold
+            background={background}
             fold={fold}
             onToggle={toggleFold}
             open={foldOpen}
@@ -169,7 +189,16 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
         <CompactToolFailureToneContext.Provider
           value={folded ? "quiet" : "alarm"}
         >
-          <CodingSessionEntry entry={entry} />
+          {entry.kind === "item" &&
+          entry.item.type === "message" &&
+          isCodingSessionTaskNotificationItem(entry.item) ? (
+            <CodingSessionBackgroundWakeRow
+              item={entry.item}
+              opensTurn={index === 0}
+            />
+          ) : (
+            <CodingSessionEntry entry={entry} />
+          )}
         </CompactToolFailureToneContext.Provider>
       </div>,
     );
@@ -212,7 +241,9 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
   // The line under the answer exists only when it has something to say.
   if (
     !turn.isWorking &&
-    (turn.completion !== null || turn.diagnostics.length > 0)
+    (turn.completion !== null ||
+      turn.diagnostics.length > 0 ||
+      background !== null)
   ) {
     answerBlock.push(
       <div
@@ -223,6 +254,7 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
       >
         <CodingSessionTurnCompletion
           answerText={answerText}
+          background={fold !== null ? null : background}
           completion={turn.completion}
           diagnostics={turn.diagnostics}
           durationShownInWorkFold={fold !== null && fold.durationMs !== null}
@@ -366,6 +398,16 @@ function CodingSessionSubagents({
 
 function renderSubagentChild(item: TranscriptItem): React.ReactNode {
   return <CodingSessionItem item={item} />;
+}
+
+function backgroundClause(
+  tasks: CodingSessionTranscriptTurn["backgroundTasks"],
+  sessionEnded: boolean,
+): CodingSessionTurnBackgroundClause | null {
+  const label = formatCodingSessionBackgroundTasks(tasks, sessionEnded);
+  return label
+    ? { label, ids: outstandingCodingSessionBackgroundTaskIds(tasks) }
+    : null;
 }
 
 function isUserPromptEntry(entry: CodingSessionTranscriptEntry): boolean {

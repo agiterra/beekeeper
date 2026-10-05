@@ -1,5 +1,6 @@
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import {
+  isCodingSessionTaskNotificationItem,
   isCodingSessionTranscriptError,
   type CodingSessionTranscriptEntry,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
@@ -62,6 +63,9 @@ export function codingSessionItemRowKind(
   item: TranscriptItem,
 ): CodingSessionRowKind {
   if (item.type === "message") {
+    // A task notification is the runtime waking the agent, read as a quiet
+    // activity row rather than a prompt (SV-78).
+    if (isCodingSessionTaskNotificationItem(item)) return "activity";
     return item.role === "user" ? "prompt" : "prose";
   }
   if (isCodingSessionTranscriptError(item)) return "alert";

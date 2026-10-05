@@ -3,6 +3,7 @@ import {
   type CodingSessionSubagentPartition,
   partitionCodingSessionSubagentItems,
 } from "@/features/coding-sessions/lib/codingSessionSubagents";
+import { deriveCodingSessionBackgroundTasks } from "@/features/coding-sessions/lib/codingSessionTranscriptModelBackground";
 import { deriveCodingSessionChangedFiles } from "@/features/coding-sessions/lib/codingSessionTranscriptModelChanges";
 import { deriveCodingSessionTurnFold } from "@/features/coding-sessions/lib/codingSessionTranscriptModelFold";
 import { parseCodingSessionTurnResult } from "@/features/coding-sessions/lib/codingSessionTranscriptModelFormat";
@@ -26,11 +27,18 @@ import type {
   CodingSessionTranscriptBlock,
   CodingSessionTranscriptModel,
   CodingSessionTranscriptTurn,
+  CodingSessionTurnBackgroundTask,
   CodingSessionTurnCompletion,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModelTypes";
 
 // One import path for every consumer: the model's pieces live in siblings
 // (split for the 1000-line ceiling) and are re-exported from here.
+export {
+  formatCodingSessionBackgroundTasks,
+  isCodingSessionTaskNotificationItem,
+  outstandingCodingSessionBackgroundTaskIds,
+  parseCodingSessionTaskNotifications,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptModelBackground";
 export {
   deriveCodingSessionChangedFiles,
   deriveCodingSessionObservedChanges,
@@ -70,6 +78,7 @@ export {
   type CodingSessionTranscriptStandalone,
   type CodingSessionTranscriptToolItem,
   type CodingSessionTranscriptTurn,
+  type CodingSessionTurnBackgroundTask,
   type CodingSessionTurnCompletion,
   type CodingSessionTurnFold,
   type CodingSessionTurnRestingStatus,
@@ -129,6 +138,7 @@ export function deriveCodingSessionTranscriptModel(
     if (isMutableTurn(candidate)) lastTurn = candidate;
   }
   const supersededTurns = findSupersededTurns(ordered, transcript);
+  const backgroundTasks = deriveCodingSessionBackgroundTasks(transcript);
   const blocks: CodingSessionTranscriptBlock[] = [];
   const diagnostics: TranscriptItem[] = [];
 
@@ -139,6 +149,7 @@ export function deriveCodingSessionTranscriptModel(
         options.isWorking && candidate === lastTurn,
         supersededTurns.has(candidate),
         subagents,
+        backgroundTasks,
       );
       if (
         turn.entries.length > 0 ||
@@ -284,6 +295,10 @@ function deriveTurn(
   canBeWorking: boolean,
   superseded: boolean,
   subagents: CodingSessionSubagentPartition,
+  backgroundTasksByItem: ReadonlyMap<
+    TranscriptItem,
+    readonly CodingSessionTurnBackgroundTask[]
+  >,
 ): CodingSessionTranscriptTurn {
   const visible: TranscriptItem[] = [];
   const diagnostics: TranscriptItem[] = [];
@@ -379,6 +394,9 @@ function deriveTurn(
     foldsSettledWork: !isWorking && completion?.state === "completed",
   });
   const startedAt = deriveTurnStartedAt(turn.items);
+  const backgroundTasks = turn.items.flatMap(
+    (item) => backgroundTasksByItem.get(item) ?? [],
+  );
 
   return {
     kind: "turn",
@@ -393,6 +411,7 @@ function deriveTurn(
     // when the next prompt arrives.
     superseded: superseded && completion === null,
     startedAt,
+    backgroundTasks,
     fold: deriveCodingSessionTurnFold({
       completion,
       entries,

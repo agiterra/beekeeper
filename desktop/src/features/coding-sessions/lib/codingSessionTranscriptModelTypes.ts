@@ -109,6 +109,19 @@ export type CodingSessionTurnFold = {
   unfinishedCount: number;
 };
 
+/**
+ * A background task a turn started (SV-78): its id from the tool result that
+ * announced it, and what the rest of the transcript says about it since.
+ * `reported` carries the notification's own `status` word (`completed`,
+ * `failed`, `killed`, …) or `null` when it named none. See
+ * `deriveCodingSessionBackgroundTasks`.
+ */
+export type CodingSessionTurnBackgroundTask = {
+  id: string;
+  state: "running" | "reported" | "unreported" | "woke";
+  status: string | null;
+};
+
 export type CodingSessionTranscriptTurn = {
   kind: "turn";
   id: string;
@@ -126,6 +139,11 @@ export type CodingSessionTranscriptTurn = {
    */
   superseded: boolean;
   startedAt: string | null;
+  /**
+   * Background tasks this turn started, in order (SV-78). A settled turn
+   * with one still `running` has not plainly finished: its row says so.
+   */
+  backgroundTasks: readonly CodingSessionTurnBackgroundTask[];
   /** Always `null` while the turn is live: nothing folds while it is watched. */
   fold: CodingSessionTurnFold | null;
 };
