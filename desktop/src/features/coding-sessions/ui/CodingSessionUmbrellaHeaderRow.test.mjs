@@ -9,6 +9,8 @@ import { deriveCodingSessionStreamPresence } from "../lib/codingSessionStreamPre
 import { groupCodingSessionCatalog } from "../lib/codingSessionUmbrellaModel.ts";
 import { UNKNOWN_CODING_SESSION_REACHABILITY } from "../hooks/useCodingSessionProviderReachability.ts";
 import { CodingSessionUmbrellaHeaderRow } from "./CodingSessionUmbrellaHeaderRow.tsx";
+import { fakeSurfaceShell } from "./CodingSessionHeaderPanelToggles.testFixtures.mjs";
+import { codingSessionHeaderRepoName } from "./CodingSessionHeaderDetails.tsx";
 
 /**
  * L17 gap 1, red first.
@@ -145,7 +147,7 @@ function buildUmbrella() {
   return umbrellas[0];
 }
 
-function renderHeaderRow(umbrella) {
+function renderHeaderRow(umbrella, overrides = {}) {
   const streamParticipants = deriveCodingSessionStreamPresence({
     umbrella,
     resolveStatus: () => ({ kind: "idle", label: "Idle" }),
@@ -190,12 +192,12 @@ function renderHeaderRow(umbrella) {
       streamParticipants,
       stopAll: { kind: "unavailable" },
       surface: "main",
-      surfaceHost: { activeTab: null, toggle() {}, close() {} },
       surfaceHostId: "surface-host-1",
-      surfaces: [],
+      surfaceShell: fakeSurfaceShell({ surfaces: [] }).shell,
       teamWake: { deliveries: [], seatAuthorities: [], refusal: null },
       umbrella,
       workspaceActorName: () => null,
+      ...overrides,
     }),
   );
 }
@@ -221,4 +223,46 @@ test("a seat whose 44223 carried no beeStamp renders no chip for it — absence,
   // The codex seat published no `beeStamp` key at all; the sentence reserved
   // for an observed-but-unparsed `--version` must never appear for it.
   assert.doesNotMatch(markup, /bee build unknown/);
+});
+
+test("SV-20: Mission keeps its Route toggle, gains the panel toggles, and loses the Inspector toggle", () => {
+  const markup = renderHeaderRow(buildUmbrella());
+  assert.match(markup, /data-testid="coding-session-route-toggle"/);
+  assert.match(markup, /data-testid="coding-session-panel-toggle-right"/);
+  assert.match(markup, /data-testid="coding-session-panel-toggle-bottom"/);
+  assert.doesNotMatch(markup, /coding-session-surface-toggle/);
+  assert.doesNotMatch(markup, /coding-session-task-rail-toggle/);
+});
+
+test("SV-20: a team session's header leads with its project crumb, from the shell's project", () => {
+  const { shell } = fakeSurfaceShell({ surfaces: [] });
+  const withProject = {
+    ...shell,
+    ctx: { ...shell.ctx, project: { id: "project-1", name: "Buzz Glue" } },
+  };
+  const markup = renderHeaderRow(buildUmbrella(), {
+    onOpenProject() {},
+    surfaceShell: withProject,
+  });
+  const project = markup.indexOf(">Buzz Glue<");
+  const separator = markup.indexOf(">/</li>");
+  assert.ok(project >= 0 && separator > project, markup);
+  assert.match(markup, /data-testid="coding-session-project-crumb"/);
+
+  // No project resolved: no crumb, and no invented one.
+  const bare = renderHeaderRow(buildUmbrella());
+  assert.doesNotMatch(bare, /coding-session-project-crumb/);
+});
+
+test("SV-20: Details names a NIP-34 repository by its identifier, and an unfamiliar ref verbatim", () => {
+  assert.equal(
+    codingSessionHeaderRepoName(`30617:${"d".repeat(64)}:buzz`),
+    "buzz",
+  );
+  assert.equal(
+    codingSessionHeaderRepoName("  local-checkout  "),
+    "local-checkout",
+  );
+  assert.equal(codingSessionHeaderRepoName(null), null);
+  assert.equal(codingSessionHeaderRepoName("   "), null);
 });

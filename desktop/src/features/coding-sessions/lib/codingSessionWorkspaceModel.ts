@@ -186,8 +186,13 @@ const IDLE_STATUSES = new Set([
 export function codingSessionWireWorkspaceStatus(
   status: CodingSessionCatalogRecord["status"] | undefined,
 ): CodingSessionWorkspaceStatus {
-  if (status === "running" || status === "starting") {
+  if (status === "running") {
     return { kind: "working", label: "Working" };
+  }
+  // SV-43: a provider still starting has not begun a turn, so the header says
+  // so in its own word — the transcript settles nothing as live under it.
+  if (status === "starting") {
+    return { kind: "working", label: "Starting" };
   }
   if (status === "waiting_for_input") {
     return { kind: "waiting", label: "Waiting" };
@@ -393,10 +398,10 @@ function deriveReportedWorkspaceStatus(
     signed.kind === "unknown" && signed.attention === undefined;
   const mayInferWorking = signed.kind === "working";
   const mayReadSignedWorking = mayInferWorking || wireMakesNoClaim;
-  if (turnInFlight(transcript, newest)) {
-    if (mayInferWorking) return { kind: "working", label: "Working" };
-    return signed;
-  }
+  // Under a signed `starting` the inference keeps the wire's own word: the
+  // header says Starting, never Working, exactly when the transcript settles
+  // nothing as live (SV-43).
+  if (turnInFlight(transcript, newest)) return signed;
   for (let index = transcript.length - 1; index >= 0; index -= 1) {
     const item = transcript[index];
     if (item.type !== "lifecycle") continue;
@@ -408,6 +413,7 @@ function deriveReportedWorkspaceStatus(
 
     const normalized = item.text.trim().toLowerCase();
     if (WORKING_STATUSES.has(normalized)) {
+      if (mayInferWorking) return signed;
       return mayReadSignedWorking
         ? { kind: "working", label: "Working" }
         : signed;

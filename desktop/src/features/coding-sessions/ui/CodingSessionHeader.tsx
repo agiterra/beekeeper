@@ -1,4 +1,4 @@
-import { Bot, Pencil, RotateCcw, X } from "lucide-react";
+import { RotateCcw, X } from "lucide-react";
 import * as React from "react";
 import type { ReactNode } from "react";
 
@@ -6,18 +6,19 @@ import { formatCodingSessionModelSummary } from "@/features/coding-sessions/lib/
 import { UNTITLED_SESSION_NAME } from "@/features/coding-sessions/lib/codingSessionTitle";
 import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { codingSessionWorkspaceStatusDetail } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
-import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 
 import { CodingSessionHeaderOverflow } from "./CodingSessionHeaderOverflow";
-import { CodingSessionFullAccessBadge } from "./CodingSessionFullAccessBadge";
+import { CodingSessionHeaderBreadcrumb } from "./CodingSessionHeaderBreadcrumb";
+import { CodingSessionHeaderRouteToggle } from "./CodingSessionHeaderParts";
 import {
-  CodingSessionHeaderDetailsGroup,
-  CodingSessionHeaderPlanToggle,
-  CodingSessionHeaderStatusBadge,
-  type CodingSessionHeaderSurfaceTab,
-} from "./CodingSessionHeaderParts";
-import { CodingSessionHeaderDetails } from "./CodingSessionHeaderDetails";
+  CodingSessionHeaderDetails,
+  codingSessionHeaderMetadataRows,
+} from "./CodingSessionHeaderDetails";
+import {
+  CodingSessionHeaderPanelToggles,
+  type CodingSessionHeaderSurfaceShell,
+} from "./CodingSessionHeaderPanelToggles";
 import type {
   CodingSessionContextRow,
   CodingSessionRoutedSeatRow,
@@ -34,20 +35,26 @@ export {
 } from "./CodingSessionHeaderProvenance";
 export type { CodingSessionHeaderSurfaceTab } from "./CodingSessionHeaderParts";
 
+export type { CodingSessionHeaderSurfaceShell } from "./CodingSessionHeaderPanelToggles";
+
 /**
- * The session header: title, status, the full-access badge, and a handful of
- * primary controls; every other action lives in the `⋯` menu.
+ * The session header (SV-20): `project / title ● Working` on the left; on the
+ * right Details, Reopen (closed sessions only), the `⋯` menu, and the bottom-
+ * and right-panel toggles (⌘J, ⌘⌥B), as T3 Code's `ChatHeader` and
+ * `PanelLayoutControls` lay it out.
  *
- * SESSION_VIEW_UX_PLAN L4. The header used to carry about fourteen controls
- * in one row — a flat run of Add provider, Stop all, Close, Reopen, Export and
- * Pop out beside the surface tabs, People, Plan and the provenance popover.
- * Mission had already collapsed the six actions into `⋯` (DESIGN-SPEC A7);
- * every lens does now. What stays in the row is what a person reads or
- * toggles while watching — status, the live counts on the surface tabs, and
- * one Details control (People with its count, plus provenance) — plus Reopen on a closed session, which is that
- * session's one primary action. Nothing was removed: each moved control keeps
- * its handler, label and consequence line in the menu
- * (`CodingSessionHeader.reachability.test.mjs` holds every one of them to it).
+ * Surfaces left the header: the segmented surface toggles and the Plan toggle
+ * became the launcher's rows and letters (SV-21), and the right-panel toggle's
+ * dot keeps any off-screen live badge visible without a click. The metadata
+ * line (goal, repository, runtime, model, generation) is the first rows of
+ * Details. What stayed: the status word (the honesty rule outranks T3's
+ * silence), the seat chip, the full-access badge, the lens control, Mission's
+ * Route toggle, and the multi-execution `agentControls`.
+ *
+ * Before that, SESSION_VIEW_UX_PLAN L4 collapsed the six actions (Add
+ * provider, Stop all, Close, Export, Pop out, Full access) into `⋯` in every
+ * lens. Nothing was removed: `CodingSessionHeader.reachability.test.mjs`
+ * holds every moved control to the place it names.
  */
 type CodingSessionHeaderProps = {
   /** Multi-execution focus/status chips. Omitted for the effortless N=1 path. */
@@ -83,7 +90,7 @@ type CodingSessionHeaderProps = {
    * popover. Omitted entirely when nothing here was routed.
    */
   routedSeats?: readonly CodingSessionRoutedSeatRow[];
-  /** Durable session intent, shown directly below the title when present. */
+  /** Durable session intent: the first row of Details when present. */
   goalText?: string | null;
   isExporting?: boolean;
   model?: string | null;
@@ -168,24 +175,21 @@ type CodingSessionHeaderProps = {
   onRename?: () => void;
   /** Reopens the durable session without starting a provider execution. */
   onReopenSession?: () => void;
-  /** Opens the owning project. Given one, the project reads as a crumb you can
-   * follow rather than a word in a context line. */
+  /** Opens the owning project. Given one, the project crumb is a link;
+   * without one it is plain text. */
   onOpenProject?: () => void;
-  /**
-   * Shows or hides the plan. The header offers it only while the plan is not
-   * already on screen ({@link taskRailOpen} false): the dock rail above the
-   * composer is the plan's one persistent place, and this is the way back to
-   * it — on a narrow window (a sheet) or after the rail was dismissed.
-   */
-  onToggleTaskRail?: () => void;
-  /** Toggles the shared surface host open/closed on the given surface tab. */
-  onToggleSurface?: (id: string) => void;
   /** People with access to the session (owner + grants), for the badge. */
   peopleCount?: number;
   projectName?: string | null;
   providerAuthorityPubkey?: string | null;
   repoName?: string | null;
   runtimeLabel?: string | null;
+  /**
+   * In a session with more than one seat, the seat whose execution `model`
+   * and `runtimeLabel` describe (the focused one). Details then labels those
+   * rows as that seat's rather than the session's. Null for one execution.
+   */
+  metadataFocusedSeat?: string | null;
   /**
    * The agent seat this execution runs as, or null for a human-created one.
    *
@@ -203,11 +207,15 @@ type CodingSessionHeaderProps = {
   status: CodingSessionWorkspaceStatus;
   /** Aggregate label for an umbrella; per-agent truth lives in agentControls. */
   statusLabelOverride?: string | null;
-  /** DOM id of the surface host panel, for `aria-controls`. */
+  /** DOM id of the surface host panel, for the right toggle's `aria-controls`. */
   surfaceHostId?: string;
-  surfaceTabs?: readonly CodingSessionHeaderSurfaceTab[];
-  taskCount?: number;
-  taskRailOpen?: boolean;
+  /**
+   * The workspace's surface shell: the panel toggles, their state, and the
+   * surfaces whose off-screen badges the right toggle's dot summarises.
+   * Absent on a header with no session view behind it (pending, loading,
+   * founded), which then has no panel toggles at all.
+   */
+  surfaceShell?: CodingSessionHeaderSurfaceShell | null;
   /** Local-only Conversation/Mission choice, kept beside the session title. */
   viewControl?: ReactNode;
 };
@@ -235,13 +243,12 @@ export function CodingSessionHeader({
   onPopout,
   onRename,
   onReopenSession,
-  onToggleTaskRail,
-  onToggleSurface,
   peopleCount = 0,
   projectName = null,
   providerAuthorityPubkey = null,
   repoName = null,
   runtimeLabel = null,
+  metadataFocusedSeat = null,
   seat = null,
   fullAccess = null,
   sessionTitle = null,
@@ -256,9 +263,7 @@ export function CodingSessionHeader({
   stopAllLabel = null,
   stopAllSentence = null,
   surfaceHostId,
-  surfaceTabs,
-  taskCount = 0,
-  taskRailOpen = false,
+  surfaceShell = null,
   viewControl,
   workspaceReuse = null,
 }: CodingSessionHeaderProps) {
@@ -281,26 +286,34 @@ export function CodingSessionHeader({
   // Callers pass the shared resolver's name; when none reaches the header it
   // reads the resolver's own last fallback, the text web and mobile show.
   const title = sessionTitle?.trim() || UNTITLED_SESSION_NAME;
-  // A demoted status carries its own history clause; the badge states both so
+  // A demoted status carries its own history clause. The word stays on
+  // screen; the clause rides in the status's tooltip and accessible name, so
   // the header never presents a stale report as the current condition.
-  const statusDetail = codingSessionWorkspaceStatusDetail(status);
-  const statusText =
-    statusLabelOverride ??
-    (statusDetail === null
-      ? status.label
-      : `${status.label} · ${statusDetail}`);
-  const conciseGenerationLabel = removeRepeatedTitle(generationLabel, title);
-  const modelLabel = model ? formatCodingSessionModelSummary(model) : null;
-  const linkedProject = onOpenProject ? projectName?.trim() || null : null;
-  const contextLabels = uniqueNonemptyLabels([
-    // A linked project is rendered on its own so it stays clickable; only an
-    // unlinked one folds into the plain context line.
-    linkedProject ? null : projectName,
-    repoName,
-    runtimeLabel,
-    modelLabel,
-    conciseGenerationLabel,
-  ]);
+  const statusDetail =
+    statusLabelOverride === null
+      ? codingSessionWorkspaceStatusDetail(status)
+      : null;
+  const statusWord = statusLabelOverride ?? status.label;
+  const metadata = codingSessionHeaderMetadataRows({
+    goal: goalText,
+    repo: repoName,
+    runtime: runtimeLabel,
+    model: model ? formatCodingSessionModelSummary(model) : null,
+    generation: removeRepeatedTitle(generationLabel, title),
+    focusedSeat: metadataFocusedSeat,
+  });
+  // SV-24: the Details People row opens the People surface where the view
+  // hosts one and it can open; elsewhere it keeps the People dialog.
+  const peopleSurface = surfaceShell?.surfaces.find(
+    ({ definition }) => definition.id === "people",
+  );
+  const openPeople =
+    onOpenPeople && surfaceShell && peopleSurface?.availability.available
+      ? () => {
+          surfaceShell.ctx.panels.open("people");
+          focusPeopleSurfaceRoster();
+        }
+      : onOpenPeople;
   // `missionActions` used to gate the `⋯` collapse to Mission. Every lens
   // collapses now, so the prop no longer changes what is offered; it is kept
   // because callers still pass it.
@@ -333,118 +346,42 @@ export function CodingSessionHeader({
           <X />
         </Button>
       ) : null}
-      <div className="group/title min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-1">
-          <h1 className="truncate text-sm font-semibold">{title}</h1>
-          {seat ? (
-            <Badge
-              className="shrink-0 gap-1.5"
-              data-testid="coding-session-header-seat"
-              title={`Seated: ${seat.label}`}
-              variant="outline"
-            >
-              <Bot aria-hidden className="size-3" />
-              {seat.label}
-            </Badge>
-          ) : null}
-          <CodingSessionFullAccessBadge fullAccess={fullAccess} />
-          {onRename ? (
-            // An edit affordance of the title, not an action in the run: it
-            // shows on hover or keyboard focus of the title, and stays in the
-            // tab order the whole time.
-            <Button
-              aria-label="Rename session"
-              className="shrink-0 opacity-0 transition-opacity group-hover/title:opacity-100 focus-visible:opacity-100"
-              data-testid="coding-session-rename"
-              onClick={onRename}
-              size="icon-xs"
-              title="Rename session"
-              type="button"
-              variant="ghost"
-            >
-              <Pencil />
-            </Button>
-          ) : null}
-          {viewControl ? (
-            <div className="ml-2 shrink-0">{viewControl}</div>
-          ) : null}
-        </div>
-        <p className="truncate text-xs text-muted-foreground">
-          {goalText?.trim() ? (
-            goalText.trim()
-          ) : linkedProject ? (
-            <>
-              <button
-                className="rounded-sm underline-offset-2 hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline"
-                data-testid="coding-session-project-crumb"
-                onClick={onOpenProject}
-                title={`Open ${linkedProject}`}
-                type="button"
-              >
-                {linkedProject}
-              </button>
-              {contextLabels.length > 0
-                ? ` · ${contextLabels.join(" · ")}`
-                : ""}
-            </>
-          ) : contextLabels.length > 0 ? (
-            contextLabels.join(" · ")
-          ) : channelName ? (
-            `#${channelName}`
-          ) : (
-            generationLabel
-          )}
-        </p>
-      </div>
+      <CodingSessionHeaderBreadcrumb
+        fullAccess={fullAccess}
+        onOpenProject={onOpenProject}
+        onRename={onRename}
+        projectName={projectName}
+        seat={seat}
+        sessionClosed={sessionClosed}
+        status={status}
+        statusDetail={statusDetail}
+        statusWord={statusWord}
+        title={title}
+        viewControl={viewControl}
+      />
       {agentControls ? (
-        <>
-          <div className="hidden min-w-0 max-w-[min(38vw,36rem)] md:flex">
-            {agentControls}
-          </div>
-          {/* The chips need room a narrow window does not have; the status
-              they summarise must not leave with them. */}
-          <div className="shrink-0 md:hidden">
-            <CodingSessionHeaderStatusBadge
-              compact={compact}
-              sessionClosed={sessionClosed}
-              status={status}
-              statusText={statusText}
-              testId="coding-session-status-badge-narrow"
-            />
-          </div>
-        </>
-      ) : (
-        <CodingSessionHeaderStatusBadge
+        // The chips need room a narrow window does not have; the status they
+        // detail stays beside the title either way.
+        <div className="hidden min-w-0 max-w-[min(38vw,36rem)] md:flex">
+          {agentControls}
+        </div>
+      ) : null}
+      {onToggleRouteRail ? (
+        <CodingSessionHeaderRouteToggle
           compact={compact}
-          sessionClosed={sessionClosed}
-          status={status}
-          statusText={statusText}
-        />
-      )}
-      {onToggleTaskRail && !taskRailOpen ? (
-        <CodingSessionHeaderPlanToggle
-          compact={compact}
-          onToggle={onToggleTaskRail}
-          open={taskRailOpen}
-          taskCount={taskCount}
+          displacesInspector={routeRailDisplacesInspector}
+          expanded={routeRailExpanded}
+          onToggle={onToggleRouteRail}
         />
       ) : null}
-      <CodingSessionHeaderDetailsGroup
-        compact={compact}
-        onToggleRouteRail={onToggleRouteRail}
-        onToggleSurface={onToggleSurface}
-        routeRailDisplacesInspector={routeRailDisplacesInspector}
-        routeRailExpanded={routeRailExpanded}
-        surfaceHostId={surfaceHostId}
-        surfaceTabs={surfaceTabs}
-      />
       <CodingSessionHeaderDetails
         channelName={channelName}
         compact={compact}
         contextLoads={contextLoads}
         founderDetails={founderDetails}
         generationLabel={generationLabel}
-        onOpenPeople={onOpenPeople}
+        metadata={metadata}
+        onOpenPeople={openPeople}
         peopleCount={peopleCount}
         projectName={projectName}
         providerAuthorityPubkey={providerAuthorityPubkey}
@@ -489,6 +426,12 @@ export function CodingSessionHeader({
           `Stop ${stopAllCount} ${stopAllCount === 1 ? "seat" : "seats"}. A stopped seat cannot be resumed.`
         }
       />
+      {surfaceShell ? (
+        <CodingSessionHeaderPanelToggles
+          shell={surfaceShell}
+          surfaceHostId={surfaceHostId}
+        />
+      ) : null}
     </header>
   );
 }
@@ -500,16 +443,22 @@ function removeRepeatedTitle(generationLabel: string, title: string): string {
     : generationLabel;
 }
 
-function uniqueNonemptyLabels(
-  values: ReadonlyArray<string | null | undefined>,
-): string[] {
-  const labels: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const label = value?.trim();
-    if (!label || seen.has(label)) continue;
-    seen.add(label);
-    labels.push(label);
-  }
-  return labels;
+/**
+ * Land keyboard focus on the People surface's roster once it has rendered, as
+ * the People dialog does on open. Without this the Details popover hands focus
+ * back to its trigger, and the roster and its invite sit ten Tabs away behind
+ * the header (people-setup S12). Two frames: one for the panel to mount, one
+ * to run after the popover's own focus restore.
+ */
+function focusPeopleSurfaceRoster(): void {
+  if (typeof window === "undefined") return;
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(
+          '[data-testid="coding-session-people-surface"] [data-testid="coding-session-people-roster"]',
+        )
+        ?.focus();
+    });
+  });
 }

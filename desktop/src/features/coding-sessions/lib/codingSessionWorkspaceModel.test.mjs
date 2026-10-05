@@ -281,7 +281,7 @@ test("empty transcript falls back to the provider's wire status", () => {
   });
   assert.deepEqual(deriveCodingSessionWorkspaceStatus([], "starting"), {
     kind: "working",
-    label: "Working",
+    label: "Starting",
   });
   assert.deepEqual(deriveCodingSessionWorkspaceStatus([], "unknown"), {
     kind: "unknown",

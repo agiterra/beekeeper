@@ -1,248 +1,161 @@
-import {
-  GitCompare,
-  ListChecks,
-  PanelLeft,
-  PanelRight,
-  Users,
-} from "lucide-react";
+import type * as React from "react";
+import { PanelLeft } from "lucide-react";
 
 import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
-import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
 import { CODING_SESSION_ROUTE_RAIL_ID } from "./CodingSessionRouteRail";
-import { CODING_SESSION_TASK_RAIL_ID } from "./CodingSessionTaskRail";
 
 /**
  * Pieces of the session header, split out of `CodingSessionHeader.tsx` so the
- * header itself reads as a layout: title, status, a few primary controls and
- * the `⋯` menu. Each part renders exactly what it rendered inline before;
- * only where it sits changed.
+ * header itself reads as a layout: breadcrumb, status, a few primary controls,
+ * the `⋯` menu and the two panel toggles (SV-20).
  */
 
 /**
- * A compact direct affordance for one surface tab of the shared right-side
- * surface host. Clicking an inactive affordance opens the host on that tab;
- * clicking the active one closes the host.
+ * The shape the header's surface toggles had before SV-20 moved surfaces to
+ * the launcher. Nothing renders or builds it any more (B1's
+ * `CodingSessionHeaderPanelToggles` replaced the toggles, and the registry
+ * shell's legacy builder is gone); it survives only as a re-exported type.
  */
 export type CodingSessionHeaderSurfaceTab = {
   id: string;
   label: string;
-  icon: "agents" | "changes" | "inspector";
+  /** A named legacy glyph, or the surface's own icon from the registry. */
+  icon:
+    | "agents"
+    | "changes"
+    | "inspector"
+    | React.ComponentType<{ className?: string }>;
   count?: number;
   active: boolean;
 };
 
-/** The session's one status word, always visible — never folded away. */
+/**
+ * The colour of the status dot. Working is green; resting is muted; founded
+ * and never started is hollow (a filled colour would claim a state nobody
+ * published); a lifecycle-signed attention state is destructive, as the
+ * execution rail draws it; everything else (waiting, unknown) is amber.
+ *
+ * Working pulses, as T3 Code's status pill does (`Sidebar.logic.ts`
+ * `resolveThreadStatusPill`, `pulse: true`), and only where the person has
+ * not asked for reduced motion.
+ */
+export function codingSessionHeaderStatusDotClass(
+  status: CodingSessionWorkspaceStatus,
+  sessionClosed: boolean,
+): string {
+  if (!sessionClosed && status.kind === "working") {
+    return "bg-emerald-500 motion-safe:animate-pulse";
+  }
+  if (sessionClosed || status.kind === "idle" || status.kind === "ended") {
+    return "bg-muted-foreground/50";
+  }
+  if (status.kind === "founded") {
+    return "bg-transparent ring-1 ring-inset ring-muted-foreground/50";
+  }
+  if (status.kind === "unknown" && status.attention) return "bg-destructive";
+  return "bg-amber-500";
+}
+
+/**
+ * The session's status: a dot and its word, beside the title (SV-20).
+ *
+ * T3 Code shows only a dot in its header; Beekeeper keeps the word on screen,
+ * because the status is a fact a person acts on and a colour alone does not
+ * say which one. A demoted status keeps its history clause ("last reported
+ * Idle 2h ago") in the tooltip and the accessible name, and in the text a
+ * screen reader or a search reads — it is detail one hover away, never gone.
+ * The badge never shrinks: in a narrow window the title truncates first, so
+ * the word cannot be squeezed to "Wo…" beside a long title.
+ */
 export function CodingSessionHeaderStatusBadge({
-  compact,
+  detail,
   sessionClosed,
   status,
-  statusText,
+  word,
   testId = "coding-session-status-badge",
 }: {
-  compact: boolean;
+  /** The history clause of a demoted status, or null. */
+  detail: string | null;
   sessionClosed: boolean;
   status: CodingSessionWorkspaceStatus;
-  statusText: string;
-  /** A second mount (the narrow fallback) carries its own id. */
+  /** The word on screen: the status label, or the caller's aggregate. */
+  word: string;
   testId?: string;
 }) {
+  const shownWord = sessionClosed ? "Closed" : word;
+  const fullText =
+    sessionClosed || detail === null ? shownWord : `${shownWord} · ${detail}`;
   return (
-    <Badge
-      aria-label={`Session status: ${sessionClosed ? "Closed" : statusText}`}
-      className={cn("gap-1.5", compact && "px-2")}
+    <span
+      aria-label={`Session status: ${fullText}`}
+      className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
+      data-status-kind={sessionClosed ? "closed" : status.kind}
       data-testid={testId}
-      title={sessionClosed ? "Closed" : statusText}
-      variant="outline"
+      role="img"
+      title={fullText}
     >
       <span
         aria-hidden
         className={cn(
-          "h-2 w-2 rounded-full",
-          !sessionClosed && status.kind === "working"
-            ? "bg-emerald-500"
-            : status.kind === "idle" || status.kind === "ended"
-              ? "bg-muted-foreground/50"
-              : // Founded, never started: hollow, like every other
-                // founded surface — a filled colour would claim a state
-                // nobody has published.
-                status.kind === "founded"
-                ? "bg-transparent ring-1 ring-inset ring-muted-foreground/50"
-                : // A lifecycle-signed "Disconnected" or "Needs attention"
-                  // reads like the execution rail's own attention state, not
-                  // like an unread status.
-                  status.kind === "unknown" && status.attention
-                  ? "bg-destructive"
-                  : "bg-amber-500",
+          "size-2 shrink-0 rounded-full",
+          codingSessionHeaderStatusDotClass(status, sessionClosed),
         )}
       />
-      {compact ? (
-        <span className="sr-only">{sessionClosed ? "Closed" : statusText}</span>
-      ) : sessionClosed ? (
-        "Closed"
-      ) : (
-        statusText
-      )}
-    </Badge>
+      <span aria-hidden className="whitespace-nowrap">
+        {shownWord}
+      </span>
+      {!sessionClosed && detail !== null ? (
+        <span aria-hidden className="sr-only">
+          {` · ${detail}`}
+        </span>
+      ) : null}
+    </span>
   );
 }
 
 /**
- * The header's way back to the plan, shown only while the plan is not already
- * on screen.
- *
- * The plan's one persistent home is the dock rail above the composer,
- * collapsed to a single line. This control exists for the two cases where
- * that rail is not mounted: a narrow window, where the plan opens as a sheet,
- * and a wide one where the person dismissed the rail for this turn. While the
- * rail (or the sheet) is showing, a second "Plan" control would be the plan
- * appearing twice, so the header stands it down. The task count rides along
- * because it is the one live number the rail would otherwise have shown.
+ * Mission's Route rail collapse control. It stays in the header in Mission
+ * only (SV-20): the rail is Mission's left-edge navigator, not a surface, so
+ * it has no launcher row.
  */
-export function CodingSessionHeaderPlanToggle({
+export function CodingSessionHeaderRouteToggle({
   compact,
+  displacesInspector,
+  expanded,
   onToggle,
-  open,
-  taskCount,
 }: {
   compact: boolean;
+  displacesInspector: boolean;
+  expanded: boolean;
   onToggle: () => void;
-  open: boolean;
-  taskCount: number;
 }) {
   return (
     <Button
-      aria-controls={CODING_SESSION_TASK_RAIL_ID}
-      aria-expanded={open}
-      aria-label={open ? "Hide session plan" : "Show session plan"}
-      data-testid="coding-session-task-rail-toggle"
+      // F7: the IDREF has to land on something. Both the expanded rail and
+      // the 40 px scrubber carry this id, because the control governs
+      // whichever of the two is mounted.
+      aria-controls={CODING_SESSION_ROUTE_RAIL_ID}
+      aria-expanded={expanded}
+      aria-label={expanded ? "Collapse route rail" : "Expand route rail"}
+      aria-pressed={expanded}
+      data-testid="coding-session-route-toggle"
       onClick={onToggle}
       size={compact ? "icon" : "sm"}
+      title={
+        expanded
+          ? "Collapse the route rail to its scrubber"
+          : displacesInspector
+            ? "Expand the route rail — closes the Inspector, which this width cannot hold beside it"
+            : "Expand the route rail"
+      }
       type="button"
-      variant={open ? "secondary" : "ghost"}
+      variant={expanded ? "secondary" : "ghost"}
     >
-      <ListChecks />
-      <span className={compact ? "sr-only" : undefined}>Plan</span>
-      {taskCount > 0 ? (
-        <>
-          <span
-            aria-hidden
-            className={cn(
-              "rounded-full bg-background/70 px-1.5 text-xs",
-              compact && "sr-only",
-            )}
-          >
-            {taskCount}
-          </span>
-          <span className="sr-only">{taskCount} tasks</span>
-        </>
-      ) : null}
+      <PanelLeft />
+      <span className={compact ? "sr-only" : undefined}>Route</span>
     </Button>
-  );
-}
-
-/**
- * Navigation the person toggles while reading — surface tabs and the Mission
- * route rail — in one segmented group. The tabs carry live counts (agents,
- * observed changes), which is why they stay in the row rather than in the
- * `⋯` menu: a count you have to open a menu to see does not signal anything.
- * People moved into the Details control (`CodingSessionHeaderDetails`), which
- * keeps its count on the trigger.
- */
-export function CodingSessionHeaderDetailsGroup({
-  compact,
-  onToggleRouteRail,
-  onToggleSurface,
-  routeRailDisplacesInspector,
-  routeRailExpanded,
-  surfaceHostId,
-  surfaceTabs,
-}: {
-  compact: boolean;
-  onToggleRouteRail?: () => void;
-  onToggleSurface?: (id: string) => void;
-  routeRailDisplacesInspector: boolean;
-  routeRailExpanded: boolean;
-  surfaceHostId?: string;
-  surfaceTabs?: readonly CodingSessionHeaderSurfaceTab[];
-}) {
-  const hasTabs = Boolean(onToggleSurface && surfaceTabs?.length);
-  if (!hasTabs && !onToggleRouteRail) return null;
-  return (
-    <fieldset
-      aria-label="Session surfaces"
-      className="flex shrink-0 items-center gap-0.5 rounded-xl border border-border/55 bg-muted/20 p-0.5"
-    >
-      {onToggleSurface && surfaceTabs
-        ? surfaceTabs.map((tab) => (
-            <Button
-              aria-controls={surfaceHostId}
-              aria-expanded={tab.active}
-              aria-label={
-                tab.active
-                  ? `Hide ${tab.label.toLowerCase()}`
-                  : `Show ${tab.label.toLowerCase()}`
-              }
-              data-testid={`coding-session-surface-toggle-${tab.id}`}
-              key={tab.id}
-              onClick={() => onToggleSurface(tab.id)}
-              size={compact ? "icon" : "sm"}
-              type="button"
-              variant={tab.active ? "secondary" : "ghost"}
-            >
-              {tab.icon === "agents" ? (
-                <Users />
-              ) : tab.icon === "inspector" ? (
-                <PanelRight />
-              ) : (
-                <GitCompare />
-              )}
-              <span className={compact ? "sr-only" : undefined}>
-                {tab.label}
-              </span>
-              {tab.count !== undefined && tab.count > 0 ? (
-                <span
-                  className={cn(
-                    "rounded-full bg-background/70 px-1.5 text-xs",
-                    compact && "sr-only",
-                  )}
-                >
-                  {tab.count}
-                </span>
-              ) : null}
-            </Button>
-          ))
-        : null}
-      {onToggleRouteRail ? (
-        <Button
-          // F7: the IDREF has to land on something. Both the expanded rail
-          // and the 40 px scrubber carry this id, because the control
-          // governs whichever of the two is mounted.
-          aria-controls={CODING_SESSION_ROUTE_RAIL_ID}
-          aria-expanded={routeRailExpanded}
-          aria-label={
-            routeRailExpanded ? "Collapse route rail" : "Expand route rail"
-          }
-          aria-pressed={routeRailExpanded}
-          data-testid="coding-session-route-toggle"
-          onClick={onToggleRouteRail}
-          size={compact ? "icon" : "sm"}
-          title={
-            routeRailExpanded
-              ? "Collapse the route rail to its scrubber"
-              : routeRailDisplacesInspector
-                ? "Expand the route rail — closes the Inspector, which this width cannot hold beside it"
-                : "Expand the route rail"
-          }
-          type="button"
-          variant={routeRailExpanded ? "secondary" : "ghost"}
-        >
-          <PanelLeft />
-          <span className={compact ? "sr-only" : undefined}>Route</span>
-        </Button>
-      ) : null}
-    </fieldset>
   );
 }

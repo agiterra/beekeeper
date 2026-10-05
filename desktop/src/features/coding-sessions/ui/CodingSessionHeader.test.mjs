@@ -7,30 +7,127 @@ import {
   CodingSessionDispositionStrip,
   CodingSessionHeader,
 } from "./CodingSessionHeader.tsx";
+import { codingSessionHeaderMetadataRows } from "./CodingSessionHeaderDetails.tsx";
+import { codingSessionHeaderStatusDotClass } from "./CodingSessionHeaderParts.tsx";
+import {
+  CLOSED_PANELS,
+  fakeSurfaceShell,
+} from "./CodingSessionHeaderPanelToggles.testFixtures.mjs";
 
-test("header keeps signed generation identity visible beside runtime context", () => {
+test("SV-20: the row reads project / title ● status, and the metadata line left it", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
       channelName: "Hive Sessions",
       generationLabel: "Keystone Session · generation 2",
       model: "claude-sonnet-4-5",
+      onOpenProject() {},
+      projectName: "Buzz Glue",
       providerAuthorityPubkey: "d7d05d95".repeat(8),
+      repoName: "buzz",
       runtimeLabel: "Claude Code",
       sessionTitle: "Keystone Session",
-      status: { kind: "idle", label: "Idle" },
+      status: { kind: "working", label: "Working" },
     }),
   );
 
-  assert.match(markup, />Keystone Session</);
-  assert.match(markup, /Claude Code · claude-sonnet-4-5 · generation 2/);
-  assert.doesNotMatch(
-    markup,
-    /Claude Code · claude-sonnet-4-5 · Keystone Session · generation 2/,
-  );
+  const project = markup.indexOf(">Buzz Glue<");
+  const separator = markup.indexOf(">/</li>");
+  const title = markup.indexOf(">Keystone Session</h1>");
+  const status = markup.indexOf("Session status: Working");
+  assert.ok(project >= 0 && separator > project, markup);
+  assert.ok(title > separator, markup);
+  assert.ok(status > title, markup);
+  assert.match(markup, /aria-label="Session breadcrumb"/);
+  assert.match(markup, /aria-current="page"/);
+  // The metadata line is Details' first rows now; none of it is in the row.
+  for (const gone of [
+    "Claude Code",
+    "claude-sonnet",
+    "generation 2",
+    ">buzz<",
+  ]) {
+    assert.doesNotMatch(markup, new RegExp(gone));
+  }
   assert.match(markup, /data-testid="coding-session-provenance-toggle"/);
 });
 
-test("umbrella header promotes the goal and aggregate agent status", () => {
+test("SV-20: only a working dot pulses, as T3's status pill does, and only with motion allowed", () => {
+  const working = codingSessionHeaderStatusDotClass(
+    { kind: "working", label: "Working" },
+    false,
+  );
+  assert.match(working, /motion-safe:animate-pulse/);
+  assert.doesNotMatch(working, /(^| )animate-pulse/);
+  assert.doesNotMatch(
+    codingSessionHeaderStatusDotClass(
+      { kind: "working", label: "Working" },
+      true,
+    ),
+    /animate-pulse/,
+  );
+  assert.doesNotMatch(
+    codingSessionHeaderStatusDotClass({ kind: "idle", label: "Idle" }, false),
+    /animate-pulse/,
+  );
+});
+
+test("Details' metadata rows: goal, repository, runtime, model, generation, blanks and repeats dropped", () => {
+  assert.deepEqual(
+    codingSessionHeaderMetadataRows({
+      goal: "  Make two-agent work read as one session ",
+      repo: "buzz",
+      runtime: "Claude Code",
+      model: "claude-sonnet-4-5",
+      generation: "generation 2",
+    }).map(({ key, label, value }) => [key, label, value]),
+    [
+      ["goal", "Goal", "Make two-agent work read as one session"],
+      ["repo", "Repository", "buzz"],
+      ["runtime", "Runtime", "Claude Code"],
+      ["model", "Model", "claude-sonnet-4-5"],
+      ["generation", "Generation", "generation 2"],
+    ],
+  );
+  assert.deepEqual(
+    codingSessionHeaderMetadataRows({
+      goal: null,
+      repo: "",
+      runtime: "codex",
+      model: "codex",
+      generation: "generation 1",
+    }).map(({ key }) => key),
+    ["runtime", "generation"],
+  );
+});
+
+test("Details' runtime and model rows say whose they are in a multi-seat session", () => {
+  const rows = (focusedSeat) =>
+    codingSessionHeaderMetadataRows({
+      goal: null,
+      repo: "buzz",
+      runtime: "Claude Code",
+      model: "opus",
+      generation: null,
+      focusedSeat,
+    }).map(({ key, label }) => [key, label]);
+  assert.deepEqual(rows("Fable"), [
+    ["repo", "Repository"],
+    ["runtime", "Runtime (focused seat: Fable)"],
+    ["model", "Model (focused seat: Fable)"],
+  ]);
+  assert.deepEqual(rows(""), [
+    ["repo", "Repository"],
+    ["runtime", "Runtime (focused seat)"],
+    ["model", "Model (focused seat)"],
+  ]);
+  assert.deepEqual(rows(null), [
+    ["repo", "Repository"],
+    ["runtime", "Runtime"],
+    ["model", "Model"],
+  ]);
+});
+
+test("umbrella header keeps the aggregate status beside the title and the chips beside it", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
       agentControls: React.createElement(
@@ -46,17 +143,49 @@ test("umbrella header promotes the goal and aggregate agent status", () => {
       statusLabelOverride: "2 agents · 1 working",
     }),
   );
-  assert.match(markup, /Make two-agent work read as one session/);
   assert.match(markup, /Codex working · Claude idle/);
-  // The chips carry per-agent status on a wide window. A narrow one hides
-  // them, so a compact status takes their place there rather than leaving
-  // the header with no status at all.
-  assert.doesNotMatch(markup, /data-testid="coding-session-status-badge"/);
+  // The status word is never folded away, wide or narrow (SV-20).
   assert.match(
     markup,
-    /class="shrink-0 md:hidden"><span[^>]*aria-label="Session status: 2 agents · 1 working"[^>]*data-testid="coding-session-status-badge-narrow"/,
+    /aria-label="Session status: 2 agents · 1 working"[^>]*data-testid="coding-session-status-badge"/,
   );
-  assert.doesNotMatch(markup, />generation 1<\/p>/);
+  assert.doesNotMatch(markup, /coding-session-status-badge-narrow/);
+  // The goal is Details' first row, not a line under the title.
+  assert.doesNotMatch(markup, /Make two-agent work read as one session/);
+});
+
+test("a demoted status keeps its word on screen and its history clause one hover away", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      channelName: "Hive Sessions",
+      generationLabel: "generation 1",
+      sessionTitle: "Keystone Session",
+      status: {
+        kind: "unknown",
+        label: "No provider answering",
+        lastReported: { label: "Idle", ageSeconds: 7_200 },
+      },
+    }),
+  );
+  assert.match(
+    markup,
+    /title="No provider answering · last reported Idle 2h ago"/,
+  );
+  assert.match(
+    markup,
+    /aria-label="Session status: No provider answering · last reported Idle 2h ago"/,
+  );
+  assert.match(
+    markup,
+    /class="whitespace-nowrap">No provider answering<\/span>/,
+  );
+  // The badge never shrinks, so a long title truncates before the word does.
+  assert.match(
+    markup,
+    /class="inline-flex shrink-0 [^"]*"[^>]*data-testid="coding-session-status-badge"/,
+  );
+  // The clause is in the text a search or a screen reader reads, never gone.
+  assert.match(markup, /class="sr-only"> · last reported Idle 2h ago</);
 });
 
 test("the team lens lives beside the title instead of creating another header", () => {
@@ -121,48 +250,57 @@ test("header exposes rename only when the authority-aware workspace provides it"
   assert.match(markup, /aria-label="Rename session"/);
 });
 
-test("surface affordances are compact direct tabs into the shared host", () => {
+test("SV-20: no surface toggles and no Plan toggle; the panel toggles come with a surface shell", () => {
   const baseProps = {
     channelName: "Hive Sessions",
     generationLabel: "Keystone Session · generation 2",
     status: { kind: "idle", label: "Idle" },
   };
 
-  // No surface wiring, no affordances — the workspace-state header stays bare.
-  const withoutSurfaces = renderToStaticMarkup(
+  // No session view behind the header (pending, loading): no panel toggles.
+  const bare = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, baseProps),
   );
-  assert.doesNotMatch(withoutSurfaces, /coding-session-surface-toggle/);
+  assert.doesNotMatch(bare, /coding-session-panel-toggle/);
 
+  const { shell } = fakeSurfaceShell({
+    surfaces: [{ id: "agents" }, { id: "diff" }, { id: "plan" }],
+    panelState: { ...CLOSED_PANELS, rightOpen: true },
+  });
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
       ...baseProps,
+      // Props the header used to take for its toggles do nothing now.
       onToggleSurface() {},
+      onToggleTaskRail() {},
       surfaceHostId: "surface-host-1",
+      surfaceShell: shell,
       surfaceTabs: [
-        {
-          id: "agents",
-          label: "Agents",
-          icon: "agents",
-          count: 2,
-          active: true,
-        },
-        {
-          id: "changes",
-          label: "Observed changes",
-          icon: "changes",
-          count: 0,
-          active: false,
-        },
+        { id: "agents", label: "Agents", icon: "agents", active: true },
       ],
+      taskCount: 3,
     }),
   );
-  assert.match(markup, /data-testid="coding-session-surface-toggle-agents"/);
-  assert.match(markup, /data-testid="coding-session-surface-toggle-changes"/);
-  assert.match(markup, /aria-label="Hide agents"/);
-  assert.match(markup, /aria-label="Show observed changes"/);
-  assert.match(markup, /aria-controls="surface-host-1"/);
-  assert.match(markup, />Observed changes</);
+  assert.doesNotMatch(markup, /coding-session-surface-toggle/);
+  assert.doesNotMatch(markup, /coding-session-task-rail-toggle/);
+  assert.doesNotMatch(markup, /aria-label="Session surfaces"/);
+  assert.match(
+    markup,
+    /aria-pressed="false"[^>]*data-testid="coding-session-panel-toggle-bottom"/,
+  );
+  assert.match(
+    markup,
+    /aria-controls="surface-host-1"[^>]*aria-label="Toggle right panel"[^>]*aria-pressed="true"[^>]*data-testid="coding-session-panel-toggle-right"/,
+  );
+  // Right side order: Details, ⋯ (empty here), bottom, right.
+  assert.ok(
+    markup.indexOf("coding-session-provenance-toggle") <
+      markup.indexOf("coding-session-panel-toggle-bottom"),
+  );
+  assert.ok(
+    markup.indexOf("coding-session-panel-toggle-bottom") <
+      markup.indexOf("coding-session-panel-toggle-right"),
+  );
 });
 
 test("the add-provider action appears only when this session can take one", () => {
@@ -229,7 +367,7 @@ test("closure controls describe session state without rewriting execution status
   assert.doesNotMatch(reopen, /data-testid="coding-session-overflow"/);
 });
 
-test("an owning project reads as a followable crumb ahead of the context line", () => {
+test("an owning project reads as a followable crumb ahead of the title", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
       channelName: "buzz glue sessions",
@@ -243,12 +381,15 @@ test("an owning project reads as a followable crumb ahead of the context line", 
   );
 
   assert.match(markup, /data-testid="coding-session-project-crumb"/);
-  assert.match(markup, />Buzz Glue<\/button> · Claude Code · generation 2/);
+  assert.match(
+    markup,
+    />Buzz Glue<\/button><\/li><li aria-hidden="true"[^>]*>\/<\/li>/,
+  );
   // The crumb is a real control, not text styled to look like one.
   assert.match(markup, /title="Open Buzz Glue"/);
 });
 
-test("without a way to open it the project is plain context, not a dead link", () => {
+test("without a way to open it the project is plain text, not a dead link", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
       channelName: "buzz glue sessions",
@@ -261,10 +402,13 @@ test("without a way to open it the project is plain context, not a dead link", (
   );
 
   assert.doesNotMatch(markup, /coding-session-project-crumb/);
-  assert.match(markup, /Buzz Glue · Claude Code · generation 2/);
+  assert.match(
+    markup,
+    /<span class="[^"]*" data-testid="coding-session-project-label">Buzz Glue<\/span>/,
+  );
 });
 
-test("a session no project claims shows no crumb at all", () => {
+test("a session no project claims shows no crumb and no separator", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
       channelName: "engineering",
@@ -276,10 +420,14 @@ test("a session no project claims shows no crumb at all", () => {
   );
 
   assert.doesNotMatch(markup, /coding-session-project-crumb/);
-  assert.match(markup, />generation 2</);
+  assert.doesNotMatch(markup, /coding-session-project-label/);
+  assert.doesNotMatch(markup, />\/<\/li>/);
+  // No name reached the header: it reads the shared resolver's fallback
+  // (SV-31), the text web and mobile show.
+  assert.match(markup, />Untitled session<\/h1>/);
 });
 
-test("header separates reasoning effort from the adapter's raw model id", () => {
+test("header keeps the adapter's raw model id out of the row", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
       channelName: "Hive Sessions",
@@ -291,8 +439,9 @@ test("header separates reasoning effort from the adapter's raw model id", () => 
     }),
   );
 
-  assert.match(markup, /gpt-5\.6-terra · Low/);
-  assert.doesNotMatch(markup, /gpt-5\.6-terra\[low\]/);
+  // The formatted model is Details' Model row
+  // (`CodingSessionHeader.reachability.test.mjs` opens it).
+  assert.doesNotMatch(markup, /gpt-5\.6-terra/);
 });
 
 test("a seated session wears its seat beside the title, and an unseated one does not", () => {

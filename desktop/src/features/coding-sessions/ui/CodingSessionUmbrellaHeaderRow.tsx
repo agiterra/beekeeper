@@ -27,9 +27,8 @@ import { CodingSessionLensControl } from "./CodingSessionLensControl";
 import { CodingSessionParticipantBar } from "./CodingSessionParticipantBar";
 import { CodingSessionMissionDensityControl } from "./CodingSessionMissionDensityControl";
 import type { useCodingSessionTaskDock } from "./useCodingSessionTaskDock";
-import type { useCodingSessionSurfaceHostState } from "./CodingSessionSurfaceHost";
 import type { CodingSessionRouteRailState } from "./useCodingSessionRoute";
-import type { CodingSessionSurfaceDescriptor } from "./CodingSessionSurfaceHost";
+import type { CodingSessionSurfaceShell } from "./surfaces/useCodingSessionSurfacePanelsShell";
 import type { CodingSessionStopAllModel } from "@/features/coding-sessions/lib/codingSessionStopAllModel";
 import {
   codingSessionMissionUmbrellaWord,
@@ -37,6 +36,8 @@ import {
   umbrellaWorkspaceStatus,
 } from "./CodingSessionUmbrellaWorkspaceModel";
 import { codingSessionUmbrellaGenerationLabel } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
+import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
+import { codingSessionHeaderRepoName } from "./CodingSessionHeaderDetails";
 
 type HeaderProps = React.ComponentProps<typeof CodingSessionHeader>;
 
@@ -77,6 +78,7 @@ export function CodingSessionUmbrellaHeaderRow({
   onClose,
   onCloseSession,
   onOpenPeople,
+  onOpenProject,
   onReopenSession,
   peopleCount,
   resolveReachability,
@@ -89,9 +91,8 @@ export function CodingSessionUmbrellaHeaderRow({
   streamParticipants,
   stopAll,
   surface,
-  surfaceHost,
   surfaceHostId,
-  surfaces,
+  surfaceShell,
   teamWake,
   umbrella,
   workspaceActorName,
@@ -128,6 +129,12 @@ export function CodingSessionUmbrellaHeaderRow({
   onClose?: () => void;
   onCloseSession?: () => void;
   onOpenPeople?: () => void;
+  /**
+   * Opens the owning project from the header's `project /` crumb (SV-20).
+   * Absent in a pop-out (no app shell to navigate) or when no project owns
+   * the session; the crumb still shows the name, it just is not a link.
+   */
+  onOpenProject?: () => void;
   onReopenSession?: () => void;
   peopleCount: number;
   resolveReachability: CodingSessionReachabilityResolver;
@@ -144,26 +151,46 @@ export function CodingSessionUmbrellaHeaderRow({
   >["items"];
   stopAll: CodingSessionStopAllModel;
   surface: CodingSessionSurface;
-  surfaceHost: ReturnType<typeof useCodingSessionSurfaceHostState>;
   surfaceHostId: string;
-  surfaces: CodingSessionSurfaceDescriptor[];
+  /**
+   * The workspace's surface shell: panel state and actions (the agent focus's
+   * Agents opener), and what the header's panel toggles read (SV-20).
+   */
+  surfaceShell: Pick<
+    CodingSessionSurfaceShell,
+    "ctx" | "headerPanels" | "panels" | "surfaces"
+  >;
   teamWake: ReturnType<typeof useCodingSessionTeamWake>;
   umbrella: CodingSessionUmbrellaRecord;
   workspaceActorName: CodingSessionActorNameResolver;
 }) {
+  const { panels } = surfaceShell;
+  // Details' metadata rows describe the execution the header's provider and
+  // workspace items already name: the focused one.
+  const focusedRecord = focusedExecution.activeGeneration;
+  const focusedRuntime = focusedRecord.runtime ?? focusedRecord.provider;
+  // With more than one seat those rows are one seat's, and change with the
+  // focus chip, so Details says whose they are rather than the session's.
+  const metadataFocusedSeat = isMultiExecution
+    ? (agentFocusItems.find(
+        (item) => item.executionKey === focusedExecution.executionKey,
+      )?.label ?? "")
+    : null;
   return (
     <div className="shrink-0" data-testid="coding-session-authority-summary">
       <CodingSessionHeader
         agentControls={
           isMultiExecution && !isNarrow && !mission ? (
             <CodingSessionAgentFocus
-              agentSurfaceOpen={surfaceHost.activeTab === "agents"}
+              agentSurfaceOpen={
+                panels.state.rightOpen && panels.state.active === "agents"
+              }
               focusedExecutionKey={focusedExecutionKey}
               items={agentFocusItems}
               onFocus={handleFocusExecution}
               onOpenAgents={() => {
                 composerTaskDock.close();
-                surfaceHost.toggle("agents");
+                panels.actions.toggle("agents");
               }}
               surfaceHostId={surfaceHostId}
             />
@@ -192,10 +219,13 @@ export function CodingSessionUmbrellaHeaderRow({
         }
         generationLabel={codingSessionUmbrellaGenerationLabel(umbrella)}
         goalText={goal?.content ?? null}
+        metadataFocusedSeat={metadataFocusedSeat}
+        model={focusedRecord.model}
         onAddProvider={onAddProvider}
         onClose={onClose}
         onCloseSession={onCloseSession}
         onOpenPeople={onOpenPeople}
+        onOpenProject={onOpenProject}
         onPopout={surface === "main" ? handlePopout : undefined}
         onRename={canRename ? () => setRenameOpen(true) : undefined}
         onReopenSession={onReopenSession}
@@ -204,23 +234,18 @@ export function CodingSessionUmbrellaHeaderRow({
         stopAllLabel={stopAll.kind === "available" ? stopAll.buttonLabel : null}
         stopAllSentence={stopAll.kind === "available" ? stopAll.sentence : null}
         peopleCount={peopleCount}
-        onToggleTaskRail={
-          !isMultiExecution && composerTaskDock.activeModel
-            ? () => {
-                surfaceHost.close();
-                composerTaskDock.toggle();
-              }
-            : undefined
-        }
-        onToggleSurface={(id) => {
-          composerTaskDock.close();
-          surfaceHost.toggle(id);
-        }}
+        projectName={surfaceShell.ctx.project?.name ?? null}
         providerAuthorityPubkey={focusedExecution.signerPubkey}
+        repoName={codingSessionHeaderRepoName(focusedRecord.repoRef)}
+        runtimeLabel={
+          focusedRuntime
+            ? formatCodingSessionRuntimeLabel(focusedRuntime)
+            : null
+        }
         workspaceReuse={{
           channelId,
           sessionRef: umbrella.sessionRef,
-          sourceRepoRef: focusedExecution.activeGeneration.repoRef ?? null,
+          sourceRepoRef: focusedRecord.repoRef ?? null,
         }}
         sessionTitle={authoritativeTitle}
         sessionClosed={sessionClosed}
@@ -242,34 +267,7 @@ export function CodingSessionUmbrellaHeaderRow({
             : umbrellaAgentStatusSummary(agentFocusItems)
         }
         surfaceHostId={surfaceHostId}
-        surfaceTabs={surfaces
-          .filter(
-            (surfaceEntry) =>
-              surfaceEntry.id !== "agents" &&
-              (!mission ||
-                (surfaceHost.activeTab === null &&
-                  surfaceEntry.id === "mission-inspector")),
-          )
-          .map((surfaceEntry) => ({
-            id: surfaceEntry.id,
-            label: surfaceEntry.label,
-            icon:
-              surfaceEntry.id === "agents"
-                ? "agents"
-                : surfaceEntry.id === "mission-inspector" ||
-                    surfaceEntry.id === "mission-context" ||
-                    surfaceEntry.id === "mission-audit"
-                  ? "inspector"
-                  : "changes",
-            count: surfaceEntry.count ?? 0,
-            active: surfaceHost.activeTab === surfaceEntry.id,
-          }))}
-        taskCount={
-          isMultiExecution
-            ? 0
-            : (composerTaskDock.activeModel?.tasks.length ?? 0)
-        }
-        taskRailOpen={composerTaskDock.open}
+        surfaceShell={surfaceShell}
         viewControl={
           isMultiExecution ? (
             <CodingSessionLensControl

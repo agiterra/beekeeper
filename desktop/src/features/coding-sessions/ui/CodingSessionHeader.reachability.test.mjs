@@ -1,6 +1,11 @@
 /**
- * Every control the session header had before SESSION_VIEW_UX_PLAN L4 is
- * still reachable, and still does what it did.
+ * Every control the session header had before SESSION_VIEW_UX_PLAN L4 and
+ * SV-20 is still reachable, where this file says it is, and still does what
+ * it did.
+ *
+ * SV-20 moved the surface toggles and the Plan toggle to the launcher (a
+ * letter each, behind the right-panel toggle), and the metadata line into
+ * Details; `MOVED_TO_LAUNCHER` and the Details tests below hold them there.
  *
  * The header went from about fourteen controls in one row to title, status,
  * the full-access badge and a few primary controls, with the rest in the `⋯`
@@ -13,6 +18,11 @@ import assert from "node:assert/strict";
 import { after, afterEach, before, test } from "node:test";
 
 import { JSDOM } from "jsdom";
+
+import {
+  CLOSED_PANELS,
+  fakeSurfaceShell,
+} from "./CodingSessionHeaderPanelToggles.testFixtures.mjs";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://localhost",
@@ -68,10 +78,21 @@ async function mountHeader(overrides = {}) {
   const { act, render } = await import("@testing-library/react");
   const { CodingSessionHeader } = await import("./CodingSessionHeader.tsx");
   const { calls, spy } = spies();
+  const { shell } = fakeSurfaceShell({
+    calls,
+    panelState: CLOSED_PANELS,
+    surfaces: [
+      { id: "agents", label: "Agents" },
+      { id: "people", label: "People" },
+      { id: "terminal", label: "Terminal", placement: "drawer" },
+    ],
+  });
   const props = {
     channelName: "Hive Sessions",
     generationLabel: "Keystone Session · generation 2",
+    goalText: "Ship the header",
     isExporting: false,
+    model: "gpt-5.6-terra[low]",
     onAddProvider: spy("addProvider"),
     onClose: spy("dismiss"),
     onCloseSession: spy("closeSession"),
@@ -89,32 +110,15 @@ async function mountHeader(overrides = {}) {
     onRename: spy("rename"),
     onStopAll: spy("stopAll"),
     onToggleRouteRail: spy("routeRail"),
-    onToggleSurface: (id) => spy(`surface:${id}`)(),
-    onToggleTaskRail: spy("plan"),
     peopleCount: 4,
     projectName: "Buzz Glue",
+    repoName: "buzz",
+    runtimeLabel: "Codex",
     sessionTitle: "Keystone Session",
     status: { kind: "working", label: "Working" },
     stopAllCount: 2,
     surfaceHostId: "surface-host",
-    surfaceTabs: [
-      {
-        id: "agents",
-        label: "Agents",
-        icon: "agents",
-        count: 2,
-        active: false,
-      },
-      {
-        id: "changes",
-        label: "Observed changes",
-        icon: "changes",
-        count: 5,
-        active: false,
-      },
-    ],
-    taskCount: 3,
-    taskRailOpen: false,
+    surfaceShell: shell,
     ...overrides,
   };
   await act(async () => {
@@ -148,15 +152,26 @@ async function openMenu() {
   return screen.getByRole("group", { name: "Session actions" });
 }
 
-/** Every control the header carried before L4, and where it lives now. */
+/** Every control that stayed in the row (or arrived with SV-20), and its handler. */
 const ROW_CONTROLS = [
   ["coding-session-dismiss", "dismiss"],
   ["coding-session-rename", "rename"],
   ["coding-session-project-crumb", "project"],
-  ["coding-session-task-rail-toggle", "plan"],
-  ["coding-session-surface-toggle-agents", "surface:agents"],
-  ["coding-session-surface-toggle-changes", "surface:changes"],
   ["coding-session-route-toggle", "routeRail"],
+  ["coding-session-panel-toggle-bottom", "toggleBottom"],
+  ["coding-session-panel-toggle-right", "toggleRight"],
+];
+
+/**
+ * SV-20: what left the row, and the launcher letter that reaches it now. The
+ * launcher is behind the right-panel toggle (⌘⌥B); its letters and rows are
+ * B0's (`CodingSessionSurfaceLauncher.test.mjs`).
+ */
+const MOVED_TO_LAUNCHER = [
+  ["coding-session-surface-toggle-agents", "agents", "A"],
+  ["coding-session-surface-toggle-changes", "diff", "D"],
+  ["coding-session-task-rail-toggle", "plan", "P"],
+  ["coding-session-surface-toggle-mission-inspector", "mission-inspector", "I"],
 ];
 
 const MENU_CONTROLS = [
@@ -175,26 +190,83 @@ test("every control that stayed in the row still reaches its handler", async () 
     await click(screen.getByTestId(testId));
     assert.equal(calls.get(handler), 1, `${testId} → ${handler}`);
   }
-  // Live counts stay on the row, never behind the menu.
-  assert.match(
-    screen.getByTestId("coding-session-surface-toggle-agents").textContent,
-    /2/,
-  );
-  assert.match(
-    screen.getByTestId("coding-session-surface-toggle-changes").textContent,
-    /5/,
-  );
   // People moved into Details; its count stayed on the trigger.
   assert.match(
     screen.getByTestId("coding-session-details-people-count").textContent,
     /4/,
   );
-  assert.match(
-    screen.getByTestId("coding-session-task-rail-toggle").textContent,
-    /3/,
-  );
   // Status is visible without a click.
-  assert.ok(screen.getByTestId("coding-session-status-badge"));
+  assert.match(
+    screen.getByTestId("coding-session-status-badge").textContent,
+    /Working/,
+  );
+});
+
+test("double-clicking the title renames, as the pencil does", async () => {
+  const { act, fireEvent, screen } = await import("@testing-library/react");
+  const { calls } = await mountHeader();
+  await act(async () => {
+    fireEvent.doubleClick(screen.getByTestId("coding-session-title"));
+  });
+  assert.equal(calls.get("rename"), 1);
+  // A modified double-click is someone selecting text, not renaming.
+  await act(async () => {
+    fireEvent.doubleClick(screen.getByTestId("coding-session-title"), {
+      metaKey: true,
+    });
+  });
+  assert.equal(calls.get("rename"), 1);
+});
+
+test("SV-20: the surface and Plan toggles left the row for a launcher letter each", async () => {
+  const { screen } = await import("@testing-library/react");
+  const { codingSessionSurfaceRegistry } = await import(
+    "./surfaces/codingSessionBuiltinSurfaces.ts"
+  );
+  await mountHeader();
+  const registry = codingSessionSurfaceRegistry();
+  for (const [oldTestId, surfaceId, letter] of MOVED_TO_LAUNCHER) {
+    assert.equal(screen.queryByTestId(oldTestId), null, `${oldTestId} left`);
+    const definition = registry.get(surfaceId);
+    assert.ok(definition, `${surfaceId} is a registered surface`);
+    assert.equal(definition.shortcut, letter, `${surfaceId} is ${letter}`);
+    assert.equal(definition.placement, "right", `${surfaceId} opens right`);
+  }
+  // And the launcher is one click away: the right-panel toggle is in the row.
+  assert.ok(screen.getByTestId("coding-session-panel-toggle-right"));
+});
+
+test("SV-20: the metadata line is Details' first rows", async () => {
+  const { act, fireEvent, screen } = await import("@testing-library/react");
+  await mountHeader();
+  const header = screen.getByTestId("coding-session-header");
+  assert.doesNotMatch(header.textContent, /Ship the header/);
+  assert.doesNotMatch(header.textContent, /gpt-5\.6-terra/);
+  const trigger = screen.getByTestId("coding-session-provenance-toggle");
+  await act(async () => {
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    fireEvent.click(trigger);
+  });
+  if (!screen.queryByTestId("coding-session-details-metadata")) {
+    await click(trigger);
+  }
+  const rows = screen.getByTestId("coding-session-details-metadata");
+  const text = (key) =>
+    rows.querySelector(`[data-testid="coding-session-details-meta-${key}"]`)
+      ?.textContent;
+  assert.equal(text("goal"), "GoalShip the header");
+  assert.equal(text("repo"), "Repositorybuzz");
+  assert.equal(text("runtime"), "RuntimeCodex");
+  // The model reads as a person reads it, effort apart from the raw id.
+  assert.equal(text("model"), "Modelgpt-5.6-terra · Low");
+  // The generation without the title it repeated.
+  assert.equal(text("generation"), "Generationgeneration 2");
+  // The rows come first, ahead of People and provenance.
+  const people = screen.getByTestId("coding-session-people-toggle");
+  assert.ok(
+    rows.compareDocumentPosition(people) &
+      globalThis.Node.DOCUMENT_POSITION_FOLLOWING,
+  );
 });
 
 test("Details holds People and provenance: same content, same ids, one control", async () => {
@@ -223,9 +295,27 @@ test("Details holds People and provenance: same content, same ids, one control",
   const people = screen.getByTestId("coding-session-people-toggle");
   assert.match(people.textContent, /4 people with access/);
   await click(people);
-  assert.equal(calls.get("people"), 1);
-  // It hands over to the People dialog rather than staying open behind it.
+  // SV-24: where the view hosts a People surface, the row opens it; the
+  // dialog handler is not the one called.
+  assert.equal(calls.get("open:people"), 1);
+  assert.equal(calls.get("people"), undefined);
+  // It hands over rather than staying open behind the surface.
   assert.equal(screen.queryByTestId("coding-session-provenance-details"), null);
+});
+
+test("without a People surface to open, the row keeps the People dialog", async () => {
+  const { act, fireEvent, screen } = await import("@testing-library/react");
+  const { calls } = await mountHeader({ surfaceShell: null });
+  const trigger = screen.getByTestId("coding-session-provenance-toggle");
+  await act(async () => {
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    fireEvent.click(trigger);
+  });
+  if (!screen.queryByTestId("coding-session-people-toggle")) {
+    await click(trigger);
+  }
+  await click(screen.getByTestId("coding-session-people-toggle"));
+  assert.equal(calls.get("people"), 1);
 });
 
 test("Details without a People surface is provenance alone, with no count", async () => {
@@ -293,7 +383,7 @@ test("choosing an item closes the menu it was chosen from", async () => {
   assert.equal(screen.queryByRole("group", { name: "Session actions" }), null);
 });
 
-test("a closed session keeps Reopen in the row and the plan stands down while shown", async () => {
+test("a closed session keeps Reopen in the row, between Details and the panel toggles", async () => {
   const { screen } = await import("@testing-library/react");
   let reopened = 0;
   await mountHeader({
@@ -302,12 +392,25 @@ test("a closed session keeps Reopen in the row and the plan stands down while sh
       reopened += 1;
     },
     sessionClosed: true,
-    taskRailOpen: true,
   });
-  await click(screen.getByTestId("coding-session-reopen"));
+  const reopen = screen.getByTestId("coding-session-reopen");
+  await click(reopen);
   assert.equal(reopened, 1);
-  // The rail is on screen, so the header offers no second way to the plan.
-  assert.equal(screen.queryByTestId("coding-session-task-rail-toggle"), null);
+  const following = globalThis.Node.DOCUMENT_POSITION_FOLLOWING;
+  assert.ok(
+    screen
+      .getByTestId("coding-session-provenance-toggle")
+      .compareDocumentPosition(reopen) & following,
+  );
+  assert.ok(
+    reopen.compareDocumentPosition(
+      screen.getByTestId("coding-session-panel-toggle-bottom"),
+    ) & following,
+  );
+  assert.match(
+    screen.getByTestId("coding-session-status-badge").textContent,
+    /Closed/,
+  );
 });
 
 test("the docked plan opens only when asked, and its close still reaches the dock", async () => {
