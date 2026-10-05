@@ -17,13 +17,49 @@ export type CodingSessionNamingProvider =
   | "anthropic"
   | "openai-compatible";
 
+/**
+ * Who titles a new coding session on this computer (D9, SV-56).
+ *
+ * - `agent`: the provider that runs the first turn titles it with the same
+ *   runtime and account that already received the message (SV-31). The
+ *   default, and nothing to set up.
+ * - `my-model`: the person's own naming model below suggests a name in the
+ *   Name field while they write. Nothing is titled after Start.
+ * - `off`: nothing is asked for a title anywhere.
+ *
+ * A name a person typed wins in every mode. This is this computer's
+ * preference: it reaches this machine's agent host as a local file, never
+ * the relay.
+ */
+export type CodingSessionTitleMode = "agent" | "my-model" | "off";
+
+export const CODING_SESSION_TITLE_MODES: readonly CodingSessionTitleMode[] = [
+  "agent",
+  "my-model",
+  "off",
+];
+
 export type CodingSessionNamingSettings = {
+  /**
+   * The mode in force. A record saved before modes existed reads as
+   * `my-model` when it had a naming endpoint configured (that was an opt-in)
+   * and `agent` otherwise.
+   */
+  titleMode: CodingSessionTitleMode;
   provider: CodingSessionNamingProvider;
   /** Endpoint root for the OpenAI-compatible adapter. Empty when unused. */
   baseUrl: string;
   model: string;
   /** Whether a key is stored on this computer. Never the key. */
   hasApiKey: boolean;
+  /**
+   * Set when this computer's agent-host files do not hold `titleMode`: a
+   * save or a provisioning could not write them, or one cannot be read.
+   * The host re-reads the files on every settings read, so this stays set
+   * until a later write lands. Optional only so drafts built in the webview
+   * need not carry it; the host always sends it (`null` when in step).
+   */
+  hostModeMismatch?: string | null;
 };
 
 /** Read what names sessions on this computer. */
@@ -34,13 +70,36 @@ export async function getCodingSessionNamingSettings(): Promise<CodingSessionNam
 }
 
 /**
+ * Whether the founded flow may ask the person's naming model at all.
+ *
+ * Only in `my-model` mode, and only with an endpoint chosen. The host
+ * refuses `generate_coding_session_name` / `generate_coding_session_goal`
+ * in every other mode, so this is the webview's courtesy, not the fence.
+ */
+export function namingModelConsulted(
+  settings: CodingSessionNamingSettings | null,
+): boolean {
+  return (
+    settings !== null &&
+    settings.titleMode === "my-model" &&
+    settings.provider !== "off"
+  );
+}
+
+/**
  * Store a new configuration.
  *
  * `apiKey` is three-state: omit it to leave the stored key untouched, pass
- * `""` to delete it, pass a key to replace it.
+ * `""` to delete it, pass a key to replace it. `titleMode` omitted leaves
+ * the mode in force unchanged. Saving also writes the mode to every agent
+ * host identity on this computer. A failure there resolves — the record and
+ * key already changed — with `hostModeMismatch` saying the host was not
+ * told. A rejection means the record was not saved, though a key change may
+ * already have reached the keychain, so callers re-read after any error.
  */
 export async function setCodingSessionNamingSettings(input: {
   provider: CodingSessionNamingProvider;
+  titleMode?: CodingSessionTitleMode;
   baseUrl?: string;
   model?: string;
   apiKey?: string;
@@ -49,6 +108,7 @@ export async function setCodingSessionNamingSettings(input: {
     "set_coding_session_naming_settings",
     {
       provider: input.provider,
+      titleMode: input.titleMode ?? null,
       baseUrl: input.baseUrl ?? null,
       model: input.model ?? null,
       apiKey: input.apiKey ?? null,

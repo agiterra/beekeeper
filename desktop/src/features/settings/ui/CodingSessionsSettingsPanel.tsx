@@ -58,8 +58,8 @@ export function CodingSessionsSettingsPanel() {
       </SettingsOptionGroup>
       <SettingsOptionGroup
         data-testid="settings-coding-session-naming"
-        description="Name a new session from its first message. Off unless you choose a model — the message leaves this computer only for the endpoint you name."
-        title="Session names"
+        description="How a new session gets its title from its first message. This computer's choice; it reaches this computer's agent host as a local setting and never the relay."
+        title="Session titles"
       >
         <CodingSessionNamingCard />
       </SettingsOptionGroup>
