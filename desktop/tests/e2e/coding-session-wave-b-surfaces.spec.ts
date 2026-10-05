@@ -25,6 +25,7 @@ import {
   lifecycleReceiptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
+import { buildCodingSessionNameEvent } from "@/features/coding-sessions/lib/codingSessionName";
 import {
   BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
@@ -60,6 +61,12 @@ const CHANNEL_ID = "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9";
 const SESSION_REF = "b2b2b2b2-0000-4000-8000-000000000024";
 const COMMAND_ID = "b2b2b2b2-1111-4000-8000-000000000024";
 const TITLE = "Surface contents";
+/**
+ * The name the founder gives the session on the wire (a signed 44229, SV-67).
+ * Different from `TITLE` on purpose: a card showing it can only have read
+ * the wire name, never the SV-65 fallback to the session view's title.
+ */
+const WIRE_NAME = "Reconnect hardening";
 /** The bridge's mock identity owns the seeded `buzz` repository and project. */
 const MOCK_OWNER = "deadbeef".repeat(8);
 const REPO_REF = `30617:${MOCK_OWNER}:buzz`;
@@ -441,6 +448,12 @@ type Variant = {
   land: "ready" | "refused";
   surfaces: WaveBSurfacesMock;
   /**
+   * The founder named the session with a signed 44229 (SV-67). Without it,
+   * the session's only name is the create's title, and Pulse's card reads
+   * the session view's title (the SV-65 fallback).
+   */
+  wireName?: string;
+  /**
    * The project names an agents repository (kind:30624 at the root). Files
    * opens on a computer without the tree only when there is one (DB3: "an
    * agents repo, or a local tree"); without it the row is truthfully dimmed.
@@ -465,6 +478,18 @@ async function openVariant(browser: Browser, variant: Variant): Promise<Page> {
     FOUNDER_SECRET,
   );
   const observed = observations(genesis.id, variant);
+  const named = variant.wireName
+    ? buildCodingSessionNameEvent({
+        channelId: CHANNEL_ID,
+        sessionRef: SESSION_REF,
+        content: variant.wireName,
+      })
+    : null;
+  // Signed by the founder, whom the genesis proves: a 44229 from anyone else
+  // is set aside as nobody's name.
+  const nameEvents = named
+    ? [signed(named.kind, BASE + 1, named.tags, named.content, FOUNDER_SECRET)]
+    : [];
   await page.addInitScript(
     ({ identity, storageKey, surfaces, owner, channelId, agentsRepo }) => {
       window.localStorage.setItem(storageKey, JSON.stringify(identity));
@@ -604,7 +629,7 @@ async function openVariant(browser: Browser, variant: Variant): Promise<Page> {
     },
     {
       channelName: CHANNEL_NAME,
-      events: [...sessionEvents(genesis), ...observed.events],
+      events: [...sessionEvents(genesis), ...observed.events, ...nameEvents],
     },
   );
   const trigger = page.getByTestId("channel-coding-sessions-trigger");
@@ -613,8 +638,10 @@ async function openVariant(browser: Browser, variant: Variant): Promise<Page> {
   });
   await trigger.click();
   await page.getByTestId("channel-coding-session-open").first().click();
+  // A named session may read its wire name or, until the name's live watch
+  // delivers it, its title; either says the workspace has the session.
   await expect(page.getByTestId("coding-session-workspace")).toContainText(
-    TITLE,
+    variant.wireName ? new RegExp(`${TITLE}|${variant.wireName}`) : TITLE,
     { timeout: 15_000 },
   );
   // ⌘⌥B opens the right panel on the launcher.
@@ -704,6 +731,7 @@ test("SV-24, SV-23 and SV-41: every surface's contents, both localities, Landing
     ],
     land: "ready",
     surfaces: LOCAL_TREE,
+    wireName: WIRE_NAME,
   });
 
   // Agents: the seat with the machine that runs it and its live/idle word.
@@ -818,6 +846,9 @@ test("SV-24, SV-23 and SV-41: every surface's contents, both localities, Landing
     .toBe(1);
 
   // Pulse: the project's Pulse, this session first, and the way to the rest.
+  // The session carries the founder's signed 44229 here (SV-67), so the lead
+  // card's name is the wire name — not the session view's title, which is
+  // only the fallback when the digest has no name (SV-65, the remote page).
   const pulse = await openByLetter(page, "pulse", "U");
   await expect(pulse).toContainText("Pulse");
   await expect(
@@ -825,13 +856,19 @@ test("SV-24, SV-23 and SV-41: every surface's contents, both localities, Landing
   ).toBeVisible();
   const leadSession = pulse.getByTestId("pulse-lead-session");
   await expect(leadSession).toBeVisible({ timeout: 15_000 });
-  await expect(leadSession).toContainText(TITLE);
+  await expect(leadSession).toContainText(WIRE_NAME, { timeout: 15_000 });
+  await expect(leadSession).not.toContainText(TITLE);
+  // A person's name carries no "Auto-named" marker and no raw-ref disclosure.
+  await expect(
+    leadSession.getByTestId("pulse-session-title-origin"),
+  ).toHaveCount(0);
+  await expect(leadSession.getByTestId("pulse-session-ref")).toHaveCount(0);
   // The lead section holds the first session card the panel draws.
   const firstCard = pulse.getByTestId("pulse-session-card").first();
-  await expect(firstCard).toContainText(TITLE);
+  await expect(firstCard).toContainText(WIRE_NAME);
   await expect(
     leadSession.getByTestId("pulse-session-card").first(),
-  ).toContainText(TITLE);
+  ).toContainText(WIRE_NAME);
   expect(
     await firstCard.evaluate(
       (card) => card.closest('[data-testid="pulse-lead-session"]') !== null,
@@ -920,6 +957,18 @@ test("SV-24, SV-23 and SV-41: every surface's contents, both localities, Landing
   ).toContainText("not seen in main's last 2 commits");
   await expect(refused).not.toContainText("not landed");
   await shoot(remote, "SV24-landing-refused", refused);
+  // No 44229 on this page: the digest has no name, so the lead card reads
+  // the session view's title (SV-65's fallback), never the raw session ref
+  // and never "Unnamed session".
+  const remotePulse = await openByLetter(remote, "pulse", "U");
+  const remoteLead = remotePulse.getByTestId("pulse-lead-session");
+  await expect(remoteLead).toBeVisible({ timeout: 15_000 });
+  await expect(
+    remoteLead.getByTestId("pulse-session-card").first(),
+  ).toContainText(TITLE);
+  await expect(remoteLead).not.toContainText(WIRE_NAME);
+  await expect(remoteLead).not.toContainText("Unnamed session");
+  await expect(remoteLead.getByTestId("pulse-session-ref")).toHaveCount(0);
   await remote.close();
 
   // ---- A gate the provider signed as started (SV-41). ------------------

@@ -87,6 +87,7 @@ function SubagentRow({
 }) {
   const meta = formatCodingSessionSubagentMeta(row);
   const [notInView, setNotInView] = React.useState(false);
+  const spawn = settledCodingSessionSubagentRowSpawn(row);
   return (
     <article
       className="py-2"
@@ -156,12 +157,28 @@ function SubagentRow({
           <CodingSessionSubagentSpawnDetail
             renderChild={renderPanelChild}
             showHeader={false}
-            spawn={row.spawn}
+            spawn={spawn}
           />
         </div>
       ) : null}
     </article>
   );
+}
+
+/**
+ * The row's spawn as its turn's settlement reads it (SV-58). `row.spawn`
+ * keeps the transcript-only status, which is `running` for an open call in a
+ * turn the stream already shows as stopped; the expanded detail must say
+ * what the row's own dot, label and icon say.
+ */
+export function settledCodingSessionSubagentRowSpawn(
+  row: CodingSessionSubagentRow,
+): Omit<CodingSessionSubagentRow["spawn"], "status"> & {
+  status: CodingSessionSubagentRow["status"];
+} {
+  return row.spawn.status === row.status
+    ? row.spawn
+    : { ...row.spawn, status: row.status };
 }
 
 /** The panel's own compact rendering of a subagent's items. */

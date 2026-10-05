@@ -857,6 +857,10 @@ export function useCodingSessionUmbrellaSubagents(
  *
  * Both opens are proactive: once the person has made a panel choice for this
  * session (persisted with the panels), neither overrides it on a reload.
+ *
+ * Leaving Mission is the view's move, not the person's (SV-59): the close
+ * marks nothing, and re-entering Mission reopens exactly the Mission surfaces
+ * that were open when the lens left — none the person closed while in it.
  */
 export function useCodingSessionMissionSurfaceActivation(input: {
   bodyWidthPx: number;
@@ -865,9 +869,16 @@ export function useCodingSessionMissionSurfaceActivation(input: {
   mission: boolean;
   openProactive: (ids: readonly string[], activate: string) => void;
   openMissionSurfaces: () => void;
+  /** Mission's surfaces open now; read only while the lens is Mission. */
+  openMissionSurfaceIds: readonly string[];
+  reopenMissionSurfaces: (ids: readonly string[]) => void;
 }): void {
   const openedRef = React.useRef(false);
   const autoOpenedAgentsRef = React.useRef(false);
+  // What was open the last time the lens showed Mission; `null` until the
+  // lens has left Mission once in this mount.
+  const lastMissionOpenRef = React.useRef<readonly string[]>([]);
+  const closedByLeaveRef = React.useRef<readonly string[] | null>(null);
   React.useEffect(() => {
     if (
       !input.mission &&
@@ -889,13 +900,34 @@ export function useCodingSessionMissionSurfaceActivation(input: {
   React.useEffect(() => {
     if (!input.mission) {
       // However the lens left Mission, its surfaces go with it.
-      if (openedRef.current) input.closeMissionSurfaces();
+      if (openedRef.current) {
+        closedByLeaveRef.current = lastMissionOpenRef.current;
+        input.closeMissionSurfaces();
+      }
       openedRef.current = false;
       return;
     }
     if (!openedRef.current) {
       openedRef.current = true;
-      input.openMissionSurfaces();
+      const reopen = closedByLeaveRef.current;
+      closedByLeaveRef.current = null;
+      if (reopen === null) input.openMissionSurfaces();
+      else input.reopenMissionSurfaces(reopen);
     }
-  }, [input.closeMissionSurfaces, input.mission, input.openMissionSurfaces]);
+  }, [
+    input.closeMissionSurfaces,
+    input.mission,
+    input.openMissionSurfaces,
+    input.reopenMissionSurfaces,
+  ]);
+  // Declared after the effect above so a leave reads the previous Mission
+  // render's tabs, not the ones the leave just closed.
+  const openMissionKey = input.openMissionSurfaceIds.join(" ");
+  React.useEffect(() => {
+    if (input.mission) {
+      lastMissionOpenRef.current = openMissionKey
+        ? openMissionKey.split(" ")
+        : [];
+    }
+  }, [input.mission, openMissionKey]);
 }

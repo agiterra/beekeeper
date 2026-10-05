@@ -52,8 +52,20 @@ export type CodingSessionSurfacePanelActions = {
   toggle: (id: string) => void;
   /** Close one tab. */
   close: (id: string) => void;
-  /** Close several tabs at once (a lens change). */
+  /** Close several tabs at once, as the person's choice. */
   closeMany: (ids: readonly string[]) => void;
+  /**
+   * Close tabs because the lens that lists them was left (SV-59). The view's
+   * own move, not the person's: never marks `userActed`, so leaving a lens
+   * never reads as the person having closed its surfaces.
+   */
+  closeForLens: (ids: readonly string[]) => void;
+  /**
+   * Reopen tabs a lens change closed, on re-entering that lens (SV-59).
+   * Not refused by `userActed` — the person never closed them — and never
+   * marks it.
+   */
+  reopenForLens: (ids: readonly string[], activate: string) => void;
   activate: (id: string) => void;
   /** Hide the right panel; its tabs are remembered. */
   closeRight: () => void;
@@ -220,6 +232,12 @@ type CodingSessionSurfacePanelAction =
   | { type: "openProactive"; ids: readonly string[]; activate: string }
   | { type: "toggle"; id: string; drawer: boolean }
   | { type: "close"; ids: readonly string[]; visibleIds: ReadonlySet<string> }
+  | {
+      type: "closeForLens";
+      ids: readonly string[];
+      visibleIds: ReadonlySet<string>;
+    }
+  | { type: "reopenForLens"; ids: readonly string[]; activate: string }
   | { type: "activate"; id: string }
   | { type: "closeRight" }
   | { type: "toggleRight" }
@@ -230,8 +248,8 @@ type CodingSessionSurfacePanelAction =
 /**
  * Pure transitions for every action, for the hook and its tests.
  *
- * Every action but `openProactive` and `replace` is the person's own, so a
- * change it makes also records `userActed`.
+ * Every action but `openProactive`, the two lens moves and `replace` is the
+ * person's own, so a change it makes also records `userActed`.
  */
 export function reduceCodingSessionSurfacePanels(
   state: CodingSessionSurfacePanelState,
@@ -239,6 +257,17 @@ export function reduceCodingSessionSurfacePanels(
 ): CodingSessionSurfacePanelState {
   if (action.type === "openProactive") {
     if (state.userActed) return state;
+    let next = state;
+    for (const id of action.ids) next = openCodingSessionSurfaceTab(next, id);
+    return next.tabs.includes(action.activate)
+      ? { ...next, active: action.activate }
+      : next;
+  }
+  if (action.type === "closeForLens") {
+    return closeCodingSessionSurfaceTabs(state, action.ids, action.visibleIds);
+  }
+  if (action.type === "reopenForLens") {
+    if (action.ids.length === 0) return state;
     let next = state;
     for (const id of action.ids) next = openCodingSessionSurfaceTab(next, id);
     return next.tabs.includes(action.activate)
@@ -254,7 +283,10 @@ function reducePersonAction(
   state: CodingSessionSurfacePanelState,
   action: Exclude<
     CodingSessionSurfacePanelAction,
-    { type: "openProactive" } | { type: "replace" }
+    | { type: "openProactive" }
+    | { type: "closeForLens" }
+    | { type: "reopenForLens" }
+    | { type: "replace" }
   >,
 ): CodingSessionSurfacePanelState {
   switch (action.type) {
@@ -380,6 +412,14 @@ export function useCodingSessionSurfacePanels(input: {
         dispatch({ type: "close", ids: [id], visibleIds: visibleRef.current }),
       closeMany: (ids) =>
         dispatch({ type: "close", ids, visibleIds: visibleRef.current }),
+      closeForLens: (ids) =>
+        dispatch({
+          type: "closeForLens",
+          ids,
+          visibleIds: visibleRef.current,
+        }),
+      reopenForLens: (ids, activate) =>
+        dispatch({ type: "reopenForLens", ids, activate }),
       activate: (id) => dispatch({ type: "activate", id }),
       closeRight: () => dispatch({ type: "closeRight" }),
       toggleRight: () => dispatch({ type: "toggleRight" }),

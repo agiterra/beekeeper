@@ -293,8 +293,15 @@ export type CodingSessionSurfaceShell = {
   openMissionSurfaces: () => void;
   /** The same, on the view's own initiative: refused after a stored choice. */
   openMissionSurfacesProactively: () => void;
-  /** Closes Mission's three surfaces (leaving the lens). */
+  /**
+   * Closes Mission's three surfaces because the lens left Mission — the
+   * view's move, never recorded as the person's choice (SV-59).
+   */
   closeMissionSurfaces: () => void;
+  /** Mission's surfaces open in the panel state now, registry order. */
+  openMissionSurfaceIds: readonly string[];
+  /** Reopens Mission surfaces a lens change closed, on re-entry (SV-59). */
+  reopenMissionSurfaces: (ids: readonly string[]) => void;
   headerPanels: CodingSessionHeaderPanels;
   minimapSlotRef: React.RefObject<HTMLDivElement | null>;
 };
@@ -537,8 +544,17 @@ export function useCodingSessionSurfaceShell(input: {
     [actions],
   );
   const closeMissionSurfaces = React.useCallback(
-    () => actions.closeMany(MISSION_SURFACE_IDS),
+    () => actions.closeForLens(MISSION_SURFACE_IDS),
     [actions],
+  );
+  const reopenMissionSurfaces = React.useCallback(
+    (ids: readonly string[]) => actions.reopenForLens(ids, "mission-inspector"),
+    [actions],
+  );
+  const openTabs = panels.state.tabs;
+  const openMissionSurfaceIds = React.useMemo(
+    () => MISSION_SURFACE_IDS.filter((id) => openTabs.includes(id)),
+    [openTabs],
   );
   const drawerUnavailable = drawerSurfaces.find(
     (surface) => !surface.availability.available,
@@ -552,6 +568,8 @@ export function useCodingSessionSurfaceShell(input: {
     openMissionSurfaces,
     openMissionSurfacesProactively,
     closeMissionSurfaces,
+    openMissionSurfaceIds,
+    reopenMissionSurfaces,
     headerPanels: {
       rightOpen: panels.state.rightOpen,
       onToggleRight: actions.toggleRight,
