@@ -16,6 +16,8 @@ pub(crate) mod host_git;
 // The durable queue that owns *when* that happens, so no panel decides it.
 pub(crate) mod assignment_establishment;
 pub(crate) mod naming;
+// D9/SV-56: who titles a session here, and telling this computer's host.
+pub(crate) mod naming_mode;
 // The seat's skills live outside every checkout, so removing them is its own
 // job, beside the tree's.
 pub(crate) mod seat_bundle;

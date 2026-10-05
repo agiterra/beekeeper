@@ -24,6 +24,10 @@
 //!    title, and all of which would be a fact about this machine handed to a
 //!    third party.
 //!
+//! Whether any of this runs is the person's session-title mode (D9, SV-56,
+//! [`super::naming_mode`]): the generate commands refuse unless it is
+//! "Use my naming model".
+//!
 //! Two adapters cover every endpoint worth naming: Anthropic's Messages API,
 //! and any OpenAI-compatible `/chat/completions` — which is what Ollama, LM
 //! Studio, llama.cpp's server, and OpenAI itself all speak.
@@ -34,6 +38,10 @@ use buzz_core_pkg::coding_session_title::{clean_generated_name, NAMING_SYSTEM_PR
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+use super::naming_mode::{
+    effective_title_mode, fail_closed_in_dir, host_mode_mismatch, publish_title_mode,
+    require_naming_model, validate_mode_with_provider, CodingSessionTitleMode,
+};
 use crate::app_state::keyring_service;
 use crate::managed_agents::atomic_write_json_restricted;
 use crate::secret_store::SecretStore;
@@ -120,6 +128,10 @@ pub enum CodingSessionNamingProvider {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CodingSessionNamingRecord {
+    /// Who titles a new session on this computer. Absent on a record saved
+    /// before modes existed; [`effective_title_mode`] reads that case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    title_mode: Option<CodingSessionTitleMode>,
     #[serde(default)]
     provider: CodingSessionNamingProvider,
     /// Endpoint root for the OpenAI-compatible adapter, e.g.
@@ -134,15 +146,53 @@ struct CodingSessionNamingRecord {
     api_key: String,
 }
 
+impl CodingSessionNamingRecord {
+    /// The mode in force for this record.
+    fn title_mode(&self) -> CodingSessionTitleMode {
+        effective_title_mode(self.title_mode, self.provider)
+    }
+
+    /// Apply a save's mode and endpoint, and check the result can be stored.
+    ///
+    /// The mode is fixed *before* the endpoint changes, so a save that omits
+    /// it keeps the mode in force rather than letting a new endpoint flip a
+    /// legacy record into "my model". The endpoint is validated only when
+    /// it will be used.
+    fn apply_mode(
+        &mut self,
+        provider: CodingSessionNamingProvider,
+        title_mode: Option<CodingSessionTitleMode>,
+    ) -> Result<(), String> {
+        let mode = title_mode.unwrap_or_else(|| self.title_mode());
+        self.provider = provider;
+        self.title_mode = Some(mode);
+        validate_mode_with_provider(mode, provider)?;
+        if mode == CodingSessionTitleMode::MyModel
+            && provider == CodingSessionNamingProvider::OpenAiCompatible
+        {
+            validate_base_url(&self.base_url)?;
+        }
+        Ok(())
+    }
+}
+
 /// The configuration as the settings surface may see it.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodingSessionNamingSettings {
+    /// The mode in force, never absent: a legacy record is read through
+    /// [`effective_title_mode`].
+    pub title_mode: CodingSessionTitleMode,
     pub provider: CodingSessionNamingProvider,
     pub base_url: String,
     pub model: String,
     /// Whether a key is stored. Never the key.
     pub has_api_key: bool,
+    /// Set when this computer's agent host files do not say `title_mode`: a
+    /// save or a provisioning could not write them, or one cannot be read.
+    /// Read from the files on every settings read, so the card keeps saying
+    /// it until a later write lands — never only for the life of one save.
+    pub host_mode_mismatch: Option<String>,
 }
 
 fn naming_record_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -211,10 +261,12 @@ fn settings_from_in(
     secrets: Option<&SecretStore>,
 ) -> CodingSessionNamingSettings {
     CodingSessionNamingSettings {
+        title_mode: record.title_mode(),
         provider: record.provider,
         base_url: record.base_url.clone(),
         model: record.model.clone(),
         has_api_key: stored_api_key_in(record, secrets).is_some(),
+        host_mode_mismatch: None,
     }
 }
 
@@ -223,30 +275,45 @@ fn settings_from_in(
 pub async fn coding_session_naming_settings(
     app: AppHandle,
 ) -> Result<CodingSessionNamingSettings, String> {
-    Ok(settings_from(&load_record(&app)?))
+    let record = load_record(&app)?;
+    let mut settings = settings_from(&record);
+    settings.host_mode_mismatch = host_mode_mismatch(&app, settings.title_mode);
+    Ok(settings)
 }
 
 /// Store a new configuration.
 ///
 /// `api_key` is three-state on purpose: `None` leaves the stored key alone
 /// (so saving a model change does not require re-typing it), `Some("")`
-/// deletes it, and `Some(key)` replaces it.
+/// deletes it, and `Some(key)` replaces it. `title_mode` `None` leaves the
+/// mode in force unchanged.
+///
+/// After the record is stored, the mode is written to every agent-host
+/// identity on this computer. A failure there is not an `Err`: the record
+/// (and the key) already changed, so the result is the stored settings with
+/// `host_mode_mismatch` saying the host was not told. The card then shows
+/// what is stored and the warning together, and the settings read keeps
+/// showing it until a later write lands. An `Err` means the record was not
+/// saved — though a key change may already have reached the keychain, so
+/// the card re-reads after any error.
 #[tauri::command]
 pub async fn set_coding_session_naming_settings(
     app: AppHandle,
     provider: CodingSessionNamingProvider,
+    title_mode: Option<CodingSessionTitleMode>,
     base_url: Option<String>,
     model: Option<String>,
     api_key: Option<String>,
 ) -> Result<CodingSessionNamingSettings, String> {
     let mut record = load_record(&app)?;
-    record.provider = provider;
     if let Some(base_url) = base_url {
         record.base_url = base_url.trim().trim_end_matches('/').to_string();
     }
     if let Some(model) = model {
         record.model = model.trim().to_string();
     }
+    // Validated before the key is touched, so a refused save changes nothing.
+    record.apply_mode(provider, title_mode)?;
     if let Some(api_key) = api_key {
         let api_key = api_key.trim().to_string();
         match naming_secret_store() {
@@ -263,11 +330,54 @@ pub async fn set_coding_session_naming_settings(
             None => record.api_key = api_key,
         }
     }
-    if record.provider == CodingSessionNamingProvider::OpenAiCompatible {
-        validate_base_url(&record.base_url)?;
-    }
     save_record(&app, &record)?;
-    Ok(settings_from(&record))
+    let mut settings = settings_from(&record);
+    settings.host_mode_mismatch = match publish_title_mode(&app, settings.title_mode) {
+        Ok(()) => host_mode_mismatch(&app, settings.title_mode),
+        Err(error) => Some(error),
+    };
+    Ok(settings)
+}
+
+/// Write this computer's stored session-title mode to every agent-host
+/// identity here, at provisioning — before the host starts, so a host never
+/// runs on a mode the person did not choose — failing closed for the
+/// identity being provisioned.
+///
+/// Provisioning stays non-fatal, but a host whose file was never written
+/// reads the default and titles sessions — so on any failure the new
+/// identity's file is set to `off` unless it already holds the stored mode.
+/// The returned error says both what failed and what the host was left on;
+/// the Session titles card reads the same files and shows the mismatch.
+///
+/// # Errors
+/// The stored mode did not reach every identity; the sentence says which
+/// mode the new identity's host was left on.
+pub(crate) fn publish_stored_title_mode_at_provisioning(
+    app: &AppHandle,
+    provider_pubkey: &str,
+) -> Result<(), String> {
+    let (wanted, error) = match load_record(app) {
+        Ok(record) => {
+            let mode = record.title_mode();
+            match publish_title_mode(app, mode) {
+                Ok(()) => return Ok(()),
+                Err(error) => (Some(mode), error),
+            }
+        }
+        Err(error) => (None, error),
+    };
+    let fallback = crate::session_provider::provider_state_dir(app, provider_pubkey)
+        .and_then(|dir| fail_closed_in_dir(&dir, wanted));
+    Err(match fallback {
+        Ok(left_on) => format!(
+            "{error}; the new identity's host is on {} until the mode is saved again",
+            left_on.as_str()
+        ),
+        Err(fallback) => format!(
+            "{error}; and its host could not be set to off either ({fallback}), so it may title sessions"
+        ),
+    })
 }
 
 /// Reject a base URL that is not an `http(s)` origin.
@@ -521,6 +631,9 @@ pub async fn generate_coding_session_name(
         return Err("there is no first message to name".to_string());
     }
     let record = load_record(&app)?;
+    // Before anything is built: in any mode but "my model" the person was
+    // told nothing is sent, and that has to be true here, not in the webview.
+    require_naming_model(record.title_mode())?;
     name_with(
         record.provider,
         &record.base_url,
@@ -580,6 +693,7 @@ pub async fn generate_coding_session_goal(
         return Err("there is no first message to summarize".to_string());
     }
     let record = load_record(&app)?;
+    require_naming_model(record.title_mode())?;
     answer_with(
         NamingTask::Goal,
         record.provider,

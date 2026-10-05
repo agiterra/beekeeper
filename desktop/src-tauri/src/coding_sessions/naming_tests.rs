@@ -74,6 +74,7 @@ fn the_default_provider_sends_nothing_anywhere() {
 #[test]
 fn settings_never_carry_the_key_itself() {
     let record = CodingSessionNamingRecord {
+        title_mode: None,
         provider: CodingSessionNamingProvider::Anthropic,
         base_url: String::new(),
         model: "claude-opus-5".to_string(),
@@ -304,5 +305,123 @@ fn the_suggestion_is_cleaned_by_the_hosts_rule() {
     assert_eq!(
         NamingTask::Name.system_prompt(),
         buzz_core_pkg::coding_session_title::NAMING_SYSTEM_PROMPT
+    );
+}
+
+// D9 / SV-56: the session-title mode on the stored record.
+
+fn record_from(json: &str) -> CodingSessionNamingRecord {
+    serde_json::from_str(json).expect("record")
+}
+
+#[test]
+fn a_record_from_before_modes_keeps_an_existing_opt_in() {
+    // An endpoint was configured: that was a choice to use "my model".
+    let legacy = record_from(r#"{"provider":"anthropic","baseUrl":"","model":"m"}"#);
+    assert_eq!(legacy.title_mode, None);
+    assert_eq!(legacy.title_mode(), CodingSessionTitleMode::MyModel);
+    assert_eq!(
+        settings_from_in(&legacy, None).title_mode,
+        CodingSessionTitleMode::MyModel
+    );
+    // Nothing configured, or no file at all: the default.
+    let off = record_from(r#"{"provider":"off"}"#);
+    assert_eq!(off.title_mode(), CodingSessionTitleMode::Agent);
+    assert_eq!(
+        CodingSessionNamingRecord::default().title_mode(),
+        CodingSessionTitleMode::Agent
+    );
+}
+
+#[test]
+fn a_stored_mode_wins_over_the_migration_rule_and_round_trips() {
+    let record = record_from(r#"{"titleMode":"off","provider":"anthropic","model":"m"}"#);
+    assert_eq!(record.title_mode(), CodingSessionTitleMode::Off);
+    let json = serde_json::to_value(&record).expect("json");
+    assert_eq!(json["titleMode"], "off");
+    let settings = serde_json::to_value(settings_from_in(&record, None)).expect("json");
+    assert_eq!(settings["titleMode"], "off");
+    let agent = record_from(r#"{"titleMode":"my-model","provider":"anthropic"}"#);
+    assert_eq!(agent.title_mode(), CodingSessionTitleMode::MyModel);
+}
+
+#[test]
+fn a_save_without_a_mode_keeps_the_mode_in_force() {
+    // Legacy, nothing configured → agent. Choosing an endpoint without
+    // naming a mode must not flip it to "my model".
+    let mut record = CodingSessionNamingRecord::default();
+    record
+        .apply_mode(CodingSessionNamingProvider::Anthropic, None)
+        .expect("save");
+    assert_eq!(record.title_mode, Some(CodingSessionTitleMode::Agent));
+    assert_eq!(record.title_mode(), CodingSessionTitleMode::Agent);
+}
+
+#[test]
+fn my_model_needs_an_endpoint_and_a_valid_url() {
+    let mut record = CodingSessionNamingRecord::default();
+    assert!(record
+        .apply_mode(
+            CodingSessionNamingProvider::Off,
+            Some(CodingSessionTitleMode::MyModel)
+        )
+        .is_err());
+    assert!(record
+        .apply_mode(
+            CodingSessionNamingProvider::OpenAiCompatible,
+            Some(CodingSessionTitleMode::MyModel)
+        )
+        .is_err());
+    record.base_url = "http://127.0.0.1:11434/v1".into();
+    record
+        .apply_mode(
+            CodingSessionNamingProvider::OpenAiCompatible,
+            Some(CodingSessionTitleMode::MyModel),
+        )
+        .expect("valid");
+    assert_eq!(record.title_mode(), CodingSessionTitleMode::MyModel);
+}
+
+#[test]
+fn an_unused_endpoint_is_not_validated() {
+    // In agent or off mode the URL builds no request, so an empty one must
+    // not block saving the mode.
+    let mut record = CodingSessionNamingRecord::default();
+    record
+        .apply_mode(
+            CodingSessionNamingProvider::OpenAiCompatible,
+            Some(CodingSessionTitleMode::Off),
+        )
+        .expect("off saves");
+    assert_eq!(record.title_mode(), CodingSessionTitleMode::Off);
+}
+
+#[test]
+fn the_generate_commands_refuse_outside_my_model() {
+    let agent = record_from(r#"{"titleMode":"agent","provider":"anthropic","model":"m"}"#);
+    let refusal = require_naming_model(agent.title_mode()).expect_err("refused");
+    assert!(
+        refusal.contains("Generate with the session's agent"),
+        "{refusal}"
+    );
+    let off = record_from(r#"{"titleMode":"off","provider":"anthropic","model":"m"}"#);
+    assert!(require_naming_model(off.title_mode())
+        .expect_err("refused")
+        .contains("Off"));
+    let legacy = record_from(r#"{"provider":"anthropic","model":"m"}"#);
+    assert!(require_naming_model(legacy.title_mode()).is_ok());
+}
+
+#[test]
+fn settings_carry_the_host_mismatch_field_for_the_card() {
+    let record = record_from(r#"{"titleMode":"off","provider":"off"}"#);
+    let mut settings = settings_from_in(&record, None);
+    let json = serde_json::to_value(&settings).expect("json");
+    assert!(json["hostModeMismatch"].is_null(), "{json}");
+    settings.host_mode_mismatch = Some("this computer's agent host is not on off".to_string());
+    let json = serde_json::to_value(&settings).expect("json");
+    assert_eq!(
+        json["hostModeMismatch"],
+        "this computer's agent host is not on off"
     );
 }

@@ -56,6 +56,27 @@ inherits the host's environment, so the switch is set where the host runs
 | --- | --- | --- |
 | `BUZZ_CSP_AUTO_TITLE` | on | `off` stops this host generating titles; a runtime opts out alone with `"titleModel": null` in `BUZZ_CSP_RUNTIMES` |
 
+The person's own choice (SV-56) is a file in the provider's state directory,
+`session-title-mode.json` — `{"version":1,"mode":"agent"|"my-model"|"off"}` —
+written by the desktop's **Settings → Coding sessions → Session titles**. It
+is this computer's preference, so it never goes on the relay.
+
+- **No file** is `agent`: the provider titles the session as above. Nothing to
+  set up.
+- **`my-model`**: the person's naming model only suggests a name in the
+  desktop's Name field before Start; nothing titles the session after Start,
+  and the provider publishes no generated title.
+- **`off`**: nothing names it, and the provider publishes no generated title.
+- **Unreadable** (not JSON, another version, an unknown mode): treated as off,
+  and the provider logs a warning naming the file and the reason. A person who
+  asked for no title never gets one by accident.
+- **`BUZZ_CSP_AUTO_TITLE=off` wins** over every mode.
+
+The provider reads the file live — before a titling job starts and again just
+before it signs — so a change takes effect without a restart, and switching to
+Off while a title is being generated drops that title. The startup log line
+says which mode the file holds.
+
 ## On a Mac
 
 **Beekeeper asks; it does not help itself.** Something that starts at every

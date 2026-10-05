@@ -20,6 +20,13 @@
 //! when a founder 44229 (or any 44252) already exists, the same check runs
 //! again immediately before signing, and readers rank by tier regardless.
 //!
+//! This computer's session-title mode (SV-56, D9, `session_title_mode.rs`)
+//! is read live twice — before a job starts and again immediately before it
+//! signs — so only mode `agent` (or no file) publishes; `my-model` and `off`
+//! publish nothing, an unreadable file fails closed, and a person who flips
+//! to Off while the model is thinking gets no title. `BUZZ_CSP_AUTO_TITLE=off`
+//! wins over every mode.
+//!
 //! The work is a detached task. Nothing here delays the turn that triggered
 //! it, the one-shot runs on its own single-slot semaphore (never against
 //! `max_sessions`), and the spawn happens in a fresh directory under the
@@ -49,6 +56,7 @@ use crate::execution_scope::{
     project_scope_cache_dir, RuntimeProfile, ScopeInputs, ScopePurpose, DISCOVERY_DIR,
     EXECUTIONS_DIR,
 };
+use crate::session_title_mode::{self, SessionTitleMode, SESSION_TITLE_MODE_FILE};
 
 /// The host-wide switch. On unless set to a false spelling (`off`).
 pub const AUTO_TITLE_ENV: &str = "BUZZ_CSP_AUTO_TITLE";
@@ -268,11 +276,34 @@ pub(crate) enum TitleOutcome {
     /// Every attempt failed, or a check could not be made. Nothing is
     /// published; this is the one log line.
     Failed(String),
+    /// This computer's session-title mode, read just before signing, no
+    /// longer lets the provider title; the title is dropped unsigned.
+    ModeDeclined(SessionTitleMode),
+    /// The session-title mode file could not be read just before signing; the
+    /// title is dropped unsigned (fail closed).
+    ModeUnreadable(String),
+}
+
+/// Run one job to its end with no session-title mode file consulted (the
+/// SV-31 job alone). See [`run_title_job_in`].
+#[cfg(test)]
+pub(crate) async fn run_title_job<P: TitlePreflight, G: TitleGenerator>(
+    job: &TitleJob,
+    preflight: &P,
+    generator: &G,
+    policy: RetryPolicy,
+    slot: &Semaphore,
+    keys: &Keys,
+) -> TitleOutcome {
+    run_title_job_in(None, job, preflight, generator, policy, slot, keys).await
 }
 
 /// Run one job to its end. Never panics, never publishes on its own: a
-/// [`TitleOutcome::Ready`] event goes back to the provider loop.
-pub(crate) async fn run_title_job<P: TitlePreflight, G: TitleGenerator>(
+/// [`TitleOutcome::Ready`] event goes back to the provider loop. With
+/// `mode_dir`, the session-title mode file there is read again immediately
+/// before signing, and anything but mode `agent` drops the title.
+pub(crate) async fn run_title_job_in<P: TitlePreflight, G: TitleGenerator>(
+    mode_dir: Option<&Path>,
     job: &TitleJob,
     preflight: &P,
     generator: &G,
@@ -325,6 +356,15 @@ pub(crate) async fn run_title_job<P: TitlePreflight, G: TitleGenerator>(
         Ok(true) => return TitleOutcome::NamedMeanwhile,
         Ok(false) => {}
         Err(error) => return TitleOutcome::Failed(format!("publish-time recheck: {error}")),
+    }
+    // The person's mode is read again here, after the slow part: flipping to
+    // Off while the model was thinking means no title.
+    if let Some(dir) = mode_dir {
+        match session_title_mode::read(dir) {
+            Ok(mode) if mode.provider_generates() => {}
+            Ok(mode) => return TitleOutcome::ModeDeclined(mode),
+            Err(reason) => return TitleOutcome::ModeUnreadable(reason),
+        }
     }
     match sign_title(job, &generated, keys) {
         Ok(event) => TitleOutcome::Ready(Box::new(event)),
@@ -409,9 +449,31 @@ impl AutoTitler {
         self.tasks.len()
     }
 
-    /// Start one detached job and return at once.
+    /// Start one detached job with no mode file consulted, and return at
+    /// once. See [`Self::start_in`].
+    #[cfg(test)]
     pub(crate) fn start<P: TitlePreflight, G: TitleGenerator>(
         &mut self,
+        session_id: String,
+        job: TitleJob,
+        preflight: P,
+        generator: G,
+        keys: Keys,
+    ) {
+        self.start_in(None, session_id, job, preflight, generator, keys);
+    }
+
+    /// Mark an umbrella decided without a job (the mode declined it), so it
+    /// is considered — and logged — once per process.
+    pub(crate) fn decline(&mut self, session_ref: &str) {
+        self.started.insert(session_ref.to_owned());
+    }
+
+    /// Start one detached job and return at once. With `mode_dir`, the job
+    /// re-reads the session-title mode there before it signs.
+    pub(crate) fn start_in<P: TitlePreflight, G: TitleGenerator>(
+        &mut self,
+        mode_dir: Option<PathBuf>,
         session_id: String,
         job: TitleJob,
         preflight: P,
@@ -424,7 +486,16 @@ impl AutoTitler {
         let policy = self.policy;
         let ready = self.ready_tx.clone();
         self.tasks.spawn(async move {
-            let outcome = run_title_job(&job, &preflight, &generator, policy, &slot, &keys).await;
+            let outcome = run_title_job_in(
+                mode_dir.as_deref(),
+                &job,
+                &preflight,
+                &generator,
+                policy,
+                &slot,
+                &keys,
+            )
+            .await;
             log_outcome(&job, &outcome);
             if let TitleOutcome::Ready(event) = outcome {
                 let _ = ready.send(TitleReady {
@@ -469,6 +540,17 @@ fn log_outcome(job: &TitleJob, outcome: &TitleOutcome) {
             target: "csp::auto_title",
             %session_ref,
             "session title generation failed; nothing published: {error}"
+        ),
+        TitleOutcome::ModeDeclined(mode) => tracing::info!(
+            target: "csp::auto_title",
+            %session_ref,
+            "session-title mode is now {}; generated title dropped",
+            mode.as_str()
+        ),
+        TitleOutcome::ModeUnreadable(reason) => tracing::warn!(
+            target: "csp::auto_title",
+            %session_ref,
+            "{SESSION_TITLE_MODE_FILE} {reason}; generated title dropped"
         ),
     }
 }
@@ -693,6 +775,10 @@ impl crate::Provider {
         if !is_title_turn(&facts) {
             return;
         }
+        if !session_title_mode::admit_job(&self.config.state_dir, &session_ref) {
+            self.auto_title.decline(&session_ref);
+            return;
+        }
         let Some(founder) = record.founder_pubkey.clone() else {
             return;
         };
@@ -752,7 +838,8 @@ impl crate::Provider {
             create_event_id,
         };
         let keys = self.config.keys.clone();
-        self.auto_title.start(
+        self.auto_title.start_in(
+            Some(self.config.state_dir.clone()),
             session_id.to_owned(),
             job,
             RelayTitleLedger { rest },
@@ -794,6 +881,7 @@ impl crate::Provider {
             );
             return;
         }
+        session_title_mode::log_startup(&self.config.state_dir);
         for descriptor in &self.config.runtimes {
             match descriptor.effective_title_model() {
                 Some(model) => tracing::info!(
@@ -828,3 +916,7 @@ pub(crate) async fn next_ready(
 #[cfg(test)]
 #[path = "auto_title_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "auto_title_mode_tests.rs"]
+mod mode_tests;

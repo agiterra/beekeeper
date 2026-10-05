@@ -387,6 +387,17 @@ pub async fn provision_coding_session_provider(
     if let Err(error) = remateralize_provider_projects_view(&app, &relay_url) {
         eprintln!("buzz-desktop: failed to materialize coding-session projects view: {error}");
     }
+    // The session-title mode (D9) is this computer's choice; the host reads
+    // it from the state directory that only exists from here on, so write it
+    // before the host starts rather than leave it on the default. On failure
+    // the new identity fails closed (off), and Settings → Session titles
+    // reads the files and shows the mismatch until a save lands.
+    if let Err(error) = crate::coding_sessions::naming::publish_stored_title_mode_at_provisioning(
+        &app,
+        &record.provider_pubkey,
+    ) {
+        eprintln!("buzz-desktop: failed to write the session-title mode: {error}");
+    }
 
     // Hand the identity to the agent host: write `host.json` and the 0600 key
     // file, then ask it to look. This is the moment "after Beekeeper is

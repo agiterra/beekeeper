@@ -45,6 +45,7 @@ pub(crate) mod execution_scope_runtime;
 pub mod full_access;
 mod project_deletion;
 pub mod sandbox_seed_host;
+pub mod session_title_mode;
 // The durable host-owned queue that puts a seat on its exact input (lane 185,
 // moved here by lane 202 so the party holding the turn gate owns the order).
 mod artifact_upload;
