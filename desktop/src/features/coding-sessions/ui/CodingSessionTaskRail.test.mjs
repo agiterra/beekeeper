@@ -198,91 +198,10 @@ test("the collapsed line states the plan honestly in every case", () => {
   );
 });
 
-test("header offers Plan only while the plan is not already on screen", () => {
-  const openMarkup = renderToStaticMarkup(
-    React.createElement(CodingSessionHeader, {
-      channelName: "Hive Sessions",
-      generationLabel: "Generation 2",
-      onBack() {},
-      onToggleTaskRail() {},
-      status: { kind: "working", label: "Working" },
-      taskCount: 3,
-      taskRailOpen: true,
-    }),
-  );
-  const closedMarkup = renderToStaticMarkup(
-    React.createElement(CodingSessionHeader, {
-      channelName: "Hive Sessions",
-      generationLabel: "Generation 2",
-      onBack() {},
-      onToggleTaskRail() {},
-      status: { kind: "idle", label: "Idle" },
-      taskCount: 3,
-      taskRailOpen: false,
-    }),
-  );
-
-  // The docked rail (or the sheet) is showing: a second Plan control would be
-  // the plan on screen twice.
-  assert.doesNotMatch(openMarkup, /coding-session-task-rail-toggle/);
-  assert.match(
-    closedMarkup,
-    new RegExp(`aria-controls="${CODING_SESSION_TASK_RAIL_ID}"`),
-  );
-  assert.match(closedMarkup, /aria-expanded="false"/);
-  assert.match(closedMarkup, /aria-label="Show session plan"/);
-  assert.match(closedMarkup, />Plan</);
-  assert.match(closedMarkup, /3 tasks/);
-});
-
-test("header keeps signed generation provenance subordinate to session orientation", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(CodingSessionHeader, {
-      channelName: "Hive Sessions",
-      generationLabel: "caf82e4c-generation-2",
-      model: "claude-sonnet-4-6",
-      onBack() {},
-      projectName: "amas-redux",
-      repoName: "buzz",
-      runtimeLabel: "Claude Code",
-      sessionTitle: "Advance Buzz live sessions",
-      status: { kind: "working", label: "Working" },
-    }),
-  );
-
-  assert.match(markup, />Advance Buzz live sessions</);
-  assert.match(
-    markup,
-    />amas-redux · buzz · Claude Code · claude-sonnet-4-6 · caf82e4c-generation-2</,
-  );
-  assert.match(markup, /aria-label="Show session details"/);
-  assert.doesNotMatch(markup, /<h1[^>]*>caf82e4c-generation-2<\/h1>/);
-});
-
-test("compact header keeps icon-only controls keyboard labeled", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(CodingSessionHeader, {
-      channelName: "Hive Sessions",
-      compact: true,
-      generationLabel: "Generation 2",
-      onBack() {},
-      onPopout() {},
-      onToggleTaskRail() {},
-      sessionTitle: "Responsive session",
-      status: { kind: "idle", label: "Idle" },
-      taskRailOpen: false,
-    }),
-  );
-
-  assert.match(markup, /data-compact="true"/);
-  assert.match(markup, /aria-label="Session status: Idle"/);
-  assert.match(markup, /aria-label="Show session plan"/);
-  assert.match(markup, /aria-label="Show session details"/);
-  // Pop out is a `⋯` item now; the menu's trigger is labelled.
-  assert.match(markup, /aria-label="Session actions"/);
-  assert.doesNotMatch(markup, />Pop out</);
-});
-
+// SV-20 (lane B1) took the Plan toggle and the metadata line out of the
+// header: Plan is the P surface, the metadata is in Details. The three tests
+// that pinned the old header here were removed with it; the header's own
+// tests cover what replaced them.
 test("header omits the Plan control in non-ready workspace states", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
@@ -294,4 +213,22 @@ test("header omits the Plan control in non-ready workspace states", () => {
   );
 
   assert.doesNotMatch(markup, /coding-session-task-rail-toggle/);
+});
+
+test("the Plan surface variant fills the host with no landmark of its own (SV-24)", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionTaskRail, {
+      model: activeModel,
+      variant: "surface",
+    }),
+  );
+  assert.match(markup, /data-variant="surface"/);
+  assert.match(markup, /data-surface-subheader/);
+  assert.match(markup, /Build the Buzz rail/);
+  // The host owns the panel landmark; the dock keeps the rail's id.
+  assert.doesNotMatch(markup, /<aside/);
+  assert.doesNotMatch(
+    markup,
+    new RegExp(`\\sid="${CODING_SESSION_TASK_RAIL_ID}"`),
+  );
 });

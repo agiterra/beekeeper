@@ -11,6 +11,7 @@ import {
 import type { CodingSessionObservationView } from "@/features/coding-sessions/lib/codingSessionObservationView";
 import { cn } from "@/shared/lib/cn";
 import { useElementWidth } from "@/shared/hooks/use-mobile";
+import type { CodingSessionObservationNotLive } from "@/features/coding-sessions/lib/codingSessionObservationLiveness";
 import { CodingSessionObservationSections } from "./CodingSessionObservationSections";
 
 export type CodingSessionMissionAuditProps = {
@@ -34,6 +35,11 @@ export type CodingSessionMissionAuditProps = {
   observationsLoading?: boolean;
   /** Why the observation read failed, or null. */
   observationsError?: string | null;
+  /**
+   * Set while the observation read is not kept live (its subscription is not
+   * up): an open gate run then says "not live — read at HH:MM".
+   */
+  observationsNotLive?: CodingSessionObservationNotLive | null;
 };
 
 /**
@@ -55,6 +61,7 @@ export function CodingSessionMissionAudit({
   observations,
   observationsError = null,
   observationsLoading = false,
+  observationsNotLive = null,
   onRefresh,
   seats,
   variant,
@@ -108,6 +115,7 @@ export function CodingSessionMissionAudit({
           <CodingSessionObservationSections
             errorMessage={observationsError}
             loading={observationsLoading}
+            notLive={observationsNotLive}
             view={observations}
           />
         </AuditSection>

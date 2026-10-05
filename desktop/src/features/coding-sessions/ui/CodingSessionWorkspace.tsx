@@ -1,5 +1,4 @@
 import * as React from "react";
-import { ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -33,7 +32,9 @@ import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSes
 import { useCodingSessionGoals } from "@/features/coding-sessions/useCodingSessionGoals";
 import { selectCodingSessionUmbrellaGoal } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import { deriveCodingSessionGoalReader } from "@/features/coding-sessions/lib/codingSessionGoal";
+import type { CodingSessionGoal } from "@/features/coding-sessions/lib/codingSessionGoal";
 import { codingSessionNameKey } from "@/features/coding-sessions/lib/codingSessionName";
+import type { CodingSessionName } from "@/features/coding-sessions/lib/codingSessionName";
 import { useCodingSessionNames } from "@/features/coding-sessions/useCodingSessionNames";
 import { codingSessionClosureKey } from "@/features/coding-sessions/lib/codingSessionClosure";
 import { useCodingSessionClosures } from "@/features/coding-sessions/useCodingSessionClosures";
@@ -44,12 +45,11 @@ import { useCodingSessionProject } from "@/features/projects-container/hooks";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useFeatureEnabled } from "@/shared/features/useFeatureEnabled";
 import { useAnchoredScroll } from "@/features/messages/ui/useAnchoredScroll";
-import { Button } from "@/shared/ui/button";
-import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { AddCodingSessionProviderDialog } from "./AddCodingSessionProviderDialog";
 import { CodingSessionComposer } from "./CodingSessionComposer";
 import { CodingSessionPeoplePopover } from "./CodingSessionPeoplePopover";
 import { CodingSessionHeader } from "./CodingSessionHeader";
+import { codingSessionHeaderRepoName } from "./CodingSessionHeaderDetails";
 import { useCodingSessionFullAccess } from "./useCodingSessionFullAccess";
 import { CodingSessionWorkspaceState } from "./CodingSessionWorkspaceState";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
@@ -63,6 +63,8 @@ import {
   useNarrowCodingSessionWorkspace,
 } from "../hooks/useCodingSessionWorkspaceLayout";
 import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
+import { resolveCodingSessionWorkspaceSettlement } from "../lib/codingSessionTranscriptModelSettlement";
+import { CodingSessionWorkspaceJumpPill } from "./CodingSessionWorkspaceJumpPill";
 import {
   CODING_SESSION_COMPOSER_DOCK_CLASS,
   CODING_SESSION_REFLOW_CLASS,
@@ -73,10 +75,16 @@ import { CodingSessionWorkspaceGoalRow } from "./CodingSessionWorkspaceGoalRow";
 import { useCodingSessionWorkspaceSessionFacts } from "./CodingSessionWorkspaceSessionFacts";
 import { CodingSessionWorkspaceSandboxFooter } from "./CodingSessionWorkspaceSandboxFooter";
 import { CodingSessionDetailsContinuityProvider } from "./CodingSessionHeaderDetailsContinuity";
-import { useCodingSessionWorkspaceDerivations } from "./CodingSessionWorkspaceDerivations";
+import {
+  useCodingSessionSettledSubagents,
+  useCodingSessionWorkspaceDerivations,
+} from "./CodingSessionWorkspaceDerivations";
 import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { useCodingSessionExport } from "./useCodingSessionExport";
-import { CodingSessionTaskRail } from "./CodingSessionTaskRail";
+import {
+  CodingSessionTaskRail,
+  CodingSessionTaskRailSheet,
+} from "./CodingSessionTaskRail";
 import { useCodingSessionTaskDock } from "./useCodingSessionTaskDock";
 import { buildCodingSessionPromptHistory } from "@/features/coding-sessions/lib/codingSessionPromptHistory";
 import {
@@ -87,14 +95,15 @@ import {
   CodingSessionPendingTurnList,
   useVisibleCodingSessionPendingTurns,
 } from "./CodingSessionPendingTurns";
-import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
-import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
-import { CodingSessionSubagentsSurface } from "./CodingSessionSubagentsPanel";
+import { CodingSessionSurfaceHost } from "./CodingSessionSurfaceHost";
+import { CodingSessionSurfaceDrawerHost } from "./CodingSessionSurfaceDrawerHost";
 import {
-  CodingSessionSurfaceHost,
-  useCodingSessionSurfaceHostState,
-  type CodingSessionSurfaceDescriptor,
-} from "./CodingSessionSurfaceHost";
+  CodingSessionMinimapSlot,
+  CodingSessionSurfaceCtxProvider,
+} from "./surfaces/codingSessionSurfaceContext";
+import { isTranscriptHiddenByPanel } from "./surfaces/useCodingSessionSurfacePanels";
+import { useCodingSessionSurfaceShell } from "./surfaces/useCodingSessionSurfacePanelsShell";
+import { useCodingSessionSurfaceTeamRead } from "./surfaces/useCodingSessionSurfaceTeamRead";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { UmbrellaCodingSessionWorkspace } from "./CodingSessionUmbrellaWorkspace";
 import { useCodingSessionClosureDialog } from "../hooks/useCodingSessionClosureDialog";
@@ -354,6 +363,7 @@ export function CodingSessionWorkspace({
       ) : (
         <ReadyCodingSessionWorkspace
           channelId={channelId}
+          communityScope={communityScope}
           resolveReachability={resolveHandoverReachability}
           channelName={channel?.name ?? null}
           generationId={generationId}
@@ -417,6 +427,7 @@ export function CodingSessionWorkspace({
 function ReadyCodingSessionWorkspace({
   acceptedOperators,
   channelId,
+  communityScope,
   resolveReachability: sharedResolveReachability,
   channelName,
   generationId,
@@ -440,17 +451,14 @@ function ReadyCodingSessionWorkspace({
 }: {
   acceptedOperators: ReadonlySet<string> | null;
   channelId: string;
+  communityScope: string;
   resolveReachability?: CodingSessionReachabilityResolver;
   channelName: string | null;
   generationId: string;
   founderPubkey: string | null;
   genesisRef: string | null;
-  goal:
-    | import("@/features/coding-sessions/lib/codingSessionGoal").CodingSessionGoal
-    | null;
-  sessionName:
-    | import("@/features/coding-sessions/lib/codingSessionName").CodingSessionName
-    | null;
+  goal: CodingSessionGoal | null;
+  sessionName: CodingSessionName | null;
   sessionClosed: boolean;
   currentUserPubkey: string | null;
   sessionRef: string | null;
@@ -583,72 +591,26 @@ function ReadyCodingSessionWorkspace({
     session.statusAt,
     reachability,
   );
-  const changedFiles = observedChanges.files;
-  // Surfaces offered by current data: Observed changes always applies to a
-  // transcript; Agents only when there is someone to list — a participant per
-  // signed execution, or a subagent a seat spawned — never an empty tab.
-  const surfaces = React.useMemo<CodingSessionSurfaceDescriptor[]>(
-    () => [
-      ...(umbrella.executions.length > 0 || subagents.rows.length > 0
-        ? [
-            {
-              id: "agents",
-              label: "Agents",
-              count: umbrella.executions.length + subagents.rows.length,
-              content:
-                umbrella.executions.length > 0 ? (
-                  <CodingSessionExecutionRail
-                    resolveReachability={resolveReachability}
-                    subagents={subagents}
-                    umbrella={umbrella}
-                  />
-                ) : (
-                  <CodingSessionSubagentsSurface panel={subagents} />
-                ),
-            },
-          ]
-        : []),
-      {
-        id: "changes",
-        label: "Observed changes",
-        count: changedFiles.length,
-        content: (
-          <CodingSessionChangesRail
-            files={changedFiles}
-            unreportedEditCount={observedChanges.unreportedEditCount}
-          />
-        ),
-      },
-    ],
-    [
-      changedFiles,
-      observedChanges.unreportedEditCount,
-      resolveReachability,
-      subagents,
-      umbrella,
-    ],
-  );
-  const surfaceIds = React.useMemo(
-    () => surfaces.map((surfaceEntry) => surfaceEntry.id),
-    [surfaces],
-  );
-  const surfaceHost = useCodingSessionSurfaceHostState(surfaceIds);
-  // SV-06: a subagent row opens the Agents surface where the workspace offers
-  // one; without it the row expands inline.
-  const selectSurface = surfaceHost.select;
-  const hasAgentsSurface = surfaceIds.includes("agents");
-  const openAgentsSurface = React.useMemo(
-    () => (hasAgentsSurface ? () => selectSurface("agents") : undefined),
-    [hasAgentsSurface, selectSurface],
-  );
   const surfaceHostId = React.useId();
   const isWorking = status.kind === "working";
-  // One derivation of the transcript model, shared with the transcript, so
-  // Details and the sandbox chip read its `sessionFacts` rather than scanning
-  // the whole transcript again on every streamed item.
+  // SV-42/43: the transcript settles through Mission's map, so one signed
+  // status reads the same in both views; the header keeps its own labels.
+  const settlement = resolveCodingSessionWorkspaceSettlement({
+    wireStatus: session.status,
+    workspaceStatus: status,
+  });
+  // One model, shared with the transcript: Details and the chip read its
+  // `sessionFacts` without a second pass per streamed item.
   const transcriptModel = useStableCodingSessionTranscriptModel(
     transcript,
-    isWorking,
+    settlement.isWorking,
+  );
+  // The Agents surface reads each spawn through the turn settlement its
+  // stream row reads it through, so the two never disagree side by side.
+  const settledSubagents = useCodingSessionSettledSubagents(
+    subagents,
+    transcriptModel.blocks,
+    settlement.restingStatus,
   );
   const sessionFacts = useCodingSessionWorkspaceSessionFacts(
     transcriptModel.sessionFacts,
@@ -666,16 +628,51 @@ function ReadyCodingSessionWorkspace({
     taskDock.open && !isNarrow && "pb-[34rem]",
   );
   const reflow = useCodingSessionReflow(workspaceRef, dockReserve.ref);
-  const narrativeExpanded = surfaceHost.activeTab === null;
+  // Use the sidebar's project resolution for the breadcrumb too.
+  const { goProject } = useAppNavigation();
+  const owningProject = useCodingSessionProject(channelId, session.projectRef);
+  const teamRead = useCodingSessionSurfaceTeamRead({
+    channelId,
+    currentUserPubkey,
+    resolveActorName,
+    umbrella,
+  });
+  const shell = useCodingSessionSurfaceShell({
+    layout: "single",
+    channelId,
+    communityScope,
+    umbrella,
+    focusedExecution:
+      umbrella.executions.find(
+        (execution) =>
+          execution.activeGeneration.generationId === session.generationId,
+      ) ?? null,
+    lens: "conversation",
+    transcript,
+    transcriptModel,
+    umbrellaTimeline: null,
+    observedChanges,
+    subagents: settledSubagents,
+    taskModel,
+    currentUserPubkey,
+    resolveActorName,
+    resolveReachability,
+    sessionClosed,
+    observations: teamRead.observations,
+    openRulings: teamRead.openRulings,
+    decisions: teamRead.decisions,
+    decisionRequests: teamRead.decisionRequests,
+    teamTransactions: teamRead.teamTransactions,
+    mission: null,
+    onOpenPeople,
+  });
+  const { state: panelState } = shell.panels;
+  const narrativeExpanded = !panelState.rightOpen;
   // SV-14: the pill rides the measured dock, so it never lands on the composer.
   const jumpPill = codingSessionJumpPillPosition({
     dockHeight: dockReserve.dockHeight,
     hasDock: Boolean(session.commandTarget) && !sessionClosed,
   });
-
-  // Use the sidebar's project resolution for the breadcrumb too.
-  const { goProject } = useAppNavigation();
-  const owningProject = useCodingSessionProject(channelId, session.projectRef);
 
   const exportEnabled = useFeatureEnabled("coding-session-export");
   const exportSession = React.useMemo(
@@ -723,6 +720,8 @@ function ReadyCodingSessionWorkspace({
               ) : undefined
             }
             generationLabel={session.label}
+            goalText={goal?.content ?? null}
+            repoName={codingSessionHeaderRepoName(session.repoRef)}
             seat={seatLabel ? { label: seatLabel } : null}
             fullAccess={fullAccess}
             isExporting={isExporting}
@@ -743,18 +742,6 @@ function ReadyCodingSessionWorkspace({
             onPopout={surface === "main" ? handlePopout : undefined}
             onRename={canRename ? () => setRenameOpen(true) : undefined}
             onReopenSession={onReopenSession}
-            onToggleTaskRail={
-              taskDock.activeModel
-                ? () => {
-                    surfaceHost.close();
-                    taskDock.toggle();
-                  }
-                : undefined
-            }
-            onToggleSurface={(id) => {
-              taskDock.close();
-              surfaceHost.toggle(id);
-            }}
             projectName={owningProject?.name ?? null}
             providerAuthorityPubkey={session.providerAuthorityPubkey}
             runtimeLabel={runtimeLabel}
@@ -762,15 +749,7 @@ function ReadyCodingSessionWorkspace({
             sessionClosed={sessionClosed}
             status={status}
             surfaceHostId={surfaceHostId}
-            surfaceTabs={surfaces.map((surfaceEntry) => ({
-              id: surfaceEntry.id,
-              label: surfaceEntry.label,
-              icon: surfaceEntry.id === "agents" ? "agents" : "changes",
-              count: surfaceEntry.count ?? 0,
-              active: surfaceHost.activeTab === surfaceEntry.id,
-            }))}
-            taskCount={taskDock.activeModel?.tasks.length ?? 0}
-            taskRailOpen={taskDock.open}
+            surfaceShell={shell}
             workspaceReuse={{
               channelId,
               sessionRef,
@@ -788,200 +767,191 @@ function ReadyCodingSessionWorkspace({
           sessionRef={sessionRef}
         />
       ) : null}
-      <div className="flex min-h-0 flex-1" data-testid="coding-session-body">
-        <section
-          aria-label="Session transcript"
-          data-testid="coding-session-transcript-pane"
-          className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
-        >
-          <div
-            className={cn(gutter, "pb-2")}
-            data-testid="coding-session-goal-slot"
+      <CodingSessionSurfaceCtxProvider value={shell.ctx}>
+        <div className="flex min-h-0 flex-1" data-testid="coding-session-body">
+          <section
+            aria-label="Session transcript"
+            data-testid="coding-session-transcript-pane"
+            className={cn(
+              "relative flex min-w-0 flex-1 flex-col overflow-hidden",
+              isTranscriptHiddenByPanel(panelState, isNarrow) && "hidden",
+            )}
           >
-            {/* One quiet row: the goal (withheld when it only restates the
+            {/* SV-21: the transcript and its composer overlay sit above the
+              drawer, so the composer's bottom-0 anchors over it. */}
+            <div
+              className="relative flex min-h-0 flex-1 flex-col"
+              data-testid="coding-session-transcript-region"
+            >
+              <CodingSessionMinimapSlot slotRef={shell.minimapSlotRef} />
+              <div
+                className={cn(gutter, "pb-2")}
+                data-testid="coding-session-goal-slot"
+              >
+                {/* One quiet row: the goal (withheld when it only restates the
                 title) and the founder. The founder is also in the header's
                 provenance popover, one click away, when this row is empty. */}
-            <CodingSessionWorkspaceGoalRow
-              channelId={channelId}
-              currentUserPubkey={currentUserPubkey}
-              founderPubkey={founderPubkey}
-              genesisRef={genesisRef}
-              goal={goal}
-              sessionRef={sessionRef}
-              title={authoritativeTitle}
-              workspaceExpanded={narrativeExpanded}
-            />
-          </div>
-          <div
-            className={cn(
-              "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
-              gutter,
-            )}
-            data-testid="coding-session-transcript-scroll"
-            onScroll={onScroll}
-            ref={scrollRef}
-            style={reflow.active ? { height: reflow.height } : undefined}
-          >
-            <CodingSessionColumn
-              className={cn(
-                "min-h-full pt-7",
-                reflow.active ? "pb-4" : dockReserve.className,
-              )}
-              expanded={narrativeExpanded}
-              style={reflow.active ? undefined : dockReserve.style}
-            >
-              <div className="flex min-w-0 flex-col gap-5" ref={contentRef}>
-                {/* "No conversation yet" is false the moment a turn is in
-                    flight, so the empty state stands down for the pending row
-                    rather than sitting above it. */}
-                {transcript.length > 0 || pendingTurns.turns.length === 0 ? (
-                  <CodingSessionTranscript
-                    currentUserPubkey={currentUserPubkey}
-                    generationId={generationId}
-                    isWorking={isWorking}
-                    items={transcript}
-                    model={transcriptModel}
-                    onOpenAgentsSurface={openAgentsSurface}
-                    operatorProfiles={operatorProfiles}
-                    scrollRef={scrollRef}
-                  />
-                ) : null}
-                <CodingSessionPendingTurnList
-                  now={pendingTurns.now}
-                  turns={pendingTurns.turns}
+                <CodingSessionWorkspaceGoalRow
+                  channelId={channelId}
+                  currentUserPubkey={currentUserPubkey}
+                  founderPubkey={founderPubkey}
+                  genesisRef={genesisRef}
+                  goal={goal}
+                  sessionRef={sessionRef}
+                  title={authoritativeTitle}
+                  workspaceExpanded={narrativeExpanded}
                 />
               </div>
-            </CodingSessionColumn>
-          </div>
-          {!isAtBottom ? (
-            <div
-              className={cn(
-                reflow.active
-                  ? "flex justify-center py-2"
-                  : "pointer-events-none absolute inset-x-0 z-30 flex justify-center",
-                !reflow.active && jumpPill.className,
-              )}
-              data-testid="coding-session-scroll-to-latest-slot"
-              style={reflow.active ? undefined : jumpPill.style}
-            >
-              <Button
-                className="pointer-events-auto rounded-full bg-background/90 shadow-md backdrop-blur-xl"
-                data-testid="coding-session-scroll-to-latest"
-                onClick={() => scrollToBottom("smooth")}
-                size="sm"
-                type="button"
-                variant="outline"
+              <div
+                className={cn(
+                  "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
+                  gutter,
+                )}
+                data-testid="coding-session-transcript-scroll"
+                onScroll={onScroll}
+                ref={scrollRef}
+                style={reflow.active ? { height: reflow.height } : undefined}
               >
-                <ArrowDown />
-                {newMessageCount > 0
-                  ? `${newMessageCount} new`
-                  : "Scroll to latest"}
-              </Button>
-            </div>
-          ) : null}
-          {session.commandTarget && !sessionClosed ? (
-            <div
-              className={cn(CODING_SESSION_COMPOSER_DOCK_CLASS, gutter)}
-              data-testid="coding-session-composer-dock"
-              ref={dockReserve.ref}
-            >
-              <CodingSessionColumn
-                className="pointer-events-auto"
-                expanded={narrativeExpanded}
-              >
-                {taskDock.open && !isNarrow ? (
-                  <div className="-mb-6">
-                    <CodingSessionTaskRail
-                      model={taskDock.activeModel}
-                      onClose={taskDock.close}
-                      variant="dock"
+                <CodingSessionColumn
+                  className={cn(
+                    "min-h-full pt-7",
+                    reflow.active ? "pb-4" : dockReserve.className,
+                  )}
+                  expanded={narrativeExpanded}
+                  style={reflow.active ? undefined : dockReserve.style}
+                >
+                  <div className="flex min-w-0 flex-col gap-5" ref={contentRef}>
+                    {/* "No conversation yet" is false the moment a turn is in
+                    flight, so the empty state stands down for the pending row
+                    rather than sitting above it. */}
+                    {transcript.length > 0 ||
+                    pendingTurns.turns.length === 0 ? (
+                      <CodingSessionTranscript
+                        currentUserPubkey={currentUserPubkey}
+                        generationId={generationId}
+                        isWorking={settlement.isWorking}
+                        items={transcript}
+                        model={transcriptModel}
+                        onOpenAgentsSurface={shell.openAgentsSurface}
+                        operatorProfiles={operatorProfiles}
+                        restingStatus={settlement.restingStatus}
+                        scrollRef={scrollRef}
+                      />
+                    ) : null}
+                    <CodingSessionPendingTurnList
+                      now={pendingTurns.now}
+                      turns={pendingTurns.turns}
                     />
                   </div>
-                ) : null}
-                <div className="relative z-10">
-                  <CodingSessionComposer
-                    authorityReason={composerAuthority.reason}
-                    authorityUnresolved={composerAuthority.isUnresolved}
-                    canInterrupt={
-                      codingSessionTargetSupportsInterrupt(
-                        session.commandTarget,
-                      ) && session.capabilities?.threadTurnInterrupt !== false
-                    }
-                    canControl={composerAuthority.canPromptExecutions}
-                    canStopExecution={canStopExecution}
-                    canSteer={session.capabilities?.threadSteer === true}
-                    canAttachImages={session.capabilities?.promptImage === true}
-                    runtimeLabel={runtimeLabel}
-                    channelId={channelId}
-                    controlContext={{
-                      capabilities: session.capabilities,
-                      model: session.model,
-                      providerLabel,
-                      runtimeLabel,
-                      sandbox: sessionFacts.sandbox,
-                      status,
-                      turnBudget: session.turnBudget,
-                    }}
-                    contextWindow={contextWindow}
-                    currentUserPubkey={currentUserPubkey}
-                    immersive
-                    channelAccess={channelAccess}
-                    onAddProvider={onAddProvider}
-                    isWorking={isWorking}
-                    isUngovernedSession={composerAuthority.isUngovernedSession}
-                    lifecycleStatus={session.status}
-                    layout={isNarrow ? "stacked" : "inline"}
-                    promptHistory={promptHistory}
-                    providerAuthorityPubkey={session.providerAuthorityPubkey}
-                    seatActorPubkey={session.agentRef}
-                    seatRole={session.role}
-                    projectRef={session.projectRef}
-                    sessionLabel={session.title}
-                    target={session.commandTarget}
-                    variant="floating"
-                  />
+                </CodingSessionColumn>
+              </div>
+              {!isAtBottom ? (
+                <CodingSessionWorkspaceJumpPill
+                  inFlow={reflow.active}
+                  newCount={newMessageCount}
+                  onJump={() => scrollToBottom("smooth")}
+                  position={jumpPill}
+                />
+              ) : null}
+              {session.commandTarget && !sessionClosed ? (
+                <div
+                  className={cn(CODING_SESSION_COMPOSER_DOCK_CLASS, gutter)}
+                  data-testid="coding-session-composer-dock"
+                  ref={dockReserve.ref}
+                >
+                  <CodingSessionColumn
+                    className="pointer-events-auto"
+                    expanded={narrativeExpanded}
+                  >
+                    {taskDock.open && !isNarrow ? (
+                      <div className="-mb-6">
+                        <CodingSessionTaskRail
+                          model={taskDock.activeModel}
+                          onClose={taskDock.close}
+                          variant="dock"
+                        />
+                      </div>
+                    ) : null}
+                    <div className="relative z-10">
+                      <CodingSessionComposer
+                        authorityReason={composerAuthority.reason}
+                        authorityUnresolved={composerAuthority.isUnresolved}
+                        canInterrupt={
+                          codingSessionTargetSupportsInterrupt(
+                            session.commandTarget,
+                          ) &&
+                          session.capabilities?.threadTurnInterrupt !== false
+                        }
+                        canControl={composerAuthority.canPromptExecutions}
+                        canStopExecution={canStopExecution}
+                        canSteer={session.capabilities?.threadSteer === true}
+                        canAttachImages={
+                          session.capabilities?.promptImage === true
+                        }
+                        runtimeLabel={runtimeLabel}
+                        channelId={channelId}
+                        controlContext={{
+                          capabilities: session.capabilities,
+                          model: session.model,
+                          providerLabel,
+                          runtimeLabel,
+                          sandbox: sessionFacts.sandbox,
+                          status,
+                          turnBudget: session.turnBudget,
+                        }}
+                        contextWindow={contextWindow}
+                        currentUserPubkey={currentUserPubkey}
+                        immersive
+                        channelAccess={channelAccess}
+                        onAddProvider={onAddProvider}
+                        isWorking={isWorking}
+                        isUngovernedSession={
+                          composerAuthority.isUngovernedSession
+                        }
+                        lifecycleStatus={session.status}
+                        layout={isNarrow ? "stacked" : "inline"}
+                        promptHistory={promptHistory}
+                        providerAuthorityPubkey={
+                          session.providerAuthorityPubkey
+                        }
+                        seatActorPubkey={session.agentRef}
+                        seatRole={session.role}
+                        projectRef={session.projectRef}
+                        sessionLabel={session.title}
+                        target={session.commandTarget}
+                        variant="floating"
+                      />
+                    </div>
+                  </CodingSessionColumn>
                 </div>
-              </CodingSessionColumn>
+              ) : (
+                <CodingSessionWorkspaceSandboxFooter
+                  sandbox={sessionFacts.sandbox}
+                  sessionClosed={sessionClosed}
+                />
+              )}
             </div>
-          ) : (
-            <CodingSessionWorkspaceSandboxFooter
-              sandbox={sessionFacts.sandbox}
-              sessionClosed={sessionClosed}
+            <CodingSessionSurfaceDrawerHost
+              ctx={shell.ctx}
+              open={panelState.bottomOpen}
+              surfaces={shell.drawerSurfaces}
             />
-          )}
-        </section>
-        {surfaceHost.activeTab !== null ? (
-          <CodingSessionSurfaceHost
-            activeSurfaceId={surfaceHost.activeTab}
-            hostId={surfaceHostId}
-            layout={
-              narrowState === null ? null : narrowState ? "sheet" : "inline"
-            }
-            onClose={surfaceHost.close}
-            onSelectSurface={surfaceHost.select}
-            surfaces={surfaces}
-            widthContainerRef={workspaceRef}
-          />
-        ) : null}
-      </div>
-      {isNarrow ? (
-        <Sheet
-          onOpenChange={(open) => (open ? taskDock.show() : taskDock.close())}
-          open={taskDock.open}
-        >
-          <SheetContent
-            aria-describedby={undefined}
-            className="w-[min(90vw,22rem)] max-w-none p-0"
-            side="right"
-          >
-            <SheetTitle className="sr-only">Session plan</SheetTitle>
-            <CodingSessionTaskRail
-              model={taskDock.activeModel}
-              variant="sheet"
+          </section>
+          {panelState.rightOpen ? (
+            <CodingSessionSurfaceHost
+              ctx={shell.ctx}
+              hostId={surfaceHostId}
+              layout={
+                narrowState === null ? null : narrowState ? "sheet" : "inline"
+              }
+              panels={shell.panels}
+              surfaces={shell.surfaces}
+              widthContainerRef={workspaceRef}
             />
-          </SheetContent>
-        </Sheet>
-      ) : null}
+          ) : null}
+        </div>
+      </CodingSessionSurfaceCtxProvider>
+      {isNarrow ? <CodingSessionTaskRailSheet dock={taskDock} /> : null}
     </main>
   );
 }

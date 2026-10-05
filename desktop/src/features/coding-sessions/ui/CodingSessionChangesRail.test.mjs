@@ -111,3 +111,16 @@ test("keeps the empty state when nothing was observed at all", () => {
 
   assert.match(markup, /No observed changes yet/);
 });
+
+test("is labelled Diff and says it is observed edits, not a git diff (SV-24)", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionChangesRail, {
+      files: [],
+      unreportedEditCount: 2,
+    }),
+  );
+  assert.match(markup, />Diff</);
+  assert.match(markup, /observed edits · not a git diff/);
+  // The unreported remainder is still disclosed in the body.
+  assert.match(markup, /2 edits observed/);
+});

@@ -3,9 +3,17 @@ import * as React from "react";
 import { deriveTranscriptItemBlockIds } from "@/features/agents/ui/agentSessionTranscriptGrouping";
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import { deriveCodingSessionContextWindow } from "@/features/coding-sessions/lib/codingSessionContextWindow";
-import { deriveCodingSessionSubagentPanel } from "@/features/coding-sessions/lib/codingSessionSubagents";
+import {
+  deriveCodingSessionSubagentPanel,
+  settleCodingSessionSubagentPanel,
+} from "@/features/coding-sessions/lib/codingSessionSubagents";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
-import { deriveCodingSessionObservedChanges } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import {
+  type CodingSessionTranscriptBlock,
+  type CodingSessionTurnRestingStatus,
+  deriveCodingSessionObservedChanges,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import { resolveCodingSessionTurnSettlementsById } from "@/features/coding-sessions/lib/codingSessionTranscriptModelSettlement";
 import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
 
 /**
@@ -179,4 +187,30 @@ export function useCodingSessionWorkspaceDerivations<T extends TranscriptItem>(
     taskModel,
     transcript,
   };
+}
+
+/**
+ * The Agents panel read through each spawn's turn settlement — the one its
+ * stream row reads it through (`CodingSessionTurnSettlementContext`) — so an
+ * open Task call in a turn the stream shows as stopped or of unknown status
+ * is not a spinner one click away. A call outside any turn keeps the
+ * stream's default, `live`.
+ */
+export function useCodingSessionSettledSubagents(
+  panel: ReturnType<typeof deriveCodingSessionSubagentPanel>,
+  blocks: readonly CodingSessionTranscriptBlock[],
+  restingStatus: CodingSessionTurnRestingStatus,
+): ReturnType<typeof deriveCodingSessionSubagentPanel> {
+  return React.useMemo(() => {
+    if (panel.rows.every((row) => row.spawn.status !== "running")) {
+      return panel;
+    }
+    const settlements = resolveCodingSessionTurnSettlementsById(
+      blocks,
+      restingStatus,
+    );
+    return settleCodingSessionSubagentPanel(panel, (call) =>
+      call.turnId ? (settlements.get(call.turnId) ?? "live") : "live",
+    );
+  }, [blocks, panel, restingStatus]);
 }

@@ -81,6 +81,14 @@ test("F6: the Mission model does not re-derive when nothing about the umbrella m
   const view = renderHook(() => useCodingSessionMissionSurface(PROPS), {
     wrapper,
   });
+  // B0: the evidence is read in Conversation too (for `ctx.openRulings`), so
+  // let that read settle (here, fail: no relay) before the first snapshot —
+  // a settled read is what "nothing moved" means.
+  for (let flush = 0; flush < 5; flush += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
   const first = {
     missionState: view.result.current.missionState,
     wakeOperations: view.result.current.wakeOperations,

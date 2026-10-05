@@ -1,5 +1,8 @@
 import * as React from "react";
 
+import { codingSessionObservationNotLive } from "@/features/coding-sessions/lib/codingSessionObservationLiveness";
+import { formatCodingSessionSurfaceClock } from "@/features/coding-sessions/lib/codingSessionSurfaceBadgeModelCtx";
+
 import type { CodingSessionContextLoad } from "@/features/coding-sessions/lib/codingSessionContextLoad";
 import type {
   CodingSessionGoal,
@@ -17,6 +20,7 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionMissionInspectorModel";
 import { mergeCodingSessionMissionWorkspaceInput } from "@/features/coding-sessions/lib/codingSessionMissionWorkspaceModel";
 import { projectCodingSessionMissionState } from "@/features/coding-sessions/lib/codingSessionMissionStateProjection";
+import type { CodingSessionMissionDecisionInput } from "@/features/coding-sessions/lib/codingSessionMissionDecisions";
 import type { CodingSessionParticipantPresence } from "@/features/coding-sessions/lib/codingSessionStreamPresence";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import type { CodingSessionObservedChanges } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
@@ -32,25 +36,56 @@ import {
   type CodingSessionWakeOperationIndex,
 } from "@/features/coding-sessions/lib/codingSessionWakeReading";
 import { deriveCodingSessionObservationView } from "@/features/coding-sessions/lib/codingSessionObservationView";
+import {
+  codingSessionObservationFoldUnchecked,
+  codingSessionSurfaceEvidenceScope,
+} from "./surfaces/useCodingSessionSurfaceTeamRead";
 import type { CodingSessionRouteGateRow } from "@/features/coding-sessions/lib/codingSessionRouteModel";
 import { useCodingSessionObservations } from "@/features/coding-sessions/hooks/useCodingSessionObservations";
-import type { CodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { useCodingSessionMissionLand } from "@/features/coding-sessions/hooks/useCodingSessionMissionLand";
 import { useCodingSessionSessionPolicy } from "@/features/coding-sessions/hooks/useCodingSessionSessionPolicy";
-import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
-import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
 import { deriveCodingSessionSubagentPanel } from "@/features/coding-sessions/lib/codingSessionSubagents";
+import { resolveCodingSessionGenerationCallSettlement } from "@/features/coding-sessions/lib/codingSessionTranscriptModelSettlement";
 import { shouldAutoOpenAgentsSurface } from "./CodingSessionUmbrellaWorkspaceModel";
 import { CodingSessionMissionAudit } from "./CodingSessionMissionAudit";
 import { CodingSessionMissionContext } from "./CodingSessionMissionContext";
 import { useProjectWork } from "../hooks/useProjectWork";
 import { CodingSessionMissionInspector } from "./CodingSessionMissionInspector";
-import type { CodingSessionSurfaceDescriptor } from "./CodingSessionSurfaceHost";
+import {
+  type CodingSessionSurfaceBaseCtx,
+  type CodingSessionSurfaceMissionContent,
+  type CodingSessionSurfaceObservations,
+  codingSessionSurfaceDecisionRequestRows,
+} from "./surfaces/codingSessionSurfaceContext";
 
 export type CodingSessionMissionSurfaceResult = {
-  surfaces: CodingSessionSurfaceDescriptor[];
+  /** Inspector, Context and Audit for the registry's Mission surfaces. */
+  missionContent: CodingSessionSurfaceMissionContent | null;
+  /**
+   * The view's one kind-44246 read, for every surface's `ctx`. Scoped by the
+   * genesis alone, so Conversation reads it too and Mission reuses it.
+   */
+  observationRead: CodingSessionSurfaceObservations;
+  /**
+   * The Mission evidence (assignments, transactions) has been read for this
+   * session. Read in both lenses whenever there is a genesis and a founder,
+   * so `ctx.openRulings` can be built outside Mission; false while it loads,
+   * when it failed, or when there is nothing to scope it by.
+   */
+  teamEvidenceRead: boolean;
+  /**
+   * The Mission fold's `decisions[]`, verbatim, for `ctx.decisions` (DB8).
+   * `null` when no fold supplied them — unknown, not empty. Read it only
+   * with {@link teamEvidenceRead}.
+   */
+  decisions: readonly CodingSessionMissionDecisionInput[] | null;
+  /**
+   * The signed `decision.request` rows that date {@link decisions}, for
+   * `ctx.decisionRequests` (SV-27). Read it only with {@link teamEvidenceRead}.
+   */
+  decisionRequests: CodingSessionSurfaceBaseCtx["decisionRequests"];
   missionState: ReturnType<
     typeof deriveCodingSessionMissionInspectorModel
   >["missionState"];
@@ -155,6 +190,23 @@ export function useCodingSessionMissionSurface(input: {
   // `gates.verifierRequired` (codingSessionPolicy.ts:91) can reach the native
   // fold rather than folding with a permanent `false` (L8.3).
   const policy = useCodingSessionSessionPolicy(scope);
+  // B0 (SV-38): the evidence itself is scoped by the genesis, not the lens,
+  // so `ctx.openRulings` exists in Conversation too (B3's waiting tone, B5's
+  // ruling marks). One read per view: Mission reuses this one.
+  const evidenceScope = React.useMemo(
+    () =>
+      codingSessionSurfaceEvidenceScope(input.channelId, {
+        founderPubkey: input.umbrella.founderPubkey,
+        genesisRef: input.umbrella.genesisRef,
+        sessionRef: input.umbrella.sessionRef,
+      }),
+    [
+      input.channelId,
+      input.umbrella.founderPubkey,
+      input.umbrella.genesisRef,
+      input.umbrella.sessionRef,
+    ],
+  );
   // L8.3: the real `gates.verifierRequired`, and — separately — whether a
   // 44245 reached this view at all. Unknown is not false: with no record the
   // fold reads `false` exactly as it did before, and the state panel says so.
@@ -162,10 +214,14 @@ export function useCodingSessionMissionSurface(input: {
   const verifierRequired =
     policy.fold?.selected?.record.gates?.verifierRequired ?? null;
   const evidence = useCodingSessionMissionEvidence(
-    scope,
+    evidenceScope,
     undefined,
     verifierRequired,
   );
+  const teamEvidenceRead =
+    evidenceScope !== null &&
+    !evidence.isLoading &&
+    evidence.errorMessage === null;
   // The assignments a 44246 `assignmentRef` may resolve against, taken from
   // the Mission fold this surface already holds. Not re-fetched: the only
   // thing the observation fold does with a pointer is disclose the ones that
@@ -176,16 +232,18 @@ export function useCodingSessionMissionSurface(input: {
       (assignment) => assignment.sourceEventId,
     ),
   );
+  // B0: scoped by the genesis, not by the lens, so the badges and Landing
+  // read the same one fold in Conversation that Mission's Audit renders.
   const observationScope = React.useMemo(
     () =>
-      scope === null
+      input.umbrella.sessionRef === null || input.umbrella.genesisRef === null
         ? null
         : {
-            channelRef: scope.channelRef,
-            sessionRef: scope.sessionRef,
-            genesisRef: scope.genesisRef,
+            channelRef: input.channelId,
+            sessionRef: input.umbrella.sessionRef,
+            genesisRef: input.umbrella.genesisRef,
           },
-    [scope],
+    [input.channelId, input.umbrella.genesisRef, input.umbrella.sessionRef],
   );
   // REVIEW-L5 F2. Every execution's `signerPubkey` is "the fact-stream signer
   // (provider authority) behind this execution" (`codingSessionTypes.ts`), so
@@ -465,9 +523,9 @@ export function useCodingSessionMissionSurface(input: {
       }),
     [evidence.inspectorInput.assignments, pending.transactions],
   );
-  // L5.4. Mission folds and remembers; Conversation — which subscribes to no
-  // fold and must not start — reads what Mission already folded for this exact
-  // session, or nothing. No invoke, no fetch, no subscription either way.
+  // L5.4. Mission folds and remembers; Conversation reads what Mission already
+  // folded for this exact session, or nothing. (B0 now reads the evidence in
+  // both lenses for `ctx.openRulings`; the wake index keeps its L5.4 rule.)
   const wakeScope = React.useMemo(
     () => ({
       channelRef: input.channelId,
@@ -552,14 +610,23 @@ export function useCodingSessionMissionSurface(input: {
       dirty: row.dirty,
     }));
   }, [observationView.gates, observations.result]);
-  const surfaces = React.useMemo(
+  // The Audit's open gate runs say "not live — read at HH:MM" while the
+  // 44246 subscription is not up (SV-41): the read is then a snapshot.
+  const observationsNotLive = React.useMemo(
     () =>
-      input.active
-        ? ([
-            {
-              id: "mission-inspector",
-              label: "Inspector",
-              content: (
+      codingSessionObservationNotLive(
+        observations.live,
+        observations.readAtMs,
+        formatCodingSessionSurfaceClock,
+      ),
+    [observations.live, observations.readAtMs],
+  );
+  const missionContent =
+    React.useMemo<CodingSessionSurfaceMissionContent | null>(
+      () =>
+        input.active
+          ? {
+              inspector: (
                 <CodingSessionMissionInspector
                   deliveries={input.deliveries}
                   errorMessage={evidence.errorMessage}
@@ -605,11 +672,7 @@ export function useCodingSessionMissionSurface(input: {
                   variant={input.isNarrow ? "drawer" : "panel"}
                 />
               ),
-            },
-            {
-              id: "mission-context",
-              label: "Context",
-              content: (
+              context: (
                 <CodingSessionMissionContext
                   errorMessage={evidence.errorMessage}
                   founderPubkey={input.umbrella.founderPubkey}
@@ -625,17 +688,14 @@ export function useCodingSessionMissionSurface(input: {
                   variant={input.isNarrow ? "drawer" : "panel"}
                 />
               ),
-            },
-            {
-              id: "mission-audit",
-              label: "Audit",
-              content: (
+              audit: (
                 <CodingSessionMissionAudit
                   errorMessage={evidence.errorMessage}
                   loading={evidence.isLoading}
                   observations={observationView}
                   observationsError={observations.errorMessage}
                   observationsLoading={observations.isLoading}
+                  observationsNotLive={observationsNotLive}
                   onRefresh={() => {
                     evidence.refresh();
                     observations.refresh();
@@ -644,46 +704,105 @@ export function useCodingSessionMissionSurface(input: {
                   variant={input.isNarrow ? "drawer" : "panel"}
                 />
               ),
-            },
-          ] satisfies CodingSessionSurfaceDescriptor[])
-        : [],
+            }
+          : null,
+      [
+        auditSeats,
+        evidence.errorMessage,
+        evidence.inspectorInput.pendingCompletion,
+        evidence.inspectorInput.settlements,
+        evidence.isLoading,
+        workCoverage.data,
+        workCoverage.error,
+        workCoverage.isPending,
+        workScope,
+        evidence.refresh,
+        input.active,
+        input.deliveries,
+        input.focusedExecutionKey,
+        input.goalEditor,
+        input.goalReader,
+        input.isNarrow,
+        input.onFocusParticipant,
+        input.onOpenTrace,
+        input.resolveActorName,
+        input.seatAuthorities,
+        input.umbrella.founderPubkey,
+        model,
+        observationView,
+        observations.errorMessage,
+        observations.isLoading,
+        observations.refresh,
+        observationsNotLive,
+        pending.unseatedReportEventIds,
+        policy.errorMessage,
+        policy.fold,
+        policy.isLoading,
+        policy.refresh,
+      ],
+    );
+  // `ctx`'s view: the Audit's own, except that until the assignments have
+  // been read a pointer is "not checked", never "resolves to nothing".
+  const ctxObservationView = React.useMemo(
+    () =>
+      teamEvidenceRead
+        ? observationView
+        : deriveCodingSessionObservationView({
+            fold: codingSessionObservationFoldUnchecked(
+              observations.result?.fold ?? null,
+            ),
+            resolveLabel: (pubkey) => input.resolveActorName(pubkey),
+            knownDecisionRefs: [],
+          }),
     [
-      auditSeats,
-      evidence.errorMessage,
-      evidence.inspectorInput.pendingCompletion,
-      evidence.inspectorInput.settlements,
-      evidence.isLoading,
-      workCoverage.data,
-      workCoverage.error,
-      workCoverage.isPending,
-      workScope,
-      evidence.refresh,
-      input.active,
-      input.deliveries,
-      input.focusedExecutionKey,
-      input.goalEditor,
-      input.goalReader,
-      input.isNarrow,
-      input.onFocusParticipant,
-      input.onOpenTrace,
       input.resolveActorName,
-      input.seatAuthorities,
-      input.umbrella.founderPubkey,
-      model,
       observationView,
+      observations.result,
+      teamEvidenceRead,
+    ],
+  );
+  const observationRead = React.useMemo<CodingSessionSurfaceObservations>(
+    () =>
+      observationScope === null
+        ? {
+            state: "not-read",
+            reason: "This session has no genesis, so it has no observations.",
+          }
+        : {
+            state: "read",
+            isLoading: observations.isLoading,
+            errorMessage: observations.errorMessage,
+            result: observations.result,
+            view: ctxObservationView,
+            assignmentsChecked: teamEvidenceRead,
+            readAtMs: observations.readAtMs,
+            live: observations.live,
+            refresh: observations.refresh,
+          },
+    [
+      ctxObservationView,
+      observationScope,
+      teamEvidenceRead,
       observations.errorMessage,
       observations.isLoading,
+      observations.live,
+      observations.readAtMs,
       observations.refresh,
-      pending.unseatedReportEventIds,
-      policy.errorMessage,
-      policy.fold,
-      policy.isLoading,
-      policy.refresh,
+      observations.result,
     ],
+  );
+  const requestInputs = evidence.inspectorInput.decisionRequests;
+  const decisionRequests = React.useMemo(
+    () => codingSessionSurfaceDecisionRequestRows(requestInputs),
+    [requestInputs],
   );
   return React.useMemo(
     () => ({
-      surfaces,
+      missionContent,
+      observationRead,
+      teamEvidenceRead,
+      decisions: evidence.inspectorInput.decisions ?? null,
+      decisionRequests,
       missionState: model.missionState,
       transactions: pending.transactions,
       unseatedReportEventIds: pending.unseatedReportEventIds,
@@ -691,90 +810,61 @@ export function useCodingSessionMissionSurface(input: {
       observationGates,
     }),
     [
+      evidence.inspectorInput.decisions,
+      decisionRequests,
+      missionContent,
       model.missionState,
       observationGates,
+      observationRead,
+      teamEvidenceRead,
       pending.transactions,
       pending.unseatedReportEventIds,
-      surfaces,
       wakeOperations,
     ],
   );
 }
 
-/** Build the lens-specific host registry; surfaces never leak across lenses. */
-export function useCodingSessionWorkspaceSurfaces(input: {
-  actorNames: CodingSessionActorNameResolver;
-  mission: boolean;
-  missionSurfaces: readonly CodingSessionSurfaceDescriptor[];
-  observedChanges: CodingSessionObservedChanges;
-  resolveReachability: CodingSessionReachabilityResolver;
-  umbrella: CodingSessionUmbrellaRecord;
-}): CodingSessionSurfaceDescriptor[] {
-  // Every Task/Agent spawn any execution made, across its generations.
-  const subagents = React.useMemo(
-    () =>
-      deriveCodingSessionSubagentPanel(
-        input.umbrella.executions.flatMap((execution) =>
-          [...execution.priorGenerations, execution.activeGeneration].map(
-            (record) => record.transcript,
-          ),
-        ),
+/** Every Task/Agent spawn any execution made, across its generations. */
+export function useCodingSessionUmbrellaSubagents(
+  umbrella: CodingSessionUmbrellaRecord,
+): ReturnType<typeof deriveCodingSessionSubagentPanel> {
+  return React.useMemo(() => {
+    const generations = umbrella.executions.flatMap((execution) =>
+      [...execution.priorGenerations, execution.activeGeneration].map(
+        (record) => ({ execution, record }),
       ),
-    [input.umbrella.executions],
-  );
-  return React.useMemo(
-    () =>
-      input.mission
-        ? [...input.missionSurfaces]
-        : [
-            {
-              id: "agents",
-              label: "Agents",
-              count: input.umbrella.executions.length + subagents.rows.length,
-              content: (
-                <CodingSessionExecutionRail
-                  actorNames={input.actorNames}
-                  resolveReachability={input.resolveReachability}
-                  subagents={subagents}
-                  umbrella={input.umbrella}
-                />
-              ),
-            },
-            {
-              id: "changes",
-              label: "Observed changes",
-              count: input.observedChanges.files.length,
-              content: (
-                <CodingSessionChangesRail
-                  files={input.observedChanges.files}
-                  unreportedEditCount={
-                    input.observedChanges.unreportedEditCount
-                  }
-                />
-              ),
-            },
-          ],
-    [
-      input.actorNames,
-      input.mission,
-      input.missionSurfaces,
-      input.observedChanges.files,
-      input.observedChanges.unreportedEditCount,
-      input.resolveReachability,
-      input.umbrella,
-      subagents,
-    ],
-  );
+    );
+    // Each spawn reads through the settlement Mission's block rules give its
+    // turn, so the panel never spins over a call the stream calls stopped.
+    const settlementOf = generations.map(({ execution, record }) =>
+      resolveCodingSessionGenerationCallSettlement({
+        activeGeneration: execution.activeGeneration,
+        generationId: record.generationId,
+        transcript: record.transcript,
+      }),
+    );
+    return deriveCodingSessionSubagentPanel(
+      generations.map(({ record }) => record.transcript),
+      (call, index) => settlementOf[index]?.(call) ?? "unknown",
+    );
+  }, [umbrella.executions]);
 }
 
-/** Open Inspector once per explicit Mission entry and close it on recovery. */
+/**
+ * Open Mission's three surfaces (Inspector active) once per mount in Mission,
+ * and Agents once for a wide multi-execution Conversation (§3's two kept
+ * behaviours), and close Mission's surfaces whenever the lens leaves it.
+ *
+ * Both opens are proactive: once the person has made a panel choice for this
+ * session (persisted with the panels), neither overrides it on a reload.
+ */
 export function useCodingSessionMissionSurfaceActivation(input: {
-  activeTab: string | null;
   bodyWidthPx: number;
-  close: () => void;
+  closeMissionSurfaces: () => void;
   isMultiExecution: boolean;
   mission: boolean;
-  select: (id: string) => void;
+  openProactive: (ids: readonly string[], activate: string) => void;
+  openMissionSurfaces: () => void;
 }): void {
   const openedRef = React.useRef(false);
   const autoOpenedAgentsRef = React.useRef(false);
@@ -788,24 +878,24 @@ export function useCodingSessionMissionSurfaceActivation(input: {
       })
     ) {
       autoOpenedAgentsRef.current = true;
-      input.select("agents");
+      input.openProactive(["agents"], "agents");
     }
-  }, [input.bodyWidthPx, input.isMultiExecution, input.mission, input.select]);
+  }, [
+    input.bodyWidthPx,
+    input.isMultiExecution,
+    input.mission,
+    input.openProactive,
+  ]);
   React.useEffect(() => {
     if (!input.mission) {
+      // However the lens left Mission, its surfaces go with it.
+      if (openedRef.current) input.closeMissionSurfaces();
       openedRef.current = false;
-      if (
-        input.activeTab === "mission-inspector" ||
-        input.activeTab === "mission-context" ||
-        input.activeTab === "mission-audit"
-      ) {
-        input.close();
-      }
       return;
     }
     if (!openedRef.current) {
       openedRef.current = true;
-      input.select("mission-inspector");
+      input.openMissionSurfaces();
     }
-  }, [input.activeTab, input.close, input.mission, input.select]);
+  }, [input.closeMissionSurfaces, input.mission, input.openMissionSurfaces]);
 }

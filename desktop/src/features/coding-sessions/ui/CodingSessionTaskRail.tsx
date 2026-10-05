@@ -37,7 +37,13 @@ export function CodingSessionTaskRail({
   loadState?: TaskRailLoadState;
   model: CodingSessionTaskModel | null;
   onClose?: () => void;
-  variant?: "dock" | "inline" | "sheet";
+  /**
+   * `surface` is the Plan surface's panel (SV-24): full width and height
+   * inside the surface host, which owns the landmark and the tab chrome, so
+   * it renders no `aside` of its own and opens on the 40px subheader every
+   * surface shares. The dock above the composer is unchanged.
+   */
+  variant?: "dock" | "inline" | "sheet" | "surface";
 }) {
   if (variant === "dock") {
     return (
@@ -54,24 +60,31 @@ export function CodingSessionTaskRail({
   const openTasks =
     model?.tasks.filter((task) => task.status !== "completed") ?? [];
 
+  const Container = variant === "surface" ? "div" : "aside";
   return (
-    <aside
-      aria-label="Session plan"
+    <Container
+      aria-label={variant === "surface" ? undefined : "Session plan"}
       className={cn(
         "flex min-h-0 shrink-0 flex-col bg-muted/10",
         variant === "inline"
           ? "w-80 border-l border-border/60"
-          : "h-full w-full",
+          : variant === "surface"
+            ? "h-full w-full flex-1"
+            : "h-full w-full",
       )}
       data-variant={variant}
       data-testid="coding-session-task-rail"
-      id={CODING_SESSION_TASK_RAIL_ID}
+      id={variant === "surface" ? undefined : CODING_SESSION_TASK_RAIL_ID}
     >
       <div
         className={cn(
-          "flex h-14 shrink-0 items-center justify-between border-b border-border/60 px-4",
+          "flex shrink-0 items-center justify-between border-b border-border/60",
+          variant === "surface"
+            ? "h-10 min-h-10 bg-background px-3"
+            : "h-14 px-4",
           variant === "sheet" && "pr-14",
         )}
+        data-surface-subheader={variant === "surface" ? "" : undefined}
       >
         <div className="flex min-w-0 items-center gap-2">
           <ListChecks
@@ -166,7 +179,7 @@ export function CodingSessionTaskRail({
           </time>
         </div>
       ) : null}
-    </aside>
+    </Container>
   );
 }
 

@@ -47,6 +47,7 @@ import {
 import { PulseEntryRow } from "./PulseEntryRow";
 import { PulseMissionsSection } from "./PulseMissionRow";
 import { PulseOverlapCard } from "./PulseOverlapCard";
+import { splitProjectPulseLeadSession } from "./ProjectPulseViewLead";
 import { PulseRulingsWaitingCard } from "./PulseRulingsWaitingCard";
 import { PulseSessionCard } from "./PulseSessionCard";
 import {
@@ -266,6 +267,13 @@ export function ProjectPulseView({
   onOpenDeclaredSession,
   /** Whether an execution is recorded for a session key at all. */
   declaredSessionOpenable,
+  /**
+   * A session to put first (the session view's Pulse surface, SV-24): its
+   * card leads the screen under "This session" and leaves its group, so it
+   * is shown once. Matched by `sessionKey` or `sessionRef`; absent or not
+   * visible under the branch filter, nothing moves.
+   */
+  leadSessionKey,
 }: {
   state: ProjectPulseViewState;
   nowSeconds: number;
@@ -277,6 +285,7 @@ export function ProjectPulseView({
   declaredWork?: ProjectPulseDeclaredWork;
   onOpenDeclaredSession?: (sessionKey: string) => void;
   declaredSessionOpenable?: (sessionKey: string) => boolean;
+  leadSessionKey?: string | null;
 }) {
   const [branch, setBranch] = React.useState<string | null | undefined>(
     undefined,
@@ -411,6 +420,11 @@ export function ProjectPulseView({
     openUnverified: sessions.openUnverified.filter(sessionMatchesBranch),
     closed: sessions.closed.filter(sessionMatchesBranch),
   };
+  const {
+    lead: leadSession,
+    leadGroup,
+    listed: listedSessions,
+  } = splitProjectPulseLeadSession(visibleSessions, leadSessionKey);
   const visibleEntries = (rows: PulseDigestEntry[]) =>
     rows.filter((entry) => matchesBranchFilter(entry.branch, branch));
   // The disclosure count and the rows behind it read the same filtered list:
@@ -535,6 +549,17 @@ export function ProjectPulseView({
             nowSeconds={nowSeconds}
           />
         </StateCard>
+      ) : null}
+
+      {leadSession ? (
+        <section data-testid="pulse-lead-session">
+          <GroupHeading>
+            {leadGroup
+              ? `This session · ${pulseSessionGroupHeading(leadGroup)}`
+              : "This session"}
+          </GroupHeading>
+          <ul className="flex flex-col gap-2">{sessionCard(leadSession)}</ul>
+        </section>
       ) : null}
 
       {isConfirmedEmpty ? (
@@ -745,33 +770,33 @@ export function ProjectPulseView({
       {/* Durable session observations follow claims and remain split by the
           fold's independent lifecycle/reachability facts. */}
       <section data-testid="pulse-sessions">
-        {visibleSessions.providerReachable.length > 0 ? (
+        {listedSessions.providerReachable.length > 0 ? (
           <div className="mb-3" data-testid="pulse-provider-reachable">
             <GroupHeading>
               {pulseSessionGroupHeading("provider_reachable")}
             </GroupHeading>
             <ul className="flex flex-col gap-2">
-              {visibleSessions.providerReachable.map(sessionCard)}
+              {listedSessions.providerReachable.map(sessionCard)}
             </ul>
           </div>
         ) : null}
 
-        {visibleSessions.openUnverified.length > 0 ? (
+        {listedSessions.openUnverified.length > 0 ? (
           <div className="mb-3" data-testid="pulse-open-unverified">
             <GroupHeading>
               {pulseSessionGroupHeading("open_unverified")}
             </GroupHeading>
             <ul className="flex flex-col gap-2">
-              {visibleSessions.openUnverified.map(sessionCard)}
+              {listedSessions.openUnverified.map(sessionCard)}
             </ul>
           </div>
         ) : null}
 
-        {visibleSessions.closed.length > 0 ? (
+        {listedSessions.closed.length > 0 ? (
           <div className="mb-3" data-testid="pulse-closed">
             <GroupHeading>{pulseSessionGroupHeading("closed")}</GroupHeading>
             <ul className="flex flex-col gap-2">
-              {visibleSessions.closed.map(sessionCard)}
+              {listedSessions.closed.map(sessionCard)}
             </ul>
           </div>
         ) : null}

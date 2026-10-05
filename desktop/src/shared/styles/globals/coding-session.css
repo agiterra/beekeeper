@@ -85,19 +85,30 @@
 }
 
 /* Block metadata waits for the pointer or keyboard focus (SV-07): copy, time
-   and cost under an answer show while the answer block is hovered, and the
-   time at the right of a "Worked for …" row while that row is. Neither is
-   ever hidden from assistive technology or find-in-page. A failure or a stop
-   is not metadata and does not use these classes. */
+   and cost under an answer show while the answer block is hovered, time and
+   copy under a prompt while the prompt is, and the time at the right of a
+   "Worked for …" row while that row is. None of it is ever hidden from
+   assistive technology or find-in-page. A failure, a stop and a prompt's
+   author are not metadata and do not use these classes.
+
+   Timing follows T3 Code: the answer and prompt lines fade over 200ms
+   (`transition-opacity duration-200`); the fold row's time appears at once,
+   as T3's `TimelineRowTimestamp` does. */
 .coding-session-turn-meta,
+.coding-session-prompt-meta {
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+
 .coding-session-row-time {
   opacity: 0;
-  transition: opacity 120ms ease-out;
 }
 
 .group\/answer:hover .coding-session-turn-meta,
 .coding-session-turn-meta:focus-within,
 .coding-session-turn-meta[data-pinned="true"],
+.group\/prompt:hover .coding-session-prompt-meta,
+.coding-session-prompt-meta:focus-within,
 .group\/fold-row:hover .coding-session-row-time,
 .group\/fold-row:focus-visible .coding-session-row-time {
   opacity: 1;
@@ -105,6 +116,7 @@
 
 @media (hover: none) {
   .coding-session-turn-meta,
+  .coding-session-prompt-meta,
   .coding-session-row-time {
     opacity: 1;
   }

@@ -21,11 +21,31 @@ import type { CodingSessionFullAccess } from "./useCodingSessionFullAccess";
  * Returns `previous` itself when the facts are the same items, so the
  * derivations keyed on it do not re-run for a streamed item that is not a
  * fact — which is nearly every item.
+ *
+ * `previousTranscript` is the transcript `previous` was read from. When this
+ * transcript extends it — every earlier item the same reference, which is
+ * what a streamed append leaves — only the appended tail is classified
+ * (SV-46); the result is the same as reading the whole transcript again.
+ * Anything else (an item replaced, the list shortened) is read in full.
  */
 export function codingSessionSessionFacts(
   transcript: readonly TranscriptItem[],
   previous: readonly TranscriptItem[] | null,
+  previousTranscript: readonly TranscriptItem[] | null = null,
 ): readonly TranscriptItem[] {
+  if (previous && previousTranscript) {
+    const start = codingSessionExtendedLength(previousTranscript, transcript);
+    if (start !== null) {
+      let facts: TranscriptItem[] | null = null;
+      for (let index = start; index < transcript.length; index += 1) {
+        const item = transcript[index];
+        if (!isCodingSessionSessionFactItem(item)) continue;
+        facts ??= [...previous];
+        facts.push(item);
+      }
+      return facts ?? previous;
+    }
+  }
   const facts: TranscriptItem[] = [];
   for (const item of transcript) {
     if (isCodingSessionSessionFactItem(item)) facts.push(item);
@@ -38,6 +58,23 @@ export function codingSessionSessionFacts(
     return previous;
   }
   return facts;
+}
+
+/**
+ * `previous.length` when `next` keeps every item of `previous`, by reference
+ * and in place, and adds zero or more after it; otherwise `null`. A reference
+ * comparison per earlier item, far cheaper than classifying it again.
+ */
+export function codingSessionExtendedLength(
+  previous: readonly TranscriptItem[],
+  next: readonly TranscriptItem[],
+): number | null {
+  if (next.length < previous.length) return null;
+  if (next === previous) return previous.length;
+  for (let index = previous.length - 1; index >= 0; index -= 1) {
+    if (next[index] !== previous[index]) return null;
+  }
+  return previous.length;
 }
 
 /**

@@ -6,8 +6,18 @@ import {
   hasFileEditLineDiff,
 } from "@/features/agents/ui/FileEditDiffView";
 
+import { CodingSessionSurfaceSubheader } from "./CodingSessionChangesRailSubheader";
+
 /**
- * The Observed-changes surface: file changes that were visible in transcript
+ * The Diff surface's subheader sentence. Diff is the label T3 Code uses; what
+ * this surface shows is narrower than a git diff, so the first line it shows
+ * says so (a git-backed Diff is SV-30).
+ */
+export const CODING_SESSION_DIFF_PROVENANCE =
+  "Edits observed in this session's transcript, not a git diff of the worktree.";
+
+/**
+ * The Diff surface (SV-24): file changes that were visible in transcript
  * tool activity. Content only — the surrounding panel chrome (tab strip,
  * close control, width, sheet behavior) belongs to the surface host.
  *
@@ -37,6 +47,19 @@ export function CodingSessionChangesRail({
       className="flex h-full min-h-0 flex-1 flex-col bg-muted/10"
       data-testid="coding-session-changes-rail"
     >
+      <CodingSessionSurfaceSubheader
+        meta={
+          <span
+            data-testid="coding-session-diff-provenance"
+            title={CODING_SESSION_DIFF_PROVENANCE}
+          >
+            {files.length > 0
+              ? `${files.length} ${files.length === 1 ? "file" : "files"} observed${unreported > 0 ? ` · ${unreported} unnamed ${unreported === 1 ? "edit" : "edits"}` : ""} · not a git diff`
+              : "observed edits · not a git diff"}
+          </span>
+        }
+        title="Diff"
+      />
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {files.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center px-6 text-center">

@@ -1,6 +1,8 @@
 import * as React from "react";
 import { toast } from "sonner";
 
+import { useAppNavigation } from "@/app/navigation/useAppNavigation";
+
 import type { CodingSessionChannelAccess } from "@/features/coding-sessions/lib/codingSessionChannelAccess";
 import {
   readCodingSessionLensPreference,
@@ -13,17 +15,9 @@ import {
   writeCodingSessionMissionDensity,
 } from "@/features/coding-sessions/lib/codingSessionMissionDensity";
 import { deriveCodingSessionStreamPresence } from "@/features/coding-sessions/lib/codingSessionStreamPresence";
-import { derivePackRefs } from "@/features/coding-sessions/lib/codingSessionPackRef";
-import { deriveSeatBeeStamps } from "@/features/coding-sessions/lib/codingSessionSeatBee";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
 import { useCodingSessionTeamWake } from "@/features/coding-sessions/hooks/useCodingSessionTeamWake";
 import { useCodingSessionBottomAnchor } from "@/features/coding-sessions/hooks/useCodingSessionBottomAnchor";
-import {
-  readCodingSessionContextLoad,
-  type CodingSessionContextLoad,
-} from "@/features/coding-sessions/lib/codingSessionContextLoad";
-import { buildCodingSessionTurnByline } from "@/features/coding-sessions/lib/codingSessionTurnByline";
-import { listCodingSessionRoutedSeats } from "@/features/coding-sessions/lib/codingSessionRoutedSeats";
 import { listCodingSessionUmbrellaParticipants } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import { useCodingSessionActorNameResolver } from "@/features/coding-sessions/lib/useCodingSessionActorNames";
 import {
@@ -61,6 +55,7 @@ import {
   CodingSessionColumn,
 } from "./CodingSessionColumn";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
+import { CodingSessionNarrativeJumpPill } from "./CodingSessionWorkspaceJumpPill";
 import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { CodingSessionTaskRailSheet } from "./CodingSessionTaskRail";
 import { CodingSessionUmbrellaDock } from "./CodingSessionUmbrellaDock";
@@ -73,10 +68,15 @@ import {
 import { CodingSessionFocusedAgentNotice } from "./CodingSessionFocusedAgentNotice";
 import { useCodingSessionStopAll } from "./useCodingSessionStopAll";
 import type { CodingSessionActiveWorkAgent } from "./CodingSessionActiveWorkDock";
+import { CodingSessionSurfaceHost } from "./CodingSessionSurfaceHost";
+import { CodingSessionSurfaceDrawerHost } from "./CodingSessionSurfaceDrawerHost";
+import { CodingSessionOpenAgentsSurfaceContext } from "./CodingSessionTranscriptAgentsSurface";
 import {
-  CodingSessionSurfaceHost,
-  useCodingSessionSurfaceHostState,
-} from "./CodingSessionSurfaceHost";
+  CodingSessionMinimapSlot,
+  CodingSessionSurfaceCtxProvider,
+} from "./surfaces/codingSessionSurfaceContext";
+import { isTranscriptHiddenByPanel } from "./surfaces/useCodingSessionSurfacePanels";
+import { useCodingSessionSurfaceShell } from "./surfaces/useCodingSessionSurfacePanelsShell";
 import {
   useCodingSessionReachabilityResolver,
   type CodingSessionReachabilityResolver,
@@ -89,7 +89,7 @@ import { CodingSessionUmbrellaTimelineView } from "./CodingSessionUmbrellaTimeli
 import {
   useCodingSessionMissionSurface,
   useCodingSessionMissionSurfaceActivation,
-  useCodingSessionWorkspaceSurfaces,
+  useCodingSessionUmbrellaSubagents,
 } from "./useCodingSessionMissionSurface";
 import {
   CodingSessionComposerRecipientContext,
@@ -97,6 +97,8 @@ import {
   CodingSessionOpenHoldsContext,
   useScrollNarrativeToLatestOnFocus,
   useCodingSessionElementHeight,
+  useCodingSessionUmbrellaSeatLookups,
+  useCodingSessionUmbrellaSurfaceTimeline,
 } from "./CodingSessionUmbrellaWorkspaceModel";
 
 export { buildUmbrellaTurnBlockHandoff } from "./CodingSessionUmbrellaTurnBlock";
@@ -174,11 +176,8 @@ export function UmbrellaCodingSessionWorkspace({
   const gutter = useCodingSessionColumnGutter();
   const identity = useIdentityQuery();
   const lane = useCodingSessionLane(channelId, umbrella.sessionRef);
-  // Team-wake arbitration now *returns* what it observed: one delivery row per
-  // wake operation and one seat-authority row per seated execution. Before this
-  // batch the result was discarded and delivery state surfaced only as
-  // transient toasts, so a queued provider wake or an ungranted seat was
-  // invisible the moment the toast faded.
+  // Team-wake arbitration returns what it observed (one delivery row per wake,
+  // one seat-authority row per seated execution), not transient toasts.
   const fullAccess = useCodingSessionFullAccess({
     channelId,
     record: focusedExecution.activeGeneration,
@@ -299,18 +298,20 @@ export function UmbrellaCodingSessionWorkspace({
   });
   const [prefill, setPrefill] =
     React.useState<CodingSessionUmbrellaComposerPrefill | null>(null);
-  // Observed changes across every execution the umbrella narrative renders —
-  // prior generations included, in the same order the timeline ingests them.
-  const observedChanges = React.useMemo(
+  // Every execution's items, prior generations included, in the order the
+  // timeline ingests them: the observed changes and the surfaces' transcript.
+  const umbrellaItems = React.useMemo(
     () =>
-      deriveCodingSessionObservedChanges(
-        umbrella.executions.flatMap((execution) =>
-          [...execution.priorGenerations, execution.activeGeneration].flatMap(
-            (record) => record.transcript,
-          ),
+      umbrella.executions.flatMap((execution) =>
+        [...execution.priorGenerations, execution.activeGeneration].flatMap(
+          (record) => record.transcript,
         ),
       ),
     [umbrella.executions],
+  );
+  const observedChanges = React.useMemo(
+    () => deriveCodingSessionObservedChanges(umbrellaItems),
+    [umbrellaItems],
   );
   // Same item set as the timeline renders, so every operator who drove a turn
   // anywhere in the umbrella is resolvable in one lookup — plus the lane's own
@@ -318,99 +319,25 @@ export function UmbrellaCodingSessionWorkspace({
   // which is why their messages rendered as bare keys (walk finding 4).
   const umbrellaTranscript = React.useMemo(
     () => [
-      ...umbrella.executions.flatMap((execution) =>
-        [...execution.priorGenerations, execution.activeGeneration].flatMap(
-          (record) => record.transcript,
-        ),
-      ),
+      ...umbrellaItems,
       ...lane.messages.map((message) => ({
         operatorPubkey: message.authorPubkey,
       })),
     ],
-    [lane.messages, umbrella.executions],
+    [lane.messages, umbrellaItems],
   );
   const operatorProfiles = useCodingSessionOperatorProfiles(
     umbrellaTranscript,
     currentUserPubkey,
   );
-  // D7 / W12: how full each seat's context is, folded from the driver's own
-  // signed occupancy items. Never estimated, and an execution that has
-  // reported nothing carries `null` rather than a zero.
-  const contextLoads = React.useMemo(
-    () =>
-      umbrella.executions.map((execution) => ({
-        key: execution.executionKey,
-        label: buildCodingSessionTurnByline({
-          agentDisplayName: execution.activeGeneration.agentRef
-            ? (workspaceActorName(execution.activeGeneration.agentRef) ?? null)
-            : null,
-          agentRef: execution.activeGeneration.agentRef,
-          generation: execution.activeGeneration.commandTarget?.generation ?? 1,
-          label: null,
-          model: execution.activeGeneration.model,
-          role: execution.activeGeneration.role,
-          runtime: execution.activeGeneration.runtime,
-        }).name,
-        load: readCodingSessionContextLoad(
-          execution.activeGeneration.transcript,
-        ) satisfies CodingSessionContextLoad | null,
-      })),
-    [umbrella.executions, workspaceActorName],
-  );
-  const routedSeats = React.useMemo(
-    () => listCodingSessionRoutedSeats(umbrella.executions),
-    [umbrella.executions],
-  );
-  // Names a transaction's author or counterparty from the umbrella's own
-  // executions. A pubkey with no execution falls back to the actor-name
-  // resolver, and an unknown one to `null` — the row then renders a truncated
-  // key rather than guessing a name.
-  const resolveMissionActor = React.useCallback(
-    (pubkey: string) => {
-      const execution = umbrella.executions.find(
-        (candidate) =>
-          candidate.activeGeneration.agentRef?.toLowerCase() ===
-          pubkey.toLowerCase(),
-      );
-      if (!execution) {
-        return {
-          label: workspaceActorName(pubkey) ?? null,
-          executionKey: null,
-        };
-      }
-      const agentRef = execution.activeGeneration.agentRef;
-      return {
-        label: buildCodingSessionTurnByline({
-          agentDisplayName: agentRef
-            ? (workspaceActorName(agentRef) ?? null)
-            : null,
-          agentRef,
-          generation: execution.activeGeneration.commandTarget?.generation ?? 1,
-          label: null,
-          model: execution.activeGeneration.model,
-          role: execution.activeGeneration.role,
-          runtime: execution.activeGeneration.runtime,
-        }).name,
-        executionKey: execution.executionKey,
-      };
-    },
-    [umbrella.executions, workspaceActorName],
-  );
-  // Same lookup, but it answers `null` for a pubkey that is not a seat — the
-  // difference that lets prompt attribution tell "a seat sent this" apart from
-  // "a person sent this". A seat's turn used to read `You` to the founder or as
-  // a bare truncated key to everyone else.
-  const resolvePromptSeat = React.useCallback(
-    (pubkey: string) => {
-      const isSeat = umbrella.executions.some(
-        (candidate) =>
-          candidate.activeGeneration.agentRef?.toLowerCase() ===
-          pubkey.toLowerCase(),
-      );
-      return isSeat ? resolveMissionActor(pubkey) : null;
-    },
-    [resolveMissionActor, umbrella.executions],
-  );
+  const {
+    contextLoads,
+    resolveMissionActor,
+    resolvePromptSeat,
+    routedSeats,
+    seatBeeStamps,
+    seatPackRefs,
+  } = useCodingSessionUmbrellaSeatLookups(umbrella, workspaceActorName);
   const [renameOpen, setRenameOpen] = React.useState(false);
   const authoritativeTitle = sessionName?.content ?? umbrella.title;
   const canRename =
@@ -592,31 +519,58 @@ export function UmbrellaCodingSessionWorkspace({
     umbrella,
   });
 
-  const surfaces = useCodingSessionWorkspaceSurfaces({
-    actorNames: workspaceActorName,
-    mission,
-    missionSurfaces: missionSurfaceResult.surfaces,
-    observedChanges,
-    resolveReachability,
+  const subagents = useCodingSessionUmbrellaSubagents(umbrella);
+  const umbrellaTimeline = useCodingSessionUmbrellaSurfaceTimeline(
     umbrella,
-  });
-  const surfaceIds = React.useMemo(
-    () => surfaces.map((surfaceEntry) => surfaceEntry.id),
-    [surfaces],
+    lane.messages,
   );
-  const surfaceHost = useCodingSessionSurfaceHostState(surfaceIds);
+  const shell = useCodingSessionSurfaceShell({
+    layout: "umbrella",
+    channelId,
+    communityScope,
+    umbrella,
+    focusedExecution,
+    lens: mission ? "mission" : "conversation",
+    transcript: umbrellaItems,
+    transcriptModel: null,
+    umbrellaTimeline,
+    observedChanges,
+    subagents,
+    taskModel: composerTaskModel,
+    currentUserPubkey,
+    resolveActorName: workspaceActorName,
+    resolveReachability,
+    sessionClosed,
+    observations: missionSurfaceResult.observationRead,
+    // Every lens: the evidence is read whenever there is a genesis (B0).
+    openRulings: missionSurfaceResult.teamEvidenceRead
+      ? routeRail.openHolds
+      : null,
+    decisions: missionSurfaceResult.teamEvidenceRead
+      ? missionSurfaceResult.decisions
+      : null,
+    decisionRequests: missionSurfaceResult.teamEvidenceRead
+      ? missionSurfaceResult.decisionRequests
+      : null,
+    teamTransactions: missionSurfaceResult.teamEvidenceRead
+      ? missionSurfaceResult.transactions
+      : null,
+    mission: missionSurfaceResult.missionContent,
+    onOpenPeople,
+  });
+  const { actions: panelActions, state: panelState } = shell.panels;
   React.useEffect(() => {
-    surfaceHostCloseRef.current = surfaceHost.close;
-  }, [surfaceHost.close]);
+    surfaceHostCloseRef.current = panelActions.closeRight;
+  }, [panelActions.closeRight]);
   useCodingSessionMissionSurfaceActivation({
-    activeTab: surfaceHost.activeTab,
     bodyWidthPx,
-    close: surfaceHost.close,
+    closeMissionSurfaces: shell.closeMissionSurfaces,
     isMultiExecution,
     mission,
-    select: surfaceHost.select,
+    openProactive: panelActions.openProactive,
+    openMissionSurfaces: shell.openMissionSurfacesProactively,
   });
-  const narrativeExpanded = surfaceHost.activeTab === null;
+  const narrativeExpanded = !panelState.rightOpen;
   const surfaceHostId = React.useId();
   /**
    * The Route control acts on what is on screen, not on a stored byte.
@@ -635,16 +589,16 @@ export function UmbrellaCodingSessionWorkspace({
       routeRail.setCollapsed(true);
       return;
     }
-    if (!routeRail.roomForRail && surfaceHost.activeTab !== null) {
-      surfaceHost.close();
+    if (!routeRail.roomForRail && panelState.rightOpen) {
+      panelActions.closeRight();
     }
     routeRail.setCollapsed(false);
   }, [
+    panelActions,
+    panelState.rightOpen,
     routeRail.fits,
     routeRail.roomForRail,
     routeRail.setCollapsed,
-    surfaceHost.activeTab,
-    surfaceHost.close,
   ]);
   const focusedAgent =
     agentFocusItems.find((item) => item.executionKey === focusedExecutionKey) ??
@@ -678,17 +632,19 @@ export function UmbrellaCodingSessionWorkspace({
   const handleLensChange = React.useCallback(
     (nextLens: CodingSessionLens) => {
       setLens(nextLens);
-      if (nextLens === "mission") surfaceHost.select("mission-inspector");
-      else surfaceHost.close();
+      if (nextLens === "mission") shell.openMissionSurfaces();
+      else shell.closeMissionSurfaces();
       writeCodingSessionLensPreference({
         ...lensCoordinates,
         lens: nextLens,
         storage: window.localStorage,
       });
     },
-    [lensCoordinates, surfaceHost.close, surfaceHost.select],
+    [lensCoordinates, shell.closeMissionSurfaces, shell.openMissionSurfaces],
   );
   useScrollNarrativeToLatestOnFocus(narrativeScrollRef, focusedExecutionKey);
+  const { goProject } = useAppNavigation();
+  const owningProject = shell.ctx.project;
 
   const handlePopout = React.useCallback(() => {
     void openCodingSessionPopout(channelId, generationId).catch((error) => {
@@ -699,24 +655,6 @@ export function UmbrellaCodingSessionWorkspace({
       );
     });
   }, [channelId, generationId]);
-
-  // Which `bee` each seat is actually running (L12), read straight off the
-  // 44223 metadata this umbrella already carries per execution — no new
-  // query. `deriveSeatBeeStamps` prefers the active generation's stamp and
-  // falls back to the newest prior generation's when a fresh resume has not
-  // republished one yet.
-  const seatBeeStamps = React.useMemo(
-    () => deriveSeatBeeStamps(umbrella.executions),
-    [umbrella.executions],
-  );
-
-  // Which persona pack each seat actually staged (LANE-L23), same fold as
-  // `seatBeeStamps` immediately above — active generation first, then the
-  // newest prior generation's.
-  const seatPackRefs = React.useMemo(
-    () => derivePackRefs(umbrella.executions),
-    [umbrella.executions],
-  );
 
   return (
     <main
@@ -752,6 +690,11 @@ export function UmbrellaCodingSessionWorkspace({
           onClose={onClose}
           onCloseSession={onCloseSession}
           onOpenPeople={onOpenPeople}
+          onOpenProject={
+            owningProject && surface === "main"
+              ? () => void goProject(owningProject.id)
+              : undefined
+          }
           onReopenSession={onReopenSession}
           peopleCount={peopleCount}
           resolveReachability={resolveReachability}
@@ -764,9 +707,8 @@ export function UmbrellaCodingSessionWorkspace({
           streamParticipants={streamPresence.participants}
           stopAll={stopAll}
           surface={surface}
-          surfaceHost={surfaceHost}
           surfaceHostId={surfaceHostId}
-          surfaces={surfaces}
+          surfaceShell={shell}
           teamWake={teamWake}
           umbrella={umbrella}
           workspaceActorName={workspaceActorName}
@@ -786,188 +728,223 @@ export function UmbrellaCodingSessionWorkspace({
           <CodingSessionComposerRecipientContext.Provider
             value={composerParticipant?.label ?? null}
           >
-            <div className="flex min-h-0 flex-1" ref={workspaceBodyRef}>
-              {/* §9.2: the map takes the left gutter when the body is wide enough to
-            give it 224 px without narrowing the reading column; otherwise the
-            40 px scrubber keeps the attention signs and Now. Mission only —
-            Conversation renders neither, which is what keeps its DOM
-            byte-identical. */}
-              {mission ? (
-                routeRail.fits ? (
-                  <CodingSessionRouteRail
-                    onCollapse={handleToggleRouteRail}
-                    onExpandRoad={routeRail.expandRoad}
-                    onFocusRoad={handleFocusExecution}
-                    onResizeKeyDown={routeRail.onResizeKeyDown}
-                    onResizeStart={routeRail.onResizeStart}
-                    onRevealRow={routeRail.revealRow}
-                    route={routeRail.route}
-                    widthPx={routeRail.widthPx}
-                  />
-                ) : (
-                  <CodingSessionRouteScrubber
-                    onExpandRoad={routeRail.expandRoad}
-                    onFocusRoad={handleFocusExecution}
-                    onRevealRow={routeRail.revealRow}
-                    route={routeRail.route}
-                  />
-                )
-              ) : null}
-              <section
-                aria-label="Umbrella session narrative"
-                className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
-                ref={routeRail.sectionRef}
-              >
-                <div className={cn(gutter, "pb-2")}>
-                  {/* Mission's goal lives in the header subtitle (read) and the
+            <CodingSessionSurfaceCtxProvider value={shell.ctx}>
+              <div className="flex min-h-0 flex-1" ref={workspaceBodyRef}>
+                {/* §9.2: Mission only — the map when 224 px fit beside the
+                  column, else the 40 px scrubber. */}
+                {mission ? (
+                  routeRail.fits ? (
+                    <CodingSessionRouteRail
+                      onCollapse={handleToggleRouteRail}
+                      onExpandRoad={routeRail.expandRoad}
+                      onFocusRoad={handleFocusExecution}
+                      onResizeKeyDown={routeRail.onResizeKeyDown}
+                      onResizeStart={routeRail.onResizeStart}
+                      onRevealRow={routeRail.revealRow}
+                      route={routeRail.route}
+                      widthPx={routeRail.widthPx}
+                    />
+                  ) : (
+                    <CodingSessionRouteScrubber
+                      onExpandRoad={routeRail.expandRoad}
+                      onFocusRoad={handleFocusExecution}
+                      onRevealRow={routeRail.revealRow}
+                      route={routeRail.route}
+                    />
+                  )
+                ) : null}
+                <section
+                  aria-label="Umbrella session narrative"
+                  className={cn(
+                    "relative flex min-w-0 flex-1 flex-col overflow-hidden",
+                    isTranscriptHiddenByPanel(panelState, isNarrow) && "hidden",
+                  )}
+                  ref={routeRail.sectionRef}
+                >
+                  {/* SV-21: the narrative and its composer overlay sit above
+                    the drawer, so the composer's bottom-0 anchors over it. */}
+                  <div
+                    className="relative flex min-h-0 flex-1 flex-col"
+                    data-testid="coding-session-narrative-region"
+                  >
+                    <CodingSessionMinimapSlot slotRef={shell.minimapSlotRef} />
+                    <div className={cn(gutter, "pb-2")}>
+                      {/* Mission's goal lives in the header subtitle (read) and the
                 Inspector's Current goal section (edit). Conversation keeps
                 this pill exactly as it was. */}
-                  {mission ? null : (
-                    <CodingSessionGoalPill
-                      channelId={channelId}
-                      currentUserPubkey={currentUserPubkey}
-                      founderPubkey={umbrella.founderPubkey}
-                      goal={goal}
-                      headerCarriesGoal
-                      sessionRef={umbrella.sessionRef}
-                      workspaceExpanded={narrativeExpanded}
-                    />
-                  )}
-                  {isMultiExecution && isNarrow && !mission ? (
-                    <div className="mt-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                      <CodingSessionAgentFocus
-                        agentSurfaceOpen={surfaceHost.activeTab === "agents"}
-                        focusedExecutionKey={focusedExecutionKey}
-                        items={agentFocusItems}
-                        onFocus={handleFocusExecution}
-                        onOpenAgents={() => {
-                          composerTaskDock.close();
-                          surfaceHost.toggle("agents");
-                        }}
-                        surfaceHostId={surfaceHostId}
-                      />
+                      {mission ? null : (
+                        <CodingSessionGoalPill
+                          channelId={channelId}
+                          currentUserPubkey={currentUserPubkey}
+                          founderPubkey={umbrella.founderPubkey}
+                          goal={goal}
+                          headerCarriesGoal
+                          sessionRef={umbrella.sessionRef}
+                          workspaceExpanded={narrativeExpanded}
+                        />
+                      )}
+                      {isMultiExecution && isNarrow && !mission ? (
+                        <div className="mt-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                          <CodingSessionAgentFocus
+                            agentSurfaceOpen={
+                              panelState.rightOpen &&
+                              panelState.active === "agents"
+                            }
+                            focusedExecutionKey={focusedExecutionKey}
+                            items={agentFocusItems}
+                            onFocus={handleFocusExecution}
+                            onOpenAgents={() => {
+                              composerTaskDock.close();
+                              panelActions.toggle("agents");
+                            }}
+                            surfaceHostId={surfaceHostId}
+                          />
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
-                </div>
-                <div
-                  className={cn(
-                    "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
-                    gutter,
-                  )}
-                  data-testid="coding-session-narrative-scroll"
-                  ref={narrativeAnchorRef}
-                >
-                  <CodingSessionColumn
-                    className={cn("min-h-full pt-7", sessionClosed && "pb-7")}
-                    expanded={narrativeExpanded}
-                    mission={mission}
-                    // One number in both lenses. Conversation's literal
-                    // `pb-48` / `pb-[34rem]` put the composer over the last
-                    // row and opened ~350 px when a reply started (Andy,
-                    // 2026-09-29).
-                    style={
-                      !sessionClosed && dockHeightPx > 0
-                        ? {
-                            paddingBottom: `calc(${dockHeightPx}px + ${CODING_SESSION_COMPOSER_DOCK_FADE})`,
+                    <div
+                      className={cn(
+                        "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
+                        gutter,
+                      )}
+                      data-testid="coding-session-narrative-scroll"
+                      ref={narrativeAnchorRef}
+                    >
+                      <CodingSessionColumn
+                        className={cn(
+                          "min-h-full pt-7",
+                          sessionClosed && "pb-7",
+                        )}
+                        expanded={narrativeExpanded}
+                        mission={mission}
+                        // One number in both lenses. Conversation's literal
+                        // `pb-48` / `pb-[34rem]` put the composer over the last
+                        // row and opened ~350 px when a reply started (Andy,
+                        // 2026-09-29).
+                        style={
+                          !sessionClosed && dockHeightPx > 0
+                            ? {
+                                paddingBottom: `calc(${dockHeightPx}px + ${CODING_SESSION_COMPOSER_DOCK_FADE})`,
+                              }
+                            : undefined
+                        }
+                      >
+                        {focusedAgent ? (
+                          <CodingSessionFocusedAgentNotice
+                            agent={focusedAgent}
+                            onClear={() => handleFocusExecution(null)}
+                          />
+                        ) : null}
+                        <CodingSessionOpenAgentsSurfaceContext.Provider
+                          value={
+                            mission ? null : (shell.openAgentsSurface ?? null)
                           }
-                        : undefined
-                    }
-                  >
-                    {focusedAgent ? (
-                      <CodingSessionFocusedAgentNotice
-                        agent={focusedAgent}
-                        onClear={() => handleFocusExecution(null)}
-                      />
-                    ) : null}
-                    <CodingSessionUmbrellaTimelineView
-                      channelId={channelId}
-                      currentUserPubkey={currentUserPubkey}
-                      focusedExecutionKey={focusedExecutionKey}
-                      laneMessages={lane.messages}
-                      onHandoff={setPrefill}
-                      onFocusExecution={handleFocusExecution}
-                      actorNames={workspaceActorName}
-                      operatorProfiles={operatorProfiles}
-                      missionDensity={mission ? missionDensity : null}
-                      // The signed handoffs between seats are the causality plane.
-                      // They used to exist only inside a pinned card's chain list;
-                      // now they are rows in the stream, interleaved with the turns
-                      // they caused.
-                      missionDeliveries={
-                        mission ? teamWake.deliveries : undefined
-                      }
-                      missionFounderPubkey={umbrella.founderPubkey}
-                      missionLiveness={mission ? missionLiveness : undefined}
-                      missionTransactions={
-                        mission ? missionSurfaceResult.transactions : undefined
-                      }
-                      missionRevealRef={
-                        mission ? routeRail.revealRef : undefined
-                      }
-                      narrativeScrollRef={narrativeScrollRef}
-                      scrollMemoryKey={narrativeMemoryKey}
-                      onMissionVisibleTimesChange={
-                        mission ? routeRail.setVisibleAt : undefined
-                      }
-                      resolveMissionActor={resolveMissionActor}
-                      resolvePromptSeat={resolvePromptSeat}
-                      umbrella={umbrella}
-                      // Not Mission-gated (L2, finding 17): a wake pointer
-                      // reads as the same §1f sentence in both lenses.
-                      // Conversation subscribes to no fold, so the index it
-                      // passes is empty and its line is the unresolved one.
-                      wakeOperations={missionSurfaceResult.wakeOperations}
+                        >
+                          <CodingSessionUmbrellaTimelineView
+                            channelId={channelId}
+                            currentUserPubkey={currentUserPubkey}
+                            focusedExecutionKey={focusedExecutionKey}
+                            laneMessages={lane.messages}
+                            onHandoff={setPrefill}
+                            onFocusExecution={handleFocusExecution}
+                            actorNames={workspaceActorName}
+                            operatorProfiles={operatorProfiles}
+                            missionDensity={mission ? missionDensity : null}
+                            // The signed handoffs between seats are the causality plane.
+                            // They used to exist only inside a pinned card's chain list;
+                            // now they are rows in the stream, interleaved with the turns
+                            // they caused.
+                            missionDeliveries={
+                              mission ? teamWake.deliveries : undefined
+                            }
+                            missionFounderPubkey={umbrella.founderPubkey}
+                            missionLiveness={
+                              mission ? missionLiveness : undefined
+                            }
+                            missionTransactions={
+                              mission
+                                ? missionSurfaceResult.transactions
+                                : undefined
+                            }
+                            missionRevealRef={
+                              mission ? routeRail.revealRef : undefined
+                            }
+                            narrativeScrollRef={narrativeScrollRef}
+                            scrollMemoryKey={narrativeMemoryKey}
+                            onMissionVisibleTimesChange={
+                              mission ? routeRail.setVisibleAt : undefined
+                            }
+                            resolveMissionActor={resolveMissionActor}
+                            resolvePromptSeat={resolvePromptSeat}
+                            umbrella={umbrella}
+                            // Not Mission-gated (L2, finding 17): a wake pointer
+                            // reads as the same §1f sentence in both lenses.
+                            // Conversation subscribes to no fold, so the index it
+                            // passes is empty and its line is the unresolved one.
+                            wakeOperations={missionSurfaceResult.wakeOperations}
+                          />
+                        </CodingSessionOpenAgentsSurfaceContext.Provider>
+                      </CodingSessionColumn>
+                    </div>
+                    <CodingSessionNarrativeJumpPill
+                      dockHeightPx={dockHeightPx}
+                      hasDock={!sessionClosed}
+                      scrollRef={narrativeScrollRef}
                     />
-                  </CodingSessionColumn>
-                </div>
-                {!sessionClosed ? (
-                  <CodingSessionUmbrellaDock
-                    acceptedOperators={acceptedOperators}
-                    activeWorkAgents={activeWorkAgents}
-                    actorNames={workspaceActorName}
-                    channelId={channelId}
-                    currentUserPubkey={identity.data?.pubkey ?? null}
-                    dockRef={dockRef}
-                    focusedExecutionKey={focusedExecutionKey}
-                    gutter={gutter}
-                    channelAccess={channelAccess}
-                    isMultiExecution={isMultiExecution}
-                    isNarrow={isNarrow}
-                    mission={mission}
-                    narrativeExpanded={narrativeExpanded}
-                    onAddProvider={onAddProvider}
-                    onFocusExecution={handleFocusExecution}
-                    onSelectedParticipantChange={setComposerParticipantKey}
-                    prefill={prefill}
-                    resolveReachability={resolveReachability}
-                    streamPresence={streamPresence}
-                    taskDock={composerTaskDock}
-                    umbrella={umbrella}
+                    {!sessionClosed ? (
+                      <CodingSessionUmbrellaDock
+                        acceptedOperators={acceptedOperators}
+                        activeWorkAgents={activeWorkAgents}
+                        actorNames={workspaceActorName}
+                        channelId={channelId}
+                        currentUserPubkey={identity.data?.pubkey ?? null}
+                        dockRef={dockRef}
+                        focusedExecutionKey={focusedExecutionKey}
+                        gutter={gutter}
+                        channelAccess={channelAccess}
+                        isMultiExecution={isMultiExecution}
+                        isNarrow={isNarrow}
+                        mission={mission}
+                        narrativeExpanded={narrativeExpanded}
+                        onAddProvider={onAddProvider}
+                        onFocusExecution={handleFocusExecution}
+                        onSelectedParticipantChange={setComposerParticipantKey}
+                        prefill={prefill}
+                        resolveReachability={resolveReachability}
+                        streamPresence={streamPresence}
+                        taskDock={composerTaskDock}
+                        umbrella={umbrella}
+                      />
+                    ) : (
+                      // A closed umbrella mounts no composer, so every seat's
+                      // boundary (full access, unenforced) is recorded in a
+                      // footer instead (SV-17).
+                      <CodingSessionUmbrellaClosedSandboxFooter
+                        focusedExecution={focusedExecution}
+                        participants={composerParticipants}
+                      />
+                    )}
+                  </div>
+                  <CodingSessionSurfaceDrawerHost
+                    ctx={shell.ctx}
+                    open={panelState.bottomOpen}
+                    surfaces={shell.drawerSurfaces}
                   />
-                ) : (
-                  // A closed umbrella mounts no composer, so every seat's
-                  // boundary (full access, unenforced) is recorded in a
-                  // footer instead (SV-17).
-                  <CodingSessionUmbrellaClosedSandboxFooter
-                    focusedExecution={focusedExecution}
-                    participants={composerParticipants}
+                </section>
+                {panelState.rightOpen ? (
+                  <CodingSessionSurfaceHost
+                    ctx={shell.ctx}
+                    hostId={surfaceHostId}
+                    layout={
+                      bodyWidthPx <= 0 ? null : isNarrow ? "sheet" : "inline"
+                    }
+                    panels={shell.panels}
+                    surfaces={shell.surfaces}
+                    widthContainerRef={workspaceBodyRef}
                   />
-                )}
-              </section>
-              {surfaceHost.activeTab !== null ? (
-                <CodingSessionSurfaceHost
-                  activeSurfaceId={surfaceHost.activeTab}
-                  hostId={surfaceHostId}
-                  layout={
-                    bodyWidthPx <= 0 ? null : isNarrow ? "sheet" : "inline"
-                  }
-                  onClose={surfaceHost.close}
-                  onSelectSurface={surfaceHost.select}
-                  surfaces={surfaces}
-                  widthContainerRef={workspaceBodyRef}
-                />
-              ) : null}
-            </div>
+                ) : null}
+              </div>
+            </CodingSessionSurfaceCtxProvider>
           </CodingSessionComposerRecipientContext.Provider>
         </CodingSessionOpenHoldsContext.Provider>
       </CodingSessionMissionLensContext.Provider>

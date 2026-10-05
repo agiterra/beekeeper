@@ -34,6 +34,7 @@ type ExecutionRailTab = "overview" | `execution:${string}`;
 export function CodingSessionExecutionRail({
   actorNames,
   canSteer = false,
+  machine,
   resolveReachability = UNKNOWN_CODING_SESSION_REACHABILITY,
   subagents = null,
   umbrella,
@@ -49,6 +50,11 @@ export function CodingSessionExecutionRail({
    * waiting strings a waiting seat reads, and nothing else.
    */
   canSteer?: boolean;
+  /**
+   * What each seat needs to say which machine runs it (SV-24). Absent, a
+   * seat names its provider by key and never claims this computer.
+   */
+  machine?: CodingSessionExecutionMachineContext;
   /**
    * Reachability for this channel, threaded down from the surface that owns
    * the coordination read. Without it every seat is `{known:false}` — which
@@ -168,6 +174,7 @@ export function CodingSessionExecutionRail({
           <ExecutionDetail
             actorNames={actorNames}
             canSteer={canSteer}
+            machine={machine}
             execution={selectedExecution}
             panelId={`${panelId}-${selectedExecution.executionKey}`}
             status={statuses.get(selectedExecution.executionKey)}
@@ -176,6 +183,7 @@ export function CodingSessionExecutionRail({
           <Overview
             actorNames={actorNames}
             canSteer={canSteer}
+            machine={machine}
             executions={umbrella.executions}
             panelId={`${panelId}-overview`}
             statuses={statuses}
@@ -232,6 +240,7 @@ function ExecutionTab({
 function Overview({
   actorNames,
   canSteer,
+  machine,
   executions,
   panelId,
   statuses,
@@ -239,6 +248,7 @@ function Overview({
 }: {
   actorNames?: CodingSessionActorNameResolver;
   canSteer: boolean;
+  machine?: CodingSessionExecutionMachineContext;
   executions: CodingSessionExecution[];
   panelId: string;
   statuses: ReadonlyMap<string, CodingSessionWorkspaceStatus>;
@@ -256,6 +266,7 @@ function Overview({
             canSteer={canSteer}
             execution={execution}
             key={execution.executionKey}
+            machine={machine}
             status={statuses.get(execution.executionKey)}
           />
         ))}
@@ -272,12 +283,14 @@ function Overview({
 function ExecutionDetail({
   actorNames,
   canSteer,
+  machine,
   execution,
   panelId,
   status,
 }: {
   actorNames?: CodingSessionActorNameResolver;
   canSteer: boolean;
+  machine?: CodingSessionExecutionMachineContext;
   execution: CodingSessionExecution;
   panelId: string;
   status: CodingSessionWorkspaceStatus | undefined;
@@ -294,6 +307,7 @@ function ExecutionDetail({
         actorNames={actorNames}
         canSteer={canSteer}
         execution={execution}
+        machine={machine}
         status={status}
       />
       <div className="mt-4 border-t border-border/60 pt-4">
@@ -330,11 +344,13 @@ function ExecutionCard({
   actorNames,
   canSteer,
   execution,
+  machine,
   status,
 }: {
   actorNames?: CodingSessionActorNameResolver;
   canSteer: boolean;
   execution: CodingSessionExecution;
+  machine?: CodingSessionExecutionMachineContext;
   status: CodingSessionWorkspaceStatus | undefined;
 }) {
   const record = execution.activeGeneration;
@@ -343,6 +359,10 @@ function ExecutionCard({
     label: "Status unknown" as const,
   };
   const word = codingSessionDispositionWord(resolved, canSteer);
+  const runsOn = codingSessionExecutionMachine(execution, {
+    localProviderPubkey: machine?.localProviderPubkey,
+    resolveName: machine?.resolveName ?? actorNames,
+  });
   return (
     <article className="py-3" data-testid="coding-session-execution-card">
       <div className="flex items-start gap-2.5">
@@ -373,6 +393,14 @@ function ExecutionCard({
             ]
               .filter(Boolean)
               .join(" · ")}
+          </p>
+          <p
+            className="mt-0.5 truncate text-2xs text-muted-foreground"
+            data-local={runsOn.local ? "true" : "false"}
+            data-testid="coding-session-execution-machine"
+            title={runsOn.title}
+          >
+            {runsOn.label}
           </p>
           {record.transcript.length > 0 ? (
             <p className="mt-2 truncate text-2xs text-muted-foreground">
@@ -515,6 +543,64 @@ function disambiguatedExecutionLabel(
   );
   if (matches.length < 2) return base;
   return `${base} ${matches.indexOf(participant) + 1}`;
+}
+
+/**
+ * Which machine runs an execution (SV-24): the provider that signs its facts.
+ *
+ * `on this computer` only when this computer's provider key is that signer;
+ * otherwise the provider by the name this client already gives it, or its
+ * first eight hex. While this computer's own key is unknown, no seat claims
+ * to be here.
+ */
+export type CodingSessionExecutionMachineContext = {
+  /**
+   * This computer's provider key: `null` when it runs no provider,
+   * `undefined` while that is unknown.
+   */
+  localProviderPubkey: string | null | undefined;
+  /** The name this client gives a provider key, when it has one. */
+  resolveName?: CodingSessionActorNameResolver;
+};
+
+export function codingSessionExecutionMachine(
+  execution: CodingSessionExecution,
+  context: CodingSessionExecutionMachineContext,
+): { label: string; title: string; local: boolean } {
+  const { localProviderPubkey } = context;
+  const record = execution.activeGeneration;
+  const provider = (
+    record.providerAuthorityPubkey ??
+    execution.signerPubkey ??
+    ""
+  )
+    .trim()
+    .toLowerCase();
+  if (provider === "") {
+    return {
+      label: "provider not named",
+      title: "No provider key signed this execution's facts.",
+      local: false,
+    };
+  }
+  const local = localProviderPubkey?.trim().toLowerCase() ?? null;
+  if (local !== null && local !== "" && local === provider) {
+    return {
+      label: "on this computer",
+      title: `This computer's provider (${provider.slice(0, 8)}) runs this execution.`,
+      local: true,
+    };
+  }
+  const name = context.resolveName?.(provider)?.trim() || null;
+  const short = provider.slice(0, 8);
+  return {
+    label: name ? `on ${name}` : `on provider ${short}`,
+    title:
+      localProviderPubkey === undefined
+        ? `Runs on the provider ${name ?? short} (${short}). Whether that is this computer was not read.`
+        : `Runs on the provider ${name ?? short} (${short}), not on this computer.`,
+    local: false,
+  };
 }
 
 /**

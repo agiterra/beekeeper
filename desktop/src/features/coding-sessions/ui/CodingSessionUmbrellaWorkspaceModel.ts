@@ -1,12 +1,23 @@
 import * as React from "react";
+import {
+  readCodingSessionContextLoad,
+  type CodingSessionContextLoad,
+} from "@/features/coding-sessions/lib/codingSessionContextLoad";
+import { derivePackRefs } from "@/features/coding-sessions/lib/codingSessionPackRef";
+import { listCodingSessionRoutedSeats } from "@/features/coding-sessions/lib/codingSessionRoutedSeats";
+import { deriveSeatBeeStamps } from "@/features/coding-sessions/lib/codingSessionSeatBee";
+import { buildCodingSessionTurnByline } from "@/features/coding-sessions/lib/codingSessionTurnByline";
+import type { CodingSessionActorNameResolver } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 
 import type { CodingSessionMissionOpenHolds } from "@/features/coding-sessions/lib/codingSessionMissionOpenHolds";
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
+  buildUmbrellaTimeline,
   codingSessionUmbrellaEntryKey,
   type CodingSessionUmbrellaTimelineEntry,
 } from "@/features/coding-sessions/lib/codingSessionUmbrellaTimeline";
+import type { CodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionConversationLane";
 import type {
   CodingSessionCatalogRecord,
   CodingSessionUmbrellaRecord,
@@ -276,4 +287,130 @@ export const CodingSessionOpenHoldsContext =
 /** The open holds in scope, or an empty result outside a provider. */
 export function useCodingSessionOpenHolds(): CodingSessionMissionOpenHolds {
   return React.useContext(CodingSessionOpenHoldsContext);
+}
+
+/**
+ * The umbrella's per-seat lookups, moved out of the workspace unchanged (B0:
+ * the workspace must shrink). Each reads only the umbrella's own executions.
+ */
+export function useCodingSessionUmbrellaSeatLookups(
+  umbrella: CodingSessionUmbrellaRecord,
+  workspaceActorName: CodingSessionActorNameResolver,
+) {
+  // D7 / W12: how full each seat's context is, folded from the driver's own
+  // signed occupancy items. Never estimated, and an execution that has
+  // reported nothing carries `null` rather than a zero.
+  const contextLoads = React.useMemo(
+    () =>
+      umbrella.executions.map((execution) => ({
+        key: execution.executionKey,
+        label: buildCodingSessionTurnByline({
+          agentDisplayName: execution.activeGeneration.agentRef
+            ? (workspaceActorName(execution.activeGeneration.agentRef) ?? null)
+            : null,
+          agentRef: execution.activeGeneration.agentRef,
+          generation: execution.activeGeneration.commandTarget?.generation ?? 1,
+          label: null,
+          model: execution.activeGeneration.model,
+          role: execution.activeGeneration.role,
+          runtime: execution.activeGeneration.runtime,
+        }).name,
+        load: readCodingSessionContextLoad(
+          execution.activeGeneration.transcript,
+        ) satisfies CodingSessionContextLoad | null,
+      })),
+    [umbrella.executions, workspaceActorName],
+  );
+  const routedSeats = React.useMemo(
+    () => listCodingSessionRoutedSeats(umbrella.executions),
+    [umbrella.executions],
+  );
+  // Names a transaction's author or counterparty from the umbrella's own
+  // executions. A pubkey with no execution falls back to the actor-name
+  // resolver, and an unknown one to `null` — the row then renders a truncated
+  // key rather than guessing a name.
+  const resolveMissionActor = React.useCallback(
+    (pubkey: string) => {
+      const execution = umbrella.executions.find(
+        (candidate) =>
+          candidate.activeGeneration.agentRef?.toLowerCase() ===
+          pubkey.toLowerCase(),
+      );
+      if (!execution) {
+        return {
+          label: workspaceActorName(pubkey) ?? null,
+          executionKey: null,
+        };
+      }
+      const agentRef = execution.activeGeneration.agentRef;
+      return {
+        label: buildCodingSessionTurnByline({
+          agentDisplayName: agentRef
+            ? (workspaceActorName(agentRef) ?? null)
+            : null,
+          agentRef,
+          generation: execution.activeGeneration.commandTarget?.generation ?? 1,
+          label: null,
+          model: execution.activeGeneration.model,
+          role: execution.activeGeneration.role,
+          runtime: execution.activeGeneration.runtime,
+        }).name,
+        executionKey: execution.executionKey,
+      };
+    },
+    [umbrella.executions, workspaceActorName],
+  );
+  // Same lookup, but it answers `null` for a pubkey that is not a seat — the
+  // difference that lets prompt attribution tell "a seat sent this" apart from
+  // "a person sent this". A seat's turn used to read `You` to the founder or as
+  // a bare truncated key to everyone else.
+  const resolvePromptSeat = React.useCallback(
+    (pubkey: string) => {
+      const isSeat = umbrella.executions.some(
+        (candidate) =>
+          candidate.activeGeneration.agentRef?.toLowerCase() ===
+          pubkey.toLowerCase(),
+      );
+      return isSeat ? resolveMissionActor(pubkey) : null;
+    },
+    [resolveMissionActor, umbrella.executions],
+  );
+  // Which `bee` each seat is actually running (L12), read straight off the
+  // 44223 metadata this umbrella already carries per execution — no new
+  // query. `deriveSeatBeeStamps` prefers the active generation's stamp and
+  // falls back to the newest prior generation's when a fresh resume has not
+  // republished one yet.
+  const seatBeeStamps = React.useMemo(
+    () => deriveSeatBeeStamps(umbrella.executions),
+    [umbrella.executions],
+  );
+  // Which persona pack each seat actually staged (LANE-L23), same fold as
+  // `seatBeeStamps` immediately above — active generation first, then the
+  // newest prior generation's.
+  const seatPackRefs = React.useMemo(
+    () => derivePackRefs(umbrella.executions),
+    [umbrella.executions],
+  );
+  return {
+    contextLoads,
+    resolveMissionActor,
+    resolvePromptSeat,
+    routedSeats,
+    seatBeeStamps,
+    seatPackRefs,
+  };
+}
+
+/**
+ * The umbrella's chronological narrative, memoized for the surface `ctx`
+ * (`umbrellaTimeline`; B5's minimap reads its turns).
+ */
+export function useCodingSessionUmbrellaSurfaceTimeline(
+  umbrella: CodingSessionUmbrellaRecord,
+  laneMessages: readonly CodingSessionLaneMessage[],
+): readonly CodingSessionUmbrellaTimelineEntry[] {
+  return React.useMemo(
+    () => buildUmbrellaTimeline(umbrella, laneMessages),
+    [laneMessages, umbrella],
+  );
 }
