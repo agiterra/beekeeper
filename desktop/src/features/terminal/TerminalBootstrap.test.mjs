@@ -653,3 +653,46 @@ test("a non-channel route closes the panel and ignores the terminal shortcut", a
   assert.equal(getTerminalPanelSnapshotForTests().mode, "closed");
   view.unmount();
 });
+
+test("on a coding-session route the channel terminal leaves ⌘J alone (DB10)", async () => {
+  const { createElement } = await import("react");
+  const { act, render } = await import("@testing-library/react");
+  const { ThemeProvider } = await import("@/shared/theme/ThemeProvider");
+  const { TerminalBootstrap } = await import("./TerminalBootstrap.tsx");
+  const { getTerminalPanelSnapshotForTests } = await import(
+    "./terminalPanelStore.ts"
+  );
+
+  setTerminalPanelMode("closed");
+  const view = render(
+    createElement(
+      ThemeProvider,
+      null,
+      createElement(TerminalBootstrap, {
+        channelId: "channel-1",
+        channelName: "general",
+        npub: "npub1owner",
+        relayUrl: "wss://relay.example",
+        threadId: null,
+        shortcutStandsDown: true,
+      }),
+    ),
+  );
+
+  const chord = {
+    bubbles: true,
+    cancelable: true,
+    code: "KeyJ",
+    metaKey: true,
+  };
+  const down = new KeyboardEvent("keydown", chord);
+  act(() => {
+    window.dispatchEvent(down);
+    window.dispatchEvent(new KeyboardEvent("keyup", chord));
+  });
+  // The session workspace's handler skips a prevented event, so standing down
+  // means not preventing it as well as not toggling.
+  assert.equal(down.defaultPrevented, false);
+  assert.equal(getTerminalPanelSnapshotForTests().mode, "closed");
+  view.unmount();
+});

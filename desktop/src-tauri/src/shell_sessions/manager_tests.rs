@@ -114,6 +114,7 @@ fn dormant_session_is_listed_readable_and_restorable() {
                 project_ref: None,
                 shared: true,
                 roster: Vec::new(),
+                coding_session: None,
             },
             state: Arc::new(Mutex::new(SharedState {
                 scrollback: history.to_vec(),
@@ -270,6 +271,7 @@ fn register_live_session_with_fake_host(
                 project_ref: None,
                 shared: true,
                 roster: Vec::new(),
+                coding_session: None,
             },
             client,
             io,
@@ -279,6 +281,7 @@ fn register_live_session_with_fake_host(
                 last_output_at: None,
                 parser: vt100::Parser::new(24, 80, 0),
             })),
+            shell_pid: None,
         },
     );
     drop(sessions);

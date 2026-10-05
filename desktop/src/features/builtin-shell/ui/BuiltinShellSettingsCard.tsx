@@ -167,7 +167,9 @@ function ShellSessionRow({
           <p className="truncate font-medium">{session.title}</p>
           <p className="flex items-center gap-1 truncate text-2xs text-muted-foreground">
             <FolderGit2 className="size-3 shrink-0" />
-            {session.currentDirectory}
+            {session.codingSession
+              ? "A coding session's working tree, on this computer"
+              : session.currentDirectory}
           </p>
         </div>
       </div>

@@ -35,7 +35,30 @@ export type RemoteTerminal = {
   roster: RemoteTerminalRosterEntry[];
   /** Announce freshness (unix seconds) — old `open` heads read as stale. */
   announcedAt: number;
+  /** The coding session the terminal was opened for (`["session", …]`,
+   * NIP-ST amendment), or null for a plain project terminal. */
+  sessionRef: string | null;
 };
+
+/** The longest `session` tag value a reader accepts (NIP-ST). */
+const MAX_SESSION_TAG_CHARS = 256;
+
+/** An announce's `session` tag: exactly one, bounded, no control
+ * characters; any other shape reads as "no session" rather than a guess. */
+export function sessionRefFromAnnounce(event: RelayEvent): string | null {
+  const value = tagValue(event, "session");
+  if (value === null) return null;
+  const trimmed = value.trim();
+  if (
+    trimmed.length === 0 ||
+    [...trimmed].length > MAX_SESSION_TAG_CHARS ||
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the rule is "no control characters".
+    /[\u0000-\u001f\u007f]/.test(trimmed)
+  ) {
+    return null;
+  }
+  return trimmed;
+}
 
 function tagValue(event: RelayEvent, name: string): string | null {
   const values = event.tags
@@ -88,6 +111,7 @@ export function remoteTerminalsFromEvents(
       dims: tagValue(event, "dims"),
       roster: rosterFromAnnounce(event),
       announcedAt: event.created_at,
+      sessionRef: sessionRefFromAnnounce(event),
     });
   }
   terminals.sort((a, b) =>

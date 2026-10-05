@@ -79,11 +79,7 @@ pub fn set_roster(
     crate::shell_sessions::persist::set_app_meta(
         app,
         session_id,
-        crate::shell_sessions::persist::AppMeta {
-            project_ref: info.project_ref.clone(),
-            shared: info.shared,
-            roster,
-        },
+        crate::shell_sessions::persist::AppMeta::from_info(&info),
     );
     if crate::shell_sessions::broadcast::may_broadcast(&info).is_some() {
         crate::shell_sessions::broadcast::announce(app, &info, "open");

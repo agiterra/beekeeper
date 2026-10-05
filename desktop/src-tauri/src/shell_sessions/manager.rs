@@ -23,6 +23,7 @@ use buzz_shell_host::proto::Frame;
 use buzz_shell_host::receipt::Receipt;
 use tauri::{AppHandle, Emitter};
 
+use super::coding_session::{self, ShellCodingSessionRef};
 use super::session_driver::{self, InputResize, Probed, SessionDriver};
 
 mod roster;
@@ -83,19 +84,31 @@ fn socket_path_for(dir: &std::path::Path, id: &str) -> PathBuf {
 /// `cwd` (default: `$HOME`). The shell runs in a `buzz-shell-host` process that
 /// outlives this app. `project_ref`, if given, tags the session with the
 /// project container it was opened from (see `set_project_ref`).
+///
+/// With `coding_session` (SV-25) the directory is the session's tree as this
+/// machine resolves it; a `cwd` from the caller is refused rather than
+/// trusted, and a session with no tree here is refused with the tree's own
+/// reason — never `$HOME`.
 pub fn create(
     app: &AppHandle,
     cwd: Option<String>,
     title: Option<String>,
     command: Option<String>,
     project_ref: Option<String>,
+    coding_session: Option<ShellCodingSessionRef>,
 ) -> Result<ShellSessionInfo, String> {
     let shell = command.unwrap_or_else(default_shell);
-    let cwd = cwd.filter(|c| !c.is_empty()).unwrap_or_else(default_cwd);
+    let cwd = match &coding_session {
+        Some(reference) => coding_session::create_cwd(app, cwd.as_deref(), reference)?,
+        None => cwd.filter(|c| !c.is_empty()).unwrap_or_else(default_cwd),
+    };
     if !std::path::Path::new(&cwd).is_dir() {
         return Err(format!("directory does not exist: {cwd}"));
     }
     let title = title.filter(|t| !t.is_empty()).unwrap_or_else(|| {
+        if coding_session.is_some() {
+            return coding_session::SESSION_SHELL_DEFAULT_TITLE.to_string();
+        }
         std::path::Path::new(&cwd)
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -114,16 +127,13 @@ pub fn create(
         project_ref,
         shared: true,
         roster: Vec::new(),
+        coding_session,
     };
     let info = spawn_host_and_attach(app, info, &cwd)?;
     crate::shell_sessions::persist::set_app_meta(
         app,
         &info.session_id,
-        crate::shell_sessions::persist::AppMeta {
-            project_ref: info.project_ref.clone(),
-            shared: info.shared,
-            roster: info.roster.clone(),
-        },
+        crate::shell_sessions::persist::AppMeta::from_info(&info),
     );
     crate::shell_sessions::broadcast::announce(app, &info, "open");
     Ok(info)
@@ -244,6 +254,7 @@ fn attach(
                 client,
                 io,
                 state: state.clone(),
+                shell_pid: hello.shell_pid,
             },
         );
     }
@@ -382,6 +393,7 @@ pub fn reattach_hosts(app: &AppHandle) {
                         project_ref: app_meta.project_ref,
                         shared: app_meta.shared,
                         roster: app_meta.roster,
+                        coding_session: app_meta.coding_session,
                     };
                     match attach(app, info, &socket) {
                         Ok(reattached_info) => {
@@ -439,6 +451,9 @@ pub fn reattach_hosts(app: &AppHandle) {
                 .and_then(|m| m.project_ref.clone())
                 .or_else(|| meta.project_ref.clone()),
             shared: session_app_meta.as_ref().map(|m| m.shared).unwrap_or(true),
+            coding_session: session_app_meta
+                .as_ref()
+                .and_then(|m| m.coding_session.clone()),
             roster: session_app_meta.map(|m| m.roster).unwrap_or_default(),
         };
         map.insert(
@@ -472,10 +487,21 @@ pub fn resume(app: &AppHandle, session_id: &str) -> Result<ShellSessionInfo, Str
         // Already live? Return its info; otherwise it's unknown.
         return info(session_id).ok_or_else(|| format!("no restorable session {session_id}"));
     };
-    let cwd = if std::path::Path::new(&session.cwd).is_dir() {
-        session.cwd
-    } else {
-        default_cwd()
+    // A session shell resumes inside the session's tree or not at all.
+    let resumed_cwd = match session.info.coding_session.as_ref() {
+        Some(reference) => coding_session::resume_session_cwd(app, reference, &session.cwd),
+        None if std::path::Path::new(&session.cwd).is_dir() => Ok(session.cwd.clone()),
+        None => Ok(default_cwd()),
+    };
+    let cwd = match resumed_cwd {
+        Ok(cwd) => cwd,
+        Err(reason) => {
+            // Put it back: refusing to resume must not forget the session.
+            if let Ok(mut map) = dormant().lock() {
+                map.insert(session_id.to_string(), session);
+            }
+            return Err(reason);
+        }
     };
     let info = spawn_host_and_attach(app, session.info, &cwd)?;
     crate::shell_sessions::broadcast::announce(app, &info, "open");
@@ -647,11 +673,7 @@ pub fn set_project_ref(
     crate::shell_sessions::persist::set_app_meta(
         app,
         session_id,
-        crate::shell_sessions::persist::AppMeta {
-            project_ref: info.project_ref.clone(),
-            shared: info.shared,
-            roster: info.roster.clone(),
-        },
+        crate::shell_sessions::persist::AppMeta::from_info(&info),
     );
     // Announce under the (possibly new) coordinate — the addressable replace
     // drops the announce from the old project's list automatically. Clearing
@@ -697,11 +719,7 @@ pub fn set_shared(app: &AppHandle, session_id: &str, shared: bool) -> Result<(),
     crate::shell_sessions::persist::set_app_meta(
         app,
         session_id,
-        crate::shell_sessions::persist::AppMeta {
-            project_ref: info.project_ref.clone(),
-            shared,
-            roster: info.roster.clone(),
-        },
+        crate::shell_sessions::persist::AppMeta::from_info(&info),
     );
     if crate::shell_sessions::broadcast::may_broadcast(&info).is_some() {
         crate::shell_sessions::broadcast::announce(app, &info, "open");
@@ -739,6 +757,14 @@ pub(crate) fn clone_screen(session_id: &str) -> Result<(vt100::Screen, u16, u16)
     };
     let st = state.lock().map_err(|_| lock_err())?;
     Ok((st.parser.screen().clone(), rows, cols))
+}
+
+/// The live shell's pid, when its host reported one (the foreground read).
+pub(crate) fn live_shell_pid(session_id: &str) -> Option<u32> {
+    registry()
+        .lock()
+        .ok()
+        .and_then(|sessions| sessions.get(session_id).and_then(|s| s.shell_pid))
 }
 
 /// Write raw bytes (keystrokes) to the session's host.

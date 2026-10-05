@@ -206,6 +206,7 @@ mod tests {
                     role: role.to_string(),
                 })
                 .collect(),
+            coding_session: None,
         }
     }
 

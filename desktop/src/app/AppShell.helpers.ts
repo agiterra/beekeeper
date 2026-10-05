@@ -159,6 +159,24 @@ export function toSearchHit(
   };
 }
 
+/**
+ * True on a coding-session workspace route (`/coding-sessions/$channelId/
+ * $generationId`), where the workspace binds ⌘J to its own terminal drawer and
+ * the channel terminal's ⌘J stands down (DB10). Not the create screen and not
+ * a founded-but-unstarted umbrella, which bind no drawer.
+ */
+export function isCodingSessionWorkspacePathname(pathname: string): boolean {
+  const segments = pathname.split("/");
+  return (
+    segments.length === 4 &&
+    segments[0] === "" &&
+    segments[1] === "coding-sessions" &&
+    segments[2].length > 0 &&
+    segments[2] !== "new" &&
+    segments[3].length > 0
+  );
+}
+
 export function deriveShellRoute(pathname: string): {
   selectedChannelId: string | null;
   selectedView: AppView;

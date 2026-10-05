@@ -28,8 +28,17 @@ function base64ToBytes(b64: string): Uint8Array {
  * own sessions, and the owner always has interact rights on them — keystrokes
  * are forwarded unconditionally.
  */
-export function ShellTerminal({ sessionId }: { sessionId: string }) {
+export function ShellTerminal({
+  autoFocus = true,
+  sessionId,
+}: {
+  sessionId: string;
+  /** Take keyboard focus on mount (default). A split's other panes pass
+   * false so only the active one grabs it, as in T3. */
+  autoFocus?: boolean;
+}) {
   const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const autoFocusRef = React.useRef(autoFocus);
 
   React.useEffect(() => {
     const container = containerRef.current;
@@ -64,7 +73,7 @@ export function ShellTerminal({ sessionId }: { sessionId: string }) {
     // Grab keyboard focus so the session is typeable the moment it mounts —
     // it's freshly navigated to (from the sidebar or a resume), so focus is
     // still on whatever was clicked, not the new terminal.
-    term.focus();
+    if (autoFocusRef.current) term.focus();
 
     let disposed = false;
     // True while the scrollback replay is being parsed. The scrollback holds

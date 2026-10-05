@@ -40,6 +40,29 @@ export type ShellSessionInfo = {
   /** Individually invited members. Admitted to watch regardless of `shared`;
    * collaborators may also type remotely. */
   roster?: ShellRosterEntry[];
+  /** The coding session this shell was opened for (SV-25), when any. Such a
+   * shell's `currentDirectory` is empty: its directory is the session's
+   * tree, which stays on the host. */
+  codingSession?: ShellCodingSessionRef | null;
+};
+
+/**
+ * Which coding session a shell is for. The host resolves the shell's
+ * directory from this — the session's working tree on this computer, or a
+ * refusal with the tree's reason — so the renderer never names a path.
+ * `sessionRef` is announced to the project (`["session", …]`, NIP-ST).
+ */
+export type ShellCodingSessionRef = {
+  /** The session view's key (umbrella `sessionRef`, or its implicit key). */
+  sessionRef: string;
+  /** The focused execution's provider-minted session id, when known. */
+  sessionId: string | null;
+  channelId: string;
+  projectRef: string | null;
+  /** This machine's provider runs the focused execution (DB9). */
+  isLocalProvider: boolean;
+  /** An agent is seated on the execution: no project/channel default. */
+  isHiredSeat?: boolean;
 };
 
 /** The broker/consent workspace id for a built-in shell session. */
@@ -59,6 +82,42 @@ export function createShellSession(options?: {
     title: options?.title ?? null,
     command: options?.command ?? null,
     projectRef: options?.projectRef ?? null,
+    codingSession: null,
+  });
+}
+
+/**
+ * Spawn a shell for a coding session (SV-25). There is deliberately no `cwd`:
+ * the host opens the session's tree on this computer, or rejects with the
+ * tree's reason. It never falls back to the home directory.
+ */
+export function createCodingSessionShell(options: {
+  codingSession: ShellCodingSessionRef;
+  title?: string;
+}): Promise<ShellSessionInfo> {
+  return invokeTauri<ShellSessionInfo>("create_shell_session", {
+    cwd: null,
+    title: options.title ?? null,
+    command: null,
+    projectRef: options.codingSession.projectRef,
+    codingSession: options.codingSession,
+  });
+}
+
+/** One shell's foreground read (SV-22). */
+export type ShellForegroundState = {
+  sessionId: string;
+  /** True while a command holds the terminal; false at the prompt; null
+   * when this computer could not tell. */
+  runningCommand: boolean | null;
+};
+
+/** Is a command running in each of these shells right now? */
+export function shellSessionsForeground(
+  sessionIds: string[],
+): Promise<ShellForegroundState[]> {
+  return invokeTauri<ShellForegroundState[]>("shell_sessions_foreground", {
+    sessionIds,
   });
 }
 

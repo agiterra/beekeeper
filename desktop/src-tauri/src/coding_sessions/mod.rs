@@ -21,6 +21,8 @@ pub(crate) mod naming_mode;
 // The seat's skills live outside every checkout, so removing them is its own
 // job, beside the tree's.
 pub(crate) mod seat_bundle;
+// SV-24/SV-25: where a session's tree is on this machine, never its path.
+pub(crate) mod session_tree;
 pub(crate) mod workdir_store;
 pub(crate) mod worktree;
 // L11: what may be done with a worktree once its session is finished.

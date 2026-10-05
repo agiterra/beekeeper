@@ -334,6 +334,7 @@ export function AppShell() {
     channelId: selectedChannelId,
     channels,
     locationSearch: location.search,
+    pathname: location.pathname,
     pubkey: identityQuery.data?.pubkey,
     relayUrl: communitiesHook.activeCommunity?.relayUrl,
   });

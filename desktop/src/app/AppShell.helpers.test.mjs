@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isCodingSessionWorkspacePathname,
   markAllReadSources,
   shouldBounceForChannelNotification,
 } from "./AppShell.helpers.ts";
@@ -69,4 +70,18 @@ test("markAllReadSources skips the active marker without projected activity", ()
   });
 
   assert.deepEqual(calls, ["channels"]);
+});
+
+test("isCodingSessionWorkspacePathname is the generation route only (DB10)", () => {
+  assert.equal(
+    isCodingSessionWorkspacePathname("/coding-sessions/c1/g1"),
+    true,
+  );
+  assert.equal(isCodingSessionWorkspacePathname("/coding-sessions/new"), false);
+  assert.equal(
+    isCodingSessionWorkspacePathname("/coding-sessions/c1/founded/s1"),
+    false,
+  );
+  assert.equal(isCodingSessionWorkspacePathname("/channels/c1"), false);
+  assert.equal(isCodingSessionWorkspacePathname("/coding-sessions/c1/"), false);
 });

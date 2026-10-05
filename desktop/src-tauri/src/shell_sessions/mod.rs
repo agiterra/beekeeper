@@ -13,6 +13,8 @@
 
 pub mod access;
 pub mod broadcast;
+pub mod coding_session;
+pub mod foreground;
 pub mod host_client;
 pub mod keys;
 pub mod manager;

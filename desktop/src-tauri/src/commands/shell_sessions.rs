@@ -10,11 +10,18 @@ use nostr::JsonUtil;
 use tauri::AppHandle;
 
 use crate::shell_sessions::access::{self, AccessRequest, Decision};
+use crate::shell_sessions::coding_session::{renderer_view, ShellCodingSessionRef};
+use crate::shell_sessions::foreground::ShellForegroundState;
 use crate::shell_sessions::manager::{self, RosterEntry, ShellSessionInfo};
 
 /// Spawn a new built-in shell session. Defaults: the user's `$SHELL`, `$HOME`.
 /// `project_ref`, if given, tags the session with the project container
 /// (`30621:<owner>:<slug>` coordinate) it was opened from.
+///
+/// `coding_session` (SV-25) opens the shell in that session's working tree as
+/// this machine resolves it, and refuses with the tree's reason when there is
+/// none; it never falls back to `$HOME`, takes no `cwd`, and the returned
+/// info carries no path.
 #[tauri::command]
 pub fn create_shell_session(
     app: AppHandle,
@@ -22,14 +29,16 @@ pub fn create_shell_session(
     title: Option<String>,
     command: Option<String>,
     project_ref: Option<String>,
+    coding_session: Option<ShellCodingSessionRef>,
 ) -> Result<ShellSessionInfo, String> {
-    manager::create(&app, cwd, title, command, project_ref)
+    manager::create(&app, cwd, title, command, project_ref, coding_session).map(renderer_view)
 }
 
-/// All built-in shell sessions, oldest first (live + restorable).
+/// All built-in shell sessions, oldest first (live + restorable). A session
+/// shell's directory is blanked: the tree's path stays in Rust.
 #[tauri::command]
 pub fn list_shell_sessions() -> Vec<ShellSessionInfo> {
-    manager::list()
+    manager::list().into_iter().map(renderer_view).collect()
 }
 
 /// Bring a restored (restorable) session back to life: spawn a fresh shell in
@@ -39,7 +48,27 @@ pub fn resume_shell_session(
     app: AppHandle,
     session_id: String,
 ) -> Result<ShellSessionInfo, String> {
-    manager::resume(&app, &session_id)
+    manager::resume(&app, &session_id).map(renderer_view)
+}
+
+/// For each named shell session: is a command running in it right now (its
+/// terminal's foreground process group is not the shell's own)? `null` when
+/// this computer could not tell. Feeds the session view's Terminal badge
+/// (SV-22), which counts only commands running on this computer.
+///
+/// `async` and on the blocking pool: the read spawns `ps` and waits on it,
+/// and the session view polls this every 1.5 s while a shell is live, so a
+/// synchronous command would put a process spawn on the main thread at that
+/// rate. A failed join is an error the caller reads as "could not tell".
+#[tauri::command]
+pub async fn shell_sessions_foreground(
+    session_ids: Vec<String>,
+) -> Result<Vec<ShellForegroundState>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::shell_sessions::foreground::running_commands(&session_ids)
+    })
+    .await
+    .map_err(|error| format!("shell foreground read failed: {error}"))
 }
 
 /// Kill the shell (if running) and remove the session, forgetting its persisted

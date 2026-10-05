@@ -60,6 +60,11 @@ pub struct ShellSessionInfo {
     /// Persisted in the app-owned sidecar map (`persist::AppMeta`).
     #[serde(default)]
     pub roster: Vec<RosterEntry>,
+    /// The coding session this shell was opened for (SV-25), when any. Its
+    /// directory is the session's tree, so the renderer gets this shell with
+    /// `current_directory` blanked (`coding_session::renderer_view`).
+    #[serde(default)]
+    pub coding_session: Option<crate::shell_sessions::coding_session::ShellCodingSessionRef>,
 }
 
 /// A read of a session's output for an agent: rendered/plain text plus the
@@ -105,6 +110,9 @@ pub(super) struct ShellSession {
     /// connection as `client`. `write`/`resize` use this exclusively.
     pub(super) io: AttachedClient,
     pub(super) state: Arc<Mutex<SharedState>>,
+    /// The shell's pid as its host reported it, for the foreground read
+    /// (`shell_sessions::foreground`). `None` when the host did not say.
+    pub(super) shell_pid: Option<u32>,
 }
 
 /// A session restored from disk with no live host (reboot fallback). Holds the
@@ -152,6 +160,7 @@ mod tests {
             project_ref: project_ref.map(str::to_string),
             shared: true,
             roster: Vec::new(),
+            coding_session: None,
         }
     }
 

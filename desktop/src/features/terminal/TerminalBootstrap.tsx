@@ -53,12 +53,19 @@ export function TerminalBootstrap({
   threadId,
   npub,
   relayUrl,
+  shortcutStandsDown = false,
 }: {
   channelId: string | null;
   channelName: string | null;
   threadId: string | null;
   npub: string | null;
   relayUrl: string | null;
+  /**
+   * True on a coding-session workspace route, where ⌘J toggles the session's
+   * own terminal drawer (DB10). This window-capture listener mounts before the
+   * workspace's, so without standing down it would always win the key.
+   */
+  shortcutStandsDown?: boolean;
 }) {
   const context =
     channelId && npub && relayUrl
@@ -147,6 +154,7 @@ export function TerminalBootstrap({
     const toggle = (event: KeyboardEvent) => {
       if (
         !context ||
+        shortcutStandsDown ||
         panel.mode !== "closed" ||
         event.code !== "KeyJ" ||
         (!event.metaKey && !event.ctrlKey) ||
@@ -165,7 +173,7 @@ export function TerminalBootstrap({
       window.removeEventListener("keydown", toggle, true);
       window.removeEventListener("keyup", toggle, true);
     };
-  }, [context, panel.mode]);
+  }, [context, panel.mode, shortcutStandsDown]);
 
   const fail = React.useCallback((error: unknown) => {
     report(error);

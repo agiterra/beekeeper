@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   remoteTerminalsFromEvents,
   rosterFromAnnounce,
+  sessionRefFromAnnounce,
 } from "./useProjectTerminals.ts";
 
 const OWNER = "feedface".repeat(8);
@@ -102,4 +103,25 @@ test("ignores events of other kinds or malformed shape", () => {
     null,
   );
   assert.deepEqual(terminals, []);
+});
+
+test("reads the session tag (NIP-ST amendment) and ignores any other shape", () => {
+  const plain = announce();
+  assert.equal(sessionRefFromAnnounce(plain), null);
+  const tagged = announce();
+  tagged.tags.push(["session", "44226:abc:sess"]);
+  assert.equal(sessionRefFromAnnounce(tagged), "44226:abc:sess");
+  assert.equal(
+    remoteTerminalsFromEvents([tagged], PROJECT, null)[0].sessionRef,
+    "44226:abc:sess",
+  );
+  const twice = announce();
+  twice.tags.push(["session", "a"], ["session", "b"]);
+  assert.equal(sessionRefFromAnnounce(twice), null);
+  const long = announce();
+  long.tags.push(["session", "x".repeat(257)]);
+  assert.equal(sessionRefFromAnnounce(long), null);
+  const control = announce();
+  control.tags.push(["session", "a\nb"]);
+  assert.equal(sessionRefFromAnnounce(control), null);
 });

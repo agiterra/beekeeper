@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import type { Channel } from "@/shared/api/types";
+import { isCodingSessionWorkspacePathname } from "@/app/AppShell.helpers";
 import { safeNpub } from "@/shared/lib/nostrUtils";
 
 type TerminalContext = {
@@ -9,6 +10,8 @@ type TerminalContext = {
   threadId: string | null;
   npub: string | null;
   relayUrl: string | null;
+  /** On a coding-session workspace route ⌘J is the session drawer's (DB10). */
+  shortcutStandsDown: boolean;
 };
 
 type TerminalContextResult = {
@@ -20,12 +23,14 @@ export function useTerminalContext({
   channelId,
   channels,
   locationSearch,
+  pathname,
   pubkey,
   relayUrl,
 }: {
   channelId: string | null;
   channels: Channel[];
   locationSearch: unknown;
+  pathname: string;
   pubkey?: string;
   relayUrl?: string;
 }): TerminalContextResult {
@@ -50,7 +55,8 @@ export function useTerminalContext({
             : null,
         npub: pubkey ? safeNpub(pubkey) : null,
         relayUrl: relayUrl ?? null,
+        shortcutStandsDown: isCodingSessionWorkspacePathname(pathname),
       },
     };
-  }, [channelId, channels, locationSearch, pubkey, relayUrl]);
+  }, [channelId, channels, locationSearch, pathname, pubkey, relayUrl]);
 }

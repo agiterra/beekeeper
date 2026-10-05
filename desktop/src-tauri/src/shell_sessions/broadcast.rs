@@ -283,6 +283,26 @@ fn announce_with_coordinate(
     coordinate: &str,
     status: &str,
 ) {
+    let builder = nostr::EventBuilder::new(
+        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_SHELL_SESSION as u16),
+        "",
+    )
+    .tags(announce_tags(info, coordinate, status));
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<crate::app_state::AppState>();
+        if let Err(e) = crate::relay::submit_event(builder, &state).await {
+            eprintln!("shell-broadcast: announce failed: {e}");
+        }
+    });
+}
+
+/// The kind:30623 announce's tags. Carries no cwd and no shell path.
+pub(crate) fn announce_tags(
+    info: &ShellSessionInfo,
+    coordinate: &str,
+    status: &str,
+) -> Vec<nostr::Tag> {
     let mut tags = vec![
         nostr::Tag::identifier(info.session_id.clone()),
         tag(&["a", coordinate]),
@@ -290,6 +310,11 @@ fn announce_with_coordinate(
         tag(&["status", status]),
         tag(&["dims", &format!("{}x{}", info.rows, info.cols)]),
     ];
+    // A session terminal names its coding session (NIP-ST amendment, DB11)
+    // so the session's other members can find it. Never a path.
+    if let Some(session_ref) = crate::shell_sessions::coding_session::announce_session_tag(info) {
+        tags.push(tag(&["session", &session_ref]));
+    }
     // The invite roster rides the announce as arity-4 `p` tags
     // (["p", <hex>, "", <role>]) — the relay enforces shape/cap/no-dupes at
     // ingest, so skip (never "fix up") anything malformed here to keep a bad
@@ -302,18 +327,7 @@ fn announce_with_coordinate(
         }
         tags.push(tag(&["p", &pubkey, "", &entry.role]));
     }
-    let builder = nostr::EventBuilder::new(
-        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_SHELL_SESSION as u16),
-        "",
-    )
-    .tags(tags);
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let state = app.state::<crate::app_state::AppState>();
-        if let Err(e) = crate::relay::submit_event(builder, &state).await {
-            eprintln!("shell-broadcast: announce failed: {e}");
-        }
-    });
+    tags
 }
 
 /// Reader-thread hook: output arrived. Cheap when nobody watches.
@@ -753,6 +767,7 @@ mod tests {
             project_ref: project_ref.map(str::to_string),
             shared,
             roster: Vec::new(),
+            coding_session: None,
         }
     }
 

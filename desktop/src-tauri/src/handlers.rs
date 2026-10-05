@@ -456,6 +456,8 @@ pub(crate) fn invoke_handler(
         #[cfg(unix)]
         resume_shell_session,
         #[cfg(unix)]
+        shell_sessions_foreground,
+        #[cfg(unix)]
         shell_persistence_enabled,
         #[cfg(unix)]
         set_shell_persistence_enabled,
@@ -512,6 +514,9 @@ pub(crate) fn invoke_handler(
         coding_sessions::workdir_store::clear_coding_session_create_hint,
         coding_sessions::workdir_store::validate_coding_session_workdir,
         coding_sessions::workdir_store::pick_coding_session_workdir,
+        // Session view parity B0 — registration lines only.
+        coding_sessions::session_tree::resolve_coding_session_tree,
+        coding_sessions::session_tree::list_coding_session_tree_entries,
         coding_sessions::worktree::plan_coding_session_worktree,
         coding_sessions::worktree::set_coding_session_worktree_parent,
         coding_sessions::worktree::record_coding_session_worktree,

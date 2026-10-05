@@ -77,6 +77,10 @@ pub struct AppMeta {
     /// written before rosters existed — `#[serde(default)]` reads as empty.
     #[serde(default)]
     pub roster: Vec<crate::shell_sessions::manager::RosterEntry>,
+    /// The coding session the shell was opened for (SV-25). Absent on files
+    /// written before session terminals existed.
+    #[serde(default)]
+    pub coding_session: Option<crate::shell_sessions::coding_session::ShellCodingSessionRef>,
 }
 
 impl Default for AppMeta {
@@ -85,6 +89,19 @@ impl Default for AppMeta {
             project_ref: None,
             shared: true,
             roster: Vec::new(),
+            coding_session: None,
+        }
+    }
+}
+
+impl AppMeta {
+    /// The app-owned fields of a session's info, as the sidecar stores them.
+    pub fn from_info(info: &crate::shell_sessions::manager::ShellSessionInfo) -> Self {
+        AppMeta {
+            project_ref: info.project_ref.clone(),
+            shared: info.shared,
+            roster: info.roster.clone(),
+            coding_session: info.coding_session.clone(),
         }
     }
 }
