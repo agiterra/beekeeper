@@ -94,6 +94,28 @@ test("one item per turn that opens with a prompt, keyed by its row", () => {
   assert.equal(items[1].authorPubkey, OTHER);
 });
 
+test("the reply is the agent's prose, not the provider's result body", () => {
+  const model = {
+    blocks: [
+      turn("t1", [
+        message("p1", "user", "Fix step 5", { operatorPubkey: ME }),
+        message("a1", "assistant", "Reply 5: step 5 now backs off."),
+        message("r1:assistant-result", "assistant", "Done."),
+      ]),
+      // The result body is the reply only when the agent wrote no prose.
+      turn("t2", [
+        message("p2", "user", "Quiet turn", { operatorPubkey: ME }),
+        message("r2:assistant-result", "assistant", "Done."),
+      ]),
+    ],
+    diagnostics: [],
+    sessionFacts: [],
+  };
+  const items = deriveCodingSessionMinimapItemsFromModel(model, ME);
+  assert.equal(items[0].assistantText, "Reply 5: step 5 now backs off.");
+  assert.equal(items[1].assistantText, "Done.");
+});
+
 test("the card facts: duration, the first three files, failure, start", () => {
   const files = ["a.ts", "b.ts", "c.ts", "d.ts"].map((filename) => ({
     path: `src/${filename}`,

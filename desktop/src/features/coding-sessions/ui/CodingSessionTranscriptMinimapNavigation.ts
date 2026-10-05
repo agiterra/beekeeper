@@ -36,6 +36,24 @@ export function scrollCodingSessionElementToTop(
 }
 
 /**
+ * Tell the pane a jump is the reader's own navigation.
+ *
+ * The single layout's pane holds the bottom until the reader scrolls
+ * (`holdBottomUntilReaderScrolls`, read by `useReaderScrollIntent` from
+ * native input on the scroller). The minimap lives in a slot beside the
+ * scroller, so its click or Enter never reaches those listeners, and a jump
+ * up from the bottom was snapped straight back. An upward wheel tick is the
+ * input that hook reads as "the reader scrolled up"; a synthetic one scrolls
+ * nothing itself.
+ */
+export function declareCodingSessionReaderNavigation(
+  scroller: HTMLElement | null,
+): void {
+  if (scroller === null || typeof WheelEvent === "undefined") return;
+  scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
+}
+
+/**
  * How the single layout's minimap finds and reaches a turn: through the
  * virtualizer when the transcript is virtualized (past 40 rows), where an
  * off-screen turn has no element to scroll to, and by scrolling the mounted
@@ -56,6 +74,7 @@ export function useCodingSessionTranscriptMinimapNavigation(input: {
   );
   const select = React.useCallback(
     (item: CodingSessionMinimapItem) => {
+      declareCodingSessionReaderNavigation(scrollRef?.current ?? null);
       const virtualizer = virtualizerRef?.current ?? null;
       if (virtualizer !== null) {
         virtualizer.scrollToIndex(item.rowIndex, { align: "start" });

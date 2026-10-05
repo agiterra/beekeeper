@@ -108,7 +108,11 @@ export function resolveCodingSessionMinimapAuthor(
  * The minimap item for one turn, or null when the turn has no prompt.
  *
  * The reply is the turn's last assistant message, as T3 previews the final
- * assistant text before the next prompt.
+ * assistant text before the next prompt. A synthesized Turn result body
+ * (`:assistant-result`) is the provider's closing word, not the agent's
+ * answer: it is the reply only when the agent wrote no prose of its own, the
+ * same rule the transcript's answer block follows
+ * (`findCodingSessionAnswerIndex`).
  */
 export function deriveCodingSessionMinimapItem(
   source: CodingSessionMinimapTurnSource,
@@ -117,16 +121,19 @@ export function deriveCodingSessionMinimapItem(
   const { turn } = source;
   let prompt: Extract<TranscriptItem, { type: "message" }> | null = null;
   let reply: string | null = null;
+  let resultBody: string | null = null;
   for (const entry of turn.entries) {
     for (const item of entryItems(entry)) {
       if (item.type !== "message") continue;
       if (item.role === "user") {
         prompt ??= item;
-      } else if (prompt !== null) {
-        reply = item.text ?? null;
+      } else if (prompt !== null && item.text?.trim()) {
+        if (item.id.endsWith(":assistant-result")) resultBody = item.text;
+        else reply = item.text;
       }
     }
   }
+  reply ??= resultBody;
   if (prompt === null) return null;
   const author = resolveCodingSessionMinimapAuthor(prompt, currentUserPubkey);
   const durationMs =

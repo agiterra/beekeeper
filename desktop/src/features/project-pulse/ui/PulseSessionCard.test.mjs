@@ -69,7 +69,7 @@ function session() {
   };
 }
 
-async function renderCard(missionRow) {
+async function renderCard(missionRow, overrides = {}) {
   const { createElement } = await import("react");
   const { render } = await import("@testing-library/react");
   const { PulseSessionCard } = await import(
@@ -80,9 +80,10 @@ async function renderCard(missionRow) {
       "ul",
       null,
       createElement(PulseSessionCard, {
-        session: session(),
+        session: { ...session(), ...overrides.session },
         nowSeconds: NOW,
         missionRow,
+        fallbackTitle: overrides.fallbackTitle ?? null,
       }),
     ),
   );
@@ -111,4 +112,33 @@ test("a session card carries its mission row beside the liveness it already show
     screen.getByTestId("pulse-mission-line-waiting").textContent,
     mission.lines[0].text,
   );
+});
+
+test("an unnamed session reads as unnamed, its reference disclosed, never the id as its name", async () => {
+  const screen = await renderCard(undefined, { session: { name: null } });
+  const card = screen.getByTestId("pulse-session-card");
+  assert.ok(card.textContent.includes("Unnamed session"));
+  assert.equal(
+    screen.getByTestId("pulse-session-ref").textContent,
+    "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+  );
+});
+
+test("an unnamed session takes the title its caller knows it by", async () => {
+  const screen = await renderCard(undefined, {
+    session: { name: null },
+    fallbackTitle: "Surface contents",
+  });
+  const card = screen.getByTestId("pulse-session-card");
+  assert.ok(card.textContent.includes("Surface contents"));
+  assert.equal(screen.queryByTestId("pulse-session-ref"), null);
+});
+
+test("a digest name beats the caller's title", async () => {
+  const screen = await renderCard(undefined, {
+    fallbackTitle: "Surface contents",
+  });
+  const card = screen.getByTestId("pulse-session-card");
+  assert.ok(card.textContent.includes("Pulse plumbing"));
+  assert.ok(!card.textContent.includes("Surface contents"));
 });

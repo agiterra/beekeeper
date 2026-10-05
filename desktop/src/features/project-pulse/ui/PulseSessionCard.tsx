@@ -34,6 +34,9 @@ function generationObservationLabel(
     : `${status} · last observed ${formatPulseAge(nowSeconds - generation.statusAt)} ago`;
 }
 
+/** The card's title when nothing names the session. */
+export const UNNAMED_SESSION_LABEL = "Unnamed session";
+
 /** One umbrella session with every observed generation preserved behind it. */
 export function PulseSessionCard({
   session,
@@ -54,6 +57,13 @@ export function PulseSessionCard({
    * marker; absent or a person's name shows none.
    */
   nameOrigin = null,
+  /**
+   * The name the caller already knows this session by when the digest
+   * carries none (the session view's own title, for its lead card). The
+   * digest's `name` resolves only 44229/44252; a session titled at creation
+   * and never renamed has none there.
+   */
+  fallbackTitle = null,
 }: {
   session: PulseDigestSession;
   nowSeconds: number;
@@ -61,6 +71,7 @@ export function PulseSessionCard({
   onOpenExecution?: (targetKey: string) => void;
   missionRow?: PulseMissionRowModel | null;
   nameOrigin?: CoordinatedSessionNameOrigin | null;
+  fallbackTitle?: string | null;
 }) {
   const [showExecutions, setShowExecutions] = React.useState(false);
   const generation = pulseSessionDisplayGeneration(session);
@@ -77,7 +88,11 @@ export function PulseSessionCard({
         left.targetKey.localeCompare(right.targetKey)
       );
     });
-  const title = session.name ?? session.sessionRef ?? session.sessionKey;
+  const fallback = fallbackTitle?.trim() ? fallbackTitle : null;
+  // Never a raw id as if it were a name: with no name the card says so and
+  // discloses the reference beside it.
+  const title = session.name ?? fallback ?? UNNAMED_SESSION_LABEL;
+  const unnamed = session.name === null && fallback === null;
 
   return (
     <li
@@ -106,6 +121,14 @@ export function PulseSessionCard({
             {title}
           </span>
         )}
+        {unnamed ? (
+          <span
+            className="truncate font-mono text-2xs text-muted-foreground"
+            data-testid="pulse-session-ref"
+          >
+            {session.sessionRef ?? session.sessionKey}
+          </span>
+        ) : null}
         {session.name ? (
           <SessionNameOriginMarker
             origin={nameOrigin}

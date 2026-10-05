@@ -126,6 +126,7 @@ function CodingSessionPulseBody({ ctx }: { ctx: CodingSessionSurfaceCtx }) {
         <ProjectPulseView
           authorNames={authorNames}
           leadSessionKey={ctx.umbrella.sessionRef ?? ctx.sessionKey}
+          leadSessionTitle={ctx.umbrella.title}
           missions={missions}
           nowSeconds={nowSeconds}
           state={state}

@@ -274,6 +274,11 @@ export function ProjectPulseView({
    * visible under the branch filter, nothing moves.
    */
   leadSessionKey,
+  /**
+   * The lead session's title as the session view resolved it, shown on its
+   * card when the digest carries no name for it.
+   */
+  leadSessionTitle,
 }: {
   state: ProjectPulseViewState;
   nowSeconds: number;
@@ -286,6 +291,7 @@ export function ProjectPulseView({
   onOpenDeclaredSession?: (sessionKey: string) => void;
   declaredSessionOpenable?: (sessionKey: string) => boolean;
   leadSessionKey?: string | null;
+  leadSessionTitle?: string | null;
 }) {
   const [branch, setBranch] = React.useState<string | null | undefined>(
     undefined,
@@ -514,6 +520,9 @@ export function ProjectPulseView({
     if (missionRow) missionSessionKeys.add(missionRow.sessionKey);
     return (
       <PulseSessionCard
+        fallbackTitle={
+          session === leadSession ? (leadSessionTitle ?? null) : null
+        }
         key={session.sessionKey}
         missionRow={missionRow}
         nameOrigin={nameOrigins.get(session.sessionKey) ?? null}
