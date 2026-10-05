@@ -47,6 +47,14 @@ export type CodingSessionCatalogRecord = {
   /** Exact authority whose metadata enriched this record, or null when unenriched. */
   metadataAuthorityPubkey: string | null;
   lastEventAt: string;
+  /**
+   * The newest *transcript* event's own time in ms, or null when this record
+   * has none (or was built where transcripts are not read). Unlike
+   * `lastEventAt` it excludes metadata, so a provider restating its status
+   * cannot make a silent turn look fresh: the working line measures "no
+   * update for Nm" from this.
+   */
+  lastTranscriptAt?: number | null;
   status: CodingSessionStatus;
   /**
    * When `status` was observed — the newest 44223 metadata event's

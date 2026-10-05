@@ -382,6 +382,13 @@ export function mergeTrustedCodingSessionIngress(
       providerAuthorityPubkey: signerPubkey,
       metadataAuthorityPubkey: metadataEntry?.signerPubkey ?? null,
       lastEventAt: new Date(latestTimestamp).toISOString(),
+      lastTranscriptAt:
+        targetTranscripts.length > 0
+          ? targetTranscripts.reduce(
+              (latest, entry) => Math.max(latest, entry.transcript.timestamp),
+              0,
+            )
+          : null,
       status: metadata?.status ?? inferTranscriptStatus(targetTranscripts),
       // When the status itself was observed (44223 created_at, ms). Kept
       // separate from lastEventAt (a max over both streams) so status

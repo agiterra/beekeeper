@@ -13,8 +13,23 @@ export type TeamReadinessLaunchGate = {
   reason: string | null;
 };
 
+/**
+ * A clause as a sentence: capitalized, ending in punctuation. Summaries and
+ * remedies come from several writers — some end in a period, some (the agent
+ * host's own words) start lower-case — and joined bare they ran together:
+ * "…could not answer for the provider the agent host is not responding".
+ */
+function asSentence(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return trimmed;
+  const capitalized = trimmed[0].toUpperCase() + trimmed.slice(1);
+  return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
+}
+
 function factReason(fact: TeamReadinessFact): string {
-  return fact.remedy ? `${fact.summary} ${fact.remedy}` : fact.summary;
+  return fact.remedy
+    ? `${asSentence(fact.summary)} ${asSentence(fact.remedy)}`
+    : fact.summary;
 }
 
 const FIRST_SESSION_AWAITING_CODES = new Set([

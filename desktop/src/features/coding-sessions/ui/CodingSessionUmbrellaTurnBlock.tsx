@@ -513,6 +513,7 @@ export function CodingSessionUmbrellaTurnBlock({
         hireDispatch={hireDispatch}
         isWorking={isWorking}
         items={narrativeItems}
+        lastTranscriptEventAt={record?.lastTranscriptAt}
         onOpenAgentsSurface={openAgentsSurface ?? undefined}
         operatorProfiles={operatorProfiles}
         resolveSeat={resolvePromptSeat}

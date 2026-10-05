@@ -46,6 +46,7 @@ import { CodingSessionOpenAgentsSurfaceContext } from "./CodingSessionTranscript
 import { CodingSessionTranscriptMinimap } from "./CodingSessionTranscriptMinimap";
 import { useCodingSessionTranscriptMinimapNavigation } from "./CodingSessionTranscriptMinimapNavigation";
 import { shouldClampCodingSessionUserMessage } from "./CodingSessionTranscriptUserMessage";
+import { CodingSessionLastTranscriptEventContext } from "./CodingSessionTranscriptWorking";
 import { useCodingSessionSurfaceCtx } from "./surfaces/codingSessionSurfaceContext";
 import {
   CodingSessionEntry,
@@ -131,6 +132,13 @@ type CodingSessionTranscriptProps = {
    */
   restingStatus?: CodingSessionTurnRestingStatus;
   /**
+   * The newest transcript event this execution published, in ms of the
+   * event's own time (`CodingSessionCatalogRecord.lastTranscriptAt`). The
+   * working line says "no update for Nm" once it is over a minute old; omitted
+   * or `null`, it claims nothing about silence.
+   */
+  lastTranscriptEventAt?: number | null;
+  /**
    * `false` for a transcript that is a fragment of a turn whose working line
    * is already on screen (Mission Live's execution bundle): no second working
    * line, and no second live announcement. Defaults to `true`.
@@ -160,6 +168,7 @@ export function CodingSessionTranscript({
   generationId,
   isWorking,
   items,
+  lastTranscriptEventAt = null,
   model: sharedModel,
   onOpenAgentsSurface,
   resolveSeat,
@@ -292,74 +301,82 @@ export function CodingSessionTranscript({
   }
 
   return (
-    <RedactionDictionaryContext.Provider value={redactions}>
-      <CodingSessionPromptAttributionContext.Provider value={promptAttribution}>
-        <CodingSessionTranscriptGenerationContext.Provider value={generationId}>
-          <CodingSessionDisclosureContext.Provider value={ownStore}>
-            <CodingSessionOpenAgentsSurfaceContext.Provider
-              value={openAgentsSurface}
-            >
-              <CodingSessionTranscriptTurnPolicyContext.Provider
-                value={turnPolicy}
+    <CodingSessionLastTranscriptEventContext.Provider
+      value={lastTranscriptEventAt}
+    >
+      <RedactionDictionaryContext.Provider value={redactions}>
+        <CodingSessionPromptAttributionContext.Provider
+          value={promptAttribution}
+        >
+          <CodingSessionTranscriptGenerationContext.Provider
+            value={generationId}
+          >
+            <CodingSessionDisclosureContext.Provider value={ownStore}>
+              <CodingSessionOpenAgentsSurfaceContext.Provider
+                value={openAgentsSurface}
               >
-                <div
-                  aria-label="Live coding-session conversation"
-                  aria-live="off"
-                  data-transcript-renderer={
-                    shouldVirtualize ? "virtualized" : "static"
-                  }
-                  data-testid="coding-session-transcript"
-                  role="log"
+                <CodingSessionTranscriptTurnPolicyContext.Provider
+                  value={turnPolicy}
                 >
-                  {shouldVirtualize ? (
-                    <VirtualizedList
-                      estimateSize={averageEstimatedRowSize}
-                      getItemKey={getCodingSessionTranscriptRowKey}
-                      innerClassName="w-full"
-                      items={rows}
-                      onVirtualizer={handleVirtualizer}
-                      overscan={6}
-                      renderItem={renderCodingSessionTranscriptVirtualRow}
-                      scrollRef={scrollRef}
-                    />
-                  ) : (
-                    <div
-                      className={`flex flex-col ${CODING_SESSION_TURN_GAP.className}`}
-                    >
-                      {rows.map((row) => (
-                        <CodingSessionTranscriptRowContent
-                          key={row.key}
-                          row={row}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  {drawsMinimap ? (
-                    <CodingSessionTranscriptMinimap
-                      items={minimapItems}
-                      onSelect={minimapNavigation.select}
-                      resolveElement={minimapNavigation.resolveElement}
-                      scrollRef={scrollRef}
-                    />
-                  ) : null}
-                  {showWorkingIndicator ? (
-                    <span
-                      aria-atomic="true"
-                      aria-live="polite"
-                      className="sr-only"
-                      data-testid="coding-session-live-status"
-                      role="status"
-                    >
-                      {codingSessionLiveStatusText(isWorking, restingStatus)}
-                    </span>
-                  ) : null}
-                </div>
-              </CodingSessionTranscriptTurnPolicyContext.Provider>
-            </CodingSessionOpenAgentsSurfaceContext.Provider>
-          </CodingSessionDisclosureContext.Provider>
-        </CodingSessionTranscriptGenerationContext.Provider>
-      </CodingSessionPromptAttributionContext.Provider>
-    </RedactionDictionaryContext.Provider>
+                  <div
+                    aria-label="Live coding-session conversation"
+                    aria-live="off"
+                    data-transcript-renderer={
+                      shouldVirtualize ? "virtualized" : "static"
+                    }
+                    data-testid="coding-session-transcript"
+                    role="log"
+                  >
+                    {shouldVirtualize ? (
+                      <VirtualizedList
+                        estimateSize={averageEstimatedRowSize}
+                        getItemKey={getCodingSessionTranscriptRowKey}
+                        innerClassName="w-full"
+                        items={rows}
+                        onVirtualizer={handleVirtualizer}
+                        overscan={6}
+                        renderItem={renderCodingSessionTranscriptVirtualRow}
+                        scrollRef={scrollRef}
+                      />
+                    ) : (
+                      <div
+                        className={`flex flex-col ${CODING_SESSION_TURN_GAP.className}`}
+                      >
+                        {rows.map((row) => (
+                          <CodingSessionTranscriptRowContent
+                            key={row.key}
+                            row={row}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {drawsMinimap ? (
+                      <CodingSessionTranscriptMinimap
+                        items={minimapItems}
+                        onSelect={minimapNavigation.select}
+                        resolveElement={minimapNavigation.resolveElement}
+                        scrollRef={scrollRef}
+                      />
+                    ) : null}
+                    {showWorkingIndicator ? (
+                      <span
+                        aria-atomic="true"
+                        aria-live="polite"
+                        className="sr-only"
+                        data-testid="coding-session-live-status"
+                        role="status"
+                      >
+                        {codingSessionLiveStatusText(isWorking, restingStatus)}
+                      </span>
+                    ) : null}
+                  </div>
+                </CodingSessionTranscriptTurnPolicyContext.Provider>
+              </CodingSessionOpenAgentsSurfaceContext.Provider>
+            </CodingSessionDisclosureContext.Provider>
+          </CodingSessionTranscriptGenerationContext.Provider>
+        </CodingSessionPromptAttributionContext.Provider>
+      </RedactionDictionaryContext.Provider>
+    </CodingSessionLastTranscriptEventContext.Provider>
   );
 }
 

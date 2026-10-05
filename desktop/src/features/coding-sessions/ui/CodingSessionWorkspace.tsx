@@ -831,6 +831,7 @@ function ReadyCodingSessionWorkspace({
                         generationId={generationId}
                         isWorking={settlement.isWorking}
                         items={transcript}
+                        lastTranscriptEventAt={session.lastTranscriptAt}
                         model={transcriptModel}
                         onOpenAgentsSurface={shell.openAgentsSurface}
                         operatorProfiles={operatorProfiles}

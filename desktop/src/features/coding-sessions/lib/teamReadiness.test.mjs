@@ -90,6 +90,38 @@ test("Unknown blocks a project team launch and preserves the exact source remedy
   );
 });
 
+test("an unanswering agent host blocks launch in two clean sentences", () => {
+  // 2026-10-05: the gate read "The agent host could not answer for the
+  // provider the agent host is not responding (no answer in 1000ms)" — the
+  // summary has no period and the host's words start lower-case.
+  const response = readiness({
+    status: "blocked",
+    blockingCodes: ["PROVIDER_HOST_UNREACHABLE"],
+    facts: [
+      {
+        category: "provider",
+        code: "PROVIDER_HOST_UNREACHABLE",
+        scope: "local",
+        state: "blocked",
+        summary: "The agent host could not answer for the provider",
+        remedy:
+          "the agent host did not answer within 5s — the computer may be busy",
+      },
+    ],
+  });
+  const gate = teamReadinessLaunchGate({
+    projectRef: response.projectRef,
+    loading: false,
+    error: null,
+    readiness: response,
+  });
+  assert.equal(gate.allowed, false, "blocked, never passable");
+  assert.equal(
+    gate.reason,
+    "The agent host could not answer for the provider. The agent host did not answer within 5s — the computer may be busy.",
+  );
+});
+
 test("a launch that does not use roles is still refused CHECKOUT_NOT_RECORDED", () => {
   // The first RPG Test team session (2026-09-19) started with "Use roles"
   // off, which used to open the gate entirely; the lead ran in another

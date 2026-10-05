@@ -16,6 +16,11 @@ import { formatCodingSessionDuration } from "@/features/coding-sessions/lib/codi
  *
  * Not a live region: a timer announced every second is noise. The
  * transcript's own `coding-session-live-status` says working or idle.
+ *
+ * When the provider has published nothing for over a minute, the line says
+ * "· no update for Nm" (`data-quiet="true"`), measured from the newest
+ * transcript event's own time — never from when this view mounted. It
+ * clears with the next event.
  */
 export function CodingSessionWorking({
   showThinking = false,
@@ -64,15 +69,62 @@ function CodingSessionThinking() {
   );
 }
 
-/** Text of the working line at `now`; "Working…" until a start is known. */
+/**
+ * The newest transcript event this execution has published, in ms of the
+ * event's own time, or `null` when the caller cannot say.
+ *
+ * A context rather than a prop through every turn: it moves with every
+ * event, and only the working line reads it, so a turn's memo is not broken
+ * by it. Nothing module-level: `resetCommunityState()` has nothing to reset.
+ */
+export const CodingSessionLastTranscriptEventContext = React.createContext<
+  number | null
+>(null);
+
+/**
+ * How long a working session may publish nothing before the working line says
+ * so. Past this, "Working for 5m" over a provider that has been silent for
+ * four of them is a comfortable guess, not a fact (2026-10-05).
+ */
+export const CODING_SESSION_QUIET_AFTER_MS = 60_000;
+
+/**
+ * How long the provider has been silent at `now`, floored to whole minutes,
+ * or `null` while it is not past {@link CODING_SESSION_QUIET_AFTER_MS} — or
+ * when no last event time is known, which is no reason to claim silence.
+ */
+export function codingSessionQuietMs(
+  lastEventAt: number | null,
+  now: number,
+): number | null {
+  if (lastEventAt === null || !Number.isFinite(lastEventAt)) return null;
+  const quiet = now - lastEventAt;
+  if (quiet <= CODING_SESSION_QUIET_AFTER_MS) return null;
+  return Math.floor(quiet / 60_000) * 60_000;
+}
+
+/**
+ * Text of the working line at `now`; "Working…" until a start is known.
+ * When the provider has published nothing for over a minute the line says
+ * so, measured from `lastEventAt` — "Working for 5m 22s · no update for 4m".
+ */
 export function formatCodingSessionWorkingLabel(
   startedAt: string | null,
   now: number,
+  lastEventAt: number | null = null,
 ): string {
-  if (!startedAt) return "Working…";
-  const start = Date.parse(startedAt);
-  if (!Number.isFinite(start) || now <= start) return "Working…";
-  return `Working for ${formatCodingSessionDuration(now - start)}`;
+  const start = startedAt ? Date.parse(startedAt) : Number.NaN;
+  const known = Number.isFinite(start) && now > start;
+  const quiet = codingSessionQuietMs(lastEventAt, now);
+  if (quiet !== null) {
+    const head = known
+      ? `Working for ${formatCodingSessionDuration(now - start)}`
+      : "Working";
+    return `${head} · no update for ${formatCodingSessionDuration(quiet)}`;
+  }
+  return known
+    ? `Working for ${formatCodingSessionDuration(now - start)}`
+    : "Working…";
 }
 
 /** `Node.TEXT_NODE`, without reaching for a DOM global during render. */
@@ -84,14 +136,26 @@ function CodingSessionWorkingTimer({
   startedAt: string | null;
 }) {
   const ref = React.useRef<HTMLSpanElement>(null);
-  const initial = formatCodingSessionWorkingLabel(startedAt, Date.now());
+  const lastEventAt = React.useContext(CodingSessionLastTranscriptEventContext);
+  const initialNow = Date.now();
+  const initial = formatCodingSessionWorkingLabel(
+    startedAt,
+    initialNow,
+    lastEventAt,
+  );
+  const initialQuiet = codingSessionQuietMs(lastEventAt, initialNow) !== null;
 
   React.useEffect(() => {
-    if (!startedAt) return;
+    if (!startedAt && lastEventAt === null) return;
     const update = () => {
       const element = ref.current;
       if (!element) return;
-      const text = formatCodingSessionWorkingLabel(startedAt, Date.now());
+      const now = Date.now();
+      const text = formatCodingSessionWorkingLabel(startedAt, now, lastEventAt);
+      const quiet = codingSessionQuietMs(lastEventAt, now) !== null;
+      if (element.dataset.quiet !== String(quiet)) {
+        element.dataset.quiet = String(quiet);
+      }
       // Write React's own text node rather than replacing it, so a later
       // render (a new step label, say) still updates the node on screen.
       const node = element.firstChild;
@@ -104,9 +168,13 @@ function CodingSessionWorkingTimer({
     update();
     const interval = window.setInterval(update, 1_000);
     return () => window.clearInterval(interval);
-  }, [startedAt]);
+  }, [lastEventAt, startedAt]);
 
-  return <span ref={ref}>{initial}</span>;
+  return (
+    <span data-quiet={String(initialQuiet)} ref={ref}>
+      {initial}
+    </span>
+  );
 }
 
 /**

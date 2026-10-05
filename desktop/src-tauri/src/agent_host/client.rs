@@ -116,9 +116,16 @@ impl AgentHost {
         })
     }
 
-    /// Poll the host.
+    /// Poll the host, patiently: one fast attempt, then one retry inside
+    /// `PATIENT_READ_BUDGET` before calling it unresponsive.
+    ///
+    /// Every caller here gates something — team readiness blocks launch on
+    /// it, the status poll draws the provider row from it, the roster checks
+    /// it before admitting a seat — so a busy machine that answers in 1.2s
+    /// must not read as a missing host. The menu bar and `bee host status`
+    /// keep their own single fast read.
     pub async fn snapshot(&self) -> HostSnapshot {
-        match client::status(self.socket()).await {
+        match client::status_patiently(self.socket()).await {
             Ok(status) => HostSnapshot {
                 reachability: HostReachability::Reachable,
                 message: status.provider.message(),
@@ -138,9 +145,10 @@ impl AgentHost {
     /// `spawn_blocking`, synchronously, and making that path async would mean
     /// restructuring the readiness gate to reach one socket. A short-lived
     /// current-thread runtime is what `spawn_blocking` exists to host, and the
-    /// call it drives is bounded by the client's own 250ms connect and 1s read
-    /// timeouts — so the worst case is the readiness gate taking a second
-    /// longer and then reporting, truthfully, that the host did not answer.
+    /// call it drives is bounded by the client's patient budget (a 1s attempt
+    /// and one retry, 5s in all) — so the worst case is the readiness gate
+    /// taking five seconds longer and then reporting, truthfully, that the
+    /// host did not answer.
     ///
     /// Never call this from an async context: building a runtime inside a
     /// runtime panics. Every caller today is inside `spawn_blocking`.

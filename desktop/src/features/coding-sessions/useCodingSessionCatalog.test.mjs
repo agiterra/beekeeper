@@ -219,6 +219,35 @@ test("lastEventAt folds transcript timestamp maxima over the metadata createdAt 
   assert.equal(session.lastEventAt, new Date(1_800_000_500_000).toISOString());
 });
 
+test("lastTranscriptAt is the newest transcript event alone, never metadata", () => {
+  // The working line measures "no update for Nm" from this; a provider
+  // restating its metadata must not make a silent turn look fresh.
+  const [session] = mergeTrustedCodingSessionIngress(
+    CHANNEL_ID,
+    [metadataEntry({ createdAt: 1_800_000_900 })],
+    [
+      transcriptEntry({
+        eventSeq: 1,
+        item: { kind: "status" },
+        timestamp: 1_800_000_500_000,
+      }),
+      transcriptEntry({
+        eventSeq: 2,
+        item: { kind: "status" },
+        timestamp: 1_800_000_200_000,
+      }),
+    ],
+  );
+  assert.equal(session.lastTranscriptAt, 1_800_000_500_000);
+  assert.equal(session.lastEventAt, new Date(1_800_000_900_000).toISOString());
+  const [metadataOnly] = mergeTrustedCodingSessionIngress(
+    CHANNEL_ID,
+    [metadataEntry()],
+    [],
+  );
+  assert.equal(metadataOnly.lastTranscriptAt, null);
+});
+
 test("no metadata and no transcripts seed epoch zero", () => {
   const [session] = mergeTrustedCodingSessionIngress(
     CHANNEL_ID,

@@ -236,3 +236,41 @@ test("the working line ticks without a React render", async () => {
   assert.equal(label.firstChild, textNode);
   assert.match(label.textContent, /^Working for \d/);
 });
+
+test("the working line says when the provider has gone quiet", async () => {
+  const now = Date.now();
+  const startedAt = new Date(now - 322_000).toISOString();
+  const { view } = await mount({
+    generationId: "generation-1",
+    isWorking: true,
+    items: [
+      { ...message("prompt", "user", "Go", "turn-1"), timestamp: startedAt },
+    ],
+    lastTranscriptEventAt: now - 150_000,
+  });
+  const label = view.container.querySelector(
+    '[data-testid="coding-session-working"] span',
+  );
+  assert.ok(label);
+  assert.match(label.textContent, /^Working for \d.* · no update for 2m$/);
+  assert.equal(label.dataset.quiet, "true");
+});
+
+test("a working line with a fresh event makes no claim of silence", async () => {
+  const now = Date.now();
+  const startedAt = new Date(now - 322_000).toISOString();
+  const { view } = await mount({
+    generationId: "generation-1",
+    isWorking: true,
+    items: [
+      { ...message("prompt", "user", "Go", "turn-1"), timestamp: startedAt },
+    ],
+    lastTranscriptEventAt: now - 2_000,
+  });
+  const label = view.container.querySelector(
+    '[data-testid="coding-session-working"] span',
+  );
+  assert.ok(label);
+  assert.doesNotMatch(label.textContent, /no update/);
+  assert.equal(label.dataset.quiet, "false");
+});
