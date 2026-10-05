@@ -1347,3 +1347,13 @@ fn cost_is_reported_per_basis_and_never_as_one_unlabelled_sum() {
         assert_eq!(i64_at(cost, "/results_total"), 6);
     }
 }
+
+/// A generated title (44252) is umbrella identity like the person's name: it
+/// lands during the first turn, so it is read with no `--since` bound and
+/// never spends the windowed session read's budget (SV-31).
+#[test]
+fn a_generated_title_is_read_as_umbrella_identity() {
+    use buzz_core::kind::KIND_CODING_SESSION_GENERATED_TITLE;
+    assert!(MEASURE_IDENTITY_KINDS.contains(&KIND_CODING_SESSION_GENERATED_TITLE));
+    assert!(!MEASURE_SESSION_KINDS.contains(&KIND_CODING_SESSION_GENERATED_TITLE));
+}

@@ -2839,6 +2839,19 @@ pub enum SessionsCmd {
         #[arg(long)]
         channel: String,
     },
+    /// Show one coding session (umbrella): its display name, where that name
+    /// came from (`nameOrigin`), and its executions
+    #[command(
+        after_help = "Examples:\n  bee sessions show --channel <uuid> --session-ref <uuid>\n  bee --format compact sessions show --channel <uuid> --session-ref <uuid>\n\nRecipe:\n  bee sessions list --channel <uuid>\n  bee sessions show --channel <uuid> --session-ref <uuid>"
+    )]
+    Show {
+        /// Channel UUID the session was published into
+        #[arg(long)]
+        channel: String,
+        /// Umbrella id (`sessionRef` from `sessions list`)
+        #[arg(long)]
+        session_ref: String,
+    },
     /// Print one generation's transcript in sequence order
     #[command(
         after_help = "Examples:\n  bee sessions transcript --channel <uuid> --session <session-id>\n  bee sessions transcript --channel <uuid> --target '<cs-target>' --format jsonl\n\nRecipe:\n  bee sessions transcript --channel <uuid> --session <session-id>"
@@ -6894,6 +6907,7 @@ mod tests {
                 "route",
                 "seat-repair",
                 "send",
+                "show",
                 "status",
                 "stop",
                 "tools",
@@ -7101,7 +7115,7 @@ mod tests {
             // appended here and two of them independently wrote 35 (item 108's
             // exact-count trap); the finalizer set it once, after every lane,
             // and both tests re-run green.
-            ("sessions", 41),
+            ("sessions", 42),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

@@ -27,11 +27,11 @@ use buzz_core::coding_session_payload::{
     decode_coding_session_metadata, TranscriptEnvelope, TurnUsageReport,
 };
 use buzz_core::kind::{
-    normalize_project_coordinate, KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_GOAL,
-    KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
-    KIND_CODING_SESSION_TRANSCRIPT, KIND_NIP29_GROUP_METADATA, KIND_PROJECT, KIND_PROJECT_MEMBERS,
-    KIND_PULSE_ENTRY,
+    normalize_project_coordinate, KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_GENERATED_TITLE,
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LEASE,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME, KIND_CODING_SESSION_TRANSCRIPT,
+    KIND_NIP29_GROUP_METADATA, KIND_PROJECT, KIND_PROJECT_MEMBERS, KIND_PULSE_ENTRY,
 };
 use buzz_core::pulse::{
     PulseCost, PulseCostSeat, PulseEntry, PulseEntryType, MAX_PULSE_TEXT_BYTES, PULSE_ENTRY_SCHEMA,
@@ -55,13 +55,20 @@ use crate::error::CliError;
 const NO_BRANCH: &str = "-";
 
 /// Durable session facts fetched as paginated history per project channel.
-const DURABLE_SESSION_FACT_KINDS: [u32; 6] = [
+///
+/// The genesis (44226) is here for the name alone: a 44229 is a person's name
+/// only when the founder signed it, and the founder is whoever signed the
+/// genesis the umbrella's create names. A generated title (44252) is the
+/// provider's, and the digest says so (`nameOrigin`).
+const DURABLE_SESSION_FACT_KINDS: [u32; 8] = [
     KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_METADATA,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
     KIND_CODING_SESSION_GOAL,
     KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_CLOSURE,
+    KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_GENERATED_TITLE,
 ];
 
 /// Upper bound on the channel-metadata scan used to resolve a project's
@@ -1037,25 +1044,87 @@ async fn cmd_list(
     Ok(())
 }
 
+/// The name keys every session row carries: `name` and `nameOrigin` always
+/// (`nameOrigin` null exactly when nothing names the session), plus
+/// `nameModel` and `nameSigner` when the name is a provider's generated title,
+/// so a model's words are never printed as though a person chose them.
+///
+/// `PulseDigestSession` does not serialize the origin (its bytes are pinned by
+/// the shared pulse vectors), so every printed row adds these keys itself.
+fn compact_name_fields(session: &PulseDigestSession) -> serde_json::Map<String, Value> {
+    let mut fields = serde_json::Map::new();
+    fields.insert("name".into(), json!(session.name));
+    fields.insert("nameOrigin".into(), json!(session.name_origin));
+    if session.name_origin.as_deref() == Some("generated") {
+        fields.insert("nameModel".into(), json!(session.name_model));
+        fields.insert("nameSigner".into(), json!(session.name_signer));
+    }
+    fields
+}
+
+/// `row` with the name keys inserted after `sessionKey`.
+fn with_name_fields(session: &PulseDigestSession, row: Value) -> Value {
+    let Value::Object(rest) = row else {
+        return row;
+    };
+    let mut object = serde_json::Map::new();
+    object.insert("sessionKey".into(), json!(session.session_key));
+    object.extend(compact_name_fields(session));
+    object.extend(rest);
+    Value::Object(object)
+}
+
 /// One row of `bee pulse sessions`.
 fn session_row(session: &PulseDigestSession, format: &crate::OutputFormat) -> Value {
     match format {
-        crate::OutputFormat::Compact => json!({
-            "sessionKey": session.session_key,
-            "name": session.name,
-            "lifecycle": session.lifecycle,
-            "coordinationState": session.coordination_state,
-            "generations": session.generations.iter().map(|generation| json!({
-                "targetKey": generation.target_key,
-                "current": generation.current,
-                "reachability": generation.reachability,
-                "status": generation.status,
-                "branch": generation.branch,
-            })).collect::<Vec<Value>>(),
-            "observedAgeSeconds": session.observed_age_seconds,
-        }),
-        crate::OutputFormat::Json => serde_json::to_value(session).unwrap_or(Value::Null),
+        crate::OutputFormat::Compact => with_name_fields(
+            session,
+            json!({
+                "lifecycle": session.lifecycle,
+                "coordinationState": session.coordination_state,
+                "generations": session.generations.iter().map(|generation| json!({
+                    "targetKey": generation.target_key,
+                    "current": generation.current,
+                    "reachability": generation.reachability,
+                    "status": generation.status,
+                    "branch": generation.branch,
+                })).collect::<Vec<Value>>(),
+                "observedAgeSeconds": session.observed_age_seconds,
+            }),
+        ),
+        crate::OutputFormat::Json => {
+            let mut row = serde_json::to_value(session).unwrap_or(Value::Null);
+            if let Value::Object(object) = &mut row {
+                object.extend(compact_name_fields(session));
+            }
+            row
+        }
     }
+}
+
+/// Where each named session's `name` came from, keyed by `sessionKey`:
+/// `{origin, model, signerPubkey}`, the shape Desktop's fold returns as
+/// `nameOriginsBySession`. An unnamed session has no entry.
+///
+/// Printed beside the `--format json` digest rather than inside its sessions,
+/// whose bytes the shared pulse vectors pin.
+fn name_origins(digest: &PulseDigest) -> Value {
+    let origins: serde_json::Map<String, Value> = digest
+        .sessions
+        .iter()
+        .filter_map(|session| {
+            let origin = session.name_origin.as_deref()?;
+            Some((
+                session.session_key.clone(),
+                json!({
+                    "origin": origin,
+                    "model": session.name_model,
+                    "signerPubkey": session.name_signer,
+                }),
+            ))
+        })
+        .collect();
+    Value::Object(origins)
 }
 
 /// `bee pulse sessions` — the coding sessions observed in the project's
@@ -1135,9 +1204,16 @@ async fn cmd_digest(
         .iter()
         .filter(|session| session.lifecycle == "open")
         .filter_map(|session| {
+            // A mission row carries a bare `name` with no origin beside it,
+            // so it gets a person's name only: a generated title there would
+            // read as a name somebody chose.
+            let person_name = session
+                .name
+                .clone()
+                .filter(|_| session.name_origin.as_deref() == Some("person"));
             Some((
                 session.session_ref.clone()?,
-                (session.name.clone(), session.latest_observation_at),
+                (person_name, session.latest_observation_at),
             ))
         })
         .collect();
@@ -1173,7 +1249,13 @@ async fn cmd_digest(
         // Both formats print `source`; compact drops the two constants a
         // reader already knows and the per-row detail, never a fact.
         crate::OutputFormat::Compact => compact_digest(&digest),
-        crate::OutputFormat::Json => serde_json::to_value(&digest).unwrap_or(Value::Null),
+        crate::OutputFormat::Json => {
+            let mut rendered = serde_json::to_value(&digest).unwrap_or(Value::Null);
+            if let Value::Object(object) = &mut rendered {
+                object.insert("nameOrigins".into(), name_origins(&digest));
+            }
+            rendered
+        }
     };
     attach_mission_rows(&mut rendered, &missions);
     println!("{rendered}");
@@ -1219,9 +1301,7 @@ fn compact_digest(digest: &PulseDigest) -> Value {
         "providerReachableSessions": digest.provider_reachable_sessions,
         "openUnverifiedSessions": digest.open_unverified_sessions,
         "closedSessions": digest.closed_sessions,
-        "sessions": digest.sessions.iter().map(|session| json!({
-            "sessionKey": session.session_key,
-            "name": session.name,
+        "sessions": digest.sessions.iter().map(|session| with_name_fields(session, json!({
             "lifecycle": session.lifecycle,
             "coordinationState": session.coordination_state,
             "generations": session.generations.iter().map(|generation| json!({
@@ -1233,7 +1313,7 @@ fn compact_digest(digest: &PulseDigest) -> Value {
                 "commitConfirmation": generation.commit_confirmation,
             })).collect::<Vec<Value>>(),
             "observedAgeSeconds": session.observed_age_seconds,
-        })).collect::<Vec<Value>>(),
+        }))).collect::<Vec<Value>>(),
         "entries": digest.entries.iter().map(|entry| json!({
             "eventId": entry.event_id,
             "pubkey": entry.pubkey,
@@ -1528,7 +1608,7 @@ mod tests {
         let sessions = durable_session_facts_filter("05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2");
         assert_eq!(
             sessions["kinds"],
-            json!([44221, 44223, 44224, 44227, 44229, 44230])
+            json!([44221, 44223, 44224, 44227, 44229, 44230, 44226, 44252])
         );
         assert_eq!(
             sessions["#h"],
@@ -1812,6 +1892,67 @@ mod tests {
                 "sessionRef": Value::Null,
                 "supersedes": Value::Null,
             })
+        );
+    }
+
+    // ---- Session names (SV-31) ----
+
+    /// A generated title is printed with its origin, model and signer; a
+    /// person's name with its origin alone; no name as two nulls.
+    #[test]
+    fn compact_session_rows_say_where_the_name_came_from() {
+        let digest = folded_vector("idle-hours-old-with-live-authorized-lease");
+        let mut session = digest.sessions[0].clone();
+
+        let unnamed = session_row(&session, &crate::OutputFormat::Compact);
+        assert_eq!(unnamed["name"], Value::Null);
+        assert_eq!(unnamed["nameOrigin"], Value::Null);
+        assert!(unnamed.get("nameModel").is_none());
+
+        session.name = Some("Fix login redirect".into());
+        session.name_origin = Some("generated".into());
+        session.name_model = Some("haiku".into());
+        session.name_signer = Some("d4".repeat(32));
+        let generated = session_row(&session, &crate::OutputFormat::Compact);
+        assert_eq!(generated["name"], "Fix login redirect");
+        assert_eq!(generated["nameOrigin"], "generated");
+        assert_eq!(generated["nameModel"], "haiku");
+        assert_eq!(generated["nameSigner"], json!("d4".repeat(32)));
+        let mut whole = digest.clone();
+        whole.sessions = vec![session.clone()];
+        assert_eq!(
+            compact_digest(&whole)["sessions"][0]["nameOrigin"],
+            "generated"
+        );
+
+        session.name = Some("Auth rework".into());
+        session.name_origin = Some("person".into());
+        session.name_model = None;
+        session.name_signer = None;
+        let person = session_row(&session, &crate::OutputFormat::Compact);
+        assert_eq!(person["nameOrigin"], "person");
+        assert!(person.get("nameModel").is_none());
+        assert!(person.get("nameSigner").is_none());
+    }
+
+    /// The JSON row and the digest-level map carry the origin the session
+    /// object itself does not serialize.
+    #[test]
+    fn json_output_carries_the_name_origin_beside_the_pinned_session() {
+        let mut digest = folded_vector("idle-hours-old-with-live-authorized-lease");
+        assert_eq!(name_origins(&digest), json!({}));
+        let session = &mut digest.sessions[0];
+        session.name = Some("Fix login redirect".into());
+        session.name_origin = Some("generated".into());
+        session.name_model = Some("haiku".into());
+        session.name_signer = Some("d4".repeat(32));
+        let row = session_row(session, &crate::OutputFormat::Json);
+        assert_eq!(row["nameOrigin"], "generated");
+        assert_eq!(row["nameModel"], "haiku");
+        let key = session.session_key.clone();
+        assert_eq!(
+            name_origins(&digest)[key.as_str()],
+            json!({ "origin": "generated", "model": "haiku", "signerPubkey": "d4".repeat(32) })
         );
     }
 

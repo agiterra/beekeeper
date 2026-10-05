@@ -42,8 +42,8 @@ use serde_json::{json, Map, Value};
 
 use buzz_core::kind::{KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT};
 use buzz_core::kind::{
-    KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
-    KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENERATED_TITLE,
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_CODING_SESSION_TRANSCRIPT, KIND_GIT_REPO_STATE,
     KIND_HOST_STEP_CLAIM, KIND_HOST_STEP_RESULT, KIND_WORKFLOW_APPROVAL_REQUESTED,
@@ -75,11 +75,13 @@ pub const MEASURE_SESSION_KINDS: &[u32] = &[
 /// The goal, the genesis and the name are published *before* the first turn —
 /// the kettle run's goal is three minutes older than the window its audit used
 /// — so applying `--since` to them would make a tool report `unknown` for the
-/// very timestamp it exists to print.
+/// very timestamp it exists to print. A generated title (44252) is the other
+/// half of the name: it lands during the first turn, once per umbrella.
 pub const MEASURE_IDENTITY_KINDS: &[u32] = &[
     KIND_CODING_SESSION_GENESIS,
     KIND_CODING_SESSION_GOAL,
     KIND_CODING_SESSION_NAME,
+    KIND_CODING_SESSION_GENERATED_TITLE,
     KIND_CODING_SESSION_CLOSURE,
 ];
 

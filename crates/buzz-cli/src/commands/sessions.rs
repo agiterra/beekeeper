@@ -45,8 +45,8 @@ use buzz_core::coding_session_payload::{
 };
 use buzz_core::kind::{
     KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CHECKPOINT,
-    KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
-    KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_NAME,
+    KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENERATED_TITLE,
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_SYSTEM_MESSAGE,
 };
 use buzz_sdk::kind::{
@@ -74,10 +74,13 @@ pub mod catalog;
 pub mod close;
 pub mod crew;
 pub mod crew_cmds;
+// SV-31: the umbrella display name `list` and `show` print, through
+// buzz-core's one resolver.
 #[cfg(test)]
 mod crew_tests;
 #[cfg(test)]
 mod crew_wire_tests;
+pub mod display_name;
 // `session.stop` from a terminal: an unattended controller's deadline stop.
 pub mod stop;
 #[cfg(test)]
@@ -1292,6 +1295,10 @@ const SESSION_OWNED_KINDS: &[u32] = &[
     KIND_CODING_SESSION_CHECKPOINT,
     KIND_CODING_SESSION_GOAL,
     KIND_CODING_SESSION_NAME,
+    // A generated title summarises the person's first message; it must go
+    // with the session, or deleting the session leaves that summary
+    // queryable by `#d`.
+    KIND_CODING_SESSION_GENERATED_TITLE,
     KIND_CODING_SESSION_TEAM_TRANSACTION,
 ];
 
@@ -1316,6 +1323,7 @@ const SESSION_D_TAG_KINDS: &[u32] = &[
     KIND_CODING_SESSION_CLOSURE,
     KIND_CODING_SESSION_GOAL,
     KIND_CODING_SESSION_NAME,
+    KIND_CODING_SESSION_GENERATED_TITLE,
     KIND_CODING_SESSION_TEAM_TRANSACTION,
 ];
 
@@ -1329,7 +1337,8 @@ const SESSION_D_TAG_KINDS: &[u32] = &[
 ///   explicit that the tag exists for the relay's uniqueness probe and for
 ///   diagnostics and that consumers must not select by it. It carries no
 ///   `d` tag at all.
-/// * **44227 goal, 44229 name, 44230 closure, 44244 team transaction** —
+/// * **44227 goal, 44229 name, 44230 closure, 44244 team transaction,
+///   44252 generated title** —
 ///   `["d", sessionRef]`.
 /// * **44223 metadata and 44225 transcript** — keyed by `cs-target`, which
 ///   names an *execution*, not the umbrella. The metadata for an execution
@@ -1499,25 +1508,18 @@ async fn cmd_list(
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
-    // 44221 and 44226 are here only for the founder column: a create says who
-    // asked for an execution, and the genesis it names says who founded the
-    // umbrella. Neither is needed to resolve a row, and both widen the fetch —
-    // see `crates/buzz-cli/TESTING.md` for what that costs.
-    let events = fetch_channel_events(
-        client,
-        channel_id,
-        &[
-            KIND_CODING_SESSION_METADATA,
-            KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
-            KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-            KIND_CODING_SESSION_GENESIS,
-        ],
-    )
-    .await?;
+    // 44221 and 44226 are here for the founder column and the name: a create
+    // says who asked for an execution, and the genesis it names says who
+    // founded the umbrella — the only key whose 44229 is a person's name.
+    // 44229 and 44252 are the name itself. None is needed to resolve a row,
+    // and each widens the fetch — see `crates/buzz-cli/TESTING.md` for what
+    // that costs.
+    let events = fetch_channel_events(client, channel_id, display_name::SESSION_LIST_KINDS).await?;
     let (metadata, _) = decode_metadata(&events);
     let (receipts, _) = decode_receipts(&events);
     let founders = crew::build_founder_index(&events, &receipts);
     let rows = resolve_sessions(&metadata, &receipts, &[]);
+    let names = display_name::umbrella_display_names(channel_id, &events, &rows, &founders);
 
     let output: Vec<Value> = rows
         .iter()
@@ -1526,7 +1528,15 @@ async fn cmd_list(
             // row — not that nobody founded it, and never the provider that
             // signed it.
             let founding = founders.of(&row.target);
-            match format {
+            // The umbrella's name, or — for a row no umbrella claims — the
+            // row's own title as a fallback, said to be one.
+            let resolved = row
+                .session_ref
+                .as_deref()
+                .and_then(|session_ref| names.get(session_ref).cloned())
+                .unwrap_or_else(|| display_name::solo_display_name(row));
+            let compact = matches!(format, crate::OutputFormat::Compact);
+            let mut value = match format {
                 crate::OutputFormat::Compact => json!({
                     "sessionRef": row.session_ref,
                     "target": row.target_key,
@@ -1554,7 +1564,11 @@ async fn cmd_list(
                     "confirmed": row.confirmed,
                     "metadataConflicts": row.metadata_conflicts,
                 }),
+            };
+            if let Value::Object(object) = &mut value {
+                object.extend(display_name::name_fields(&resolved, compact));
             }
+            value
         })
         .collect();
 
@@ -2676,6 +2690,10 @@ pub async fn dispatch(
             dry_run,
         } => cmd_delete_session(client, &channel, &session_ref, dry_run).await,
         SessionsCmd::List { channel } => cmd_list(client, &channel, format).await,
+        SessionsCmd::Show {
+            channel,
+            session_ref,
+        } => display_name::cmd_show(client, &channel, &session_ref, format).await,
         SessionsCmd::Transcript {
             channel,
             target,
@@ -3158,7 +3176,7 @@ mod tests {
         })
     }
 
-    /// kinds 44227 / 44229 / 44230 / 44244 — plain `d` tag.
+    /// kinds 44227 / 44229 / 44230 / 44244 / 44252 — plain `d` tag.
     fn del_d_tagged(id: &str, kind: u32, session_ref: &str) -> Value {
         json!({
             "id": id,
@@ -3269,6 +3287,26 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert_eq!(ids, vec!["close", "g-a", "goal", "name", "txn"]);
+    }
+
+    /// A generated title (44252) summarises the person's first message, so a
+    /// session delete must reach it — by its `d` tag, as the relay admits —
+    /// and must leave another session's alone.
+    #[test]
+    fn a_generated_title_goes_with_its_session() {
+        assert!(SESSION_OWNED_KINDS.contains(&KIND_CODING_SESSION_GENERATED_TITLE));
+        let events = vec![
+            del_genesis("g-a", SESSION_A),
+            del_d_tagged("title-a", KIND_CODING_SESSION_GENERATED_TITLE, SESSION_A),
+            del_d_tagged("title-b", KIND_CODING_SESSION_GENERATED_TITLE, SESSION_B),
+        ];
+        assert_eq!(
+            session_owned_events(&events, SESSION_A),
+            vec![
+                ("g-a".to_string(), KIND_CODING_SESSION_GENESIS),
+                ("title-a".to_string(), KIND_CODING_SESSION_GENERATED_TITLE),
+            ]
+        );
     }
 
     /// A chat message with a matching `d` tag must not ride in on the
