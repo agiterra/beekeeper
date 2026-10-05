@@ -87,6 +87,7 @@ export function CodingSessionUmbrellaHeaderRow({
   seatBeeStamps,
   seatPackRefs,
   sessionClosed,
+  sessionTitleOrigin = null,
   setRenameOpen,
   streamParticipants,
   stopAll,
@@ -100,6 +101,8 @@ export function CodingSessionUmbrellaHeaderRow({
   agentFocusItems: CodingSessionAgentFocusItem[];
   authoritativeTitle: string;
   canRename: boolean;
+  /** Whose words `authoritativeTitle` is; a generated one is marked (SV-70). */
+  sessionTitleOrigin?: HeaderProps["sessionTitleOrigin"];
   /** The session channel, for the overflow's workspace-reuse draft. */
   channelId: string;
   channelName: string | null;
@@ -248,6 +251,7 @@ export function CodingSessionUmbrellaHeaderRow({
           sourceRepoRef: focusedRecord.repoRef ?? null,
         }}
         sessionTitle={authoritativeTitle}
+        sessionTitleOrigin={sessionTitleOrigin}
         sessionClosed={sessionClosed}
         status={umbrellaWorkspaceStatus(umbrella)}
         // SURFACES A3/B2: Mission's header shows the demoted lifecycle word

@@ -41,6 +41,31 @@ export function nextCodingSessionSurfaceTabIndex(
   return null;
 }
 
+/**
+ * What a key pressed on a focused tab does (SV-69, the WAI-ARIA tabs
+ * pattern): arrows, Home and End move between tabs and activate the one they
+ * land on; Delete or Backspace closes the focused tab, because its close
+ * button is out of the tab order. `focusedIndex` is the tab that has focus,
+ * not the active one — they differ after a click on another tab's close
+ * button or a Delete that left focus where it was.
+ */
+export type CodingSessionSurfaceTabKeyAction =
+  | { kind: "move"; index: number }
+  | { kind: "close"; index: number };
+
+export function codingSessionSurfaceTabKeyAction(
+  key: string,
+  focusedIndex: number,
+  tabCount: number,
+): CodingSessionSurfaceTabKeyAction | null {
+  if (focusedIndex < 0 || focusedIndex >= tabCount) return null;
+  if (key === "Delete" || key === "Backspace") {
+    return { kind: "close", index: focusedIndex };
+  }
+  const next = nextCodingSessionSurfaceTabIndex(key, focusedIndex, tabCount);
+  return next === null ? null : { kind: "move", index: next };
+}
+
 /** What a tab's context menu can close, after T3's tab menu. */
 export type CodingSessionSurfaceTabCloseScope =
   | "close"
@@ -89,6 +114,15 @@ const TAB_CONTEXT_ITEMS: ReadonlyArray<{
  * this, the others, those to the right or all; a "+" menu listing the same
  * entries as the launcher (dimmed rows keep their reason inline), then expand
  * and close at the top right.
+ *
+ * Keyboard and screen readers (SV-69): the tablist holds only the tabs, and
+ * each tab is the strip's one stop (roving tabindex) — the close buttons are
+ * `tabIndex={-1}`, so Tab never lands on them and the arrows rove across
+ * tabs alone. A focused tab closes with Delete or Backspace, or from its
+ * context menu (the context-menu key or Shift+F10). The surface's badge is
+ * drawn in the close button's icon slot, so the tab names it through
+ * `aria-labelledby` — "Agents 2 subagents running" — rather than leaving it
+ * inside a button whose own label overrides it.
  */
 export function CodingSessionSurfaceTabStrip({
   activeId,
@@ -125,9 +159,19 @@ export function CodingSessionSurfaceTabStrip({
   tabs: readonly CodingSessionSurfaceDefinition[];
 }) {
   const tabRefs = React.useRef<Array<HTMLButtonElement | null>>([]);
+  tabRefs.current.length = tabs.length;
   const [menuOpen, setMenuOpen] = React.useState(false);
   const activeIndex = tabs.findIndex((tab) => tab.id === activeId);
   const tabIds = tabs.map((tab) => tab.id);
+  // A tab closed from the keyboard takes its focus with it; hand focus to the
+  // tab that is now the strip's stop once the store has re-rendered. Every
+  // render checks: closing a tab after the active one changes no index.
+  const refocusAfterClose = React.useRef(false);
+  React.useEffect(() => {
+    if (!refocusAfterClose.current) return;
+    refocusAfterClose.current = false;
+    tabRefs.current[Math.max(activeIndex, 0)]?.focus();
+  });
 
   return (
     <div
@@ -137,108 +181,133 @@ export function CodingSessionSurfaceTabStrip({
       )}
       data-testid="coding-session-surface-tabbar"
     >
-      <div
-        aria-label="Session surface tabs"
-        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        onKeyDown={(event) => {
-          const next = nextCodingSessionSurfaceTabIndex(
-            event.key,
-            activeIndex,
-            tabs.length,
-          );
-          if (next === null) return;
-          const tab = tabs[next];
-          if (!tab) return;
-          event.preventDefault();
-          onActivate(tab.id);
-          tabRefs.current[next]?.focus();
-        }}
-        role="tablist"
-      >
-        {tabs.map((tab, index) => {
-          const active = index === activeIndex;
-          return (
-            <ContextMenu key={tab.id}>
-              <ContextMenuTrigger asChild>
-                <div
-                  className={cn(
-                    "group/tab flex h-7 max-w-40 shrink-0 items-center gap-0.5 rounded-md pr-1 pl-1 text-xs",
-                    active
-                      ? "bg-muted text-foreground"
-                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                  )}
-                  data-testid={`coding-session-surface-tab-item-${tab.id}`}
-                  onAuxClick={(event) => {
-                    if (event.button !== 1) return;
-                    event.preventDefault();
-                    onCloseTab(tab.id);
-                  }}
-                >
-                  <button
-                    aria-label={`Close ${tab.label}`}
-                    className="group/close relative flex size-5 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-background/80 focus-visible:ring-2 focus-visible:ring-ring"
-                    data-testid={`coding-session-surface-tab-close-${tab.id}`}
-                    onClick={() => onCloseTab(tab.id)}
-                    type="button"
-                  >
-                    <span className="relative flex items-center justify-center group-hover/tab:hidden group-focus-visible/close:hidden">
-                      <CodingSessionSurfaceIconWithBadge
-                        ctx={ctx}
-                        definition={tab}
-                        slot="tab"
-                      />
-                    </span>
-                    <X
-                      aria-hidden
-                      className="hidden size-3 group-hover/tab:block group-focus-visible/close:block"
-                    />
-                  </button>
-                  <button
-                    aria-controls={`${idBase}-panel-${tab.id}`}
-                    aria-selected={active}
-                    className="flex min-w-0 items-center rounded px-1 py-1 font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    data-testid={`coding-session-surface-tab-${tab.id}`}
-                    id={`${idBase}-tab-${tab.id}`}
-                    onClick={() => onActivate(tab.id)}
-                    ref={(node) => {
-                      tabRefs.current[index] = node;
+      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div
+          aria-label="Session surface tabs"
+          className="flex shrink-0 items-center gap-1"
+          onKeyDown={(event) => {
+            if (event.altKey || event.ctrlKey || event.metaKey) return;
+            const focusedIndex = tabRefs.current.indexOf(
+              event.target as HTMLButtonElement,
+            );
+            const action = codingSessionSurfaceTabKeyAction(
+              event.key,
+              focusedIndex,
+              tabs.length,
+            );
+            if (action === null) return;
+            const tab = tabs[action.index];
+            if (!tab) return;
+            event.preventDefault();
+            if (action.kind === "close") {
+              refocusAfterClose.current = true;
+              onCloseTab(tab.id);
+              return;
+            }
+            onActivate(tab.id);
+            tabRefs.current[action.index]?.focus();
+          }}
+          role="tablist"
+        >
+          {tabs.map((tab, index) => {
+            const active = index === activeIndex;
+            const tabDomId = `${idBase}-tab-${tab.id}`;
+            return (
+              <ContextMenu key={tab.id}>
+                <ContextMenuTrigger asChild>
+                  <div
+                    className={cn(
+                      "group/tab flex h-7 max-w-40 shrink-0 items-center gap-0.5 rounded-md pr-1 pl-1 text-xs",
+                      active
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                    )}
+                    data-testid={`coding-session-surface-tab-item-${tab.id}`}
+                    onAuxClick={(event) => {
+                      if (event.button !== 1) return;
+                      event.preventDefault();
+                      onCloseTab(tab.id);
                     }}
-                    role="tab"
-                    tabIndex={
-                      active || (activeIndex === -1 && index === 0) ? 0 : -1
-                    }
-                    type="button"
                   >
-                    <span className="truncate">{tab.label}</span>
-                  </button>
-                </div>
-              </ContextMenuTrigger>
-              <ContextMenuContent
-                data-testid={`coding-session-surface-tab-menu-${tab.id}`}
-              >
-                {TAB_CONTEXT_ITEMS.map(({ label, scope }) => {
-                  const ids = codingSessionSurfaceTabsToClose(
-                    tabIds,
-                    tab.id,
-                    scope,
-                  );
-                  return (
-                    <React.Fragment key={scope}>
-                      {scope === "close-all" ? <ContextMenuSeparator /> : null}
-                      <ContextMenuItem
-                        data-testid={`coding-session-surface-tab-menu-${scope}`}
-                        disabled={ids.length === 0}
-                        onSelect={() => onCloseTabs(ids)}
+                    <button
+                      aria-label={`Close ${tab.label}`}
+                      className="group/close relative flex size-5 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-background/80 focus-visible:ring-2 focus-visible:ring-ring"
+                      data-testid={`coding-session-surface-tab-close-${tab.id}`}
+                      onClick={() => onCloseTab(tab.id)}
+                      // Out of the tab order: the tab is the strip's one stop,
+                      // and Delete on it does what this button does (SV-69).
+                      tabIndex={-1}
+                      title={`Close ${tab.label}`}
+                      type="button"
+                    >
+                      <span
+                        className="relative flex items-center justify-center group-hover/tab:hidden group-focus-visible/close:hidden"
+                        id={`${tabDomId}-badge`}
                       >
-                        {label}
-                      </ContextMenuItem>
-                    </React.Fragment>
-                  );
-                })}
-              </ContextMenuContent>
-            </ContextMenu>
-          );
-        })}
+                        <CodingSessionSurfaceIconWithBadge
+                          ctx={ctx}
+                          definition={tab}
+                          slot="tab"
+                        />
+                      </span>
+                      <X
+                        aria-hidden
+                        className="hidden size-3 group-hover/tab:block group-focus-visible/close:block"
+                      />
+                    </button>
+                    <button
+                      aria-controls={`${idBase}-panel-${tab.id}`}
+                      aria-keyshortcuts="Delete"
+                      aria-labelledby={`${tabDomId}-label ${tabDomId}-badge`}
+                      aria-selected={active}
+                      className="flex min-w-0 items-center rounded px-1 py-1 font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      data-testid={`coding-session-surface-tab-${tab.id}`}
+                      id={tabDomId}
+                      onClick={() => onActivate(tab.id)}
+                      ref={(node) => {
+                        tabRefs.current[index] = node;
+                      }}
+                      role="tab"
+                      tabIndex={
+                        active || (activeIndex === -1 && index === 0) ? 0 : -1
+                      }
+                      type="button"
+                    >
+                      <span className="truncate" id={`${tabDomId}-label`}>
+                        {tab.label}
+                      </span>
+                    </button>
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent
+                  data-testid={`coding-session-surface-tab-menu-${tab.id}`}
+                >
+                  {TAB_CONTEXT_ITEMS.map(({ label, scope }) => {
+                    const ids = codingSessionSurfaceTabsToClose(
+                      tabIds,
+                      tab.id,
+                      scope,
+                    );
+                    return (
+                      <React.Fragment key={scope}>
+                        {scope === "close-all" ? (
+                          <ContextMenuSeparator />
+                        ) : null}
+                        <ContextMenuItem
+                          data-testid={`coding-session-surface-tab-menu-${scope}`}
+                          disabled={ids.length === 0}
+                          onSelect={() => onCloseTabs(ids)}
+                        >
+                          {label}
+                        </ContextMenuItem>
+                      </React.Fragment>
+                    );
+                  })}
+                </ContextMenuContent>
+              </ContextMenu>
+            );
+          })}
+        </div>
         {tabs.length > 0 ? (
           <DropdownMenu onOpenChange={setMenuOpen} open={menuOpen}>
             <DropdownMenuTrigger asChild>

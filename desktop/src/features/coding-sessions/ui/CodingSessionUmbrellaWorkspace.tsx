@@ -33,7 +33,7 @@ import type {
   CodingSessionGoal,
   CodingSessionGoalReader,
 } from "@/features/coding-sessions/lib/codingSessionGoal";
-import type { CodingSessionName } from "@/features/coding-sessions/lib/codingSessionName";
+import type { CodingSessionDisplayName } from "@/features/coding-sessions/lib/codingSessionTitle";
 import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
 import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
 import { deriveCodingSessionObservedChanges } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
@@ -165,7 +165,7 @@ export function UmbrellaCodingSessionWorkspace({
   goal: CodingSessionGoal | null;
   /** The goal reader's own condition — A1. Rendered by the Inspector. */
   goalReader: CodingSessionGoalReader;
-  sessionName?: CodingSessionName | null;
+  sessionName?: CodingSessionDisplayName | null;
   sessionClosed?: boolean;
   turnStartedAtFor?: (
     channelId: string,
@@ -569,6 +569,8 @@ export function UmbrellaCodingSessionWorkspace({
     mission,
     openProactive: panelActions.openProactive,
     openMissionSurfaces: shell.openMissionSurfacesProactively,
+    openMissionSurfaceIds: shell.openMissionSurfaceIds,
+    reopenMissionSurfaces: shell.reopenMissionSurfaces,
   });
   const narrativeExpanded = !panelState.rightOpen;
   const surfaceHostId = React.useId();
@@ -665,6 +667,7 @@ export function UmbrellaCodingSessionWorkspace({
         <CodingSessionUmbrellaHeaderRow
           agentFocusItems={agentFocusItems}
           authoritativeTitle={authoritativeTitle}
+          sessionTitleOrigin={sessionName}
           canRename={canRename}
           channelId={channelId}
           channelName={channelName}

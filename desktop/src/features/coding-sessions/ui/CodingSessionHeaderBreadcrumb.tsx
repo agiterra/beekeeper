@@ -8,6 +8,10 @@ import { Button } from "@/shared/ui/button";
 
 import { CodingSessionFullAccessBadge } from "./CodingSessionFullAccessBadge";
 import { CodingSessionHeaderStatusBadge } from "./CodingSessionHeaderParts";
+import {
+  CodingSessionTitleOrigin,
+  type CodingSessionTitleOriginFacts,
+} from "./CodingSessionTitleOrigin";
 
 /**
  * The header's left side: `project / title ● Working` (SV-20).
@@ -30,6 +34,12 @@ import { CodingSessionHeaderStatusBadge } from "./CodingSessionHeaderParts";
  *
  * The seat chip stays beside the title, so an agent's session never reads as
  * a person's, and so do the full-access badge and the lens control.
+ *
+ * A provider's generated title carries the muted "Auto-named" marker right
+ * after it (SV-70), the same marker and tooltip the sidebar shelf, the
+ * Sessions menu, Pulse and Agent Progress rows show (SV-31), so the header
+ * never presents a model's words as a person's name. It is `shrink-0` and one
+ * `text-2xs` word, so the title keeps its share of the row (SV-57).
  */
 export function CodingSessionHeaderBreadcrumb({
   onOpenProject,
@@ -42,6 +52,7 @@ export function CodingSessionHeaderBreadcrumb({
   statusDetail,
   statusWord,
   title,
+  titleOrigin = null,
   viewControl,
 }: {
   onOpenProject?: () => void;
@@ -56,6 +67,8 @@ export function CodingSessionHeaderBreadcrumb({
   statusDetail: string | null;
   statusWord: string;
   title: string;
+  /** Whose words `title` is; a generated title is marked (SV-70). */
+  titleOrigin?: CodingSessionTitleOriginFacts | null;
   viewControl?: ReactNode;
 }) {
   const project = projectName?.trim() || null;
@@ -123,6 +136,10 @@ export function CodingSessionHeaderBreadcrumb({
           >
             {title}
           </h1>
+          <CodingSessionTitleOrigin
+            name={titleOrigin}
+            testId="coding-session-header-title-origin"
+          />
           {onRename ? (
             // An edit affordance of the title, not an action in the run: it
             // shows on hover or keyboard focus of the title, and stays in the

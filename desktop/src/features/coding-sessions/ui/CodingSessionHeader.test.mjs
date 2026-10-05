@@ -834,3 +834,61 @@ test("Mission collapses the same actions and gains no flat button", () => {
   // One header for both lenses: the prop no longer changes the row.
   assert.equal(mission, conversation);
 });
+
+test("SV-70: a generated title in the breadcrumb carries the rows' Auto-named marker", () => {
+  const signer = "ab".repeat(32);
+  const render = (props) =>
+    renderToStaticMarkup(
+      React.createElement(CodingSessionHeader, {
+        channelName: "engineering",
+        generationLabel: "generation 1",
+        status: { kind: "working", label: "Working" },
+        ...props,
+      }),
+    );
+
+  const generated = render({
+    sessionTitle: "Fix reconnect after sleep",
+    sessionTitleOrigin: {
+      origin: "generated",
+      model: "claude-haiku-4-5",
+      signerPubkey: signer.toUpperCase(),
+    },
+  });
+  const title = generated.indexOf(">Fix reconnect after sleep</h1>");
+  const marker = generated.indexOf(
+    'data-testid="coding-session-header-title-origin"',
+  );
+  assert.ok(title >= 0, generated);
+  assert.ok(marker > title, "the marker follows the title in the breadcrumb");
+  assert.match(generated, />Auto-named</);
+  // The same accessible sentence as the rows: who generated it, and the model.
+  assert.match(
+    generated,
+    /aria-label="Auto-named: Named automatically from the first message by [^"]*claude-haiku-4-5"/,
+  );
+  assert.match(generated, /role="img"/);
+  // The marker never shrinks the title out of its row (SV-57).
+  assert.match(
+    generated,
+    /class="shrink-0[^"]*"[^>]*data-testid="coding-session-header-title-origin"/,
+  );
+
+  // A person's name, a name with no origin, and an untitled session: no marker.
+  for (const props of [
+    {
+      sessionTitle: "Reconnect survives sleep",
+      sessionTitleOrigin: { origin: "person", signerPubkey: signer },
+    },
+    { sessionTitle: "Reconnect survives sleep" },
+    { sessionTitle: "Reconnect survives sleep", sessionTitleOrigin: {} },
+    {
+      sessionTitle: "  ",
+      sessionTitleOrigin: { origin: "generated", signerPubkey: signer },
+    },
+  ]) {
+    const markup = render(props);
+    assert.doesNotMatch(markup, /coding-session-header-title-origin/);
+    assert.doesNotMatch(markup, /Auto-named/);
+  }
+});

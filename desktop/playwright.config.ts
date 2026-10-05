@@ -89,6 +89,8 @@ export default defineConfig({
         "**/coding-session-founded-setup.spec.ts",
         // SV-31: a generated title's marker, rename and foreign-signer cases.
         "**/coding-session-auto-title.spec.ts",
+        // SV-69 / SV-70: tab-strip keyboard and names; header Auto-named.
+        "**/coding-session-sv69-70-header.spec.ts",
         // SV-56 / D9: the session-title mode card in each mode, and the
         // founded flow honouring it.
         "**/coding-session-title-mode-settings.spec.ts",
@@ -116,6 +118,7 @@ export default defineConfig({
         "**/coding-session-wave-b-orchestration.spec.ts",
         "**/coding-session-terminal-shortcut.spec.ts",
         "**/coding-session-elision-screenshots.spec.ts",
+        "**/coding-session-sv75-command-glyph.spec.ts",
         "**/coding-session-seat-bee.spec.ts",
         "**/coding-session-surface-host-screenshots.spec.ts",
         "**/coding-session-connect.spec.ts",

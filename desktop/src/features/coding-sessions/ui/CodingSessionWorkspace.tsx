@@ -34,7 +34,7 @@ import { selectCodingSessionUmbrellaGoal } from "@/features/coding-sessions/lib/
 import { deriveCodingSessionGoalReader } from "@/features/coding-sessions/lib/codingSessionGoal";
 import type { CodingSessionGoal } from "@/features/coding-sessions/lib/codingSessionGoal";
 import { codingSessionNameKey } from "@/features/coding-sessions/lib/codingSessionName";
-import type { CodingSessionName } from "@/features/coding-sessions/lib/codingSessionName";
+import type { CodingSessionDisplayName } from "@/features/coding-sessions/lib/codingSessionTitle";
 import { useCodingSessionNames } from "@/features/coding-sessions/useCodingSessionNames";
 import { codingSessionClosureKey } from "@/features/coding-sessions/lib/codingSessionClosure";
 import { useCodingSessionClosures } from "@/features/coding-sessions/useCodingSessionClosures";
@@ -240,9 +240,9 @@ export function CodingSessionWorkspace({
   const sessionName =
     umbrella.sessionRef && umbrella.founderPubkey
       ? // The effective name: the founder's 44229, else the provider's
-        // standing 44252 (SV-31, S2). The header carries no "Auto-named"
-        // marker until Wave B's breadcrumb does; meanwhile the rename dialog
-        // states who generated it and with which model, one click away.
+        // standing 44252 (SV-31, S2). The header breadcrumb marks a
+        // generated one "Auto-named" (SV-70), and the rename dialog states
+        // who generated it and with which model.
         (nameSnapshot.names.get(
           codingSessionNameKey(
             channelId,
@@ -458,7 +458,7 @@ function ReadyCodingSessionWorkspace({
   founderPubkey: string | null;
   genesisRef: string | null;
   goal: CodingSessionGoal | null;
-  sessionName: CodingSessionName | null;
+  sessionName: CodingSessionDisplayName | null;
   sessionClosed: boolean;
   currentUserPubkey: string | null;
   sessionRef: string | null;
@@ -746,6 +746,7 @@ function ReadyCodingSessionWorkspace({
             providerAuthorityPubkey={session.providerAuthorityPubkey}
             runtimeLabel={runtimeLabel}
             sessionTitle={authoritativeTitle}
+            sessionTitleOrigin={sessionName}
             sessionClosed={sessionClosed}
             status={status}
             surfaceHostId={surfaceHostId}

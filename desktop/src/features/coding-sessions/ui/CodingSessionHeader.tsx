@@ -10,6 +10,7 @@ import { Button } from "@/shared/ui/button";
 
 import { CodingSessionHeaderOverflow } from "./CodingSessionHeaderOverflow";
 import { CodingSessionHeaderBreadcrumb } from "./CodingSessionHeaderBreadcrumb";
+import type { CodingSessionTitleOriginFacts } from "./CodingSessionTitleOrigin";
 import { CodingSessionHeaderRouteToggle } from "./CodingSessionHeaderParts";
 import {
   CodingSessionHeaderDetails,
@@ -203,6 +204,13 @@ type CodingSessionHeaderProps = {
     typeof CodingSessionHeaderOverflow
   >["fullAccess"];
   sessionTitle?: string | null;
+  /**
+   * Whose words {@link sessionTitle} is (SV-70): a provider's generated title
+   * gets the same "Auto-named" marker the rows show (SV-31). Pass the
+   * resolved name the title came from; absent or a person's name marks
+   * nothing, so absence is never upgraded into "a model wrote this".
+   */
+  sessionTitleOrigin?: CodingSessionTitleOriginFacts | null;
   sessionClosed?: boolean;
   status: CodingSessionWorkspaceStatus;
   /** Aggregate label for an umbrella; per-agent truth lives in agentControls. */
@@ -252,6 +260,7 @@ export function CodingSessionHeader({
   seat = null,
   fullAccess = null,
   sessionTitle = null,
+  sessionTitleOrigin = null,
   sessionClosed = false,
   status,
   statusLabelOverride = null,
@@ -357,6 +366,8 @@ export function CodingSessionHeader({
         statusDetail={statusDetail}
         statusWord={statusWord}
         title={title}
+        // Only a title actually shown can be marked: "Untitled" never is.
+        titleOrigin={sessionTitle?.trim() ? sessionTitleOrigin : null}
         viewControl={viewControl}
       />
       {agentControls ? (

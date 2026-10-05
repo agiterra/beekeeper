@@ -347,6 +347,7 @@ export function CodingSessionFoundedView({
         generationLabel="not started"
         goalText={goal.kind === "available" ? goal.text : null}
         sessionTitle={sessionName}
+        sessionTitleOrigin={sessionNameOrigin}
         status={{ kind: "founded", label: "Not started" }}
       />
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6">
