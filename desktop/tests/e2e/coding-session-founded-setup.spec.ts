@@ -782,6 +782,36 @@ test.describe("the founded page is the form", () => {
     });
   });
 
+  test("07 — sv31: a blank Name says it stays untitled unless the agent's computer names it, and Start signs no 44229", async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    await openApp(page);
+    await foundSession(page);
+    const sentence = page.getByTestId("coding-session-founded-name-auto");
+    await expect(sentence).toHaveText(
+      "Left blank, it stays untitled unless the agent's computer names it from the first message.",
+    );
+    await waitForAnimations(page);
+    // The eighth SV-31 shot. The other seven come from
+    // coding-session-auto-title.spec.ts, so the sv31 hash-distinctness gate
+    // must run both specs (smoke project) before `shasum -a 256
+    // test-results/sv31/*.png`; this one lives here because it needs this
+    // file's founding helpers.
+    await sentence.locator("..").screenshot({
+      path: "test-results/sv31/sv31-blank-name-sentence.png",
+    });
+    await commitField(page, "coding-session-founded-prompt", "Fix the push.");
+    await page.getByTestId("coding-session-founded-start").click();
+    await expect
+      .poll(async () => creates(await signedEvents(page)).length, {
+        timeout: 25_000,
+      })
+      .toBe(1);
+    // Naming after Start is the host's 44252 (SV-31): this app signs none.
+    expect(await signedKinds(page)).not.toContain(44229);
+  });
+
   test("06 — Discard deletes the founded session: one kind:5 over its records, no row anywhere", async ({
     page,
   }) => {
@@ -948,4 +978,6 @@ test("Team to Solo discards hidden readiness blockers and launches without an ag
   expect(kinds).not.toContain(44245);
   expect(kinds).not.toContain(44228);
   expect(kinds).not.toContain(44220);
+  // A blank Name: no post-Start 44229 (SV-31); the host titles it as 44252.
+  expect(kinds).not.toContain(44229);
 });

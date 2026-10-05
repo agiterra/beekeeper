@@ -87,6 +87,8 @@ export default defineConfig({
         "**/coding-session-capacity.spec.ts",
         "**/coding-session-goal.spec.ts",
         "**/coding-session-founded-setup.spec.ts",
+        // SV-31: a generated title's marker, rename and foreign-signer cases.
+        "**/coding-session-auto-title.spec.ts",
         "**/coding-session-transcript-narrative-screenshots.spec.ts",
         // The provider's project execution boundary disclosure, both states.
         "**/coding-session-project-boundary.spec.ts",

@@ -18,6 +18,7 @@ import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codi
 import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import {
   KIND_CODING_SESSION_CLOSURE,
+  KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_LEASE,
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
@@ -153,12 +154,29 @@ function sessionAuthorityEvents(input: {
   sessionRef: string;
   commandId: string;
 }): RelayEvent[] {
+  // The founding 44226, signed by the author: a create naming it by
+  // `genesisRef` is what proves the founder, and only the founder's 44229
+  // is a person's name (`provenSessionFounder`, as `pulse_fold_names.rs`).
+  const genesis = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_GENESIS,
+      created_at: nowSeconds() - 14_410,
+      tags: [
+        ["h", GENERAL_CHANNEL_ID],
+        ["csg-v", "csg1-1"],
+        ["csg-session", input.sessionRef],
+      ],
+      content: JSON.stringify({ sessionRef: input.sessionRef, v: 1 }),
+    },
+    AUTHOR_SECRET,
+  ) as unknown as RelayEvent;
   const command = buildCodingSessionCreateEvent({
     channelId: GENERAL_CHANNEL_ID,
     commandId: input.commandId,
     projectRef: SESSIONS_COORDINATE,
     repoRef: null,
     sessionRef: input.sessionRef,
+    genesisRef: genesis.id,
     providerInstanceRef: input.target.instanceId,
     providerAuthorityPubkey: PROVIDER_PUBKEY,
     model: "sonnet",
@@ -166,6 +184,7 @@ function sessionAuthorityEvents(input: {
     initialTurn: null,
   });
   return [
+    genesis,
     finalizeEvent(
       { ...command, created_at: nowSeconds() - 14_400 },
       AUTHOR_SECRET,
@@ -388,7 +407,8 @@ function sessionNameEvent(sessionRef: string, name: string): RelayEvent {
       ],
       content: name,
     },
-    PROVIDER_SECRET,
+    // The founder signs the name: a 44229 from anyone else is set aside.
+    AUTHOR_SECRET,
   ) as unknown as RelayEvent;
 }
 

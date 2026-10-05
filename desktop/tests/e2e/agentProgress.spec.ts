@@ -249,7 +249,8 @@ function nameEvent(sessionRef: string, name: string): RelayEvent {
       ],
       content: name,
     },
-    PROVIDER_SECRET,
+    // The founder signs the name: a 44229 from anyone else is set aside.
+    OPERATOR_SECRET,
   ) as unknown as RelayEvent;
 }
 

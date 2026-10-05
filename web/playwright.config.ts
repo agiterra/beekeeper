@@ -28,6 +28,7 @@ export default defineConfig({
         "**/smoke.spec.ts",
         "**/sessions.spec.ts",
         "**/coding-session-prose-join.spec.ts",
+        "**/coding-session-auto-title.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
