@@ -32,6 +32,10 @@ import { useCodingSessionNames } from "../../useCodingSessionNames";
 import { CodingSessionFounderLine } from "../CodingSessionFounderLine";
 import { CodingSessionHeader } from "../CodingSessionHeader";
 import {
+  CodingSessionTitleOrigin,
+  type CodingSessionTitleOriginFacts,
+} from "../CodingSessionTitleOrigin";
+import {
   CodingSessionFoundedSetupHost,
   CodingSessionFoundedSetupReadOnly,
 } from "./CodingSessionFoundedSetupCard";
@@ -176,8 +180,16 @@ export function CodingSessionFoundedWorkspace({
       }),
     [closure, resolution],
   );
-  const sessionName = founderPubkey
+  const wireName = founderPubkey
     ? (nameSnapshot.names.get(
+        codingSessionNameKey(channelId, sessionRef, founderPubkey),
+      ) ?? null)
+    : null;
+  const sessionName = wireName?.content ?? null;
+  // The Name field guards against overwriting a person's name, so it reads
+  // the founder's own 44229 only — never a provider's generated title.
+  const personName = founderPubkey
+    ? (nameSnapshot.personNames.get(
         codingSessionNameKey(channelId, sessionRef, founderPubkey),
       )?.content ?? null)
     : null;
@@ -218,6 +230,7 @@ export function CodingSessionFoundedWorkspace({
       goal={goal}
       resolution={viewResolution}
       sessionName={sessionName}
+      sessionNameOrigin={wireName}
       sessionRef={sessionRef}
       setupCard={(umbrella, starting) => (
         <CodingSessionFoundedSetupHost
@@ -238,7 +251,7 @@ export function CodingSessionFoundedWorkspace({
           projectRef={channel?.projectRef ?? null}
           sessionRef={sessionRef}
           starting={starting}
-          wireName={sessionName}
+          wireName={personName}
         />
       )}
     />
@@ -260,6 +273,7 @@ export function CodingSessionFoundedView({
   goal,
   resolution,
   sessionName,
+  sessionNameOrigin = null,
   sessionRef,
   setupCard,
 }: {
@@ -278,6 +292,8 @@ export function CodingSessionFoundedView({
   goal: CodingSessionFoundedGoal;
   resolution: CodingSessionFoundedViewResolution;
   sessionName: string | null;
+  /** Whose words `sessionName` is; a generated title is marked (SV-31). */
+  sessionNameOrigin?: CodingSessionTitleOriginFacts | null;
   sessionRef: string;
   /** The founder's setup card; `starting` holds its Start (see the hook). */
   setupCard: (
@@ -339,9 +355,14 @@ export function CodingSessionFoundedView({
           // the header carries "not started" and the card carries the rest
           // (Andy, 2026-09-10). Everybody else is told what it is and whose.
           <div className="flex flex-col gap-2">
-            <h1 className="text-base font-semibold">
-              {sessionName?.trim() || "Untitled session"}
-            </h1>
+            <div className="flex min-w-0 items-baseline gap-2">
+              <h1 className="text-base font-semibold">
+                {sessionName?.trim() || "Untitled session"}
+              </h1>
+              {sessionName?.trim() ? (
+                <CodingSessionTitleOrigin name={sessionNameOrigin} />
+              ) : null}
+            </div>
             {goal.kind === "available" ? (
               <p
                 className="whitespace-pre-wrap text-sm"

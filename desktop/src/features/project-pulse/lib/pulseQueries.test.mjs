@@ -90,7 +90,7 @@ test("cold reads split durable history from the one-shot lease snapshot", async 
   // Per-generation facts and per-turn receipts read separately, each with its
   // own budget — see the eviction test at the end of this file.
   assert.deepEqual(filters[1], {
-    kinds: [44221, 44223, 44227, 44229, 44230],
+    kinds: [44221, 44223, 44226, 44227, 44229, 44230, 44252],
     "#h": ["channel-1"],
     limit: 1000,
   });

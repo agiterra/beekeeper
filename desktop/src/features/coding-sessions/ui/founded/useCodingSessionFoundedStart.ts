@@ -1,13 +1,6 @@
 import * as React from "react";
 
-import { toast } from "sonner";
-
 import { createCodingSessionWorktree } from "@/shared/api/tauriCodingSessionWorktrees";
-import {
-  type CodingSessionAutoNameInput,
-  type CodingSessionAutoNameOutcome,
-  autoNameCodingSession,
-} from "../../lib/codingSessionAutoName";
 import {
   type CodingSessionAutoGoalInput,
   type CodingSessionAutoGoalOutcome,
@@ -22,37 +15,21 @@ import type { CodingSessionFoundedTextModel } from "./useCodingSessionFoundedTex
 
 /**
  * The acts Start makes outside the create itself; injected in tests: the
- * worktree cut, the draft forgotten, and — for a session started with a
- * blank Name — the namer asked after the create is accepted.
+ * worktree cut, the draft forgotten, and — Solo only — the goal summarized.
+ *
+ * There is no post-Start namer here any more (SV-31, Decision 7). A session
+ * started with a blank Name is titled by the agent's computer from its first
+ * message and signed by that provider as a kind 44252; this desktop never
+ * publishes a model's words as the founder's 44229.
  */
 export type CodingSessionFoundedStartDeps = {
   createWorktree: typeof createCodingSessionWorktree;
   clearFoundedDraft: typeof clearCodingSessionFoundedDraft;
-  autoName: (
-    input: CodingSessionAutoNameInput,
-  ) => Promise<CodingSessionAutoNameOutcome>;
   /** Solo only: the goal becomes one line once the create is accepted. */
   autoGoal: (
     input: CodingSessionAutoGoalInput,
   ) => Promise<CodingSessionAutoGoalOutcome>;
 };
-
-/**
- * Name the session after Start and say so only when it went wrong: the
- * header renames itself when the 44229 lands, so success needs no notice;
- * a refusal would otherwise leave "Untitled session" with no reason given.
- */
-export async function autoNameCodingSessionAfterStart(
-  input: CodingSessionAutoNameInput,
-): Promise<CodingSessionAutoNameOutcome> {
-  const outcome = await autoNameCodingSession(input);
-  if (outcome.kind === "failed") {
-    toast.error("The session could not be named.", {
-      description: `${outcome.reason} — rename it from the session header.`,
-    });
-  }
-  return outcome;
-}
 
 /**
  * Summarize a Solo session's goal after Start, quietly. The full prompt
@@ -72,7 +49,6 @@ export async function autoSummarizeCodingSessionGoalAfterStart(
 const DEFAULT_START_DEPS: CodingSessionFoundedStartDeps = {
   createWorktree: createCodingSessionWorktree,
   clearFoundedDraft: clearCodingSessionFoundedDraft,
-  autoName: autoNameCodingSessionAfterStart,
   autoGoal: autoSummarizeCodingSessionGoalAfterStart,
 };
 
@@ -160,7 +136,7 @@ export function useCodingSessionFoundedStart(input: {
   channelId: string;
   sessionRef: string;
   genesisRef: string;
-  /** The founder — whose key signs the name the namer proposes. */
+  /** The founder — whose key signs the Solo goal summary. */
   founderPubkey: string;
   projectRef: string | null;
   setup: CodingSessionFoundedStartSetup;
@@ -224,20 +200,9 @@ export function useCodingSessionFoundedStart(input: {
       workspaceSourcePath: setup.draft.workspaceSourcePath,
       repoRef: setup.draft.repoRef,
     });
-    // A session started with a blank Name is named from its first message
-    // once the create is accepted. Fire-and-forget on purpose: the page
-    // hands off to the generation route on the receipt, and the name lands
-    // in the header there, whenever the model answers.
-    const nameBlank = setup.text.name.trim().length === 0;
-    const nameAfterStart = () => {
-      if (!nameBlank) return;
-      void deps.autoName({
-        channelId,
-        sessionRef,
-        founderPubkey,
-        firstMessage: prompt,
-      });
-    };
+    // A blank Name publishes nothing here: the agent's computer titles the
+    // session from this first message as a provider-signed 44252 (SV-31).
+    // A typed or picked Name was flushed above as the founder's 44229.
     // Solo only: the goal above the transcript becomes one line. A Team
     // session's goal is the lead's mission, left exactly as written.
     const goalAfterStart = () => {
@@ -306,7 +271,6 @@ export function useCodingSessionFoundedStart(input: {
           if (!outcome.ok) return;
           setup.text.remember();
           deps.clearFoundedDraft(sessionRef);
-          nameAfterStart();
           goalAfterStart();
           return;
         }
@@ -376,7 +340,6 @@ export function useCodingSessionFoundedStart(input: {
         }
         setup.text.remember();
         deps.clearFoundedDraft(sessionRef);
-        nameAfterStart();
         const destination = codingSessionCrewLeadDestination({
           result: launched,
           providerAuthorityPubkey: fresh.signerPubkey,

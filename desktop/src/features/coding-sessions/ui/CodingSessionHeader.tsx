@@ -3,6 +3,7 @@ import * as React from "react";
 import type { ReactNode } from "react";
 
 import { formatCodingSessionModelSummary } from "@/features/coding-sessions/lib/codingSessionLabels";
+import { UNTITLED_SESSION_NAME } from "@/features/coding-sessions/lib/codingSessionTitle";
 import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { codingSessionWorkspaceStatusDetail } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { Badge } from "@/shared/ui/badge";
@@ -277,7 +278,9 @@ export function CodingSessionHeader({
     },
     [resolveNewSessionHere],
   );
-  const title = sessionTitle?.trim() || "Coding session";
+  // Callers pass the shared resolver's name; when none reaches the header it
+  // reads the resolver's own last fallback, the text web and mobile show.
+  const title = sessionTitle?.trim() || UNTITLED_SESSION_NAME;
   // A demoted status carries its own history clause; the badge states both so
   // the header never presents a stale report as the current condition.
   const statusDetail = codingSessionWorkspaceStatusDetail(status);

@@ -7,6 +7,10 @@
  * turn; Team is the crew launch against the existing umbrella. The worktree
  * is cut before either signs; `rememberWorkspace` and `repoRef` are the
  * click-time draft's; the drafts are forgotten on success only.
+ *
+ * Naming after Start is the host's (SV-31, Decision 7): a blank Name
+ * publishes no 44229 here; a typed Name is the founder's 44229, flushed
+ * before the create.
  */
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
@@ -76,6 +80,9 @@ async function press({
   );
   const calls = [];
   const errors = [];
+  // Every kind this press signs, in order. The flush stands in for the
+  // text model: a 44229 for a non-blank Name, a 44227 for the prompt.
+  const published = [];
   const setup = {
     canLaunch: true,
     readiness: { blockers: [], unknowns: [], canLaunch: true },
@@ -138,6 +145,10 @@ async function press({
       prompt,
       flush: async () => {
         calls.push(["flush"]);
+        if (flushOutcome.ok) {
+          if (name.trim().length > 0) published.push(44229);
+          published.push(44227);
+        }
         return flushOutcome;
       },
       markPromptAttempted: () => calls.push(["promptAttempted"]),
@@ -159,8 +170,11 @@ async function press({
       };
     },
     clearFoundedDraft: (sessionRef) => calls.push(["clearDraft", sessionRef]),
+    // A trap: the retired post-Start namer, still offered. Were the hook
+    // to call it, a model's words would land as the founder's 44229.
     autoName: async (input) => {
       calls.push(["autoName", input]);
+      published.push(44229);
       return { kind: "published", name: "Generated" };
     },
     autoGoal: async (input) => {
@@ -188,7 +202,13 @@ async function press({
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   mounted.unmount();
-  return { calls, errors, navigations, names: calls.map(([name]) => name) };
+  return {
+    calls,
+    errors,
+    navigations,
+    published,
+    names: calls.map(([name]) => name),
+  };
 }
 
 test("Solo: flush first, then the worktree, then one create joined to the umbrella with no title", async () => {
@@ -199,7 +219,6 @@ test("Solo: flush first, then the worktree, then one create joined to the umbrel
     "submit",
     "remember",
     "clearDraft",
-    "autoName",
     "autoGoal",
   ]);
   const [, worktree] = run.calls[1];
@@ -299,7 +318,6 @@ test("Team: flush, then the launch against the existing umbrella with the prompt
     "launch",
     "remember",
     "clearDraft",
-    "autoName",
   ]);
   const [, input, fresh] = run.calls[2];
   assert.deepEqual(input.existingUmbrella, {
@@ -399,39 +417,45 @@ test("nothing is pressed while readiness blocks", async () => {
   assert.deepEqual(run.errors, []);
 });
 
-test("a session started with a blank Name is named from its first message after the create is accepted", async () => {
-  const { calls, names } = await press({ name: "" });
-  const at = names.indexOf("autoName");
-  assert.ok(at > names.indexOf("submit"), "the namer runs after the create");
-  assert.ok(
-    at > names.indexOf("clearDraft"),
-    "and after the drafts are forgotten",
+test("Solo: a blank-Name Start publishes no 44229 — the agent's computer titles the session", async () => {
+  const run = await press({ name: "" });
+  assert.equal(run.names.includes("submit"), true, "the create was signed");
+  assert.equal(run.names.includes("autoName"), false);
+  assert.equal(
+    run.published.filter((kind) => kind === 44229).length,
+    0,
+    "no name is signed as the founder's for a blank field",
   );
-  assert.deepEqual(calls[at][1], {
-    channelId: CHANNEL_ID,
-    sessionRef: SESSION_REF,
-    founderPubkey: FOUNDER,
-    firstMessage: PROMPT,
-  });
+  const [, submitted] = run.calls.find(([name]) => name === "submit");
+  assert.equal(submitted.title, null, "and no title rides on the create");
 });
 
-test("a typed Name is never second-guessed by the namer", async () => {
-  const { names } = await press({ name: "Typed by hand" });
-  assert.equal(names.includes("submit"), true);
-  assert.equal(names.includes("autoName"), false);
+test("Solo: a typed Name still publishes exactly one 44229, before the create", async () => {
+  const run = await press({ name: "Typed by hand" });
+  assert.deepEqual(
+    run.published.filter((kind) => kind === 44229),
+    [44229],
+  );
+  assert.ok(run.names.indexOf("flush") < run.names.indexOf("submit"));
+  assert.equal(run.names.includes("autoName"), false);
 });
 
-test("a refused create names nothing", async () => {
-  const { names } = await press({ name: "", submitOutcome: { ok: false } });
-  assert.equal(names.includes("autoName"), false);
-});
-
-test("Team: a blank Name is named after the launch too", async () => {
-  const { names } = await press({
+test("Team: a blank-Name Start publishes no 44229 after the launch either", async () => {
+  const run = await press({
     name: "",
     setup: { mode: "team", lead: FABLE, policySet: true },
   });
-  assert.ok(names.indexOf("autoName") > names.indexOf("launch"));
+  assert.equal(run.names.includes("launch"), true);
+  assert.equal(run.names.includes("autoName"), false);
+  assert.equal(run.published.filter((kind) => kind === 44229).length, 0);
+});
+
+test("Team: a typed Name still publishes exactly one 44229", async () => {
+  const run = await press({
+    name: "Typed by hand",
+    setup: { mode: "team", lead: FABLE, policySet: true },
+  });
+  assert.equal(run.published.filter((kind) => kind === 44229).length, 1);
 });
 
 test("Team with no lead: the press marks the attempt, says it under the field, and signs nothing", async () => {
@@ -476,15 +500,9 @@ test("an unnamed worktree with the toggle on is refused on press, before any cut
 test("Solo summarizes the goal after the create; Team leaves the lead's mission as written", async () => {
   const solo = await press({ name: "Typed" });
   assert.ok(solo.names.indexOf("autoGoal") > solo.names.indexOf("submit"));
-  assert.equal(
-    solo.names.includes("autoName"),
-    false,
-    "a typed name is not renamed",
-  );
   const team = await press({
     name: "",
     setup: { mode: "team", lead: FABLE, policySet: true },
   });
   assert.equal(team.names.includes("autoGoal"), false);
-  assert.equal(team.names.includes("autoName"), true);
 });

@@ -1,3 +1,4 @@
+import { SessionNameOriginMarker } from "@/features/coding-sessions/ui/SessionNameOriginMarker";
 import { cn } from "@/shared/lib/cn";
 
 import type { AgentProgressLane } from "../lib/agentProgressFold";
@@ -58,6 +59,10 @@ export function AgentProgressLaneRow({
             )}
           />
           <span className="truncate text-sm text-foreground">{lane.label}</span>
+          <SessionNameOriginMarker
+            origin={lane.labelOrigin}
+            testId="agent-progress-lane-title-origin"
+          />
           {lane.executionCount > 1 ? (
             <span
               className="shrink-0 rounded bg-muted px-1 text-3xs uppercase tracking-wide text-muted-foreground"

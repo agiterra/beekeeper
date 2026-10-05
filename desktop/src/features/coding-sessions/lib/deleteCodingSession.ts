@@ -8,6 +8,7 @@ import type { RelayEvent } from "@/shared/api/types";
 import {
   KIND_CODING_SESSION_CHECKPOINT,
   KIND_CODING_SESSION_CLOSURE,
+  KIND_CODING_SESSION_GENERATED_TITLE,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_METADATA,
@@ -35,6 +36,9 @@ export const SESSION_OWNED_KINDS = [
   KIND_CODING_SESSION_CHECKPOINT,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_NAME,
+  // A generated title summarises the person's first message; deleting the
+  // session must take it too, or that summary stays queryable by `#d`.
+  KIND_CODING_SESSION_GENERATED_TITLE,
   KIND_CODING_SESSION_TEAM_TRANSACTION,
 ] as const;
 
@@ -48,7 +52,7 @@ export const SESSION_OWNED_KINDS = [
  * | Kind | Attaches by |
  * |---|---|
  * | 44226 genesis | its **event id** — `["csg-session", …]` exists for the relay's uniqueness probe and diagnostics, and NIP-CSG says consumers must not select by it |
- * | 44227 goal, 44229 name, 44230 closure, 44244 team txn | `["d", sessionRef]` |
+ * | 44227 goal, 44229 name, 44230 closure, 44244 team txn, 44252 generated title | `["d", sessionRef]` |
  * | 44223 metadata | `sessionRef` in its **content**; its tags carry only `cs-target` |
  * | 44225 transcript | `["cs-target", …]` only — no sessionRef anywhere on it |
  * | 44231 checkpoint | `["cs-target", …]`, the same way a transcript item does |
@@ -83,6 +87,7 @@ const D_TAG_KINDS: readonly number[] = [
   KIND_CODING_SESSION_CLOSURE,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_NAME,
+  KIND_CODING_SESSION_GENERATED_TITLE,
   KIND_CODING_SESSION_TEAM_TRANSACTION,
 ];
 

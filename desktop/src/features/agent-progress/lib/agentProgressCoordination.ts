@@ -42,6 +42,7 @@ import {
   type CoordinatedSession,
   type CoordinationEvent,
   type SessionCoordinationAmbiguity,
+  type SessionCoordinationFold,
 } from "@/shared/coordination/sessionCoordinationTypes";
 import {
   type HeldEventReads,
@@ -70,6 +71,12 @@ export type AgentProgressCoordinationRead = {
   asOf: number;
   sessions: CoordinatedSession[];
   channelsBySession: ReadonlyMap<string, string[]>;
+  /**
+   * Where each named session's name came from — a person's 44229 or a
+   * provider's generated 44252 — so a lane can mark a generated title
+   * "Auto-named" instead of presenting it as a person's name.
+   */
+  nameOriginsBySession: SessionCoordinationFold["nameOriginsBySession"];
   /**
    * True only when every source query answered in full. False means the
    * session list is a floor — "at least this many" — never a census.
@@ -266,6 +273,7 @@ export async function fetchAgentProgressCoordination(
     asOf,
     sessions: fold.sessions,
     channelsBySession: fold.channelsBySession,
+    nameOriginsBySession: fold.nameOriginsBySession,
     // An unreadable event is a hole in this read exactly as a failed query is:
     // both mean the list below is a floor. Only an untruncated, fully decoded
     // read may present itself as the whole answer.

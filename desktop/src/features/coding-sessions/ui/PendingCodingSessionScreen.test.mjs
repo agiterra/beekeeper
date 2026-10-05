@@ -87,7 +87,7 @@ test("no initial turn: no echoed bubble, Idle badge", () => {
     /data-testid="pending-coding-session-first-message"/,
   );
   assert.match(markup, /Session status: Idle/);
-  assert.match(markup, /Coding session/);
+  assert.match(markup, /Untitled session/);
 });
 
 test("an auth-failed receipt surfaces the login remediation in place", () => {

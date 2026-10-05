@@ -12,6 +12,7 @@ import {
   codingSessionNameKey,
   type CodingSessionName,
 } from "@/features/coding-sessions/lib/codingSessionName";
+import type { CoordinatedSessionNameOrigin } from "@/shared/coordination/sessionCoordinationNames";
 import {
   codingSessionClosureIsClosed,
   codingSessionClosureKey,
@@ -36,6 +37,13 @@ export type ProjectCodingSessionShelfEntry = {
   channelId: string;
   generationId: string;
   label: string;
+  /**
+   * Whose words `label` is, when it is a wire name: `generated` for a
+   * provider's 44252 title (the row marks it "Auto-named", SV-31), `person`
+   * for the founder's 44229. Absent or null when the label is a fallback —
+   * the provider's metadata title or "Untitled session" — which is no name.
+   */
+  labelOrigin?: CoordinatedSessionNameOrigin | null;
   sourceChannelLabel: string | null;
   runtimeLabel: string | null;
   /** Distinct provider/runtime labels participating in this durable session. */
@@ -105,6 +113,30 @@ export type ProjectCodingSessionPlacementIndex = {
 };
 
 /**
+ * A session name as the shelf reads it: a founder-keyed 44229, or the names
+ * hook's effective name, which also says whose words it is (SV-31). A map
+ * without origins reads every name as having no stated origin — never as
+ * generated.
+ */
+export type ProjectCodingSessionName = CodingSessionName & {
+  origin?: "person" | "generated";
+  model?: string | null;
+  signerPubkey?: string | null;
+};
+
+/** The origin a wire name carries onto its row, or null when it states none. */
+export function projectCodingSessionLabelOrigin(
+  name: ProjectCodingSessionName | null | undefined,
+): CoordinatedSessionNameOrigin | null {
+  if (!name?.origin) return null;
+  return {
+    origin: name.origin,
+    model: name.model ?? null,
+    signerPubkey: name.signerPubkey ?? null,
+  };
+}
+
+/**
  * Resolve globally discoverable sessions for the Projects surfaces.
  *
  * Placement authority, in order: the session's own signed `projectRef` from
@@ -120,7 +152,7 @@ export function resolveProjectCodingSessionShelf(
     projectIdByChannel: new Map(),
   },
   sourceChannelLabels: ReadonlyMap<string, string> = new Map(),
-  names: ReadonlyMap<string, CodingSessionName> = new Map(),
+  names: ReadonlyMap<string, ProjectCodingSessionName> = new Map(),
   closures: ReadonlyMap<string, CodingSessionClosure> = new Map(),
 ): ProjectCodingSessionShelfModel {
   if (catalog.authorityErrorMessage) {
@@ -134,7 +166,10 @@ export function resolveProjectCodingSessionShelf(
     };
   }
 
-  const nameByGeneration = new Map<string, string>();
+  const nameByGeneration = new Map<
+    string,
+    { label: string; origin: CoordinatedSessionNameOrigin | null }
+  >();
   const umbrellaByGeneration = new Map<
     string,
     {
@@ -157,7 +192,7 @@ export function resolveProjectCodingSessionShelf(
       channelEntries,
       channelCreates,
     )) {
-      const sessionName =
+      const wireName =
         umbrella.sessionRef && umbrella.founderPubkey
           ? names.get(
               codingSessionNameKey(
@@ -165,8 +200,14 @@ export function resolveProjectCodingSessionShelf(
                 umbrella.sessionRef,
                 umbrella.founderPubkey,
               ),
-            )?.content
+            )
           : undefined;
+      const sessionName = wireName?.content
+        ? {
+            label: wireName.content,
+            origin: projectCodingSessionLabelOrigin(wireName),
+          }
+        : null;
       const closure =
         umbrella.sessionRef && umbrella.genesisRef
           ? (closures.get(
@@ -211,6 +252,7 @@ export function resolveProjectCodingSessionShelf(
     const runtimeLabel = buildRuntimeLabel(session);
     const generationKey = `${channelId}\u0000${session.generationId}`;
     const umbrella = umbrellaByGeneration.get(generationKey);
+    const wireName = nameByGeneration.get(generationKey);
     // Lifecycle metadata is required here: a durable stop can otherwise
     // look like an ordinary idle transcript forever.
     const status = deriveCodingSessionWorkspaceStatus(
@@ -226,9 +268,8 @@ export function resolveProjectCodingSessionShelf(
       placedBy: placement.placedBy,
       channelId,
       generationId: session.generationId,
-      label:
-        nameByGeneration.get(generationKey) ??
-        buildProjectCodingSessionLabel(session),
+      label: wireName?.label ?? buildProjectCodingSessionLabel(session),
+      labelOrigin: wireName?.origin ?? null,
       // Presentation provenance only. It is intentionally not passed to any
       // project-placement decision or exact session action.
       sourceChannelLabel: sourceChannelLabels.get(channelId)?.trim() || null,
@@ -482,9 +523,13 @@ function buildProjectCodingSessionLabel(
 function resolveUmbrellaLabel(
   representative: ProjectCodingSessionShelfEntry,
   group: ProjectCodingSessionShelfEntry[],
-): string {
+): Pick<ProjectCodingSessionShelfEntry, "label" | "labelOrigin"> {
+  const labelOf = (entry: ProjectCodingSessionShelfEntry) => ({
+    label: entry.label,
+    labelOrigin: entry.labelOrigin ?? null,
+  });
   if (representative.session.title.trim().length > 0) {
-    return representative.label;
+    return labelOf(representative);
   }
   const titled = group
     .filter((entry) => entry.session.title.trim().length > 0)
@@ -496,7 +541,7 @@ function resolveUmbrellaLabel(
         ? byTime
         : left.generationId.localeCompare(right.generationId);
     });
-  return titled[0]?.label ?? representative.label;
+  return labelOf(titled[0] ?? representative);
 }
 
 /**
@@ -555,7 +600,7 @@ function groupProjectCodingSessionEntries(
     ];
     return {
       ...representative,
-      label: resolveUmbrellaLabel(representative, group),
+      ...resolveUmbrellaLabel(representative, group),
       runtimeLabel: runtimeLabels.join(" + ") || null,
       runtimeLabels,
       executionCount: group.length,

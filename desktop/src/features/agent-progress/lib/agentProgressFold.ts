@@ -29,6 +29,7 @@
  * agents.
  */
 import { coordinationDisplayGeneration } from "@/shared/coordination/sessionCoordinationFormat";
+import type { CoordinatedSessionNameOrigin } from "@/shared/coordination/sessionCoordinationNames";
 import type {
   CoordinatedGeneration,
   CoordinatedSession,
@@ -84,6 +85,13 @@ export type AgentProgressLane = {
   /** The channel that proved this session, or null when its proof spans several. */
   channelId: string | null;
   label: string;
+  /**
+   * Where {@link label} came from when it is the session's signed name, so a
+   * generated title (44252) is marked "Auto-named". Null when the label is a
+   * local catalog row or a fallback, or the name is a person's with no origin
+   * recorded.
+   */
+  labelOrigin: CoordinatedSessionNameOrigin | null;
   goal: string | null;
   runtimeLabel: string | null;
   /** The only liveness claim on this row. Never derived from `statusAt`. */
@@ -219,9 +227,12 @@ function byteOrder(left: string, right: string): number {
 }
 
 /**
- * A lane's fallback name when no local catalog row and no signed 44229 name
- * exist. Never a bare 64-char hash: a label the reader cannot match to
- * anything on screen is worse than admitting the session is unnamed.
+ * A lane's fallback name when no local catalog row and no signed name exist —
+ * neither the founder's 44229 nor a standing provider's generated 44252, which
+ * the shared fold resolves into `session.name`
+ * (`shared/coordination/sessionCoordinationNames.ts`). Never a bare 64-char
+ * hash: a label the reader cannot match to anything on screen is worse than
+ * admitting the session is unnamed.
  */
 function fallbackLabel(session: CoordinatedSession): string {
   if (session.sessionRef) return `Session ${session.sessionRef.slice(0, 8)}`;
@@ -242,6 +253,8 @@ function fallbackLabel(session: CoordinatedSession): string {
 export function foldAgentProgress(input: {
   sessions: readonly CoordinatedSession[];
   channelsBySession: ReadonlyMap<string, string[]>;
+  /** The shared fold's name origins; absent means "unknown", never a marker. */
+  nameOriginsBySession?: ReadonlyMap<string, CoordinatedSessionNameOrigin>;
   detailBySessionRef: ReadonlyMap<string, AgentProgressLocalDetail>;
   nowSeconds: number;
   complete: boolean;
@@ -268,6 +281,9 @@ export function foldAgentProgress(input: {
       sessionRef: session.sessionRef,
       channelId,
       label: session.name ?? detail?.label ?? fallbackLabel(session),
+      labelOrigin: session.name
+        ? (input.nameOriginsBySession?.get(session.sessionKey) ?? null)
+        : null,
       goal: session.goal,
       runtimeLabel: detail?.runtimeLabel ?? null,
       coordination: session.coordinationState,

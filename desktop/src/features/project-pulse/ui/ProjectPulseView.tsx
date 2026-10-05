@@ -38,6 +38,7 @@ import type { PulseDeclaredWorkModel } from "../lib/pulseDeclaredWork";
 import type { PulseDiskRow as PulseDiskRowModel } from "../lib/pulseDiskRow";
 import type { PulseMissionRowsState } from "../lib/pulseQueries";
 import { pulseMissionRowForSession } from "../lib/pulseMissionWire";
+import { pulseNameOrigins } from "../lib/pulseNameOrigins.ts";
 import { PulseDiskRow } from "./PulseDiskRow";
 import {
   PulseDeclaredWorkSection,
@@ -489,6 +490,7 @@ export function ProjectPulseView({
   // the rest exactly once — a mission dropped between two views of the same
   // project is the failure this bookkeeping exists to prevent.
   const missionSessionKeys = new Set<string>();
+  const nameOrigins = pulseNameOrigins(readable);
   const sessionCard = (session: PulseDigestSession) => {
     const targetKey = pulseSessionDisplayGeneration(session)?.targetKey;
     const missionRow = pulseMissionRowForSession(
@@ -500,6 +502,7 @@ export function ProjectPulseView({
       <PulseSessionCard
         key={session.sessionKey}
         missionRow={missionRow}
+        nameOrigin={nameOrigins.get(session.sessionKey) ?? null}
         nowSeconds={nowSeconds}
         onOpen={
           onOpenSession && targetKey

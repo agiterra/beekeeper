@@ -192,6 +192,40 @@ test("an unnamed founded row is Untitled session and lands under General when no
   assert.equal(row.sourceChannelLabel, null);
 });
 
+test("sv31: a founded row carries a wire name's origin, and Untitled session carries none", () => {
+  const [generated] = resolveFoundedProjectCodingSessionEntries({
+    founded: [founded()],
+    index: index(),
+    names: new Map([
+      [
+        codingSessionNameKey(CHANNEL_ID, REF, FOUNDER),
+        {
+          channelId: CHANNEL_ID,
+          content: "Ship the founded flow",
+          createdAt: FOUNDED_AT + 1,
+          eventId: "d".repeat(64),
+          founderPubkey: FOUNDER,
+          sessionRef: REF,
+          origin: "generated",
+          model: "haiku",
+          signerPubkey: PROVIDER,
+        },
+      ],
+    ]),
+  });
+  assert.deepEqual(generated.labelOrigin, {
+    origin: "generated",
+    model: "haiku",
+    signerPubkey: PROVIDER,
+  });
+  const [untitled] = resolveFoundedProjectCodingSessionEntries({
+    founded: [founded()],
+    index: index(),
+  });
+  assert.equal(untitled.label, UNTITLED_FOUNDED_CODING_SESSION_LABEL);
+  assert.equal(untitled.labelOrigin, null);
+});
+
 test("a closure keyed by (channel, ref, genesis) settles a founded row like any other", () => {
   const closure = {
     action: "archived",

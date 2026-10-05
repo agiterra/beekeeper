@@ -24,6 +24,18 @@ import { Button } from "@/shared/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
+import {
+  CodingSessionTitleOrigin,
+  type CodingSessionTitleOriginFacts,
+} from "./CodingSessionTitleOrigin";
+
+/**
+ * A session's name as the menu reads it: a founder-keyed 44229, or the
+ * hook's effective name carrying its origin (SV-31).
+ */
+type ChannelCodingSessionName =
+  import("@/features/coding-sessions/lib/codingSessionName").CodingSessionName &
+    CodingSessionTitleOriginFacts;
 
 type ChannelCodingSessionsMenuProps = {
   channelId: string | null;
@@ -40,6 +52,10 @@ export function ChannelCodingSessionsMenu({
   const identity = useIdentityQuery();
   const goalSnapshot = useCodingSessionGoals(channelId ? [channelId] : []);
   const nameSnapshot = useCodingSessionNames(channelId ? [channelId] : []);
+  // The effective name: the founder's own 44229, else a provider's standing
+  // 44252 title — which every row below marks "Auto-named" (SV-31), so a
+  // model's words never read as a name the person chose.
+  const names = nameSnapshot.names;
   const entries = React.useMemo(
     () =>
       resolveChannelCodingSessionIngress({
@@ -176,7 +192,7 @@ export function ChannelCodingSessionsMenu({
             currentUserPubkey={identity.data?.pubkey ?? null}
             entries={entries}
             goals={goalSnapshot.goals}
-            names={nameSnapshot.names}
+            names={names}
             onOpen={handleOpen}
             onPopout={handlePopout}
           />
@@ -186,7 +202,7 @@ export function ChannelCodingSessionsMenu({
           currentUserPubkey={identity.data?.pubkey ?? null}
           founded={founded}
           goals={goalSnapshot.goals}
-          names={nameSnapshot.names}
+          names={names}
           onOpen={handleOpenFounded}
         />
         <Button
@@ -271,10 +287,7 @@ export function ChannelCodingSessionList({
     string,
     import("@/features/coding-sessions/lib/codingSessionGoal").CodingSessionGoal
   >;
-  names?: ReadonlyMap<
-    string,
-    import("@/features/coding-sessions/lib/codingSessionName").CodingSessionName
-  >;
+  names?: ReadonlyMap<string, ChannelCodingSessionName>;
   onOpen: (generationId: string) => void;
   onPopout: (generationId: string) => void;
 }) {
@@ -307,7 +320,7 @@ export function ChannelCodingSessionList({
                 ),
               ) ?? null)
             : null;
-        const sessionName =
+        const wireName =
           authority.sessionRef && authority.founderPubkey
             ? (names.get(
                 codingSessionNameKey(
@@ -315,8 +328,9 @@ export function ChannelCodingSessionList({
                   authority.sessionRef,
                   authority.founderPubkey,
                 ),
-              )?.content ?? null)
+              ) ?? null)
             : null;
+        const sessionName = wireName?.content ?? null;
         const note = historyNote(
           session.runtime ?? session.provider,
           executionCount,
@@ -350,6 +364,7 @@ export function ChannelCodingSessionList({
               <span className="min-w-0 flex-1 truncate text-sm font-medium">
                 {displayName}
               </span>
+              <CodingSessionTitleOrigin name={wireName} />
               <span className="shrink-0 text-xs text-muted-foreground">
                 {status.label}
               </span>
@@ -426,10 +441,7 @@ export function ChannelFoundedCodingSessionList({
     string,
     import("@/features/coding-sessions/lib/codingSessionGoal").CodingSessionGoal
   >;
-  names?: ReadonlyMap<
-    string,
-    import("@/features/coding-sessions/lib/codingSessionName").CodingSessionName
-  >;
+  names?: ReadonlyMap<string, ChannelCodingSessionName>;
   onOpen: (sessionRef: string) => void;
 }) {
   if (founded.length === 0) return null;
@@ -439,16 +451,15 @@ export function ChannelFoundedCodingSessionList({
       data-testid="channel-founded-coding-sessions"
     >
       {founded.map((umbrella) => {
-        const displayName =
-          names
-            .get(
-              codingSessionNameKey(
-                channelId,
-                umbrella.sessionRef,
-                umbrella.founderPubkey,
-              ),
-            )
-            ?.content.trim() || "Untitled session";
+        const wireName =
+          names.get(
+            codingSessionNameKey(
+              channelId,
+              umbrella.sessionRef,
+              umbrella.founderPubkey,
+            ),
+          ) ?? null;
+        const displayName = wireName?.content.trim() || "Untitled session";
         const goal =
           goals.get(
             codingSessionGoalKey(
@@ -472,6 +483,9 @@ export function ChannelFoundedCodingSessionList({
               <span className="min-w-0 flex-1 truncate text-sm font-medium">
                 {displayName}
               </span>
+              {wireName?.content.trim() ? (
+                <CodingSessionTitleOrigin name={wireName} />
+              ) : null}
               <span className="shrink-0 text-xs text-muted-foreground">
                 Not started
               </span>

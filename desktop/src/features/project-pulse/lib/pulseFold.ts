@@ -35,6 +35,7 @@ import {
   foldSessionCoordination,
   sessionCommitConfirmation,
 } from "../../../shared/coordination/sessionCoordinationFold.ts";
+import { rememberPulseNameOrigins } from "./pulseNameOrigins.ts";
 
 export * from "./pulseFoldTypes.ts";
 
@@ -203,7 +204,7 @@ export function foldProjectPulseDigest(
       : byteOrder(left.message, right.message),
   );
 
-  return {
+  const digest: ProjectPulseDigest = {
     schema: PULSE_DIGEST_SCHEMA,
     source: input.source ?? "client-composed",
     project,
@@ -220,6 +221,10 @@ export function foldProjectPulseDigest(
     entries,
     errors,
   };
+  // Beside the digest, never in it: the pinned bytes have no origin key, but
+  // a surface showing a generated title must still be able to say so.
+  rememberPulseNameOrigins(digest, foldedSessions.nameOriginsBySession);
+  return digest;
 }
 
 /** The distinct branch values across a digest, `null` kept as its own group. */

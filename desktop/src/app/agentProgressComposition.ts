@@ -79,6 +79,7 @@ export function useAgentProgress(): AgentProgressState {
       foldAgentProgress({
         sessions: read?.sessions ?? [],
         channelsBySession: read?.channelsBySession ?? new Map(),
+        nameOriginsBySession: read?.nameOriginsBySession,
         detailBySessionRef,
         nowSeconds: read?.asOf ?? Math.floor(Date.now() / 1_000),
         complete: read?.complete ?? false,

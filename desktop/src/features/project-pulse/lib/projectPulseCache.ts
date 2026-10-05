@@ -13,6 +13,7 @@
  */
 import type { ProjectPulseDigest } from "./pulseFold.ts";
 import type { PulseMissionRowsResponse } from "./pulseMissionWire";
+import { resetProjectPulseNameOrigins } from "./pulseNameOrigins.ts";
 
 const lastGoodDigests = new Map<string, ProjectPulseDigest>();
 const lastGoodMissionRows = new Map<string, PulseMissionRowsResponse>();
@@ -68,4 +69,5 @@ export function readPulseMissionRows(
 export function resetProjectPulseState(): void {
   lastGoodDigests.clear();
   lastGoodMissionRows.clear();
+  resetProjectPulseNameOrigins();
 }

@@ -55,6 +55,7 @@ async function mount({
   currentUserPubkey = FOUNDER,
   goal = { kind: "available", text: "Close ledger item 104." },
   resolution = { kind: "founded", founded: FOUNDED },
+  sessionNameOrigin = null,
 } = {}) {
   const React = (await import("react")).default;
   const { act, cleanup, render } = await import("@testing-library/react");
@@ -81,6 +82,7 @@ async function mount({
     goal,
     resolution,
     sessionName: "Founded first",
+    sessionNameOrigin,
     sessionRef: SESSION_REF,
     setupCard: (founded, starting) => {
       cards.push(founded);
@@ -160,6 +162,28 @@ test("a member who did not found it sees the name, the goal, the read-only sente
     "the setup card is never mounted for them",
   );
   screen.teardown();
+});
+
+test("sv31: the page title marks a generated name Auto-named and leaves a person's bare", async () => {
+  const generated = await mount({
+    currentUserPubkey: OTHER,
+    sessionNameOrigin: {
+      origin: "generated",
+      model: "haiku",
+      signerPubkey: "d4".repeat(32),
+    },
+  });
+  assert.match(
+    generated.markup(),
+    /data-testid="coding-session-title-origin"[^>]*>Auto-named</,
+  );
+  generated.teardown();
+  const person = await mount({
+    currentUserPubkey: OTHER,
+    sessionNameOrigin: { origin: "person", model: null, signerPubkey: FOUNDER },
+  });
+  assert.doesNotMatch(person.markup(), /Auto-named/);
+  person.teardown();
 });
 
 test("a goal this screen could not read is said to a non-founder, never shown blank", async () => {

@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
+import { CodingSessionTitleOrigin } from "@/features/coding-sessions/ui/CodingSessionTitleOrigin";
 import { ProjectTerminalsCard } from "@/features/builtin-shell/ui/ProjectTerminalsCard";
 import { ProjectTodosCard } from "@/features/project-todos/ui/ProjectTodosCard";
 import { ProjectPulseCard } from "@/features/project-pulse/ui/ProjectPulseCard";
@@ -475,6 +476,9 @@ export function ProjectContainerScreen({
                       >
                         <Terminal className="size-4 shrink-0 text-muted-foreground" />
                         <span className="truncate">{entry.label}</span>
+                        {/* A provider's generated title is marked here as on
+                            the sidebar row; a person's name is not (SV-31). */}
+                        <CodingSessionTitleOrigin name={entry.labelOrigin} />
                         <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
                           {[entry.runtimeLabel, entry.status.label]
                             .filter(Boolean)

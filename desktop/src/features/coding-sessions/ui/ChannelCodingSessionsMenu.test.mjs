@@ -7,6 +7,7 @@ import { ChannelScreenHeader } from "../../channels/ui/ChannelScreenHeader.tsx";
 import {
   ChannelCodingSessionList,
   ChannelCodingSessionsTrigger,
+  ChannelFoundedCodingSessionList,
 } from "./ChannelCodingSessionsMenu.tsx";
 
 const entries = [
@@ -133,6 +134,101 @@ test("catalog uses the founder-authored session name over execution labels", () 
   assert.match(markup, /Durable session name/);
   assert.match(markup, /aria-label="Open Durable session name"/);
   assert.doesNotMatch(markup, /Session worker-a \/ generation 7/);
+});
+
+const TITLE_SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+const TITLE_FOUNDER = "a".repeat(64);
+const TITLE_PROVIDER = "d4".repeat(32);
+
+function titledName(origin) {
+  return new Map([
+    [
+      `channel-1\u0000${TITLE_SESSION_REF}\u0000${TITLE_FOUNDER}`,
+      {
+        channelId: "channel-1",
+        content: "Fix the reconnect loop",
+        createdAt: 1,
+        eventId: "b".repeat(64),
+        founderPubkey: TITLE_FOUNDER,
+        sessionRef: TITLE_SESSION_REF,
+        ...origin,
+      },
+    ],
+  ]);
+}
+
+function startedRow(names) {
+  return renderToStaticMarkup(
+    React.createElement(ChannelCodingSessionList, {
+      authorityByGeneration: new Map([
+        [
+          entries[0].session.generationId,
+          { founderPubkey: TITLE_FOUNDER, sessionRef: TITLE_SESSION_REF },
+        ],
+      ]),
+      channelId: "channel-1",
+      entries: [entries[0]],
+      names,
+      onOpen() {},
+      onPopout() {},
+    }),
+  );
+}
+
+test("sv31: a generated title shows with its Auto-named marker; a person's name shows bare", () => {
+  const generated = startedRow(
+    titledName({
+      origin: "generated",
+      model: "claude-haiku-4-5",
+      signerPubkey: TITLE_PROVIDER,
+    }),
+  );
+  assert.match(generated, /Fix the reconnect loop/);
+  assert.match(generated, /data-testid="coding-session-title-origin"/);
+  assert.match(generated, /Auto-named/);
+
+  const person = startedRow(
+    titledName({ origin: "person", model: null, signerPubkey: TITLE_FOUNDER }),
+  );
+  assert.match(person, /Fix the reconnect loop/);
+  assert.doesNotMatch(person, /Auto-named/);
+
+  // A map that states no origin (a plain 44229 map) is never read as generated.
+  assert.doesNotMatch(startedRow(titledName({})), /Auto-named/);
+});
+
+function foundedList(names) {
+  return renderToStaticMarkup(
+    React.createElement(ChannelFoundedCodingSessionList, {
+      channelId: "channel-1",
+      founded: [
+        {
+          channelId: "channel-1",
+          sessionRef: TITLE_SESSION_REF,
+          founderPubkey: TITLE_FOUNDER,
+          genesisRef: "c".repeat(64),
+          foundedAt: 1,
+        },
+      ],
+      names,
+      onOpen() {},
+    }),
+  );
+}
+
+test("sv31: a founded row keeps Untitled session without a name, and marks a generated one", () => {
+  const untitled = foundedList(new Map());
+  assert.match(untitled, /Untitled session/);
+  assert.doesNotMatch(untitled, /Auto-named/);
+  const generated = foundedList(
+    titledName({
+      origin: "generated",
+      model: "haiku",
+      signerPubkey: TITLE_PROVIDER,
+    }),
+  );
+  assert.match(generated, /Fix the reconnect loop/);
+  assert.match(generated, /Auto-named/);
 });
 
 test("channel session list forwards only the clicked exact generation ids", () => {

@@ -19,10 +19,13 @@ export const KIND_SESSION_LEASE = 24223;
 
 /**
  * The durable signed facts the fold consumes: lifecycle command, metadata,
- * lifecycle receipt, goal, name, closure — in wire order.
+ * lifecycle receipt, genesis, goal, name, closure, generated title — in wire
+ * order. The 44226 genesis an accepted create names proves the founder, whose
+ * 44229 is the only person's name; 44252 is a provider's generated title,
+ * which a person's 44229 always outranks (`sessionCoordinationNames.ts`).
  */
 export const SESSION_COORDINATION_DURABLE_KINDS = [
-  44221, 44223, 44224, 44227, 44229, 44230,
+  44221, 44223, 44224, 44226, 44227, 44229, 44230, 44252,
 ] as const;
 
 /** Every kind the fold consumes, in wire order. */
@@ -214,4 +217,23 @@ export type SessionCoordinationFold = {
    * it against locally-held transcripts.
    */
   channelsBySession: ReadonlyMap<string, string[]>;
+  /**
+   * Where each named session's {@link CoordinatedSession.name} came from —
+   * a person's 44229 or a provider's generated 44252, with the model and
+   * signer of a generated one — keyed by `sessionKey`. An unnamed session has
+   * no entry.
+   *
+   * Beside the session, not inside it, for the same reason as
+   * {@link channelsBySession}: the session object's bytes are pinned by
+   * `conformance/project-pulse-fold`, and a surface showing a generated title
+   * must still be able to say it was generated.
+   */
+  nameOriginsBySession: ReadonlyMap<
+    string,
+    {
+      origin: "person" | "generated";
+      model: string | null;
+      signerPubkey: string | null;
+    }
+  >;
 };

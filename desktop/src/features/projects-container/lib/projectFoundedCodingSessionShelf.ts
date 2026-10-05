@@ -23,10 +23,7 @@ import {
   type CodingSessionFoundedUmbrella,
   resolveFoundedCodingSessions,
 } from "@/features/coding-sessions/lib/codingSessionFoundedModel";
-import {
-  type CodingSessionName,
-  codingSessionNameKey,
-} from "@/features/coding-sessions/lib/codingSessionName";
+import { codingSessionNameKey } from "@/features/coding-sessions/lib/codingSessionName";
 import {
   PENDING_CODING_SESSION_LIFECYCLE_TTL_MS,
   type PendingCodingSessionLifecycle,
@@ -41,8 +38,10 @@ import type {
 } from "@/features/coding-sessions/lib/codingSessionTypes";
 
 import {
+  type ProjectCodingSessionName,
   type ProjectCodingSessionPlacementIndex,
   type ProjectCodingSessionShelfEntry,
+  projectCodingSessionLabelOrigin,
   resolveProjectCodingSessionPlacement,
 } from "./projectCodingSessionShelf";
 
@@ -93,11 +92,11 @@ export function resolveFoundedProjectCodingSessionEntries(input: {
   founded: readonly CodingSessionFoundedUmbrella[];
   index: ProjectCodingSessionPlacementIndex;
   channelLabels?: ReadonlyMap<string, string>;
-  names?: ReadonlyMap<string, CodingSessionName>;
+  names?: ReadonlyMap<string, ProjectCodingSessionName>;
   closures?: ReadonlyMap<string, CodingSessionClosure>;
 }): ProjectCodingSessionShelfEntry[] {
   const channelLabels = input.channelLabels ?? new Map<string, string>();
-  const names = input.names ?? new Map<string, CodingSessionName>();
+  const names = input.names ?? new Map<string, ProjectCodingSessionName>();
   const closures = input.closures ?? new Map<string, CodingSessionClosure>();
   return input.founded.map((founded) => {
     const placement = resolveProjectCodingSessionPlacement(
@@ -105,16 +104,17 @@ export function resolveFoundedProjectCodingSessionEntries(input: {
       founded.channelId,
       input.index,
     );
-    const name = names
-      .get(
-        codingSessionNameKey(
-          founded.channelId,
-          founded.sessionRef,
-          founded.founderPubkey,
-        ),
-      )
-      ?.content.trim();
+    const wireName = names.get(
+      codingSessionNameKey(
+        founded.channelId,
+        founded.sessionRef,
+        founded.founderPubkey,
+      ),
+    );
+    const name = wireName?.content.trim();
     const label = name || UNTITLED_FOUNDED_CODING_SESSION_LABEL;
+    // Only a wire name has an origin; "Untitled session" is no one's words.
+    const labelOrigin = name ? projectCodingSessionLabelOrigin(wireName) : null;
     const closure =
       closures.get(
         codingSessionClosureKey(
@@ -131,6 +131,7 @@ export function resolveFoundedProjectCodingSessionEntries(input: {
       channelId: founded.channelId,
       generationId: session.generationId,
       label,
+      labelOrigin,
       sourceChannelLabel: channelLabels.get(founded.channelId)?.trim() || null,
       runtimeLabel: null,
       runtimeLabels: [],

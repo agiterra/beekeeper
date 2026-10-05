@@ -182,6 +182,10 @@ export const KIND_CODING_SESSION_CLOSURE = 44230;
 // NIP-CSCK: provider-authored turn checkpoint (`csck1-1`) — the working tree
 // at the end of one turn, keyed by `cs-target` like a transcript item.
 export const KIND_CODING_SESSION_CHECKPOINT = 44231;
+// NIP-CSG § Generated title: a provider-signed, append-only title generated
+// from the founder's first message. A person's 44229 always outranks it.
+// Deletable with its session (it attaches by `["d", sessionRef]`).
+export const KIND_CODING_SESSION_GENERATED_TITLE = 44252;
 // NIP-CSTX: actor-authored portable team transactions folded canonically by
 // buzz-core (`buzz-coding-session-team-transaction/v1`).
 export const KIND_CODING_SESSION_TEAM_TRANSACTION = 44244;
@@ -298,6 +302,9 @@ export const CODING_SESSION_EVENT_KINDS = [
   KIND_CODING_SESSION_CLOSURE,
   KIND_CODING_SESSION_TEAM_TRANSACTION,
   KIND_CODING_SESSION_HANDOVER,
+  // Read by `useCodingSessionNames` (a bounded query plus a live REQ) in the
+  // same change that added it here, so the mock relay serves it too.
+  KIND_CODING_SESSION_GENERATED_TITLE,
 ] as const;
 
 // Human-visible "new content" message kinds. Used as the unread trigger set

@@ -164,6 +164,93 @@ test("founder-authored session name overrides provider titles on the shelf", () 
   assert.equal(entries[0].label, "Durable session name");
 });
 
+function shelfWithName(nameFields, title = "Provider execution title") {
+  const channelId = "sessions-channel";
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const founderPubkey = "f".repeat(64);
+  const target = {
+    driver: "hive-seat",
+    instanceId: "private-instance",
+    sessionId: "private-seat",
+    generation: 7,
+  };
+  const names = nameFields
+    ? new Map([
+        [
+          `${channelId}\u0000${sessionRef}\u0000${founderPubkey}`,
+          {
+            channelId,
+            content: "Fix the reconnect loop",
+            createdAt: 1,
+            eventId: "a".repeat(64),
+            founderPubkey,
+            sessionRef,
+            ...nameFields,
+          },
+        ],
+      ])
+    : new Map();
+  return resolveProjectCodingSessionShelf(
+    catalog(
+      [
+        {
+          channelId,
+          session: session({ commandTarget: target, sessionRef, title }),
+        },
+      ],
+      {
+        creates: [
+          {
+            channelId,
+            sessionRef,
+            signerPubkey: founderPubkey,
+            createdAt: 1,
+            eventId: "create-a",
+            target,
+          },
+        ],
+      },
+    ),
+    index(),
+    new Map(),
+    names,
+  ).entries[0];
+}
+
+test("sv31: a generated title carries its origin onto the row; a person's name says person", () => {
+  const generated = shelfWithName({
+    origin: "generated",
+    model: "claude-haiku-4-5",
+    signerPubkey: "d4".repeat(32),
+  });
+  assert.equal(generated.label, "Fix the reconnect loop");
+  assert.deepEqual(generated.labelOrigin, {
+    origin: "generated",
+    model: "claude-haiku-4-5",
+    signerPubkey: "d4".repeat(32),
+  });
+  // An untitled representative borrows a titled member's label — and its
+  // origin with it, so the marker follows the words it describes.
+  const untitled = shelfWithName(
+    { origin: "generated", model: "haiku", signerPubkey: "d4".repeat(32) },
+    "",
+  );
+  assert.equal(untitled.label, "Fix the reconnect loop");
+  assert.equal(untitled.labelOrigin.origin, "generated");
+
+  const person = shelfWithName({
+    origin: "person",
+    model: null,
+    signerPubkey: "f".repeat(64),
+  });
+  assert.equal(person.labelOrigin.origin, "person");
+  // A name map that states no origin, and a fallback label, mark nothing.
+  assert.equal(shelfWithName({}).labelOrigin, null);
+  const fallback = shelfWithName(null);
+  assert.equal(fallback.label, "Provider execution title");
+  assert.equal(fallback.labelOrigin, null);
+});
+
 test("active sessions sort before compact idle and unknown rows", () => {
   const { entries } = resolveProjectCodingSessionShelf(
     catalog([

@@ -12,7 +12,7 @@ import {
 import { useNewCodingSessionDraft } from "../../lib/newCodingSessionDraft";
 import { useNewCodingSessionPromptRecall } from "../../lib/newCodingSessionPromptHistory";
 import { codingSessionAutoGoalSentence } from "../../lib/codingSessionAutoGoal";
-import { codingSessionAutoNameSentence } from "../../lib/codingSessionAutoName";
+import { codingSessionBlankNameSentence } from "../../lib/codingSessionBlankNameSentence";
 import { useNewCodingSessionTitleSuggestion } from "../useNewCodingSessionTitleSuggestion";
 import type { CodingSessionFoundedGoal } from "./CodingSessionFoundedWorkspace";
 
@@ -360,8 +360,12 @@ export function useCodingSessionFoundedText(input: {
     nameDirty,
     commitName,
     suggestion: suggestionAllowed ? naming.status : null,
-    /** What a blank Name means at Start, per this computer's namer. */
-    autoNameSentence: codingSessionAutoNameSentence(naming.settings),
+    /**
+     * What a blank Name means at Start: it stays untitled unless the agent's
+     * computer titles it from the first message (a provider-signed 44252) —
+     * not guaranteed, and not decided by this desktop's draft-time namer.
+     */
+    autoNameSentence: codingSessionBlankNameSentence(),
     /** What a Solo Start does to the goal, per this computer's namer. */
     autoGoalSentence: codingSessionAutoGoalSentence(naming.settings),
     /** Ask the namer now — the prompt's blur; a no-op while suppressed. */

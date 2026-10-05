@@ -230,7 +230,11 @@ export function CodingSessionWorkspace({
   const goal = goalSelection.kind === "available" ? goalSelection.goal : null;
   const sessionName =
     umbrella.sessionRef && umbrella.founderPubkey
-      ? (nameSnapshot.names.get(
+      ? // The effective name: the founder's 44229, else the provider's
+        // standing 44252 (SV-31, S2). The header carries no "Auto-named"
+        // marker until Wave B's breadcrumb does; meanwhile the rename dialog
+        // states who generated it and with which model, one click away.
+        (nameSnapshot.names.get(
           codingSessionNameKey(
             channelId,
             umbrella.sessionRef,

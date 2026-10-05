@@ -34,7 +34,7 @@ test("one bundle per 128-channel chunk, two filters with two budgets each", asyn
   );
   assert.deepEqual(
     batches[0][0].kinds,
-    [44221, 44223, 44224, 44227, 44229, 44230],
+    [44221, 44223, 44224, 44226, 44227, 44229, 44230, 44252],
   );
   assert.deepEqual(batches[0][1].kinds, [24223]);
   assert.deepEqual(batches[0][0]["#h"].slice(0, 2), [

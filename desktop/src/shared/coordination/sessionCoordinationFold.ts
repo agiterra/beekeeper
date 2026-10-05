@@ -71,6 +71,14 @@ import {
   hasStrictMetadataJson,
   hasStrictSessionTargetValues,
 } from "./sessionCoordinationStrictJson.ts";
+import {
+  type CoordinatedNameWitness,
+  type CoordinatedSessionNameOrigin,
+  indexSessionGeneses,
+  indexSessionNameRecords,
+  resolveCoordinatedSessionName,
+  witnessSessionName,
+} from "./sessionCoordinationNames.ts";
 
 export * from "./sessionCoordinationTypes.ts";
 
@@ -727,6 +735,7 @@ export function foldSessionCoordination(
   const generationsBySession = new Map<string, CoordinatedGeneration[]>();
   const sessionRefs = new Map<string, string | null>();
   const sessionChannels = new Map<string, Set<string>>();
+  const nameWitnesses = new Map<string, CoordinatedNameWitness[]>();
   for (const acceptedGeneration of accepted.values()) {
     const generationFactKey = channelFactKey(
       acceptedGeneration.channelId,
@@ -822,13 +831,20 @@ export function foldSessionCoordination(
       generation,
     ]);
     sessionRefs.set(sessionKey, acceptedGeneration.sessionRef);
+    const { action, event: command } = acceptedGeneration.command;
+    witnessSessionName(nameWitnesses, sessionKey, generation, action, command);
     const channels = sessionChannels.get(sessionKey) ?? new Set<string>();
     channels.add(acceptedGeneration.channelId);
     sessionChannels.set(sessionKey, channels);
   }
 
   const goals = foldNewestByDTag(events, 44227);
-  const names = foldNewestByDTag(events, 44229);
+  // A person's name or a standing generated title, by the shared rule
+  // (`sessionCoordinationNames.ts`) — never the newest 44229 from anyone.
+  const nameIndex = indexSessionNameRecords(events);
+  // The founder is proven by the 44226 an accepted create names, as in Rust.
+  const geneses = indexSessionGeneses(events);
+  const nameOrigins = new Map<string, CoordinatedSessionNameOrigin>();
   const closures = foldNewestByDTag(events, 44230);
   const sessions: CoordinatedSession[] = [];
   for (const [sessionKey, generations] of generationsBySession) {
@@ -844,7 +860,20 @@ export function foldSessionCoordination(
     const sessionFactKey =
       channelId && sessionRef ? channelFactKey(channelId, sessionRef) : null;
     const goal = sessionFactKey ? (goals.get(sessionFactKey) ?? null) : null;
-    const name = sessionFactKey ? (names.get(sessionFactKey) ?? null) : null;
+    const name =
+      channelId && sessionRef
+        ? resolveCoordinatedSessionName({
+            channelId,
+            sessionRef,
+            witnesses: nameWitnesses.get(sessionKey) ?? [],
+            geneses,
+            index: nameIndex,
+          })
+        : null;
+    if (name) {
+      const { origin, model, signerPubkey } = name;
+      nameOrigins.set(sessionKey, { origin, model, signerPubkey });
+    }
     const closure = sessionFactKey
       ? (closures.get(sessionFactKey) ?? null)
       : null;
@@ -868,13 +897,13 @@ export function foldSessionCoordination(
     const sourceEventIds = sortedUnique([
       ...generations.flatMap((generation) => generation.sourceEventIds),
       ...(goal ? [goal.id] : []),
-      ...(name ? [name.id] : []),
+      ...(name ? [name.sourceEventId] : []),
       ...(closure ? [closure.id] : []),
     ]);
     sessions.push({
       sessionKey,
       sessionRef,
-      name: name?.content ?? null,
+      name: name?.name ?? null,
       goal: goal?.content ?? null,
       lifecycle,
       coordinationState,
@@ -920,6 +949,7 @@ export function foldSessionCoordination(
     errors,
     sessions,
     channelsBySession,
+    nameOriginsBySession: nameOrigins,
     providerReachableSessions: sessions
       .filter((session) => session.coordinationState === "provider_reachable")
       .map((session) => session.sessionKey),

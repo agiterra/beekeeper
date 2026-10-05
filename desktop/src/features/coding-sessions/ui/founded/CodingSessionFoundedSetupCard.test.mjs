@@ -443,7 +443,7 @@ test("Discard is offered only when the host offers it; a busy Start still has it
 });
 
 const AUTO_NAME_SENTENCE =
-  "Left blank, it is named from the initial prompt after Start (claude-haiku-4-5).";
+  "Left blank, it stays untitled unless the agent's computer names it from the first message.";
 
 test("a blank Name says what happens to it at Start", async () => {
   const page = await mount({

@@ -1,7 +1,9 @@
 import * as React from "react";
 import { ChevronDown, ChevronRight, GitBranch, Terminal } from "lucide-react";
 
+import { SessionNameOriginMarker } from "@/features/coding-sessions/ui/SessionNameOriginMarker";
 import { coordinationReportedStatus } from "@/shared/coordination/sessionCoordinationFormat";
+import type { CoordinatedSessionNameOrigin } from "@/shared/coordination/sessionCoordinationNames";
 
 import {
   branchChipLabel,
@@ -46,12 +48,19 @@ export function PulseSessionCard({
    * them would hide a disagreement between them rather than show it.
    */
   missionRow,
+  /**
+   * Where `session.name` came from, read beside the digest
+   * (`lib/pulseNameOrigins.ts`). A generated title gets the "Auto-named"
+   * marker; absent or a person's name shows none.
+   */
+  nameOrigin = null,
 }: {
   session: PulseDigestSession;
   nowSeconds: number;
   onOpen?: () => void;
   onOpenExecution?: (targetKey: string) => void;
   missionRow?: PulseMissionRowModel | null;
+  nameOrigin?: CoordinatedSessionNameOrigin | null;
 }) {
   const [showExecutions, setShowExecutions] = React.useState(false);
   const generation = pulseSessionDisplayGeneration(session);
@@ -97,6 +106,12 @@ export function PulseSessionCard({
             {title}
           </span>
         )}
+        {session.name ? (
+          <SessionNameOriginMarker
+            origin={nameOrigin}
+            testId="pulse-session-title-origin"
+          />
+        ) : null}
         <span
           className="ml-auto inline-flex items-center gap-1 text-2xs text-muted-foreground"
           data-testid="pulse-session-status"

@@ -24,6 +24,7 @@ import {
   KIND_CODING_SESSION_CLOSURE,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_METADATA,
+  KIND_CODING_SESSION_GENERATED_TITLE,
   KIND_CODING_SESSION_NAME,
   KIND_PULSE_ENTRY,
 } from "@/shared/constants/kinds";
@@ -78,6 +79,7 @@ function excludedNoun(kind: number): { one: string; many: string } {
     kind === KIND_CODING_SESSION_METADATA ||
     kind === KIND_CODING_SESSION_GOAL ||
     kind === KIND_CODING_SESSION_NAME ||
+    kind === KIND_CODING_SESSION_GENERATED_TITLE ||
     kind === KIND_CODING_SESSION_CLOSURE
   ) {
     return { one: "A coding-session update", many: "coding-session updates" };

@@ -29,6 +29,8 @@ import { phaseJitteredPeriodMs } from "@/shared/lib/pollSchedule";
 import type { RelayEvent } from "@/shared/api/types";
 import {
   KIND_CODING_SESSION_CLOSURE,
+  KIND_CODING_SESSION_GENERATED_TITLE,
+  KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_LEASE,
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
@@ -124,9 +126,14 @@ export function projectPulseChannelSetUnresolved(query: {
 const GENERATION_FACT_KINDS = [
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_METADATA,
+  // Once per umbrella: the genesis an accepted create names proves the
+  // founder, without whom no 44229 is a person's name (as `pulse_fetch.rs`).
+  KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_NAME,
   KIND_CODING_SESSION_CLOSURE,
+  // A provider's generated title: once per umbrella, so it stays bounded too.
+  KIND_CODING_SESSION_GENERATED_TITLE,
 ];
 
 /**
@@ -501,6 +508,11 @@ export function useProjectPulseDigest(
   const query = useQuery({
     queryKey: key,
     enabled: coordinate !== null,
+    // The digest is read by identity for its name origins
+    // (`pulseNameOrigins.ts`), so the object held must be the one the fold
+    // returned. Sharing bought little here: `asOf` changes on every read, so
+    // the top-level digest was already new each time.
+    structuralSharing: false,
     refetchInterval: phaseJitteredPeriodMs(
       `project-pulse:${coordinate ?? "none"}`,
       PULSE_DIGEST_REFETCH_INTERVAL_MS,

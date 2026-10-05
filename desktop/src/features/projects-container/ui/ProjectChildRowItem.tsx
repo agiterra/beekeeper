@@ -19,6 +19,7 @@ import type { PinRow } from "@/features/agents-repo/lib/artifactPinFold";
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import { useNewSessionInWorkspaceAction } from "@/features/coding-sessions/hooks/useNewSessionInWorkspaceAction";
 import { NEW_SESSION_IN_WORKSPACE_LABEL } from "@/features/coding-sessions/lib/codingSessionWorkspaceReuseCopy";
+import { CodingSessionTitleOrigin } from "@/features/coding-sessions/ui/CodingSessionTitleOrigin";
 import { ShellSessionRow } from "@/features/builtin-shell/ui/ShellSessionRow";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { resolveUserLabel } from "@/features/profile/lib/identity";
@@ -282,7 +283,12 @@ export function ProjectChildRowItem({
             )}
           </span>
           <span className="flex min-w-0 flex-1 flex-col">
-            <span className="truncate">{entry.label}</span>
+            <span className="flex min-w-0 items-baseline gap-1.5">
+              <span className="truncate">{entry.label}</span>
+              {/* A provider's generated title is marked; a person's name and
+                  a fallback label are not (SV-31). */}
+              <CodingSessionTitleOrigin name={entry.labelOrigin} />
+            </span>
             {details && !settled ? (
               <span className="truncate text-2xs font-normal text-sidebar-foreground/50">
                 {details}

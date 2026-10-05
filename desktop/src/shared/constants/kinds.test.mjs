@@ -11,6 +11,7 @@ import {
   KIND_CODING_SESSION_COMMAND,
   KIND_CODING_SESSION_CHECKPOINT,
   KIND_CODING_SESSION_CLOSURE,
+  KIND_CODING_SESSION_GENERATED_TITLE,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_HANDOVER,
@@ -115,6 +116,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       authorityTransition: KIND_CODING_SESSION_AUTHORITY_TRANSITION,
       teamTransaction: KIND_CODING_SESSION_TEAM_TRANSACTION,
       name: KIND_CODING_SESSION_NAME,
+      generatedTitle: KIND_CODING_SESSION_GENERATED_TITLE,
     },
     {
       command: 44220,
@@ -131,9 +133,10 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       authorityTransition: 44228,
       teamTransaction: 44244,
       name: 44229,
+      generatedTitle: 44252,
     },
   );
-  assert.equal(CODING_SESSION_EVENT_KINDS.length, 14);
+  assert.equal(CODING_SESSION_EVENT_KINDS.length, 15);
   assert.equal(
     KIND_CODING_SESSION_LEASE >= 20000 && KIND_CODING_SESSION_LEASE <= 29999,
     true,
@@ -231,6 +234,22 @@ test("the handover kind is read off the wire and served by the mock relay", () =
   );
   assert.equal(
     CHANNEL_TIMELINE_CONTENT_KINDS.includes(KIND_CODING_SESSION_HANDOVER),
+    false,
+  );
+});
+
+test("the generated-title kind is read off the wire and served by the mock relay", () => {
+  // 44252 (NIP-CSG § Generated title) is read by `useCodingSessionNames`, so
+  // by this list's rule it belongs in `CODING_SESSION_EVENT_KINDS`, which the
+  // e2e mock relay serves. Like every session kind it is never a chat row.
+  assert.equal(
+    CODING_SESSION_EVENT_KINDS.includes(KIND_CODING_SESSION_GENERATED_TITLE),
+    true,
+  );
+  assert.equal(
+    CHANNEL_TIMELINE_CONTENT_KINDS.includes(
+      KIND_CODING_SESSION_GENERATED_TITLE,
+    ),
     false,
   );
 });

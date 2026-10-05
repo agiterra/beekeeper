@@ -182,6 +182,22 @@ test("goal, name, closure and team transactions match on the d tag", () => {
   assert.ok(!ids.includes("other"));
 });
 
+test("a generated title goes with its session, and only its own", () => {
+  // 44252 summarises the person's first message. The relay admits it to a
+  // whole-session delete by its `d` tag; the client must name it, or the
+  // summary outlives the session it describes.
+  assert.ok(SESSION_OWNED_KINDS.includes(44252));
+  const events = [
+    genesis("g-a", SESSION_A),
+    dTagged("title-a", 44252, SESSION_A),
+    dTagged("title-b", 44252, SESSION_B),
+  ];
+  assert.deepEqual(sessionOwnedEventIds(events, SESSION_A, "g-a"), [
+    "g-a",
+    "title-a",
+  ]);
+});
+
 test("undecodable content is left alone rather than guessed at", () => {
   const broken = {
     ...base,

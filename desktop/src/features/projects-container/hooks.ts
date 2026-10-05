@@ -459,6 +459,10 @@ export function useProjectCodingSessionBuckets(
     ),
   });
   const nameSnapshot = useCodingSessionNames(stableChannelIds);
+  // The effective name: the founder's own 44229, else a provider's standing
+  // 44252 title. Each row carries its origin, and the sidebar marks a
+  // generated one "Auto-named" (SV-31) so it never reads as the person's.
+  const shelfNames = nameSnapshot.names;
   // Founders by genesis, per channel (the umbrella join is channel-scoped),
   // including geneses nothing has started: the closure fold drops any 44230
   // whose genesis it cannot resolve, and a founded session must be closable.
@@ -521,7 +525,7 @@ export function useProjectCodingSessionBuckets(
       catalog,
       placementIndex,
       channelLabels,
-      nameSnapshot.names,
+      shelfNames,
       closureSnapshot.closures,
     );
     const now = Date.now();
@@ -545,7 +549,7 @@ export function useProjectCodingSessionBuckets(
       founded: resolveGlobalFoundedCodingSessions(catalog),
       index: placementIndex,
       channelLabels,
-      names: nameSnapshot.names,
+      names: shelfNames,
       closures: closureSnapshot.closures,
     });
     const entries = mergeFoundedCodingSessionShelfEntries(
@@ -572,7 +576,7 @@ export function useProjectCodingSessionBuckets(
     closureSnapshot.closures,
     closureSnapshot.errorMessage,
     nameSnapshot.errorMessage,
-    nameSnapshot.names,
+    shelfNames,
     pendingLifecycle,
     placementIndex,
   ]);

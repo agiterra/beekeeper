@@ -23,7 +23,8 @@ before(() => {
 
 after(() => dom.window.close());
 
-const CHANNEL_ID = "channel-session-names";
+// A channel UUID: the 44229 envelope rule (relay and every reader) requires one.
+const CHANNEL_ID = "6f1d2c3b-4a59-4e8d-9c7b-1a2b3c4d5e6f";
 const SESSION_REF = "9c4e2b10-3f5a-4d72-8b16-2e9a7d4c1f08";
 const FOUNDER_SECRET = generateSecretKey();
 const FOUNDER_PUBKEY = getPublicKey(FOUNDER_SECRET);
@@ -130,8 +131,8 @@ test("immediate history and bounded live replay cover an attaching watch", async
     "HTTP history does not wait on live admission",
   );
   assert.deepEqual(filters, [
-    { kinds: [44229], "#h": [CHANNEL_ID], limit: 1000 },
-    { kinds: [44229], "#h": [CHANNEL_ID], limit: 1000 },
+    { kinds: [44229, 44252], "#h": [CHANNEL_ID], limit: 1000 },
+    { kinds: [44229, 44252], "#h": [CHANNEL_ID], limit: 1000 },
   ]);
   await act(async () => deliverLive(initial));
   assert.equal(
@@ -300,4 +301,366 @@ test("a held rename cannot enter a remounted community with the same client and 
   });
   assert.equal(next.result.current.names.size, 0);
   next.unmount();
+});
+
+// ── SV-31: generated titles beside a person's name ─────────────────────────
+
+const PROVIDER_SECRET = generateSecretKey();
+const PROVIDER_PUBKEY = getPublicKey(PROVIDER_SECRET);
+const SECOND_PROVIDER_SECRET = generateSecretKey();
+const STRANGER_SECRET = generateSecretKey();
+const TARGET = {
+  driver: "claude-agent-acp",
+  instanceId: "inst-1",
+  sessionId: "sess-1",
+  generation: 1,
+};
+const SECOND_TARGET = { ...TARGET, driver: "codex-acp", sessionId: "sess-2" };
+
+function targetKey(target) {
+  return `coding-session/v1|${[
+    target.driver,
+    target.instanceId,
+    target.sessionId,
+    String(target.generation),
+  ]
+    .map((field) => `${new TextEncoder().encode(field).byteLength}:${field}`)
+    .join("")}`;
+}
+
+function titleEvent(secret, title, createdAt, target = TARGET) {
+  return finalizeEvent(
+    {
+      kind: 44252,
+      created_at: createdAt,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["d", SESSION_REF],
+        ["cstl-v", "cstl1-1"],
+        ["cs-target", targetKey(target)],
+      ],
+      content: JSON.stringify({
+        schema: "buzz-coding-session-title/v1",
+        title,
+        model: "claude-haiku-4-5",
+        basis: "first-message",
+        sourceCommand: null,
+        createEventId: "ca".repeat(32),
+      }),
+    },
+    secret,
+  );
+}
+
+async function metadataEvent(secret, target = TARGET) {
+  const { codingSessionMetadataSemanticKey } = await import(
+    "./lib/codingSessionIngressPayloads.ts"
+  );
+  return finalizeEvent(
+    {
+      kind: 44223,
+      created_at: 1_800_000_000,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["csm-v", "csm1-1"],
+        ["cs-target", targetKey(target)],
+        ["csm-key", codingSessionMetadataSemanticKey(target)],
+      ],
+      content: JSON.stringify({
+        schema: "buzz-coding-session-metadata/v1",
+        session: target,
+        projectRef: null,
+        repoRef: null,
+        title: "Founding execution title",
+        agentRef: null,
+        provider: "claude",
+        runtime: "claude",
+        model: null,
+        status: "running",
+        branch: null,
+        capabilities: {
+          threadTurnStart: true,
+          threadTurnInterrupt: true,
+          threadSteer: true,
+          context: false,
+          diff: true,
+          plan: true,
+        },
+        sessionRef: SESSION_REF,
+      }),
+    },
+    secret,
+  );
+}
+
+async function receiptEvent(secret, target = TARGET, status = "created") {
+  const {
+    CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+    codingSessionReceiptSemanticKey,
+  } = await import("./lib/codingSessionIngressPayloads.ts");
+  const commandId = `cmd-${status}`;
+  return finalizeEvent(
+    {
+      kind: 44224,
+      created_at: 1_799_999_999,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["cslr-v", "cslr1-1"],
+        ["csl-command", commandId],
+        ["csl-key", codingSessionReceiptSemanticKey(commandId, status)],
+      ],
+      content: JSON.stringify({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId,
+        status,
+        session: target,
+        error: null,
+      }),
+    },
+    secret,
+  );
+}
+
+/** A confirmed execution: the signer's 44223 and its `created` receipt. */
+async function executionEvents(secret, target = TARGET) {
+  return [
+    await metadataEvent(secret, target),
+    await receiptEvent(secret, target),
+  ];
+}
+
+/** A client serving names/titles, and 44223/44224 standing by kind and author. */
+function titleClient({ names, metadata }) {
+  const filters = [];
+  return {
+    filters,
+    fetchEventsCoalesced: async (filter) => {
+      filters.push(filter);
+      if (filter.kinds.includes(44223) || filter.kinds.includes(44224)) {
+        return metadata
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              (filter.authors ?? []).includes(event.pubkey) &&
+              (filter.until === undefined || event.created_at <= filter.until),
+          )
+          .sort((left, right) => right.created_at - left.created_at)
+          .slice(0, filter.limit);
+      }
+      return names;
+    },
+    subscribeLive: async () => () => {},
+    subscribeToReconnects: () => () => {},
+  };
+}
+
+async function renderNames(client) {
+  const { act, renderHook } = await import("@testing-library/react");
+  const { useCodingSessionNames } = await import("./useCodingSessionNames.ts");
+  const rendered = renderHook(() =>
+    useCodingSessionNames([CHANNEL_ID], client),
+  );
+  await act(async () => {});
+  await act(async () => {});
+  return rendered;
+}
+
+async function founderKey() {
+  const { codingSessionNameKey } = await import("./lib/codingSessionName.ts");
+  return codingSessionNameKey(CHANNEL_ID, SESSION_REF, FOUNDER_PUBKEY);
+}
+
+test("an older person name beats a newer generated title, and personNames holds only it", async () => {
+  const person = await nameEvent("Auth rework", 1_800_000_100);
+  const title = titleEvent(
+    PROVIDER_SECRET,
+    "Login redirect fix",
+    1_800_000_200,
+  );
+  const client = titleClient({
+    names: [title, person],
+    metadata: [...(await executionEvents(PROVIDER_SECRET))],
+  });
+  const { result, unmount } = await renderNames(client);
+  const key = await founderKey();
+  assert.equal(result.current.names.get(key)?.content, "Auth rework");
+  assert.equal(result.current.names.get(key)?.origin, "person");
+  assert.equal(result.current.names.get(key)?.model, null);
+  assert.equal(result.current.personNames.get(key)?.content, "Auth rework");
+  // The standing reads name their kinds and only the signer they vouch for,
+  // in the title's channel, ending at the title: metadata, then the
+  // lifecycle receipts that confirm it.
+  assert.deepEqual(client.filters.at(-2), {
+    kinds: [44223],
+    "#h": [CHANNEL_ID],
+    authors: [PROVIDER_PUBKEY],
+    until: 1_800_000_260,
+    limit: 1000,
+  });
+  assert.deepEqual(client.filters.at(-1), {
+    kinds: [44224],
+    "#h": [CHANNEL_ID],
+    authors: [PROVIDER_PUBKEY],
+    until: 1_800_000_260,
+    limit: 1000,
+  });
+  unmount();
+});
+
+test("a generated title shows with its model and signer, but is never a person's name", async () => {
+  const title = titleEvent(
+    PROVIDER_SECRET,
+    "Login redirect fix",
+    1_800_000_200,
+  );
+  const { result, unmount } = await renderNames(
+    titleClient({
+      names: [title],
+      metadata: [...(await executionEvents(PROVIDER_SECRET))],
+    }),
+  );
+  const key = await founderKey();
+  const shown = result.current.names.get(key);
+  assert.equal(shown?.content, "Login redirect fix");
+  assert.equal(shown?.origin, "generated");
+  assert.equal(shown?.model, "claude-haiku-4-5");
+  assert.equal(shown?.signerPubkey, PROVIDER_PUBKEY);
+  assert.equal(shown?.eventId, title.id);
+  assert.equal(result.current.personNames.get(key), undefined);
+  assert.equal(result.current.personNames.size, 0);
+  unmount();
+});
+
+test("the earliest generated title wins, so a shown title never flips", async () => {
+  const later = titleEvent(PROVIDER_SECRET, "Later title", 1_800_000_300);
+  const earlier = titleEvent(
+    SECOND_PROVIDER_SECRET,
+    "Earlier title",
+    1_800_000_200,
+    SECOND_TARGET,
+  );
+  const { result, unmount } = await renderNames(
+    titleClient({
+      names: [later, earlier],
+      metadata: [
+        ...(await executionEvents(PROVIDER_SECRET)),
+        ...(await executionEvents(SECOND_PROVIDER_SECRET, SECOND_TARGET)),
+      ],
+    }),
+  );
+  assert.equal(
+    result.current.names.get(await founderKey())?.content,
+    "Earlier title",
+  );
+  unmount();
+});
+
+test("a foreign or non-execution signer's title is ignored and counted", async () => {
+  // The stranger signed no 44223 at all; the second provider signed one for
+  // its own target, not for the target this title claims.
+  const stranger = titleEvent(STRANGER_SECRET, "Stranger title", 1_800_000_100);
+  const crossed = titleEvent(
+    SECOND_PROVIDER_SECRET,
+    "Crossed title",
+    1_800_000_150,
+  );
+  const { result, unmount } = await renderNames(
+    titleClient({
+      names: [stranger, crossed],
+      metadata: [
+        ...(await executionEvents(SECOND_PROVIDER_SECRET, SECOND_TARGET)),
+      ],
+    }),
+  );
+  assert.equal(result.current.names.get(await founderKey()), undefined);
+  assert.equal(result.current.generatedTitles.size, 0);
+  assert.deepEqual(result.current.titleDiagnostics, {
+    foreignTitles: 2,
+    malformed: 0,
+  });
+  unmount();
+});
+
+test("a signer's 44223 with no lifecycle receipt is no execution: its title is counted, never shown", async () => {
+  const title = titleEvent(
+    PROVIDER_SECRET,
+    "Login redirect fix",
+    1_800_000_200,
+  );
+  const { result, unmount } = await renderNames(
+    titleClient({
+      names: [title],
+      metadata: [await metadataEvent(PROVIDER_SECRET)],
+    }),
+  );
+  assert.equal(result.current.names.get(await founderKey()), undefined);
+  assert.equal(result.current.generatedTitles.size, 0);
+  assert.deepEqual(result.current.titleDiagnostics, {
+    foreignTitles: 1,
+    malformed: 0,
+  });
+  unmount();
+});
+
+test("a failed standing read hides titles and says so", async () => {
+  const title = titleEvent(
+    PROVIDER_SECRET,
+    "Login redirect fix",
+    1_800_000_200,
+  );
+  const client = {
+    fetchEventsCoalesced: async (filter) => {
+      if (filter.kinds.includes(44223)) throw new Error("relay refused");
+      return [title];
+    },
+    subscribeLive: async () => () => {},
+  };
+  const { result, unmount } = await renderNames(client);
+  assert.equal(result.current.names.get(await founderKey()), undefined);
+  assert.match(result.current.errorMessage ?? "", /relay refused/);
+  // The names read itself settled cleanly: nothing gates on standing.
+  assert.equal(result.current.readErrorMessage, null);
+  assert.equal(result.current.resolved, true);
+  unmount();
+});
+
+test("a busy provider's 1000+ later turn receipts never unseat an old session's title", async () => {
+  const title = titleEvent(
+    PROVIDER_SECRET,
+    "Login redirect fix",
+    1_800_000_200,
+  );
+  const later = [];
+  for (let index = 0; index < 1_200; index += 1) {
+    const turn = {
+      id: index.toString(16).padStart(64, "0"),
+      pubkey: PROVIDER_PUBKEY,
+      kind: 44224,
+      created_at: 1_800_100_000 + index,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["cslr-v", "cslr1-1"],
+        ["csl-command", `turn-${index}`],
+        ["csl-key", "k"],
+      ],
+      content: "{}",
+      sig: "00".repeat(64),
+    };
+    later.push(turn, { ...turn, id: `m${turn.id.slice(1)}`, kind: 44223 });
+  }
+  const client = titleClient({
+    names: [title],
+    metadata: [...(await executionEvents(PROVIDER_SECRET)), ...later],
+  });
+  const { result, unmount } = await renderNames(client);
+  assert.equal(
+    result.current.names.get(await founderKey())?.content,
+    "Login redirect fix",
+  );
+  assert.deepEqual(result.current.titleDiagnostics, {
+    foreignTitles: 0,
+    malformed: 0,
+  });
+  assert.equal(result.current.errorMessage, null);
+  unmount();
 });
