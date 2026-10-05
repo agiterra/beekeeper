@@ -160,6 +160,19 @@ type MockBridgeOptions = {
   pocketVoiceImportResult?: "success" | "cancel" | "invalid";
   /** Advertised HEAD for the first mock project without adding that branch. */
   projectHeadBranch?: string;
+  /**
+   * Session-title settings the naming commands answer with (SV-56). Unset,
+   * `coding_session_naming_settings` stays unsupported as before.
+   */
+  codingSessionNaming?: {
+    titleMode: "agent" | "my-model" | "off";
+    provider: "off" | "anthropic" | "openai-compatible";
+    baseUrl: string;
+    model: string;
+    hasApiKey: boolean;
+    /** The host's "agent host was not told" sentence; cleared by a save. */
+    hostModeMismatch?: string | null;
+  };
   /** Relay NIP-11 identity used to sign authoritative repository state. */
   relaySelf?: string | null;
   /** Canonical buzz-core adapter response for Mission transaction E2E. */

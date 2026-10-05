@@ -20,6 +20,10 @@ import {
   MOCK_PROJECT_AGENT_KINDS,
 } from "./e2eBridgeProjectAgents.ts";
 import { handleMockAgentsRepoCommand } from "./e2eBridgeAgentsRepo.ts";
+import {
+  handleMockCodingSessionNamingCommand,
+  type MockCodingSessionNamingSettings,
+} from "./e2eBridgeCodingSessionNaming.ts";
 import { relayClient } from "@/shared/api/relayClient";
 import {
   mockChannelHistoryPage,
@@ -259,6 +263,8 @@ type E2eConfig = {
     pocketVoiceImportResult?: "success" | "cancel" | "invalid";
     /** Advertised HEAD for the first mock project without adding that branch. */
     projectHeadBranch?: string;
+    /** Session-title settings (SV-56). Unset = the naming commands stay unsupported. */
+    codingSessionNaming?: MockCodingSessionNamingSettings;
     /** Builderlab account returned by hosted-community onboarding. Null/omitted = signed out. */
     builderlabAuth?: {
       email?: string;
@@ -13597,6 +13603,13 @@ export function maybeInstallE2eTauriMocks() {
       case "agents_repo_commit_drafts":
       case "validate_plan_source":
         return handleMockAgentsRepoCommand(command, payload);
+      case "coding_session_naming_settings":
+      case "set_coding_session_naming_settings":
+        return handleMockCodingSessionNamingCommand(
+          command,
+          payload,
+          activeConfig?.mock?.codingSessionNaming,
+        );
       case "project_agents_init": {
         const input = (payload ?? {}) as {
           projectRef?: string;

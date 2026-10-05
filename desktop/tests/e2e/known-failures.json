@@ -157,6 +157,16 @@
       "observed": "Wave A gate round 2: failed in the four-worker full run, then 1 of 4 alone on the Wave A tree; on an untouched cf2791efa build it failed 1 of 6 alone, with the same error (navigation invoked commands outside the read-only set: coding_session_provider_runtimes). Pre-existing on main.",
       "ledger": "none yet: first recorded by SV-39 gate round 2 (plans/SESSION_VIEW_PARITY_PLAN.md)",
       "intermittent": true
+    },
+    {
+      "spec": "coding-session-width.spec.ts",
+      "title": "the wide code line scrolls inside its own block",
+      "line": 717,
+      "verifiedOn": "db4ea4aea",
+      "verifiedAt": "2026-10-05",
+      "observed": "SV-56 end-of-wave full smoke at 4 workers: failed (data-overflow stayed \"true\" after scrolling to the end); alone via npx playwright at 1 worker: failed; alone via pnpm test:e2e:smoke: passed twice with the wave and once on untouched db4ea4aea. A scroll-event vs read race, not a regression",
+      "ledger": "none yet: first recorded by SV-56 end-of-wave E2E (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
     }
   ]
 }
