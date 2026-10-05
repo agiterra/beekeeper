@@ -17,17 +17,33 @@
 #
 # The key file (/home/git/.nostr/key, 0600, nsec1... or 64-hex) is the
 # operator's to create — this script writes no key material.
+#
+# The GitHub push authenticates as a GitHub App, not a deploy key: GitHub
+# names a deploy-key push's sender as whoever added the key, and Woodpecker
+# labels every pipeline with that sender — so every bridged push read as one
+# person's. An app's pushes read as `<app-slug>[bot]`. The app needs
+# Contents and Workflows read/write on the repo (Workflows, or any push
+# touching .github/workflows is refused). Its private key
+# (/home/git/.github-app/key.pem, 0600, owned by git) is the operator's to
+# place, like the Nostr key. Pass the app's ids on the first run; they are
+# kept in the git user's config after that:
+#
+#   GITHUB_APP_ID=<id> GITHUB_APP_INSTALLATION_ID=<id> \
+#     ./scripts/forge/setup-hive-mirror.sh
 set -euo pipefail
 
 FORGE_HOST=agincus
 FORGE_EXEC=(ssh "$FORGE_HOST" incus exec forge --)
 KEYFILE=/home/git/.nostr/key
+APP_KEYFILE=/home/git/.github-app/key.pem
 MIRROR_REPO=/srv/git/beekeeper.git
 
 # ---------------------------------------------------------------- remote part
 if [[ "${1:-}" == "--remote" ]]; then
     HIVE_URL="$2"
     RELAY_SCOPE="$3"
+    APP_ID="${4:-}"
+    APP_INSTALLATION_ID="${5:-}"
     # The script arrives on stdin (bash -s); a credential prompt would read
     # the rest of it as a username. Fail instead.
     export GIT_TERMINAL_PROMPT=0
@@ -123,6 +139,33 @@ EOF
         exit 1
     fi
 
+    echo "== GitHub App credential =="
+    gitcfg() { sudo -u git git -C /home/git config --global "$@"; }
+    [ -n "$APP_ID" ] && gitcfg githubApp.appId "$APP_ID"
+    [ -n "$APP_INSTALLATION_ID" ] && gitcfg githubApp.installationId "$APP_INSTALLATION_ID"
+    gitcfg githubApp.keyFile "$APP_KEYFILE"
+    gitcfg credential.https://github.com.helper github-app
+    missing=""
+    gitcfg --get githubApp.appId >/dev/null || missing="$missing GITHUB_APP_ID"
+    gitcfg --get githubApp.installationId >/dev/null \
+        || missing="$missing GITHUB_APP_INSTALLATION_ID"
+    sudo -u git test -r "$APP_KEYFILE" || missing="$missing $APP_KEYFILE"
+    if [ -n "$missing" ]; then
+        echo "GitHub App setup incomplete — missing:$missing" >&2
+        echo "See the header of this script; nothing was flipped." >&2
+        exit 1
+    fi
+    # An ssh remote (the deploy-key era's `git@<alias>:org/repo.git`) becomes
+    # the https URL the credential helper answers for. Idempotent.
+    GH_URL=$(sudo -u git git -C "$MIRROR_REPO" remote get-url origin)
+    case "$GH_URL" in
+        https://github.com/*) ;;
+        git@*:*) sudo -u git git -C "$MIRROR_REPO" remote set-url origin \
+                     "https://github.com/${GH_URL#git@*:}" ;;
+        *) echo "unexpected GitHub remote URL: $GH_URL" >&2; exit 1 ;;
+    esac
+    sudo -u git git -C "$MIRROR_REPO" remote get-url origin
+
     echo "== GitHub push access test =="
     # The bare repo was cloned with --mirror; that push mode is incompatible
     # with explicit refspecs (fatal) and would prune GitHub-only refs. The
@@ -132,8 +175,8 @@ EOF
             '+refs/heads/main:refs/heads/main' 2>&1; then
         echo
         echo "GitHub push failed — the git output above is authoritative." >&2
-        echo "A 'read only' rejection means the deploy key needs write" >&2
-        echo "access: GitHub > agiterra/beekeeper > Settings > Deploy keys." >&2
+        echo "A 403 means the app lacks Contents: write, or is not" >&2
+        echo "installed on this repo: the org's Settings > GitHub Apps." >&2
         exit 1
     fi
 
@@ -211,6 +254,12 @@ echo "== install git-mirror-update on forge =="
     < scripts/forge/git-mirror-update
 "${FORGE_EXEC[@]}" chmod 755 /usr/local/bin/git-mirror-update
 
+echo "== install git-credential-github-app on forge =="
+"${FORGE_EXEC[@]}" tee /usr/local/bin/git-credential-github-app >/dev/null \
+    < scripts/forge/git-credential-github-app
+"${FORGE_EXEC[@]}" chmod 755 /usr/local/bin/git-credential-github-app
+
 echo "== run remote setup =="
 "${FORGE_EXEC[@]}" bash -s -- --remote "$HIVE_URL" "$RELAY_SCOPE" \
+    "${GITHUB_APP_ID:-}" "${GITHUB_APP_INSTALLATION_ID:-}" \
     < "scripts/forge/$(basename "$0")"
