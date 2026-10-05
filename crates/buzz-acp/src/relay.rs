@@ -283,6 +283,67 @@ fn unix_now_secs() -> u64 {
         .as_secs()
 }
 
+/// Render a `reqwest::Error` with its whole source chain and whether the
+/// client's own deadline fired.
+///
+/// reqwest's `Display` prints only its kind ("error sending request",
+/// "error decoding response body") and drops the cause. In reqwest 0.13 a
+/// body that is cut off — the client's total timeout firing mid-download, or
+/// the peer closing the stream — surfaces as the *decode* kind, so the bare
+/// message reads as malformed JSON when nothing was decoded at all. The chain
+/// says which it was ("operation timed out", "connection closed before
+/// message completed", "unexpected end of file", ...).
+fn describe_reqwest_error(error: &reqwest::Error) -> String {
+    let mut out = error.to_string();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        out.push_str(": ");
+        out.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    if error.is_timeout() {
+        out.push_str(" [client timeout]");
+    }
+    out
+}
+
+/// How many leading bytes of a non-JSON body an error message quotes.
+const NON_JSON_BODY_PREVIEW_BYTES: usize = 200;
+
+/// Read a bridge response body and parse it as JSON, keeping the two failure
+/// modes apart: the body could not be read in full (timeout, truncation,
+/// reset — reported with its cause chain and how many bytes arrived is
+/// unknown to reqwest, so it is not guessed), or it was read in full and is
+/// not JSON (reported with its status, content type, length and first bytes,
+/// so an ingress error page is recognisable as one).
+async fn read_json_body(what: &str, resp: reqwest::Response) -> Result<Value, RelayError> {
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("none")
+        .to_owned();
+    let content_length = resp.content_length();
+    let bytes = resp.bytes().await.map_err(|e| {
+        let expected = content_length
+            .map(|n| format!(", content-length {n}"))
+            .unwrap_or_default();
+        RelayError::Http(format!(
+            "{what}: HTTP {status} response body could not be read in full{expected}: {}",
+            describe_reqwest_error(&e)
+        ))
+    })?;
+    serde_json::from_slice(&bytes).map_err(|e| {
+        let head = &bytes[..bytes.len().min(NON_JSON_BODY_PREVIEW_BYTES)];
+        RelayError::Http(format!(
+            "{what}: HTTP {status} body is not JSON ({} bytes, content-type {content_type}): {e}; body starts {:?}",
+            bytes.len(),
+            String::from_utf8_lossy(head)
+        ))
+    })
+}
+
 impl RestClient {
     /// Sign a NIP-98 HTTP Auth event (kind:27235) for the given method/URL/body.
     ///
@@ -378,10 +439,16 @@ impl RestClient {
                     )));
                 }
                 Err(e) if e.is_timeout() || e.is_connect() => {
-                    tracing::warn!("{method} {path} network error: {e}");
-                    last_err = Some(RelayError::Http(e.to_string()));
+                    let detail = describe_reqwest_error(&e);
+                    tracing::warn!("{method} {path} network error: {detail}");
+                    last_err = Some(RelayError::Http(format!("{method} {path}: {detail}")));
                 }
-                Err(e) => return Err(RelayError::Http(e.to_string())),
+                Err(e) => {
+                    return Err(RelayError::Http(format!(
+                        "{method} {path}: {}",
+                        describe_reqwest_error(&e)
+                    )))
+                }
             }
         }
 
@@ -456,9 +523,7 @@ impl RestClient {
         let body_bytes = serde_json::to_vec(filters)
             .map_err(|e| RelayError::Http(format!("filter serialize error: {e}")))?;
         let resp = self.bridge_post("/query", &body_bytes).await?;
-        resp.json()
-            .await
-            .map_err(|e| RelayError::Http(e.to_string()))
+        read_json_body("POST /query", resp).await
     }
 
     /// Resolve one signed event by its exact id and expected kind.
@@ -547,9 +612,7 @@ impl RestClient {
         let body_bytes = serde_json::to_vec(filters)
             .map_err(|e| RelayError::Http(format!("filter serialize error: {e}")))?;
         let resp = self.bridge_post("/count", &body_bytes).await?;
-        resp.json()
-            .await
-            .map_err(|e| RelayError::Http(e.to_string()))
+        read_json_body("POST /count", resp).await
     }
 
     /// Submit a signed event via the HTTP bridge: `POST /events` with NIP-98 auth.
@@ -8182,6 +8245,92 @@ mod tests {
             let _ = stream.shutdown().await;
         });
         (format!("http://{addr}"), rx)
+    }
+
+    /// Accept one connection, read the request head, write `raw` verbatim,
+    /// then either close (`hold == false`) or keep the socket open without
+    /// writing more until the test ends (`hold == true`).
+    async fn mock_raw_http_once(raw: Vec<u8>, hold: bool) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind raw mock listener");
+        let addr = listener.local_addr().expect("raw mock local addr");
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut stream, _) = listener.accept().await.expect("accept raw mock conn");
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).await.expect("read raw mock req");
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            stream
+                .write_all(&raw)
+                .await
+                .expect("write raw mock response");
+            if hold {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+            let _ = stream.shutdown().await;
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn query_reports_a_non_json_body_with_status_and_first_bytes() {
+        let page = b"<html><body>upstream hiccup</body></html>".to_vec();
+        let (base, _rx) = mock_http_once("200 OK", page).await;
+        let error = test_rest_client(&base)
+            .query(&[nostr::Filter::new().kind(Kind::Custom(1))])
+            .await
+            .expect_err("an HTML body is not a query result");
+        let text = error.to_string();
+        assert!(
+            text.contains("POST /query: HTTP 200 OK body is not JSON"),
+            "{text}"
+        );
+        assert!(text.contains("<html><body>upstream hiccup"), "{text}");
+        assert!(!text.contains("error decoding response body"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn query_reports_a_truncated_body_as_unread_not_as_bad_json() {
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 5000\r\nConnection: close\r\n\r\n[{\"id\":\"ab".to_vec();
+        let base = mock_raw_http_once(raw, false).await;
+        let error = test_rest_client(&base)
+            .query(&[nostr::Filter::new().kind(Kind::Custom(1))])
+            .await
+            .expect_err("a body cut short is not a query result");
+        let text = error.to_string();
+        assert!(
+            text.contains("response body could not be read in full, content-length 5000"),
+            "{text}"
+        );
+        assert!(!text.contains("is not JSON"), "{text}");
+        assert!(!text.contains("[client timeout]"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn query_reports_a_client_timeout_mid_body_as_a_timeout() {
+        let raw =
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 5000\r\n\r\n["
+                .to_vec();
+        let base = mock_raw_http_once(raw, true).await;
+        let mut rest = test_rest_client(&base);
+        rest.http = reqwest::Client::builder()
+            .timeout(Duration::from_millis(300))
+            .build()
+            .expect("build short-timeout client");
+        let error = rest
+            .query(&[nostr::Filter::new().kind(Kind::Custom(1))])
+            .await
+            .expect_err("a stalled body must time out");
+        let text = error.to_string();
+        assert!(text.contains("could not be read in full"), "{text}");
+        assert!(text.contains("[client timeout]"), "{text}");
     }
 
     fn decode_nip98_u_tag(authorization: &str) -> String {
