@@ -84,8 +84,76 @@ export function codeBlockLanguageIcon(language: string): LucideIcon | null {
   return ICON_BY_LANGUAGE.get(normalized) ?? FileCode;
 }
 
-/** Icon plus the fence's own language name, for the code-block header. */
-export function CodeBlockLanguageLabel({ language }: { language: string }) {
+const FENCE_TITLE_ATTR_REGEX =
+  /(?:^|\s)(?:title|file(?:name)?)=(?:"([^"]+)"|'([^']+)'|(\S+))/i;
+const FENCE_FILENAME_TOKEN_REGEX = /^[\w@][\w@./-]*\.[A-Za-z0-9]+$/;
+
+/**
+ * A file name from a fence's meta string, as T3 Code reads it
+ * (`ChatMarkdown.tsx` `extractFenceTitle`): an explicit `title=` / `file=` /
+ * `filename=` attribute, else the first bare token that looks like a file
+ * (```ts src/main.ts). `null` when the fence named no file.
+ */
+export function extractFenceTitle(meta: string | null | undefined) {
+  if (!meta) return null;
+  const attrMatch = FENCE_TITLE_ATTR_REGEX.exec(meta);
+  const attrTitle = attrMatch?.[1] ?? attrMatch?.[2] ?? attrMatch?.[3];
+  if (attrTitle) return attrTitle;
+  return (
+    meta
+      .split(/\s+/)
+      .find((candidate) => FENCE_FILENAME_TOKEN_REGEX.test(candidate)) ?? null
+  );
+}
+
+type HastLike = {
+  type?: string;
+  tagName?: string;
+  data?: { meta?: unknown };
+  children?: HastLike[];
+};
+
+/**
+ * The meta string of the `code` element inside a `pre` hast node — the text
+ * after the language on the fence line, which mdast-util-to-hast keeps on
+ * `data.meta`.
+ */
+export function extractPreCodeMeta(node: unknown): string | undefined {
+  const children = (node as HastLike | undefined)?.children;
+  const codeNode = children?.find(
+    (child) => child?.type === "element" && child.tagName === "code",
+  );
+  const meta = codeNode?.data?.meta;
+  return typeof meta === "string" && meta.trim().length > 0
+    ? meta.trim()
+    : undefined;
+}
+
+/**
+ * The code-block header's label: the fence's file title when it declared one
+ * (file icon and name, as T3 draws it), otherwise the language's family icon
+ * and its own name.
+ */
+export function CodeBlockLanguageLabel({
+  language,
+  title,
+}: {
+  language: string;
+  title?: string | null;
+}) {
+  if (title) {
+    return (
+      <span
+        className="inline-flex min-w-0 items-center gap-1.5 font-mono text-2xs text-muted-foreground"
+        data-code-block-language={language || undefined}
+        data-code-block-title={title}
+        title={language ? `${title} · ${language}` : title}
+      >
+        <FileCode aria-hidden="true" className="size-3.5 shrink-0" />
+        <span className="truncate">{title}</span>
+      </span>
+    );
+  }
   const Icon = codeBlockLanguageIcon(language);
   if (!Icon) return <span aria-hidden="true" />;
   return (

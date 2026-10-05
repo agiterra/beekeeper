@@ -125,6 +125,12 @@ export type AgentProgressAggregate = {
   closed: number;
   executions: number;
   atLeast: boolean;
+  /**
+   * True while no read has settled. A pending read has made no claim yet, so
+   * the footer says it is reading rather than that it "did not complete":
+   * failure is a verdict on evidence, and there is no evidence yet (SV-49).
+   */
+  pending: boolean;
 };
 
 export type AgentProgressModel = {
@@ -259,6 +265,8 @@ export function foldAgentProgress(input: {
   nowSeconds: number;
   complete: boolean;
   ambiguities?: readonly SessionCoordinationAmbiguity[];
+  /** True until the first coordination read settles, either way. */
+  pending?: boolean;
 }): AgentProgressModel {
   const lanes = input.sessions.map((session): AgentProgressLane => {
     const channels = input.channelsBySession.get(session.sessionKey) ?? [];
@@ -325,6 +333,7 @@ export function foldAgentProgress(input: {
     // An ambiguity the fold refused to resolve is a session it may have
     // dropped, so it makes the counts a floor exactly as a failed query does.
     atLeast: !input.complete || (input.ambiguities?.length ?? 0) > 0,
+    pending: input.pending ?? false,
   };
   for (const lane of lanes) {
     if (lane.coordination === "provider_reachable") aggregate.reachable += 1;

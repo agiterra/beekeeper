@@ -1,4 +1,10 @@
-import { ArrowUp, Ellipsis, ShieldCheck, Square } from "lucide-react";
+import {
+  ArrowUp,
+  ChevronDown,
+  Ellipsis,
+  ShieldCheck,
+  Square,
+} from "lucide-react";
 
 import { codingSessionTurnBudgetUsage } from "@/features/coding-sessions/lib/codingSessionCapacity";
 import type { CodingSessionChannelAccessCopy } from "@/features/coding-sessions/lib/codingSessionChannelAccess";
@@ -157,6 +163,9 @@ export function CodingSessionComposerDeck({
   const identityLabel = [providerName, modelName]
     .filter((value): value is string => Boolean(value))
     .join(" · ");
+  // SV-18: T3's chip is the mark then the model's name; the mark already says
+  // whose model it is, and the provider is one click away in the popover.
+  const identityChipLabel = modelName ?? providerName;
   const accessLabel = accessCopy
     ? accessCopy.label
     : canControl
@@ -190,10 +199,15 @@ export function CodingSessionComposerDeck({
                     "min-w-0 text-foreground/75",
                   )}
                   data-testid="coding-session-control-identity"
+                  title={identityLabel}
                   type="button"
                 >
                   <CodingSessionComposerProviderMark kind={providerMark} />
-                  <span className="max-w-48 truncate">{identityLabel}</span>
+                  <span className="max-w-48 truncate">{identityChipLabel}</span>
+                  <ChevronDown
+                    aria-hidden
+                    className="size-3 shrink-0 opacity-60"
+                  />
                 </button>
               </PopoverTrigger>
               <PopoverContent align="start" className="w-72" side="top">
@@ -249,6 +263,7 @@ export function CodingSessionComposerDeck({
             </Popover>
           )}
 
+          <ComposerChipSeparator />
           <Popover>
             <PopoverTrigger asChild>
               <button
@@ -279,9 +294,13 @@ export function CodingSessionComposerDeck({
           </Popover>
 
           {context?.sandbox ? (
-            <CodingSessionComposerSandboxChip sandbox={context.sandbox} />
+            <>
+              <ComposerChipSeparator />
+              <CodingSessionComposerSandboxChip sandbox={context.sandbox} />
+            </>
           ) : null}
 
+          {deckTraits ? <ComposerChipSeparator /> : null}
           {deckTraits ? (
             <span
               className="hidden shrink-0 rounded-full px-2 py-0.5 sm:inline"
@@ -431,9 +450,19 @@ export function CodingSessionComposerDeck({
   );
 }
 
-/** One compact chip: a quiet pill whose detail lives in its popover. */
+/**
+ * One compact chip whose detail lives in its popover, drawn as T3's composer
+ * control (`ComposerControl`): borderless, a hover fill, no pill outline.
+ */
 const COMPOSER_CHIP_CLASS =
-  "inline-flex h-6 items-center gap-1.5 rounded-full border border-border/60 bg-background/40 px-2 transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "inline-flex h-7 items-center gap-1.5 rounded-md px-2 transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+/** The hairline T3 draws between composer controls (`ComposerControlSeparator`). */
+function ComposerChipSeparator() {
+  return (
+    <span aria-hidden className="mx-0.5 hidden h-4 w-px bg-border sm:block" />
+  );
+}
 
 function ComposerDefinition({
   label,

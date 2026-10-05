@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Check, Copy, Maximize2, Minimize2 } from "lucide-react";
+import type { Components } from "react-markdown";
 import { toast } from "sonner";
 
 import { Button } from "@/shared/ui/button";
@@ -13,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 import {
   copyTableText,
+  readTableMarkdownRows,
   readTableRows,
   serializeTableRowsToCsv,
   serializeTableRowsToMarkdown,
@@ -22,6 +24,44 @@ import { useHorizontalOverflow } from "./useHorizontalOverflow";
 const COPIED_FEEDBACK_MS = 1200;
 const TABLE_ACTION_CLASS =
   "text-muted-foreground hover:bg-accent/60 hover:text-foreground aria-pressed:bg-accent aria-pressed:text-foreground";
+
+/** The widest a collapsed cell is drawn (`markdown.css`, SV-11). */
+export const COLLAPSED_CELL_MAX_WIDTH = "24rem";
+
+type MeasuredRow = {
+  cells: ArrayLike<{ getBoundingClientRect: () => { width: number } }>;
+};
+
+/** Each column's widest rendered cell, in px, across every row given. */
+export function measureColumnWidths(rows: ArrayLike<MeasuredRow>): number[] {
+  const widths: number[] = [];
+  for (const row of Array.from(rows)) {
+    Array.from(row.cells).forEach((cell, column) => {
+      widths[column] = Math.max(
+        widths[column] ?? 0,
+        cell.getBoundingClientRect().width,
+      );
+    });
+  }
+  return widths;
+}
+
+/**
+ * Before cells expand, pin each header cell's minimum width to the width its
+ * column has now, as T3 Code's `toggleExpanded` does, so expanding wraps text
+ * inside the columns the reader was just looking at instead of reflowing them
+ * narrower. Capped at the collapsed cell maximum so a pinned column can never
+ * stop the table wrapping back into the reading column.
+ */
+export function pinColumnWidthsForExpand(table: HTMLTableElement) {
+  const widths = measureColumnWidths(table.rows);
+  const headerCells = table.tHead?.rows[0]?.cells;
+  if (!headerCells) return;
+  Array.from(headerCells).forEach((cell, column) => {
+    const width = widths[column] ?? cell.getBoundingClientRect().width;
+    cell.style.minWidth = `min(${Math.ceil(width)}px, ${COLLAPSED_CELL_MAX_WIDTH})`;
+  });
+}
 
 /** The label each cell-mode toggle state offers (what a click will do). */
 export function tableCellToggleLabel(expanded: boolean): string {
@@ -34,11 +74,13 @@ export function tableCellToggleLabel(expanded: boolean): string {
  * Header, row dividers and a horizontal scroller, with two actions under the
  * table as T3 Code draws them (`ChatMarkdown.tsx` `MarkdownTable`):
  *
- * - **Collapse / Expand cells.** Expanded (the default) wraps cells so the
- *   table fits the reading column; collapsed keeps every cell on one line and
- *   lets the table scroll sideways. Neither mode truncates a cell — collapsing
- *   changes layout, never what is shown.
- * - **Copy table**, as Markdown or CSV.
+ * - **Collapse / Expand cells.** Expanded (the default, T3's word-wrap
+ *   default) wraps cells so the table fits the reading column; collapsed keeps
+ *   every cell on one line, ends a cell wider than 24rem in an ellipsis, and
+ *   lets the table scroll sideways. The ellipsis says text is hidden and the
+ *   toggle is one click away; Copy table always copies every cell in full.
+ * - **Copy table**, as Markdown (inline formatting and column alignment kept)
+ *   or CSV (plain text).
  *
  * `[data-table-block]` stays on the scroller: the overflow fade and the width
  * audits measure that element. The wrapper is `[data-table-container]`.
@@ -73,11 +115,10 @@ export function MarkdownTable({
   const handleCopy = React.useCallback(async (format: "markdown" | "csv") => {
     const table = tableRef.current;
     if (!table) return;
-    const rows = readTableRows(table);
     const text =
       format === "markdown"
-        ? serializeTableRowsToMarkdown(rows)
-        : serializeTableRowsToCsv(rows);
+        ? serializeTableRowsToMarkdown(readTableMarkdownRows(table))
+        : serializeTableRowsToCsv(readTableRows(table));
     try {
       await copyTableText(text);
       if (copiedTimerRef.current != null) clearTimeout(copiedTimerRef.current);
@@ -91,6 +132,12 @@ export function MarkdownTable({
       toast.error("Failed to copy table");
     }
   }, []);
+
+  const toggleExpanded = React.useCallback(() => {
+    const table = tableRef.current;
+    if (!expanded && table) pinColumnWidthsForExpand(table);
+    setExpanded((value) => !value);
+  }, [expanded]);
 
   const expandLabel = tableCellToggleLabel(expanded);
   const copyLabel = copied ? "Copied" : "Copy table";
@@ -121,7 +168,7 @@ export function MarkdownTable({
                 aria-pressed={expanded}
                 className={TABLE_ACTION_CLASS}
                 data-testid="markdown-table-cells-toggle"
-                onClick={() => setExpanded((value) => !value)}
+                onClick={toggleExpanded}
                 size="icon-xs"
                 type="button"
                 variant="ghost"
@@ -170,4 +217,29 @@ export function MarkdownTable({
       ) : null}
     </div>
   );
+}
+
+/**
+ * The markdown renderer's `table`, `th` and `td`. Cells keep `style`, which
+ * is where a GFM column's alignment (`| :-: |` → `text-align`) arrives;
+ * dropping it drew every column left-aligned and lost it on Copy as Markdown.
+ */
+export function createTableComponents(
+  interactive: boolean,
+): Pick<Components, "table" | "td" | "th"> {
+  return {
+    table: ({ children }) => (
+      <MarkdownTable interactive={interactive}>{children}</MarkdownTable>
+    ),
+    td: ({ children, style }) => (
+      <td className="px-3 py-2 align-top" style={style}>
+        {children}
+      </td>
+    ),
+    th: ({ children, style }) => (
+      <th className="px-3 py-2 font-semibold text-foreground" style={style}>
+        {children}
+      </th>
+    ),
+  };
 }

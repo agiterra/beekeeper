@@ -9,9 +9,13 @@ import {
   formatCodingSessionSubagentMeta,
   formatCodingSessionSubagentTokens,
   partitionCodingSessionSubagentItems,
+  settleCodingSessionSubagentSpawns,
+  settleCodingSessionSubagentStatus,
+  summarizeCodingSessionSubagentStatuses,
 } from "./codingSessionSubagents.ts";
 import { deriveCodingSessionTaskModel } from "./codingSessionTaskModel.ts";
 import { deriveCodingSessionTranscriptModel } from "./codingSessionTranscriptModel.ts";
+import { resolveCodingSessionTurnSettlement } from "./codingSessionTranscriptModelSettlement.ts";
 import { projectCodingSessionTranscript } from "./codingSessionTranscriptProjection.ts";
 
 const TARGET = {
@@ -153,13 +157,17 @@ test("an item whose owning call is absent stays visible rather than vanishing", 
   assert.equal(entries.at(-1).item.text, "orphan");
 });
 
-test("a running spawn reads as running; consecutive spawns group", () => {
+test("a running spawn reads as kicked off; consecutive spawns group", () => {
   const running = project([
     { kind: "user_prompt", content: "Go" },
     taskCall("task-1", "Survey tests"),
   ]);
   const runningEntry = turnEntries(running, true).at(-1);
-  assert.equal(runningEntry.label, "Running 1 subagent");
+  assert.equal(runningEntry.label, "Kicked off 1 subagent");
+  assert.equal(
+    summarizeCodingSessionSubagentStatuses(runningEntry.spawns),
+    "1 working",
+  );
   // The description left the row (SV-06) but stays one click away.
   assert.equal(
     codingSessionSubagentTitle(runningEntry.spawns[0].call),
@@ -176,7 +184,7 @@ test("a running spawn reads as running; consecutive spawns group", () => {
   const entries = turnEntries(several, true);
   assert.equal(entries.length, 2);
   assert.equal(entries[1].kind, "subagents");
-  assert.equal(entries[1].label, "Running 3 subagents");
+  assert.equal(entries[1].label, "Kicked off 3 subagents");
   assert.deepEqual(
     entries[1].spawns.map((spawn) => spawn.children.length),
     [0, 1, 0],
@@ -326,6 +334,87 @@ test("an open spawn is stopped when a later turn begins, and counts as settled",
   );
 });
 
+test("SV-44: a later turn that began while the spawn's turn still publishes does not stop it", () => {
+  const transcript = projectTurns([
+    ["turn-1", { kind: "user_prompt", content: "Go" }],
+    ["turn-1", taskCall("task-1", "Still going")],
+    // A queued prompt with its own turn id arrives mid-run...
+    ["turn-2", { kind: "user_prompt", content: "Queued" }],
+    // ...and turn 1 keeps publishing after it.
+    ["turn-1", { kind: "assistant_text", text: "Still working on it." }],
+  ]);
+  assert.equal(
+    deriveCodingSessionSubagentPanel([transcript]).rows[0].status,
+    "running",
+  );
+});
+
+test("a spawn whose turn settles without a result reads as its tool rows do (SV-44)", () => {
+  // Turn A starts a Task; prompt B arrives; one more child of A's Task lands
+  // after B's prompt; A never reports a result; B completes; session idle.
+  const transcript = projectTurns([
+    ["turn-a", { kind: "user_prompt", content: "Go" }],
+    ["turn-a", taskCall("task-1", "Abandoned")],
+    ["turn-b", { kind: "user_prompt", content: "Next" }],
+    [
+      "turn-a",
+      { kind: "assistant_text", text: "late child", parentToolId: "task-1" },
+    ],
+    ["turn-b", { kind: "assistant_text", text: "Done." }],
+    ["turn-b", TURN_RESULT],
+  ]);
+  const model = deriveCodingSessionTranscriptModel(transcript, {
+    isWorking: false,
+  });
+  const turnA = model.blocks.find(
+    (block) => block.kind === "turn" && block.id === "turn-a",
+  );
+  assert.ok(turnA, "turn A is in the model");
+  assert.equal(turnA.superseded, false, "B's prompt came before A went quiet");
+  const entry = turnA.entries.find((e) => e.kind === "subagents");
+  // From the transcript alone the spawn still reads running...
+  assert.equal(entry.spawns[0].status, "running");
+
+  // ...but the session is idle, so A's settlement is `settled`, and the
+  // spawn reads stopped like A's other unended tool rows.
+  const idle = resolveCodingSessionTurnSettlement(turnA, "stopped");
+  assert.equal(idle, "settled");
+  const settled = settleCodingSessionSubagentSpawns(entry.spawns, idle);
+  assert.deepEqual(
+    settled.map((spawn) => spawn.status),
+    ["stopped"],
+  );
+  assert.equal(
+    formatCodingSessionSubagentGroupLabel(settled),
+    "Ran 1 subagent",
+  );
+  assert.equal(summarizeCodingSessionSubagentStatuses(settled), "1 stopped");
+
+  // A session nobody can vouch for: no spinner and no verdict.
+  const unsure = resolveCodingSessionTurnSettlement(turnA, "unknown");
+  assert.equal(unsure, "unknown");
+  assert.deepEqual(
+    settleCodingSessionSubagentSpawns(entry.spawns, unsure).map(
+      (spawn) => spawn.status,
+    ),
+    ["unknown"],
+  );
+});
+
+test("settlement never rewrites a spawn that has its result, nor a live one", () => {
+  for (const status of ["done", "failed", "stopped"]) {
+    for (const settlement of ["live", "settled", "unknown"]) {
+      assert.equal(
+        settleCodingSessionSubagentStatus(status, settlement),
+        status,
+      );
+    }
+  }
+  assert.equal(settleCodingSessionSubagentStatus("running", "live"), "running");
+  const spawns = [{ call: {}, children: [], status: "running" }];
+  assert.equal(settleCodingSessionSubagentSpawns(spawns, "live"), spawns);
+});
+
 test("a steered prompt inside the same turn does not stop a spawn", () => {
   const transcript = projectTurns([
     ["turn-1", { kind: "user_prompt", content: "Go" }],
@@ -363,7 +452,7 @@ test("without turn identity a later prompt or terminal stops the spawn", () => {
   );
 });
 
-test("the group label counts spawns and only the ones still running (SV-06)", () => {
+test("the group label is T3's; the in-flight count is the status line (SV-06)", () => {
   const spawn = (status) => ({ call: {}, children: [], status });
   assert.equal(
     formatCodingSessionSubagentGroupLabel([spawn("done")]),
@@ -377,12 +466,38 @@ test("the group label counts spawns and only the ones still running (SV-06)", ()
   );
   assert.equal(
     formatCodingSessionSubagentGroupLabel(["running", "running"].map(spawn)),
-    "Running 2 subagents",
+    "Kicked off 2 subagents",
   );
   assert.equal(
     formatCodingSessionSubagentGroupLabel(
-      ["running", "done", "failed"].map(spawn),
+      ["running", "failed", "failed"].map(spawn),
     ),
-    "Running 1 of 3 subagents",
+    "Kicked off 3 subagents",
   );
+  // How many still work, and the failures, are the line beside the label.
+  assert.equal(
+    summarizeCodingSessionSubagentStatuses(
+      ["running", "failed", "failed"].map(spawn),
+    ),
+    "1 working · 2 failed",
+  );
+});
+
+test("the status line counts every spawn once, live work first (SV-06)", () => {
+  const spawn = (status) => ({ call: {}, children: [], status });
+  assert.equal(
+    summarizeCodingSessionSubagentStatuses(
+      ["done", "running", "failed", "running"].map(spawn),
+    ),
+    "2 working · 1 done · 1 failed",
+  );
+  assert.equal(
+    summarizeCodingSessionSubagentStatuses(["done", "done"].map(spawn)),
+    "2 done",
+  );
+  assert.equal(
+    summarizeCodingSessionSubagentStatuses(["stopped", "done"].map(spawn)),
+    "1 done · 1 stopped",
+  );
+  assert.equal(summarizeCodingSessionSubagentStatuses([]), "");
 });

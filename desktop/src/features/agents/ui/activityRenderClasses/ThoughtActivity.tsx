@@ -4,6 +4,7 @@ import { Brain } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { Markdown } from "@/shared/ui/markdown";
 import {
+  ACTIVITY_ROW_DETAIL_INSET_CLASS,
   ACTIVITY_ROW_ICON_CLASS,
   ACTIVITY_ROW_LABEL_CLASS,
   ACTIVITY_ROW_LINE_CLASS,
@@ -31,6 +32,12 @@ export function ThoughtActivity(props: ActivityRenderClassItemProps) {
  * A thought as one compact row — a brain and the word "Thought", dimmed and
  * closed (SV-05) — whose text is parsed only while open.
  *
+ * `active` marks a thought still being written: the last entry of a live
+ * turn. It reads "Thinking", with the working line's shimmer, as T3 Code's
+ * in-progress reasoning row does; once anything follows it or the turn
+ * settles the caller drops the flag and it reads "Thought". Without the
+ * flag a live reasoning step would read as finished.
+ *
  * The producer's own title ("Reasoning", "Thinking", …) stays reachable as
  * the row's accessible name and tooltip; the row reads the same whichever
  * provider wrote it.
@@ -40,10 +47,12 @@ export function ThoughtActivity(props: ActivityRenderClassItemProps) {
  * closed row used to parse all of it on every render.
  */
 export const ThoughtDisclosure = React.memo(function ThoughtDisclosure({
+  active = false,
   item,
   onOpenChange,
   open,
 }: {
+  active?: boolean;
   item: Extract<TranscriptItem, { type: "thought" }>;
   onOpenChange: (open: boolean) => void;
   open: boolean;
@@ -53,6 +62,7 @@ export const ThoughtDisclosure = React.memo(function ThoughtDisclosure({
   return (
     <details
       className="group not-prose w-full"
+      data-active={active ? "" : undefined}
       data-testid="transcript-thought-item"
       onToggle={(event) => onOpenChange(event.currentTarget.open)}
       open={open}
@@ -73,14 +83,35 @@ export const ThoughtDisclosure = React.memo(function ThoughtDisclosure({
           className={cn(
             ACTIVITY_ROW_LABEL_CLASS,
             "transition-colors group-open:text-foreground/80",
+            active && "relative overflow-hidden",
           )}
           data-testid="transcript-thought-label"
         >
-          Thought
+          {active ? "Thinking" : "Thought"}
+          {active ? (
+            // The working line's shimmer (`coding-session.css`): a lit copy
+            // of the word sweeps across it; reduced motion keeps it still.
+            <span
+              aria-hidden
+              className="coding-session-live-activity-focus pointer-events-none absolute inset-y-0 select-none"
+              data-testid="transcript-thought-shimmer"
+            >
+              <span className="coding-session-live-activity-counter block">
+                <span className="coding-session-live-activity-aligned block text-foreground">
+                  Thinking
+                </span>
+              </span>
+            </span>
+          ) : null}
         </span>
       </summary>
       {open ? (
-        <div className="ps-7 pe-1 pt-1 pb-1.5 text-sm leading-5 text-muted-foreground">
+        <div
+          className={cn(
+            ACTIVITY_ROW_DETAIL_INSET_CLASS,
+            "pe-1 pt-1 pb-1.5 text-sm leading-5 text-muted-foreground",
+          )}
+        >
           <Markdown className="leading-5" content={item.text.trim() || " "} />
         </div>
       ) : null}

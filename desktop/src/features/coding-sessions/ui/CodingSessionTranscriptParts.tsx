@@ -18,6 +18,7 @@ import {
 } from "@/features/agents/ui/FileEditDiffView";
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import {
+  ACTIVITY_ROW_DETAIL_INSET_CLASS,
   ACTIVITY_ROW_ICON_CLASS,
   ACTIVITY_ROW_LABEL_CLASS,
   ACTIVITY_ROW_LINE_CLASS,
@@ -115,7 +116,7 @@ export function CodingSessionActiveTool({
   if (!hasDetails) {
     return (
       <div
-        className="flex min-h-7 w-full items-center gap-2 px-1 text-sm text-muted-foreground"
+        className="flex min-h-7 w-full items-center gap-1.5 px-0.5 text-sm text-muted-foreground"
         data-testid="coding-session-active-tool"
         data-tool-status={item.status}
         data-tool-status-unknown={statusUnknown ? "" : undefined}
@@ -143,7 +144,7 @@ export function CodingSessionActiveTool({
         {summary}
       </summary>
       {open ? (
-        <div className="mt-1 ml-3 min-w-0 border-l border-border/60 pl-4">
+        <div className={cn(ACTIVITY_ROW_DETAIL_INSET_CLASS, "mt-1 min-w-0")}>
           {Object.keys(item.args).length > 0 ? (
             <pre className="buzz-code-scrollbar max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
               <RedactedText text={safeFormatToolArgs(item.args)} />

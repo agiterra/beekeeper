@@ -84,8 +84,10 @@ export function useAgentProgress(): AgentProgressState {
         nowSeconds: read?.asOf ?? Math.floor(Date.now() / 1_000),
         complete: read?.complete ?? false,
         ambiguities: read?.ambiguities ?? [],
+        // No settled read yet: the footer must not call it incomplete (SV-49).
+        pending: read === null && coordination.isPending,
       }),
-    [detailBySessionRef, read],
+    [detailBySessionRef, read, coordination.isPending],
   );
 
   return {

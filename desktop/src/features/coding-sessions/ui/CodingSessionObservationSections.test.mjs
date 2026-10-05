@@ -26,7 +26,7 @@ const PROVIDER = "22".repeat(32);
 
 function fold(overrides = {}) {
   return {
-    schema: "buzz-coding-session-observation-fold-adapter/v1",
+    schema: "buzz-coding-session-observation-fold-adapter/v2",
     implementation: "buzz-core",
     inputEventIds: [],
     sessionRef: "dc580cfb-6c80-4fc2-8f4e-dfc328acf222",
@@ -35,6 +35,8 @@ function fold(overrides = {}) {
     gates: [],
     findings: [],
     phases: [],
+    gateStarts: [],
+    gateStartStaleAfterMs: 1_800_000,
     unresolved: [],
     ignored: [],
     misclaimedObserved: [],
@@ -50,6 +52,8 @@ function fold(overrides = {}) {
       entryEventIds: 0,
       displacedGates: 0,
       displacedFindings: 0,
+      gateStarts: 0,
+      gateStartClosesUnmatched: 0,
     },
     disclosure:
       "an observation is something its author saw, not a decision: it settles nothing",
@@ -479,6 +483,116 @@ test("a row that names no commit says so, and never borrows one", async () => {
       .getAllByTestId("coding-session-gate-row-commit")
       .map((node) => node.getAttribute("data-dirty"));
     assert.deepEqual(marks, [null, "false"]);
+  } finally {
+    screen.cleanup();
+  }
+});
+
+function gateStart(overrides = {}) {
+  return {
+    eventId: "5a".repeat(32),
+    authorPubkey: PROVIDER,
+    gate: "cargo test",
+    startedAtMs: Date.UTC(2026, 9, 4, 14, 2),
+    assignmentRef: null,
+    closeEventId: null,
+    endedAtMs: null,
+    durationMs: null,
+    ...overrides,
+  };
+}
+
+test("SV-41: a watcher's gate runs list under its gate rows, ended, running or no result", async () => {
+  const now = Date.now();
+  const screen = await render({
+    view: view(
+      fold({
+        gateStarts: [
+          gateStart({
+            eventId: "51".repeat(32),
+            startedAtMs: now - 600_000,
+            closeEventId: "52".repeat(32),
+            endedAtMs: now - 420_000,
+            durationMs: 180_000,
+          }),
+          gateStart({ eventId: "53".repeat(32), startedAtMs: now - 60_000 }),
+          gateStart({
+            eventId: "54".repeat(32),
+            gate: "cargo clippy",
+            startedAtMs: now - 3_600_000,
+          }),
+        ],
+        truncated: {
+          ...fold().truncated,
+          gateStartClosesUnmatched: 2,
+        },
+      }),
+    ),
+  });
+  try {
+    // A watcher whose only rows are gate starts still gets its block.
+    const blocks = screen.getAllByTestId("coding-session-observation-seat");
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].getAttribute("data-author"), PROVIDER);
+    const rows = screen.getAllByTestId("coding-session-gate-start-row");
+    assert.deepEqual(
+      rows.map((row) => row.getAttribute("data-gate-run-state")),
+      ["ended", "running", "no-result"],
+    );
+    assert.match(
+      rows[0].textContent,
+      /cargo test · started .+ · ended .+ \(3m\)/,
+    );
+    assert.match(rows[1].textContent, /cargo test · running since /);
+    assert.match(
+      rows[2].textContent,
+      /cargo clippy · started .+ · no result observed/,
+    );
+    assert.match(rows[2].getAttribute("title"), /After 30m/);
+    // Each line names its start event.
+    assert.equal(
+      rows[1]
+        .querySelector("[data-testid='coding-session-gate-start-event']")
+        .getAttribute("data-event-id"),
+      "53".repeat(32),
+    );
+    assert.match(
+      screen.getByTestId("coding-session-observations").textContent,
+      /2 gate runs ended whose starts are not in this fold, so they are not listed\./,
+    );
+  } finally {
+    screen.cleanup();
+  }
+});
+
+test("SV-41: a close the provider signed without a span reads as no longer watched, not ended", async () => {
+  const now = Date.now();
+  const screen = await render({
+    view: view(
+      fold({
+        gateStarts: [
+          gateStart({
+            eventId: "55".repeat(32),
+            startedAtMs: now - 120_000,
+            closeEventId: "56".repeat(32),
+            endedAtMs: now - 80_000,
+            durationMs: null,
+          }),
+        ],
+      }),
+    ),
+  });
+  try {
+    const [row] = screen.getAllByTestId("coding-session-gate-start-row");
+    assert.equal(row.getAttribute("data-gate-run-state"), "unwatched");
+    assert.match(
+      row.textContent,
+      /cargo test · started .+ · stopped watching .+ · end not observed/,
+    );
+    assert.doesNotMatch(row.textContent, /ended/);
+    assert.match(row.getAttribute("title"), /may still have been running/);
+    // This block lists no gate row, so the title points at none.
+    assert.doesNotMatch(row.getAttribute("title"), /gate row/);
   } finally {
     screen.cleanup();
   }

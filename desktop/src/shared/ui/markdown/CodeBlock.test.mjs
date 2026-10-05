@@ -6,8 +6,17 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "../tooltip.tsx";
-import { MarkdownCodeBlock, StaticCodeBlock } from "./CodeBlock.tsx";
-import { codeBlockLanguageIcon } from "./CodeBlockLanguage.tsx";
+import {
+  CODE_BLOCK_CLASS,
+  createPreComponent,
+  MarkdownCodeBlock,
+  StaticCodeBlock,
+} from "./CodeBlock.tsx";
+import {
+  codeBlockLanguageIcon,
+  extractFenceTitle,
+  extractPreCodeMeta,
+} from "./CodeBlockLanguage.tsx";
 
 function css(name) {
   return readFileSync(
@@ -16,14 +25,14 @@ function css(name) {
   );
 }
 
-function renderBlock(language = "bash") {
+function renderBlock(language = "bash", title = undefined) {
   return renderToStaticMarkup(
     React.createElement(
       TooltipProvider,
       null,
       React.createElement(
         MarkdownCodeBlock,
-        { language },
+        { language, title },
         "bee --format compact messages thread --channel 00000000-0000-0000-0000-000000000000\n",
       ),
     ),
@@ -41,6 +50,40 @@ test("a fenced block owns its horizontal overflow instead of escaping the column
   assert.match(html, /<pre[^>]*class="[^"]*\bbuzz-code-scrollbar\b/);
 });
 
+test("SV-12: a session block is uncapped; a channel block is capped at 25rem with an expand control", () => {
+  // T3's code block (ChatMarkdown.tsx, index.css `.chat-markdown pre`) sets
+  // only `overflow-x: auto`, and the session view matches it. Channels and
+  // threads keep a cap so a pasted 500-line log cannot take over the timeline.
+  // The cap lives in markdown.css keyed on `data-height-capped`, not on the
+  // pre's classes, so the session column can lift it by selector.
+  const html = renderBlock();
+  const pre = html.match(/<pre[^>]*class="([^"]*)"/);
+  assert.ok(pre, "the fenced block renders a pre");
+  assert.doesNotMatch(pre[1], /\bmax-h-/);
+  assert.match(pre[1], /\boverflow-x-auto\b/);
+  assert.match(html, /data-height-capped="true"/);
+  const markdownCss = css("markdown.css");
+  assert.match(
+    markdownCss,
+    /\[data-code-block\]\[data-height-capped="true"\] > pre \{\s*max-height: 25rem;\s*overflow-y: auto;/,
+  );
+  assert.match(
+    markdownCss,
+    /\[data-coding-session-column\] \[data-code-block\]\[data-height-capped\] > pre \{\s*max-height: none;\s*overflow-y: visible;/,
+  );
+  // No px heights: a px cap is frozen against Cmd +/-.
+  assert.doesNotMatch(markdownCss, /max-height:\s*\d+px/);
+  // The expand control is drawn only once the cap is measured hiding lines;
+  // a static render (no layout) has measured nothing and draws none.
+  assert.doesNotMatch(html, /code-block-height-toggle/);
+  const source = readFileSync(
+    fileURLToPath(new URL("./CodeBlock.tsx", import.meta.url)),
+    "utf8",
+  );
+  assert.match(source, /data-testid="code-block-height-toggle"/);
+  assert.match(source, /useExceedsHeightCap\(codeBlockRef, isHeightExpanded/);
+});
+
 test("the static (unfenced) block is contained the same way", () => {
   const html = renderToStaticMarkup(
     React.createElement(StaticCodeBlock, null, "echo hi"),
@@ -49,10 +92,10 @@ test("the static (unfenced) block is contained the same way", () => {
   assert.match(html, /<pre[^>]*class="[^"]*\bbuzz-code-scrollbar\b/);
 });
 
-test("wrapping is off by default, and the block advertises its state", () => {
+test("SV-12: lines wrap by default (T3's wordWrap default), and the block advertises its state", () => {
   const html = renderBlock();
   assert.match(html, /data-code-block=""/);
-  assert.match(html, /data-wrap="false"/);
+  assert.match(html, /data-wrap="true"/);
   // Nothing is known to be hidden until the block has been measured.
   assert.match(html, /data-overflow="false"/);
 });
@@ -72,8 +115,9 @@ test("a scroller with content still to the right fades that edge", () => {
 test("every fenced block carries a wrap toggle beside the copy button", () => {
   const html = renderBlock();
   assert.match(html, /data-testid="code-block-wrap-toggle"/);
-  assert.match(html, /aria-pressed="false"/);
-  assert.match(html, /Wrap long lines in this code block/);
+  // Pressed: wrapping is on, and the toggle offers to stop it.
+  assert.match(html, /aria-pressed="true"/);
+  assert.match(html, /Stop wrapping long lines in this code block/);
   assert.match(html, /Copy code block/);
 });
 
@@ -187,7 +231,7 @@ test("SV-10: inline code is a bordered pill sized to its sentence", () => {
   assert.ok(rule, "inline code rule present");
   assert.match(rule[0], /border: 1px solid hsl\(var\(--border\)\)/);
   assert.match(rule[0], /border-radius: 0\.375rem/);
-  assert.match(rule[0], /padding-inline: 0\.35rem/);
+  assert.match(rule[0], /padding: 0\.1rem 0\.35rem/);
   // Relative to the sentence, not a fixed step: zoom-safe and never towering.
   assert.match(markdownCss, /--inline-code-font-size: 0\.857em;/);
 });
@@ -216,8 +260,116 @@ test("SV-09: document rhythm is scoped to session answers, not channel chat", ()
   // Bold list leads stand out against slightly softer prose.
   assert.match(
     doc,
-    /:is\(strong, h1, h2, h3, h4, h5, th\) \{\s*color: hsl\(var\(--foreground\)\);/,
+    /:is\(strong, h1, h2, h3, h4, h5, th, :not\(pre\) > code\) \{\s*color: hsl\(var\(--foreground\)\);/,
   );
   // rem, never px, so Cmd +/- zoom keeps scaling the document.
   assert.doesNotMatch(doc, /font-size: [0-9.]+px/);
+});
+
+// ── Wave B audit against T3's MarkdownCodeBlock ────────────────────────
+
+test("SV-12: the block is T3's box — rounded-lg (--radius), no shadow, regular-weight code", () => {
+  const html = renderBlock();
+  const block = /<div[^>]*data-code-block=""[^>]*>/.exec(html)?.[0] ?? "";
+  assert.match(block, /class="[^"]*\brounded-lg\b/);
+  assert.doesNotMatch(block, /rounded-2xl|shadow-/);
+  assert.match(block, /border-radius:var\(--radius\)/);
+  assert.match(CODE_BLOCK_CLASS, /\bfont-normal\b/);
+  assert.doesNotMatch(CODE_BLOCK_CLASS, /font-medium/);
+  const staticHtml = renderToStaticMarkup(
+    React.createElement(StaticCodeBlock, null, "echo hi"),
+  );
+  assert.match(staticHtml, /<pre[^>]*class="[^"]*\brounded-lg\b/);
+});
+
+test("SV-12: a fence that names a file shows the file in the header", () => {
+  const html = renderBlock("ts", "src/main.ts");
+  assert.match(html, /data-code-block-title="src\/main\.ts"/);
+  assert.match(html, /<span class="truncate">src\/main\.ts<\/span>/);
+  // The language stays one hover away on the title.
+  assert.match(html, /title="src\/main\.ts · ts"/);
+});
+
+test("SV-12: fence titles are read the way T3 reads them", () => {
+  assert.equal(extractFenceTitle('title="a b.ts"'), "a b.ts");
+  assert.equal(extractFenceTitle("filename='x.py' {1,3}"), "x.py");
+  assert.equal(extractFenceTitle("file=Cargo.toml"), "Cargo.toml");
+  assert.equal(extractFenceTitle("src/main.rs"), "src/main.rs");
+  assert.equal(extractFenceTitle("{1,3} showLineNumbers"), null);
+  assert.equal(extractFenceTitle(""), null);
+  assert.equal(extractFenceTitle(undefined), null);
+  const pre = {
+    type: "element",
+    tagName: "pre",
+    children: [
+      { type: "text" },
+      { type: "element", tagName: "code", data: { meta: "  title=x.ts " } },
+    ],
+  };
+  assert.equal(extractPreCodeMeta(pre), "title=x.ts");
+  assert.equal(extractPreCodeMeta({ children: [] }), undefined);
+  assert.equal(extractPreCodeMeta(undefined), undefined);
+});
+
+test("SV-12: the renderer's pre carries language and file title into the chrome", () => {
+  const Pre = createPreComponent(true);
+  const code = React.createElement(
+    "code",
+    { className: "language-python" },
+    "print(1)\n",
+  );
+  const node = {
+    type: "element",
+    tagName: "pre",
+    children: [
+      { type: "element", tagName: "code", data: { meta: "title=demo.py" } },
+    ],
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(
+      TooltipProvider,
+      null,
+      React.createElement(Pre, { node }, code),
+    ),
+  );
+  assert.match(html, /data-language="python"/);
+  assert.match(html, /data-code-block-title="demo\.py"/);
+  // Previews and search rows keep the plain contained block.
+  const Static = createPreComponent(false);
+  const staticHtml = renderToStaticMarkup(
+    React.createElement(Static, { node }, code),
+  );
+  assert.doesNotMatch(staticHtml, /data-code-block/);
+});
+
+test("SV-10: inline code is an inline box that wraps with its sentence, regular weight", () => {
+  const markdownCss = css("markdown.css");
+  const rule = [
+    ...markdownCss.matchAll(
+      /\.message-markdown \.inline-code-chip,\s*\.message-markdown :not\(pre\) > code \{[^}]*\}/g,
+    ),
+  ].find((match) => match[0].includes("font-family: ui-monospace"));
+  assert.ok(rule);
+  // Declared after the shared chip rule (inline-flex), so it wins.
+  assert.ok(
+    markdownCss.indexOf(rule[0]) > markdownCss.indexOf("display: inline-flex;"),
+  );
+  assert.match(rule[0], /display: inline;/);
+  assert.match(rule[0], /font-weight: 400;/);
+  assert.match(rule[0], /padding: 0\.1rem 0\.35rem;/);
+  assert.match(rule[0], /box-decoration-break: slice;/);
+});
+
+test("SV-09: bold list leads are bold, markers and inline code take full ink in documents", () => {
+  const markdownCss = css("markdown.css");
+  const doc = markdownCss.slice(
+    markdownCss.indexOf("Answers read as documents (SV-09)"),
+    markdownCss.indexOf("Tables (SV-11)"),
+  );
+  assert.match(doc, /\)\s*strong \{\s*font-weight: 700;/);
+  assert.match(doc, /\)\s*li::marker \{\s*color: inherit;/);
+  assert.match(
+    doc,
+    /:is\(strong, h1, h2, h3, h4, h5, th, :not\(pre\) > code\) \{\s*color: hsl\(var\(--foreground\)\);/,
+  );
 });

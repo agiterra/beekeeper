@@ -46,11 +46,7 @@ import {
   shallowArrayEqual,
   shallowRecordEqual,
 } from "./markdownUtils";
-import {
-  extractLanguage,
-  MarkdownCodeBlock,
-  StaticCodeBlock,
-} from "./markdown/CodeBlock";
+import { createPreComponent } from "./markdown/CodeBlock";
 import { createCodeComponent } from "./markdown/MarkdownCode";
 import {
   renderEntityLinkAnchor,
@@ -113,7 +109,7 @@ import {
   visibleImageGalleryForTrigger,
 } from "./markdown/imageLightbox";
 import { ImageMosaic } from "./markdown/ImageMosaic";
-import { MarkdownTable } from "./markdown/MarkdownTable";
+import { createTableComponents } from "./markdown/MarkdownTable";
 import { ProgressiveImage } from "./markdown/ProgressiveImage";
 import { RedactedPill } from "./RedactedPill";
 import { BuzzInlineLink } from "./markdown/BuzzLinkChip";
@@ -1518,31 +1514,11 @@ export function createMarkdownComponents(
 
       return <p>{children}</p>;
     },
-    pre: ({ children }) => {
-      if (!interactive) return <StaticCodeBlock>{children}</StaticCodeBlock>;
-      let language = "";
-      React.Children.forEach(children, (child) => {
-        if (
-          React.isValidElement<Record<string, unknown>>(child) &&
-          typeof child.props?.className === "string"
-        ) {
-          language = extractLanguage(child.props.className);
-        }
-      });
-      return (
-        <MarkdownCodeBlock language={language}>{children}</MarkdownCodeBlock>
-      );
-    },
+    pre: createPreComponent(interactive),
     strong: ({ children }) => (
       <strong className="font-semibold">{children}</strong>
     ),
-    table: ({ children }) => (
-      <MarkdownTable interactive={interactive}>{children}</MarkdownTable>
-    ),
-    td: ({ children }) => <td className="px-3 py-2 align-top">{children}</td>,
-    th: ({ children }) => (
-      <th className="px-3 py-2 font-semibold text-foreground">{children}</th>
-    ),
+    ...createTableComponents(interactive),
     ul: ({ children }) => (
       <ul className={cn("list-disc", listClassName)}>{children}</ul>
     ),

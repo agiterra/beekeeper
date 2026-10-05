@@ -1,5 +1,5 @@
 import * as React from "react";
-import { CircleAlert } from "lucide-react";
+import { CircleAlert, Copy } from "lucide-react";
 
 import { ToolItem } from "@/features/agents/ui/AgentSessionToolItem";
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
@@ -25,6 +25,7 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionWakeReading";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { Markdown } from "@/shared/ui/markdown";
+import { copyTextToClipboard } from "@/shared/lib/clipboard";
 import { RedactedText } from "@/shared/ui/RedactedPill";
 import {
   useCodingSessionDisclosure,
@@ -34,6 +35,7 @@ import {
   CodingSessionActiveTool,
   CodingSessionInlinePlan,
 } from "./CodingSessionTranscriptParts";
+import { formatCodingSessionBlockTime } from "./CodingSessionTranscriptRhythm";
 import { CodingSessionClampedUserMessage } from "./CodingSessionTranscriptUserMessage";
 
 /**
@@ -113,6 +115,18 @@ export const CodingSessionTranscriptGenerationContext =
 export const CodingSessionTurnSettlementContext =
   React.createContext<CodingSessionTurnSettlement>("live");
 
+/**
+ * The id of the thought still being written — the last entry of a live turn
+ * — or `null`. `CodingSessionTurn` provides it; that row reads "Thinking"
+ * (SV-05) and every other thought reads "Thought".
+ *
+ * A React context, not a module-level cache: nothing here outlives a render
+ * tree, so `resetCommunityState()` has nothing to reset.
+ */
+export const CodingSessionActiveThoughtContext = React.createContext<
+  string | null
+>(null);
+
 const GENERIC_AGENT_IDENTITY = {
   agentAvatarUrl: null,
   agentName: "Coding session",
@@ -177,7 +191,7 @@ export const CodingSessionItem = React.memo(function CodingSessionItem({
       });
       return (
         <div
-          className="group flex flex-col items-end gap-1"
+          className="group/prompt flex flex-col items-end gap-1"
           data-role="user-message"
           data-settled-by={settledByText ? "text" : undefined}
           data-testid="coding-session-user-message"
@@ -200,35 +214,43 @@ export const CodingSessionItem = React.memo(function CodingSessionItem({
               <p data-testid="coding-session-user-message-wake">{wakeLine}</p>
             )}
           </div>
-          <p className="pe-1 text-2xs text-muted-foreground">
-            <span
-              className={
-                author.kind === "team-wake" ||
-                author.kind === "hire-host" ||
-                author.kind === "unrecorded"
-                  ? "font-medium text-muted-foreground"
-                  : "font-medium text-foreground/75"
-              }
-              data-author-kind={author.kind}
-              data-testid="coding-session-user-message-author"
-            >
-              {author.label}
-            </span>
-            {item.steered === true ? (
-              // A mid-turn correction the running turn took, not the prompt
-              // that opened it. Said beside the author rather than hidden in
-              // the `title`, because "who said it" and "when it went in" are
-              // read together.
+          {/* SV-07: who sent it is always said — attribution is never a
+              hover detail — while the time and copy wait for the pointer,
+              as T3 Code's do under a prompt. */}
+          <div className="flex items-center justify-end gap-2 pe-1">
+            <p className="text-2xs text-muted-foreground">
               <span
-                className="ms-1 rounded-sm bg-muted px-1 font-medium text-foreground/75"
-                data-testid="coding-session-user-message-steered"
-                title="Injected into the turn that was already running"
+                className={
+                  author.kind === "team-wake" ||
+                  author.kind === "hire-host" ||
+                  author.kind === "unrecorded"
+                    ? "font-medium text-muted-foreground"
+                    : "font-medium text-foreground/75"
+                }
+                data-author-kind={author.kind}
+                data-testid="coding-session-user-message-author"
               >
-                steered
+                {author.label}
               </span>
-            ) : null}
-            {formatCodingSessionMessageTimestamp(item.timestamp)}
-          </p>
+              {item.steered === true ? (
+                // A mid-turn correction the running turn took, not the prompt
+                // that opened it. Said beside the author rather than hidden in
+                // the `title`, because "who said it" and "when it went in" are
+                // read together.
+                <span
+                  className="ms-1 rounded-sm bg-muted px-1 font-medium text-foreground/75"
+                  data-testid="coding-session-user-message-steered"
+                  title="Injected into the turn that was already running"
+                >
+                  steered
+                </span>
+              ) : null}
+            </p>
+            <CodingSessionPromptMeta
+              copyText={wakeLine ?? item.text}
+              timestamp={item.timestamp}
+            />
+          </div>
         </div>
       );
     }
@@ -303,7 +325,15 @@ function CodingSessionThoughtRow({
   const [open, setOpen] = useCodingSessionDisclosure(
     codingSessionItemDisclosureId(item.id),
   );
-  return <ThoughtDisclosure item={item} onOpenChange={setOpen} open={open} />;
+  const activeThoughtId = React.useContext(CodingSessionActiveThoughtContext);
+  return (
+    <ThoughtDisclosure
+      active={activeThoughtId === item.id}
+      item={item}
+      onOpenChange={setOpen}
+      open={open}
+    />
+  );
 }
 
 function CodingSessionPlanRow({
@@ -359,17 +389,54 @@ export function CodingSessionToolRow({
       {...GENERIC_AGENT_IDENTITY}
       agentPubkey={generationId}
       item={item}
+      leadingIcon
       onOpenChange={setOpen}
       open={open}
     />
   );
 }
 
-function formatCodingSessionMessageTimestamp(timestamp: string): string {
-  const date = new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) return "";
-  return ` · ${date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
+/**
+ * The hover cluster under a prompt (SV-07): when it was sent, then copy. The
+ * words stay in the document while hidden, so find-in-page and assistive
+ * technology still reach them; on a touch screen they are always shown.
+ */
+function CodingSessionPromptMeta({
+  copyText,
+  timestamp,
+}: {
+  copyText: string;
+  timestamp: string;
+}) {
+  const time = formatCodingSessionBlockTime(timestamp);
+  const text = copyText.trim();
+  if (!time && !text) return null;
+  return (
+    <span
+      className="coding-session-prompt-meta flex items-center gap-1 text-xs tabular-nums text-muted-foreground"
+      data-testid="coding-session-user-message-meta"
+    >
+      {time ? (
+        <time
+          data-testid="coding-session-user-message-time"
+          dateTime={timestamp}
+          title={time.title}
+        >
+          {time.label}
+        </time>
+      ) : null}
+      {text ? (
+        <button
+          aria-label="Copy message"
+          className="inline-flex size-6 items-center justify-center rounded-md transition-colors hover:bg-accent/30 hover:text-foreground"
+          data-testid="coding-session-user-message-copy"
+          onClick={() => copyTextToClipboard(text, "Message copied")}
+          title="Copy message"
+          type="button"
+        >
+          <Copy aria-hidden className="size-3" />
+        </button>
+      ) : null}
+    </span>
+  );
 }

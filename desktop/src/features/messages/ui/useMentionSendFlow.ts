@@ -34,6 +34,12 @@ import type { UseDraftsResult } from "@/features/messages/lib/useDrafts";
 import { useActivePreparedLinkPreviews } from "./useActivePreparedLinkPreviews";
 import { useDetachedAgentStart } from "./useDetachedAgentStart";
 import { useEnsureAgentMentionsReady } from "./useEnsureAgentMentionsReady";
+import {
+  MENTION_MEMBERSHIP_UNKNOWN_MESSAGE,
+  membershipForMentionSend,
+  nonMemberMentionPromptPubkeys,
+  useMentionMembershipResolver,
+} from "./useMentionSendFlowInvite";
 import { invokeTauri } from "@/shared/api/tauri";
 import type { CustomEmoji } from "@/shared/lib/remarkCustomEmoji";
 import type { AcpRuntime, ChannelType, ManagedAgent } from "@/shared/api/types";
@@ -122,6 +128,8 @@ export function useMentionSendFlow({
   const [nonMemberPromptError, setNonMemberPromptError] = React.useState<
     string | null
   >(null);
+  // SV-50: the member read failed, so the prompt must not claim non-membership.
+  const [isMembershipUnknown, setIsMembershipUnknown] = React.useState(false);
   const [isMentionSendPending, setIsMentionSendPending] = React.useState(false);
   const [isCompleteSendPending, setIsCompleteSendPending] =
     React.useState(false);
@@ -140,6 +148,11 @@ export function useMentionSendFlow({
   }, []);
   const addMembersMutation = useAddChannelMembersMutation(channelId);
   const canInviteNonMembers = useCanAddChannelMembers(channelId);
+  const resolveMembership = useMentionMembershipResolver({
+    channelId,
+    hasResolvedMembers: mentions.hasResolvedMembers,
+    memberPubkeys: mentions.memberPubkeys,
+  });
   const attachAgentMutation = useAttachManagedAgentToChannelMutation(channelId);
   const createPersonaAgentMutation =
     useCreateChannelManagedAgentMutation(channelId);
@@ -278,6 +291,7 @@ export function useMentionSendFlow({
     (postSendContent = "") => {
       setPendingNonMemberSend(null);
       setNonMemberPromptError(null);
+      setIsMembershipUnknown(false);
       setContent(postSendContent);
       contentRef.current = postSendContent;
       if (postSendContent) {
@@ -316,6 +330,7 @@ export function useMentionSendFlow({
     previousChannelIdRef.current = channelId;
     setPendingNonMemberSend(null);
     setNonMemberPromptError(null);
+    setIsMembershipUnknown(false);
   }, [channelId]);
 
   const completeSend = React.useCallback(
@@ -731,14 +746,24 @@ export function useMentionSendFlow({
           ...buildCustomEmojiTags(trimmed, customEmoji),
           ...linkPreviewTags,
         ];
-        const nonMemberPubkeys =
-          channelType === null ||
-          channelType === "dm" ||
-          !mentions.hasResolvedMembers
-            ? []
-            : uniqueNormalizedPubkeys(pubkeys).filter(
-                (pubkey) => !mentions.memberPubkeys.has(pubkey),
-              );
+        // Unknown membership is "ask", never "member" (SV-50): wait for the
+        // read, but only when a mention could still need the prompt.
+        const membership = await membershipForMentionSend({
+          channelType,
+          mentionPubkeys: pubkeys,
+          isExemptFromPrompt: (pubkey) =>
+            mentions.isManagedAgentPubkey(pubkey) ||
+            createdPersonaAgentPubkeySet.has(normalizePubkey(pubkey)),
+          resolve: () => resolveMembership(effectiveChannelId),
+        });
+        if (isSendCancelled()) return;
+        const nonMemberPubkeys = membership
+          ? nonMemberMentionPromptPubkeys({
+              channelType,
+              mentionPubkeys: pubkeys,
+              membership,
+            })
+          : [];
         let promptNonMemberPubkeys = nonMemberPubkeys.filter(
           (pubkey) =>
             !mentions.isManagedAgentPubkey(pubkey) &&
@@ -782,7 +807,12 @@ export function useMentionSendFlow({
         };
 
         if (promptNonMemberPubkeys.length > 0) {
-          setNonMemberPromptError(null);
+          setNonMemberPromptError(
+            membership?.kind === "unknown"
+              ? MENTION_MEMBERSHIP_UNKNOWN_MESSAGE
+              : null,
+          );
+          setIsMembershipUnknown(membership?.kind === "unknown");
           setPendingNonMemberSend(pendingDraft);
           return;
         }
@@ -814,6 +844,7 @@ export function useMentionSendFlow({
       mentions.memberPubkeys,
       mentions.getDraftMentionRefs,
       onPrepareSendChannel,
+      resolveMembership,
       activePreparedLinkPreviews,
     ],
   );
@@ -936,6 +967,7 @@ export function useMentionSendFlow({
   const dismissNonMemberPrompt = React.useCallback(() => {
     setPendingNonMemberSend(null);
     setNonMemberPromptError(null);
+    setIsMembershipUnknown(false);
   }, []);
   return {
     isPreparingMentionSend:
@@ -952,6 +984,7 @@ export function useMentionSendFlow({
         addMembersMutation.isPending ||
         attachAgentMutation.isPending ||
         createPersonaAgentMutation.isPending,
+      membershipUnknown: isMembershipUnknown,
       names: pendingNonMemberNames,
       onDismiss: dismissNonMemberPrompt,
       onDoNothing: handleSendWithoutInviting,

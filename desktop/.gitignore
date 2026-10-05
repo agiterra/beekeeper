@@ -16,6 +16,8 @@ playwright-report.json
 test-results
 playwright-release-smoke-report
 *.local
+# tsc -b writes this beside tsconfig.node.json (composite); a build artifact.
+*.tsbuildinfo
 playwright-report
 test-results
 

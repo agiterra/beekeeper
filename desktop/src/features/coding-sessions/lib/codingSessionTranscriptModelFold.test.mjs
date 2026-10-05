@@ -134,11 +134,16 @@ test("a settled turn folds its work, failures before the answer included, and na
   // The fold row sits where the first hidden entry was.
   assert.equal(keyOf(turn.entries[turn.fold.anchorIndex]), "think-1");
   assert.deepEqual(visibleKeys(turn), ["prompt", "permission", "answer"]);
-  // Opening the fold restores every hidden entry in its own position.
+  // Opening the fold restores every hidden entry in its own position. The
+  // failed step before the answer joins its neighbours' group, as in T3's
+  // work log; the unfinished one stays its own row.
   assert.deepEqual(
     turn.fold.hiddenIndexes.map((index) => keyOf(turn.entries[index])),
-    ["think-1", "commentary", "tools:read-1", "run-failed", "run-2", "stuck"],
+    ["think-1", "commentary", "tools:read-1", "stuck"],
   );
+  const group = turn.entries.find((entry) => keyOf(entry) === "tools:read-1");
+  assert.equal(group.label, "Read 1 file and ran 3 commands · 1 failed");
+  assert.equal(group.failedCount, 1);
   assert.equal(turn.completion.state, "completed");
 });
 
@@ -164,18 +169,18 @@ test("a failure after the answer stays visible; ordinary trailing work folds", (
   assert.equal(turn.fold.summary, "Ran 2 commands");
 });
 
+/** A Turn result with no body and no measured duration. */
+const bareResult = (at = "2026-07-30T12:00:05.000Z") =>
+  lifecycle({ id: "result", title: "Turn result", text: "", at });
+
 test("a turn that never answered keeps its failures on screen", () => {
   const turn = onlyTurn([
     message({ id: "prompt", role: "user", text: "Fix it" }),
     tool({ id: "run-1" }),
     tool({ id: "run-failed", status: "failed" }),
-    lifecycle({
-      id: "stop",
-      title: "Interrupted",
-      text: "",
-      at: "2026-07-30T12:00:05.000Z",
-    }),
+    bareResult(),
   ]);
+  assert.equal(turn.completion.state, "completed");
   assert.ok(turn.fold);
   assert.deepEqual(visibleKeys(turn), ["prompt", "run-failed"]);
   assert.equal(turn.fold.failureSummary, "");
@@ -187,13 +192,9 @@ test("a blank closing message is not an answer: the failure before it stays loud
     tool({ id: "run-1" }),
     tool({ id: "run-failed", status: "failed" }),
     message({ id: "blank", role: "assistant", text: "  \n\t " }),
-    lifecycle({
-      id: "stop",
-      title: "Interrupted",
-      text: "",
-      at: "2026-07-30T12:00:05.000Z",
-    }),
+    bareResult(),
   ]);
+  assert.equal(turn.completion.state, "completed");
   assert.ok(turn.fold);
   // SV-02 (D2): the turn never answered, so the failure is kept on screen
   // rather than folded and counted as a quiet step.
@@ -213,6 +214,47 @@ test("a fold that hides only failures still names them", () => {
   ]);
   assert.equal(turn.fold.summary, "Ran 2 commands · 2 steps failed");
   assert.deepEqual(visibleKeys(turn), ["prompt", "answer"]);
+});
+
+test("SV-02/SV-03: five Bash calls with one failure fold as 'Ran 5 commands · 1 step failed'", () => {
+  const turn = onlyTurn([
+    message({ id: "prompt", role: "user", text: "Run the checks" }),
+    tool({ id: "run-1" }),
+    tool({ id: "run-2" }),
+    tool({ id: "run-failed", status: "failed" }),
+    tool({ id: "run-3" }),
+    tool({ id: "run-4" }),
+    message({ id: "answer", role: "assistant", text: "All green now." }),
+    result("All green now. (8000ms)"),
+  ]);
+  assert.equal(turn.fold.workSummary, "Ran 5 commands");
+  assert.equal(turn.fold.failureSummary, "1 step failed");
+  assert.equal(turn.fold.summary, "Ran 5 commands · 1 step failed");
+  assert.deepEqual(visibleKeys(turn), ["prompt", "answer"]);
+});
+
+test("SV-02: a turn that itself failed does not fold; its steps and its failure stay on screen", () => {
+  const turn = onlyTurn([
+    message({ id: "prompt", role: "user", text: "Run the tests" }),
+    tool({ id: "run-1" }),
+    tool({ id: "run-failed", status: "failed" }),
+    message({ id: "answer", role: "assistant", text: "Tests still fail." }),
+    lifecycle({
+      id: "result",
+      title: "Turn result",
+      text: "pytest demo/ exited 1",
+      renderClass: "error",
+    }),
+  ]);
+  assert.equal(turn.completion.state, "failed");
+  assert.equal(turn.fold, null);
+  assert.deepEqual(visibleKeys(turn), [
+    "prompt",
+    "run-1",
+    "run-failed",
+    "answer",
+    "result",
+  ]);
 });
 
 test("formatFoldedFailures names failed and unfinished steps", () => {
@@ -254,10 +296,11 @@ test("nothing folds while the turn is live", () => {
   assert.deepEqual(visibleKeys(live), ["prompt", "tools:run-1", "partial"]);
 });
 
-test("a stopped turn folds with a duration measured from its signed rows", () => {
+test("a stopped turn stays unfolded, as T3 never folds an interrupted run", () => {
   const turn = onlyTurn([
     message({ id: "prompt", role: "user", text: "Fix the build" }),
     tool({ id: "run-1" }),
+    tool({ id: "run-failed", status: "failed" }),
     tool({ id: "run-2" }),
     lifecycle({
       id: "stop",
@@ -267,19 +310,84 @@ test("a stopped turn folds with a duration measured from its signed rows", () =>
     }),
   ]);
   assert.equal(turn.completion.state, "interrupted");
-  assert.ok(turn.fold);
-  assert.equal(turn.fold.durationMs, 42000);
-  assert.deepEqual(visibleKeys(turn), ["prompt"]);
+  assert.equal(turn.fold, null);
+  // A failed step in a stopped turn does not join a group either.
+  assert.deepEqual(visibleKeys(turn), [
+    "prompt",
+    "run-1",
+    "run-failed",
+    "run-2",
+  ]);
 });
 
-test("a turn that only thought does not fold behind a Worked row", () => {
+test("an unmeasured completed turn's duration is measured from its signed rows", () => {
+  const turn = onlyTurn([
+    message({ id: "prompt", role: "user", text: "Fix the build" }),
+    tool({ id: "run-1" }),
+    tool({ id: "run-2" }),
+    message({ id: "answer", role: "assistant", text: "Fixed." }),
+    bareResult("2026-07-30T12:00:42.000Z"),
+  ]);
+  assert.equal(turn.completion.state, "completed");
+  assert.equal(turn.completion.durationMs, null);
+  assert.ok(turn.fold);
+  assert.equal(turn.fold.durationMs, 42000);
+  assert.deepEqual(visibleKeys(turn), ["prompt", "answer"]);
+});
+
+test("a turn that only thought folds behind a Worked row, as T3's does", () => {
   const turn = onlyTurn([
     message({ id: "prompt", role: "user", text: "Hi" }),
     thought("think-1", "Greet back."),
     message({ id: "answer", role: "assistant", text: "Hello." }),
     result("Hello. (900ms)"),
   ]);
-  assert.equal(turn.fold, null);
+  assert.ok(turn.fold);
+  assert.equal(turn.fold.durationMs, 900);
+  assert.equal(turn.fold.workSummary, "");
+  assert.equal(turn.fold.summary, "");
+  assert.deepEqual(visibleKeys(turn), ["prompt", "answer"]);
+});
+
+test("a failed step between commands joins their group before the answer, and only there", () => {
+  const turn = onlyTurn([
+    message({ id: "prompt", role: "user", text: "Run the demo" }),
+    tool({ id: "run-1" }),
+    tool({ id: "run-failed", status: "failed" }),
+    tool({ id: "run-2" }),
+    message({ id: "answer", role: "assistant", text: "Ran it." }),
+    tool({ id: "after-1" }),
+    tool({ id: "after-failed", status: "failed" }),
+    tool({ id: "after-2" }),
+    result("Ran it. (3000ms)"),
+  ]);
+  const group = turn.entries.find((entry) => keyOf(entry) === "tools:run-1");
+  assert.ok(group, "the three commands read as one group");
+  assert.deepEqual(
+    group.items.map((item) => item.id),
+    ["run-1", "run-failed", "run-2"],
+  );
+  assert.equal(group.label, "Ran 3 commands · 1 failed");
+  assert.equal(group.failedCount, 1);
+  assert.equal(turn.fold.summary, "Ran 5 commands · 1 step failed");
+  assert.equal(turn.fold.failedCount, 1);
+  // After the answer the failure is not recovered from: it stays its own,
+  // visible row, and splits the calls around it.
+  assert.deepEqual(visibleKeys(turn), ["prompt", "answer", "after-failed"]);
+
+  // A turn that never answered keeps its failure ungrouped too.
+  const unanswered = onlyTurn([
+    message({ id: "prompt", role: "user", text: "Run the demo" }),
+    tool({ id: "run-1" }),
+    tool({ id: "run-failed", status: "failed" }),
+    tool({ id: "run-2" }),
+    bareResult(),
+  ]);
+  assert.deepEqual(visibleKeys(unanswered), ["prompt", "run-failed"]);
+  assert.equal(
+    unanswered.entries.some((entry) => entry.kind === "tool-group"),
+    false,
+  );
 });
 
 test("paragraph pieces join into one message without breaking a fence or a list", () => {

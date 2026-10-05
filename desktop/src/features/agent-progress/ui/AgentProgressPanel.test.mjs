@@ -143,6 +143,7 @@ async function renderPanel(sessions, options = {}) {
     nowSeconds: NOW,
     complete,
     ambiguities,
+    pending: options.pending ?? false,
   });
   return render(
     createElement(AgentProgressPanel, {
@@ -385,4 +386,42 @@ test("a lane with no local transcript is honest rather than blank or clickable",
   const button = getByTestId("agent-progress-lane").querySelector("button");
   assert.equal(button.disabled, true);
   assert.equal(opened.length, 0);
+});
+
+/**
+ * SV-49. Before the first read settles there is no evidence of anything, so
+ * neither the banner nor the footer may say the read "did not complete": that
+ * is a verdict on an answer that has not arrived. Only a settled short read
+ * earns it.
+ */
+test("a pending read says it is reading, never that it did not complete", async () => {
+  const { getByTestId, queryByTestId } = await renderPanel([], {
+    complete: false,
+    isLoading: true,
+    pending: true,
+  });
+  assert.equal(
+    getByTestId("agent-progress-footer-counts").textContent,
+    "Reading sessions…",
+  );
+  assert.equal(queryByTestId("agent-progress-incomplete"), null);
+  assert.doesNotMatch(
+    getByTestId("agent-progress-panel").textContent,
+    /did not complete/,
+  );
+});
+
+test("a settled incomplete read says it did not complete", async () => {
+  const { getByTestId } = await renderPanel([], {
+    complete: false,
+    errors: [{ scope: "sessions", message: "session read timed out" }],
+  });
+  assert.match(
+    getByTestId("agent-progress-footer-counts").textContent,
+    /did not complete/,
+  );
+  assert.match(
+    getByTestId("agent-progress-incomplete").textContent,
+    /session read timed out/,
+  );
 });

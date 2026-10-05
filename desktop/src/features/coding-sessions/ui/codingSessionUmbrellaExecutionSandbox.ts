@@ -64,7 +64,12 @@ export function codingSessionUmbrellaGenerationFacts(
   const generations = transcripts.map((transcript, index) => {
     const cached = previousGenerations[index];
     if (cached && cached.transcript === transcript) return cached;
-    const facts = codingSessionSessionFacts(transcript, cached?.facts ?? null);
+    // SV-46: a streamed append re-reads only the appended tail.
+    const facts = codingSessionSessionFacts(
+      transcript,
+      cached?.facts ?? null,
+      cached?.transcript ?? null,
+    );
     if (facts !== cached?.facts) changed = true;
     return { transcript, facts };
   });
@@ -163,10 +168,16 @@ export function useCodingSessionExecutionSandboxes(
   const previousRef = React.useRef<CodingSessionExecutionSandboxes | null>(
     null,
   );
+  // Read during render, written only once the render commits (SV-45): a
+  // render React throws away (a suspended or interrupted one, StrictMode's
+  // second pass) must not become the next render's cache. The function is
+  // pure in `previous`, so reading the last committed result is always safe.
   const next = codingSessionExecutionSandboxes(
     participants,
     previousRef.current,
   );
-  previousRef.current = next;
+  React.useLayoutEffect(() => {
+    previousRef.current = next;
+  });
   return next.reports;
 }

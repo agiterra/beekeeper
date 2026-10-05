@@ -65,6 +65,10 @@ import {
   umbrellaTimelineLiveBlockKeys,
 } from "./CodingSessionUmbrellaTimelineWindow";
 import { useCodingSessionUmbrellaTimelineWindow } from "./useCodingSessionUmbrellaTimelineWindow";
+import { CodingSessionTranscriptMinimap } from "./CodingSessionTranscriptMinimap";
+import { useCodingSessionUmbrellaTimelineMinimapItems } from "./CodingSessionUmbrellaTimelineViewMinimap";
+import { useCodingSessionSurfaceCtx } from "./surfaces/codingSessionSurfaceContext";
+import type { CodingSessionMinimapItem } from "@/features/coding-sessions/lib/codingSessionTranscriptMinimapItems";
 
 /** The turn block's Mission shell: the card grammar, keeping the accent rail. */
 const MISSION_TURN_BLOCK_CLASS = missionRowClass("standard", {
@@ -418,6 +422,30 @@ export function CodingSessionUmbrellaTimelineView({
     return () =>
       document.removeEventListener(UMBRELLA_TIMELINE_REVEAL_ITEM_EVENT, handle);
   }, [narrativeEntries, revealFact]);
+  // SV-26: the Conversation lens's minimap. Mission's route rail is its map.
+  const surfaceCtx = useCodingSessionSurfaceCtx();
+  const drawsMinimap =
+    missionDensity === null && surfaceCtx?.layout === "umbrella";
+  const minimapItems = useCodingSessionUmbrellaTimelineMinimapItems({
+    enabled: drawsMinimap,
+    entries: narrativeEntries,
+    workingBlockKeys,
+    currentUserPubkey,
+  });
+  // A turn above the render window has no node: widen the window first,
+  // then scroll once its rows exist (`onRevealReady`), as `revealFact` does —
+  // without the highlight ring, which marks a cited fact, not a jump.
+  const selectMinimapTurn = React.useCallback(
+    (item: CodingSessionMinimapItem) => {
+      if (!revealInWindow(item.key)) scrollBlockIntoView(item.key);
+    },
+    [revealInWindow, scrollBlockIntoView],
+  );
+  const resolveMinimapElement = React.useCallback(
+    (item: CodingSessionMinimapItem) =>
+      blockNodes.current.get(item.key) ?? null,
+    [],
+  );
   const windowStartIndex = timelineWindow.window.startIndex;
   // With a seat focused the window counts only that seat's turns, while the
   // rows above it hold every seat's; the control has to say which it counted.
@@ -659,6 +687,14 @@ export function CodingSessionUmbrellaTimelineView({
         );
       })}
       {pendingTurns}
+      {drawsMinimap ? (
+        <CodingSessionTranscriptMinimap
+          items={minimapItems}
+          onSelect={selectMinimapTurn}
+          resolveElement={resolveMinimapElement}
+          scrollRef={narrativeScrollRef}
+        />
+      ) : null}
     </div>
   );
 }

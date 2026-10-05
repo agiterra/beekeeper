@@ -32,8 +32,16 @@ import type {
  *   row, which are continuity rather than work;
  * - subagent batches, which name who did the work.
  *
- * A turn whose only foldable entries are thoughts does not fold: a "Worked
- * for" row that hides nothing but reasoning would be ceremony.
+ * A turn whose only foldable entries are thoughts folds too, as T3's does
+ * (`hidesNonCompactionWork` counts reasoning entries): reasoning is work, and
+ * the fold row then reads "Worked for …" with no tool sentence.
+ *
+ * A turn that itself failed does not fold at all, as T3 leaves a failed run
+ * unfolded (`failedTimelineRunIds` joins `unfoldedRunIds` in
+ * `MessagesTimeline.logic.ts`): the steps that led to the failure are the
+ * story, and the failure stays red (SV-02). Nor does a turn that was stopped:
+ * T3's `deriveTurnFolds` skips every interrupted run (`interruptedRunIds`), so
+ * what the agent had done when it was stopped stays on screen.
  *
  * Changed files and the stop/failure state live outside `entries` and are
  * never folded. Split out of `codingSessionTranscriptModel.ts`.
@@ -45,6 +53,8 @@ export function deriveCodingSessionTurnFold(
   >,
 ): CodingSessionTurnFold | null {
   if (turn.isWorking || !turn.completion) return null;
+  if (turn.completion.state === "failed") return null;
+  if (turn.completion.state === "interrupted") return null;
 
   // The answer is the last prose the agent wrote. A Turn result body that
   // repeats nothing the turn shows is synthesized as its own assistant row
@@ -59,26 +69,27 @@ export function deriveCodingSessionTurnFold(
 
   const hiddenIndexes: number[] = [];
   const hiddenTools: CodingSessionTranscriptToolItem[] = [];
-  let hidesWork = false;
-  let failedCount = 0;
-  let unfinishedCount = 0;
   turn.entries.forEach((entry, index) => {
     if (index === terminalAnswerIndex || isResultBodyEntry(entry)) return;
     const beforeAnswer = index < terminalAnswerIndex;
-    const fold = classifyFoldable(entry, beforeAnswer);
-    if (fold === "keep") return;
+    if (!isFoldable(entry, beforeAnswer)) return;
     hiddenIndexes.push(index);
-    if (fold !== "thought") hidesWork = true;
     if (entry.kind === "tool-group") hiddenTools.push(...entry.items);
     else if (entry.kind === "item" && entry.item.type === "tool") {
       hiddenTools.push(entry.item);
-      if (isFailedTool(entry.item)) failedCount += 1;
-      else if (!isSettledTool(entry.item)) unfinishedCount += 1;
     }
   });
+  // A failed call may sit inside a tool group (it joins one before the
+  // answer — `groupAdjacentTools`), so the count reads every hidden call.
+  let failedCount = 0;
+  let unfinishedCount = 0;
+  for (const tool of hiddenTools) {
+    if (isFailedTool(tool)) failedCount += 1;
+    else if (!isSettledTool(tool)) unfinishedCount += 1;
+  }
 
   const anchorIndex = hiddenIndexes[0];
-  if (!hidesWork || anchorIndex === undefined) return null;
+  if (anchorIndex === undefined) return null;
   const workSummary = summarizeCodingSessionTools(hiddenTools);
   const failureSummary = formatFoldedFailures(failedCount, unfinishedCount);
   return {
@@ -109,30 +120,27 @@ export function formatFoldedFailures(
     : `${steps(unfinishedCount)} did not finish`;
 }
 
-function classifyFoldable(
+function isFoldable(
   entry: CodingSessionTranscriptEntry,
   beforeAnswer: boolean,
-): "keep" | "work" | "thought" {
-  if (entry.kind === "tool-group") return "work";
-  if (entry.kind === "subagents") return "keep";
+): boolean {
+  if (entry.kind === "tool-group") return true;
+  if (entry.kind === "subagents") return false;
   const item: TranscriptItem = entry.item;
   switch (item.type) {
     case "message":
-      return item.role === "assistant" ? "work" : "keep";
+      return item.role === "assistant";
     case "thought":
-      return "thought";
     case "plan":
-      return "work";
+      return true;
     case "tool":
       // Before the answer every call folds, failed or unfinished included —
       // the fold row names those. After it (or in a turn that never
       // answered) only a call that settled successfully does.
-      if (beforeAnswer) return "work";
-      return isCompletedSuccessfulTool(item) && !isErrorItem(item)
-        ? "work"
-        : "keep";
+      if (beforeAnswer) return true;
+      return isCompletedSuccessfulTool(item) && !isErrorItem(item);
     default:
-      return "keep";
+      return false;
   }
 }
 

@@ -9,7 +9,10 @@ import {
   isCodingSessionSubagentCall,
 } from "@/features/coding-sessions/lib/codingSessionSubagents";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
-import { isCompletedSuccessfulTool } from "@/features/coding-sessions/lib/codingSessionTranscriptModelPredicates";
+import {
+  isCompletedSuccessfulTool,
+  isErrorItem,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptModelPredicates";
 import type {
   CodingSessionTranscriptEntry,
   CodingSessionTranscriptToolItem,
@@ -24,18 +27,38 @@ import type {
 /** The fewest consecutive settled tool calls that read as one row. */
 const TOOL_GROUP_MIN = 2;
 
+export type GroupAdjacentToolsOptions = {
+  /**
+   * The turn completed and will fold (not live, not failed, not stopped).
+   * Then a failed call before the answer joins its neighbours' group, as in
+   * T3's work log, where a failed command sits inside "Ran 3 commands" — it
+   * is a step on the way to the answer, which the fold names. A failed call
+   * after the answer, or in a turn that never answered, stays its own row.
+   */
+  foldsSettledWork?: boolean;
+};
+
 export function groupAdjacentTools(
   items: TranscriptItem[],
   subagents: CodingSessionSubagentPartition,
+  options: GroupAdjacentToolsOptions = {},
 ): CodingSessionTranscriptEntry[] {
   const narrativeItems = coalescePlanSnapshots(items);
+  const answerIndex = options.foldsSettledWork
+    ? findAnswerIndex(narrativeItems)
+    : -1;
   const entries: CodingSessionTranscriptEntry[] = [];
   const isSpawn = (candidate: TranscriptItem | undefined) =>
     candidate !== undefined &&
     isCodingSessionSubagentCall(candidate, subagents);
-  const isGroupable = (candidate: TranscriptItem | undefined) =>
+  const isGroupable = (
+    candidate: TranscriptItem | undefined,
+    position: number,
+  ) =>
     candidate !== undefined &&
-    isCompletedSuccessfulTool(candidate) &&
+    candidate.type === "tool" &&
+    (isCompletedSuccessfulTool(candidate) ||
+      (position < answerIndex && isFailedToolCall(candidate))) &&
     !isSpawn(candidate) &&
     deriveCodingSessionTaskModel([candidate]) === null;
 
@@ -59,7 +82,7 @@ export function groupAdjacentTools(
       index = cursor - 1;
       continue;
     }
-    if (!isGroupable(item) || item.type !== "tool") {
+    if (!isGroupable(item, index) || item.type !== "tool") {
       entries.push({ kind: "item", item });
       continue;
     }
@@ -68,19 +91,27 @@ export function groupAdjacentTools(
     let cursor = index + 1;
     while (cursor < narrativeItems.length) {
       const candidate = narrativeItems[cursor];
-      if (!isGroupable(candidate) || candidate?.type !== "tool") break;
+      if (!isGroupable(candidate, cursor) || candidate?.type !== "tool") {
+        break;
+      }
       tools.push(candidate);
       cursor += 1;
     }
 
     if (tools.length >= TOOL_GROUP_MIN) {
+      const failedCount = tools.filter(isFailedToolCall).length;
+      const summary = summarizeCodingSessionTools(tools);
       entries.push({
         kind: "tool-group",
         // Keyed by the first call, so the row stays mounted (and keeps its
         // open state) while a live run grows behind it.
         id: `tools:${item.id}`,
-        label: summarizeCodingSessionTools(tools),
+        // A failed step inside the group is named on the row itself, so a
+        // closed group never reads as all-green (honesty; the fold row
+        // names it too).
+        label: failedCount > 0 ? `${summary} · ${failedCount} failed` : summary,
         items: tools,
+        failedCount,
       });
     } else {
       entries.push({ kind: "item", item });
@@ -89,6 +120,29 @@ export function groupAdjacentTools(
   }
 
   return entries;
+}
+
+function isFailedToolCall(item: TranscriptItem): boolean {
+  return item.type === "tool" && isErrorItem(item);
+}
+
+/**
+ * The turn's answer: its last assistant prose that says something and is not
+ * a Turn result body — the same entry `deriveCodingSessionTurnFold` keeps.
+ */
+function findAnswerIndex(items: readonly TranscriptItem[]): number {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (
+      item.type === "message" &&
+      item.role === "assistant" &&
+      item.text.trim() !== "" &&
+      !item.id.endsWith(":assistant-result")
+    ) {
+      return index;
+    }
+  }
+  return -1;
 }
 
 /** Keep a plan's first narrative position while replacing it with its latest snapshot. */
@@ -116,75 +170,161 @@ type ToolAction =
   | "read"
   | "edit"
   | "command"
-  | "search"
-  | "skill"
-  | "image"
+  | "code-search"
+  | "web-search"
   | "other";
 
-const TOOL_ACTION_NOUNS: Record<
-  ToolAction,
-  { verb: string; one: string; many: string }
-> = {
-  read: { verb: "Read", one: "file", many: "files" },
-  edit: { verb: "Edited", one: "file", many: "files" },
-  command: { verb: "Ran", one: "command", many: "commands" },
-  search: { verb: "Ran", one: "search", many: "searches" },
-  skill: { verb: "Read", one: "skill", many: "skills" },
-  image: { verb: "Viewed", one: "image", many: "images" },
-  other: { verb: "Ran", one: "tool call", many: "tool calls" },
+/**
+ * T3 Code's work-log labels (`packages/client-runtime/src/work-log/
+ * presentation.ts`, `toolGroupActionLabel`), word for word.
+ */
+const TOOL_ACTION_LABELS: Record<ToolAction, (count: number) => string> = {
+  read: (count) => `Read ${count} ${count === 1 ? "file" : "files"}`,
+  edit: (count) => `Changed ${count} ${count === 1 ? "file" : "files"}`,
+  command: (count) => `Ran ${count} ${count === 1 ? "command" : "commands"}`,
+  "code-search": (count) =>
+    `Searched code ${count} ${count === 1 ? "time" : "times"}`,
+  "web-search": (count) =>
+    `Searched the web ${count} ${count === 1 ? "time" : "times"}`,
+  other: (count) => `Used ${count} ${count === 1 ? "tool" : "tools"}`,
 };
 
 /**
- * One sentence for a run of tool calls: "Read 3 files, ran 2 commands and
- * edited 1 file". Clauses follow the order each kind first appears.
+ * Which clauses win the sentence's two places, as T3's
+ * `summaryActionPriority`: what changed the world first (commands and edits),
+ * then reads and searches, then anything else.
+ */
+const TOOL_ACTION_PRIORITY: Record<ToolAction, number> = {
+  command: 0,
+  edit: 0,
+  read: 1,
+  "code-search": 1,
+  "web-search": 1,
+  other: 2,
+};
+
+/** The most action clauses a sentence names before "performed N other actions". */
+const TOOL_SUMMARY_MAX_CLAUSES = 2;
+
+/**
+ * One sentence for a run of tool calls, in T3 Code's words
+ * (`summarizeToolGroup`): "Changed 2 files and ran 5 commands", and with a
+ * third kind present "Changed 2 files, ran 5 commands, and performed 1 other
+ * action". At most two kinds are named — commands and edits first, then reads
+ * and searches, then other tools — in the order each first appears; every
+ * call they leave out is still counted in the remainder, so the sentence
+ * never claims less work than there was.
  *
- * Files are counted once each — three reads of one file read one file — and
- * everything else is counted per call. A call that names no file counts as its
- * own, so the number never claims fewer files than the calls could have
- * touched. Mixed unknown tools say "tool calls" rather than guessing a verb.
+ * One deliberate difference from T3: reads, like edits, count each file once
+ * — three reads of one file read one file. A call that names no file counts
+ * as its own, so the number never claims fewer files than the calls could
+ * have touched. The remainder counts calls.
  */
 export function summarizeCodingSessionTools(
   tools: readonly CodingSessionTranscriptToolItem[],
 ): string {
-  const buckets = new Map<ToolAction, Set<string>>();
+  const groups = new Map<ToolAction, { calls: number; keys: Set<string> }>();
   for (const tool of tools) {
     const action = classifyToolAction(tool);
     const key =
       action === "read" || action === "edit"
         ? (toolFileKey(tool) ?? `call:${tool.id}`)
         : `call:${tool.id}`;
-    const bucket = buckets.get(action) ?? new Set<string>();
-    bucket.add(key);
-    buckets.set(action, bucket);
+    const group = groups.get(action) ?? { calls: 0, keys: new Set<string>() };
+    group.calls += 1;
+    group.keys.add(key);
+    groups.set(action, group);
   }
-  const clauses = [...buckets].map(([action, keys], index) => {
-    const nouns = TOOL_ACTION_NOUNS[action];
-    const verb = index === 0 ? nouns.verb : nouns.verb.toLowerCase();
-    return `${verb} ${keys.size} ${keys.size === 1 ? nouns.one : nouns.many}`;
-  });
-  if (clauses.length < 2) return clauses[0] ?? "";
-  return `${clauses.slice(0, -1).join(", ")} and ${clauses.at(-1)}`;
+  const ranked = [...groups].map(([action, group], index) => ({
+    action,
+    group,
+    index,
+  }));
+  const selected = [...ranked]
+    .sort(
+      (a, b) =>
+        TOOL_ACTION_PRIORITY[a.action] - TOOL_ACTION_PRIORITY[b.action] ||
+        a.index - b.index,
+    )
+    .slice(0, TOOL_SUMMARY_MAX_CLAUSES)
+    .sort((a, b) => a.index - b.index);
+  const labels = selected.map(({ action, group }) =>
+    TOOL_ACTION_LABELS[action](group.keys.size),
+  );
+  const remaining =
+    tools.length -
+    selected.reduce((count, { group }) => count + group.calls, 0);
+  if (remaining > 0) {
+    labels.push(
+      `Performed ${remaining} other ${remaining === 1 ? "action" : "actions"}`,
+    );
+  }
+  return joinToolSummaryClauses(labels);
 }
 
+/** "A", "A and b", "A, b, and c" — T3's sentence casing and serial comma. */
+function joinToolSummaryClauses(labels: readonly string[]): string {
+  const clauses = labels.map((label, index) =>
+    index === 0 ? label : label.charAt(0).toLowerCase() + label.slice(1),
+  );
+  if (clauses.length < 3) return clauses.join(" and ");
+  return `${clauses.slice(0, -1).join(", ")}, and ${clauses.at(-1)}`;
+}
+
+/**
+ * What kind of work a call was, after T3's `classifyToolActivity`
+ * (`packages/shared/src/toolActivity.ts`): ACP's own discriminant first, then
+ * the call's descriptor, then the provider's bare tool name. Claude-agent-acp
+ * titles a Bash call with its command, so only `toolKind` (or the name) says
+ * it ran one (SV-03).
+ */
 function classifyToolAction(tool: CodingSessionTranscriptToolItem): ToolAction {
-  // ACP's own discriminant outranks any name rule: claude-agent-acp titles a
-  // Bash call with its command, so only `toolKind` says it ran one (SV-03).
-  if (tool.toolKind === "execute") return "command";
-  if (tool.toolKind === "edit") return "edit";
+  const kind = tool.toolKind?.trim().toLowerCase() ?? null;
+  if (kind === "execute") return "command";
+  if (kind === "edit" || kind === "move" || kind === "delete") return "edit";
+  if (kind === "search") return "code-search";
+  if (kind === "read") return "read";
   const renderClass = baseRenderClass(tool);
-  if (renderClass === "file-edit") return "edit";
-  if (renderClass === "file-read") return "read";
   if (renderClass === "shell") return "command";
-  if (renderClass === "skill-read") return "skill";
-  if (renderClass === "image") return "image";
-  if (
-    tool.toolKind === "search" ||
-    tool.descriptor?.action?.verb === "Searched"
-  ) {
-    return "search";
-  }
-  if (tool.toolKind === "read") return "read";
-  return "other";
+  if (renderClass === "file-edit") return "edit";
+  if (renderClass === "file-read" || renderClass === "image") return "read";
+  // The title stands in only when the provider sent no tool name. A name
+  // that is present but server-qualified is someone else's tool, and its
+  // title ("Read file") must not turn it into a local read.
+  const name = tool.toolName?.trim()
+    ? toolNameToken(tool.toolName)
+    : toolNameToken(tool.title);
+  return (name === null ? undefined : TOOL_NAME_ACTIONS.get(name)) ?? "other";
+}
+
+/** Provider tool names that say what the call did, as T3 reads them. */
+const TOOL_NAME_ACTIONS: ReadonlyMap<string, ToolAction> = new Map([
+  ["bash", "command"],
+  ["shell", "command"],
+  ["terminal", "command"],
+  ["edit", "edit"],
+  ["multiedit", "edit"],
+  ["write", "edit"],
+  ["notebookedit", "edit"],
+  ["find", "code-search"],
+  ["grep", "code-search"],
+  ["glob", "code-search"],
+  ["rg", "code-search"],
+  ["ls", "code-search"],
+  ["websearch", "web-search"],
+  ["read", "read"],
+  ["readfile", "read"],
+]);
+
+/**
+ * A bare provider tool name, folded: `Read`, `read_file` and `read-file` all
+ * read `readfile`. A server-qualified name (`github.read_file`,
+ * `mcp__db__find`) is someone else's tool, never a local read or search.
+ */
+function toolNameToken(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || /__|[./`]/u.test(trimmed)) return null;
+  return trimmed.replace(/[_\s-]/gu, "").toLowerCase();
 }
 
 /**

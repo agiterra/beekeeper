@@ -52,15 +52,19 @@ export type CodingSessionTranscriptToolItem = Extract<
 export type CodingSessionTranscriptEntry =
   | { kind: "item"; item: TranscriptItem }
   /**
-   * Two or more consecutive settled, successful tool calls, read as one row
-   * whose `label` is a sentence ("Read 3 files and ran 2 commands"). The
-   * calls themselves are one click away, in place.
+   * Two or more consecutive settled tool calls, read as one row whose `label`
+   * is a sentence ("Read 3 files and ran 2 commands"). The calls themselves
+   * are one click away, in place. A failed call joins only before the answer
+   * of a turn that will fold (`groupAdjacentTools`); the label then ends
+   * " · 1 failed" and `failedCount` says how many, so a renderer can tint
+   * the row's icon as it tints a quiet failed step.
    */
   | {
       kind: "tool-group";
       id: string;
       label: string;
       items: CodingSessionTranscriptToolItem[];
+      failedCount: number;
     }
   /** Consecutive Task/Agent spawns, each carrying its subagent's own items. */
   | {

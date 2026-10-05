@@ -1,5 +1,4 @@
 import * as React from "react";
-import { ChevronRight } from "lucide-react";
 
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import {
@@ -12,6 +11,8 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import { CompactToolFailureToneContext } from "@/features/agents/ui/AgentSessionToolItem/CompactToolFailureToneContext";
+import { compactToolGroupIcon } from "@/features/agents/ui/AgentSessionToolItem/ToolItemRowIcon";
+import { buildCompactToolSummary } from "@/features/agents/ui/agentSessionToolSummary";
 import {
   ACTIVITY_ROW_ICON_CLASS,
   ACTIVITY_ROW_LABEL_CLASS,
@@ -29,6 +30,7 @@ import {
   useCodingSessionDisclosureProps,
 } from "./CodingSessionTranscriptDisclosure";
 import {
+  CodingSessionActiveThoughtContext,
   CodingSessionItem,
   CodingSessionToolRow,
   CodingSessionTranscriptGenerationContext,
@@ -111,6 +113,16 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
     () => (turn.isWorking ? -1 : findCodingSessionAnswerIndex(turn.entries)),
     [turn.entries, turn.isWorking],
   );
+  // SV-05: a thought that is the live turn's last entry is still being
+  // written, so it reads "Thinking"; anything after it, or the turn
+  // settling, makes it "Thought".
+  const lastEntry = turn.entries.at(-1);
+  const activeThoughtId =
+    turn.isWorking &&
+    lastEntry?.kind === "item" &&
+    lastEntry.item.type === "thought"
+      ? lastEntry.item.id
+      : null;
   const answerEntry = answerIndex >= 0 ? turn.entries[answerIndex] : undefined;
   const answerText =
     answerEntry?.kind === "item" && answerEntry.item.type === "message"
@@ -222,23 +234,25 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
 
   return (
     <CodingSessionTurnSettlementContext.Provider value={settlement}>
-      <section
-        className="content-visibility-auto flex flex-col"
-        data-fold={fold ? (foldOpen ? "open" : "closed") : undefined}
-        data-message-id={`turn:${turn.id}`}
-        data-testid="coding-session-turn"
-        data-turn-id={turn.id}
-      >
-        {lead}
-        {answerBlock.length > 0 ? (
-          <div
-            className="group/answer flex flex-col"
-            data-testid="coding-session-answer-block"
-          >
-            {answerBlock}
-          </div>
-        ) : null}
-      </section>
+      <CodingSessionActiveThoughtContext.Provider value={activeThoughtId}>
+        <section
+          className="content-visibility-auto flex flex-col"
+          data-fold={fold ? (foldOpen ? "open" : "closed") : undefined}
+          data-message-id={`turn:${turn.id}`}
+          data-testid="coding-session-turn"
+          data-turn-id={turn.id}
+        >
+          {lead}
+          {answerBlock.length > 0 ? (
+            <div
+              className="group/answer flex flex-col"
+              data-testid="coding-session-answer-block"
+            >
+              {answerBlock}
+            </div>
+          ) : null}
+        </section>
+      </CodingSessionActiveThoughtContext.Provider>
     </CodingSessionTurnSettlementContext.Provider>
   );
 });
@@ -272,6 +286,11 @@ export const CodingSessionEntry = React.memo(function CodingSessionEntry({
 /**
  * Consecutive settled tool calls as one sentence row. The calls are built
  * only while it is open, and each keeps its own open state inside it.
+ *
+ * SV-01/SV-06, after T3 Code's `WorkGroupHeader`: the shared activity row,
+ * led by the calls' own glyph (a terminal for commands, a hammer for a mix),
+ * no chevron; opened, the calls line up under it on the same icon column
+ * rather than in an indented rail (T3's `WorkLogList`).
  */
 function CodingSessionToolGroup({
   entry,
@@ -282,30 +301,39 @@ function CodingSessionToolGroup({
     CodingSessionTranscriptGenerationContext,
   );
   const [open, setOpen] = useCodingSessionDisclosure(`group:${entry.id}`);
+  const GroupIcon = React.useMemo(
+    () => compactToolGroupIcon(entry.items.map(buildCompactToolSummary)),
+    [entry.items],
+  );
   return (
     <div
       data-count={entry.items.length}
+      data-open={open ? "" : undefined}
       data-testid="coding-session-tool-group"
     >
-      {/* SV-01/SV-06: the shared activity row; the chevron is its 16px icon. */}
       <button
         aria-expanded={open}
-        className={cn("cursor-pointer", ACTIVITY_ROW_LINE_CLASS)}
+        className={cn("group/row cursor-pointer", ACTIVITY_ROW_LINE_CLASS)}
         onClick={() => setOpen(!open)}
         type="button"
       >
-        <ChevronRight
+        <GroupIcon
           aria-hidden
-          className={cn(
-            ACTIVITY_ROW_ICON_CLASS,
-            "transition-transform",
-            open && "rotate-90",
-          )}
+          className={ACTIVITY_ROW_ICON_CLASS}
+          data-testid="coding-session-tool-group-icon"
         />
-        <span className={ACTIVITY_ROW_LABEL_CLASS}>{entry.label}</span>
+        <span
+          className={cn(
+            ACTIVITY_ROW_LABEL_CLASS,
+            "transition-colors group-hover/row:text-foreground",
+            open && "text-foreground/80",
+          )}
+        >
+          {entry.label}
+        </span>
       </button>
       {open ? (
-        <div className="mt-0.5 ml-3 flex flex-col gap-0.5 border-l border-border/60 pl-3">
+        <div className="flex flex-col">
           {entry.items.map((item) => (
             <CodingSessionToolRow
               generationId={generationId}

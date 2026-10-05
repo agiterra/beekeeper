@@ -209,3 +209,135 @@ test("SV-06: without an Agents surface the row expands inline as before", async 
     await view.unmount();
   }
 });
+
+test("SV-06: a live batch says how many are still working; a done one only describes it", async () => {
+  const live = spawnEntry(3);
+  live.label = "Kicked off 3 subagents";
+  live.spawns[0].status = "running";
+  live.spawns[1].status = "running";
+  live.spawns[2].status = "failed";
+  const view = await mountEntry({
+    entry: live,
+    onOpenChange: () => {},
+    open: false,
+  });
+  try {
+    const summary = view.container.querySelector("summary");
+    assert.equal(
+      summary.getAttribute("aria-description"),
+      "2 working · 1 failed",
+    );
+    const counts = view.container.querySelector(
+      '[data-testid="coding-session-subagents-status-summary"]',
+    );
+    assert.ok(counts);
+    assert.equal(counts.textContent, "· 2 working · 1 failed");
+
+    const done = spawnEntry(3);
+    done.label = "Kicked off 3 subagents";
+    await view.render({ entry: done, onOpenChange: () => {}, open: false });
+    assert.equal(
+      view.container.querySelector("summary").getAttribute("aria-description"),
+      "3 done",
+    );
+    assert.equal(
+      view.container.querySelector(
+        '[data-testid="coding-session-subagents-status-summary"]',
+      ),
+      null,
+    );
+  } finally {
+    await view.unmount();
+  }
+});
+
+async function mountInTurn(settlement, entry) {
+  Object.assign(globalThis, {
+    HTMLElement: dom.window.HTMLElement,
+    Node: dom.window.Node,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
+  const React = await import("react");
+  const { act } = React;
+  const { createRoot } = await import("react-dom/client");
+  const { CodingSessionSubagentEntry } = await import(
+    "./CodingSessionSubagentEntry.tsx"
+  );
+  const { CodingSessionTurnSettlementContext } = await import(
+    "./CodingSessionTranscriptItem.tsx"
+  );
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  await act(async () => {
+    root.render(
+      React.createElement(
+        CodingSessionTurnSettlementContext.Provider,
+        { value: settlement },
+        React.createElement(CodingSessionSubagentEntry, {
+          disclosureId: "subagents:subagents-1",
+          entry,
+          onOpenChange: () => {},
+          open: false,
+          renderChild: () => null,
+        }),
+      ),
+    );
+  });
+  return {
+    container,
+    unmount: async () => {
+      await act(async () => root.unmount());
+      container.remove();
+    },
+  };
+}
+
+function openSpawnEntry() {
+  const entry = spawnEntry(1);
+  entry.label = "Kicked off 1 subagent";
+  entry.spawns[0].status = "running";
+  entry.spawns[0].call.status = "in_progress";
+  entry.spawns[0].call.result = "";
+  return entry;
+}
+
+test("a spawn that never answered reads through its turn's settlement, never a spinner over a settled turn", async () => {
+  const cases = [
+    ["live", "running", "1 working", "Kicked off 1 subagent", true],
+    ["settled", "stopped", "1 stopped", "Ran 1 subagent", false],
+    ["unknown", "unknown", "1 status unknown", "Ran 1 subagent", false],
+  ];
+  for (const [settlement, status, words, label, spins] of cases) {
+    const view = await mountInTurn(settlement, openSpawnEntry());
+    try {
+      const details = view.container.querySelector("details");
+      assert.equal(details.dataset.status, status, settlement);
+      const summary = details.querySelector("summary");
+      assert.equal(summary.getAttribute("aria-description"), words);
+      assert.equal(
+        view.container.querySelector(
+          '[data-testid="coding-session-subagents-status-summary"]',
+        ).textContent,
+        `· ${words}`,
+      );
+      assert.equal(summary.getAttribute("aria-label"), label);
+      assert.equal(
+        view.container.querySelector(".animate-spin") !== null,
+        spins,
+        settlement,
+      );
+      assert.equal(
+        view.container.querySelector('[aria-label="Running"]') !== null,
+        spins,
+      );
+      if (settlement === "unknown") {
+        assert.ok(
+          view.container.querySelector('[aria-label="Status unknown"]'),
+        );
+      }
+    } finally {
+      await view.unmount();
+    }
+  }
+});

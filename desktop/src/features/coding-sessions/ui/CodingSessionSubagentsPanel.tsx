@@ -76,24 +76,6 @@ export function CodingSessionSubagentsSection({
   );
 }
 
-/** The section on its own, for a session with spawns but no hired seats. */
-export function CodingSessionSubagentsSurface({
-  panel,
-}: {
-  panel: CodingSessionSubagentPanel;
-}) {
-  return (
-    <div
-      className="flex h-full min-h-0 flex-1 flex-col bg-background"
-      data-testid="coding-session-subagents-surface"
-    >
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
-        <CodingSessionSubagentsSection panel={panel} />
-      </div>
-    </div>
-  );
-}
-
 function SubagentRow({
   expanded,
   onToggle,
@@ -126,6 +108,8 @@ function SubagentRow({
               row.status === "done" && "bg-muted-foreground/60",
               row.status === "stopped" && "bg-muted-foreground/30",
               row.status === "failed" && "bg-destructive",
+              // Neither live nor settled: a hollow dot, no colour claim.
+              row.status === "unknown" && "border border-muted-foreground/60",
             )}
           />
           <span className="min-w-0 truncate text-xs font-semibold">
@@ -141,6 +125,7 @@ function SubagentRow({
               ? formatCodingSessionDuration(row.durationMs)
               : null}
             {row.status === "stopped" ? <span>Stopped</span> : null}
+            {row.status === "unknown" ? <span>Status unknown</span> : null}
             <CodingSessionSubagentStatusIcon status={row.status} />
           </span>
         </span>

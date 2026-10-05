@@ -98,10 +98,16 @@ export function agentProgressFooterParts(
  * back evidence the fold refused to resolve, the number below is a floor over
  * what this read returned. Printing it bare would turn an incomplete read into
  * a census.
+ *
+ * A read that has not settled says so and nothing more. "Did not complete" is
+ * a verdict, and it is reserved for a read that answered short; saying it
+ * while the read is still in flight claims a failure before the evidence
+ * exists (SV-49).
  */
 export function agentProgressFooterText(
   aggregate: AgentProgressAggregate,
 ): string {
+  if (aggregate.pending) return "Reading sessions…";
   const noun = aggregate.sessions === 1 ? "session" : "sessions";
   if (aggregate.sessions === 0) {
     return aggregate.atLeast

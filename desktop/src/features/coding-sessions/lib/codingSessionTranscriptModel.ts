@@ -128,6 +128,7 @@ export function deriveCodingSessionTranscriptModel(
   for (const candidate of ordered) {
     if (isMutableTurn(candidate)) lastTurn = candidate;
   }
+  const supersededTurns = findSupersededTurns(ordered, transcript);
   const blocks: CodingSessionTranscriptBlock[] = [];
   const diagnostics: TranscriptItem[] = [];
 
@@ -136,7 +137,7 @@ export function deriveCodingSessionTranscriptModel(
       const turn = deriveTurn(
         candidate,
         options.isWorking && candidate === lastTurn,
-        candidate !== lastTurn,
+        supersededTurns.has(candidate),
         subagents,
       );
       if (
@@ -165,6 +166,46 @@ export function deriveCodingSessionTranscriptModel(
   }
 
   return { blocks, diagnostics, sessionFacts };
+}
+
+/**
+ * The turns a later turn followed (SV-44): a turn is superseded only when
+ * some later turn **started after its last item**. Turns are ordered by first
+ * appearance, so "not the last turn" alone would end a turn that is still
+ * producing — a later prompt with its own turn id while the earlier turn
+ * runs (a queued prompt, or a provider that does not join a steer to the
+ * running turn) would read the earlier turn's in-flight calls as settled.
+ * Interleaved items say the earlier turn is still going, so it is not
+ * superseded; its own completion, or a turn that begins after it went quiet,
+ * ends it.
+ */
+function findSupersededTurns(
+  ordered: ReadonlyArray<MutableTurn | TranscriptItem>,
+  transcript: readonly TranscriptItem[],
+): ReadonlySet<MutableTurn> {
+  const position = new Map<TranscriptItem, number>();
+  transcript.forEach((item, index) => {
+    position.set(item, index);
+  });
+  const superseded = new Set<MutableTurn>();
+  let latestLaterStart = -1;
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const candidate = ordered[index];
+    if (!candidate || !isMutableTurn(candidate)) continue;
+    let first = Number.POSITIVE_INFINITY;
+    let last = -1;
+    for (const item of candidate.items) {
+      const at = position.get(item);
+      if (at === undefined) continue;
+      first = Math.min(first, at);
+      last = Math.max(last, at);
+    }
+    if (last >= 0 && latestLaterStart > last) superseded.add(candidate);
+    if (Number.isFinite(first)) {
+      latestLaterStart = Math.max(latestLaterStart, first);
+    }
+  }
+  return superseded;
 }
 
 /**
@@ -332,7 +373,11 @@ function deriveTurn(
       !echoes.has(normalizeContent(item.text)),
   );
   const isWorking = canBeWorking && completion === null;
-  const entries = groupAdjacentTools(narrative, subagents);
+  // Only a completed turn folds (a failed or stopped one stays open), so only
+  // there may a failed step before the answer join its neighbours' group.
+  const entries = groupAdjacentTools(narrative, subagents, {
+    foldsSettledWork: !isWorking && completion?.state === "completed",
+  });
   const startedAt = deriveTurnStartedAt(turn.items);
 
   return {

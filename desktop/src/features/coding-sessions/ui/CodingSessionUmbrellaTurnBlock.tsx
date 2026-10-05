@@ -34,6 +34,7 @@ import { codingSessionAgentAccent } from "./CodingSessionAgentFocus";
 import { CodingSessionMissionExecutionBundle } from "./CodingSessionMissionExecutionBundle";
 import type { CodingSessionTurnRestingStatus } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
+import { useCodingSessionOpenAgentsSurface } from "./CodingSessionTranscriptAgentsSurface";
 import type { CodingSessionUmbrellaComposerPrefill } from "./CodingSessionUmbrellaComposer";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
@@ -262,6 +263,7 @@ export function CodingSessionUmbrellaTurnBlock({
   // ordinary signer-based byline renders instead of a name nobody here can
   // check.
   const hireOutcomes = useCodingSessionHireOutcomes();
+  const openAgentsSurface = useCodingSessionOpenAgentsSurface();
   const hireDispatch = React.useMemo(
     () =>
       codingSessionHireDispatchLabelForSeat(hireOutcomes, {
@@ -366,7 +368,10 @@ export function CodingSessionUmbrellaTurnBlock({
   return (
     <article
       className={cn(
-        "group/turn relative border-t border-l-2 border-border/40 pt-5 pb-1 pl-4 first:border-t-0 first:pt-1 transition-colors",
+        // SV-08: no rule above each turn — the timeline's gap separates
+        // blocks, and the hairline under a "Worked for …" row is the only
+        // rule. The left rail stays: it says whose turn this is.
+        "group/turn relative border-l-2 border-border/40 pt-1 pb-1 pl-4 transition-colors",
         // Mission's card grammar goes in the middle, never last: it carries a
         // neutral `border-border/60` and a `bg-background`, and tailwind-merge
         // lets the *last* colour in each group win. Merged after the accent it
@@ -508,6 +513,7 @@ export function CodingSessionUmbrellaTurnBlock({
         hireDispatch={hireDispatch}
         isWorking={isWorking}
         items={narrativeItems}
+        onOpenAgentsSurface={openAgentsSurface ?? undefined}
         operatorProfiles={operatorProfiles}
         resolveSeat={resolvePromptSeat}
         restingStatus={blockRestingStatus}

@@ -51,6 +51,7 @@ export function CompactToolSummaryRow({
   failureDetail = null,
   failureTone: failureToneProp,
   fileEditSummary,
+  hasLeadingIcon = false,
   kind,
   label,
   preview,
@@ -70,6 +71,12 @@ export function CompactToolSummaryRow({
    */
   failureTone?: CompactToolFailureTone;
   fileEditSummary: CompactFileEditSummary | null;
+  /**
+   * The row already leads with a kind glyph that carries the failure tint
+   * (`ToolItemRowIcon`), so the failure labels drop their own CircleX rather
+   * than draw a second failure mark.
+   */
+  hasLeadingIcon?: boolean;
   kind: CompactToolKind;
   label: string;
   preview: string | null;
@@ -95,12 +102,13 @@ export function CompactToolSummaryRow({
         <QuietFailedToolLabel
           action={action}
           detail={failureDetail}
+          hasLeadingIcon={hasLeadingIcon}
           label={label}
           preview={preview}
         />
       ) : failed ? (
         <span className="inline-flex min-w-0 items-center gap-1.5 font-semibold text-destructive">
-          <CircleX className="size-3.5 shrink-0" />
+          {hasLeadingIcon ? null : <CircleX className="size-3.5 shrink-0" />}
           <span className="shrink-0">Tool call failed</span>
           {preview ? (
             <span className="min-w-0 truncate font-normal" title={preview}>
@@ -173,11 +181,13 @@ export function CompactToolSummaryRow({
 function QuietFailedToolLabel({
   action,
   detail,
+  hasLeadingIcon,
   label,
   preview,
 }: {
   action: AgentActivityAction | null;
   detail: string | null;
+  hasLeadingIcon: boolean;
   label: string;
   preview: string | null;
 }) {
@@ -193,11 +203,13 @@ function QuietFailedToolLabel({
       )}
       data-failure-tone="quiet"
     >
-      <CircleX
-        aria-label="Failed"
-        className="size-3.5 shrink-0 text-destructive/40"
-        role="img"
-      />
+      {hasLeadingIcon ? null : (
+        <CircleX
+          aria-label="Failed"
+          className="size-3.5 shrink-0 text-destructive/40"
+          role="img"
+        />
+      )}
       <span className="shrink-0 font-semibold">
         <RedactedText text={ran ? ran.verb : label} />
       </span>

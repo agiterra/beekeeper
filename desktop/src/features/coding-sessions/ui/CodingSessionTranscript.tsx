@@ -15,8 +15,12 @@ import type {
 } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import type { CodingSessionWakeOperationIndex } from "@/features/coding-sessions/lib/codingSessionWakeReading";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
+import { deriveCodingSessionMinimapItemsFromModel } from "@/features/coding-sessions/lib/codingSessionTranscriptMinimapItems";
 import { RedactionDictionaryContext } from "@/shared/ui/redactionDictionary";
-import { VirtualizedList } from "@/shared/ui/VirtualizedList";
+import {
+  type ListVirtualizer,
+  VirtualizedList,
+} from "@/shared/ui/VirtualizedList";
 import { useRedactionDictionary } from "../useRedactionDictionary";
 import {
   CodingSessionDisclosureContext,
@@ -39,7 +43,10 @@ import {
   type CodingSessionRowKind,
 } from "./CodingSessionTranscriptRhythm";
 import { CodingSessionOpenAgentsSurfaceContext } from "./CodingSessionTranscriptAgentsSurface";
+import { CodingSessionTranscriptMinimap } from "./CodingSessionTranscriptMinimap";
+import { useCodingSessionTranscriptMinimapNavigation } from "./CodingSessionTranscriptMinimapNavigation";
 import { shouldClampCodingSessionUserMessage } from "./CodingSessionTranscriptUserMessage";
+import { useCodingSessionSurfaceCtx } from "./surfaces/codingSessionSurfaceContext";
 import {
   CodingSessionEntry,
   CodingSessionTranscriptTurnPolicyContext,
@@ -227,6 +234,37 @@ export function CodingSessionTranscript({
     [rows],
   );
 
+  const shouldVirtualize =
+    rows.length > CODING_SESSION_VIRTUALIZATION_THRESHOLD &&
+    scrollRef !== undefined;
+  // SV-26: the single layout's minimap. Only the workspace's own transcript
+  // (the one handed the pane's scroller) draws it; an umbrella turn block's
+  // transcript is one turn of a narrative whose view draws its own.
+  const surfaceCtx = useCodingSessionSurfaceCtx();
+  const drawsMinimap =
+    surfaceCtx?.layout === "single" && scrollRef !== undefined;
+  const minimapItems = React.useMemo(
+    () =>
+      drawsMinimap
+        ? deriveCodingSessionMinimapItemsFromModel(
+            model,
+            currentUserPubkey ?? null,
+          )
+        : [],
+    [currentUserPubkey, drawsMinimap, model],
+  );
+  const virtualizerRef = React.useRef<ListVirtualizer | null>(null);
+  const handleVirtualizer = React.useCallback(
+    (virtualizer: ListVirtualizer) => {
+      virtualizerRef.current = virtualizer;
+    },
+    [],
+  );
+  const minimapNavigation = useCodingSessionTranscriptMinimapNavigation({
+    scrollRef,
+    virtualizerRef: shouldVirtualize ? virtualizerRef : null,
+  });
+
   if (rows.length === 0) {
     return (
       <div
@@ -252,9 +290,6 @@ export function CodingSessionTranscript({
       </div>
     );
   }
-
-  const shouldVirtualize =
-    rows.length > CODING_SESSION_VIRTUALIZATION_THRESHOLD && scrollRef;
 
   return (
     <RedactionDictionaryContext.Provider value={redactions}>
@@ -282,6 +317,7 @@ export function CodingSessionTranscript({
                       getItemKey={getCodingSessionTranscriptRowKey}
                       innerClassName="w-full"
                       items={rows}
+                      onVirtualizer={handleVirtualizer}
                       overscan={6}
                       renderItem={renderCodingSessionTranscriptVirtualRow}
                       scrollRef={scrollRef}
@@ -298,6 +334,14 @@ export function CodingSessionTranscript({
                       ))}
                     </div>
                   )}
+                  {drawsMinimap ? (
+                    <CodingSessionTranscriptMinimap
+                      items={minimapItems}
+                      onSelect={minimapNavigation.select}
+                      resolveElement={minimapNavigation.resolveElement}
+                      scrollRef={scrollRef}
+                    />
+                  ) : null}
                   {showWorkingIndicator ? (
                     <span
                       aria-atomic="true"

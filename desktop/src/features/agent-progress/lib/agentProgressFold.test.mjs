@@ -72,6 +72,7 @@ function fold(sessions, options = {}) {
     nowSeconds: NOW,
     complete: options.complete ?? true,
     ambiguities: options.ambiguities ?? [],
+    pending: options.pending,
   });
 }
 
@@ -340,6 +341,16 @@ test("zero sessions is scoped to this read, never to the world", () => {
   );
   const partial = fold([], { complete: false });
   assert.match(agentProgressFooterText(partial.aggregate), /did not complete/);
+});
+
+/** SV-49: pending is not incomplete; the verdict waits for the evidence. */
+test("a pending read is not called incomplete", () => {
+  const pending = fold([], { complete: false, pending: true });
+  assert.equal(pending.aggregate.pending, true);
+  assert.equal(agentProgressFooterText(pending.aggregate), "Reading sessions…");
+  const settled = fold([], { complete: false });
+  assert.equal(settled.aggregate.pending, false);
+  assert.match(agentProgressFooterText(settled.aggregate), /did not complete/);
 });
 
 test("local transcript enriches a lane; its absence is stated, not hidden", () => {

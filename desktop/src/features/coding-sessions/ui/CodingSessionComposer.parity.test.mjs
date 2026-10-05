@@ -90,9 +90,13 @@ test("SV-18: the identity chip leads with the provider's mark", () => {
   );
   assert.ok(
     chip.indexOf('data-provider-mark="claude"') <
-      chip.indexOf("Claude Code · "),
+      chip.indexOf(">Claude Opus 5<"),
     "the mark comes before the model name",
   );
+  // T3's chip names the model alone; the provider is in its title and the
+  // identity popover, one click away.
+  assert.match(chip, /title="Claude Code · Claude Opus 5"/);
+  assert.match(chip.slice(0, chip.indexOf("</button>")), /lucide-chevron-down/);
   const codex = render({
     controlContext: controlContext({
       model: "gpt-5-codex",
@@ -119,4 +123,12 @@ test("SV-17: the deck carries the sandbox chip when the workspace supplies one",
   });
   assert.match(full, /data-testid="coding-session-control-sandbox"/);
   assert.match(full, />Full access</);
+});
+
+test("SV-18: with no model named the chip falls back to the provider", () => {
+  const markup = render({ controlContext: controlContext({ model: null }) });
+  const chip = markup.slice(
+    markup.indexOf('data-testid="coding-session-control-identity"'),
+  );
+  assert.match(chip.slice(0, chip.indexOf("</button>")), />Claude Code</);
 });

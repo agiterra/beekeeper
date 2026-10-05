@@ -12,6 +12,8 @@ import {
   gateSourceTitle,
 } from "@/features/coding-sessions/lib/codingSessionObservationView";
 import { CodingSessionGateRows } from "./CodingSessionGateRows";
+import type { CodingSessionObservationNotLive } from "@/features/coding-sessions/lib/codingSessionObservationLiveness";
+import { CodingSessionGateStartRows } from "./CodingSessionGateStartRows";
 
 /**
  * The observer's screen: kind 44246, per author and per phase.
@@ -33,10 +35,13 @@ export function CodingSessionObservationSections({
   view,
   loading = false,
   errorMessage = null,
+  notLive = null,
 }: {
   view: CodingSessionObservationView;
   loading?: boolean;
   errorMessage?: string | null;
+  /** Set while this read is not kept live; open gate runs say so. */
+  notLive?: CodingSessionObservationNotLive | null;
 }) {
   if (errorMessage !== null) {
     return (
@@ -73,7 +78,12 @@ export function CodingSessionObservationSections({
       ) : (
         <div className="space-y-4">
           {view.seats.map((seat) => (
-            <SeatBlock key={seat.key} seat={seat} />
+            <SeatBlock
+              key={seat.key}
+              notLive={notLive}
+              seat={seat}
+              staleAfterMs={view.gateStartStaleAfterMs}
+            />
           ))}
         </div>
       )}
@@ -166,7 +176,15 @@ export function CodingSessionObservationSections({
   );
 }
 
-function SeatBlock({ seat }: { seat: CodingSessionObservationSeatBlock }) {
+function SeatBlock({
+  notLive,
+  seat,
+  staleAfterMs,
+}: {
+  notLive: CodingSessionObservationNotLive | null;
+  seat: CodingSessionObservationSeatBlock;
+  staleAfterMs: number | null;
+}) {
   return (
     <section
       className="rounded-lg border border-border/60 p-2.5"
@@ -201,6 +219,14 @@ function SeatBlock({ seat }: { seat: CodingSessionObservationSeatBlock }) {
         <CodingSessionGateRows
           rows={seat.gates}
           testId="coding-session-seat-gates"
+        />
+        {/* SV-41: the gate runs this watcher signed as started. They left
+            "Phase timing" and are listed here, under the outcomes. */}
+        <CodingSessionGateStartRows
+          gateRows={seat.gates}
+          notLive={notLive}
+          staleAfterMs={staleAfterMs}
+          starts={seat.gateStarts}
         />
       </Section>
 

@@ -14,6 +14,12 @@ type NonMemberMentionDialogProps = {
   canInvite: boolean;
   error: string | null;
   isInvitePending: boolean;
+  /**
+   * True when the channel's member list could not be read, so every mention
+   * is asked about. The headline then says membership is unconfirmed instead
+   * of claiming these people are not in the channel.
+   */
+  membershipUnknown?: boolean;
   names: string[];
   onDismiss: () => void;
   onDoNothing: () => void;
@@ -25,6 +31,7 @@ export function NonMemberMentionDialog({
   canInvite,
   error,
   isInvitePending,
+  membershipUnknown = false,
   names,
   onDismiss,
   onDoNothing,
@@ -46,8 +53,9 @@ export function NonMemberMentionDialog({
             Mention people outside this channel?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {names.join(", ")} {names.length === 1 ? "is" : "are"} not in this
-            channel.{" "}
+            {membershipUnknown
+              ? `Could not confirm whether ${names.join(", ")} ${names.length === 1 ? "is" : "are"} in this channel.`
+              : `${names.join(", ")} ${names.length === 1 ? "is" : "are"} not in this channel.`}{" "}
             {canInvite
               ? "Invite them to the channel, or send without inviting them."
               : `${PRIVATE_CHANNEL_ADD_DENIED_MESSAGE} You can still send without inviting them.`}

@@ -21,6 +21,7 @@ import {
   codingSessionExecutionSandbox,
   codingSessionExecutionSandboxes,
 } from "./codingSessionUmbrellaExecutionSandbox.ts";
+import { codingSessionSessionFacts } from "./CodingSessionWorkspaceSessionFacts.ts";
 
 const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
 const CLAUDE_SIGNER = "a".repeat(64);
@@ -260,4 +261,68 @@ test("a seat that leaves drops out of the reports", () => {
     first,
   );
   assert.deepEqual([...next.reports.keys()], ["A"]);
+});
+
+/** An item that counts every property the classifier reads from it. */
+function watched(item, reads) {
+  return new Proxy(item, {
+    get(target, property, receiver) {
+      reads.count += 1;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
+test("SV-46: an append classifies only the tail and equals a full read", () => {
+  let transcript = [];
+  let facts = codingSessionSessionFacts(transcript, null, null);
+  let previousTranscript = transcript;
+  // A deterministic mix of messages, boundary and isolation-free facts.
+  for (let index = 0; index < 120; index += 1) {
+    const next =
+      index % 17 === 0
+        ? full(`f${index}`)
+        : index % 23 === 0
+          ? safe(`s${index}`)
+          : { id: `m${index}`, type: "message", text: "x" };
+    // Sometimes a burst of several items lands in one projection.
+    const burst =
+      index % 5 === 0 ? [next, { id: `b${index}`, type: "tool" }] : [next];
+    transcript = [...transcript, ...burst];
+    facts = codingSessionSessionFacts(transcript, facts, previousTranscript);
+    previousTranscript = transcript;
+    assert.deepEqual(facts, codingSessionSessionFacts(transcript, null, null));
+  }
+});
+
+test("SV-46: earlier items are not read again, and a replaced item forces a full read", () => {
+  const reads = { count: 0 };
+  const earlier = Array.from({ length: 40 }, (_, index) =>
+    watched({ id: `m${index}`, type: "message", text: "x" }, reads),
+  );
+  const first = codingSessionSessionFacts(earlier, null, null);
+  reads.count = 0;
+  const appended = [...earlier, full("f-new")];
+  const next = codingSessionSessionFacts(appended, first, earlier);
+  assert.equal(reads.count, 0, "an earlier item was classified again");
+  assert.deepEqual(
+    next.map((item) => item.id),
+    ["f-new"],
+  );
+  // A message appended with no fact keeps the facts' reference.
+  const quiet = [...appended, { id: "m-new", type: "message" }];
+  assert.equal(codingSessionSessionFacts(quiet, next, appended), next);
+
+  // Not an extension: the first item was replaced in place.
+  const replaced = [full("f-replaced"), ...appended.slice(1)];
+  const reread = codingSessionSessionFacts(replaced, next, appended);
+  assert.deepEqual(
+    reread.map((item) => item.id),
+    ["f-replaced", "f-new"],
+  );
+  // Shorter is not an extension either.
+  assert.deepEqual(
+    codingSessionSessionFacts(earlier.slice(0, 3), next, appended),
+    [],
+  );
 });

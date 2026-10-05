@@ -501,9 +501,11 @@ test("groups each run of settled successful tools into one sentence row", () => 
       ["item", "tool-6"],
     ],
   );
+  // T3's sentence names two kinds — commands and edits outrank reads — and
+  // counts the rest, so nothing goes uncounted.
   assert.equal(
     turn.entries[1].label,
-    "Ran 3 commands, read 1 file and edited 1 file",
+    "Ran 3 commands, changed 1 file, and performed 1 other action",
   );
   assert.equal(turn.entries[1].items.length, 5);
   assert.equal(turn.isWorking, true);
@@ -525,12 +527,14 @@ test("tool sentence counts files once each and calls otherwise", () => {
     ]),
     "Read 2 files and ran 2 commands",
   );
+  const generic = (id) => ({
+    ...tool({ id, renderClass: "generic" }),
+    title: "lookup_weather",
+    toolName: "lookup_weather",
+  });
   assert.equal(
-    summarizeCodingSessionTools([
-      tool({ id: "g1", renderClass: "generic" }),
-      tool({ id: "g2", renderClass: "generic" }),
-    ]),
-    "Ran 2 tool calls",
+    summarizeCodingSessionTools([generic("g1"), generic("g2")]),
+    "Used 2 tools",
   );
   assert.equal(summarizeCodingSessionTools([]), "");
 });

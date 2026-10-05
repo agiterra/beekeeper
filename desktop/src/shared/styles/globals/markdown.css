@@ -221,17 +221,29 @@
 }
 
 /* SV-10: inline code is a bordered pill (T3 Code's `.chat-markdown
-   :not(pre) > code`): a hairline border, a slightly wider inline padding than
-   a mention chip, and a size relative to the sentence so it never towers over
-   prose — 14px body gives 12px code, a 16px session answer 13.6px. */
+   :not(pre) > code`): a hairline border, 0.1rem / 0.35rem padding, regular
+   weight, and a size relative to the sentence so it never towers over prose —
+   14px body gives 12px code, a 16px session answer 13.6px.
+
+   Unlike a mention chip it is a plain inline box, not `inline-flex`: a long
+   span such as `{commit, path, content hash}` breaks across lines with the
+   sentence, as T3 draws it (ref sv11-t3-table), instead of forcing a
+   rectangle that overflows the column. Each line fragment is sliced, not
+   cloned, so a wrapped pill reads as one pill. */
 .message-markdown .inline-code-chip,
 .message-markdown :not(pre) > code {
+  display: inline;
+  min-height: 0;
   font-size: var(--inline-code-font-size);
   font-family: ui-monospace, monospace;
+  font-weight: 400;
+  line-height: inherit;
   background: hsl(var(--muted) / 0.7);
   border: 1px solid hsl(var(--border));
   border-radius: 0.375rem;
-  padding-inline: 0.35rem;
+  padding: 0.1rem 0.35rem;
+  box-decoration-break: slice;
+  -webkit-box-decoration-break: slice;
   color: inherit;
 }
 
@@ -362,6 +374,25 @@
   overflow-wrap: anywhere;
 }
 
+/* ── Code block height ────────────────────────────────────────────────
+ * In channels and threads a fenced block is capped at 25rem and scrolls
+ * inside itself, so a pasted 500-line log does not take over the timeline or
+ * the virtualized list's measurements. `CodeBlock.tsx` draws an always-visible
+ * expand control whenever the cap is hiding lines, and flips
+ * `data-height-capped` to lift it. A coding session reads like T3 Code: its
+ * blocks are uncapped and the page's own scroll reads them (SV-12), so the
+ * session column removes the cap and the control, finding nothing hidden,
+ * is never drawn there. */
+[data-code-block][data-height-capped="true"] > pre {
+  max-height: 25rem;
+  overflow-y: auto;
+}
+
+[data-coding-session-column] [data-code-block][data-height-capped] > pre {
+  max-height: none;
+  overflow-y: visible;
+}
+
 /* The scroll affordance for code blocks and tables. A scroller that still has
  * content to its right fades at that edge, because the platform's overlay
  * scrollbar paints nothing until the user is already scrolling — leaving a
@@ -404,8 +435,28 @@
     [data-role="assistant-message"] > .message-markdown,
     .message-markdown.markdown-document
   )
-  :is(strong, h1, h2, h3, h4, h5, th) {
+  :is(strong, h1, h2, h3, h4, h5, th, :not(pre) > code) {
   color: hsl(var(--foreground));
+}
+
+/* Bold list leads read as bold, not semibold: T3 leaves `strong` at the
+   browser's `bolder`, a full step above the 600 headings. */
+:is(
+    [data-role="assistant-message"] > .message-markdown,
+    .message-markdown.markdown-document
+  )
+  strong {
+  font-weight: 700;
+}
+
+/* List markers take the prose colour, as T3's do, rather than the muted
+   marker channel chat uses. */
+:is(
+    [data-role="assistant-message"] > .message-markdown,
+    .message-markdown.markdown-document
+  )
+  li::marker {
+  color: inherit;
 }
 
 :is(
@@ -500,14 +551,17 @@
  * diagnostics-table look: no outer box, no header fill, a divider under every
  * row. `shared/ui/markdown/MarkdownTable.tsx` flips `data-expanded`:
  *
- * - expanded (default): the table fills the column and cells wrap at word
- *   boundaries, so the narrowest a column gets is its longest word and a
- *   table that still cannot fit scrolls;
- * - collapsed: every cell stays on one line and the table scrolls sideways.
+ * - expanded (default — T3's word-wrap default): the table fills the column
+ *   and cells wrap at word boundaries, so the narrowest a column gets is its
+ *   longest word and a table that still cannot fit scrolls;
+ * - collapsed: every cell stays on one line, a cell wider than 24rem ends in
+ *   an ellipsis (T3's `max-width: 24rem; text-overflow: ellipsis`), and the
+ *   table scrolls sideways. The ellipsis discloses the cut, Expand is one
+ *   click away, and Copy table always copies every cell in full.
  *
- * Neither mode truncates: collapsing changes the layout, never what is
- * shown. The markdown root wraps anywhere; that is reset here or columns
- * shrink to single characters. */
+ * The markdown root wraps anywhere; that is reset here or columns shrink to
+ * single characters. `COLLAPSED_CELL_MAX_WIDTH` in MarkdownTable.tsx mirrors
+ * the 24rem. */
 [data-table-container] table {
   overflow-wrap: normal;
   word-break: normal;
@@ -524,6 +578,9 @@
 
 [data-table-container][data-expanded="false"] :is(th, td) {
   white-space: nowrap;
+  overflow: hidden;
+  max-width: 24rem;
+  text-overflow: ellipsis;
 }
 
 [data-table-container] th {

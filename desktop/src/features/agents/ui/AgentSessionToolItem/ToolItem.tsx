@@ -27,7 +27,11 @@ import {
 import { getSentMessageLink } from "./messageLinks";
 import { isTodoSummary, TodoToolSummary } from "./TodoToolSummary";
 import { ToolDetailBlocks } from "./ToolDetailBlocks";
-import { ACTIVITY_ROW_LINE_CLASS } from "./ToolItemRowClasses";
+import {
+  ACTIVITY_ROW_DETAIL_INSET_CLASS,
+  ACTIVITY_ROW_LINE_CLASS,
+} from "./ToolItemRowClasses";
+import { compactToolRowIcon, ToolItemRowIcon } from "./ToolItemRowIcon";
 
 type ToolItemProps = AgentTranscriptIdentityProps & {
   item: Extract<TranscriptItem, { type: "tool" }>;
@@ -46,6 +50,12 @@ type ToolItemProps = AgentTranscriptIdentityProps & {
    * `CompactToolFailureToneContext`, which is `alarm` outside any fold.
    */
   failureTone?: CompactToolFailureTone;
+  /**
+   * Lead the row with its 16px kind glyph (SV-06), as every other activity
+   * row in the coding-session transcript does. Off by default, so the
+   * managed-agent views keep their own row.
+   */
+  leadingIcon?: boolean;
 };
 
 /**
@@ -65,6 +75,7 @@ export const ToolItem = React.memo(function ToolItem({
   agentPubkey,
   failureTone: failureToneProp,
   item,
+  leadingIcon = false,
   onOpenChange,
   open,
   profiles,
@@ -169,7 +180,15 @@ export const ToolItem = React.memo(function ToolItem({
             ACTIVITY_ROW_LINE_CLASS,
             compactSummaryTone(failed, failureTone),
           )}
+          data-leading-icon={leadingIcon ? "" : undefined}
         >
+          {leadingIcon ? (
+            <ToolItemRowIcon
+              failed={failed}
+              icon={compactToolRowIcon(compactSummary)}
+              quiet={quietFailure}
+            />
+          ) : null}
           <CompactToolSummaryRow
             action={compactSummary.action}
             duration={duration}
@@ -179,6 +198,10 @@ export const ToolItem = React.memo(function ToolItem({
             }
             failureTone={failureTone}
             fileEditSummary={compactSummary.fileEditSummary}
+            // With a leading glyph the failure mark moves onto that glyph,
+            // so the summary row drops its own `CircleX` rather than draw it
+            // twice. Its words ("Tool call failed", "· exit 2") stay.
+            hasLeadingIcon={leadingIcon}
             kind={compactSummary.kind}
             preview={compactSummary.preview}
             thumbnailSrc={compactSummary.thumbnailSrc}
@@ -199,26 +222,34 @@ export const ToolItem = React.memo(function ToolItem({
         </summary>
 
         {isExpanded || (failed && !quietFailure) ? (
-          <ToolDetailBlocks
-            args={item.args}
-            description={buzzTool?.label}
-            fileEditDiff={compactSummary.fileEditDiff}
-            fileReadContent={compactSummary.fileReadContent}
-            hasArgs={hasArgs}
-            hasResult={hasResult}
-            imagePreview={
-              compactSummary.imageContent != null && isExpanded
-                ? {
-                    src: compactSummary.imageContent.src,
-                    title: compactSummary.imageContent.title,
-                  }
-                : null
+          // With a leading glyph, the detail starts under the label (T3's
+          // `WorkLogDetails` inset), not under the glyph.
+          <div
+            className={
+              leadingIcon ? ACTIVITY_ROW_DETAIL_INSET_CLASS : undefined
             }
-            isError={failed}
-            outputGap={item.outputGap}
-            result={item.result}
-            shellCommand={compactSummary.shellContent}
-          />
+          >
+            <ToolDetailBlocks
+              args={item.args}
+              description={buzzTool?.label}
+              fileEditDiff={compactSummary.fileEditDiff}
+              fileReadContent={compactSummary.fileReadContent}
+              hasArgs={hasArgs}
+              hasResult={hasResult}
+              imagePreview={
+                compactSummary.imageContent != null && isExpanded
+                  ? {
+                      src: compactSummary.imageContent.src,
+                      title: compactSummary.imageContent.title,
+                    }
+                  : null
+              }
+              isError={failed}
+              outputGap={item.outputGap}
+              result={item.result}
+              shellCommand={compactSummary.shellContent}
+            />
+          </div>
         ) : null}
       </details>
     </div>

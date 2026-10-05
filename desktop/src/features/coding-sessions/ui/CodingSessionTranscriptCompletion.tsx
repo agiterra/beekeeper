@@ -61,7 +61,9 @@ export function CodingSessionWorkedFold({
         className={cn(
           "group/fold-row cursor-pointer text-muted-foreground hover:text-foreground",
           ACTIVITY_ROW_LINE_CLASS,
-          "gap-1.5",
+          // T3's fold button is `px-1 gap-1`: the label sits where the
+          // prose does, not where an icon would.
+          "gap-1 px-1",
         )}
         data-hidden-count={fold.hiddenIndexes.length}
         data-testid="coding-session-worked-fold"
@@ -217,7 +219,7 @@ export function CodingSessionTurnCompletion({
               title="Copy response"
               type="button"
             >
-              <Copy aria-hidden className="size-3.5" />
+              <Copy aria-hidden className="size-3" />
             </button>
           ) : null}
           {time ? (

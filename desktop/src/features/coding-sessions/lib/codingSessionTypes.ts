@@ -276,7 +276,13 @@ export type GlobalCodingSessionCatalogSnapshot = {
 };
 
 export type CodingSessionWorkspaceStatus =
-  | { kind: "working"; label: "Working" }
+  /**
+   * The producer is on it (`Working`), or the provider signed `starting` and
+   * is not on a turn yet (`Starting`). Starting keeps the `working` kind —
+   * it is live and stoppable — but its own word, because nothing on screen
+   * may settle a call as live under it (SV-43).
+   */
+  | { kind: "working"; label: "Working" | "Starting" }
   /**
    * Founded, never started: a genesis (with a goal and a name) and no
    * execution. Umbrella-level and produced only by the founded projection;

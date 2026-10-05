@@ -71,7 +71,11 @@ export function useCodingSessionUmbrellaContinuity(
     codingSessionGenerationTranscripts(execution),
     previousRef.current,
   );
-  previousRef.current = next;
+  // Committed, never written during render (SV-45, as in
+  // `useCodingSessionExecutionSandboxes`).
+  React.useLayoutEffect(() => {
+    previousRef.current = next;
+  });
   const { facts } = next;
   return React.useMemo(() => codingSessionContinuityRows(facts), [facts]);
 }

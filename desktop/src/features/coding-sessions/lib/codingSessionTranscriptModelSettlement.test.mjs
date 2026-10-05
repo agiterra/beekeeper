@@ -5,7 +5,9 @@ import {
   resolveCodingSessionExecutionRestingStatus,
   resolveCodingSessionTurnSettlement,
   resolveCodingSessionUmbrellaBlockRestingStatuses,
+  resolveCodingSessionWorkspaceSettlement,
 } from "./codingSessionTranscriptModelSettlement.ts";
+import { deriveCodingSessionWorkspaceStatus } from "./codingSessionWorkspaceModel.ts";
 
 const completion = { state: "completed" };
 
@@ -196,4 +198,233 @@ test("a replaced generation's open turn is stopped", () => {
     [old],
   );
   assert.equal(statuses.get(key(old)), "stopped");
+});
+
+/**
+ * SV-43: the single workspace's settlement for one signed status, as it
+ * derives it — the header status from the transcript and the wire, then the
+ * shared map.
+ */
+function singleViewSettlement(wireStatus, transcript = []) {
+  return resolveCodingSessionWorkspaceSettlement({
+    wireStatus,
+    workspaceStatus: deriveCodingSessionWorkspaceStatus(
+      transcript,
+      wireStatus,
+      null,
+    ),
+  });
+}
+
+test("SV-43: one signed status settles the same open turn alike in both views", () => {
+  const openTurn = [{ id: "tool-1", type: "tool", turnId: "turn-1" }];
+  const latest = block(1);
+  for (const status of [
+    "running",
+    "idle",
+    "completed",
+    "stopped",
+    "failed",
+    "interrupted",
+    "starting",
+    "waiting_for_input",
+    "disconnected",
+    "unknown",
+  ]) {
+    const mission = resolveCodingSessionUmbrellaBlockRestingStatuses(
+      umbrellaWith(status),
+      [latest],
+    ).get(key(latest));
+    const single = singleViewSettlement(status, openTurn);
+    const open = { completion: null, superseded: false };
+    assert.equal(
+      resolveCodingSessionTurnSettlement(
+        { ...open, isWorking: single.isWorking },
+        single.restingStatus,
+      ),
+      resolveCodingSessionTurnSettlement(
+        { ...open, isWorking: status === "running" },
+        mission,
+      ),
+      status,
+    );
+  }
+});
+
+test("SV-43: the header says Working exactly when the transcript shows a live turn", () => {
+  const transcripts = {
+    empty: [],
+    openTurn: [{ id: "tool-1", type: "tool", turnId: "turn-1" }],
+    statusRow: [
+      {
+        id: "status-1",
+        type: "lifecycle",
+        title: "Status",
+        text: "running",
+        timestamp: "2026-10-04T00:00:00Z",
+      },
+    ],
+  };
+  for (const status of [
+    undefined,
+    "running",
+    "idle",
+    "completed",
+    "stopped",
+    "failed",
+    "interrupted",
+    "starting",
+    "waiting_for_input",
+    "disconnected",
+    "unknown",
+  ]) {
+    for (const [name, transcript] of Object.entries(transcripts)) {
+      const header = deriveCodingSessionWorkspaceStatus(
+        transcript,
+        status,
+        null,
+      );
+      const { isWorking, restingStatus } = singleViewSettlement(
+        status,
+        transcript,
+      );
+      const live =
+        resolveCodingSessionTurnSettlement(
+          { completion: null, isWorking, superseded: false },
+          restingStatus,
+        ) === "live";
+      const label = `${String(status)} / ${name}`;
+      assert.equal(header.label === "Working", live, label);
+      if (status === "starting") assert.equal(header.label, "Starting", label);
+    }
+  }
+});
+
+test("SV-43: failed reads stopped in both views, starting is live in neither", () => {
+  const latest = block(1);
+  const missionFailed = resolveCodingSessionUmbrellaBlockRestingStatuses(
+    umbrellaWith("failed"),
+    [latest],
+  ).get(key(latest));
+  assert.equal(missionFailed, "stopped");
+  assert.deepEqual(singleViewSettlement("failed"), {
+    isWorking: false,
+    restingStatus: "stopped",
+  });
+  const openTurn = [{ id: "tool-1", type: "tool", turnId: "turn-1" }];
+  // The header reads a starting provider in its own word, not Working…
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(openTurn, "starting", null),
+    { kind: "working", label: "Starting" },
+  );
+  // …and nothing settles a call under it as live.
+  assert.deepEqual(singleViewSettlement("starting", openTurn), {
+    isWorking: false,
+    restingStatus: "unknown",
+  });
+});
+
+test("SV-42: an Idle or Ended session settles its unfinished call as stopped", () => {
+  for (const status of ["idle", "completed", "stopped", "interrupted"]) {
+    const { isWorking, restingStatus } = singleViewSettlement(status);
+    assert.equal(isWorking, false, status);
+    assert.equal(restingStatus, "stopped", status);
+    assert.equal(
+      resolveCodingSessionTurnSettlement(
+        { completion: null, isWorking, superseded: false },
+        restingStatus,
+      ),
+      "settled",
+      status,
+    );
+  }
+  assert.deepEqual(singleViewSettlement(undefined), {
+    isWorking: false,
+    restingStatus: "unknown",
+  });
+});
+
+test("a status the lease demoted vouches for nothing, not even a signed running", () => {
+  const demoted = resolveCodingSessionWorkspaceSettlement({
+    wireStatus: "running",
+    workspaceStatus: {
+      kind: "unknown",
+      label: "No provider answering",
+      attention: "unreachable",
+    },
+  });
+  assert.deepEqual(demoted, { isWorking: false, restingStatus: "unknown" });
+  assert.deepEqual(singleViewSettlement("running"), {
+    isWorking: true,
+    restingStatus: "running",
+  });
+});
+
+test("a signed running the newer transcript overrode settles nothing", () => {
+  assert.deepEqual(
+    resolveCodingSessionWorkspaceSettlement({
+      wireStatus: "running",
+      workspaceStatus: { kind: "idle", label: "Idle" },
+    }),
+    { isWorking: false, restingStatus: "unknown" },
+  );
+});
+
+// SV-44 on Mission's blocks, mirroring codingSessionTranscriptModelSupersession:
+// a later turn ends an earlier one only if it starts after the earlier turn's
+// last block.
+
+test("SV-44: a later turn whose blocks interleave with an earlier turn's does not stop it", () => {
+  // turn-a runs `long-build`; a queued prompt opens turn-b; turn-a keeps
+  // publishing after it.
+  const longBuild = block(1, { turnId: "turn-a" });
+  const queued = block(2, { turnId: "turn-b" });
+  const stillBuilding = block(3, { turnId: "turn-a" });
+  const entries = [longBuild, queued, stillBuilding];
+  const running = resolveCodingSessionUmbrellaBlockRestingStatuses(
+    umbrellaWith("running"),
+    entries,
+  );
+  assert.equal(running.get(key(longBuild)), "running");
+  assert.equal(running.get(key(queued)), "running");
+  assert.equal(running.get(key(stillBuilding)), "running");
+  // The active generation's signed status still decides once nothing in the
+  // timeline does.
+  const idle = resolveCodingSessionUmbrellaBlockRestingStatuses(
+    umbrellaWith("idle"),
+    entries,
+  );
+  assert.equal(idle.get(key(longBuild)), "stopped");
+  const waiting = resolveCodingSessionUmbrellaBlockRestingStatuses(
+    umbrellaWith("waiting_for_input"),
+    entries,
+  );
+  assert.equal(waiting.get(key(longBuild)), "unknown");
+});
+
+test("SV-44: a turn that starts after the earlier turn went quiet stops it", () => {
+  const quiet = block(1, { turnId: "turn-a" });
+  const interleaved = block(2, { turnId: "turn-b" });
+  const lastOfA = block(3, { turnId: "turn-a" });
+  const afterA = block(4, { turnId: "turn-c" });
+  const statuses = resolveCodingSessionUmbrellaBlockRestingStatuses(
+    umbrellaWith("running"),
+    [quiet, interleaved, lastOfA, afterA],
+  );
+  // turn-c began after turn-a's last block, so turn-a (every fragment) and
+  // turn-b (whose last block precedes turn-c) are over.
+  assert.equal(statuses.get(key(quiet)), "stopped");
+  assert.equal(statuses.get(key(lastOfA)), "stopped");
+  assert.equal(statuses.get(key(interleaved)), "stopped");
+  assert.equal(statuses.get(key(afterA)), "running");
+});
+
+test("SV-44: another generation's or another seat's turns do not count as starting later", () => {
+  const mine = block(1, { turnId: "turn-a" });
+  const theirs = block(2, { executionKey: "exec-b", turnId: "turn-z" });
+  const statuses = resolveCodingSessionUmbrellaBlockRestingStatuses(
+    umbrellaWith("running"),
+    [mine, theirs],
+  );
+  assert.equal(statuses.get(key(mine)), "running");
 });

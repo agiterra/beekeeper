@@ -23,6 +23,7 @@ import {
   MAX_METADATA_FIELD_LENGTH,
   safeString,
 } from "./codingSessionDefensive";
+import type { CodingSessionTurnSettlement } from "./codingSessionTranscriptModelTypes";
 
 type ToolTranscriptItem = Extract<TranscriptItem, { type: "tool" }>;
 
@@ -134,18 +135,26 @@ function isTurnOpeningPrompt(item: TranscriptItem): boolean {
 /**
  * Open calls whose turn is over, from transcript data alone.
  *
- * With turn identity: a later terminal item in the call's own turn, or a later
- * prompt that opened a different turn. Without it: any later terminal item or
- * opening prompt — the only boundary the transcript still offers.
+ * With turn identity: a later terminal item in the call's own turn, or a
+ * prompt that opened a different turn **after the call's turn went quiet** —
+ * after its last item (SV-44, the rule `deriveCodingSessionTranscriptModel`
+ * supersedes turns by). A prompt with its own turn id that arrives while the
+ * call's turn is still publishing does not end it. Without turn identity: any
+ * later terminal item or opening prompt — the only boundary the transcript
+ * still offers.
  */
 function findStoppedCalls(
   transcript: readonly TranscriptItem[],
 ): ReadonlySet<string> {
+  const lastIndexByTurn = new Map<string, number>();
+  transcript.forEach((item, index) => {
+    if (item.turnId) lastIndexByTurn.set(item.turnId, index);
+  });
   const stopped = new Set<string>();
   const terminatedTurns = new Set<string>();
-  const laterPromptTurns = new Set<string>();
+  // Later opening prompts, newest first: [index, turn key].
+  const laterPrompts: Array<readonly [number, string]> = [];
   let laterTerminal = false;
-  let laterPrompt = false;
   for (let index = transcript.length - 1; index >= 0; index -= 1) {
     const item = transcript[index];
     const turnId = item.turnId ?? null;
@@ -155,9 +164,12 @@ function findStoppedCalls(
     ) {
       const over =
         turnId === null
-          ? laterTerminal || laterPrompt
+          ? laterTerminal || laterPrompts.length > 0
           : terminatedTurns.has(turnId) ||
-            [...laterPromptTurns].some((other) => other !== turnId);
+            laterPrompts.some(
+              ([at, other]) =>
+                other !== turnId && at > (lastIndexByTurn.get(turnId) ?? index),
+            );
       if (over) stopped.add(item.id);
     }
     if (isTurnTerminal(item)) {
@@ -165,9 +177,8 @@ function findStoppedCalls(
       if (turnId !== null) terminatedTurns.add(turnId);
     }
     if (isTurnOpeningPrompt(item)) {
-      laterPrompt = true;
       // A prompt with no turn identity still proves a later turn began.
-      laterPromptTurns.add(turnId ?? `prompt:${item.id}`);
+      laterPrompts.push([index, turnId ?? `prompt:${item.id}`]);
     }
   }
   return stopped;
@@ -290,26 +301,94 @@ export function codingSessionSubagentTitle(call: ToolTranscriptItem): string {
 }
 
 /**
- * The stream row's label, one sentence for any number of spawns (SV-06, after
- * T3's `agentSpawnSummary.ts`): "Ran 1 subagent", "Ran 4 subagents", and
- * while any still runs "Running 2 subagents" — or "Running 1 of 3
- * subagents" when only some do, so the count never claims more work in
- * flight than there is.
+ * The stream row's label, one sentence for any number of spawns, in T3 Code's
+ * words (SV-06; `subagentGroupSummary` in
+ * `packages/client-runtime/src/state/subagentDisplay.ts`): "Ran 1 subagent",
+ * "Ran 4 subagents", and while any still runs "Kicked off 3 subagents".
  *
- * The subagent's own description is no longer on the row; it is one click
- * away, on the spawn's header inside the opened row and in the Agents panel
- * (`codingSessionSubagentTitle`). How the batch ended — failed, stopped —
- * is the row's status icon, which this sentence does not replace.
+ * The sentence says how many started, not how many still work. That count,
+ * and how the rest ended, is `summarizeCodingSessionSubagentStatuses`
+ * ("1 working · 2 failed"), which `CodingSessionSubagentEntry` renders right
+ * after this label whenever any spawn is not done (and always as the row's
+ * accessible description), beside the group's status icon. The subagent's
+ * own description is one click away, on the spawn's header inside the opened
+ * row and in the Agents panel (`codingSessionSubagentTitle`).
  */
 export function formatCodingSessionSubagentGroupLabel(
-  spawns: readonly CodingSessionSubagentSpawn[],
+  spawns: ReadonlyArray<{ status: CodingSessionSettledSubagentStatus }>,
 ): string {
   const total = spawns.length;
-  const running = spawns.filter((spawn) => spawn.status === "running").length;
-  const noun = (count: number) => (count === 1 ? "subagent" : "subagents");
-  if (running === 0) return `Ran ${total} ${noun(total)}`;
-  if (running === total) return `Running ${total} ${noun(total)}`;
-  return `Running ${running} of ${total} ${noun(total)}`;
+  const live = spawns.some((spawn) => spawn.status === "running");
+  return `${live ? "Kicked off" : "Ran"} ${total} ${total === 1 ? "subagent" : "subagents"}`;
+}
+
+/**
+ * A spawn's status once its turn's settlement is known (SV-44 follow-up).
+ *
+ * The transcript alone cannot always tell that a spawn's turn is over: a turn
+ * that a provider abandoned without a result, and that no later prompt
+ * followed, keeps its open Task call "running" here, while the turn's own
+ * tool rows read settled from the session's resting status
+ * (`resolveCodingSessionTurnSettlement`). Reading the spawn through the same
+ * settlement keeps the two agreeing: an open spawn in a `settled` turn is
+ * `stopped`, in an `unknown` turn it is `unknown` — neither a spinner nor a
+ * verdict — and in a `live` turn it is still running. A spawn that has its
+ * result keeps it.
+ */
+export type CodingSessionSettledSubagentStatus =
+  | CodingSessionSubagentStatus
+  | "unknown";
+
+export function settleCodingSessionSubagentStatus(
+  status: CodingSessionSubagentStatus,
+  settlement: CodingSessionTurnSettlement,
+): CodingSessionSettledSubagentStatus {
+  if (status !== "running") return status;
+  if (settlement === "settled") return "stopped";
+  if (settlement === "unknown") return "unknown";
+  return status;
+}
+
+/** A turn's spawns read through its settlement; the same array when unchanged. */
+export function settleCodingSessionSubagentSpawns(
+  spawns: readonly CodingSessionSubagentSpawn[],
+  settlement: CodingSessionTurnSettlement,
+): ReadonlyArray<
+  Omit<CodingSessionSubagentSpawn, "status"> & {
+    status: CodingSessionSettledSubagentStatus;
+  }
+> {
+  if (!spawns.some((spawn) => spawn.status === "running")) return spawns;
+  if (settlement === "live") return spawns;
+  return spawns.map((spawn) => ({
+    ...spawn,
+    status: settleCodingSessionSubagentStatus(spawn.status, settlement),
+  }));
+}
+
+/** T3's status words, in the order a reader scans them: live work first. */
+const SUBAGENT_STATUS_WORDS: ReadonlyArray<
+  readonly [CodingSessionSettledSubagentStatus, string]
+> = [
+  ["running", "working"],
+  ["done", "done"],
+  ["failed", "failed"],
+  ["stopped", "stopped"],
+  ["unknown", "status unknown"],
+];
+
+/**
+ * Counts a group's states, T3's `summarizeSubagentStatuses`: "2 working · 1
+ * done", "3 done", "1 done · 1 failed". Every spawn is counted under exactly
+ * one word, so the parts always add up to the label's number.
+ */
+export function summarizeCodingSessionSubagentStatuses(
+  spawns: ReadonlyArray<{ status: CodingSessionSettledSubagentStatus }>,
+): string {
+  return SUBAGENT_STATUS_WORDS.flatMap(([status, word]) => {
+    const count = spawns.filter((spawn) => spawn.status === status).length;
+    return count > 0 ? [`${count} ${word}`] : [];
+  }).join(" · ");
 }
 
 // ---------------------------------------------------------------------------
@@ -322,7 +401,12 @@ export type CodingSessionSubagentRow = {
   title: string;
   /** `subagent_type` (`general-purpose`, `Explore`), when known. */
   type: string | null;
-  status: CodingSessionSubagentStatus;
+  /**
+   * Read through the spawn's turn settlement (`settleCodingSessionSubagentStatus`)
+   * when the caller knows it, so the panel says what the stream row says.
+   * `spawn.status` keeps the transcript-only reading.
+   */
+  status: CodingSessionSettledSubagentStatus;
   durationMs: number | null;
   model: string | null;
   totalTokens: number | null;
@@ -336,9 +420,11 @@ export type CodingSessionSubagentRow = {
 
 export type CodingSessionSubagentPanel = {
   rows: CodingSessionSubagentRow[];
-  /** Done, failed and stopped alike: everything no longer running. */
+  /** Done, failed and stopped alike: everything known to be no longer running. */
   settled: number;
   running: number;
+  /** Open spawns whose turn nothing on screen can vouch for: neither of the above. */
+  unknown: number;
   /** Σ over the rows that reported tokens; `null` when none did. */
   totalTokens: number | null;
 };
@@ -374,6 +460,7 @@ function elapsedMs(call: ToolTranscriptItem): number | null {
 /** One panel row, from the call and its nested items only. */
 export function deriveCodingSessionSubagentRow(
   spawn: CodingSessionSubagentSpawn,
+  settlement: CodingSessionTurnSettlement = "live",
 ): CodingSessionSubagentRow {
   const { call } = spawn;
   const report = call.subagent;
@@ -389,7 +476,7 @@ export function deriveCodingSessionSubagentRow(
       (typeof argType === "string" && argType.trim()
         ? safeString(argType.trim(), MAX_METADATA_FIELD_LENGTH)
         : null),
-    status: spawn.status,
+    status: settleCodingSessionSubagentStatus(spawn.status, settlement),
     durationMs: report?.durationMs ?? elapsedMs(call),
     model: report?.model ?? null,
     totalTokens: report?.totalTokens ?? null,
@@ -403,15 +490,31 @@ export function deriveCodingSessionSubagentRow(
 }
 
 /**
+ * The turn settlement of one spawn's call, for the panel: `transcriptIndex`
+ * names which of the panel's transcripts the call came from.
+ */
+export type CodingSessionSubagentSettlementOf = (
+  call: ToolTranscriptItem,
+  transcriptIndex: number,
+) => CodingSessionTurnSettlement;
+
+/**
  * Every Task/Agent call across the given transcripts, newest last, with the
  * footer tally. Several transcripts because the umbrella lists every
  * execution's spawns in one panel.
+ *
+ * `settlementOf` is the turn settlement the stream reads the same spawn
+ * through (SV-44 follow-up). Omitted, every open spawn reads `running` —
+ * the transcript-only reading — so a caller that knows the session's
+ * resting status must pass it, or the panel shows a spinner the stream row
+ * beside it has already settled.
  */
 export function deriveCodingSessionSubagentPanel(
   transcripts: readonly (readonly TranscriptItem[])[],
+  settlementOf?: CodingSessionSubagentSettlementOf,
 ): CodingSessionSubagentPanel {
   const rows: CodingSessionSubagentRow[] = [];
-  for (const transcript of transcripts) {
+  for (const [transcriptIndex, transcript] of transcripts.entries()) {
     const partition = partitionCodingSessionSubagentItems(transcript);
     for (const item of transcript) {
       if (
@@ -420,9 +523,13 @@ export function deriveCodingSessionSubagentPanel(
       ) {
         continue;
       }
+      const spawn = buildCodingSessionSubagentSpawn(item, partition);
       rows.push(
         deriveCodingSessionSubagentRow(
-          buildCodingSessionSubagentSpawn(item, partition),
+          spawn,
+          spawn.status === "running" && settlementOf
+            ? settlementOf(item, transcriptIndex)
+            : "live",
         ),
       );
     }
@@ -431,18 +538,58 @@ export function deriveCodingSessionSubagentPanel(
     (left, right) =>
       (Date.parse(left.startedAt) || 0) - (Date.parse(right.startedAt) || 0),
   );
+  return tallyCodingSessionSubagentRows(rows);
+}
+
+/**
+ * A panel derived without settlement, read through each open spawn's turn
+ * settlement afterwards — for a caller that derives the panel before it
+ * knows the session's resting status. The same panel when nothing changes.
+ */
+export function settleCodingSessionSubagentPanel(
+  panel: CodingSessionSubagentPanel,
+  settlementOf: (call: ToolTranscriptItem) => CodingSessionTurnSettlement,
+): CodingSessionSubagentPanel {
+  let changed = false;
+  const rows = panel.rows.map((row) => {
+    if (row.spawn.status !== "running") return row;
+    const status = settleCodingSessionSubagentStatus(
+      row.spawn.status,
+      settlementOf(row.spawn.call),
+    );
+    if (status === row.status) return row;
+    changed = true;
+    return { ...row, status };
+  });
+  return changed ? tallyCodingSessionSubagentRows(rows) : panel;
+}
+
+function tallyCodingSessionSubagentRows(
+  rows: CodingSessionSubagentRow[],
+): CodingSessionSubagentPanel {
   let totalTokens: number | null = null;
   let running = 0;
+  let unknown = 0;
   for (const row of rows) {
     if (row.status === "running") running += 1;
+    if (row.status === "unknown") unknown += 1;
     if (row.totalTokens !== null) {
       totalTokens = (totalTokens ?? 0) + row.totalTokens;
     }
   }
-  return { rows, settled: rows.length - running, running, totalTokens };
+  return {
+    rows,
+    settled: rows.length - running - unknown,
+    running,
+    unknown,
+    totalTokens,
+  };
 }
 
-/** The footer line: settled, Σ tokens when any were reported, and running. */
+/**
+ * The footer line: settled, Σ tokens when any were reported, running, and
+ * the spawns whose status nobody can vouch for — never folded into settled.
+ */
 export function formatCodingSessionSubagentFooter(
   panel: CodingSessionSubagentPanel,
 ): string {
@@ -452,6 +599,7 @@ export function formatCodingSessionSubagentFooter(
       ? `Σ ${formatCodingSessionSubagentTokens(panel.totalTokens)} tok`
       : null,
     panel.running > 0 ? `${panel.running} running` : null,
+    panel.unknown > 0 ? `${panel.unknown} status unknown` : null,
   ]
     .filter(Boolean)
     .join(" · ");

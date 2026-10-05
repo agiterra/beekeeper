@@ -1,5 +1,11 @@
 import * as React from "react";
-import { Check, Copy, WrapText } from "lucide-react";
+import {
+  Check,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Copy,
+  WrapText,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   getSingletonHighlighter,
@@ -16,7 +22,14 @@ import { Button } from "@/shared/ui/button";
 import { useSmoothCorners } from "@/shared/ui/smoothCorners";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
-import { CodeBlockLanguageLabel } from "./CodeBlockLanguage";
+import type { Components } from "react-markdown";
+
+import {
+  CodeBlockLanguageLabel,
+  extractFenceTitle,
+  extractPreCodeMeta,
+} from "./CodeBlockLanguage";
+import { useExceedsHeightCap } from "./useExceedsHeightCap";
 import { useHorizontalOverflow } from "./useHorizontalOverflow";
 import { getReactNodeText } from "./utils";
 
@@ -30,7 +43,7 @@ const MAX_CACHE_ENTRIES = 100;
 const MAX_LOADED_LANGUAGES = 30;
 const MAX_HIGHLIGHT_LINES = 150;
 export const CODE_BLOCK_CLASS =
-  "code-block-lines block min-w-full whitespace-pre font-mono text-sm font-medium text-foreground";
+  "code-block-lines block min-w-full whitespace-pre font-mono text-sm font-normal text-foreground";
 /**
  * Shared chrome for the code-block header actions (wrap, copy). Always
  * visible (SV-12): an action that appears only on hover is invisible to anyone
@@ -75,7 +88,7 @@ function getCodeBlockText(children: React.ReactNode) {
 
 export function StaticCodeBlock({ children }: { children?: React.ReactNode }) {
   return (
-    <pre className="buzz-code-scrollbar max-w-full overflow-x-auto rounded-2xl border border-border/70 bg-muted/60 px-3 py-1.5">
+    <pre className="buzz-code-scrollbar max-w-full overflow-x-auto rounded-lg border border-border/70 bg-muted/60 px-3 py-1.5">
       {children}
     </pre>
   );
@@ -88,26 +101,42 @@ const COPIED_FEEDBACK_MS = 1200;
  * A fenced code block, everywhere markdown renders — channels, threads and
  * coding sessions alike (SV-12, decision D4).
  *
- * The header carries the fence's language (icon and name) and the block's two
- * actions, wrap and copy, always visible rather than revealed on hover, the
- * way T3 Code draws them. The `pre` stays the direct child of
+ * The header carries the fence's file title when it declares one
+ * (```ts title="x.ts"), otherwise its language (icon and name), and the
+ * block's two actions, wrap and copy, always visible rather than revealed on
+ * hover, the way T3 Code draws them (`ChatMarkdown.tsx` `MarkdownCodeBlock`):
+ * a `rounded-lg` (`--radius`, 10px) box, no shadow, lines wrapped by default. The `pre` stays the direct child of
  * `[data-code-block]` because the session column and the width audit both
  * address it as `[data-code-block] > pre`, and the overflow fade masks only
  * the `pre`, never the header.
+ *
+ * Height: in channels and threads a block is capped at 25rem and scrolls
+ * inside itself (`markdown.css`, `data-height-capped`), so a pasted 500-line
+ * log does not take over the timeline. When the code is taller than the cap,
+ * the header shows an always-visible expand control that lifts it. Inside a
+ * coding session (`[data-coding-session-column]`) the cap does not apply —
+ * T3 Code's block is uncapped and the page scroll reads it — so the control
+ * never appears there: it is drawn only when the cap is actually hiding lines.
  */
 export function MarkdownCodeBlock({
   children,
   language,
+  title,
 }: {
   children?: React.ReactNode;
   language?: string;
+  /** A file name the fence declared in its meta (`title="x.ts"`). */
+  title?: string | null;
 }) {
   const [isCopying, setIsCopying] = React.useState(false);
   const [isCopied, setIsCopied] = React.useState(false);
-  // Default off: a wide block scrolls (t3code's default too). The toggle is
-  // per block and deliberately not persisted — Beekeeper has no settings surface
+  // Default on, as T3 Code's is: its `wordWrap` client setting decodes to
+  // `true` (`packages/contracts/src/settings.ts`), so a long line wraps and
+  // nothing is hidden past the right edge until someone asks to scroll. The
+  // toggle is per block and not persisted — Beekeeper has no settings surface
   // for a global word-wrap preference yet.
-  const [isWrapped, setIsWrapped] = React.useState(false);
+  const [isWrapped, setIsWrapped] = React.useState(true);
+  const [isHeightExpanded, setIsHeightExpanded] = React.useState(false);
   const blockRef = React.useRef<HTMLDivElement | null>(null);
   const codeBlockRef = React.useRef<HTMLPreElement | null>(null);
   const copiedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
@@ -119,6 +148,10 @@ export function MarkdownCodeBlock({
     codeBlockRef,
     [code, isWrapped],
   );
+  const exceedsCap = useExceedsHeightCap(codeBlockRef, isHeightExpanded, [
+    code,
+    isWrapped,
+  ]);
 
   React.useEffect(
     () => () => {
@@ -163,6 +196,19 @@ export function MarkdownCodeBlock({
     [],
   );
 
+  const handleToggleHeight = React.useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setIsHeightExpanded((previous) => !previous);
+    },
+    [],
+  );
+
+  const heightLabel = isHeightExpanded
+    ? "Cap this code block's height"
+    : "Show the whole code block";
+
   const wrapLabel = isWrapped
     ? "Stop wrapping long lines in this code block"
     : "Wrap long lines in this code block";
@@ -170,23 +216,49 @@ export function MarkdownCodeBlock({
   return (
     <div
       ref={blockRef}
-      className="relative min-w-0 overflow-hidden rounded-2xl border border-border/70 bg-muted/60 shadow-xs"
+      className="relative min-w-0 overflow-hidden rounded-lg border border-border/70 bg-muted/60"
       data-code-block=""
       data-language={language || undefined}
       data-overflow={hasHiddenOverflow ? "true" : "false"}
       data-wrap={isWrapped ? "true" : "false"}
-      style={{ borderRadius: "1rem" }}
+      data-height-capped={isHeightExpanded ? "false" : "true"}
+      style={{ borderRadius: "var(--radius)" }}
     >
       <div
         className="flex select-none items-center justify-between gap-2 pb-0 pl-3 pr-1.5 pt-1.5"
         data-code-block-header=""
       >
-        <CodeBlockLanguageLabel language={language ?? ""} />
+        <CodeBlockLanguageLabel language={language ?? ""} title={title} />
         <div
           aria-label="Code block actions"
           className="flex shrink-0 items-center gap-0.5"
           role="toolbar"
         >
+          {exceedsCap ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  aria-expanded={isHeightExpanded}
+                  aria-label={heightLabel}
+                  className={CODE_BLOCK_ACTION_CLASS}
+                  data-testid="code-block-height-toggle"
+                  onClick={handleToggleHeight}
+                  size="icon-xs"
+                  type="button"
+                  variant="ghost"
+                >
+                  {isHeightExpanded ? (
+                    <ChevronsDownUp aria-hidden="true" />
+                  ) : (
+                    <ChevronsUpDown aria-hidden="true" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {isHeightExpanded ? "Collapse" : "Show all lines"}
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -233,12 +305,42 @@ export function MarkdownCodeBlock({
       <pre
         onScroll={measureOverflow}
         ref={codeBlockRef}
-        className="buzz-code-scrollbar max-h-[400px] max-w-full overflow-x-auto overflow-y-auto px-3 pb-2 pt-0.5"
+        className="buzz-code-scrollbar max-w-full overflow-x-auto px-3 pb-2 pt-0.5"
       >
         {children}
       </pre>
     </div>
   );
+}
+
+/**
+ * The markdown renderer's `pre`: a fenced block with the shared chrome
+ * (language or file title, wrap, copy) when interactive, a plain contained
+ * block in previews and search rows.
+ */
+export function createPreComponent(
+  interactive: boolean,
+): NonNullable<Components["pre"]> {
+  return function MarkdownPre({ children, node }) {
+    if (!interactive) return <StaticCodeBlock>{children}</StaticCodeBlock>;
+    let language = "";
+    React.Children.forEach(children, (child) => {
+      if (
+        React.isValidElement<Record<string, unknown>>(child) &&
+        typeof child.props?.className === "string"
+      ) {
+        language = extractLanguage(child.props.className);
+      }
+    });
+    return (
+      <MarkdownCodeBlock
+        language={language}
+        title={extractFenceTitle(extractPreCodeMeta(node))}
+      >
+        {children}
+      </MarkdownCodeBlock>
+    );
+  };
 }
 
 export function SyntaxHighlightedCode({

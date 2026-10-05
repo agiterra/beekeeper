@@ -10,10 +10,13 @@ import {
 } from "@tanstack/react-router";
 
 import {
+  buildCodingSessionTranscriptRows,
   CODING_SESSION_VIRTUALIZATION_THRESHOLD,
   CodingSessionTranscript,
   createCodingSessionDisclosureStore,
 } from "./CodingSessionTranscript.tsx";
+import { deriveCodingSessionTranscriptModel } from "../lib/codingSessionTranscriptModel.ts";
+import { deriveCodingSessionMinimapItemsFromModel } from "../lib/codingSessionTranscriptMinimapItems.ts";
 
 const timestamp = "2026-07-30T12:00:00.000Z";
 const bridgeSource = {
@@ -732,7 +735,7 @@ test("renders failed tools as compact semantic rows while preserving lifecycle e
   assert.equal(markup.match(/data-testid="transcript-tool-item"/g)?.length, 1);
   assert.equal(markup.match(/data-testid="coding-session-error"/g)?.length, 1);
   assert.match(markup, /Tool call failed/);
-  assert.match(markup, /lucide-circle-x/);
+  assert.match(markup, /^(?!.*lucide-circle-x).*data-failure-tone="alarm"/s);
   assert.match(markup, /Exit code 1/);
   assert.match(markup, /Provider error/);
 });
@@ -997,5 +1000,31 @@ test("a normal end of turn shows no outcome badge", async () => {
     });
     assert.doesNotMatch(markup, /coding-session-turn-outcome/);
     assert.doesNotMatch(markup, /end turn/);
+  }
+});
+
+test("SV-26: a minimap item's rowIndex is its virtualizer row, keyed alike", () => {
+  // Past the threshold the minimap jumps through `scrollToIndex(rowIndex)`,
+  // so each item's index must be the row the virtualizer draws its turn at.
+  const items = [];
+  for (let n = 1; n <= CODING_SESSION_VIRTUALIZATION_THRESHOLD + 2; n += 1) {
+    const turnId = `turn-${n}`;
+    if (n % 7 !== 0)
+      items.push(message(`p${n}`, "user", `Prompt ${n}`, turnId));
+    items.push(message(`a${n}`, "assistant", `Reply ${n}`, turnId));
+  }
+  const model = deriveCodingSessionTranscriptModel(items, { isWorking: false });
+  const rows = buildCodingSessionTranscriptRows(model);
+  const minimap = deriveCodingSessionMinimapItemsFromModel(model, null);
+  assert.ok(rows.length > CODING_SESSION_VIRTUALIZATION_THRESHOLD);
+  // Every seventh turn has no prompt and gets no dash.
+  assert.equal(
+    minimap.length,
+    CODING_SESSION_VIRTUALIZATION_THRESHOLD +
+      2 -
+      Math.floor((CODING_SESSION_VIRTUALIZATION_THRESHOLD + 2) / 7),
+  );
+  for (const item of minimap) {
+    assert.equal(rows[item.rowIndex]?.key, item.key, item.id);
   }
 });

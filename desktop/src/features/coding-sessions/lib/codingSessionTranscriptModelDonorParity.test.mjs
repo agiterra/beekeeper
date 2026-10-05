@@ -297,6 +297,6 @@ test("characterization: tool group labels count a single render class by verb", 
   );
   assert.equal(
     derive(["e1", "e2", "e3", "e4", "e5"], "file-edit").label,
-    "Edited 5 files",
+    "Changed 5 files",
   );
 });

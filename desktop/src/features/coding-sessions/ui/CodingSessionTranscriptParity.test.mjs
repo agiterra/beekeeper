@@ -299,7 +299,7 @@ test("SV-15: a short prompt has no toggle", async () => {
 
 test("SV-05: a thought is a brain and the word Thought, dimmed and closed", async () => {
   const markup = await renderTranscript({
-    isWorking: true,
+    isWorking: false,
     items: [message("prompt", "user", "Think"), thought("t-1")],
   });
   const row = markup.match(
@@ -307,13 +307,49 @@ test("SV-05: a thought is a brain and the word Thought, dimmed and closed", asyn
   )?.[0];
   assert.ok(row, markup);
   assert.doesNotMatch(row, / open=""/);
-  assert.match(row, /lucide-brain size-4 shrink-0 text-muted-foreground/);
+  assert.match(
+    row,
+    /lucide-brain mx-1 size-4 shrink-0 text-muted-foreground opacity-70/,
+  );
   assert.match(row, /data-testid="transcript-thought-label">Thought<\/span>/);
   // The producer's own word stays reachable; the reasoning is not built.
   assert.match(row, /title="Reasoning · /);
   assert.doesNotMatch(row, /Considering the reconnect path/);
   // SV-01: full width with a soft fill on hover.
   assert.match(row, /<summary class="[^"]*w-full[^"]*hover:bg-accent\/30/);
+});
+
+test("SV-05: the live turn's last thought reads Thinking, with the shimmer", async () => {
+  const markup = await renderTranscript({
+    isWorking: true,
+    items: [message("prompt", "user", "Think"), thought("t-1")],
+  });
+  const row = markup.match(
+    /<details[^>]*data-testid="transcript-thought-item"[\s\S]*?<\/details>/,
+  )?.[0];
+  assert.ok(row, markup);
+  assert.match(row, /data-active=""/);
+  assert.match(row, /data-testid="transcript-thought-label">Thinking</);
+  assert.match(row, /data-testid="transcript-thought-shimmer"/);
+  assert.match(row, /coding-session-live-activity-focus/);
+});
+
+test("SV-05: a thought reads Thought once anything follows it", async () => {
+  const markup = await renderTranscript({
+    isWorking: true,
+    items: [
+      message("prompt", "user", "Think"),
+      thought("t-1"),
+      message("a", "assistant", "Looking at the reconnect path."),
+    ],
+  });
+  const row = markup.match(
+    /<details[^>]*data-testid="transcript-thought-item"[\s\S]*?<\/details>/,
+  )?.[0];
+  assert.ok(row, markup);
+  assert.doesNotMatch(row, /data-active/);
+  assert.match(row, /data-testid="transcript-thought-label">Thought<\/span>/);
+  assert.doesNotMatch(row, /transcript-thought-shimmer/);
 });
 
 test("SV-05: an opened thought shows its reasoning", async () => {
@@ -433,7 +469,10 @@ test("SV-01/SV-06: a subagent row is a full-width activity row with a 16px muted
   assert.ok(summary, markup);
   assert.match(summary, /w-full/);
   assert.match(summary, /hover:bg-accent\/30/);
-  assert.match(markup, /lucide-bot size-4 shrink-0 text-muted-foreground/);
+  assert.match(
+    markup,
+    /lucide-bot mx-1 size-4 shrink-0 text-muted-foreground opacity-70/,
+  );
   assert.match(
     markup,
     /<span class="min-w-0 truncate text-muted-foreground">Ran 2 subagents<\/span>/,
