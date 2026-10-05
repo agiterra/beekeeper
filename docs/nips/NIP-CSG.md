@@ -6,7 +6,9 @@ what that umbrella session is doing; name revisions (`kind:44229`) provide its
 short navigation label; closure revisions (`kind:44230`) record whether the
 umbrella is organizationally closed or open. All are public, durable, and
 scoped to a NIP-29 channel by an `h` tag. Providers do not author or interpret
-goal, name, or closure events.
+goal, name, or closure events. One provider-authored record lives here too,
+because it is read beside the name: the generated title (`kind:44252`, below),
+which a provider signs as itself and which never becomes a name revision.
 
 ## Goal revision (`kind:44227`)
 
@@ -68,6 +70,84 @@ Consumers group valid events by `(h, d)` and choose the greatest tuple
 `(created_at, event id)` as the current name. A missing name falls back to the
 founding execution title for compatibility; provider-authored 44223 titles
 remain per-generation facts and never become authoritative session names.
+
+## Generated title (`kind:44252`)
+
+A generated title is a short title a model wrote for an umbrella session nobody
+has named, from the founder's first message. It is **not** a name revision and
+is never published as one: `kind:44229` is human-authored by definition, and a
+model's words signed as the founder would put them on the wire as the person's
+name. The provider instance that ran the founder's first turn signs the title
+with its own key — the same key that signs that execution's 44223, 44224 and
+44225.
+
+It is a regular append-only event, scoped by `h` and grouped by `d` without
+parameterized replacement. The event has exactly these four ordered,
+two-field tags:
+
+```json
+[
+  ["h", "<channel UUID>"],
+  ["d", "<lowercase canonical sessionRef UUID>"],
+  ["cstl-v", "cstl1-1"],
+  ["cs-target", "<the signing execution's coding-session/v1 target key>"]
+]
+```
+
+`cs-target` is the structured key NIP-CSC defines
+(`coding_session_target_key`): driver, instance id, session id and generation,
+re-encoding exactly.
+
+Content is strict JSON, at most 2048 bytes, with exactly these keys:
+
+```json
+{
+  "schema": "buzz-coding-session-title/v1",
+  "title": "Login redirect fix",
+  "model": "claude-haiku-4-5",
+  "basis": "first-message",
+  "sourceCommand": null,
+  "createEventId": "<64-character lowercase 44221 event id>"
+}
+```
+
+- `title` obeys the 44229 content rule: one line, at most 256 UTF-8 bytes, at
+  least one non-whitespace character.
+- `model` is the model id the provider used: non-empty, at most 128 bytes, no
+  control characters.
+- `basis` is exactly `first-message` in v1.
+- `sourceCommand` is the 44220 turn command whose text was summarised, or
+  `null` for a create's initial turn. The key is required; only the value may
+  be null.
+- `createEventId` is the 44221 create of the execution that ran the turn.
+- Any other key is refused, so no workdir, path or prompt text travels.
+
+**The relay validates structure only** — the tags, the target key and the
+content above — under the strict coding-session membership gate every session
+kind uses. It checks no signer standing, the division 44229 and 44245 draw.
+
+**Readers judge standing, in one resolver.** Every reader resolves an
+umbrella's display name with the same three ranked tiers
+(`buzz_core::coding_session_title::resolve_session_display_name`, mirrored in
+TypeScript and Dart and pinned by `conformance/session-display-name/`):
+
+1. **person** — the latest valid founder-signed 44229, as above;
+2. **generated** — only when tier 1 is empty: the **earliest** valid 44252 for
+   `(h, d)` whose signer equals the provider authority of the execution its
+   `cs-target` names, where that execution is in this umbrella (the reader
+   lists every generation it holds). Earliest, by `(created_at, event id)`
+   ascending, so a title never flips once shown. This tier also yields the
+   `model` and the signer, which a reader shows as the title's attribution;
+3. **fallback** — the founding execution's title, then "Untitled session".
+
+Tiers are never compared by time: a person's name always wins, even an older
+one, so a rename beats a title by construction rather than by winning a race.
+A title from a signer without standing — another execution's provider, or a
+key with no execution in the umbrella — is ignored and counted in the
+resolver's diagnostics. That is an isolation rule, not a security rule.
+
+A generated title is deletable with its session: a whole-session `kind:5`
+reaches it by its `d` tag, as it reaches 44229.
 
 ## Closure revision (`kind:44230`)
 

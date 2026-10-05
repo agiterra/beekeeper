@@ -39,21 +39,26 @@ use buzz_core::{
         CODING_SESSION_NAME_TAG_VERSION,
     },
     coding_session_payload::ReceiptStatus,
+    coding_session_title::{
+        validate_coding_session_title_parts, CodingSessionTitlePayload,
+        CODING_SESSION_TITLE_TAG_VERSION, MAX_CODING_SESSION_TITLE_CONTENT_BYTES,
+    },
     kind::{
         KIND_AGENTS_REPO_DRAFT_OP, KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY,
         KIND_APPROVAL_GRANT, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
-        KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
-        KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-        KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
-        KIND_CODING_SESSION_NAME, KIND_CODING_SESSION_PROVIDER_CATALOG,
-        KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_OPEN,
-        KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
-        KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
-        KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST,
-        KIND_IA_UNARCHIVE_REQUEST, KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT,
-        KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT,
-        KIND_PRESENCE_UPDATE, KIND_PROJECT, KIND_PROJECT_ARTIFACT_PIN_OP, KIND_PROJECT_TODO_OP,
-        KIND_PULSE_ENTRY, KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
+        KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENERATED_TITLE,
+        KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LEASE,
+        KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+        KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
+        KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION,
+        KIND_DM_ADD_MEMBER, KIND_DM_OPEN, KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH,
+        KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT,
+        KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED,
+        KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST,
+        KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT,
+        KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_PRESENCE_UPDATE, KIND_PROJECT,
+        KIND_PROJECT_ARTIFACT_PIN_OP, KIND_PROJECT_TODO_OP, KIND_PULSE_ENTRY, KIND_USER_STATUS,
+        KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
     },
     observer::{
         content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
@@ -2851,6 +2856,51 @@ pub fn build_coding_session_name(
     Ok(EventBuilder::new(
         Kind::Custom(KIND_CODING_SESSION_NAME as u16),
         content.to_owned(),
+    )
+    .tags(tags))
+}
+
+/// Build one provider-signed generated session title (kind 44252).
+///
+/// The provider instance that ran the founder's first turn signs the returned
+/// builder with its own key — never the founder's: the words are a model's.
+/// `target` is that instance's execution; readers accept the title only when
+/// the signer is the provider authority of exactly this target in the
+/// umbrella (`buzz_core::coding_session_title::resolve_session_display_name`).
+/// The result is checked against the same envelope validator the relay runs.
+pub fn build_coding_session_generated_title(
+    channel_id: Uuid,
+    session_ref: &str,
+    target: &CodingSessionTarget,
+    payload: &CodingSessionTitlePayload,
+) -> Result<EventBuilder, SdkError> {
+    validate_coding_session_name_session_ref(session_ref).map_err(SdkError::InvalidInput)?;
+    payload.validate().map_err(SdkError::InvalidInput)?;
+    let content = serde_json::to_string(payload).map_err(|error| {
+        SdkError::InvalidInput(format!("coding-session title serialization: {error}"))
+    })?;
+    check_content(&content, MAX_CODING_SESSION_TITLE_CONTENT_BYTES)?;
+    let target_key = coding_session_target_key(target);
+    let channel = channel_id.to_string();
+    let tag_values: [[&str; 2]; 4] = [
+        ["h", &channel],
+        ["d", session_ref],
+        ["cstl-v", CODING_SESSION_TITLE_TAG_VERSION],
+        ["cs-target", &target_key],
+    ];
+    let owned: Vec<Vec<String>> = tag_values
+        .iter()
+        .map(|pair| pair.iter().map(|value| (*value).to_owned()).collect())
+        .collect();
+    let parts: Vec<&[String]> = owned.iter().map(Vec::as_slice).collect();
+    validate_coding_session_title_parts(&parts, &content).map_err(SdkError::InvalidInput)?;
+    let tags = tag_values
+        .iter()
+        .map(|pair| tag(pair))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_GENERATED_TITLE as u16),
+        content,
     )
     .tags(tags))
 }
@@ -6311,6 +6361,92 @@ mod tests {
                 ("csnm-v".into(), "csnm1-1".into()),
             ]
         );
+    }
+
+    fn generated_title_payload(title: &str) -> CodingSessionTitlePayload {
+        CodingSessionTitlePayload {
+            schema: buzz_core::coding_session_title::CODING_SESSION_TITLE_SCHEMA.into(),
+            title: title.into(),
+            model: "claude-haiku-4-5".into(),
+            basis: buzz_core::coding_session_title::CodingSessionTitleBasis::FirstMessage,
+            source_command: None,
+            create_event_id: "ca".repeat(32),
+        }
+    }
+
+    fn generated_title_target() -> CodingSessionTarget {
+        CodingSessionTarget {
+            driver: "claude-agent-acp".into(),
+            instance_id: "1958c6c448e05eed".into(),
+            session_id: "sess-a".into(),
+            generation: 1,
+        }
+    }
+
+    #[test]
+    fn generated_title_builder_emits_the_exact_envelope() {
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let target = generated_title_target();
+        let event = build_coding_session_generated_title(
+            channel,
+            session_ref,
+            &target,
+            &generated_title_payload("Login redirect fix"),
+        )
+        .unwrap()
+        .sign_with_keys(&keys())
+        .unwrap();
+        assert_eq!(
+            event.kind.as_u16() as u32,
+            KIND_CODING_SESSION_GENERATED_TITLE
+        );
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("d".into(), session_ref.into()),
+                ("cstl-v".into(), "cstl1-1".into()),
+                ("cs-target".into(), coding_session_target_key(&target)),
+            ]
+        );
+        let envelope =
+            buzz_core::coding_session_title::validate_coding_session_title_envelope(&event)
+                .unwrap();
+        assert_eq!(envelope.payload.title, "Login redirect fix");
+        assert!(event.content.contains("\"sourceCommand\":null"));
+    }
+
+    #[test]
+    fn generated_title_builder_rejects_bad_titles_and_refs() {
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let target = generated_title_target();
+        for title in ["", "two\nlines", &"x".repeat(257)] {
+            assert!(build_coding_session_generated_title(
+                channel,
+                session_ref,
+                &target,
+                &generated_title_payload(title)
+            )
+            .is_err());
+        }
+        assert!(build_coding_session_generated_title(
+            channel,
+            &session_ref.to_uppercase(),
+            &target,
+            &generated_title_payload("Title")
+        )
+        .is_err());
+        let mut zero = target.clone();
+        zero.generation = 0;
+        assert!(build_coding_session_generated_title(
+            channel,
+            session_ref,
+            &zero,
+            &generated_title_payload("Title")
+        )
+        .is_err());
     }
 
     #[test]

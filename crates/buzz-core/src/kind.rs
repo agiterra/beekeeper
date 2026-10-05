@@ -1045,6 +1045,36 @@ pub const KIND_AGENTS_REPO_DRAFT_OP: u32 = 44250;
 /// The wire contract is `docs/nips/NIP-AR.md`.
 pub const KIND_PROJECT_ARTIFACT_PIN_OP: u32 = 44251;
 
+/// NIP-CSG § Generated title: Coding-session generated title — one
+/// provider-signed title for an umbrella session nobody has named.
+///
+/// Regular stored event (append-only), channel-scoped via `h`, with
+/// `d=sessionRef` for lookup and grouping. Ordered tags, exactly: `h`, `d`,
+/// `cstl-v` (`cstl1-1`), `cs-target`. Content is strict public JSON
+/// ([`crate::coding_session_title::CodingSessionTitlePayload`]): schema, a
+/// title under the 44229 content rule, the model id, `basis`, the source 44220
+/// (or `null` for a create's initial turn) and the 44221 create id. The
+/// signature is the author; whether that author was the provider authority of
+/// the execution its `cs-target` names is the reader's fold
+/// ([`crate::coding_session_title::resolve_session_display_name`]) — the
+/// relay validates structure only, the division 44229 and 44245 draw.
+///
+/// **Why not 44229.** A name revision is human-authored by definition, and
+/// readers trust it from the founder only; signing a model's words as the
+/// founder would put them on the wire as the person's name, and a
+/// non-founder 44229 breaks the context projection on every deployed host. A
+/// separate kind makes "a person's name always wins" hold by construction:
+/// readers rank 44229 above 44252 regardless of time.
+///
+/// **Allocation.** 44252 is the lowest unused and unreserved kind in this fork
+/// on 2026-10-04: 44231–44239 are reserved by the continuity research (44231
+/// now claimed by the checkpoint spec), 44240 is Pulse with 44241–44243
+/// reserved by the Pulse plan, 44244–44251 are allocated above, and the
+/// session-view parity plan's single registry assigns 44252 to this record
+/// (44253–44255 to the preview and device records). `git grep 44252` over
+/// this tree matched nothing on 2026-10-04.
+pub const KIND_CODING_SESSION_GENERATED_TITLE: u32 = 44252;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -1882,6 +1912,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_CODING_SESSION_GOAL,
     KIND_CODING_SESSION_AUTHORITY_TRANSITION,
     KIND_CODING_SESSION_NAME,
+    KIND_CODING_SESSION_GENERATED_TITLE,
     KIND_CODING_SESSION_CLOSURE,
     KIND_CODING_SESSION_CHECKPOINT,
     KIND_CODING_SESSION_TEAM_TRANSACTION,
@@ -2186,6 +2217,19 @@ const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_NAME));
 const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_NAME));
 const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_NAME));
 const _: () = assert!(KIND_CODING_SESSION_NAME <= u16::MAX as u32);
+// Generated titles are append-only history too: the d tag groups them without
+// NIP-33 replacement, so the earliest title a reader showed stays queryable and
+// a later one can never replace it at the relay.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_GENERATED_TITLE));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_GENERATED_TITLE));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_GENERATED_TITLE
+));
+const _: () = assert!(KIND_CODING_SESSION_GENERATED_TITLE <= u16::MAX as u32);
+const _: () = assert!(!is_project_a_scoped_kind(
+    KIND_CODING_SESSION_GENERATED_TITLE
+));
+const _: () = assert!(!is_relay_only_kind(KIND_CODING_SESSION_GENERATED_TITLE));
 // Closure revisions are append-only history, never a NIP-16/NIP-33 head.
 const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_CLOSURE));
 const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_CLOSURE));
@@ -2298,6 +2342,33 @@ mod tests {
         assert!(!is_project_a_scoped_kind(KIND_PROJECT_WORK_RECORD));
         assert!(!PROJECT_A_SCOPED_KINDS.contains(&KIND_PROJECT_WORK_RECORD));
         assert!(ALL_KINDS.contains(&KIND_PROJECT_WORK_RECORD));
+    }
+
+    /// A generated title (44252) is a provider-written, `h`-gated regular
+    /// event, registered once, and distinct from the human 44229 it ranks
+    /// below.
+    #[test]
+    fn a_generated_title_is_channel_gated_and_client_written() {
+        assert_eq!(KIND_CODING_SESSION_GENERATED_TITLE, 44252);
+        assert_ne!(
+            KIND_CODING_SESSION_GENERATED_TITLE,
+            KIND_CODING_SESSION_NAME
+        );
+        assert!(!is_relay_only_kind(KIND_CODING_SESSION_GENERATED_TITLE));
+        assert!(!is_project_a_scoped_kind(
+            KIND_CODING_SESSION_GENERATED_TITLE
+        ));
+        assert!(!is_ephemeral(KIND_CODING_SESSION_GENERATED_TITLE));
+        assert!(!is_parameterized_replaceable(
+            KIND_CODING_SESSION_GENERATED_TITLE
+        ));
+        assert_eq!(
+            ALL_KINDS
+                .iter()
+                .filter(|&&kind| kind == KIND_CODING_SESSION_GENERATED_TITLE)
+                .count(),
+            1
+        );
     }
 
     #[test]

@@ -85,6 +85,9 @@ pub mod coding_session_seat_bundle;
 /// NIP-CSTX: signed, append-only team transactions inside a coding session
 /// (44244).
 pub mod coding_session_team_transaction;
+/// NIP-CSG § Generated title: provider-signed session titles (44252) and the
+/// shared person > generated > fallback display-name resolver.
+pub mod coding_session_title;
 /// The rule a `require-verdict` ref enforces: which canonical mission ruling
 /// admits a commit, and which key may land it.
 pub mod coding_session_verdict_admission;

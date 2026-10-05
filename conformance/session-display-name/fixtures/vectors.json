@@ -1,0 +1,2219 @@
+{
+  "constants": {
+    "kindGeneratedTitle": 44252,
+    "kindName": 44229,
+    "maxContentBytes": 2048,
+    "maxModelBytes": 128,
+    "maxTitleBytes": 256,
+    "payloadSchema": "buzz-coding-session-title/v1",
+    "tagVersion": "cstl1-1",
+    "untitled": "Untitled session"
+  },
+  "contract": "conformance/session-display-name/CONTRACT.md",
+  "envelopes": [
+    {
+      "description": "A create's initial turn: sourceCommand null.",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Login redirect fix\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 1,
+        "id": "587f19bd18b7295017530972496773da96dd3f14e99a0344534c659cf0fd3ba3",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "canonical-initial-turn",
+      "valid": true
+    },
+    {
+      "description": "A later 44220 turn: sourceCommand names it.",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Login redirect fix\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 1,
+        "id": "663b1ea6223ea6907fa286696222cf6c619148016e500b2a7268469da1b1fab9",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "canonical-turn-command",
+      "valid": true
+    },
+    {
+      "description": "Exactly 256 bytes of title is allowed.",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 1,
+        "id": "8c5d9761692a9b02be665efe01d20a01544be22b92c7c308d9cc45b45fa78c00",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "title-at-256-bytes",
+      "valid": true
+    },
+    {
+      "description": "a fifth tag",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Extra tag\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 10,
+        "id": "b856be1f6197f149e82fa0c11d2441ceb71a33e2d9a8584ebf1e63b59772d671",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ],
+          [
+            "p",
+            "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+          ]
+        ]
+      },
+      "name": "extra-tag",
+      "valid": false
+    },
+    {
+      "description": "d before h",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Reordered\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 11,
+        "id": "31e0864f1881acf6c882657f820d280696358c017ee763bc961d40c1b3802dc1",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "reordered-tags",
+      "valid": false
+    },
+    {
+      "description": "an h tag with a relay hint",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Three fields\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 12,
+        "id": "93b12c59c54a451a815d35b67f0d89d4ddd4470b09e27d25bd18bf7e2579ed11",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+            "wss://relay"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "three-field-tag",
+      "valid": false
+    },
+    {
+      "description": "cstl-v=cstl1-2",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Unknown version\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 13,
+        "id": "1b7cd006b84702b8d1407b61777fcc58aa90df00ed04191957b6080eb0bf098c",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-2"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "unknown-version",
+      "valid": false
+    },
+    {
+      "description": "a non-canonical sessionRef",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Uppercase d\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 14,
+        "id": "35a58baf9b59a97806d95e67982ba69e2b113829168fb67507daf9fae079b6aa",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5B7E1C2A-90D4-4B0E-A1F3-7C2D8E6F4A10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "uppercase-d",
+      "valid": false
+    },
+    {
+      "description": "a cs-target that is not a v1 key",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Bad target\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 15,
+        "id": "fae5e03903de21a09254e7016a0a4456c9e19fbf729ea8def3e75df74109815e",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|wrong"
+          ]
+        ]
+      },
+      "name": "bad-cs-target",
+      "valid": false
+    },
+    {
+      "description": "cs-target generation 0",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Generation zero\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 16,
+        "id": "0255ef8aa969d85667026d1ee1f74f9820830827546536d8af5fea406ea669d3",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:0"
+          ]
+        ]
+      },
+      "name": "generation-zero",
+      "valid": false
+    },
+    {
+      "description": "a two-line title",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"First line\\nsecond line\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 17,
+        "id": "5a179bf3e2eb16688e0ffe01bc063a465c6760867f3c75b973d19840826b813f",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "multiline-title",
+      "valid": false
+    },
+    {
+      "description": "a 257-byte title",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 18,
+        "id": "f2157431c948cfb396f053ce8e76f9adffbd8ff3c087fa81ae870f6933e1ed1a",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "oversized-title",
+      "valid": false
+    },
+    {
+      "description": "a whitespace title",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"   \",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 19,
+        "id": "84f013c9619c0c97ef6477902bd15121064b0a4aad74b606cfa87e6f601e241a",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "blank-title",
+      "valid": false
+    },
+    {
+      "description": "truncated JSON",
+      "event": {
+        "content": "{\"schema\":",
+        "created_at": 20,
+        "id": "5d2e31d80877010af72f9d7e20adf533dd47551990d8295b6e40c1d2036ba71a",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "bad-json",
+      "valid": false
+    },
+    {
+      "description": "an extra content key",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Unknown field\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\",\"prompt\":\"leaked\"}",
+        "created_at": 21,
+        "id": "c48c8cb33da5634878e66d1282a79835c8d94001b07f6ffa475a8698440e831d",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "unknown-field",
+      "valid": false
+    },
+    {
+      "description": "sourceCommand absent rather than null",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Missing key\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 22,
+        "id": "555b491f990f9f122c273741eea0dc5eec79cb12277903440b8f7de8aef6865a",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "missing-source-command",
+      "valid": false
+    },
+    {
+      "description": "schema v2",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v2\",\"title\":\"Wrong schema\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 23,
+        "id": "aa13c0817e718975ee630fb6487055cc9b4d484e334c4ad6a9ad1e8b1c565ccd",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "wrong-schema",
+      "valid": false
+    },
+    {
+      "description": "basis other than first-message",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Wrong basis\",\"model\":\"claude-haiku-4-5\",\"basis\":\"conversation\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 24,
+        "id": "491c70bbe8b45b4e0686fea4c48263680a7bf74b51cbdfd961a3d11e8b688aff",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "wrong-basis",
+      "valid": false
+    },
+    {
+      "description": "createEventId in uppercase hex",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Uppercase create\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"CACACACACACACACACACACACACACACACACACACACACACACACACACACACACACACACA\"}",
+        "created_at": 25,
+        "id": "518b30856c50a89919396d3ea585661c827a44cd2b0f088b3f96ceb7e5535dfd",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "uppercase-create-id",
+      "valid": false
+    },
+    {
+      "description": "sourceCommand not an event id",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Short source\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":\"abc\",\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 26,
+        "id": "2a544466da507d568e8ff03f70ae17604e8bc3c9331d0ea86046263c74656638",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "short-source-command",
+      "valid": false
+    },
+    {
+      "description": "an empty model",
+      "event": {
+        "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Empty model\",\"model\":\"\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 27,
+        "id": "84daac3dc60b4b159105d78d3c44d4509fb57d589ff37404d8b8c24eb40631a5",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "empty-model",
+      "valid": false
+    },
+    {
+      "description": "content over 2048 bytes",
+      "event": {
+        "content": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 {\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Padded\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+        "created_at": 28,
+        "id": "63f106e64d2c44311798a1d28e10b8eb31bbb9c4d0fb0a0e4a9e862e6f7575ba",
+        "kind": 44252,
+        "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "tags": [
+          [
+            "h",
+            "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+          ],
+          [
+            "d",
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+          ],
+          [
+            "cstl-v",
+            "cstl1-1"
+          ],
+          [
+            "cs-target",
+            "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          ]
+        ]
+      },
+      "name": "oversized-content",
+      "valid": false
+    }
+  ],
+  "schema": "buzz.conformance/session-display-name@1",
+  "vectors": [
+    {
+      "description": "A founder-signed 44229 and nothing else is the person's name.",
+      "events": [
+        {
+          "content": "Auth rework",
+          "created_at": 100,
+          "id": "05b98dde04700328bc47c1ac8c80df5d219227a91cb4921a062c740c6a25bbee",
+          "kind": 44229,
+          "pubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "csnm-v",
+              "csnm1-1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 0,
+          "malformed": 0
+        },
+        "model": null,
+        "name": "Auth rework",
+        "origin": "person",
+        "signerPubkey": null
+      },
+      "name": "person-name-only",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "Tiers are ranked, never compared by time: a person's name from t=100 beats a valid generated title from t=200.",
+      "events": [
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Login redirect fix\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 200,
+          "id": "d5b0c18c9e95f291da7c03007fd217a27f42cda9129468e577fb3b44fa3309e6",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "Auth rework",
+          "created_at": 100,
+          "id": "05b98dde04700328bc47c1ac8c80df5d219227a91cb4921a062c740c6a25bbee",
+          "kind": 44229,
+          "pubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "csnm-v",
+              "csnm1-1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 0,
+          "malformed": 0
+        },
+        "model": null,
+        "name": "Auth rework",
+        "origin": "person",
+        "signerPubkey": null
+      },
+      "name": "older-person-name-beats-newer-title",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "Within the person tier the greatest (created_at, id) wins; on a tied created_at the lexicographically greater id.",
+      "events": [
+        {
+          "content": "First name",
+          "created_at": 100,
+          "id": "05b902fbf6437bfe4ae6d0be4505859be86bc4419a5359286ef8b3d825713414",
+          "kind": 44229,
+          "pubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "csnm-v",
+              "csnm1-1"
+            ]
+          ]
+        },
+        {
+          "content": "Tie one",
+          "created_at": 200,
+          "id": "2309765077ca5e507d7a754ec399acc0ba0b954c53c71e8a42e656c3100eda7b",
+          "kind": 44229,
+          "pubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "csnm-v",
+              "csnm1-1"
+            ]
+          ]
+        },
+        {
+          "content": "Tie two",
+          "created_at": 200,
+          "id": "2af6f84ecc99fc4a5347579c70ebea4507d208a1bfcb93a481d9df1b06fabe87",
+          "kind": 44229,
+          "pubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "csnm-v",
+              "csnm1-1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 0,
+          "malformed": 0
+        },
+        "model": null,
+        "name": "Tie two",
+        "origin": "person",
+        "signerPubkey": null
+      },
+      "name": "latest-person-name-wins",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "Within the generated tier the EARLIEST valid title wins, so a title never flips: t=200 beats t=250 (another execution's provider) and t=300.",
+      "events": [
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Later title\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 300,
+          "id": "9a8a431fcba31675389d91be3875c5a79370cd210aef4c0e16ea6e93fa20dc65",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Login redirect fix\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 200,
+          "id": "40153a2f1410e0c87110abfbcedffe9361ced42e5c489f5b4b857bc035648884",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Codex title\",\"model\":\"gpt-5-codex\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb\"}",
+          "created_at": 250,
+          "id": "191912f269836fb2f2139215ac80f342d1c6e9b8fc70f46b83e8e8c656b660fc",
+          "kind": 44252,
+          "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 0,
+          "malformed": 0
+        },
+        "model": "claude-haiku-4-5",
+        "name": "Login redirect fix",
+        "origin": "generated",
+        "signerPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      },
+      "name": "earliest-title-wins",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "Two valid titles with the same created_at: the lexicographically smaller id wins.",
+      "events": [
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Tie title one\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 200,
+          "id": "c916683d25da3651ed5779e0eb524909f32f646205548b6881bf692d752ac805",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Tie title two\",\"model\":\"gpt-5-codex\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb\"}",
+          "created_at": 200,
+          "id": "03f1994420582a9edc948b4f1e2bed4c275eb69d2ba773e202215b3fe7187968",
+          "kind": 44252,
+          "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 0,
+          "malformed": 0
+        },
+        "model": "gpt-5-codex",
+        "name": "Tie title two",
+        "origin": "generated",
+        "signerPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+      },
+      "name": "earliest-title-tie-breaks-on-smaller-id",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "A title naming execution A1 but signed by B's provider (an umbrella signer, not A1's authority) is ignored and counted, even though it is earlier.",
+      "events": [
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Forged title\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 100,
+          "id": "6dc84935688f1a025e1882b6b0bf9cb1c46347d378624ba315b5fca9f1fb72fa",
+          "kind": 44252,
+          "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Login redirect fix\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 200,
+          "id": "70c390c3dcae67d1e8f74ccb34eea8553779a9a0dcc08140f968808a2b5a8358",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 1,
+          "malformed": 0
+        },
+        "model": "claude-haiku-4-5",
+        "name": "Login redirect fix",
+        "origin": "generated",
+        "signerPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      },
+      "name": "foreign-signer-ignored",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "A stranger with no execution in the umbrella is ignored and counted, whether its cs-target names an umbrella execution or one outside it; with no valid title the founding execution's title stands.",
+      "events": [
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Stranger title\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 100,
+          "id": "81d202c312b0ec29323529c78d4bf9f87bf5913fb6400bb9b7176facb4f97641",
+          "kind": 44252,
+          "pubkey": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Stranger elsewhere\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 110,
+          "id": "015875085875ca613aa7bb8b6bc0a8314786cad6ac0668c7a5e975b2004adf6a",
+          "kind": 44252,
+          "pubkey": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:0badc0ffee0ddf006:sess-x1:1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 2,
+          "malformed": 0
+        },
+        "model": null,
+        "name": "Fix the login redirect",
+        "origin": "fallback",
+        "signerPubkey": null
+      },
+      "name": "signer-without-execution-ignored",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "A's own provider signing for a target the umbrella does not hold is not standing: the exact target key, generation included, must be listed.",
+      "events": [
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Login redirect fix\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 100,
+          "id": "35a16e2d30207aa280a1cb25cf34434a2f35fff9692119a7b528def88ff0cf93",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 1,
+          "malformed": 0
+        },
+        "model": null,
+        "name": "Fix the login redirect",
+        "origin": "fallback",
+        "signerPubkey": null
+      },
+      "name": "target-outside-umbrella-ignored",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:2"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "A title signed for generation 1 still stands when the reader lists generation 2 beside it.",
+      "events": [
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Login redirect fix\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 100,
+          "id": "effaba9eaaf4617d7fcfdb2777a1d0b85a837c86b245db45a5417ef84719d469",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 0,
+          "malformed": 0
+        },
+        "model": "claude-haiku-4-5",
+        "name": "Login redirect fix",
+        "origin": "generated",
+        "signerPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      },
+      "name": "title-survives-a-restart",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:2"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "A 44229 not signed by the founder is never the person's name, however new; it is counted and the generated title shows.",
+      "events": [
+        {
+          "content": "Provider wrote this",
+          "created_at": 500,
+          "id": "cc9e46f6a1febc6741f695ca731f47be13280f2db63f8d670fcbf86ab8d5657a",
+          "kind": 44229,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "csnm-v",
+              "csnm1-1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Login redirect fix\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 200,
+          "id": "d5b0c18c9e95f291da7c03007fd217a27f42cda9129468e577fb3b44fa3309e6",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 1,
+          "foreignTitles": 0,
+          "malformed": 0
+        },
+        "model": "claude-haiku-4-5",
+        "name": "Login redirect fix",
+        "origin": "generated",
+        "signerPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      },
+      "name": "foreign-name-never-a-person-name",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "Without a known founder no 44229 is a person's name: each is counted foreign and the next tier answers.",
+      "events": [
+        {
+          "content": "Auth rework",
+          "created_at": 100,
+          "id": "05b98dde04700328bc47c1ac8c80df5d219227a91cb4921a062c740c6a25bbee",
+          "kind": 44229,
+          "pubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "csnm-v",
+              "csnm1-1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 1,
+          "foreignTitles": 0,
+          "malformed": 0
+        },
+        "model": null,
+        "name": "Fix the login redirect",
+        "origin": "fallback",
+        "signerPubkey": null
+      },
+      "name": "founder-unknown",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": null,
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "Nothing names the session: the founding execution's title.",
+      "events": [],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 0,
+          "malformed": 0
+        },
+        "model": null,
+        "name": "Fix the login redirect",
+        "origin": "fallback",
+        "signerPubkey": null
+      },
+      "name": "fallback-founding-execution-title",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "No founding execution title: \"Untitled session\".",
+      "events": [],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 0,
+          "malformed": 0
+        },
+        "model": null,
+        "name": "Untitled session",
+        "origin": "fallback",
+        "signerPubkey": null
+      },
+      "name": "fallback-untitled",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": null,
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "A blank founding execution title is no title: \"Untitled session\".",
+      "events": [],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 0,
+          "malformed": 0
+        },
+        "model": null,
+        "name": "Untitled session",
+        "origin": "fallback",
+        "signerPubkey": null
+      },
+      "name": "fallback-blank-founding-title",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "   ",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "Events for another sessionRef or another channel, and other kinds, are not this session's and are not counted.",
+      "events": [
+        {
+          "content": "Other session",
+          "created_at": 100,
+          "id": "24ac9b8f83d2c714422f6b119b8671e97218ae9727b9beabf3c99a7593c99d0a",
+          "kind": 44229,
+          "pubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "e2c4a6b8-1d3f-4e5a-8b7c-9d0e1f2a3b4c"
+            ],
+            [
+              "csnm-v",
+              "csnm1-1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Other channel\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 100,
+          "id": "25adffea4a3ade6b5659f8df62489215e0a976f421772645b648e2cfe479013f",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "7d3f0a52-1c9e-4b8a-9f61-2e4c5d6b7a80"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "A goal is not a name",
+          "created_at": 100,
+          "id": "0d47a6f7a832e96d987dd4b676d1f74ec9c3fe44bf63ed25b35315f8cf38c226",
+          "kind": 44227,
+          "pubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "csgl-v",
+              "csgl1-1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 0,
+          "malformed": 0
+        },
+        "model": null,
+        "name": "Fix the login redirect",
+        "origin": "fallback",
+        "signerPubkey": null
+      },
+      "name": "other-sessions-ignored",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    },
+    {
+      "description": "Every malformed 44229/44252 carrying this session's exact h and d is rejected and counted; none of them names the session. (The uppercase-d envelope vector is absent here: it does not carry this session's d, so it is not this session's event at all.)",
+      "events": [
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Extra tag\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 10,
+          "id": "b856be1f6197f149e82fa0c11d2441ceb71a33e2d9a8584ebf1e63b59772d671",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ],
+            [
+              "p",
+              "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Reordered\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 11,
+          "id": "31e0864f1881acf6c882657f820d280696358c017ee763bc961d40c1b3802dc1",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Three fields\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 12,
+          "id": "93b12c59c54a451a815d35b67f0d89d4ddd4470b09e27d25bd18bf7e2579ed11",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+              "wss://relay"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Unknown version\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 13,
+          "id": "1b7cd006b84702b8d1407b61777fcc58aa90df00ed04191957b6080eb0bf098c",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-2"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Bad target\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 15,
+          "id": "fae5e03903de21a09254e7016a0a4456c9e19fbf729ea8def3e75df74109815e",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|wrong"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Generation zero\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 16,
+          "id": "0255ef8aa969d85667026d1ee1f74f9820830827546536d8af5fea406ea669d3",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:0"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"First line\\nsecond line\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 17,
+          "id": "5a179bf3e2eb16688e0ffe01bc063a465c6760867f3c75b973d19840826b813f",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 18,
+          "id": "f2157431c948cfb396f053ce8e76f9adffbd8ff3c087fa81ae870f6933e1ed1a",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"   \",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 19,
+          "id": "84f013c9619c0c97ef6477902bd15121064b0a4aad74b606cfa87e6f601e241a",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":",
+          "created_at": 20,
+          "id": "5d2e31d80877010af72f9d7e20adf533dd47551990d8295b6e40c1d2036ba71a",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Unknown field\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\",\"prompt\":\"leaked\"}",
+          "created_at": 21,
+          "id": "c48c8cb33da5634878e66d1282a79835c8d94001b07f6ffa475a8698440e831d",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Missing key\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 22,
+          "id": "555b491f990f9f122c273741eea0dc5eec79cb12277903440b8f7de8aef6865a",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v2\",\"title\":\"Wrong schema\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 23,
+          "id": "aa13c0817e718975ee630fb6487055cc9b4d484e334c4ad6a9ad1e8b1c565ccd",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Wrong basis\",\"model\":\"claude-haiku-4-5\",\"basis\":\"conversation\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 24,
+          "id": "491c70bbe8b45b4e0686fea4c48263680a7bf74b51cbdfd961a3d11e8b688aff",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Uppercase create\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"CACACACACACACACACACACACACACACACACACACACACACACACACACACACACACACACA\"}",
+          "created_at": 25,
+          "id": "518b30856c50a89919396d3ea585661c827a44cd2b0f088b3f96ceb7e5535dfd",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Short source\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":\"abc\",\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 26,
+          "id": "2a544466da507d568e8ff03f70ae17604e8bc3c9331d0ea86046263c74656638",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Empty model\",\"model\":\"\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 27,
+          "id": "84daac3dc60b4b159105d78d3c44d4509fb57d589ff37404d8b8c24eb40631a5",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 {\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Padded\",\"model\":\"claude-haiku-4-5\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca\"}",
+          "created_at": 28,
+          "id": "63f106e64d2c44311798a1d28e10b8eb31bbb9c4d0fb0a0e4a9e862e6f7575ba",
+          "kind": 44252,
+          "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "cstl-v",
+              "cstl1-1"
+            ],
+            [
+              "cs-target",
+              "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+            ]
+          ]
+        },
+        {
+          "content": "Two\nlines",
+          "created_at": 29,
+          "id": "914b4c2df5be4e83ae14d48cf11b338f3aaf4c891a68faf8026cb89d778bf3c9",
+          "kind": 44229,
+          "pubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "tags": [
+            [
+              "h",
+              "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"
+            ],
+            [
+              "d",
+              "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+            ],
+            [
+              "csnm-v",
+              "csnm1-1"
+            ]
+          ]
+        }
+      ],
+      "expected": {
+        "diagnostics": {
+          "foreignNames": 0,
+          "foreignTitles": 0,
+          "malformed": 19
+        },
+        "model": null,
+        "name": "Fix the login redirect",
+        "origin": "fallback",
+        "signerPubkey": null
+      },
+      "name": "malformed-events-rejected",
+      "scope": {
+        "channelId": "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+        "executions": [
+          {
+            "providerAuthorityPubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "targetKey": "coding-session/v1|16:claude-agent-acp16:1958c6c448e05eed6:sess-a1:1"
+          },
+          {
+            "providerAuthorityPubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "targetKey": "coding-session/v1|9:codex-acp16:77aa00bb11cc22dd6:sess-b1:1"
+          }
+        ],
+        "founderPubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+        "foundingExecutionTitle": "Fix the login redirect",
+        "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+      }
+    }
+  ]
+}

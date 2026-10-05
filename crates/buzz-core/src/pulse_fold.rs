@@ -18,15 +18,20 @@ use crate::coding_session_payload::{
     decode_coding_session_lifecycle_receipt, decode_coding_session_metadata, LifecycleReceipt,
     ReceiptStatus, SessionMetadata, SessionStatus,
 };
+use crate::coding_session_title::{SessionDisplayNameOrigin, SessionExecutionAuthority};
 use crate::kind::{
-    normalize_project_coordinate, KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_GOAL,
-    KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
-    KIND_PULSE_ENTRY,
+    normalize_project_coordinate, KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_GENERATED_TITLE,
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LEASE,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME, KIND_PULSE_ENTRY,
 };
 use crate::pulse::{pulse_entry_project_coordinate, validate_pulse_entry_envelope, PulseEntry};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+#[path = "pulse_fold_names.rs"]
+mod names;
+pub use names::{session_name_record_from_json, winning_name_event_id};
 
 /// Conservative client-composed lease lifetime from signed issue time.
 ///
@@ -201,8 +206,30 @@ pub struct PulseDigestSession {
     pub session_key: String,
     /// Canonical umbrella UUID, or null for an implicit singleton.
     pub session_ref: Option<String>,
-    /// Newest 44229, or null.
+    /// The umbrella's display name from the shared resolver
+    /// (`crate::coding_session_title::resolve_session_display_name`): the
+    /// newest founder-signed 44229, else the earliest standing provider-signed
+    /// 44252, else null. Never a non-founder 44229, and never a fallback.
     pub name: Option<String>,
+    /// `person` or `generated` — which record supplied `name`; `None` exactly
+    /// when `name` is null.
+    ///
+    /// Not serialized, and neither are the two fields below: the session
+    /// object's bytes are pinned by `conformance/project-pulse-fold`, which
+    /// the Desktop fold also binds to and which carries its own origins beside
+    /// the session (`nameOriginsBySession`). Every reader that prints `name`
+    /// prints these beside it — `bee pulse` as `nameOrigin`/`nameModel`/
+    /// `nameSigner` and a digest-level `nameOrigins` map, the ACP prompt as
+    /// `[auto-named]` — so a generated title is never shown as a person's.
+    #[serde(skip)]
+    pub name_origin: Option<String>,
+    /// The model that generated `name`; `generated` only. Not serialized.
+    #[serde(skip)]
+    pub name_model: Option<String>,
+    /// The provider pubkey that signed `name`; `generated` only. Not
+    /// serialized.
+    #[serde(skip)]
+    pub name_signer: Option<String>,
     /// Newest 44227, or null.
     pub goal: Option<String>,
     /// `open` or `closed`, independent from generation reachability.
@@ -900,7 +927,7 @@ fn fold_sessions(project: &str, now: i64, events: &[Value]) -> Vec<PulseDigestSe
     let mut metadata: HashMap<(String, String), (FactRow, SessionMetadata)> = HashMap::new();
     let mut leases: HashMap<(String, String), Vec<LeaseRow>> = HashMap::new();
     let mut goals: HashMap<(String, String), FactRow> = HashMap::new();
-    let mut names: HashMap<(String, String), FactRow> = HashMap::new();
+    let mut names = names::NameInputs::default();
     let mut closures: HashMap<(String, String), FactRow> = HashMap::new();
     for event in events {
         let (Some(kind), Some(event_id), Some(created_at), Some(content), Some(channel_id)) = (
@@ -981,7 +1008,9 @@ fn fold_sessions(project: &str, now: i64, events: &[Value]) -> Vec<PulseDigestSe
                     });
             }
             KIND_CODING_SESSION_GOAL => keep_newest_by_d_tag(&mut goals, event, fact),
-            KIND_CODING_SESSION_NAME => keep_newest_by_d_tag(&mut names, event, fact),
+            KIND_CODING_SESSION_NAME
+            | KIND_CODING_SESSION_GENERATED_TITLE
+            | KIND_CODING_SESSION_GENESIS => names.observe(kind, channel_id, event),
             KIND_CODING_SESSION_CLOSURE => keep_newest_by_d_tag(&mut closures, event, fact),
             _ => {}
         }
@@ -996,6 +1025,33 @@ fn fold_sessions(project: &str, now: i64, events: &[Value]) -> Vec<PulseDigestSe
             ))
             .and_modify(|held| *held = (*held).max(generation.target.generation))
             .or_insert(generation.target.generation);
+    }
+
+    // The founder each umbrella's accepted creates prove, through the genesis
+    // they name by event id. A resume carries no genesis reference.
+    let mut founders: HashMap<String, HashSet<String>> = HashMap::new();
+    for accepted_generation in accepted.values() {
+        let (
+            Some(session_ref),
+            CodingSessionLifecycleAction::SessionCreate {
+                genesis_ref: Some(genesis_ref),
+                ..
+            },
+        ) = (
+            accepted_generation.session_ref.as_deref(),
+            &accepted_generation.command.payload.action,
+        )
+        else {
+            continue;
+        };
+        if let Some(founder) =
+            names.founder_of(&accepted_generation.channel_id, session_ref, genesis_ref)
+        {
+            founders
+                .entry(session_ref.to_owned())
+                .or_default()
+                .insert(founder);
+        }
     }
 
     let mut grouped: GroupedSessionGenerations = HashMap::new();
@@ -1113,7 +1169,26 @@ fn fold_sessions(project: &str, now: i64, events: &[Value]) -> Vec<PulseDigestSe
             let fact = facts.get(&(channel_id.clone(), reference.to_owned()))?;
             Some((fact.event_id.clone(), fact.content.clone()))
         };
-        let name = joined(&names);
+        // The same one-channel join as goal and closure, then the shared
+        // resolver over that umbrella's executions.
+        let name = match (channels.len(), session_ref.as_deref()) {
+            (1, Some(reference)) => channels.iter().next().and_then(|channel_id| {
+                let executions = generations
+                    .iter()
+                    .map(|generation| SessionExecutionAuthority {
+                        target_key: generation.target_key.clone(),
+                        provider_authority_pubkey: generation.provider_authority_pubkey.clone(),
+                    })
+                    .collect();
+                names.resolve(
+                    channel_id,
+                    reference,
+                    founders.get(reference).unwrap_or(&HashSet::new()),
+                    executions,
+                )
+            }),
+            _ => None,
+        };
         let goal = joined(&goals);
         let closure = joined(&closures);
         let closed = closure.as_ref().is_some_and(|(_, content)| {
@@ -1137,15 +1212,32 @@ fn fold_sessions(project: &str, now: i64, events: &[Value]) -> Vec<PulseDigestSe
             .iter()
             .flat_map(|generation| generation.source_event_ids.clone())
             .collect();
-        for (event_id, _) in [&name, &goal, &closure].into_iter().flatten() {
+        for (event_id, _) in [&goal, &closure].into_iter().flatten() {
             source_event_ids.push(event_id.clone());
+        }
+        if let Some(event_id) = name.as_ref().and_then(|(_, event_id)| event_id.clone()) {
+            source_event_ids.push(event_id);
         }
         source_event_ids.sort();
         source_event_ids.dedup();
         sessions.push(PulseDigestSession {
             session_key,
             session_ref,
-            name: name.map(|(_, content)| content),
+            name: name.as_ref().map(|(resolved, _)| resolved.name.clone()),
+            name_origin: name.as_ref().map(|(resolved, _)| {
+                match resolved.origin {
+                    SessionDisplayNameOrigin::Person => "person",
+                    SessionDisplayNameOrigin::Generated => "generated",
+                    SessionDisplayNameOrigin::Fallback => "fallback",
+                }
+                .to_owned()
+            }),
+            name_model: name
+                .as_ref()
+                .and_then(|(resolved, _)| resolved.model.clone()),
+            name_signer: name
+                .as_ref()
+                .and_then(|(resolved, _)| resolved.signer_pubkey.clone()),
             goal: goal.map(|(_, content)| content),
             lifecycle: if closed { "closed" } else { "open" }.to_owned(),
             coordination_state: coordination_state.to_owned(),
@@ -1186,7 +1278,8 @@ fn keep_newest_pair<T>(
 }
 
 /// Keep the newest `(created_at, event id)` fact per `d` tag — the session
-/// UUID that 44227/44229/44230 are keyed by.
+/// UUID that 44227/44230 are keyed by. A 44229 name is not: it is resolved
+/// with its signer's standing, in [`names`].
 fn keep_newest_by_d_tag(
     facts: &mut HashMap<(String, String), FactRow>,
     event: &Value,

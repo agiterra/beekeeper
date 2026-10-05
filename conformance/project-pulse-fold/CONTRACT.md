@@ -14,8 +14,8 @@ For one normalized kind-30621 project coordinate, a client-composed fold takes:
 
 - kind 44240 Pulse entries selected by their `a` tag;
 - project-channel facts of kinds 24223 (lease), 44221 (lifecycle command),
-  44223 (metadata), 44224 (lifecycle receipt), 44227 (goal), 44229 (name), and
-  44230 (closure);
+  44223 (metadata), 44224 (lifecycle receipt), 44226 (genesis), 44227 (goal),
+  44229 (name), 44230 (closure), and 44252 (generated title);
 - `now`, read once after the last source query returns; and
 - `sourceErrors`, one `{scope, message}` per failed or truncated query.
 
@@ -216,6 +216,24 @@ Goal, name, and closure joins are `(h, sessionRef)` joins. When one verified
 umbrella `sessionRef` has accepted generations in more than one channel, those
 umbrella facts fail closed rather than selecting one channel or allowing a
 fact from either channel to govern the other.
+
+`name` is not "the newest 44229". It is the shared display-name rule
+(`conformance/session-display-name/`, SV-31) over that `(h, sessionRef)`: the
+newest 44229 signed by the founder, else the earliest standing 44252, else
+null — never a fallback title. The executions are the umbrella's accepted
+generations with the provider authority each receipt proved. The Rust fold
+takes the founder from the 44226 genesis the accepted `session.create` names
+by `genesisRef` (same channel, same `sessionRef`; two different proven
+founders leave it unknown, and an unknown founder makes no 44229 a person's
+name). The winning record's event id joins `sourceEventIds`. Where the name
+came from (`person` or `generated`, and for a generated title its model and
+signer) is carried beside the session, never inside it, so the session
+object's bytes stay as pinned here. The Desktop fold proves the founder the
+same way (`provenSessionFounder` in
+`desktop/src/shared/coordination/sessionCoordinationNames.ts`), and vector
+`founder-name-beats-newer-foreign-rename-and-generated-title` pins it for both:
+the founder's 44229 names the session over a newer 44229 from another key and
+over a standing 44252, and only that 44229 joins `sourceEventIds`.
 
 `coordinationState` and the outer indexes are tri-state:
 

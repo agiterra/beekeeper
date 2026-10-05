@@ -60,6 +60,49 @@ pub struct RuntimeDescriptor {
     /// an adapter without a guard would start a detached turn nobody observes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steer_idle_guard: Option<SteerIdleGuard>,
+    /// The model the host's auto-title one-shot asks this runtime for
+    /// (SV-31). Tri-state on the wire:
+    ///
+    /// - key absent (`None`): the default — see [`RuntimeDescriptor::effective_title_model`];
+    /// - explicit `null` (`Some(None)`): titling is disabled for this runtime;
+    /// - a string (`Some(Some(model))`): that model.
+    ///
+    /// Omitted when absent, so a list an older sidecar parses stays parseable
+    /// under `deny_unknown_fields`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_nullable"
+    )]
+    pub title_model: Option<Option<String>>,
+}
+
+impl RuntimeDescriptor {
+    /// The model the auto-title one-shot uses, or `None` when titling is
+    /// disabled for this runtime.
+    ///
+    /// Absent `titleModel`: `haiku` for the `claude` runtime (the cheap model
+    /// the Claude CLI always accepts as an alias), otherwise the runtime's
+    /// `defaultModel`. An explicit `null` disables titling; a blank string is
+    /// treated the same way rather than sent to an adapter as a model id.
+    pub fn effective_title_model(&self) -> Option<String> {
+        match &self.title_model {
+            None if self.runtime == "claude" => Some("haiku".to_owned()),
+            None => Some(self.default_model.clone()),
+            Some(None) => None,
+            Some(Some(model)) if model.trim().is_empty() => None,
+            Some(Some(model)) => Some(model.trim().to_owned()),
+        }
+    }
+}
+
+/// Deserialize a key that is present into `Some(..)`, keeping an explicit
+/// `null` distinct from absence (`#[serde(default)]` supplies the `None`).
+fn deserialize_present_nullable<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 /// How an adapter answers a `_session/steering` request that finds no
@@ -250,6 +293,57 @@ mod tests {
         let mut unknown = minimal("claude-primary");
         unknown["steerIdleGuard"] = serde_json::json!("startNewTurn");
         assert!(parse_runtime_descriptors(&serde_json::json!([unknown]).to_string()).is_err());
+    }
+
+    /// `titleModel` is tri-state: absent means the default (haiku for
+    /// claude, otherwise the default model), `null` disables titling, a
+    /// string is the model. Absence survives a round trip as omission.
+    #[test]
+    fn the_title_model_is_tri_state_and_omitted_when_absent() {
+        let parse = |entry: serde_json::Value| {
+            parse_runtime_descriptors(&serde_json::json!([entry]).to_string()).expect("parse")[0]
+                .clone()
+        };
+        let claude = parse(minimal("claude-primary"));
+        assert_eq!(claude.title_model, None);
+        assert_eq!(claude.effective_title_model().as_deref(), Some("haiku"));
+        let serialized = serde_json::to_value(&claude).expect("serialize");
+        assert!(!serialized
+            .as_object()
+            .expect("object")
+            .contains_key("titleModel"));
+
+        let mut codex = minimal("codex-primary");
+        codex["runtime"] = serde_json::json!("codex");
+        codex["defaultModel"] = serde_json::json!("gpt-5.1-codex-mini");
+        assert_eq!(
+            parse(codex).effective_title_model().as_deref(),
+            Some("gpt-5.1-codex-mini")
+        );
+
+        let mut disabled = minimal("claude-primary");
+        disabled["titleModel"] = serde_json::Value::Null;
+        let disabled = parse(disabled);
+        assert_eq!(disabled.title_model, Some(None));
+        assert_eq!(disabled.effective_title_model(), None);
+        let serialized = serde_json::to_value(&disabled).expect("serialize");
+        assert_eq!(serialized["titleModel"], serde_json::Value::Null);
+        assert!(serialized
+            .as_object()
+            .expect("object")
+            .contains_key("titleModel"));
+        assert_eq!(parse(serialized).effective_title_model(), None);
+
+        let mut chosen = minimal("claude-primary");
+        chosen["titleModel"] = serde_json::json!("sonnet");
+        assert_eq!(
+            parse(chosen).effective_title_model().as_deref(),
+            Some("sonnet")
+        );
+
+        let mut blank = minimal("claude-primary");
+        blank["titleModel"] = serde_json::json!("  ");
+        assert_eq!(parse(blank).effective_title_model(), None);
     }
 
     #[test]

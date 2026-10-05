@@ -2373,6 +2373,164 @@
         "entries": [],
         "errors": []
       }
+    },
+    {
+      "name": "founder-name-beats-newer-foreign-rename-and-generated-title",
+      "description": "SV-31 Risk 1: the founder is the signer of the 44226 genesis the accepted session.create names by genesisRef (not the create's own signer). The founder's 44229 names the session over a newer 44229 from a key that is not the founder and over a standing provider 44252; only the winning 44229 joins sourceEventIds.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785600000,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000009a0",
+            "pubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "created_at": 1785589800,
+            "kind": 44226,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csg-v", "csg1-1"],
+              ["csg-session", "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"]
+            ],
+            "content": "{\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"v\":1}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000009a1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785589900,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "create-named-1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-named-1\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"genesisRef\":\"00000000000000000000000000000000000000000000000000000000000009a0\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000009a2",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785589901,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "create-named-1"],
+              ["csl-key", "coding-session-lifecycle-receipt/v1|14:create-named-1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-named-1\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"sess-1\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000009a3",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785590000,
+            "kind": 44223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-16:sess-11:1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"sess-1\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"idle\",\"branch\":null,\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"observedCommit\":null,\"dirty\":null,\"relayReachable\":null,\"verifiedAt\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000009a4",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785590050,
+            "kind": 44252,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["d", "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"],
+              ["cstl-v", "cstl1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-16:sess-11:1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-title/v1\",\"title\":\"Fix login redirect\",\"model\":\"haiku\",\"basis\":\"first-message\",\"sourceCommand\":null,\"createEventId\":\"00000000000000000000000000000000000000000000000000000000000009a1\"}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000009a5",
+            "pubkey": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "created_at": 1785590100,
+            "kind": 44229,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["d", "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"],
+              ["csnm-v", "csnm1-1"]
+            ],
+            "content": "Auth rework"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000009a6",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "created_at": 1785590200,
+            "kind": 44229,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["d", "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"],
+              ["csnm-v", "csnm1-1"]
+            ],
+            "content": "Hijacked"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785600000,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "sessionKey": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+            "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+            "name": "Auth rework",
+            "goal": null,
+            "lifecycle": "open",
+            "coordinationState": "open_unverified",
+            "latestObservationAt": 1785590000,
+            "observedAgeSeconds": 10000,
+            "generations": [
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-16:sess-11:1",
+                "executionKey": "coding-execution/v1|3:acp6:inst-16:sess-1",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "unverified",
+                "status": "idle",
+                "statusAt": 1785590000,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": null,
+                "leaseIssuedAt": null,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": null,
+                "leaseSigner": null,
+                "leaseSourceEventId": null,
+                "leaseSequence": null,
+                "lifecycleCommandEventId": "00000000000000000000000000000000000000000000000000000000000009a1",
+                "lifecycleReceiptEventId": "00000000000000000000000000000000000000000000000000000000000009a2",
+                "sourceEventIds": [
+                  "00000000000000000000000000000000000000000000000000000000000009a1",
+                  "00000000000000000000000000000000000000000000000000000000000009a2",
+                  "00000000000000000000000000000000000000000000000000000000000009a3"
+                ]
+              }
+            ],
+            "sourceEventIds": [
+              "00000000000000000000000000000000000000000000000000000000000009a1",
+              "00000000000000000000000000000000000000000000000000000000000009a2",
+              "00000000000000000000000000000000000000000000000000000000000009a3",
+              "00000000000000000000000000000000000000000000000000000000000009a5"
+            ]
+          }
+        ],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": ["5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"],
+        "closedSessions": [],
+        "entries": [],
+        "errors": []
+      }
     }
   ]
 }

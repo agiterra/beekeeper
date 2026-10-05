@@ -42,8 +42,19 @@ pub fn validate_coding_session_name_content(content: &str) -> Result<(), String>
 
 /// Validate the exact ordered name envelope: `h`, `d`, then `csnm-v`.
 pub fn validate_coding_session_name_envelope(event: &Event) -> Result<(), String> {
-    validate_coding_session_name_content(&event.content)?;
     let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
+    validate_coding_session_name_parts(&tags, &event.content)
+}
+
+/// [`validate_coding_session_name_envelope`] over an event's parts rather
+/// than a signed [`Event`].
+///
+/// Exists so a reader that holds events in its own shape — the display-name
+/// resolver in [`crate::coding_session_title`] and the conformance vectors it
+/// binds to, whose ids and signers are synthetic labels — applies exactly the
+/// rule the relay applies at ingest, not a copy of it.
+pub fn validate_coding_session_name_parts(tags: &[&[String]], content: &str) -> Result<(), String> {
+    validate_coding_session_name_content(content)?;
     if tags.len() != 3 || tags.iter().any(|parts| parts.len() != 2) {
         return Err("coding-session name requires exactly three two-field tags".into());
     }
