@@ -2,7 +2,10 @@ import * as React from "react";
 import { ChevronDown } from "lucide-react";
 
 import { cn } from "@/shared/lib/cn";
-import { RedactedText } from "@/shared/ui/RedactedPill";
+import {
+  RevealedRedactionsMarker,
+  RowRedactedText,
+} from "../AgentSessionToolItem/RowRedactedText";
 import { useAgentSessionTranscriptVariant } from "../agentSessionTranscriptContext";
 
 export type ActivityRowLabelParts = {
@@ -106,12 +109,18 @@ export function ActivityRowLabel({
   className,
   object,
   openToneScope,
+  revealedMarker = true,
   stats,
   title,
   verb,
 }: ActivityRowLabelParts & {
   className?: string;
   openToneScope: ActivityRowToneScope;
+  /**
+   * Draw the row's own "only you see this" marker beside the object (SV-75).
+   * `false` when the caller draws one marker for a wider row itself.
+   */
+  revealedMarker?: boolean;
   stats?: ActivityRowStats | null;
   title?: string;
 }) {
@@ -150,10 +159,19 @@ export function ActivityRowLabel({
         >
           {/* Coding-session tool labels are prose the provider redacted before
               signing, and a shell row is the argv itself — so a redacted
-              interpreter path lands mid-label. Strings get the pill; anything
+              interpreter path lands mid-label. Strings get the pill, and a
+              value this machine resolved reads as itself with its disclosure
+              beside the row, not inside the command (SV-75); anything
               already an element was built by a caller that knows better. */}
-          {typeof object === "string" ? <RedactedText text={object} /> : object}
+          {typeof object === "string" ? (
+            <RowRedactedText text={object} />
+          ) : (
+            object
+          )}
         </span>
+      ) : null}
+      {revealedMarker && typeof object === "string" ? (
+        <RevealedRedactionsMarker texts={[object]} />
       ) : null}
       {stats ? <ActivityRowStatsView stats={stats} /> : null}
     </span>

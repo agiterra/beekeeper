@@ -23,6 +23,10 @@ import {
   ACTIVITY_ROW_LABEL_CLASS,
   ACTIVITY_ROW_LINE_CLASS,
 } from "@/features/agents/ui/AgentSessionToolItem/ToolItemRowClasses";
+import {
+  RevealedRedactionsMarker,
+  RowRedactedText,
+} from "@/features/agents/ui/AgentSessionToolItem/RowRedactedText";
 import type {
   CodingSessionChangedFile,
   CodingSessionTurnSettlement,
@@ -102,8 +106,9 @@ export function CodingSessionActiveTool({
         />
       )}
       <span className={ACTIVITY_ROW_LABEL_CLASS}>
-        <RedactedText text={label} />
+        <RowRedactedText text={label} />
       </span>
+      <RevealedRedactionsMarker texts={[label]} />
       <span className="ml-auto shrink-0 text-xs text-muted-foreground">
         {statusLabel}
       </span>

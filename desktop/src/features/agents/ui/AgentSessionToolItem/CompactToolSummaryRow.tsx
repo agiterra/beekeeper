@@ -2,7 +2,6 @@ import * as React from "react";
 import { ChevronDown, CircleX } from "lucide-react";
 
 import { cn } from "@/shared/lib/cn";
-import { RedactedText } from "@/shared/ui/RedactedPill";
 import { useAgentSessionTranscriptVariant } from "../agentSessionTranscriptContext";
 import type { AgentActivityAction } from "../agentSessionTypes";
 import type {
@@ -16,6 +15,7 @@ import {
   type ActivityRowLabelParts,
 } from "../activityRenderClasses/ActivityRow";
 import { useCompactToolFailureTone } from "./CompactToolFailureToneContext";
+import { RevealedRedactionsMarker, RowRedactedText } from "./RowRedactedText";
 import type { CompactToolFailureTone } from "./CompactToolSummaryRowFailure";
 
 export {
@@ -112,7 +112,7 @@ export function CompactToolSummaryRow({
           <span className="shrink-0">Tool call failed</span>
           {preview ? (
             <span className="min-w-0 truncate font-normal" title={preview}>
-              <RedactedText text={preview} />
+              <RowRedactedText text={preview} />
             </span>
           ) : null}
         </span>
@@ -122,6 +122,7 @@ export function CompactToolSummaryRow({
         <ActivityRowLabel
           object={actionLabel.object}
           openToneScope="tool"
+          revealedMarker={false}
           title={actionLabel.title}
           verb={actionLabel.verb}
         />
@@ -133,7 +134,7 @@ export function CompactToolSummaryRow({
             tone,
           )}
         >
-          <RedactedText text={label} />
+          <RowRedactedText text={label} />
         </span>
       )}
       {!fileEditSummary && resolvedThumbnail ? (
@@ -155,9 +156,16 @@ export function CompactToolSummaryRow({
           )}
           title={preview}
         >
-          <RedactedText text={preview} />
+          <RowRedactedText text={preview} />
         </span>
       ) : null}
+      {fileEditSummary ? null : (
+        // One disclosure for the whole row, beside it — never a glyph
+        // wedged after each path inside the command (SV-75).
+        <RevealedRedactionsMarker
+          texts={[label, preview, action?.verb, action?.object]}
+        />
+      )}
       {duration ? (
         <span className={cn("shrink-0 text-xs", tone)}>{duration}</span>
       ) : null}
@@ -211,11 +219,11 @@ function QuietFailedToolLabel({
         />
       )}
       <span className="shrink-0 font-semibold">
-        <RedactedText text={ran ? ran.verb : label} />
+        <RowRedactedText text={ran ? ran.verb : label} />
       </span>
       {object ? (
         <span className="min-w-0 truncate font-normal" title={object}>
-          <RedactedText text={object} />
+          <RowRedactedText text={object} />
         </span>
       ) : null}
       {ran || detail ? (
