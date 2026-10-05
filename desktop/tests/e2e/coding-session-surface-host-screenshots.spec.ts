@@ -26,9 +26,9 @@ import { installMockBridge } from "../helpers/bridge";
 
 /**
  * The shared right-side surface host (Slice 1 of the coding-session UI
- * convergence): one collapsible, resizable panel whose sibling tabs are
- * Agents and Observed changes, with a single sheet presentation on narrow
- * layouts. This spec captures the host's five canonical states.
+ * convergence, reworked by SV-21): one collapsible, resizable panel whose
+ * tabs are the surfaces the person opened — Agents first here, then Diff
+ * added from "+" — with a single sheet presentation on narrow layouts.
  */
 
 const SHOTS = "test-results/coding-session-surface-host";
@@ -352,9 +352,14 @@ test("merged work focuses in place and the shared surface remains responsive", a
   await waitForAnimations(page);
   await workspace.screenshot({ path: `${SHOTS}/03-agents-open.png` });
 
-  // 3 — switching tabs swaps content without closing or resizing the host.
+  // 3 — adding Diff from "+" opens it as a second tab and swaps the content
+  // without closing or resizing the host (SV-21).
   const widthBeforeSwitch = (await host.boundingBox())?.width ?? 0;
-  await page.getByTestId("coding-session-surface-tab-changes").click();
+  await page.getByTestId("coding-session-surface-add").click();
+  await page.getByTestId("coding-session-surface-add-diff").click();
+  await expect(
+    page.getByTestId("coding-session-surface-tab-diff"),
+  ).toHaveAttribute("aria-selected", "true");
   const changes = page.getByTestId("coding-session-changes-rail");
   await expect(changes).toBeVisible();
   await expect(changes).toContainText("CodingSessionSurfaceHost.tsx");
@@ -395,14 +400,18 @@ test("merged work focuses in place and the shared surface remains responsive", a
   const sheet = page.getByRole("dialog");
   await expect(sheet).toContainText("All agents");
   await expect(sheet).toContainText("Codex");
-  await expect(sheet.getByRole("button", { name: "Close" })).toHaveCount(1);
+  // Exactly one panel close (the sheet's own); each tab's own close button
+  // names its tab ("Close Agents").
+  await expect(
+    sheet.getByRole("button", { name: "Close", exact: true }),
+  ).toHaveCount(1);
   await waitForAnimations(page);
   await page.screenshot({ path: `${SHOTS}/07-narrow-sheet.png` });
 
   // 7 — the compact focus and recipient controls remain usable at narrow
   // width; both popovers stay inside the viewport instead of creating another
   // horizontal interaction band.
-  await sheet.getByRole("button", { name: "Close" }).click();
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
   await focusTrigger.click();
   await expect(page.getByTestId("coding-session-agent-focus-chip")).toHaveCount(
     2,

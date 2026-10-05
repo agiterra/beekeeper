@@ -100,6 +100,21 @@ export default defineConfig({
         // the mission view's sandbox chip (SV-17).
         "**/coding-session-parity-screenshots.spec.ts",
         "**/coding-session-umbrella-sandbox.spec.ts",
+        // Session-view parity wave B: every lane's spec, listed by name
+        // (check:e2e-registration reads literal file names, not globs).
+        "**/coding-session-wave-b-audit-markdown.spec.ts",
+        "**/coding-session-wave-b-audit-transcript-model.spec.ts",
+        "**/coding-session-wave-b-audit-transcript-view.spec.ts",
+        "**/coding-session-wave-b-audit-workspace.spec.ts",
+        "**/coding-session-wave-b-followups.spec.ts",
+        "**/coding-session-wave-b-registry.spec.ts",
+        "**/coding-session-wave-b-header.spec.ts",
+        "**/coding-session-wave-b-surfaces.spec.ts",
+        "**/coding-session-wave-b-badges.spec.ts",
+        "**/coding-session-wave-b-terminal.spec.ts",
+        "**/coding-session-wave-b-minimap.spec.ts",
+        "**/coding-session-wave-b-orchestration.spec.ts",
+        "**/coding-session-terminal-shortcut.spec.ts",
         "**/coding-session-elision-screenshots.spec.ts",
         "**/coding-session-seat-bee.spec.ts",
         "**/coding-session-surface-host-screenshots.spec.ts",

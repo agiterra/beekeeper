@@ -23,6 +23,7 @@ import {
 import type { RelayEvent } from "@/shared/api/types";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
+import { openSessionSurface } from "./helpers/codingSessionWaveBHeader";
 
 const SHOTS = "test-results/coding-session-transcript-narrative";
 const secret = generateSecretKey();
@@ -341,17 +342,19 @@ test("captures the busy transcript narrative collapsed and expanded", async ({
   await waitForAnimations(page);
   await workspace.screenshot({ path: `${SHOTS}/01-collapsed.png` });
 
-  // Opening the fold puts the work back in place: the six consecutive
-  // successful calls read as one sentence-summary row, itself closed, and
-  // the failed check is its own row beside them.
+  // Opening the fold puts the work back in place: all seven calls read as one
+  // sentence-summary row, itself closed. Since Wave B (T3's work log) the
+  // failed check before the answer joins its neighbours' group, and the row
+  // names it, so a closed group never reads as all-green.
   await fold.click();
   await expect(fold).toHaveAttribute("aria-expanded", "true");
   const group = page.getByTestId("coding-session-tool-group");
   await expect(group).toHaveCount(1);
-  await expect(group).toHaveAttribute("data-count", "6");
+  await expect(group).toHaveAttribute("data-count", "7");
+  await expect(group).toContainText("1 failed");
   const groupToggle = group.getByRole("button").first();
   await expect(groupToggle).toHaveAttribute("aria-expanded", "false");
-  await expect(page.getByTestId("transcript-tool-item")).toHaveCount(1);
+  await expect(page.getByTestId("transcript-tool-item")).toHaveCount(0);
 
   // And the summary row opens onto every call it stands for.
   await groupToggle.click();
@@ -409,7 +412,9 @@ test("captures signed changes in the transcript and workspace rail", async ({
   await waitForAnimations(page);
   await workspace.screenshot({ path: `${SHOTS}/05-changes-inline.png` });
 
-  await page.getByTestId("coding-session-surface-toggle-changes").click();
+  // SV-20: the header's Observed-changes toggle became the Diff surface,
+  // opened from the right-panel toggle and its launcher row.
+  await openSessionSurface(page, "diff");
   const rail = page.getByTestId("coding-session-changes-rail");
   await expect(rail).toBeVisible();
   await expect(rail).toContainText("CodingSessionHeader.tsx");

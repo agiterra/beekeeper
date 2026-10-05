@@ -30,6 +30,7 @@ import {
 import type { RelayEvent } from "@/shared/api/types";
 import { installMockBridge } from "../helpers/bridge";
 import { waitForAnimations } from "../helpers/animations";
+import { openSessionSurface } from "./helpers/codingSessionWaveBHeader";
 
 /**
  * Width behaviour of the coding-session workspace.
@@ -568,7 +569,8 @@ for (const width of WIDTHS) {
     // constraint binds, it must bind identically for all three.
     expect(result.edges.composer).toEqual(result.edges.column);
     expect(result.edges.goalPill).toEqual(result.edges.column);
-    expect(result.affordance.codeBlocksOverflowing).toBeGreaterThan(0);
+    // Code wraps by default (SV-12, T3's wordWrap default).
+    expect(result.affordance.codeBlocksOverflowing).toBe(0);
     // Tables wrap to the column by default (SV-11), so none is asserted.
   });
 }
@@ -719,6 +721,9 @@ test("the wide code line scrolls inside its own block", async ({ page }) => {
   await openSession(page);
   const pre = page.locator("[data-code-block] > pre").first();
   await expect(pre).toBeVisible();
+  // Code blocks start wrapped (SV-12); turn wrapping off to measure the scroll.
+  await page.getByTestId("code-block-wrap-toggle").first().click();
+  await waitForAnimations(page);
 
   const before = await pre.evaluate((el) => ({
     clientWidth: el.clientWidth,
@@ -764,7 +769,8 @@ test("opening a side surface returns the transcript to its 48rem measure", async
 }) => {
   await page.setViewportSize({ width: 1920, height: 900 });
   await openSession(page);
-  await page.getByTestId("coding-session-surface-toggle-changes").click();
+  // SV-20: Observed changes is the Diff surface, opened through the launcher.
+  await openSessionSurface(page, "diff");
   await waitForAnimations(page);
 
   const withSurface = await audit(page);

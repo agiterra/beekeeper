@@ -76,7 +76,7 @@ const BASE_CREATED_AT = 1_800_000_000;
 const OBSERVED_AT = Math.floor(Date.now() / 1_000) - 600;
 
 const OBSERVATION_SCHEMA = "buzz-coding-session-observation/v1";
-const FOLD_SCHEMA = "buzz-coding-session-observation-fold-adapter/v1";
+const FOLD_SCHEMA = "buzz-coding-session-observation-fold-adapter/v2";
 const DISCLOSURE =
   "an observation is something its author saw, not a decision: it settles nothing, authorizes nothing and excludes nothing, and every duration in it is the author's own measurement";
 
@@ -108,16 +108,21 @@ function genesisEvent(): RelayEvent {
   );
 }
 
+/** Where the seeded session says it works; both null unless a spec asks. */
+type SessionRefs = { projectRef: string | null; repoRef: string | null };
+const NO_REFS: SessionRefs = { projectRef: null, repoRef: null };
+
 function createAndReceiptEvents(
   genesisRef: string,
   commandId: string = COMMAND_ID,
   target: typeof TARGET = TARGET,
+  refs: SessionRefs = NO_REFS,
 ): RelayEvent[] {
   const built = buildCodingSessionCreateEvent({
     channelId: CHANNEL_ID,
     commandId,
-    projectRef: null,
-    repoRef: null,
+    projectRef: refs.projectRef,
+    repoRef: refs.repoRef,
     sessionRef: SESSION_REF,
     genesisRef,
     providerInstanceRef: "claude-primary",
@@ -158,6 +163,7 @@ function createAndReceiptEvents(
 function metadataEvent(
   target: typeof TARGET = TARGET,
   targetKey: string = TARGET_KEY,
+  refs: SessionRefs = NO_REFS,
 ): RelayEvent {
   return signed(
     KIND_CODING_SESSION_METADATA,
@@ -171,8 +177,8 @@ function metadataEvent(
     JSON.stringify({
       schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
       session: target,
-      projectRef: null,
-      repoRef: null,
+      projectRef: refs.projectRef,
+      repoRef: refs.repoRef,
       title: "Render kind 44246",
       agentRef: null,
       provider: "claude-agent-acp",
@@ -417,6 +423,8 @@ export function observationFixture(genesisRef: string) {
         durationMs: 180_000,
       },
     ],
+    gateStarts: [],
+    gateStartStaleAfterMs: 1_800_000,
     unresolved: [{ eventId: phase.id, assignmentRef: DANGLING_ASSIGNMENT }],
     ignored: [],
     misclaimedObserved: [],
@@ -434,6 +442,8 @@ export function observationFixture(genesisRef: string) {
       entryEventIds: 0,
       displacedGates: 0,
       displacedFindings: 0,
+      gateStarts: 0,
+      gateStartClosesUnmatched: 0,
     },
     disclosure: DISCLOSURE,
   };
@@ -452,6 +462,8 @@ export function emptyFoldResponse(genesisRef: string) {
     gates: [],
     findings: [],
     phases: [],
+    gateStarts: [],
+    gateStartStaleAfterMs: 1_800_000,
     unresolved: [],
     ignored: [],
     misclaimedObserved: [],
@@ -467,22 +479,45 @@ export function emptyFoldResponse(genesisRef: string) {
       entryEventIds: 0,
       displacedGates: 0,
       displacedFindings: 0,
+      gateStarts: 0,
+      gateStartClosesUnmatched: 0,
     },
     disclosure: DISCLOSURE,
   };
 }
 
-/** Seed one governed session, with or without observations, and open it. */
+/**
+ * Seed one governed session, with or without observations, and open it.
+ *
+ * `refs` names a project and repository for the session (SV-20's header spec
+ * needs a repository so Landing can open). `foldThroughWaveBHeader` serves
+ * the fold from the header lane's bridge module (`e2eBridgeWaveBHeader.ts`)
+ * instead of the built-in mock: the same response, through the seam that
+ * spec exercises.
+ */
 export async function openObservedSession(
   page: Page,
-  input: { withObservations: boolean },
+  input: {
+    withObservations: boolean;
+    refs?: SessionRefs;
+    foldThroughWaveBHeader?: boolean;
+  },
 ): Promise<void> {
   const genesis = genesisEvent();
   const fixture = observationFixture(genesis.id);
+  const refs = input.refs ?? NO_REFS;
+  const fold = input.withObservations
+    ? fixture.foldResponse
+    : emptyFoldResponse(genesis.id);
+  // Not a field of the typed options: the Wave B seam reads its own keys.
+  const waveB = input.foldThroughWaveBHeader
+    ? { waveBHeader: { observationFold: fold } }
+    : {};
   await installMockBridge(page, {
-    codingSessionObservationFoldResponse: input.withObservations
-      ? fixture.foldResponse
-      : emptyFoldResponse(genesis.id),
+    ...waveB,
+    codingSessionObservationFoldResponse: input.foldThroughWaveBHeader
+      ? emptyFoldResponse(genesis.id)
+      : fold,
     globalAgentConfig: {
       env_vars: {},
       provider: null,
@@ -509,10 +544,15 @@ export async function openObservedSession(
       channelName: CHANNEL_NAME,
       events: [
         genesis,
-        ...createAndReceiptEvents(genesis.id),
-        ...createAndReceiptEvents(genesis.id, SECOND_COMMAND_ID, SECOND_TARGET),
-        metadataEvent(),
-        metadataEvent(SECOND_TARGET, SECOND_TARGET_KEY),
+        ...createAndReceiptEvents(genesis.id, COMMAND_ID, TARGET, refs),
+        ...createAndReceiptEvents(
+          genesis.id,
+          SECOND_COMMAND_ID,
+          SECOND_TARGET,
+          refs,
+        ),
+        metadataEvent(TARGET, TARGET_KEY, refs),
+        metadataEvent(SECOND_TARGET, SECOND_TARGET_KEY, refs),
         ...(input.withObservations ? fixture.events : []),
       ],
     },

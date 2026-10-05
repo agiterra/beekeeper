@@ -95,10 +95,10 @@ can be re-verified and removed; add an entry only after running the test on an
 untouched `main`.
 
 An entry marked `intermittent` is a blind spot: a real regression in that test
-reads as known. Every test in `project-team-setup.spec.ts` is listed that way,
-so the gate cannot see a regression in that file at all — when a change
-reaches it, run it alone (`E2E_WORKERS=1 pnpm -C desktop test:e2e:smoke --
-project-team-setup.spec.ts`) and read the failures yourself. The list came
+reads as known. `channels.spec.ts:2474` (forum unread count) is listed that
+way since SV-48; when a change reaches it, run it alone and read the failures
+yourself. The `project-team-setup.spec.ts` entries were pruned under SV-47
+after three clean file-alone runs at `623b2c301`. The list came
 from three four-worker full runs at `dad4726ba` on 2026-10-04; each of the
 second and third found entries the earlier ones missed, so a fourth may too.
 

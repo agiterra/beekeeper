@@ -14,6 +14,7 @@ import {
   respondToMockMultiChannelSessionFacts,
   type MockFilter,
 } from "./e2eBridgeSessionFacts.ts";
+import { handleWaveBMockCommand } from "./e2eBridgeWaveBRegistry.ts";
 import { handleMockProjectTeamSetupCommand } from "./e2eBridgeProjectTeamSetup.ts";
 import {
   associateMockManagedAgent,
@@ -11822,6 +11823,10 @@ export function maybeInstallE2eTauriMocks() {
       payload: loggedPayload,
     });
     window.__BUZZ_E2E_COMMAND_LOG__?.push({ command, payload });
+
+    // Session-view parity Wave B: each lane's own module answers first.
+    const waveB = await handleWaveBMockCommand(command, payload, activeConfig);
+    if (waveB !== null) return waveB.value;
 
     switch (command) {
       case "query_relay_filters": {

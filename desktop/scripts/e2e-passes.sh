@@ -40,7 +40,10 @@ fi
 
 pnpm exec playwright test "${projects[@]}" ${extra[@]+"${extra[@]}"} "$@"
 first=$?
-pnpm exec playwright test --project=smoke-serial ${extra[@]+"${extra[@]}"} "$@"
+# Playwright empties its output directory when a run starts, so the second pass
+# writes beneath the first's: sharing `test-results/` would delete the first
+# pass's failure attachments and every screenshot a spec saved there.
+pnpm exec playwright test --project=smoke-serial --output=test-results/smoke-serial ${extra[@]+"${extra[@]}"} "$@"
 second=$?
 if [ "$first" -ne 0 ]; then exit "$first"; fi
 exit "$second"

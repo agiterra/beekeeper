@@ -1261,7 +1261,11 @@ test("Mission stream stays within its own width at 900px", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 900 });
   // Below 960 the Inspector is a Sheet over the workspace; U-E3 is about the
   // stream underneath it, so close the drawer before measuring.
-  const drawerClose = page.getByRole("button", { name: "Close" }).last();
+  // Wave B (SV-20/24): each surface tab has its own "Close <tab>" button, so
+  // the Sheet's own Close is matched exactly.
+  const drawerClose = page
+    .getByRole("button", { name: "Close", exact: true })
+    .last();
   if (await drawerClose.isVisible().catch(() => false)) {
     await drawerClose.click();
   }
@@ -1906,9 +1910,9 @@ test("A4: the Route rail maps the session, and folds to a scrubber below its wid
   // happens when both panels genuinely cannot fit, so the Inspector is
   // re-opened first: at a 1280 window the body is 969 and
   // 969 − 224 − 360 = 385, under the 420 px floor.
-  await page
-    .getByTestId("coding-session-surface-toggle-mission-inspector")
-    .click();
+  // SV-20: the header's Inspector toggle left with the other surface
+  // toggles; the right-panel toggle reopens the panel on its remembered tab.
+  await page.getByTestId("coding-session-panel-toggle-right").click();
   await expect(
     page.getByTestId("coding-session-mission-inspector"),
   ).toBeVisible({ timeout: 15_000 });

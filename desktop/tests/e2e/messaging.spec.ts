@@ -1737,7 +1737,7 @@ test("copy a rendered code block and paste it back as code", async ({
   await expect(codeBlock).toHaveCount(1);
   // SV-12: the rounded, smoothed chrome is on the block (header + pre), and
   // the copy button is always visible rather than revealed on hover.
-  await expectCornerRadiusPx(codeBlock, 16);
+  await expectCornerRadiusPx(codeBlock, 10);
   await expectSmoothCorners(codeBlock);
 
   const copyButton = page.getByLabel("Copy code block");

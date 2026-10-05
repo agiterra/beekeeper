@@ -4,100 +4,12 @@
     "Matched by spec file + title (describe titles joined with ' › '); line is informational and drifts.",
     "Add an entry only after running the test on an untouched main, and record that commit in verifiedOn.",
     "`node scripts/e2e-affected.mjs compare <report>` names entries that pass: re-verify on main and remove them.",
-    "project-team-setup.spec.ts fails a different subset per run (6 of 8 at four workers in the full run, 7 of 8 with the file alone at one), so all eight are listed with intermittent: true — a pass of one is not a fix.",
     "Checked 2026-10-04 at dad4726ba and NOT listed because they passed: ledger 111/115's six (coding-session-founder-acts:380, coding-session-observations:33/114/144, coding-sessions:458, project-packs:40) and the dense-history case (channel-dense-second-reach:28).",
-    "The baseline came from three four-worker full runs; a fourth may find more. An intermittent entry is a blind spot: a real regression in that test is reported as known. project-team-setup.spec.ts is wholly blind this way — every test in it is listed — so a change that reaches that file must be checked by hand (run it alone at E2E_WORKERS=1 and read the failures)."
+    "The baseline came from three four-worker full runs; a fourth may find more. An intermittent entry is a blind spot: a real regression in that test is reported as known.",
+    "Pruned 2026-10-04 by SV-47 at 623b2c301 (clean export of HEAD, E2E_WORKERS=1, three runs in a row each, all passed): agentProgress.spec.ts 'every coordination state renders…' and all eight project-team-setup.spec.ts entries (8 of 8 passed in each of three file-alone runs).",
+    "Checked 2026-10-04 by SV-48 at 623b2c301 and NOT listed because it passed: channels.spec.ts:2114 'shows and clears activity indicators for active channel agents' (3 of 3 alone at one worker, 2 of 2 under four workers); its Wave A failure was not reproduced on main."
   ],
   "failures": [
-    {
-      "spec": "agentProgress.spec.ts",
-      "title": "every coordination state renders, each from the evidence that proves it",
-      "line": 576,
-      "verifiedOn": "dad4726ba",
-      "verifiedAt": "2026-10-04",
-      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: failed",
-      "ledger": "311(s)"
-    },
-    {
-      "spec": "project-team-setup.spec.ts",
-      "title": "open is read-only; explicit preparation and validation stay separate from publication; reopening resumes",
-      "line": 418,
-      "verifiedOn": "dad4726ba",
-      "verifiedAt": "2026-10-04",
-      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: failed",
-      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
-      "intermittent": true
-    },
-    {
-      "spec": "project-team-setup.spec.ts",
-      "title": "saving and reopening reverify the same separate copy; failed retry clears success",
-      "line": 494,
-      "verifiedOn": "dad4726ba",
-      "verifiedAt": "2026-10-04",
-      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: failed",
-      "ledger": "311(s)",
-      "intermittent": true
-    },
-    {
-      "spec": "project-team-setup.spec.ts",
-      "title": "checked draft publishes, installs the adopted source, and starts one project lead",
-      "line": 597,
-      "verifiedOn": "dad4726ba",
-      "verifiedAt": "2026-10-04",
-      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: failed",
-      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
-      "intermittent": true
-    },
-    {
-      "spec": "project-team-setup.spec.ts",
-      "title": "a failed saved-draft read stays actionable and retry never creates a draft",
-      "line": 698,
-      "verifiedOn": "dad4726ba",
-      "verifiedAt": "2026-10-04",
-      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: passed",
-      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
-      "intermittent": true
-    },
-    {
-      "spec": "project-team-setup.spec.ts",
-      "title": "setup form and draft remain usable at narrow",
-      "line": 730,
-      "verifiedOn": "dad4726ba",
-      "verifiedAt": "2026-10-04",
-      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: failed",
-      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
-      "intermittent": true
-    },
-    {
-      "spec": "project-team-setup.spec.ts",
-      "title": "setup form and draft remain usable at text zoom 250%",
-      "line": 730,
-      "verifiedOn": "dad4726ba",
-      "verifiedAt": "2026-10-04",
-      "observed": "full smoke at 4 workers: failed; file alone at 1 worker: failed",
-      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
-      "intermittent": true
-    },
-    {
-      "spec": "project-team-setup.spec.ts",
-      "title": "authoring opens read-only, provisions explicitly and retries one durable request",
-      "line": 817,
-      "verifiedOn": "dad4726ba",
-      "verifiedAt": "2026-10-04",
-      "observed": "full smoke at 4 workers: passed; file alone at 1 worker: failed",
-      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
-      "intermittent": true
-    },
-    {
-      "spec": "project-team-setup.spec.ts",
-      "title": "runtime discovery failure gives a recoverable setup blocker without provisioning",
-      "line": 898,
-      "verifiedOn": "dad4726ba",
-      "verifiedAt": "2026-10-04",
-      "observed": "full smoke at 4 workers: passed; file alone at 1 worker: failed",
-      "ledger": "none yet: first recorded by SV-39 (plans/SESSION_VIEW_PARITY_PLAN.md)",
-      "intermittent": true
-    },
     {
       "spec": "messaging.spec.ts",
       "title": "sends a thread message to its parent channel with a root-thread link",
@@ -167,6 +79,25 @@
       "observed": "SV-56 end-of-wave full smoke at 4 workers: failed (data-overflow stayed \"true\" after scrolling to the end); alone via npx playwright at 1 worker: failed; alone via pnpm test:e2e:smoke: passed twice with the wave and once on untouched db4ea4aea. A scroll-event vs read race, not a regression",
       "ledger": "none yet: first recorded by SV-56 end-of-wave E2E (plans/SESSION_VIEW_PARITY_PLAN.md)",
       "intermittent": true
+    },
+    {
+      "spec": "channels.spec.ts",
+      "title": "sidebar shows unread indicator for new forum posts",
+      "line": 2474,
+      "verifiedOn": "623b2c301",
+      "verifiedAt": "2026-10-04",
+      "observed": "SV-48: alone at one worker failed 1 of 3; with channels/messaging/mentions/badge at four workers failed 1 of 2. Both failures: watercooler unread count 2 where 1 is expected (:2509), so one seeded forum post is still unread after the test opened the forum. Root cause not found in one pass; this entry is a blind spot.",
+      "ledger": "none yet: first recorded by SV-48 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "agentProgress.spec.ts",
+      "title": "every coordination state renders, each from the evidence that proves it",
+      "line": 589,
+      "verifiedOn": "db4ea4aea",
+      "verifiedAt": "2026-10-05",
+      "observed": "Wave B full smoke at 4 workers: failed; alone at 1 worker on Wave B: failed; alone at 1 worker on a clean export of db4ea4aea (no Wave B): failed ('Reachable' lane coordination not found). Failed 3 of 3. Re-listed after the 2026-10-04 SV-47 prune.",
+      "ledger": "311(s)"
     }
   ]
 }

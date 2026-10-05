@@ -432,13 +432,17 @@ export async function openPeopleSetupSession(
 }
 
 export function peopleDialog(page: Page): Locator {
-  return page.getByTestId("coding-session-people");
+  // The Details People row opens the People surface where it is available
+  // (Wave B, SV-24) and the dialog only where it is not.
+  return page
+    .getByTestId("coding-session-surface-panel-people")
+    .or(page.getByTestId("coding-session-people"));
 }
 
 /** Open the session People surface and wait for its roster to settle. */
 export async function openPeopleDialog(page: Page): Promise<Locator> {
-  // People is a row inside the header's Details popover; it opens the same
-  // People dialog the former standalone `People N` button did.
+  // People is a row inside the header's Details popover; it opens the People
+  // surface, or the People dialog where the surface is unavailable.
   await page.getByTestId("coding-session-provenance-toggle").click();
   await page.getByTestId("coding-session-people-toggle").click();
   const dialog = peopleDialog(page);
@@ -657,6 +661,12 @@ export const READ_COMMAND_EXCEPTIONS = new Set<string>([
   // names its provider and session id; with ingress publishes batched per frame
   // that first read can land just after the baseline is taken.
   "coding_session_full_access",
+  // A pure computation: folds observation events already held in memory into
+  // the session's view model, writing nothing (`fold_adapter` in
+  // `coding_session_observation_fold.rs`). Since Wave B (SV-24) People opens
+  // as a surface beside the live transcript instead of a modal over it, so the
+  // session keeps folding while People is browsed.
+  "fold_coding_session_observations_command",
   // Transport, not app state. A publish would still need `sign_event`, which
   // this allowlist denies, so an EVENT frame cannot slip through here.
   "plugin:websocket|connect",

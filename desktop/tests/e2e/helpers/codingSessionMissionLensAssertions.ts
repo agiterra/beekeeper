@@ -48,9 +48,14 @@ export async function assertConversationAndMissionLenses(
   await expect(
     page.getByTestId("coding-session-umbrella-composer"),
   ).toBeVisible();
+  // SV-20: surfaces open from the launcher behind the right-panel toggle;
+  // the header carries no per-surface toggles in either lens.
   await expect(
-    page.getByTestId("coding-session-surface-toggle-changes"),
+    page.getByTestId("coding-session-panel-toggle-right"),
   ).toBeVisible();
+  await expect(
+    page.locator('[data-testid^="coding-session-surface-toggle-"]'),
+  ).toHaveCount(0);
   const focusTrigger = page.getByTestId("coding-session-agent-focus-trigger");
   await expect(focusTrigger).toBeVisible();
   await focusTrigger.click();
@@ -315,9 +320,10 @@ export async function assertConversationAndMissionLenses(
     path: `${harness.screenshots}/mission-trace.png`,
   });
 
-  const inspectorToggle = page.getByTestId(
-    "coding-session-surface-toggle-mission-inspector",
-  );
+  // SV-20: the right-panel toggle stands where the Inspector toggle did; the
+  // Trace button hides the panel and keeps its tabs, so it reopens on the
+  // Inspector.
+  const inspectorToggle = page.getByTestId("coding-session-panel-toggle-right");
   await inspectorToggle.click();
   await expect(inspector).toBeVisible();
   await inspector
@@ -429,7 +435,9 @@ export async function assertNarrowMissionSurfaceHierarchy(
   await drawer.screenshot({
     path: `${screenshots}/context-dark-narrow-drawer.png`,
   });
-  await page.getByRole("button", { name: "Close" }).last().click();
+  // Wave B (SV-20/24): surface tabs carry "Close <tab>" buttons; match the
+  // Sheet's own Close exactly.
+  await page.getByRole("button", { name: "Close", exact: true }).last().click();
   await expect(inspector).toHaveCount(0);
   await expect(context).toHaveCount(0);
 }

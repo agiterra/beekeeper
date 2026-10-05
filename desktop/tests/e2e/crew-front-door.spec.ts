@@ -1166,9 +1166,11 @@ test.describe("crew front door", () => {
         { timeout: 15_000 },
       )
       .toBe(1);
-    await expect(page.getByTestId("coding-session-header")).toContainText(
-      "Pin the unseated create.",
-    );
+    await page.getByTestId("coding-session-provenance-toggle").click();
+    await expect(
+      page.getByTestId("coding-session-details-meta-goal"),
+    ).toContainText("Pin the unseated create.");
+    await page.keyboard.press("Escape");
     await page.getByTestId("coding-session-founded-start").click();
 
     await expect

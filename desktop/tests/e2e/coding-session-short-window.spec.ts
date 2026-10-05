@@ -417,6 +417,10 @@ async function enlargeText(page: Page) {
 test("at 250% in a 720px window, scroll to recover, send and use header controls", async ({
   page,
 }) => {
+  // Wave B (SV-20): a Working status dot pulses (motion-safe:animate-pulse),
+  // so every waitForAnimations here runs to its 1s ceiling. Fourteen of them
+  // took this test from 18s to 31s alone, past the 30s default.
+  test.setTimeout(60_000);
   await enlargeText(page);
   const editor = page.getByLabel("Coding-session instruction");
   const notice = page.getByTestId("coding-session-handover-error");
@@ -466,8 +470,16 @@ test("at 250% in a 720px window, scroll to recover, send and use header controls
   await reveal(page, provenance);
   const title = page.getByTestId("coding-session-header").getByRole("heading");
   await reveal(page, title);
+  // Wave B (SV-20): the header is one breadcrumb row, and in a narrow window
+  // the title truncates first so the status word is never squeezed. The full
+  // title stays one hover away in its tooltip, and the status word stays whole.
+  await expect(title).toHaveAttribute("title", /Steer the running turn/);
+  const statusBadge = page
+    .getByTestId("coding-session-header")
+    .getByTestId("coding-session-status-badge");
+  await expect(statusBadge).toBeVisible();
   expect(
-    await title.evaluate(
+    await statusBadge.evaluate(
       (element) => element.scrollWidth <= element.clientWidth,
     ),
   ).toBe(true);

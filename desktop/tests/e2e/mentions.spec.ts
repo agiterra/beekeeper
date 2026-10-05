@@ -236,11 +236,11 @@ async function waitForTimelineSettled(page: import("@playwright/test").Page) {
   await expect(page.locator("[data-render-pending]")).toHaveCount(0);
 }
 
-// The non-member invite prompt only fires once the channel's member list has
-// resolved: until then `useMentionSendFlow` cannot tell a non-member from a
-// member and sends without prompting. A loaded full smoke run can reach the
-// send click before `get_channel_members` settles, so specs that expect the
-// Invite prompt wait for the members query to succeed first.
+// Since SV-50 the send itself waits for the channel's member read before it
+// decides whether to prompt (`useMentionSendFlowInvite.ts`), so an early send
+// click no longer skips the Invite prompt; coding-session-wave-b-followups
+// covers that race. These specs still wait for the members query so each one
+// tests its own subject rather than the read's timing.
 async function waitForChannelMembersResolved(
   page: import("@playwright/test").Page,
   channelId: string,
