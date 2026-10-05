@@ -90,6 +90,26 @@
       "observed": "SV-48: alone at one worker failed 1 of 3; with channels/messaging/mentions/badge at four workers failed 1 of 2. Both failures: watercooler unread count 2 where 1 is expected (:2509), so one seeded forum post is still unread after the test opened the forum. Root cause not found in one pass; this entry is a blind spot.",
       "ledger": "none yet: first recorded by SV-48 (plans/SESSION_VIEW_PARITY_PLAN.md)",
       "intermittent": true
+    },
+    {
+      "spec": "virtualization.spec.ts",
+      "title": "list virtualization › 08 — cascading older pages never snap the viewport toward newest",
+      "line": 197,
+      "verifiedOn": "a9d3d802e",
+      "verifiedAt": "2026-10-05",
+      "observed": "SV-54: failed under concurrent load in the checkpoints stage 1 affected run and in other worktrees' runs at the same time; not reproduced alone. A load flake, recorded so a gate reads it as known.",
+      "ledger": "none yet: first recorded by SV-54 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
+    },
+    {
+      "spec": "virtualization.spec.ts",
+      "title": "list virtualization › 09 — older-page render commit waits for scroller rest under continued wheel input",
+      "line": 449,
+      "verifiedOn": "a9d3d802e",
+      "verifiedAt": "2026-10-05",
+      "observed": "SV-54: failed under concurrent load in the checkpoints stage 1 affected run and in other worktrees' runs at the same time; not reproduced alone. A load flake, recorded so a gate reads it as known.",
+      "ledger": "none yet: first recorded by SV-54 (plans/SESSION_VIEW_PARITY_PLAN.md)",
+      "intermittent": true
     }
   ]
 }
