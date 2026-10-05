@@ -30,5 +30,11 @@ export const KIND_CODING_SESSION_AUTHORITY_TRANSITION = 44228;
 export const KIND_CODING_SESSION_NAME = 44229;
 /** Addressable session closure marker, keyed by `d` = sessionRef. */
 export const KIND_CODING_SESSION_CLOSURE = 44230;
+/**
+ * Provider-signed generated session title (NIP-CSG § Generated title). A
+ * model's words, never a person's name: readers rank it below every founder
+ * 44229 and accept it only from an execution's own provider.
+ */
+export const KIND_CODING_SESSION_GENERATED_TITLE = 44252;
 /** Relay-signed acceptance receipt / system message. */
 export const KIND_SYSTEM_MESSAGE = 40099;

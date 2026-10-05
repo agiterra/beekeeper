@@ -11,6 +11,7 @@ import {
   CHANNEL_ID,
   SESSION_REF,
   createEvent,
+  generatedTitleEvent,
   leaseEvent,
   metadataEvent,
   newSigner,
@@ -129,7 +130,8 @@ test("the live subscription is limit 0, h-scoped, and replays a real page", () =
   // Literal, not `deepEqual` against the function under test: comparing the
   // subscription to its own producer pins nothing about WHICH streams stay
   // live, and a session renamed (44229) or closed (44230) while the page is
-  // open would then stop updating with the suite green.
+  // open would then stop updating with the suite green. A title a provider
+  // generates (44252) during the first turn must arrive live too (SV-31).
   assert.deepEqual(
     live.filters.map((filter) => filter.kinds),
     [
@@ -137,6 +139,7 @@ test("the live subscription is limit 0, h-scoped, and replays a real page", () =
       [44221],
       [44226],
       [44229],
+      [44252],
       [44227],
       [44230],
       [24223],
@@ -400,4 +403,82 @@ test("a refused live filter stops the view calling the subscription live", () =>
     "part of the stream is gone; a frozen transcript must not read as live",
   );
   assert.equal(snapshot.lastError, "auth-required: not authenticated");
+});
+
+test("an older title whose create fell off the page is settled by a back-fill", () => {
+  // SV-31 D2 on the web: a busy channel's newest-1000 pages still show the
+  // session but no longer reach its create, so the title had no standing and
+  // read "Untitled". The engine asks for that create by the id the title
+  // carries, plus the signer's records around the title's own time.
+  const { engine, transport } = startEngine();
+  const operator = newSigner();
+  const provider = newSigner();
+  const create = createEvent(operator, {
+    sessionRef: SESSION_REF,
+    providerAuthorityPubkey: provider.pubkey,
+  });
+  for (const event of [
+    receiptEvent(provider, { status: "created" }),
+    metadataEvent(provider, { sessionRef: SESSION_REF, title: null }),
+    generatedTitleEvent(provider, {
+      title: "Parser fix",
+      createEventId: create.id,
+      created_at: 1_700_000_100,
+    }),
+  ]) {
+    transport.history().emit(event);
+  }
+  transport.history().eoseAll();
+  engine.flush();
+  assert.equal(engine.getSnapshot().sessions[0].nameOrigin, "fallback");
+
+  const standing = transport.last();
+  assert.notEqual(standing, transport.history());
+  assert.equal(standing.options.closeOnEose, true);
+  assert.deepEqual(standing.filters[0], {
+    kinds: [44221],
+    "#h": [CHANNEL_ID],
+    ids: [create.id],
+    limit: 1,
+  });
+  assert.deepEqual(
+    standing.filters.slice(1).map((filter) => [filter.kinds, filter.authors]),
+    [
+      [[44223], [provider.pubkey]],
+      [[44224], [provider.pubkey]],
+    ],
+  );
+
+  standing.emit(create);
+  standing.eoseAll();
+  engine.flush();
+  const [session] = engine.getSnapshot().sessions;
+  assert.equal(session.name, "Parser fix");
+  assert.equal(session.nameOrigin, "generated");
+  assert.equal(engine.getSnapshot().truncatedAt1000, false);
+  // Asked once: a settled read does not ask again.
+  const count = transport.subscriptions.length;
+  engine.flush();
+  assert.equal(transport.subscriptions.length, count);
+});
+
+test("an unprovable title is asked about once, then stays foreign", () => {
+  const { engine, transport } = startEngine();
+  const provider = newSigner();
+  for (const event of [
+    receiptEvent(provider, { status: "created" }),
+    metadataEvent(provider, { sessionRef: SESSION_REF }),
+    generatedTitleEvent(provider, { title: "Self-appointed" }),
+  ]) {
+    transport.history().emit(event);
+  }
+  transport.history().eoseAll();
+  engine.flush();
+  const standing = transport.last();
+  standing.eoseAll();
+  engine.flush();
+  const count = transport.subscriptions.length;
+  engine.flush();
+  assert.equal(transport.subscriptions.length, count, "no retry loop");
+  assert.equal(engine.getSnapshot().sessions[0].nameOrigin, "fallback");
 });

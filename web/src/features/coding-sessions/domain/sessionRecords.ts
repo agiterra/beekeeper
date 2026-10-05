@@ -1,7 +1,7 @@
 /**
- * The four small addressable/immutable records that describe an umbrella
- * session rather than an execution: 44226 genesis, 44229 name, 44230 closure,
- * 44227 goal.
+ * The small addressable/immutable records that describe an umbrella session
+ * rather than an execution: 44226 genesis, 44229 name, 44252 generated title,
+ * 44230 closure, 44227 goal.
  *
  * Mirrors the decode halves of desktop's `codingSessionGenesis.ts`,
  * `codingSessionName.ts`, `codingSessionClosure.ts` and `codingSessionGoal.ts`.
@@ -10,10 +10,15 @@
  */
 import {
   KIND_CODING_SESSION_CLOSURE,
+  KIND_CODING_SESSION_GENERATED_TITLE,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_NAME,
 } from "../../../shared/lib/kinds.ts";
+import {
+  parseCodingSessionTitleParts,
+  type SessionNameRecord,
+} from "./sessionTitle.ts";
 import type { ObservedEvent } from "./types.ts";
 import {
   hasExactKeys,
@@ -50,6 +55,29 @@ export type CodingSessionName = {
   signerPubkey: string;
   sessionRef: string;
   name: string;
+};
+
+/**
+ * One structurally valid 44252. Standing — whether the signer is the provider
+ * of the execution its `cs-target` names — is judged later, in the umbrella
+ * fold, by {@link resolveSessionDisplayName}; the relay checks shape alone.
+ */
+export type CodingSessionGeneratedTitle = {
+  eventId: string;
+  channelId: string;
+  createdAt: number;
+  signerPubkey: string;
+  sessionRef: string;
+  targetKey: string;
+  title: string;
+  model: string;
+  /**
+   * The 44221 create the title's execution answered. A reader that does not
+   * hold that create can fetch it by id to settle the title's standing.
+   */
+  createEventId: string;
+  /** The event as the resolver reads it, without its signature. */
+  record: SessionNameRecord;
 };
 
 export type CodingSessionClosure = {
@@ -139,6 +167,59 @@ export function parseCodingSessionName(
     signerPubkey,
     sessionRef: tags[1],
     name: event.content,
+  };
+}
+
+/** The resolver's view of a decoded 44229: its exact NIP-CSN envelope. */
+export function codingSessionNameRecord(
+  name: CodingSessionName,
+): SessionNameRecord {
+  return {
+    id: name.eventId,
+    pubkey: name.signerPubkey,
+    created_at: name.createdAt,
+    kind: KIND_CODING_SESSION_NAME,
+    tags: [
+      ["h", name.channelId],
+      ["d", name.sessionRef],
+      ["csnm-v", CODING_SESSION_NAME_TAG_VERSION],
+    ],
+    content: name.name,
+  };
+}
+
+/**
+ * Decode one 44252 generated title, or null.
+ *
+ * Shape only, through the same validator the resolver and its shared vectors
+ * use, so the store and the fold can never disagree about what is malformed.
+ */
+export function parseCodingSessionGeneratedTitle(
+  event: ObservedEvent,
+): CodingSessionGeneratedTitle | null {
+  if (event.kind !== KIND_CODING_SESSION_GENERATED_TITLE) return null;
+  const signerPubkey = normalizePubkey(event.pubkey);
+  if (!signerPubkey || typeof event.content !== "string") return null;
+  const envelope = parseCodingSessionTitleParts(event.tags, event.content);
+  if (envelope === null) return null;
+  return {
+    eventId: event.id,
+    channelId: envelope.channelId,
+    createdAt: event.created_at,
+    signerPubkey,
+    sessionRef: envelope.sessionRef,
+    targetKey: envelope.targetKey,
+    title: envelope.payload.title,
+    model: envelope.payload.model,
+    createEventId: envelope.payload.createEventId,
+    record: {
+      id: event.id,
+      pubkey: signerPubkey,
+      created_at: event.created_at,
+      kind: event.kind,
+      tags: event.tags.map((tag) => [...tag]),
+      content: event.content,
+    },
   };
 }
 

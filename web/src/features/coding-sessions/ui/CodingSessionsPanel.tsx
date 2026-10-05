@@ -21,6 +21,7 @@ import {
   codingSessionRouteRef,
 } from "./observer-contract.ts";
 import { CodingSessionConnectionLine } from "./CodingSessionConnectionLine.tsx";
+import { CodingSessionTitleOrigin } from "./CodingSessionTitleOrigin.tsx";
 
 function SessionRow({
   repoId,
@@ -46,9 +47,13 @@ function SessionRow({
         <Terminal className="mt-0.5 h-4 w-4 shrink-0 text-black/50 dark:text-white/50" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-sm font-medium text-black dark:text-white">
+            <span
+              className="truncate text-sm font-medium text-black dark:text-white"
+              data-testid="coding-session-row-name"
+            >
               {umbrella.name}
             </span>
+            <CodingSessionTitleOrigin umbrella={umbrella} />
             <CodingSessionStatusChip status={umbrella.status} />
             {umbrella.closed && <CodingSessionClosedBadge />}
             {hasUnverifiedAuthority && <CodingSessionAuthorityBadge />}

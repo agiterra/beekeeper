@@ -255,7 +255,8 @@ function classifyMetadata(
 
 /**
  * Verify a non-442xx-fact event (44221 create, 44226 genesis, 44229 name,
- * 44230 closure, 44227 goal, 24223 lease) before its decoder runs.
+ * 44252 generated title, 44230 closure, 44227 goal, 24223 lease) before its
+ * decoder runs.
  *
  * Exported separately because those decoders are pure and testable without a
  * crypto dependency; the gate belongs to the caller that ingests them.

@@ -17,10 +17,20 @@ import {
   codingSessionTargetFactKey,
   generationExecutionLabel,
 } from "./catalog.ts";
-import { buildCodingSessionExecutionKey, encodeStructuredKey } from "./keys.ts";
+import {
+  buildCodingSessionExecutionKey,
+  buildCodingSessionTargetKey,
+  encodeStructuredKey,
+} from "./keys.ts";
 import { resolveCodingSessionReachability } from "./lease.ts";
 import type { CodingSessionLifecycleCommand } from "./lifecycleCommand.ts";
-import { foldNewestByKey } from "./sessionRecords.ts";
+import { codingSessionNameRecord, foldNewestByKey } from "./sessionRecords.ts";
+import {
+  resolveSessionDisplayName,
+  type SessionDisplayName,
+  type SessionNameRecord,
+  UNTITLED_SESSION_NAME,
+} from "./sessionTitle.ts";
 import type {
   CodingSessionExecution,
   CodingSessionFounderResolution,
@@ -135,9 +145,7 @@ export function groupCodingSessionGenerations(
       });
     }
   }
-  const names = foldNewestByKey(facts.names, (name) =>
-    sessionScopeKey(name.channelId, name.sessionRef),
-  );
+  const names = groupNameRecords(facts);
   const closures = foldNewestByKey(facts.closures, (closure) =>
     sessionScopeKey(closure.channelId, closure.sessionRef),
   );
@@ -269,7 +277,7 @@ function buildUmbrella(
     executions: Execution[];
   },
   facts: CodingSessionObserverFacts,
-  names: ReadonlyMap<string, { name: string }>,
+  names: ReadonlyMap<string, SessionNameRecord[]>,
   closures: ReadonlyMap<
     string,
     { action: "closed" | "open"; signerPubkey: string }
@@ -297,12 +305,21 @@ function buildUmbrella(
     closure?.action === "closed" &&
     authority.founderPubkey !== null &&
     closure.signerPubkey === authority.founderPubkey;
-  const declaredName = scope === null ? undefined : names.get(scope)?.name;
+  const displayName = resolveUmbrellaDisplayName(
+    group,
+    ordered,
+    authority.founderPubkey,
+    scope === null ? [] : (names.get(scope) ?? []),
+  );
   return {
     umbrellaKey,
     channelId: group.channelId,
     sessionRef: group.sessionRef,
-    name: declaredName ?? ordered[0].activeGeneration.title ?? ordered[0].label,
+    name: displayName.name,
+    nameOrigin: displayName.origin,
+    nameModel: displayName.model,
+    nameSigner: displayName.signerPubkey,
+    nameDiagnostics: displayName.diagnostics,
     executions: ordered.map((execution) => ({
       executionKey: execution.executionKey,
       signerPubkey: execution.signerPubkey,
@@ -334,6 +351,116 @@ function buildUmbrella(
               execution.operatorPubkey !== authority.founderPubkey,
           ).length,
   };
+}
+
+/** Every 44229 and 44252 the store holds, bucketed by `(h, d)`. */
+function groupNameRecords(
+  facts: CodingSessionObserverFacts,
+): Map<string, SessionNameRecord[]> {
+  const grouped = new Map<string, SessionNameRecord[]>();
+  const add = (
+    channelId: string,
+    sessionRef: string,
+    record: SessionNameRecord,
+  ) => {
+    const key = sessionScopeKey(channelId, sessionRef);
+    const bucket = grouped.get(key);
+    if (bucket) bucket.push(record);
+    else grouped.set(key, [record]);
+  };
+  for (const name of facts.names) {
+    add(name.channelId, name.sessionRef, codingSessionNameRecord(name));
+  }
+  for (const title of facts.generatedTitles) {
+    add(title.channelId, title.sessionRef, title.record);
+  }
+  return grouped;
+}
+
+/**
+ * The umbrella's display name, by the one NIP-CSG resolver.
+ *
+ * The person tier is explicitly the founder's: `founderPubkey` is the
+ * genesis-anchored (or legacy) founder this fold resolved, and with none a
+ * 44229 names nobody — it is counted, never shown. A generated title stands
+ * only when its signer is the provider authority of the exact generation its
+ * `cs-target` names, so every generation of every execution is listed: a
+ * title minted on generation 1 survives a restart to generation 2.
+ *
+ * Only a **verified** authority stands: a generation reached through a create
+ * whose own named provider answered it with a lifecycle receipt
+ * (`authoritySource: "create"`). The D5 disclosed fallback — the first-seen
+ * metadata signer for a target no readable create claims — is anyone in the
+ * channel, so its title counts as foreign, exactly as desktop (a lifecycle
+ * receipt from the signer), mobile (`authority.verified`) and `bee` (a
+ * confirmed row) rule. A reader that cannot see the create yet asks for it by
+ * the id the title carries (`titleStanding.ts`) rather than trusting less.
+ *
+ * An implicit umbrella (no `sessionRef`) has no `d` any record could carry,
+ * so it goes straight to the fallback tier.
+ */
+function resolveUmbrellaDisplayName(
+  group: { sessionRef: string | null; channelId: string },
+  ordered: readonly Execution[],
+  founderPubkey: string | null,
+  records: readonly SessionNameRecord[],
+): SessionDisplayName {
+  const foundingExecutionTitle = ordered[0]?.activeGeneration.title ?? null;
+  if (group.sessionRef === null) {
+    const hasTitle =
+      foundingExecutionTitle !== null &&
+      foundingExecutionTitle.trim().length > 0;
+    return {
+      name: hasTitle ? foundingExecutionTitle : UNTITLED_SESSION_NAME,
+      origin: "fallback",
+      model: null,
+      signerPubkey: null,
+      diagnostics: { foreignNames: 0, foreignTitles: 0, malformed: 0 },
+    };
+  }
+  return resolveSessionDisplayName(
+    {
+      channelId: group.channelId,
+      sessionRef: group.sessionRef,
+      founderPubkey,
+      foundingExecutionTitle,
+      executions: ordered.flatMap((execution) =>
+        [...execution.priorGenerations, execution.activeGeneration]
+          .filter((generation) => generation.authoritySource === "create")
+          .map((generation) => ({
+            targetKey: buildCodingSessionTargetKey(generation.target),
+            providerAuthorityPubkey: generation.providerAuthorityPubkey,
+          })),
+      ),
+    },
+    records,
+  );
+}
+
+/**
+ * Who generated an auto-named session's title, as the tooltip says it.
+ *
+ * The signer is named by the execution it provides — the same label the
+ * session's execution rows show — plus its short key, because two machines
+ * can run the same runtime and model. A signer the umbrella holds no
+ * execution for cannot reach here: the resolver never lets its title win.
+ */
+export function codingSessionTitleOriginDetail(
+  umbrella: CodingSessionUmbrella,
+): string | null {
+  if (umbrella.nameOrigin !== "generated" || umbrella.nameSigner === null) {
+    return null;
+  }
+  const signer = umbrella.nameSigner;
+  const execution = umbrella.executions.find(
+    (candidate) => candidate.signerPubkey.toLowerCase() === signer,
+  );
+  const who =
+    execution === undefined
+      ? truncatePubkey(signer)
+      : `${execution.label} (${truncatePubkey(signer)})`;
+  const model = umbrella.nameModel === null ? "" : ` · ${umbrella.nameModel}`;
+  return `Named automatically from the first message by ${who}${model}`;
 }
 
 /**

@@ -12,6 +12,7 @@
 import {
   KIND_CODING_SESSION_AUTHORITY_TRANSITION,
   KIND_CODING_SESSION_CLOSURE,
+  KIND_CODING_SESSION_GENERATED_TITLE,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_LEASE,
@@ -34,6 +35,10 @@ export type CodingSessionFilter = {
   "#h": string[];
   limit: number;
   since?: number;
+  /** Only the SV-31 standing back-fill narrows (`titleStanding.ts`). */
+  until?: number;
+  authors?: string[];
+  ids?: string[];
 };
 
 function scoped(
@@ -101,6 +106,21 @@ export function codingSessionNamesFilter(
   );
 }
 
+/**
+ * Generated titles (44252) on their own page, not folded into the names
+ * filter: `limit` applies per filter, and a provider-signed title must never
+ * be able to crowd a person's 44229 out of the history read.
+ */
+export function codingSessionGeneratedTitlesFilter(
+  channelId: string,
+): CodingSessionFilter {
+  return scoped(
+    [KIND_CODING_SESSION_GENERATED_TITLE],
+    channelId,
+    CODING_SESSION_HISTORY_LIMIT,
+  );
+}
+
 export function codingSessionGoalsFilter(
   channelId: string,
 ): CodingSessionFilter {
@@ -154,6 +174,7 @@ export function codingSessionHistoryFilters(
     codingSessionFactsFilter(channelId),
     ...codingSessionCreatesFilters(channelId),
     codingSessionNamesFilter(channelId),
+    codingSessionGeneratedTitlesFilter(channelId),
     codingSessionGoalsFilter(channelId),
     codingSessionClosuresFilter(channelId),
     codingSessionLeasesFilter(channelId),

@@ -19,6 +19,7 @@ import {
   CodingSessionClosedBadge,
   CodingSessionStatusChip,
 } from "./CodingSessionStatusChip.tsx";
+import { CodingSessionTitleOrigin } from "./CodingSessionTitleOrigin.tsx";
 import { CodingSessionTranscript } from "./CodingSessionTranscript.tsx";
 import {
   type CodingSessionObserverView,
@@ -73,6 +74,34 @@ function ExecutionRow({
 }
 
 /**
+ * Name records the resolver refused, disclosed rather than dropped: a title
+ * from a provider with no execution in this session, or a 44229 from someone
+ * other than the founder. Neither may name the session; both happened.
+ */
+function CodingSessionNameSetAside({
+  umbrella,
+}: {
+  umbrella: CodingSessionUmbrella;
+}) {
+  const { foreignNames, foreignTitles } = umbrella.nameDiagnostics;
+  if (foreignNames === 0 && foreignTitles === 0) return null;
+  const parts = [
+    foreignTitles > 0 &&
+      `${foreignTitles} generated title${foreignTitles === 1 ? "" : "s"} from a provider outside this session`,
+    foreignNames > 0 &&
+      `${foreignNames} name${foreignNames === 1 ? "" : "s"} not signed by the founder`,
+  ].filter((part): part is string => typeof part === "string");
+  return (
+    <p
+      className="mt-1 text-xs text-black/50 dark:text-white/50"
+      data-testid="coding-session-name-set-aside"
+    >
+      Ignored {parts.join(" and ")}.
+    </p>
+  );
+}
+
+/**
  * One session, read-only.
  *
  * Every claim on this screen traces to a signed fact: the status comes from
@@ -96,38 +125,48 @@ export function CodingSessionDetail({
 
   return (
     <div data-testid="coding-session-detail">
-      <div className="flex flex-wrap items-center gap-3">
-        <Terminal className="h-5 w-5 shrink-0 text-black/50 dark:text-white/50" />
-        <h1 className="text-xl font-semibold tracking-tight text-black dark:text-white">
-          {umbrella.name}
-        </h1>
-        <CodingSessionStatusChip status={umbrella.status} />
-        {umbrella.closed && <CodingSessionClosedBadge />}
-      </div>
-
-      {headlineReport !== null && (
-        <p
-          className="mt-2 text-sm text-black/60 dark:text-white/60"
-          data-testid="coding-session-reachability"
+      <div data-testid="coding-session-detail-summary">
+        <div
+          className="flex flex-wrap items-center gap-3"
+          data-testid="coding-session-detail-header"
         >
-          {codingSessionReachabilityLine(
-            headlineReport,
-            codingSessionStatusChipLabel(umbrella.status),
-          )}
-        </p>
-      )}
+          <Terminal className="h-5 w-5 shrink-0 text-black/50 dark:text-white/50" />
+          <h1
+            className="text-xl font-semibold tracking-tight text-black dark:text-white"
+            data-testid="coding-session-detail-name"
+          >
+            {umbrella.name}
+          </h1>
+          <CodingSessionTitleOrigin umbrella={umbrella} />
+          <CodingSessionStatusChip status={umbrella.status} />
+          {umbrella.closed && <CodingSessionClosedBadge />}
+        </div>
 
-      <p className="mt-1 text-xs text-black/50 dark:text-white/50">
-        Founder {codingSessionFounderLabel(umbrella)}
-        {umbrella.genesisRef !== null && " · governed by a genesis record"}
-      </p>
-      {umbrella.foreignAttachmentCount > 0 && (
-        <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
-          {umbrella.foreignAttachmentCount} execution
-          {umbrella.foreignAttachmentCount === 1 ? "" : "s"} attached by someone
-          other than the founder — shown, never merged.
+        {headlineReport !== null && (
+          <p
+            className="mt-2 text-sm text-black/60 dark:text-white/60"
+            data-testid="coding-session-reachability"
+          >
+            {codingSessionReachabilityLine(
+              headlineReport,
+              codingSessionStatusChipLabel(umbrella.status),
+            )}
+          </p>
+        )}
+
+        <p className="mt-1 text-xs text-black/50 dark:text-white/50">
+          Founder {codingSessionFounderLabel(umbrella)}
+          {umbrella.genesisRef !== null && " · governed by a genesis record"}
         </p>
-      )}
+        <CodingSessionNameSetAside umbrella={umbrella} />
+        {umbrella.foreignAttachmentCount > 0 && (
+          <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+            {umbrella.foreignAttachmentCount} execution
+            {umbrella.foreignAttachmentCount === 1 ? "" : "s"} attached by
+            someone other than the founder — shown, never merged.
+          </p>
+        )}
+      </div>
 
       <div className="mt-4">
         <CodingSessionConnectionLine view={view} />

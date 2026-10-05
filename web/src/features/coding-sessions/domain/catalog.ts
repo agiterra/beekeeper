@@ -27,6 +27,7 @@
  */
 import {
   KIND_CODING_SESSION_CLOSURE,
+  KIND_CODING_SESSION_GENERATED_TITLE,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_LEASE,
@@ -49,10 +50,12 @@ import {
 } from "./lifecycleCommand.ts";
 import {
   type CodingSessionClosure,
+  type CodingSessionGeneratedTitle,
   type CodingSessionGenesis,
   type CodingSessionGoal,
   type CodingSessionName,
   parseCodingSessionClosure,
+  parseCodingSessionGeneratedTitle,
   parseCodingSessionGenesis,
   parseCodingSessionGoal,
   parseCodingSessionName,
@@ -133,6 +136,12 @@ export type CodingSessionObserverFacts = {
   creates: CodingSessionLifecycleCommand[];
   genesisByEventId: Map<string, CodingSessionGenesis>;
   names: CodingSessionName[];
+  /**
+   * Structurally valid 44252s from any signer. Standing is the umbrella
+   * fold's to judge, against the executions it holds (NIP-CSG § Generated
+   * title) — never the store's.
+   */
+  generatedTitles: CodingSessionGeneratedTitle[];
   closures: CodingSessionClosure[];
   goals: CodingSessionGoal[];
   /** Leases keyed by `(channelId, targetKey)`. */
@@ -159,6 +168,10 @@ export class CodingSessionObserverStore {
   private readonly creates = new Map<string, CodingSessionLifecycleCommand>();
   private readonly genesis = new Map<string, CodingSessionGenesis>();
   private readonly names = new Map<string, CodingSessionName>();
+  private readonly generatedTitles = new Map<
+    string,
+    CodingSessionGeneratedTitle
+  >();
   private readonly closures = new Map<string, CodingSessionClosure>();
   private readonly goals = new Map<string, CodingSessionGoal>();
   private readonly leases = new Map<string, CodingSessionLease>();
@@ -353,6 +366,9 @@ export class CodingSessionObserverStore {
       genesisByEventId: new Map(this.genesis),
       names: [...this.names.values()].filter((name) =>
         allowed.has(name.channelId),
+      ),
+      generatedTitles: [...this.generatedTitles.values()].filter((title) =>
+        allowed.has(title.channelId),
       ),
       closures: [...this.closures.values()].filter((closure) =>
         allowed.has(closure.channelId),
@@ -682,7 +698,10 @@ export class CodingSessionObserverStore {
     }
   }
 
-  /** The session-scoped records: 44221, 44226, 44229, 44230, 44227, 24223. */
+  /**
+   * The session-scoped records: 44221, 44226, 44229, 44252, 44230, 44227,
+   * 24223.
+   */
   private ingestSessionRecord(
     event: ObservedEvent,
     allowed: ReadonlySet<string>,
@@ -691,6 +710,7 @@ export class CodingSessionObserverStore {
       KIND_CODING_SESSION_LIFECYCLE_COMMAND,
       KIND_CODING_SESSION_GENESIS,
       KIND_CODING_SESSION_NAME,
+      KIND_CODING_SESSION_GENERATED_TITLE,
       KIND_CODING_SESSION_CLOSURE,
       KIND_CODING_SESSION_GOAL,
       KIND_CODING_SESSION_LEASE,
@@ -722,6 +742,15 @@ export class CodingSessionObserverStore {
       const name = parseCodingSessionName(event);
       if (name && allowed.has(name.channelId)) this.names.set(event.id, name);
       else this.malformedCount += 1;
+      return true;
+    }
+    if (event.kind === KIND_CODING_SESSION_GENERATED_TITLE) {
+      const title = parseCodingSessionGeneratedTitle(event);
+      if (title && allowed.has(title.channelId)) {
+        this.generatedTitles.set(event.id, title);
+      } else {
+        this.malformedCount += 1;
+      }
       return true;
     }
     if (event.kind === KIND_CODING_SESSION_CLOSURE) {

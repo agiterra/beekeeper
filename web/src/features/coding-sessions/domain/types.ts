@@ -5,6 +5,10 @@
  * and trimmed to the read side: nothing here describes a write path, because
  * the web client has none.
  */
+import type {
+  SessionDisplayNameDiagnostics,
+  SessionDisplayNameOrigin,
+} from "./sessionTitle.ts";
 
 /** A signature-stripped-or-signed Nostr event as the relay hands it back. */
 export type ObservedEvent = {
@@ -137,8 +141,21 @@ export type CodingSessionUmbrella = {
   umbrellaKey: string;
   channelId: string;
   sessionRef: string | null;
-  /** Newest 44229 name, else the newest metadata title/label, else a fallback. */
+  /**
+   * The display name, by NIP-CSG's one resolver (`sessionTitle.ts`): the
+   * founder's newest 44229, else the earliest 44252 from one of this
+   * umbrella's own providers, else the founding execution's title, else
+   * "Untitled session".
+   */
   name: string;
+  /** Which tier named it. A `generated` name is a model's words, not a person's. */
+  nameOrigin: SessionDisplayNameOrigin;
+  /** The model that generated the name; `generated` only. */
+  nameModel: string | null;
+  /** The provider pubkey that signed the generated name; `generated` only. */
+  nameSigner: string | null;
+  /** Name records the resolver set aside — disclosed, never silently dropped. */
+  nameDiagnostics: SessionDisplayNameDiagnostics;
   executions: CodingSessionExecution[];
   founderPubkey: string | null;
   genesisRef: string | null;

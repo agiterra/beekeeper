@@ -20,6 +20,7 @@ export {
   codingSessionCreatesFilters,
   codingSessionFactsFilter,
   codingSessionFactsLiveFilter,
+  codingSessionGeneratedTitlesFilter,
   codingSessionGoalsFilter,
   codingSessionHistoryFilters,
   codingSessionLeasesFilter,
@@ -63,15 +64,35 @@ export {
 } from "./lifecycleCommand.ts";
 export {
   type CodingSessionClosure,
+  type CodingSessionGeneratedTitle,
   type CodingSessionGenesis,
   type CodingSessionGoal,
   type CodingSessionName,
   foldNewestByKey,
   parseCodingSessionClosure,
+  parseCodingSessionGeneratedTitle,
   parseCodingSessionGenesis,
   parseCodingSessionGoal,
   parseCodingSessionName,
 } from "./sessionRecords.ts";
+export {
+  type CodingSessionTitleStandingGap,
+  codingSessionTitleStandingFilters,
+  codingSessionTitleStandingGaps,
+  isTitleStandingPageTruncated,
+  MAX_TITLE_STANDING_GAPS_PER_READ,
+} from "./titleStanding.ts";
+export {
+  parseCodingSessionTitleParts,
+  resolveSessionDisplayName,
+  type SessionDisplayName,
+  type SessionDisplayNameDiagnostics,
+  type SessionDisplayNameOrigin,
+  type SessionDisplayNameScope,
+  type SessionExecutionAuthority,
+  type SessionNameRecord,
+  UNTITLED_SESSION_NAME,
+} from "./sessionTitle.ts";
 export {
   type BuzzCodingSessionTranscriptV1,
   parseBuzzCodingSessionTranscript,
@@ -107,6 +128,7 @@ export {
   codingSessionFounderLabel,
   codingSessionReachabilityLine,
   codingSessionStatusChipLabel,
+  codingSessionTitleOriginDetail,
   type CodingSessionObserverSnapshot,
   foldUmbrellaStatus,
   groupCodingSessionGenerations,

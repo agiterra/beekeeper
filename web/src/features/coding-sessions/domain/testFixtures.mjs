@@ -276,3 +276,30 @@ export function corruptSignature(event) {
     : `0${event.sig.slice(1)}`;
   return { ...event, sig: flipped };
 }
+
+/**
+ * A provider-signed 44252 generated title (NIP-CSG § Generated title). The
+ * signer is whoever the test says — standing is the reader's fold to judge.
+ */
+export function generatedTitleEvent(signer, options = {}) {
+  const sessionRef = options.sessionRef ?? SESSION_REF;
+  const session = options.target ?? target();
+  return sign(signer, {
+    kind: 44252,
+    created_at: options.created_at ?? 1_700_000_100,
+    content: JSON.stringify({
+      schema: "buzz-coding-session-title/v1",
+      title: options.title ?? "Generated title",
+      model: options.model ?? "claude-haiku-4-5",
+      basis: "first-message",
+      sourceCommand: options.sourceCommand ?? null,
+      createEventId: options.createEventId ?? "c".repeat(64),
+    }),
+    tags: [
+      ["h", options.channelId ?? CHANNEL_ID],
+      ["d", sessionRef],
+      ["cstl-v", "cstl1-1"],
+      ["cs-target", buildCodingSessionTargetKey(session)],
+    ],
+  });
+}

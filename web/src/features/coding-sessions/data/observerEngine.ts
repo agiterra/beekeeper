@@ -8,7 +8,9 @@
  * - one long-lived live subscription (limit 0) that survives reconnect and
  *   replays `since = lastSeen - 5s`;
  * - a lease re-read every 60s, because a 24223 lease is ephemeral and its
- *   150s TTL is the only proof anybody is actually answering (D8).
+ *   150s TTL is the only proof anybody is actually answering (D8);
+ * - after history, a back-fill read for any generated title whose standing
+ *   the pages could not prove (SV-31, `titleStanding.ts`).
  *
  * It never publishes anything. The browser observer has no write path.
  */
@@ -28,11 +30,17 @@ import {
   codingSessionClosuresFilter,
   codingSessionCreatesFilters,
   codingSessionFactsLiveFilter,
+  codingSessionGeneratedTitlesFilter,
   codingSessionGoalsFilter,
   codingSessionHistoryFilters,
   codingSessionLeasesFilter,
   codingSessionNamesFilter,
+  codingSessionTitleStandingFilters,
+  codingSessionTitleStandingGaps,
+  type CodingSessionObserverFacts,
+  isTitleStandingPageTruncated,
   isTruncatedHistoryPage,
+  MAX_TITLE_STANDING_GAPS_PER_READ,
   MAX_RETAINED_RAW_EVENTS_PER_GENERATION,
   type ObservedEvent,
 } from "../domain/index.ts";
@@ -100,6 +108,7 @@ export function codingSessionLiveFilters(
       )
       .map(live),
     live(codingSessionNamesFilter(channelId)),
+    live(codingSessionGeneratedTitlesFilter(channelId)),
     live(codingSessionGoalsFilter(channelId)),
     live(codingSessionClosuresFilter(channelId)),
     live(codingSessionLeasesFilter(channelId)),
@@ -140,6 +149,9 @@ export class CodingSessionObserverEngine {
   private stopHistory: (() => void) | null = null;
   private stopLive: (() => void) | null = null;
   private stopLeaseRead: (() => void) | null = null;
+  private stopStandingRead: (() => void) | null = null;
+  /** Titles a back-fill already asked about; cleared by a history re-read. */
+  private readonly standingAsked = new Set<string>();
   private cancelLeaseSchedule: CancelSchedule | null = null;
   private rebuildTimer: ReturnType<typeof setTimeout> | null = null;
   private historyWaiters: {
@@ -186,6 +198,8 @@ export class CodingSessionObserverEngine {
     this.stopLive = null;
     this.stopLeaseRead?.();
     this.stopLeaseRead = null;
+    this.stopStandingRead?.();
+    this.stopStandingRead = null;
     this.cancelLeaseSchedule?.();
     this.cancelLeaseSchedule = null;
     if (this.rebuildTimer !== null) {
@@ -284,6 +298,10 @@ export class CodingSessionObserverEngine {
     this.stopHistory?.();
     this.stopHistory = null;
     this.historyRead = false;
+    // A re-read is a retry: every title may be asked about again.
+    this.stopStandingRead?.();
+    this.stopStandingRead = null;
+    this.standingAsked.clear();
 
     const filters = codingSessionHistoryFilters(this.channelId);
     const counts = filters.map(() => 0);
@@ -390,18 +408,80 @@ export class CodingSessionObserverEngine {
     }, this.rebuildDelayMs);
   }
 
-  private rebuildNow(): void {
-    this.snapshot = buildChannelSessionSnapshot(
-      this.store.facts([this.channelId]),
+  /**
+   * Ask the relay for the proof behind generated titles the history pages
+   * could not stand up (SV-31): the create by id, and the signer's metadata
+   * and receipts around the title's own time. One read at a time; a read's
+   * end rebuilds, which asks about the next batch. A title is asked about
+   * once per history read, so an unprovable one stays honestly foreign
+   * instead of looping.
+   */
+  private readTitleStanding(facts: CodingSessionObserverFacts): void {
+    if (!this.started || !this.historyRead || this.stopStandingRead !== null) {
+      return;
+    }
+    const gaps = codingSessionTitleStandingGaps(facts)
+      .filter((gap) => !this.standingAsked.has(gap.titleEventId))
+      .slice(0, MAX_TITLE_STANDING_GAPS_PER_READ);
+    if (gaps.length === 0) return;
+    for (const gap of gaps) this.standingAsked.add(gap.titleEventId);
+    const filters = codingSessionTitleStandingFilters(gaps);
+    const counts = filters.map(() => 0);
+    const settled = filters.map(() => false);
+    const settle = (index: number) => {
+      settled[index] = true;
+      if (settled.every((value) => value)) {
+        this.stopStandingRead = null;
+        this.flush();
+      }
+    };
+    let finished = false;
+    const stop = this.subscribe(
+      this.wsUrl,
+      filters,
+      (event, index) => {
+        counts[index] += 1;
+        this.ingest(event);
+      },
       {
-        nowMs: this.now(),
-        leasesRead: this.leasesRead,
-        historyRead: this.historyRead,
-        truncatedAt1000: this.truncatedAt1000,
-        connection: this.connection,
-        lastError: this.lastError,
+        closeOnEose: true,
+        onEose: (index) => {
+          if (isTitleStandingPageTruncated(filters[index], counts[index])) {
+            this.truncatedAt1000 = true;
+          }
+          settle(index);
+        },
+        onClosed: (reason, index) => {
+          this.lastError = reason;
+          if (index !== null) {
+            settle(index);
+            return;
+          }
+          finished = true;
+          this.stopStandingRead?.();
+          this.stopStandingRead = null;
+          this.scheduleRebuild();
+        },
       },
     );
+    // A transport that settled every filter synchronously already cleared
+    // the slot; never re-arm it with a finished read.
+    if (!finished && settled.some((value) => !value)) {
+      this.stopStandingRead = stop;
+    }
+  }
+
+  private rebuildNow(): void {
+    const facts = this.store.facts([this.channelId]);
+    this.readTitleStanding(facts);
+    this.snapshot = buildChannelSessionSnapshot(facts, {
+      nowMs: this.now(),
+      leasesRead: this.leasesRead,
+      historyRead: this.historyRead,
+      truncatedAt1000: this.truncatedAt1000,
+      connection: this.connection,
+      lastError: this.lastError,
+    });
     for (const listener of this.listeners) listener();
   }
 
