@@ -15,15 +15,16 @@ use buzz_core::kind::{
     is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_TURN_METRIC,
     KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
     KIND_CANVAS, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CHECKPOINT,
-    KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
-    KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_HANDOVER, KIND_CODING_SESSION_LEASE,
-    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
-    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME, KIND_CODING_SESSION_OBSERVATION,
-    KIND_CODING_SESSION_POLICY, KIND_CODING_SESSION_PROVIDER_CATALOG,
-    KIND_CODING_SESSION_TEAM_TRANSACTION, KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST,
-    KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
-    KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
-    KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+    KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENERATED_TITLE,
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_HANDOVER,
+    KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
+    KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
+    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TEAM_TRANSACTION,
+    KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST, KIND_DELETION, KIND_DM_ADD_MEMBER,
+    KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET, KIND_EVENT_REMINDER,
+    KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_GIFT_WRAP,
+    KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
     KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HOST_STEP_CLAIM, KIND_HOST_STEP_RESULT,
     KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES, KIND_HUDDLE_PARTICIPANT_JOINED,
@@ -354,7 +355,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         // revisions, authority-chain transitions, closure facts (44226–44230),
         // signed team transactions (44244), session policies (44245),
         // observations (44246), handover records (44247), turn checkpoints
-        // (44231, NIP-CSCK), the operator-authored commands (44220/44221), and the
+        // (44231, NIP-CSCK), provider-signed generated titles (44252),
+        // the operator-authored commands (44220/44221), and the
         // provider-authored facts they produce (44222-44225). All are
         // durable, channel-scoped writes consumed by an out-of-relay
         // provider adapter — the relay validates and stores them, and
@@ -375,7 +377,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         | KIND_CODING_SESSION_TEAM_TRANSACTION
         | KIND_CODING_SESSION_POLICY
         | KIND_CODING_SESSION_OBSERVATION
-        | KIND_CODING_SESSION_HANDOVER => Ok(Scope::MessagesWrite),
+        | KIND_CODING_SESSION_HANDOVER
+        | KIND_CODING_SESSION_GENERATED_TITLE => Ok(Scope::MessagesWrite),
         // NIP-56 reports are ordinary member writes into the mod-only queue.
         // Ingest persists them to `moderation_reports` and suppresses public
         // storage/fanout; reports are signals, never enforcement triggers.
@@ -834,6 +837,7 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_CODING_SESSION_GOAL
             | KIND_CODING_SESSION_AUTHORITY_TRANSITION
             | KIND_CODING_SESSION_NAME
+            | KIND_CODING_SESSION_GENERATED_TITLE
             | KIND_CODING_SESSION_CLOSURE
             | KIND_CODING_SESSION_CHECKPOINT
             | KIND_CODING_SESSION_TEAM_TRANSACTION
@@ -863,6 +867,7 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_GOAL
             | KIND_CODING_SESSION_AUTHORITY_TRANSITION
             | KIND_CODING_SESSION_NAME
+            | KIND_CODING_SESSION_GENERATED_TITLE
             | KIND_CODING_SESSION_CLOSURE
             | KIND_CODING_SESSION_CHECKPOINT
             | KIND_CODING_SESSION_TEAM_TRANSACTION
@@ -881,10 +886,11 @@ pub(crate) fn requires_strict_coding_session_membership(kind: u32) -> bool {
 
 /// Maximum signed content size for each coding-session kind, in bytes.
 ///
-/// 44220, 44221, and 44226–44230 are bounded by their payload
+/// 44220, 44221, 44226–44230 and 44252 are bounded by their payload
 /// contracts in `buzz-core` instead (12 KiB of turn text, 16 KiB of signed
 /// content, 1 KiB of genesis, 4 KiB of goal prose, 512 B of an authority
-/// transition, 256 B of session-name text, and 512 B of closure JSON), so they are
+/// transition, 256 B of session-name text, 512 B of closure JSON, and 2 KiB of
+/// generated-title JSON), so they are
 /// absent here — and those bounds are the stricter ones,
 /// since their envelope validators run *before* this table is consulted. The
 /// four provider-authored kinds carry no envelope validator — the
@@ -4165,6 +4171,16 @@ async fn ingest_event_inner(
             .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
     }
 
+    // NIP-CSG § Generated title: structure only, the division 44229 draws.
+    // Whether the signer is the provider authority of the execution its
+    // `cs-target` names is a fact about the umbrella's 44223 history, so the
+    // shared resolver answers it in every reader's fold; the relay checks no
+    // signer standing.
+    if kind_u32 == KIND_CODING_SESSION_GENERATED_TITLE {
+        buzz_core::coding_session_title::validate_coding_session_title_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
     if kind_u32 == KIND_CODING_SESSION_CLOSURE {
         let payload =
             buzz_core::coding_session_closure::validate_coding_session_closure_envelope(&event)
@@ -5157,6 +5173,10 @@ mod coding_session_handover_tests;
 #[cfg(test)]
 #[path = "ingest_coding_session_checkpoint_tests.rs"]
 mod coding_session_checkpoint_tests;
+
+#[cfg(test)]
+#[path = "ingest_coding_session_title_tests.rs"]
+mod coding_session_title_tests;
 
 #[cfg(test)]
 mod tests {
@@ -8085,7 +8105,7 @@ mod tests {
 
     /// Every coding-session kind, in kind order. Kept next to the tests that
     /// sweep it so the next kind lands in the sweep the moment it exists.
-    const CODING_SESSION_TEST_KINDS: [u32; 17] = [
+    const CODING_SESSION_TEST_KINDS: [u32; 18] = [
         KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -8103,6 +8123,7 @@ mod tests {
         KIND_CODING_SESSION_OBSERVATION,
         KIND_CODING_SESSION_HANDOVER,
         buzz_core::kind::KIND_PROJECT_WORK_RECORD,
+        KIND_CODING_SESSION_GENERATED_TITLE,
     ];
 
     #[test]
@@ -8118,7 +8139,10 @@ mod tests {
                     // NIP-PW work records (44249) are coding-session kinds:
                     // their `h` tag is the gate, exactly as for 44244. The
                     // `a` tag selects a project and never admits one.
-                    || kind == buzz_core::kind::KIND_PROJECT_WORK_RECORD,
+                    || kind == buzz_core::kind::KIND_PROJECT_WORK_RECORD
+                    // NIP-CSG generated titles (44252): `h`-gated like the
+                    // 44229 name they rank below.
+                    || kind == KIND_CODING_SESSION_GENERATED_TITLE,
                 "is_coding_session_kind disagrees at kind {kind}"
             );
         }
@@ -9726,6 +9750,10 @@ mod tests {
         );
         assert_eq!(coding_session_content_cap(KIND_CODING_SESSION_GOAL), None);
         assert_eq!(coding_session_content_cap(KIND_CODING_SESSION_NAME), None);
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_GENERATED_TITLE),
+            None
+        );
         assert_eq!(
             coding_session_content_cap(KIND_CODING_SESSION_CLOSURE),
             None

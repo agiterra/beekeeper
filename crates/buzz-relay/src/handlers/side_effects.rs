@@ -734,6 +734,7 @@ fn coding_session_scoped_kind(kind: u32) -> bool {
             | buzz_core::kind::KIND_CODING_SESSION_CHECKPOINT
             | buzz_core::kind::KIND_CODING_SESSION_GOAL
             | buzz_core::kind::KIND_CODING_SESSION_NAME
+            | buzz_core::kind::KIND_CODING_SESSION_GENERATED_TITLE
             | buzz_core::kind::KIND_CODING_SESSION_TEAM_TRANSACTION
             | buzz_core::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT
     )
@@ -744,6 +745,7 @@ const SESSION_D_TAG_KINDS: &[u32] = &[
     KIND_CODING_SESSION_CLOSURE,
     buzz_core::kind::KIND_CODING_SESSION_GOAL,
     buzz_core::kind::KIND_CODING_SESSION_NAME,
+    buzz_core::kind::KIND_CODING_SESSION_GENERATED_TITLE,
     buzz_core::kind::KIND_CODING_SESSION_TEAM_TRANSACTION,
 ];
 
@@ -776,7 +778,7 @@ struct AuthorizedSessionDeletion {
 /// Does this target actually belong to the session being deleted?
 ///
 /// The exemption above is by kind, and a kind is not an identity. Without
-/// this, "delete session A" would also delete any 44227, 44229, 44230,
+/// this, "delete session A" would also delete any 44227, 44229, 44252, 44230,
 /// 44223, 44225, 44231 or 44244 named alongside it — including another project's,
 /// signed by someone else, in a channel the actor has no standing in. That
 /// was unreachable only for as long as the ingest gate refused every
@@ -789,7 +791,7 @@ struct AuthorizedSessionDeletion {
 /// | Kind | Belongs by |
 /// |---|---|
 /// | 44226 genesis | being *the* genesis this deletion was authorized against |
-/// | 44230, 44227, 44229, 44244 | `["d", sessionRef]` |
+/// | 44230, 44227, 44229, 44252, 44244 | `["d", sessionRef]` |
 /// | 44223 metadata | `sessionRef` in its content |
 /// | 44225 transcript | a `cs-target` some named metadata attributed here |
 /// | 44231 checkpoint | the same `cs-target` set — it names its execution as a transcript does |
@@ -4867,6 +4869,7 @@ mod tests {
             buzz_core::kind::KIND_CODING_SESSION_METADATA,
             buzz_core::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
             buzz_core::kind::KIND_CODING_SESSION_TRANSCRIPT,
+            buzz_core::kind::KIND_CODING_SESSION_GENERATED_TITLE,
             buzz_core::kind::KIND_STREAM_MESSAGE,
         ] {
             assert!(
@@ -4874,6 +4877,49 @@ mod tests {
                 "kind {kind} must keep its ordinary deletion rules"
             );
         }
+    }
+
+    /// A whole-session delete reaches the session's generated titles (44252)
+    /// by their `d` tag, exactly as it reaches its 44229 names — and only
+    /// this session's, in this channel.
+    #[test]
+    fn a_session_delete_reaches_its_own_generated_titles_by_d_tag() {
+        let channel_id = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let title = |channel: Uuid, d: &str| {
+            nostr::EventBuilder::new(
+                nostr::Kind::Custom(buzz_core::kind::KIND_CODING_SESSION_GENERATED_TITLE as u16),
+                "{}",
+            )
+            .tags([
+                nostr::Tag::parse(["h", &channel.to_string()]).expect("h"),
+                nostr::Tag::parse(["d", d]).expect("d"),
+                nostr::Tag::parse(["cstl-v", "cstl1-1"]).expect("v"),
+            ])
+            .sign_with_keys(&nostr::Keys::generate())
+            .expect("sign")
+        };
+        let session = AuthorizedSessionDeletion {
+            session_ref: session_ref.to_owned(),
+            channel_id,
+            genesis_id: vec![0; 32],
+            execution_targets: std::collections::HashSet::new(),
+        };
+        assert!(coding_session_scoped_kind(
+            buzz_core::kind::KIND_CODING_SESSION_GENERATED_TITLE
+        ));
+        assert!(session_deletion_admits(
+            &title(channel_id, session_ref),
+            &session
+        ));
+        assert!(!session_deletion_admits(
+            &title(channel_id, "e2c4a6b8-1d3f-4e5a-8b7c-9d0e1f2a3b4c"),
+            &session
+        ));
+        assert!(!session_deletion_admits(
+            &title(Uuid::new_v4(), session_ref),
+            &session
+        ));
     }
 
     #[test]
