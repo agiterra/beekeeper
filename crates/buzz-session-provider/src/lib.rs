@@ -93,6 +93,7 @@ pub mod session_isolation;
 pub mod situation_card;
 pub mod state;
 mod team_wake;
+mod team_wake_fetch;
 pub mod transcript;
 mod turn_checkpoint_git;
 pub mod verification_input;
@@ -543,6 +544,9 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     provider.recover_action_steps_on_start()?;
     provider.start_action_step_listener();
     let mut action_step_events = provider.take_action_step_events();
+    // Held out here for the same borrow reason: finished team-wake reads,
+    // which run on their own task so a slow relay never holds this loop.
+    let mut team_wake_fetches = provider.take_team_wake_fetches();
 
     provider.start_project_deletion_listener();
     let mut project_deletion_events = provider.project_deletion_events.take();
@@ -641,6 +645,11 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                     tracing::warn!(target: "csp::lease", "lease handoff after session event failed: {error}");
                 }
             }
+            fetched = team_wake_fetch::next_fetched(&mut team_wake_fetches) => {
+                if let Err(error) = provider.finish_team_wake_fetch(fetched, &publisher).await {
+                    tracing::warn!(target: "csp::team_wake", "team wake processing failed: {error}");
+                }
+            }
             _ = ticker.tick() => {
                 // Hot-reload: an operator who adds a project to the file should
                 // see it offered without restarting the provider.
@@ -657,7 +666,11 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 if let Err(error) = provider.flush_pending_leases(&publisher).await {
                     tracing::warn!(target: "csp::lease", "lease handoff failed: {error}");
                 }
-                if let Err(error) = provider.run_one_team_wake_tick(&publisher).await {
+                // Starts the relay read and returns; the answer is applied by
+                // the arm above. Awaiting it here held every other arm —
+                // transcript publication included — for as long as the relay
+                // took to answer.
+                if let Err(error) = provider.start_team_wake_tick() {
                     tracing::warn!(target: "csp::team_wake", "team wake processing failed: {error}");
                 }
                 // The release side of a deferred assignment wake: a fetch that
@@ -679,6 +692,12 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 provider.publish_due_gate_starts();
                 provider.sync_project_deletion_listener();
                 while provider.git_probe_tasks.try_join_next().is_some() {}
+                // A tick body that outlived RUNTIME_TICK leaves the interval
+                // already due, and this arm sits above the publish arm in the
+                // biased select — so a run of slow ticks would starve
+                // publication outright. Restart the period from now, so every
+                // tick is followed by a full period in which the outbox drains.
+                ticker.reset();
             }
             // The replay reorder window closing is a delivery, not a timer
             // tick: the turns it holds are already the operator's, they are
@@ -826,6 +845,10 @@ pub struct Provider {
     team_wake_refusal_reprobed: HashSet<Uuid>,
     /// Infrastructure retries wait here without waking a model or touching its context.
     team_wake_backoff: HashMap<Uuid, TeamWakeBackoff>,
+    /// The one team-wake relay read allowed in flight, run off the loop so it
+    /// never holds back session events or transcript publication. See
+    /// [`team_wake_fetch`].
+    team_wake_fetch: team_wake_fetch::TeamWakeFetchSlot,
     sessions: SessionManager,
     session_events: mpsc::Receiver<SessionEvent>,
     /// Sender for the queue [`Provider::next_session_event`] drains.
@@ -1217,6 +1240,7 @@ impl Provider {
             team_wake_refusals_at_startup,
             team_wake_refusal_reprobed: HashSet::new(),
             team_wake_backoff: HashMap::new(),
+            team_wake_fetch: team_wake_fetch::TeamWakeFetchSlot::new(),
             sessions: SessionManager::new(events_tx.clone()),
             session_events,
             session_events_tx: events_tx,
@@ -2242,10 +2266,31 @@ impl Provider {
     /// wake processing. Advancing the durable round-robin independently for
     /// each phase skips the selected discovery channel and lets alternating
     /// saturated/blocked channels starve their neighbours.
+    ///
+    /// This awaits the relay read inline, so it is a test driver only: the run
+    /// loop uses [`Provider::start_team_wake_tick`], which reads off the loop
+    /// and applies the same decisions when the answer arrives.
+    #[cfg(test)]
     async fn run_one_team_wake_tick(
         &mut self,
         publisher: &RelayEventPublisher,
     ) -> anyhow::Result<()> {
+        let Some(channel_id) = self.next_team_wake_channel()? else {
+            return Ok(());
+        };
+        if self.team_wake_discovery_needed(channel_id) {
+            self.discover_team_wake_partition_for(channel_id).await;
+        }
+        if self.team_wake_processing_needed(channel_id) {
+            self.process_team_wake_for(channel_id, publisher).await?;
+        }
+        Ok(())
+    }
+
+    /// The channel this tick's team-wake work is for, advancing the durable
+    /// round-robin once. Shared by the inline tick above and the run loop's
+    /// off-loop tick ([`team_wake_fetch`]).
+    fn next_team_wake_channel(&mut self) -> anyhow::Result<Option<Uuid>> {
         let scheduled: HashSet<Uuid> = self
             .subscribed
             .iter()
@@ -2257,16 +2302,7 @@ impl Provider {
                     .filter(|channel| self.team_wake_processing_needed(*channel)),
             )
             .collect();
-        let Some(channel_id) = self.team_wakes.next_tick_channel(scheduled)? else {
-            return Ok(());
-        };
-        if self.team_wake_discovery_needed(channel_id) {
-            self.discover_team_wake_partition_for(channel_id).await;
-        }
-        if self.team_wake_processing_needed(channel_id) {
-            self.process_team_wake_for(channel_id, publisher).await?;
-        }
-        Ok(())
+        Ok(self.team_wakes.next_tick_channel(scheduled)?)
     }
 
     fn team_wake_discovery_needed(&self, channel_id: Uuid) -> bool {
@@ -2291,9 +2327,22 @@ impl Provider {
     /// is marked only after a complete-or-error authenticated query, so a
     /// saturated or unavailable relay can never turn partial history into a
     /// successful discovery pass.
+    #[cfg(test)]
     async fn discover_team_wake_partition_for(&mut self, channel_id: Uuid) {
-        if !self.team_wake_discovery_needed(channel_id) {
+        let Some((rest, reprobing_refusal)) = self.prepare_team_wake_discovery(channel_id) else {
             return;
+        };
+        let result =
+            team_wake_fetch::fetch_discovery(&rest, channel_id, self.team_wake_fetch.timeout).await;
+        self.apply_team_wake_discovery(channel_id, reprobing_refusal, result);
+    }
+
+    /// Everything discovery decides before it reads the relay: whether the
+    /// channel still needs it, the one restart re-probe mark, and the client.
+    /// `None` means there is nothing to read now.
+    fn prepare_team_wake_discovery(&mut self, channel_id: Uuid) -> Option<(RestClient, bool)> {
+        if !self.team_wake_discovery_needed(channel_id) {
+            return None;
         }
         let reprobing_refusal = self.team_wakes.is_refused(channel_id);
         if reprobing_refusal {
@@ -2301,15 +2350,19 @@ impl Provider {
         }
         let Some(rest) = self.rest_client.clone() else {
             self.defer_team_wake_discovery(channel_id, "relay_query_unavailable");
-            return;
+            return None;
         };
-        let mut events = match context_projector::query_complete_kind_partition(
-            &rest,
-            channel_id,
-            KIND_CODING_SESSION_TEAM_TRANSACTION,
-        )
-        .await
-        {
+        Some((rest, reprobing_refusal))
+    }
+
+    /// Fold one complete-partition read into the channel's wake queue.
+    fn apply_team_wake_discovery(
+        &mut self,
+        channel_id: Uuid,
+        reprobing_refusal: bool,
+        result: Result<Vec<Event>, context_projector::ContextProjectionError>,
+    ) {
+        let mut events = match result {
             Ok(events) => events,
             Err(context_projector::ContextProjectionError::Bound(error)) => {
                 let first = match self.team_wakes.refuse_channel(
@@ -2513,32 +2566,62 @@ impl Provider {
     /// durable with a stable reason; only a verified outcome, a canonical
     /// report suppressing a terminal diagnostic, or a definitively excluded
     /// report retires it.
+    #[cfg(test)]
     async fn process_team_wake_for(
         &mut self,
         channel_ref: Uuid,
         publisher: &RelayEventPublisher,
     ) -> anyhow::Result<()> {
-        let Some(mut intent) = self.team_wakes.pending_for_channel(channel_ref)? else {
+        let Some((rest, relay_self, intent)) = self.prepare_team_wake_snapshot(channel_ref)? else {
             return Ok(());
+        };
+        let result = team_wake_fetch::fetch_snapshot(
+            &rest,
+            &relay_self,
+            &intent,
+            self.team_wake_fetch.timeout,
+        )
+        .await;
+        self.apply_team_wake_snapshot(channel_ref, intent, result, publisher)
+            .await
+    }
+
+    /// Everything a wake decides before it reads the relay. `None` means the
+    /// intent was deferred (or there is none) and nothing is to be read now.
+    fn prepare_team_wake_snapshot(
+        &mut self,
+        channel_ref: Uuid,
+    ) -> anyhow::Result<Option<(RestClient, String, team_wake::WakeIntent)>> {
+        let Some(mut intent) = self.team_wakes.pending_for_channel(channel_ref)? else {
+            return Ok(None);
         };
         debug_assert_eq!(intent.scope.channel_ref, channel_ref);
         if self.team_wake_backoff_pending(channel_ref) {
             self.team_wakes.defer_in_flight(channel_ref, intent)?;
-            return Ok(());
+            return Ok(None);
         }
         let Some(rest) = self.rest_client.clone() else {
             intent.last_reason = Some("relay_query_unavailable".into());
             self.defer_team_wake(intent)?;
-            return Ok(());
+            return Ok(None);
         };
         let Some(relay_self) = self.relay_self.clone() else {
             intent.last_reason = Some("relay_identity_unavailable".into());
             self.defer_team_wake(intent)?;
-            return Ok(());
+            return Ok(None);
         };
-        let snapshot = match team_wake::fetch_verified_snapshot(&rest, &relay_self, &intent.scope)
-            .await
-        {
+        Ok(Some((rest, relay_self, intent)))
+    }
+
+    /// Decide one wake from its verified snapshot read: mint, defer or retire.
+    async fn apply_team_wake_snapshot(
+        &mut self,
+        channel_ref: Uuid,
+        mut intent: team_wake::WakeIntent,
+        result: Result<team_wake::VerifiedWakeSnapshot, team_wake::WakeSnapshotError>,
+        publisher: &RelayEventPublisher,
+    ) -> anyhow::Result<()> {
+        let snapshot = match result {
             Ok(snapshot) => snapshot,
             Err(error) if error.is_bound() => {
                 let first = self.team_wakes.refuse_channel(
@@ -12376,6 +12459,8 @@ mod tests {
     mod team_wake_disposition_tests;
     #[path = "team_wake_driver_tests.rs"]
     mod team_wake_driver_tests;
+    #[path = "team_wake_fetch_tests.rs"]
+    mod team_wake_fetch_tests;
     #[path = "team_wake_pressure_tests.rs"]
     mod team_wake_pressure_tests;
     #[path = "team_wake_relevance_tests.rs"]
