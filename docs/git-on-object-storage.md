@@ -85,7 +85,12 @@ each contender clones/commits/pushes through real `git` and the cost grows
 with width.) The open question — "is the no-retry default safe past MinIO
 and beyond the widths so far exercised?" — re-opens on a different backend
 or a sustained-load regime the conformance probe (§Conformance) doesn't
-already exercise. The non-negotiable rule: retry, if added, lives in the
+already exercise. **2026-10-05, RustFS 1.0.1** (which replaced MinIO in every
+bundled stack): the relay's startup conformance probe admitted it (width 32 ×
+3 rounds, 0 transport drops), `e2e_git` passed 3/3 including the 8-way
+concurrent-push race, and a direct 20-writer `If-Match` race produced exactly
+one winner in each of 5 rounds — so the no-retry default holds on this backend
+at the widths exercised. The non-negotiable rule: retry, if added, lives in the
 store layer and retries *only* pre-classification network errors — never
 `Ok(2xx)`, `LostRace(412)`, or `NotFound(404)`. Retrying a classified
 outcome would change the TLA action and break the proof.

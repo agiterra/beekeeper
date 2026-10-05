@@ -388,7 +388,7 @@ after, 0/65 across both conditions.
 
 `just ci` is **narrower than the gate**. The gate additionally runs
 `just conformance-check` and `just export-viewer-manifest-test`, starts
-Postgres/Redis/MinIO as services, and migrates a **fresh** database — so a
+Postgres/Redis/RustFS as services, and migrates a **fresh** database — so a
 local run can go green and still land red. Run the two extra steps by hand
 before a push you intend to deploy, and remember that a fresh-database
 `cargo run -p buzz-admin -- migrate` exercises migration ordering that an

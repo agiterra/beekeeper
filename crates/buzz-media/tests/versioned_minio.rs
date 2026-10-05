@@ -1,19 +1,23 @@
-//! Live destructive versioned-bucket deletion coverage against docker-compose MinIO.
+//! Live destructive versioned-bucket deletion coverage against the docker-compose
+//! S3 store (RustFS since 2026-10; the file keeps its MinIO-era name).
 //!
 //! This exercises the S3-compatible path that community deletion relies on when
 //! a bucket has versioning enabled: list object versions/delete markers with
 //! dual markers, delete exact `(Key, VersionId)` identifiers, retry an already
 //! deleted version, and prove final `ListObjectVersions` emptiness.
 //!
-//! Run it against the docker-compose MinIO (creds `buzz_dev`/`buzz_dev_secret`):
+//! Run it against the docker-compose store (creds `buzz_dev`/`buzz_dev_secret`):
 //!
 //! ```bash
-//! docker compose up -d minio minio-init
+//! docker compose up -d rustfs rustfs-init mc
 //! cargo test -p buzz-media --test versioned_minio -- --ignored --nocapture
 //! ```
 //!
-//! The test creates and removes its own bucket. The MinIO container name is
-//! overridable with `BUZZ_MINIO_CONTAINER`; credentials/endpoint/region/addressing
+//! The test creates and removes its own bucket, driving bucket setup with `mc`
+//! through `docker exec` in a container that reaches the store at
+//! localhost:9000 — the compose `mc` service (`buzz-mc`), which shares the
+//! RustFS network namespace. Override it with `BUZZ_MC_CONTAINER`
+//! (`BUZZ_MINIO_CONTAINER` is still read); credentials/endpoint/region/addressing
 //! use the same `BUZZ_S3_*` env vars as `static_creds_minio`.
 
 use std::process::Command;
@@ -47,7 +51,9 @@ fn minio_config(bucket: String) -> MediaConfig {
 }
 
 fn run_mc(args: &[String]) -> Result<(), String> {
-    let container = env_or("BUZZ_MINIO_CONTAINER", "buzz-minio");
+    let container = std::env::var("BUZZ_MC_CONTAINER")
+        .or_else(|_| std::env::var("BUZZ_MINIO_CONTAINER"))
+        .unwrap_or_else(|_| "buzz-mc".to_string());
     let output = Command::new("docker")
         .arg("exec")
         .arg(container)
@@ -128,7 +134,7 @@ fn refs_from(entries: &[buzz_media::storage::ObjectVersionEntry]) -> Vec<ObjectV
 }
 
 #[tokio::test]
-#[ignore = "requires live docker-compose MinIO; permanently deletes exact test object versions"]
+#[ignore = "requires the live docker-compose S3 store; permanently deletes exact test object versions"]
 async fn never_versioned_bucket_lists_null_versions_and_exact_delete_empties_listing() {
     let bucket = format!("buzz-media-never-versioned-{}", std::process::id());
     let bucket_path = format!("local/{bucket}");
@@ -182,7 +188,7 @@ async fn never_versioned_bucket_lists_null_versions_and_exact_delete_empties_lis
 }
 
 #[tokio::test]
-#[ignore = "requires live docker-compose MinIO; permanently deletes exact test object versions"]
+#[ignore = "requires the live docker-compose S3 store; permanently deletes exact test object versions"]
 async fn versioned_bucket_exact_version_delete_reaches_final_list_versions_emptiness() {
     let bucket = format!("buzz-media-versioned-{}", std::process::id());
     let bucket_path = format!("local/{bucket}");
@@ -355,7 +361,7 @@ async fn versioned_bucket_exact_version_delete_reaches_final_list_versions_empti
         );
         assert!(list_all_versions(&storage, &prefix, 2).await.is_empty());
     } else {
-        eprintln!("MinIO mc did not support version suspend; enabled-versioning coverage passed");
+        eprintln!("mc did not support version suspend; enabled-versioning coverage passed");
     }
 
     run_mc(&["rb".to_string(), "--force".to_string(), bucket_path.clone()])
