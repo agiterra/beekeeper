@@ -424,11 +424,19 @@ re-run it after changing any of them):
   same script as the reconcile fallback, so a dead bridge costs latency, not
   commits. Pushes use forced refspecs but **no prune** — GitHub-only refs are
   left alone.
-- The forge's identities: an SSH deploy key with **write** access for the
-  GitHub push, and a Nostr key (`/home/git/.nostr/key`, member of the
+- The forge's identities: the GitHub App `agiterra-hive-mirror` (Contents
+  and Workflows read/write, installed on this repo only) for the GitHub push,
+  and a Nostr key (`/home/git/.nostr/key`, member of the
   community and of the repo's bound channel) for the NIP-98 fetch — the git
   read gate 404s repos to non-members, and `git-credential-nostr` (git 2.46+
   required, PPA-installed on the forge) signs the fetches.
+  `git-credential-github-app` (`scripts/forge/`) mints the app's installation
+  token per push. It replaced a deploy key on 2026-10-05: GitHub names a
+  deploy-key push's sender as whoever added the key, and Woodpecker labels
+  each pipeline with that sender, so every bridged push — anyone's — read as
+  `andy-agiterra`. Pipelines now read `agiterra-hive-mirror[bot]`; the
+  pusher's own name never reaches Woodpecker, since GitHub has no way to know
+  it.
 
 Woodpecker still watches GitHub, and that constraint is unchanged: it needs a
 *forge* — OAuth login, repo/branch API, webhook delivery, commit statuses —
