@@ -116,8 +116,11 @@ void main() {
         [lower, higher],
         [higher, lower],
       ]) {
+        final founded = foundedByFounder();
         final sessions = groupCodingSessionUmbrellas(
           executions: executions,
+          creates: founded.creates,
+          targetKeyByCommandId: founded.targetKeyByCommandId,
           names: order,
         );
         expect(sessions.single.name, 'Higher id');

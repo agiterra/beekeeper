@@ -394,6 +394,43 @@ class CodingSessionName {
   });
 }
 
+/// A decoded 44252 provider-signed generated title.
+///
+/// Signed by the provider that ran the founder's first turn, with its own key.
+/// Structure is all the decoder vouches for: whether this signer may title
+/// this umbrella is the display-name resolver's call, never the decoder's.
+@immutable
+class CodingSessionGeneratedTitle {
+  final CodingSessionEventRef ref;
+  final String sessionRef;
+
+  /// The `cs-target` key of the execution whose provider signed the title.
+  final String targetKey;
+
+  /// The generated title; one line of at most 256 bytes.
+  final String title;
+
+  /// The model id the provider used.
+  final String model;
+
+  /// The 44220 turn whose text was summarised; `null` for a create's initial
+  /// turn.
+  final String? sourceCommand;
+
+  /// The 44221 create of the execution that ran the turn.
+  final String createEventId;
+
+  const CodingSessionGeneratedTitle({
+    required this.ref,
+    required this.sessionRef,
+    required this.targetKey,
+    required this.title,
+    required this.model,
+    required this.sourceCommand,
+    required this.createEventId,
+  });
+}
+
 /// A decoded 44227 umbrella-session goal.
 @immutable
 class CodingSessionGoal {

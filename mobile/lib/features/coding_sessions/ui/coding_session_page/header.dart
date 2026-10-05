@@ -44,6 +44,11 @@ class _SessionHeader extends StatelessWidget {
               CodingSessionStatusChip(status: session.status),
             ],
           ),
+          if (session.resolvedName.isGenerated)
+            Padding(
+              padding: const EdgeInsets.only(top: Grid.half),
+              child: CodingSessionTitleOriginLabel(session: session),
+            ),
           if (session.closed)
             _HeaderLine(
               key: const ValueKey('coding-session-closed'),

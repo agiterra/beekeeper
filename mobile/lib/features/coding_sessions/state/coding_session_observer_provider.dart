@@ -162,12 +162,14 @@ class CodingSessionChannelObserverNotifier
     // its pending row, and a session another device founds never appears
     // until a reload; live finding, 2026-09-08), and the per-session streams
     // a page can change under the reader: its name, its goal, its closure,
-    // and the leases that decide whether anyone is still answering. One REQ
-    // carries all six.
+    // and the leases that decide whether anyone is still answering — and the
+    // provider-generated title that names a session nobody named. One REQ
+    // carries all seven.
     final filters = <NostrFilter>[
       NostrFilters.codingSessionFactsLive(channelId),
       NostrFilters.codingSessionCreatesLive(channelId),
       NostrFilters.codingSessionNames(channelId, limit: 0),
+      NostrFilters.codingSessionGeneratedTitles(channelId, limit: 0),
       NostrFilters.codingSessionGoals(channelId, limit: 0),
       NostrFilters.codingSessionClosures(channelId, limit: 0),
       NostrFilters.codingSessionLeases(channelId),
@@ -199,6 +201,7 @@ class CodingSessionChannelObserverNotifier
       NostrFilters.codingSessionFacts(channelId),
       ...NostrFilters.codingSessionCreates(channelId),
       NostrFilters.codingSessionNames(channelId),
+      NostrFilters.codingSessionGeneratedTitles(channelId),
       NostrFilters.codingSessionGoals(channelId),
       NostrFilters.codingSessionClosures(channelId),
       leaseFilter,

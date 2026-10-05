@@ -131,6 +131,10 @@ class CodingSessionTrustedFacts {
   final Map<String, CodingSessionGenesis> genesesByEventId;
 
   final List<CodingSessionName> names;
+
+  /// Decoded 44252 generated titles. Structure only: whose title stands is
+  /// the display-name resolver's call (`coding_session_title.dart`).
+  final List<CodingSessionGeneratedTitle> titles;
   final List<CodingSessionGoal> goals;
   final List<CodingSessionClosure> closures;
   final List<CodingSessionLease> leases;
@@ -165,6 +169,7 @@ class CodingSessionTrustedFacts {
     required this.targetKeyByCommandId,
     required this.counts,
     required this.signaturesVerified,
+    this.titles = const [],
   });
 }
 
@@ -213,6 +218,7 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
   final resumes = <CodingSessionResume>[];
   final geneses = <String, CodingSessionGenesis>{};
   final names = <CodingSessionName>[];
+  final titles = <CodingSessionGeneratedTitle>[];
   final goals = <CodingSessionGoal>[];
   final closures = <CodingSessionClosure>[];
   final leases = <CodingSessionLease>[];
@@ -281,6 +287,13 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
         final decoded = decodeCodingSessionName(event, verifier: verifier);
         count(_outcomeOf(decoded.reason), event.kind);
         if (decoded.value != null) names.add(decoded.value!);
+      case EventKind.codingSessionGeneratedTitle:
+        final decoded = decodeCodingSessionGeneratedTitle(
+          event,
+          verifier: verifier,
+        );
+        count(_outcomeOf(decoded.reason), event.kind);
+        if (decoded.value != null) titles.add(decoded.value!);
       case EventKind.codingSessionGoal:
         final decoded = decodeCodingSessionGoal(event, verifier: verifier);
         count(_outcomeOf(decoded.reason), event.kind);
@@ -388,6 +401,7 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
     creates: List.unmodifiable(creates),
     genesesByEventId: Map.unmodifiable(geneses),
     names: List.unmodifiable(names),
+    titles: List.unmodifiable(titles),
     goals: List.unmodifiable(goals),
     closures: List.unmodifiable(closures),
     leases: List.unmodifiable(leases),

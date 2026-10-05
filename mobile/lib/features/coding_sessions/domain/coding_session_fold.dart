@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import 'coding_session_models.dart';
 import 'coding_session_target.dart';
+import 'coding_session_title.dart';
 import 'coding_session_trust.dart';
 
 /// How long a 24223 lease proves anything for.
@@ -225,8 +226,12 @@ class CodingSessionUmbrella {
 
   final CodingSessionFounder founder;
 
-  /// The newest 44229 name, when one exists.
+  /// The person's name: the newest 44229 the founder signed, when one exists.
   final String? name;
+
+  /// The shared display-name resolution ([resolveCodingSessionDisplayName]);
+  /// `null` only for an umbrella built outside [groupCodingSessionUmbrellas].
+  final CodingSessionDisplayName? nameResolution;
 
   /// The newest 44227 goal, when one exists.
   final String? goal;
@@ -251,6 +256,7 @@ class CodingSessionUmbrella {
     required this.closed,
     required this.status,
     required this.lastActivityAt,
+    this.nameResolution,
   });
 
   /// True for a session that was founded but never started: a genesis with
@@ -258,22 +264,33 @@ class CodingSessionUmbrella {
   /// custody), so the phone reads it, and steers nothing.
   bool get isFounded => executions.isEmpty;
 
-  /// What to call this session on screen.
+  /// What to call this session on screen, and which tier said so.
   ///
-  /// The newest signed name wins; failing that the newest execution's title;
-  /// failing that the same "Coding session" the desktop shows for an unnamed
-  /// session. The execution's driver is deliberately not a title — it is
-  /// still shown as detail — because a row headed "claude-agent-acp" reads as
-  /// a name nobody gave (live finding 2026-09-08).
-  String get displayName {
+  /// The shared rule (`conformance/session-display-name/`): the founder's
+  /// name, else the earliest title a provider of this umbrella generated,
+  /// else the founding execution's title, else "Untitled session". The
+  /// execution's driver is never a title — a row headed "claude-agent-acp"
+  /// reads as a name nobody gave (live finding 2026-09-08).
+  CodingSessionDisplayName get resolvedName {
+    final resolved = nameResolution;
+    if (resolved != null) return resolved;
     final signed = name;
-    if (signed != null && signed.trim().isNotEmpty) return signed;
-    for (final execution in executions) {
-      final title = execution.metadata?.title;
-      if (title != null && title.trim().isNotEmpty) return title;
+    if (signed != null && signed.trim().isNotEmpty) {
+      return CodingSessionDisplayName(
+        name: signed,
+        origin: CodingSessionNameOrigin.person,
+      );
     }
-    return 'Coding session';
+    return resolveCodingSessionUmbrellaName(
+      channelId: channelId,
+      sessionRef: null,
+      founderPubkey: founder.pubkey,
+      executions: executions,
+    );
   }
+
+  /// The text of [resolvedName].
+  String get displayName => resolvedName.name;
 
   /// True when any execution's authority is the unverified fallback.
   bool get hasUnverifiedAuthority =>
@@ -444,6 +461,7 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
   Map<String, String> targetKeyByCommandId = const {},
   Map<String, CodingSessionGenesis> genesesByEventId = const {},
   Iterable<CodingSessionName> names = const [],
+  Iterable<CodingSessionGeneratedTitle> titles = const [],
   Iterable<CodingSessionGoal> goals = const [],
   Iterable<CodingSessionClosure> closures = const [],
 }) {
@@ -528,7 +546,15 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
       creates: ownCreates,
       genesesByEventId: genesesByEventId,
     );
-    final name = nameFor(sessionRef, channelId);
+    final resolved = resolveCodingSessionUmbrellaName(
+      channelId: channelId,
+      sessionRef: sessionRef,
+      founderPubkey: founder.pubkey,
+      executions: members,
+      creates: ownCreates,
+      names: names,
+      titles: titles,
+    );
     final goal = goalFor(sessionRef, channelId);
     final closure = closureFor(sessionRef, channelId);
     var lastActivityAt = 0;
@@ -544,7 +570,10 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
         sessionRef: sessionRef,
         executions: List.unmodifiable(members),
         founder: founder,
-        name: name?.content,
+        name: resolved.origin == CodingSessionNameOrigin.person
+            ? resolved.name
+            : null,
+        nameResolution: resolved,
         goal: goal?.content,
         closed: closure?.closed ?? false,
         status: foldCodingSessionUmbrellaStatus(members),
@@ -582,6 +611,13 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
     for (final ref in [name?.ref, goal?.ref, closure?.ref].nonNulls) {
       if (ref.createdAt > lastActivityAt) lastActivityAt = ref.createdAt;
     }
+    final resolved = resolveCodingSessionUmbrellaName(
+      channelId: channelId,
+      sessionRef: sessionRef,
+      founderPubkey: genesis.founderPubkey,
+      executions: const [],
+      names: names,
+    );
     umbrellas.add(
       CodingSessionUmbrella(
         channelId: channelId,
@@ -593,7 +629,10 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
           resolution: CodingSessionFounderResolution.genesis,
           genesisRef: genesis.ref.eventId,
         ),
-        name: name?.content,
+        name: resolved.origin == CodingSessionNameOrigin.person
+            ? resolved.name
+            : null,
+        nameResolution: resolved,
         goal: goal?.content,
         closed: closure?.closed ?? false,
         status: foldCodingSessionUmbrellaStatus(const []),

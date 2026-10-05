@@ -199,6 +199,7 @@ String codingSessionKindLabel(int kind) => switch (kind) {
   EventKind.codingSessionLifecycleCommand => 'command',
   EventKind.codingSessionGenesis => 'genesis',
   EventKind.codingSessionName => 'name',
+  EventKind.codingSessionGeneratedTitle => 'generated title',
   EventKind.codingSessionGoal => 'goal',
   EventKind.codingSessionClosure => 'closure',
   EventKind.codingSessionLease => 'lease',

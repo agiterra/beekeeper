@@ -69,6 +69,9 @@ void main() {
 
     test('names, goals and closures each read their own kind', () {
       expect(NostrFilters.codingSessionNames(_channelId).kinds, [44229]);
+      expect(NostrFilters.codingSessionGeneratedTitles(_channelId).kinds, [
+        44252,
+      ]);
       expect(NostrFilters.codingSessionGoals(_channelId).kinds, [44227]);
       expect(NostrFilters.codingSessionClosures(_channelId).kinds, [44230]);
     });

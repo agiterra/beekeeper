@@ -1,13 +1,16 @@
 import '../../../shared/relay/nostr_models.dart';
 import 'coding_session_decode_result.dart';
+import 'coding_session_keys.dart';
 import 'coding_session_models.dart';
 import 'coding_session_signature.dart';
 import 'coding_session_target.dart';
+import 'coding_session_title_wire.dart';
 import 'coding_session_wire.dart';
 
 /// Strict decoders for the umbrella-session kinds a *member* signs: the 44221
 /// create that names a provider authority, the 44226 genesis that anchors an
-/// umbrella, and the 44229/44227/44230 name, goal and closure facts.
+/// umbrella, and the 44229/44227/44230 name, goal and closure facts — plus
+/// the one provider-signed umbrella fact, the 44252 generated title.
 
 /// Schema string on a 44221 payload.
 const codingSessionLifecycleCommandSchema =
@@ -361,6 +364,88 @@ CodingSessionDecoded<CodingSessionName> decodeCodingSessionName(
       ref: record.ref,
       sessionRef: record.sessionRef,
       content: record.content,
+    ),
+  );
+}
+
+/// Decode a 44252 provider-signed generated title (NIP-CSG § Generated title).
+///
+/// Exactly `h`, `d`, `cstl-v=cstl1-1`, `cs-target`, in that order, each with
+/// two fields; strict v1 JSON content of at most 2048 bytes. Mirror of
+/// `validate_coding_session_title_parts` in
+/// `crates/buzz-core/src/coding_session_title.rs`, bound to it by
+/// `conformance/session-display-name/` — a shape buzz-core refuses is refused
+/// here, never repaired.
+CodingSessionDecoded<CodingSessionGeneratedTitle>
+decodeCodingSessionGeneratedTitle(
+  NostrEvent event, {
+  CodingSessionSignatureVerifier? verifier,
+}) {
+  if (event.kind != EventKind.codingSessionGeneratedTitle) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.wrongKind,
+    );
+  }
+  final tags = parseExactTags(event.tags, ['h', 'd', 'cstl-v', 'cs-target']);
+  if (tags == null ||
+      !isUuidText(tags[0]) ||
+      !isCodingSessionSessionRef(tags[1]) ||
+      tags[2] != codingSessionTitleTagVersion ||
+      !isCodingSessionTitleTargetKey(tags[3])) {
+    return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
+  }
+  final ref = _eventRef(event, tags[0]);
+  if (ref == null) {
+    return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
+  }
+  final signature = _checkSignature(event, verifier);
+  if (signature != null) return CodingSessionDecoded.failed(signature);
+
+  final value = parseBoundedJson(
+    event.content,
+    maxCodingSessionTitleContentBytes,
+  );
+  if (!isPlainRecord(value)) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  final payload = value! as Map<String, dynamic>;
+  // `sourceCommand` is required and nullable: absent is a different shape
+  // from null, exactly as buzz-core's `deserialize_required_nullable` reads it.
+  final title = payload['title'];
+  final model = payload['model'];
+  final source = payload['sourceCommand'];
+  if (!hasExactKeys(payload, const [
+        'schema',
+        'title',
+        'model',
+        'basis',
+        'sourceCommand',
+        'createEventId',
+      ]) ||
+      payload['schema'] != codingSessionTitleSchema ||
+      !isCodingSessionNameText(title) ||
+      model is! String ||
+      model.trim().isEmpty ||
+      utf8ByteLength(model) > maxCodingSessionTitleModelBytes ||
+      hasControlCharacter(model) ||
+      payload['basis'] != codingSessionTitleBasisFirstMessage ||
+      (source != null && !isHex64(source)) ||
+      !isHex64(payload['createEventId'])) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  return CodingSessionDecoded.ok(
+    CodingSessionGeneratedTitle(
+      ref: ref,
+      sessionRef: tags[1],
+      targetKey: tags[3],
+      title: title! as String,
+      model: model,
+      sourceCommand: source as String?,
+      createEventId: payload['createEventId'] as String,
     ),
   );
 }

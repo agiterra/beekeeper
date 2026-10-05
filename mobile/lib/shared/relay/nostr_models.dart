@@ -114,7 +114,7 @@ abstract final class EventKind {
   /// input bytes for the owner's PTY, ≤ 8 KiB of base64 per event.
   static const shellInput = 24312;
 
-  // --- Coding sessions (44220-44231, 44244-44247, 24223) --------------------
+  // --- Coding sessions (44220-44231, 44244-44247, 44252, 24223) -------------
   // Keep in sync with `desktop/src/shared/constants/kinds.ts`. Mobile reads
   // the fact kinds and, since 2026-09-07, also publishes the member-signed
   // command kinds (44220 turns, 44221 stop, 44227/44229/44230 goal, name,
@@ -189,6 +189,16 @@ abstract final class EventKind {
   /// here because this table and
   /// `desktop/src/shared/constants/kinds.ts` must not drift (CLAUDE.md).
   static const codingSessionHandover = 44247;
+
+  /// Kind:44252 provider-signed generated session title (NIP-CSG § Generated
+  /// title).
+  ///
+  /// A model's words, signed by the provider that ran the founder's first
+  /// turn — never a person's name, which stays kind:44229. Readers rank the
+  /// two with `resolveCodingSessionDisplayName`
+  /// (`features/coding_sessions/domain/coding_session_title.dart`), the
+  /// shared rule pinned by `conformance/session-display-name/`.
+  static const codingSessionGeneratedTitle = 44252;
 
   /// Kind:24223 ephemeral provider lease proving the provider is reachable.
   static const codingSessionLease = 24223;

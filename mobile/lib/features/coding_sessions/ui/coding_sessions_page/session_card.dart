@@ -52,6 +52,14 @@ class _SessionCard extends StatelessWidget {
                   ],
                 ],
               ),
+              if (session.resolvedName.isGenerated)
+                Padding(
+                  padding: const EdgeInsets.only(top: Grid.quarter),
+                  child: CodingSessionTitleOriginLabel(
+                    session: session,
+                    keyPrefix: 'coding-session-card-title-origin',
+                  ),
+                ),
               const SizedBox(height: Grid.half),
               _CardLine(
                 icon: LucideIcons.userRound,

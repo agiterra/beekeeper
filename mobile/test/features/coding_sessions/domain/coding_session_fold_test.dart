@@ -368,8 +368,11 @@ void main() {
         // Only generation 1 has echoed the umbrella claim so far.
         metadata: [_metadata(sessionRef: sessionRefA)],
       );
+      final founded = foundedByFounder();
       final sessions = groupCodingSessionUmbrellas(
         executions: executions,
+        creates: founded.creates,
+        targetKeyByCommandId: founded.targetKeyByCommandId,
         names: [decodeCodingSessionName(nameEvent(content: 'Ship it')).value!],
         closures: [decodeCodingSessionClosure(closureEvent()).value!],
         genesesByEventId: {
@@ -390,8 +393,11 @@ void main() {
         receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
         metadata: [_metadata(sessionRef: sessionRefA, title: 'Fallback title')],
       );
+      final founded = foundedByFounder();
       final sessions = groupCodingSessionUmbrellas(
         executions: executions,
+        creates: founded.creates,
+        targetKeyByCommandId: founded.targetKeyByCommandId,
         names: [
           decodeCodingSessionName(
             nameEvent(content: 'Old name', createdAt: 1000),
@@ -422,17 +428,21 @@ void main() {
     });
 
     test(
-      'an unnamed, untitled session is "Coding session", not its driver',
+      'an unnamed, untitled session is "Untitled session", not its driver',
       () {
         final executions = resolveCodingSessionGenerations(
           receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
           metadata: const [],
         );
         final sessions = groupCodingSessionUmbrellas(executions: executions);
-        expect(sessions.single.displayName, 'Coding session');
+        expect(sessions.single.displayName, 'Untitled session');
+        expect(
+          sessions.single.resolvedName.origin,
+          CodingSessionNameOrigin.fallback,
+        );
         expect(
           sessions.single.executions.single.label,
-          isNot('Coding session'),
+          isNot('Untitled session'),
         );
       },
     );

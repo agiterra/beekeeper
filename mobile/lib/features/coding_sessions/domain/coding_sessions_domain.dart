@@ -22,6 +22,8 @@ export 'coding_session_provider_catalog.dart';
 export 'coding_session_session_decoders.dart';
 export 'coding_session_signature.dart';
 export 'coding_session_target.dart';
+export 'coding_session_title.dart';
+export 'coding_session_title_wire.dart';
 export 'coding_session_transcript.dart';
 export 'coding_session_transcript_item.dart';
 export 'coding_session_trust.dart';

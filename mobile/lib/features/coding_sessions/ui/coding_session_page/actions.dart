@@ -79,7 +79,14 @@ class _SessionActionsMenu extends ConsumerWidget {
         await _showTextSheet(
           context,
           title: 'Rename session',
-          initial: session.name ?? '',
+          // A generated title is offered as the starting text, as the
+          // desktop's rename dialog does; saving signs it as the person's
+          // name, and the "Auto-named" label goes with it.
+          initial:
+              session.name ??
+              (session.resolvedName.isGenerated
+                  ? session.resolvedName.name
+                  : ''),
           hint: 'A name for this session',
           multiline: false,
           maxBytes: maxCodingSessionNameBytes,

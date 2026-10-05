@@ -184,6 +184,7 @@ CodingSessionChannelView readCodingSessionChannel({
     targetKeyByCommandId: facts.targetKeyByCommandId,
     genesesByEventId: facts.genesesByEventId,
     names: facts.names,
+    titles: facts.titles,
     goals: facts.goals,
     closures: facts.closures,
   );

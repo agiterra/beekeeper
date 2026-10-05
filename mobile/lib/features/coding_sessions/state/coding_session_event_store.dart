@@ -77,6 +77,10 @@ class CodingSessionEventStore {
   static const _separatelyCappedTargetedKinds = <int>{
     EventKind.codingSessionMetadata,
     EventKind.codingSessionLease,
+    // One per umbrella, at most a few: filed under its generation it would be
+    // the oldest event in a transcript flood and the first evicted, and the
+    // session would quietly fall back from its title to "Untitled session".
+    EventKind.codingSessionGeneratedTitle,
   };
 
   /// The bucket [event] belongs to: its generation, its kind *and* generation

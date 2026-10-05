@@ -28,10 +28,10 @@ void main() {
 
       await _start(container);
 
-      // One REQ for the four live filters, one POST /query for the ten
+      // One REQ for the live filters, one POST /query for the eleven
       // history filters; nothing on the socket's read lane.
       expect(session.operations, ['subscribeAll', 'query']);
-      expect(session.queryBundles.single, hasLength(10));
+      expect(session.queryBundles.single, hasLength(11));
       expect(session.reqBundles, isEmpty);
       for (final filter in session.historyFilters) {
         expect(filter.kinds, isNotEmpty, reason: 'a filter without kinds 403s');
@@ -47,6 +47,7 @@ void main() {
           '[44224] limit 1000',
           '[44226] limit 1000',
           '[44229] limit 1000',
+          '[44252] limit 1000',
           '[44227] limit 1000',
           '[44230] limit 1000',
           '[24223] limit 1000',
@@ -56,15 +57,15 @@ void main() {
       );
     });
 
-    test('opens facts, creates, names, goals, closures and leases as one '
-        'live REQ', () async {
+    test('opens facts, creates, names, generated titles, goals, closures and '
+        'leases as one live REQ', () async {
       final session = _FakeRelaySession();
       final container = _container(session);
       addTearDown(container.dispose);
 
       await _start(container);
 
-      expect(session.subscribeBundles.single, hasLength(6));
+      expect(session.subscribeBundles.single, hasLength(7));
       for (final filter in session.subscribeFilters) {
         expect(filter.tags['#h'], [channelId]);
         expect(filter.kinds, isNotEmpty);
@@ -75,6 +76,7 @@ void main() {
           '[44223, 44224, 44225] limit 0',
           '[44221, 44226] limit 0',
           '[44229] limit 0',
+          '[44252] limit 0',
           '[44227] limit 0',
           '[44230] limit 0',
           '[24223] limit 1000',
@@ -82,29 +84,32 @@ void main() {
       );
     });
 
-    test(
-      'a failed bridge read falls back to one REQ of the same ten filters',
-      () async {
-        final session = _FakeRelaySession(
-          events: _liveSession(),
-          failQuery: true,
-        );
-        final container = _container(session);
-        addTearDown(container.dispose);
+    test('a failed bridge read falls back to REQs of the same eleven filters, '
+        'at most ten to a REQ', () async {
+      final session = _FakeRelaySession(
+        events: _liveSession(),
+        failQuery: true,
+      );
+      final container = _container(session);
+      addTearDown(container.dispose);
 
-        final snapshot = await _start(container);
+      final snapshot = await _start(container);
 
-        expect(session.operations, ['subscribeAll', 'query', 'fetchAll']);
-        expect(
-          session.reqBundles.single.map(_shape),
-          unorderedEquals(session.queryBundles.single.map(_shape)),
-        );
-        expect(session.reqBundles.single, hasLength(10));
-        expect(snapshot.connection, CodingSessionObserverConnection.open);
-        expect(snapshot.sessions, hasLength(1));
-        expect(snapshot.leasesRead, isTrue);
-      },
-    );
+      expect(session.operations, [
+        'subscribeAll',
+        'query',
+        'fetchAll',
+        'fetchAll',
+      ]);
+      expect(
+        session.reqBundles.expand((bundle) => bundle).map(_shape),
+        unorderedEquals(session.queryBundles.single.map(_shape)),
+      );
+      expect(session.reqBundles.map((bundle) => bundle.length), [10, 1]);
+      expect(snapshot.connection, CodingSessionObserverConnection.open);
+      expect(snapshot.sessions, hasLength(1));
+      expect(snapshot.leasesRead, isTrue);
+    });
 
     test('folds history into an umbrella session', () async {
       final session = _FakeRelaySession(events: _liveSession());
@@ -435,7 +440,12 @@ void main() {
         expect(failed.connection, CodingSessionObserverConnection.error);
         expect(failed.lastError, contains('history failed'));
         expect(failed.sessions, isEmpty);
-        expect(session.operations, ['subscribeAll', 'query', 'fetchAll']);
+        expect(session.operations, [
+          'subscribeAll',
+          'query',
+          'fetchAll',
+          'fetchAll',
+        ]);
 
         for (final event in _liveSession()) {
           session.emit(event, force: true);

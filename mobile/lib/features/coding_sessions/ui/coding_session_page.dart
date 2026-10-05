@@ -16,6 +16,7 @@ import '../domain/coding_sessions_domain.dart';
 import '../state/coding_sessions_state.dart' show CodingSessionPublishException;
 import 'coding_session_labels.dart';
 import 'coding_session_status_chip.dart';
+import 'coding_session_title_origin.dart';
 import 'observer_contract.dart';
 
 part 'coding_session_page/actions.dart';

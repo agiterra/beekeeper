@@ -69,7 +69,7 @@ void main() {
       );
       expect(sessions.single.lastActivityAt, 4321);
       expect(sessions.single.name, isNull);
-      expect(sessions.single.displayName, 'Coding session');
+      expect(sessions.single.displayName, 'Untitled session');
     });
 
     test('a founded session can be closed by its founder', () {

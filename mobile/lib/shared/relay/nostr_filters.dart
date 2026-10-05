@@ -314,6 +314,22 @@ abstract final class NostrFilters {
         limit: limit,
       );
 
+  /// Provider-signed generated session titles (kind:44252).
+  ///
+  /// Its own filter rather than a second kind on [codingSessionNames]: one
+  /// filter shares one `limit`, and a reader that lost a person's 44229 to a
+  /// page of titles would show a model's words where a name was set.
+  static NostrFilter codingSessionGeneratedTitles(
+    String channelId, {
+    int limit = 1000,
+  }) => NostrFilter(
+    kinds: const [EventKind.codingSessionGeneratedTitle],
+    tags: {
+      '#h': [channelId],
+    },
+    limit: limit,
+  );
+
   /// Umbrella-session goals (kind:44227).
   static NostrFilter codingSessionGoals(String channelId, {int limit = 1000}) =>
       NostrFilter(

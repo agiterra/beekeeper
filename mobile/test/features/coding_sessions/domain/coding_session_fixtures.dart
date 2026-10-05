@@ -324,6 +324,52 @@ NostrEvent nameEvent({
   content: content,
 );
 
+/// A signed 44252 generated title, by default from [providerPubkey] for
+/// generation 1 of the default [target].
+NostrEvent generatedTitleEvent({
+  required String title,
+  String sessionRef = sessionRefA,
+  String pubkey = providerPubkey,
+  CodingSessionTarget? forTarget,
+  String model = 'claude-haiku-4-5',
+  int createdAt = 1100,
+  String? id,
+}) => event(
+  kind: EventKind.codingSessionGeneratedTitle,
+  pubkey: pubkey,
+  createdAt: createdAt,
+  id: id,
+  tags: [
+    ['h', channelId],
+    ['d', sessionRef],
+    ['cstl-v', 'cstl1-1'],
+    ['cs-target', (forTarget ?? target()).key],
+  ],
+  content: jsonEncode({
+    'schema': 'buzz-coding-session-title/v1',
+    'title': title,
+    'model': model,
+    'basis': 'first-message',
+    'sourceCommand': null,
+    'createEventId': 'ca' * 32,
+  }),
+);
+
+/// The receipt-joined create that makes [founderPubkey] the legacy founder
+/// of an umbrella whose execution is the default [target].
+///
+/// A person's name is the *founder's* 44229 (the shared display-name rule),
+/// so a fold test that expects a name has to say whose session it is.
+({List<CodingSessionCreate> creates, Map<String, String> targetKeyByCommandId})
+foundedByFounder({String commandId = 'cmd-1', String? sessionRef}) => (
+  creates: [
+    decodeCodingSessionCreate(
+      createEvent(commandId: commandId, sessionRef: sessionRef),
+    ).value!,
+  ],
+  targetKeyByCommandId: {commandId: target().key},
+);
+
 /// A signed 44227 goal event.
 NostrEvent goalEvent({
   required String content,

@@ -11,6 +11,7 @@ import '../domain/coding_sessions_domain.dart';
 import 'coding_session_labels.dart';
 import 'coding_session_page.dart';
 import 'coding_session_status_chip.dart';
+import 'coding_session_title_origin.dart';
 import 'observer_contract.dart';
 
 part 'coding_sessions_page/session_card.dart';
