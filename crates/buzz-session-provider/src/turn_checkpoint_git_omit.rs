@@ -11,6 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::blocking::{off_runtime, Deadline};
 use super::run::{Git, StepError};
 use super::{CaptureFailure, OmitReason, OmittedPath, DURABLE_CONFIG, MAX_UNTRACKED_FILE_BYTES};
 
@@ -63,9 +64,12 @@ pub(super) fn normalize_omitted(mut excluded: Vec<Exclusion>, prefix: &str) -> R
 
 /// Untracked, non-ignored files under `cwd` that the capture must leave out,
 /// with paths relative to `cwd` (the caller adds the prefix).
+///
+/// The per-file checks run on the blocking pool and stop at `deadline`.
 pub(super) async fn scan_untracked(
     git: &Git<'_>,
     cwd: &Path,
+    deadline: Deadline,
 ) -> Result<Vec<Exclusion>, CaptureFailure> {
     let listing = git
         .run(
@@ -75,10 +79,24 @@ pub(super) async fn scan_untracked(
         )
         .await
         .map_err(StepError::into_failure)?;
+    let cwd = cwd.to_path_buf();
+    off_runtime(move || classify_untracked(&listing, &cwd, deadline)).await
+}
+
+/// The blocking half of [`scan_untracked`]: which listed files are too large
+/// or unreadable.
+pub(super) fn classify_untracked(
+    listing: &[u8],
+    cwd: &Path,
+    deadline: Deadline,
+) -> Result<Vec<Exclusion>, CaptureFailure> {
     let mut excluded = Vec::new();
     for record in listing.split(|byte| *byte == 0) {
         if record.is_empty() || record.ends_with(b"/") {
             continue;
+        }
+        if deadline.passed() {
+            return Err(deadline.timed_out());
         }
         let path = cwd.join(bytes_to_path(record));
         let Ok(meta) = std::fs::symlink_metadata(&path) else {
@@ -103,8 +121,15 @@ pub(super) async fn scan_untracked(
 }
 
 /// What to leave out after `add -A` failed: nested repositories, and tracked
-/// files the host cannot open.
-pub(super) async fn recovery_exclusions(git: &Git<'_>, cwd: &Path) -> Vec<Exclusion> {
+/// files the host cannot open. The per-file checks run on the blocking pool.
+///
+/// # Errors
+/// [`Deadline::timed_out`] when the ceiling passes mid-check.
+pub(super) async fn recovery_exclusions(
+    git: &Git<'_>,
+    cwd: &Path,
+    deadline: Deadline,
+) -> Result<Vec<Exclusion>, CaptureFailure> {
     let mut extra = Vec::new();
     if let Ok(listing) = git
         .run(
@@ -127,23 +152,33 @@ pub(super) async fn recovery_exclusions(git: &Git<'_>, cwd: &Path) -> Vec<Exclus
         .run("ls-files --cached", &["ls-files", "-z", "--cached"], None)
         .await
     {
-        for record in listing.split(|byte| *byte == 0) {
-            if record.is_empty() {
-                continue;
+        let cwd = cwd.to_path_buf();
+        let unreadable = off_runtime(move || {
+            let mut unreadable = Vec::new();
+            for record in listing.split(|byte| *byte == 0) {
+                if record.is_empty() {
+                    continue;
+                }
+                if deadline.passed() {
+                    return Err(deadline.timed_out());
+                }
+                let path = cwd.join(bytes_to_path(record));
+                let is_file = std::fs::symlink_metadata(&path)
+                    .map(|meta| meta.is_file())
+                    .unwrap_or(false);
+                if is_file && permission_denied(&path) {
+                    unreadable.push(Exclusion {
+                        raw: record.to_vec(),
+                        reason: OmitReason::Unreadable,
+                    });
+                }
             }
-            let path = cwd.join(bytes_to_path(record));
-            let is_file = std::fs::symlink_metadata(&path)
-                .map(|meta| meta.is_file())
-                .unwrap_or(false);
-            if is_file && permission_denied(&path) {
-                extra.push(Exclusion {
-                    raw: record.to_vec(),
-                    reason: OmitReason::Unreadable,
-                });
-            }
-        }
+            Ok(unreadable)
+        })
+        .await?;
+        extra.extend(unreadable);
     }
-    extra
+    Ok(extra)
 }
 
 fn permission_denied(path: &Path) -> bool {
@@ -168,10 +203,21 @@ pub(super) fn exclusion_pathspecs(excluded: &[Exclusion]) -> Vec<u8> {
 /// `add -A` of `cwd` into the scratch index, each exclusion excluded by
 /// literal pathspec. Pathspecs travel on stdin, so no list is too long for
 /// an argument vector.
+///
+/// `--sparse` (SV-51): in a sparse checkout git otherwise refuses the whole
+/// `add` when an untracked file lies outside the sparse-checkout definition.
+/// Entries the seeded index marks skip-worktree are still left at their
+/// `HEAD` content (see [`super`] § Sparse checkouts).
 pub(super) async fn stage(git: &Git<'_>, excluded: &[Exclusion]) -> Result<(), StepError> {
     let args = [
         &DURABLE_CONFIG[..],
-        &["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
+        &[
+            "add",
+            "-A",
+            "--sparse",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+        ],
     ]
     .concat();
     git.run("add -A", &args, Some(exclusion_pathspecs(excluded)))

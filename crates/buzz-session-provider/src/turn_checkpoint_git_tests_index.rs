@@ -142,3 +142,90 @@ async fn content_staged_outside_cwd_is_not_in_the_tree_or_the_turn() {
         "the person's staged edit is still staged"
     );
 }
+
+/// A repository like [`repo`] with `far/away.txt` committed, then made a
+/// sparse checkout of `sub` alone (with a sparse index when asked).
+fn sparse_repo(sparse_index: bool) -> tempfile::TempDir {
+    let dir = repo();
+    let root = dir.path();
+    write(root, "far/away.txt", "away\n");
+    git(root, &["add", "."]);
+    git(root, &["commit", "-q", "--no-gpg-sign", "-m", "far"]);
+    let index_flag = if sparse_index {
+        "--sparse-index"
+    } else {
+        "--no-sparse-index"
+    };
+    git(
+        root,
+        &["sparse-checkout", "set", "--cone", index_flag, "sub"],
+    );
+    assert!(
+        !root.join("far/away.txt").exists(),
+        "the fixture leaves far/ out of the checkout"
+    );
+    dir
+}
+
+/// SV-51: without `--sparse`, `add -A` exits 1 on an untracked file outside
+/// the sparse-checkout definition and nothing is captured. With it, the file
+/// is captured, and a file the checkout leaves out keeps its `HEAD` content
+/// rather than reading as deleted.
+#[tokio::test]
+async fn a_sparse_checkout_with_a_file_outside_the_cone_still_captures() {
+    for sparse_index in [false, true] {
+        let dir = sparse_repo(sparse_index);
+        let root = dir.path();
+        write(root, "far/stray.txt", "stray\n");
+        write(root, "sub/inner.txt", "edited in the turn\n");
+
+        let captured = capture_from(root, RefLeaf::Through(1))
+            .await
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "sparse index {sparse_index}: no capture: {}",
+                    failure.sentence
+                )
+            });
+        assert_eq!(blob(root, &captured.tree, "far/away.txt"), "away");
+        assert_eq!(blob(root, &captured.tree, "far/stray.txt"), "stray");
+        assert_eq!(
+            blob(root, &captured.tree, "sub/inner.txt"),
+            "edited in the turn"
+        );
+        assert_eq!(blob(root, &captured.tree, "top.txt"), "top");
+        assert!(captured.complete);
+        assert_eq!(
+            git(root, &["status", "--porcelain", "--untracked-files=no"]),
+            "M sub/inner.txt",
+            "sparse index {sparse_index}: the person's index is untouched"
+        );
+    }
+}
+
+/// A sparse checkout whose index cannot be copied would be seeded by a fresh
+/// `read-tree HEAD` with no skip-worktree marks, recording every file outside
+/// the cone as deleted; it is refused instead.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_sparse_checkout_whose_index_cannot_be_copied_is_refused_not_captured_wrong() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = sparse_repo(false);
+    let root = dir.path();
+    let index = root.join(".git/index");
+    std::fs::set_permissions(&index, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+    if std::fs::File::open(&index).is_ok() {
+        // Running as a user that reads anything (root): no fixture to make.
+        return;
+    }
+    let result = capture_from(root, RefLeaf::Through(1)).await;
+    std::fs::set_permissions(&index, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+    let failure = result.expect_err("refused");
+    assert_eq!(failure.code, UnavailableCode::GitFailed);
+    assert!(
+        failure.sentence.contains("sparse checkout"),
+        "{}",
+        failure.sentence
+    );
+    assert!(git(root, &["for-each-ref", CHECKPOINT_REF_ROOT]).is_empty());
+}

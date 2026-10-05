@@ -11,7 +11,7 @@
 //! ```text
 //! cp <real index> <git-dir>/beekeeper-checkpoint-index-<uuid>
 //! GIT_INDEX_FILE=<tmp>  git read-tree --reset HEAD               (then mtime − 1 s)
-//! GIT_INDEX_FILE=<tmp>  git add -A --pathspec-from-file=-       (. and the exclusions)
+//! GIT_INDEX_FILE=<tmp>  git add -A --sparse --pathspec-from-file=-   (. and the exclusions)
 //! GIT_INDEX_FILE=<tmp>  git write-tree
 //!                       git commit-tree --no-gpg-sign [-p HEAD] <tree>
 //!                       git update-ref refs/beekeeper/checkpoints/<session>/<generation>/<leaf> <commit> 0000…
@@ -33,6 +33,22 @@
 //! person's `assume-unchanged` (and, outside a sparse checkout,
 //! `skip-worktree`) flags, which would hide edits from `add -A`, so an index
 //! holding either is replaced by a fresh `read-tree HEAD` — slower, correct.
+//!
+//! **Sparse checkouts (SV-51).** `add -A` runs with `--sparse`: without it git
+//! refuses outright (exit 1) when any untracked file sits outside the
+//! sparse-checkout definition, and no capture is made. `--sparse` only lets
+//! such a file be staged; an entry the checkout marks skip-worktree keeps its
+//! `HEAD` content, because the seed keeps those marks. A fresh `read-tree
+//! HEAD` would not keep them — every file outside the cone would read as
+//! deleted — so a sparse checkout whose index cannot be copied is refused
+//! rather than captured wrong.
+//!
+//! **Off the runtime (SV-52).** The per-file checks (size and readability of
+//! untracked files, readability of tracked ones) and the index copy are
+//! blocking filesystem work, so they run under `spawn_blocking`, bounded by
+//! the same deadline as the capture: a timeout cannot cancel a blocking
+//! thread, so the work checks the deadline between files itself, and a copy
+//! that finishes after the capture was abandoned removes what it wrote.
 //!
 //! # What it will not do
 //!
@@ -80,10 +96,14 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use crate::execution_scope_host::HostLaunchPlan;
 
+#[path = "turn_checkpoint_git_blocking.rs"]
+mod blocking;
 #[path = "turn_checkpoint_git_diff.rs"]
 mod diff;
 #[path = "turn_checkpoint_git_omit.rs"]
@@ -98,6 +118,7 @@ mod run;
 pub(crate) use diff::{diff_tree_files, ChangedFile, FileChange};
 // Stage 2 names it when it adds `not_listed` to the wire's `filesNotListed`;
 // the tests read its fields without naming it.
+use blocking::{off_runtime, Deadline};
 #[allow(unused_imports)]
 pub(crate) use diff::DiffResult;
 #[cfg(test)]
@@ -249,6 +270,17 @@ pub(crate) fn checkpoint_ref(
     generation: u64,
     leaf: RefLeaf<'_>,
 ) -> Option<String> {
+    let prefix = checkpoint_session_prefix(session_id)?;
+    let segment = leaf.segment()?;
+    Some(format!("{prefix}{generation}/{segment}"))
+}
+
+/// `refs/beekeeper/checkpoints/<sessionId>/` — everything one session's
+/// checkpoints are pinned under, ending in `/` so `sess-1` never matches
+/// `sess-10` — or `None` when the id could not be a single, safe ref path
+/// segment (so no checkpoint could ever have been written for it).
+#[must_use]
+pub(crate) fn checkpoint_session_prefix(session_id: &str) -> Option<String> {
     let safe = !session_id.is_empty()
         && session_id.len() <= MAX_SESSION_ID_LEN
         && !session_id.starts_with('.')
@@ -258,13 +290,7 @@ pub(crate) fn checkpoint_ref(
         && session_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
-    if !safe {
-        return None;
-    }
-    let segment = leaf.segment()?;
-    Some(format!(
-        "{CHECKPOINT_REF_ROOT}/{session_id}/{generation}/{segment}"
-    ))
+    safe.then(|| format!("{CHECKPOINT_REF_ROOT}/{session_id}/"))
 }
 
 /// Why there is no capture, in the wire's vocabulary (`unavailable.code`).
@@ -448,15 +474,15 @@ pub(crate) async fn capture_tree_within(
              not run to capture it.",
         ));
     };
-    match tokio::time::timeout(ceiling, capture(cwd, plan, &ref_name, parent_head)).await {
+    let deadline = Deadline::after(ceiling);
+    match tokio::time::timeout(
+        ceiling,
+        capture(cwd, plan, &ref_name, parent_head, deadline),
+    )
+    .await
+    {
         Ok(result) => result,
-        Err(_elapsed) => Err(CaptureFailure::new(
-            UnavailableCode::TimedOut,
-            format!(
-                "Capturing the working tree took longer than {} ms, so it was abandoned.",
-                ceiling.as_millis()
-            ),
-        )),
+        Err(_elapsed) => Err(deadline.timed_out()),
     }
 }
 
@@ -473,6 +499,7 @@ async fn capture(
     plan: &HostLaunchPlan,
     ref_name: &str,
     parent_head: Option<&str>,
+    deadline: Deadline,
 ) -> Result<CapturedTree, CaptureFailure> {
     let probe = Git::new(cwd, plan, None);
     let layout = read_layout(&probe).await?;
@@ -496,14 +523,14 @@ async fn capture(
 
     let scratch = ScratchIndex::new(&layout.git_dir);
     let git = Git::new(cwd, plan, Some(scratch.path()));
-    seed_index(&git, &scratch, &layout, head.as_deref()).await?;
+    seed_index(&git, &scratch, &layout, head.as_deref(), deadline).await?;
 
-    let mut omitted = scan_untracked(&git, cwd).await?;
+    let mut omitted = scan_untracked(&git, cwd, deadline).await?;
     if let Err(first) = stage(&git, &omitted).await {
         // Recovery, once: a nested repository with no commit, or a tracked
         // file the host cannot read, fails `add -A` outright. Name them and
         // try again without them; anything else is git's refusal.
-        let extra = recovery_exclusions(&git, cwd).await;
+        let extra = recovery_exclusions(&git, cwd, deadline).await?;
         if extra.is_empty() {
             return Err(first.into_failure());
         }
@@ -682,18 +709,23 @@ async fn read_branch(git: &Git<'_>) -> Result<Option<String>, CaptureFailure> {
 /// tree: a path outside `cwd` holds its `HEAD` content whatever the person's
 /// index says. `read-tree` rewrites the file, so the racy-check stamp is put
 /// back afterwards.
+///
+/// A fresh `read-tree HEAD` carries no skip-worktree marks, so in a sparse
+/// checkout it would record every file outside the cone as deleted; a sparse
+/// checkout whose index cannot be copied is refused instead.
 async fn seed_index(
     git: &Git<'_>,
     scratch: &ScratchIndex,
     layout: &Layout,
     head: Option<&str>,
+    deadline: Deadline,
 ) -> Result<(), CaptureFailure> {
     // With no `HEAD` there is nothing to reset the copy to, so the person's
     // staged entries would survive into the tree; start empty instead.
     let Some(head) = head else {
         return Ok(());
     };
-    if reset_copied_index(git, scratch, layout, head).await {
+    if reset_copied_index(git, scratch, layout, head, deadline).await? {
         let flags = git
             .run("ls-files -v", &["ls-files", "-v", "-z"], None)
             .await
@@ -702,15 +734,7 @@ async fn seed_index(
         if !hidden && !skip_worktree {
             return Ok(());
         }
-        let sparse = git
-            .run(
-                "config core.sparseCheckout",
-                &["config", "--bool", "core.sparseCheckout"],
-                None,
-            )
-            .await
-            .map(|out| String::from_utf8_lossy(&out).trim() == "true")
-            .unwrap_or(false);
+        let sparse = sparse_checkout(git).await;
         if !hidden && sparse {
             // A sparse checkout's skip-worktree entries are its exclusions;
             // `add -A` leaves them alone, which is what a capture should do.
@@ -724,6 +748,12 @@ async fn seed_index(
             ));
         }
         scratch.remove();
+    } else if sparse_checkout(git).await {
+        return Err(CaptureFailure::new(
+            UnavailableCode::GitFailed,
+            "This sparse checkout's index could not be copied, and without it every file \
+             outside the checkout would read as deleted, so no capture was made.",
+        ));
     }
     git.run("read-tree", &["read-tree", head], None)
         .await
@@ -731,38 +761,67 @@ async fn seed_index(
     Ok(())
 }
 
+/// Whether the repository is a sparse checkout (`core.sparseCheckout`); a
+/// failed read counts as not sparse, as git itself treats an unset key.
+async fn sparse_checkout(git: &Git<'_>) -> bool {
+    git.run(
+        "config core.sparseCheckout",
+        &["config", "--bool", "core.sparseCheckout"],
+        None,
+    )
+    .await
+    .map(|out| String::from_utf8_lossy(&out).trim() == "true")
+    .unwrap_or(false)
+}
+
 /// Copy the real index to the scratch path, reset it to `head` and stamp it
-/// one second below the real index's mtime; `false` (with the scratch file
-/// gone) when any step fails, so the caller seeds from `HEAD` alone.
+/// one second below the real index's mtime; `Ok(false)` (with the scratch
+/// file gone) when any step fails, so the caller seeds from `HEAD` alone.
+///
+/// # Errors
+/// [`Deadline::timed_out`] when the ceiling passed before the copy began.
 async fn reset_copied_index(
     git: &Git<'_>,
     scratch: &ScratchIndex,
     layout: &Layout,
     head: &str,
-) -> bool {
-    let Some(earlier) = copy_index(&layout.index, scratch.path()) else {
-        return false;
+    deadline: Deadline,
+) -> Result<bool, CaptureFailure> {
+    let real = layout.index.clone();
+    let target = scratch.path().to_path_buf();
+    let abandoned = scratch.abandoned();
+    let copied = off_runtime(move || {
+        if deadline.passed() {
+            return Err(deadline.timed_out());
+        }
+        Ok(copy_index(&real, &target, &abandoned))
+    })
+    .await?;
+    let Some(earlier) = copied else {
+        return Ok(false);
     };
     let reset = git
         .run("read-tree --reset", &["read-tree", "--reset", head], None)
         .await;
     if reset.is_err() || !stamp(scratch.path(), earlier) {
         scratch.remove();
-        return false;
+        return Ok(false);
     }
-    true
+    Ok(true)
 }
 
 /// Copy the real index to `scratch` and return the mtime one second below
 /// the original's, or `None` when there is no real index to copy (or it
-/// cannot be copied or stamped).
-fn copy_index(real: &Path, scratch: &Path) -> Option<SystemTime> {
+/// cannot be copied or stamped), or when the capture was `abandoned` while it
+/// copied — the copy is then removed, since the scratch guard that would have
+/// removed it is already gone.
+fn copy_index(real: &Path, scratch: &Path, abandoned: &AtomicBool) -> Option<SystemTime> {
     let modified = std::fs::metadata(real)
         .and_then(|meta| meta.modified())
         .ok()?;
     let earlier = modified.checked_sub(Duration::from_secs(1))?;
     std::fs::copy(real, scratch).ok()?;
-    if !stamp(scratch, earlier) {
+    if abandoned.load(Ordering::SeqCst) || !stamp(scratch, earlier) {
         let _ = std::fs::remove_file(scratch);
         return None;
     }
@@ -827,17 +886,25 @@ fn bounded_sentence(text: String) -> String {
 /// success, on error, and when a timeout drops the capture mid-step.
 struct ScratchIndex {
     path: PathBuf,
+    /// Set (before the file is removed) when the guard is dropped, so a copy
+    /// still running on the blocking pool removes what it writes afterwards.
+    abandoned: Arc<AtomicBool>,
 }
 
 impl ScratchIndex {
     fn new(git_dir: &Path) -> Self {
         Self {
             path: git_dir.join(format!("{SCRATCH_INDEX_PREFIX}{}", uuid::Uuid::new_v4())),
+            abandoned: Arc::new(AtomicBool::new(false)),
         }
     }
 
     fn path(&self) -> &Path {
         &self.path
+    }
+
+    fn abandoned(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.abandoned)
     }
 
     fn remove(&self) {
@@ -850,6 +917,7 @@ impl ScratchIndex {
 
 impl Drop for ScratchIndex {
     fn drop(&mut self) {
+        self.abandoned.store(true, Ordering::SeqCst);
         self.remove();
     }
 }
@@ -869,3 +937,7 @@ mod tests_diff;
 #[cfg(test)]
 #[path = "turn_checkpoint_git_tests_index.rs"]
 mod tests_index;
+
+#[cfg(test)]
+#[path = "turn_checkpoint_git_tests_blocking.rs"]
+mod tests_blocking;

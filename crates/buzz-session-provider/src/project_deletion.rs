@@ -25,21 +25,28 @@
 //! empty. A candidate is checked off the provider's loop; the provider stops
 //! the affected executions. Starts and resumes re-check the same facts.
 //!
-//! **Not done here yet: turn checkpoint refs.** The checkpoints brief
-//! (Host/provider step 6) says a project's deletion also deletes its sessions'
-//! `refs/beekeeper/checkpoints/<session>/…`. This module only stops
-//! executions; it deletes no ref. Three consequences, until the provider's
-//! checkpoint writer (`turn_checkpoint.rs`, its first caller) also retires
-//! what it wrote:
+//! **Turn checkpoint refs (SV-55).** The checkpoints brief (Host/provider
+//! step 6) says a project's deletion also deletes its sessions'
+//! `refs/beekeeper/checkpoints/<session>/…`. Once a deletion is applied,
+//! [`checkpoint_retirements`] names every session this host recorded under
+//! that project — open or closed — grouped by the working directory it ran
+//! in, and [`retire_checkpoint_refs`] deletes exactly those sessions' refs
+//! from each repository, as the host with hooks off (no project code runs).
+//! A session of any other project, and any ref outside one of those
+//! sessions' own prefixes, is never listed. What is still not retired here:
 //!
-//! * refs of a session that ran in the project's own checkout are never
-//!   retired — no seat worktree prune ever names them;
-//! * refs of a seat worktree whose record carries no `session_id` stay after
-//!   that tree is pruned (`worktree_prune.rs` will not guess whose they were);
+//! * refs of a session whose working directory is gone (a seat worktree
+//!   already pruned): there is no repository left to reach from it, and
+//!   `worktree_prune.rs` retired them with the tree when the record named the
+//!   session — it will not guess when the record did not;
+//! * refs of a session this host has no record of (another machine's, or a
+//!   record already dropped);
 //! * a deletion observed while the project has no open execution is never
 //!   seen at all, since the subscription above names only those projects.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -192,6 +199,128 @@ async fn head(rest: &RestClient, project: &str) -> Result<Option<u64>, String> {
         .filter(|event| event.verify().is_ok())
         .map(|event| event.created_at.as_secs())
         .max())
+}
+
+/// Ceiling on retiring one repository's checkpoint refs.
+const RETIRE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// The sessions of `project` whose checkpoint refs go with it, grouped by the
+/// working directory each ran in: `(session_id, project_ref, cwd)` for every
+/// record this host holds, open or closed.
+///
+/// Only sessions recorded under exactly `project` are named, and only ids
+/// that could have named a checkpoint ref at all.
+// Called by `stop_project_executions` in `lib.rs` once a deletion applies.
+pub(crate) fn checkpoint_retirements<'a>(
+    sessions: impl IntoIterator<Item = (&'a str, Option<&'a str>, &'a Path)>,
+    project: &str,
+) -> BTreeMap<PathBuf, BTreeSet<String>> {
+    let mut by_cwd: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
+    for (session_id, project_ref, cwd) in sessions {
+        if project_ref != Some(project)
+            || crate::turn_checkpoint_git::checkpoint_session_prefix(session_id).is_none()
+        {
+            continue;
+        }
+        by_cwd
+            .entry(cwd.to_path_buf())
+            .or_default()
+            .insert(session_id.to_owned());
+    }
+    by_cwd
+}
+
+/// Delete each named session's `refs/beekeeper/checkpoints/<session>/…` from
+/// the repository its working directory is in, and answer how many refs went.
+///
+/// Never fails the deletion that already happened: a directory that is gone
+/// or is no longer a repository, or a git that refuses, is logged and the
+/// rest are still retired.
+pub(crate) async fn retire_checkpoint_refs(
+    retirements: BTreeMap<PathBuf, BTreeSet<String>>,
+) -> usize {
+    let mut retired = 0;
+    for (cwd, sessions) in retirements {
+        if !cwd.is_dir() {
+            tracing::info!(target: "csp::projects", sessions = sessions.len(),
+                "checkpoint refs not retired: the sessions' working directory is gone");
+            continue;
+        }
+        match tokio::time::timeout(RETIRE_TIMEOUT, delete_checkpoint_refs(&cwd, &sessions)).await {
+            Ok(Ok(count)) => retired += count,
+            Ok(Err(reason)) => tracing::warn!(target: "csp::projects",
+                "a deleted project's checkpoint refs could not be retired: {reason}"),
+            Err(_) => tracing::warn!(target: "csp::projects",
+                "retiring a deleted project's checkpoint refs timed out"),
+        }
+    }
+    retired
+}
+
+/// List every ref under the sessions' prefixes in `cwd`'s repository and
+/// delete them in one `update-ref --stdin` transaction.
+async fn delete_checkpoint_refs(cwd: &Path, sessions: &BTreeSet<String>) -> Result<usize, String> {
+    let prefixes: Vec<String> = sessions
+        .iter()
+        .filter_map(|session| crate::turn_checkpoint_git::checkpoint_session_prefix(session))
+        .collect();
+    if prefixes.is_empty() {
+        return Ok(0);
+    }
+    let mut list = tokio::process::Command::from(crate::host_command::metadata_git_command(cwd));
+    list.args(["for-each-ref", "--format=%(refname)"])
+        .args(&prefixes)
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+    let listed = list
+        .output()
+        .await
+        .map_err(|_| "git could not be started to list them".to_owned())?;
+    if !listed.status.success() {
+        return Err(format!("git for-each-ref failed ({})", listed.status));
+    }
+    let names: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|name| {
+            prefixes
+                .iter()
+                .any(|prefix| name.starts_with(prefix.as_str()))
+        })
+        .map(str::to_owned)
+        .collect();
+    if names.is_empty() {
+        return Ok(0);
+    }
+    let mut script = String::new();
+    for name in &names {
+        script.push_str("delete ");
+        script.push_str(name);
+        script.push('\n');
+    }
+    let mut delete = tokio::process::Command::from(crate::host_command::metadata_git_command(cwd));
+    delete
+        .args(["update-ref", "--no-deref", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = delete
+        .spawn()
+        .map_err(|_| "git could not be started to delete them".to_owned())?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        // A failed write surfaces as git's own refusal below.
+        let _ = stdin.write_all(script.as_bytes()).await;
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|_| "git did not finish deleting them".to_owned())?;
+    if !status.success() {
+        return Err(format!("git update-ref failed ({status})"));
+    }
+    Ok(names.len())
 }
 
 /// What reaches the provider's main loop.
@@ -432,5 +561,118 @@ mod tests {
         assert!(coordinate_parts(&format!("30620:{owner}:demo")).is_none());
         assert!(coordinate_parts(&format!("30621:{owner}:")).is_none());
         assert!(coordinate_parts("30621:not-hex:demo").is_none());
+    }
+
+    const DELETED: &str = "30621:aa:deleted";
+    const OTHER: &str = "30621:aa:other";
+
+    #[test]
+    fn only_the_deleted_projects_sessions_are_named_grouped_by_cwd() {
+        let checkout = Path::new("/checkout");
+        let seat = Path::new("/checkout-seat");
+        let sessions = [
+            ("a", Some(DELETED), checkout),
+            ("b", Some(OTHER), checkout),
+            ("c", Some(DELETED), seat),
+            ("d", None, checkout),
+            ("../e", Some(DELETED), checkout),
+        ];
+        let named = checkpoint_retirements(sessions, DELETED);
+        let expected: BTreeMap<PathBuf, BTreeSet<String>> = [
+            (checkout.to_path_buf(), BTreeSet::from(["a".to_owned()])),
+            (seat.to_path_buf(), BTreeSet::from(["c".to_owned()])),
+        ]
+        .into();
+        assert_eq!(named, expected);
+    }
+
+    /// `git` in `cwd`, hermetic; asserts success and returns stdout.
+    fn git(cwd: &Path, args: &[&str]) -> String {
+        let mut command = std::process::Command::new("git");
+        for var in crate::git_probe::GIT_REPO_SELECTION_VARS {
+            command.env_remove(var);
+        }
+        let output = command
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+            .output()
+            .expect("git runs");
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    /// Every repository here is a throwaway in the test's own temporary
+    /// directory, never this checkout.
+    #[tokio::test]
+    async fn a_deleted_projects_session_refs_go_and_no_other_ref_does() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let checkout = dir.path().join("checkout");
+        let seat = dir.path().join("seat");
+        std::fs::create_dir_all(&checkout).expect("dir");
+        git(&checkout, &["init", "-q", "-b", "main", "."]);
+        std::fs::write(checkout.join("a.txt"), "a\n").expect("write");
+        git(&checkout, &["add", "."]);
+        git(&checkout, &["commit", "-q", "--no-gpg-sign", "-m", "init"]);
+        git(
+            &checkout,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "seat",
+                seat.to_str().expect("utf8"),
+            ],
+        );
+        let head = git(&checkout, &["rev-parse", "HEAD"]);
+        let refs = [
+            "refs/beekeeper/checkpoints/sess-a/1/base-1",
+            "refs/beekeeper/checkpoints/sess-a/1/2",
+            "refs/beekeeper/checkpoints/sess-a/2/5",
+            "refs/beekeeper/checkpoints/sess-c/1/3",
+            "refs/beekeeper/checkpoints/sess-a1/1/2",
+            "refs/beekeeper/checkpoints/sess-b/1/2",
+            "refs/heads/sess-a",
+        ];
+        for name in refs {
+            git(&checkout, &["update-ref", name, &head]);
+        }
+        let gone = dir.path().join("pruned");
+        let sessions = [
+            ("sess-a", Some(DELETED), checkout.as_path()),
+            ("sess-c", Some(DELETED), seat.as_path()),
+            ("sess-b", Some(OTHER), checkout.as_path()),
+            ("sess-gone", Some(DELETED), gone.as_path()),
+        ];
+
+        let retired = retire_checkpoint_refs(checkpoint_retirements(sessions, DELETED)).await;
+
+        assert_eq!(
+            retired, 4,
+            "sess-a's three refs and sess-c's one, from a linked worktree"
+        );
+        let left = git(&checkout, &["for-each-ref", "--format=%(refname)"]);
+        let left: Vec<&str> = left.lines().collect();
+        assert_eq!(
+            left,
+            vec![
+                "refs/beekeeper/checkpoints/sess-a1/1/2",
+                "refs/beekeeper/checkpoints/sess-b/1/2",
+                "refs/heads/main",
+                "refs/heads/seat",
+                "refs/heads/sess-a",
+            ]
+        );
     }
 }

@@ -20,7 +20,9 @@ the existing conversation and coding-session events and may ignore kind 44244.
 the program base (`0f37c1d4`). The allocation scan checked both this fork and
 `vanilla/main` registries and documentation:
 
-- `44231` is reserved for session checkpoints and `44232` for native snapshots.
+- `44231` was reserved for session checkpoints when this scan ran; it is now the
+  turn checkpoint ([NIP-CSCK](NIP-CSCK.md)). `44232` is reserved for native
+  snapshots.
 - `44233` and `44234` are proposed for git transitions and checks.
 - `44235` through `44239` are explicitly reserved as coding-session headroom.
 - `44240` through `44243` are used or reserved by Project Pulse extensions.
