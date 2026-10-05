@@ -1,3 +1,8 @@
+import {
+  type CodingSessionNamingSettings,
+  namingModelConsulted,
+} from "@/shared/api/tauriCodingSessionNaming";
+
 /**
  * When to ask a model for a session name, and when to accept its answer.
  *
@@ -10,6 +15,22 @@
  * Two rules keep it honest: never re-send text that has already been named,
  * and never overwrite a name a person typed.
  */
+
+/**
+ * Whether the Name field may ask the person's naming model at all.
+ *
+ * Only in "Use my naming model" with an endpoint chosen (D9, SV-56). In the
+ * agent mode — the default — the session's own agent titles it after Start,
+ * on the computer it runs on, and Off titles nothing: in both, no draft
+ * text leaves this computer for a name. A configured endpoint left behind
+ * from before a mode switch is not consent to use it. `null` is no host, or
+ * the read still in flight: no naming model, not an error.
+ */
+export function codingSessionNameSuggestionEnabled(
+  settings: CodingSessionNamingSettings | null,
+): boolean {
+  return namingModelConsulted(settings);
+}
 
 /** How often the cadence may fire while the first message keeps changing. */
 export const CODING_SESSION_NAME_SUGGEST_INTERVAL_MS = 5_000;

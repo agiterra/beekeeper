@@ -20,7 +20,10 @@ const CHANNEL_ID = "3d2a7b18-9b7a-4a41-9a86-6a52a1c0b7e1";
 const SESSION_REF = "22222222-2222-4222-8222-222222222222";
 const FOUNDER_SECRET = generateSecretKey();
 const FOUNDER = getPublicKey(FOUNDER_SECRET);
+// "Use my naming model" with an endpoint: the one configuration that
+// consults a naming model (D9, SV-56).
 const ON = {
+  titleMode: "my-model",
   provider: "anthropic",
   baseUrl: "",
   model: "claude-haiku-4-5",
@@ -173,5 +176,44 @@ test("what counts as needing a summary, and the sentence under the prompt", () =
   assert.match(
     codingSessionAutoGoalSentence(ON),
     /one-line summary of this prompt \(claude-haiku-4-5\)/,
+  );
+});
+
+test("agent mode (the default) and Off consult no naming model: outcome off, nothing generated or published", async () => {
+  // The agent mode with an endpoint still configured from before: the
+  // endpoint is kept for switching back, and asked for nothing.
+  for (const titleMode of ["agent", "off"]) {
+    for (const provider of ["anthropic", "openai-compatible", "off"]) {
+      const d = deps({ settings: { ...ON, titleMode, provider } });
+      assert.deepEqual(
+        await autoSummarizeCodingSessionGoal(INPUT, d.deps),
+        { kind: "off" },
+        `${titleMode}/${provider}`,
+      );
+      assert.deepEqual(d.calls, [], `${titleMode}/${provider}`);
+    }
+  }
+});
+
+test("my-model with no endpoint chosen consults nothing either", async () => {
+  const d = deps({ settings: { ...ON, provider: "off" } });
+  assert.deepEqual(await autoSummarizeCodingSessionGoal(INPUT, d.deps), {
+    kind: "off",
+  });
+  assert.deepEqual(d.calls, []);
+});
+
+test("the prompt's goal sentence shows only when the naming model is consulted", () => {
+  assert.equal(
+    codingSessionAutoGoalSentence({ ...ON, titleMode: "agent" }),
+    null,
+  );
+  assert.equal(
+    codingSessionAutoGoalSentence({ ...ON, titleMode: "off" }),
+    null,
+  );
+  assert.equal(
+    codingSessionAutoGoalSentence({ ...ON, titleMode: "my-model", model: "" }),
+    "After Start, the goal shown with the session is a one-line summary of this prompt; the prompt itself is the first message.",
   );
 });

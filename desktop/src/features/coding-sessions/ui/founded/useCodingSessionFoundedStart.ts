@@ -17,10 +17,14 @@ import type { CodingSessionFoundedTextModel } from "./useCodingSessionFoundedTex
  * The acts Start makes outside the create itself; injected in tests: the
  * worktree cut, the draft forgotten, and — Solo only — the goal summarized.
  *
- * There is no post-Start namer here any more (SV-31, Decision 7). A session
- * started with a blank Name is titled by the agent's computer from its first
- * message and signed by that provider as a kind 44252; this desktop never
- * publishes a model's words as the founder's 44229.
+ * There is no post-Start namer here any more (SV-31, Decision 7), and none
+ * comes back with the session-title mode (D9, SV-56): in every mode a
+ * blank Name publishes nothing after Start. In the agent mode (the default)
+ * the agent's computer may title the session from its first message, signed
+ * by that provider as a kind 44252; in "Use my naming model" and Off it
+ * stays untitled. This desktop never publishes a model's words as the
+ * founder's 44229, and never signs a 44252. The goal step consults the
+ * naming model only in "Use my naming model" (`namingModelConsulted`).
  */
 export type CodingSessionFoundedStartDeps = {
   createWorktree: typeof createCodingSessionWorktree;

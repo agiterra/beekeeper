@@ -2,6 +2,7 @@ import * as React from "react";
 
 import {
   CODING_SESSION_NAME_SUGGEST_INTERVAL_MS,
+  codingSessionNameSuggestionEnabled,
   shouldRequestCodingSessionName,
 } from "./lib/codingSessionNameSuggestion";
 import {
@@ -20,9 +21,10 @@ import {
  * requests, not one per word.
  *
  * The hook holds no key and builds no request. It asks the host, which knows
- * whether a namer is configured and holds the credential — so a desktop with
- * naming turned off makes exactly one call here (the settings read) and never
- * touches the network.
+ * whether a namer is configured and holds the credential — so a desktop not
+ * on "Use my naming model" (the agent mode, the default, or Off) makes
+ * exactly one call here (the settings read) and never touches the network
+ * (D9, SV-56).
  */
 export function useCodingSessionNameSuggestion({
   firstMessage,
@@ -61,7 +63,7 @@ export function useCodingSessionNameSuggestion({
     };
   }, []);
 
-  const enabled = settings !== null && settings.provider !== "off";
+  const enabled = codingSessionNameSuggestionEnabled(settings);
 
   // Read inside callbacks so neither the interval nor `requestNow` has to be
   // rebuilt on every keystroke.

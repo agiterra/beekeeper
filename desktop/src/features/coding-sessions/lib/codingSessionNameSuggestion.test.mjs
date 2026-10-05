@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   MIN_CODING_SESSION_NAME_SUGGEST_CHARS,
   codingSessionNameSuggestStatus,
+  codingSessionNameSuggestionEnabled,
   shouldAdoptSuggestion,
   shouldRequestCodingSessionName,
 } from "./codingSessionNameSuggestion.ts";
@@ -142,4 +143,46 @@ test("naming in progress outranks a previous failure", () => {
   });
   assert.equal(status.state, "generating");
   assert.doesNotMatch(status.message, /stale/);
+});
+
+test("only Use my naming model, with an endpoint, asks for a Name-field suggestion (D9)", () => {
+  const base = {
+    provider: "anthropic",
+    baseUrl: "",
+    model: "claude-haiku-4-5",
+    hasApiKey: true,
+  };
+  assert.equal(
+    codingSessionNameSuggestionEnabled({ ...base, titleMode: "my-model" }),
+    true,
+  );
+  // The default: the session's agent titles it after Start; the Name field
+  // sends nothing, even with an endpoint still configured from before.
+  assert.equal(
+    codingSessionNameSuggestionEnabled({ ...base, titleMode: "agent" }),
+    false,
+  );
+  assert.equal(
+    codingSessionNameSuggestionEnabled({ ...base, titleMode: "off" }),
+    false,
+  );
+  assert.equal(
+    codingSessionNameSuggestionEnabled({
+      ...base,
+      titleMode: "my-model",
+      provider: "off",
+    }),
+    false,
+  );
+  // No host is no naming model, not an error.
+  assert.equal(codingSessionNameSuggestionEnabled(null), false);
+  // And with it disabled the field says nothing about a namer.
+  assert.deepEqual(
+    codingSessionNameSuggestStatus({
+      enabled: false,
+      error: null,
+      isGenerating: false,
+    }),
+    { state: "off", message: null },
+  );
 });

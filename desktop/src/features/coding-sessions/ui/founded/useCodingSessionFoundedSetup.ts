@@ -404,6 +404,11 @@ export function useCodingSessionFoundedSetup(input: {
     refreshNames,
     goal,
     nameDraft,
+    // Which machine's title mode the blank-Name sentence describes: a
+    // foreign runtime titles by its own computer's setting, not this one's.
+    selectedTargetIsLocal: selectedTarget
+      ? selectedTarget.isLocalProvider === true
+      : null,
     ...(textDeps ? { deps: textDeps } : {}),
   });
 

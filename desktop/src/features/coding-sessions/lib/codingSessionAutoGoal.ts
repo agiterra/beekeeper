@@ -5,6 +5,7 @@ import {
   type CodingSessionNamingSettings,
   generateCodingSessionGoal,
   getCodingSessionNamingSettings,
+  namingModelConsulted,
 } from "@/shared/api/tauriCodingSessionNaming";
 import {
   buildCodingSessionGoalFilter,
@@ -21,11 +22,13 @@ import { codingSessionGoalKey } from "../useCodingSessionGoals";
  * it: the transcript shows the same text as the first turn, and a long
  * prompt above a transcript is the largest object on the screen. For a Solo
  * session the goal's job is to remind the person what the session is for,
- * in a little more detail than the name — so, when this computer has a
- * summarization model configured (the naming model in Settings), the goal
- * is rewritten as one sentence once the create is accepted (Andy,
- * 2026-09-14). A Team session's goal is the lead's mission and is left as
- * written.
+ * in a little more detail than the name — so, when this computer's
+ * session titles are on "Use my naming model" with an endpoint chosen
+ * (Settings → Coding sessions; `namingModelConsulted`), the goal is
+ * rewritten as one sentence once the create is accepted (Andy, 2026-09-14).
+ * In the agent mode (the default) and Off, no naming model is consulted and
+ * the goal stays the prompt as typed (D9, SV-56). A Team session's goal is
+ * the lead's mission and is left as written.
  *
  * Honesty rules: a prompt that already fits one line is left alone; the
  * wire is read right before publishing and nothing is published unless the
@@ -82,8 +85,9 @@ export async function autoSummarizeCodingSessionGoal(
   input: CodingSessionAutoGoalInput,
   deps: CodingSessionAutoGoalDeps = DEFAULT_DEPS,
 ): Promise<CodingSessionAutoGoalOutcome> {
+  // No host (settings null) is no naming model, not an error.
   const settings = await deps.getSettings();
-  if (settings === null || settings.provider === "off") return { kind: "off" };
+  if (!namingModelConsulted(settings)) return { kind: "off" };
   const firstMessage = input.firstMessage.trim();
   if (!codingSessionGoalNeedsSummary(firstMessage)) {
     return { kind: "already-short" };
@@ -135,7 +139,7 @@ export async function autoSummarizeCodingSessionGoal(
 export function codingSessionAutoGoalSentence(
   settings: CodingSessionNamingSettings | null,
 ): string | null {
-  if (settings === null || settings.provider === "off") return null;
+  if (settings === null || !namingModelConsulted(settings)) return null;
   const model = settings.model.trim();
   return model.length > 0
     ? `After Start, the goal shown with the session is a one-line summary of this prompt (${model}); the prompt itself is the first message.`

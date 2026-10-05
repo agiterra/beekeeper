@@ -106,6 +106,14 @@ export function useCodingSessionFoundedText(input: {
   goal: CodingSessionFoundedGoal;
   /** The founded draft's Name text and its writer. */
   nameDraft: CodingSessionFoundedNameDraft;
+  /**
+   * Whether the selected runtime is this computer's own provider
+   * (`NewCodingSessionTarget.isLocalProvider`); null or omitted when no
+   * target is chosen. A session on another computer follows that
+   * computer's title mode, which this desktop cannot read, so the blank-Name
+   * sentence says so rather than quoting this computer's.
+   */
+  selectedTargetIsLocal?: boolean | null;
   deps?: CodingSessionFoundedTextDeps;
 }) {
   const {
@@ -117,6 +125,7 @@ export function useCodingSessionFoundedText(input: {
     refreshNames,
     goal,
     nameDraft,
+    selectedTargetIsLocal = null,
     deps = DEFAULT_TEXT_DEPS,
   } = input;
   const scopeId = codingSessionFoundedTextScope(sessionRef);
@@ -361,12 +370,25 @@ export function useCodingSessionFoundedText(input: {
     commitName,
     suggestion: suggestionAllowed ? naming.status : null,
     /**
-     * What a blank Name means at Start: it stays untitled unless the agent's
-     * computer titles it from the first message (a provider-signed 44252) —
-     * not guaranteed, and not decided by this desktop's draft-time namer.
+     * What a blank Name means at Start, per this computer's session-title
+     * mode and where the selected runtime runs (D9, SV-56): untitled unless
+     * the agent's computer titles it (a provider-signed 44252), or untitled
+     * with the naming model only suggesting in the field, or untitled with
+     * titles Off. This desktop publishes no title after Start in any mode.
      */
-    autoNameSentence: codingSessionBlankNameSentence(),
-    /** What a Solo Start does to the goal, per this computer's namer. */
+    autoNameSentence: codingSessionBlankNameSentence({
+      titleMode: naming.settings?.titleMode ?? null,
+      target:
+        selectedTargetIsLocal === null
+          ? "unknown"
+          : selectedTargetIsLocal
+            ? "this-computer"
+            : "another-computer",
+    }),
+    /**
+     * What a Solo Start does to the goal: a one-line summary only when this
+     * computer is on "Use my naming model"; null in the agent mode and Off.
+     */
     autoGoalSentence: codingSessionAutoGoalSentence(naming.settings),
     /** Ask the namer now — the prompt's blur; a no-op while suppressed. */
     requestSuggestionNow: naming.requestNow,

@@ -73,6 +73,7 @@ async function press({
   submitOutcome = { ok: true },
   launchOutcome = null,
   presses = 1,
+  deps: depsOverrides = {},
 } = {}) {
   const { act, renderHook } = await import("@testing-library/react");
   const { useCodingSessionFoundedStart } = await import(
@@ -181,6 +182,9 @@ async function press({
       calls.push(["autoGoal", input]);
       return { kind: "published", goal: "One line." };
     },
+    ...(typeof depsOverrides === "function"
+      ? depsOverrides({ calls, published })
+      : depsOverrides),
   };
   const navigations = [];
   const mounted = renderHook(() =>
@@ -197,9 +201,10 @@ async function press({
   );
   await act(async () => {
     for (let index = 0; index < presses; index += 1) mounted.result.current();
-    // Let the async work settle.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Let the async work settle — including the fire-and-forget goal step.
+    for (let tick = 0; tick < 6; tick += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
   });
   mounted.unmount();
   return {
@@ -506,3 +511,108 @@ test("Solo summarizes the goal after the create; Team leaves the lead's mission 
   });
   assert.equal(team.names.includes("autoGoal"), false);
 });
+
+/**
+ * The session-title mode (D9, SV-56) across a whole Start.
+ *
+ * The goal step is the real `autoSummarizeCodingSessionGoal` over injected
+ * settings, so the mode gate is the shipped one. In no mode does Start sign
+ * a model's words as the founder's 44229, and the desktop never signs a
+ * 44252 — that kind is the provider's own. A typed Name is the founder's
+ * 44229 in every mode.
+ */
+const MODE_SETTINGS = {
+  agent: {
+    titleMode: "agent",
+    // An endpoint left configured from before: not consent to use it.
+    provider: "anthropic",
+    baseUrl: "",
+    model: "claude-haiku-4-5",
+    hasApiKey: true,
+  },
+  "my-model": {
+    titleMode: "my-model",
+    provider: "anthropic",
+    baseUrl: "",
+    model: "claude-haiku-4-5",
+    hasApiKey: true,
+  },
+  off: {
+    titleMode: "off",
+    provider: "off",
+    baseUrl: "",
+    model: "",
+    hasApiKey: false,
+  },
+};
+const LONG_PROMPT = [
+  "Close ledger item 104: move the setup onto the founded page,",
+  "flush both fields before Start, and keep the Name blank so the host titles it.",
+].join("\n");
+
+async function pressInMode(titleMode, { name = "", setup = {} } = {}) {
+  const { autoSummarizeCodingSessionGoal } = await import(
+    "../../lib/codingSessionAutoGoal.ts"
+  );
+  return press({
+    name,
+    prompt: LONG_PROMPT,
+    setup,
+    deps: ({ calls, published }) => ({
+      autoGoal: (input) =>
+        autoSummarizeCodingSessionGoal(input, {
+          getSettings: async () => MODE_SETTINGS[titleMode],
+          generate: async (firstMessage) => {
+            calls.push(["generateGoal", firstMessage]);
+            return "Move the setup onto the founded page.";
+          },
+          readGoals: async () => {
+            calls.push(["readGoals"]);
+            return [];
+          },
+          publishGoal: async (goal) => {
+            calls.push(["publishGoal", goal]);
+            published.push(44227);
+          },
+        }),
+    }),
+  });
+}
+
+for (const titleMode of ["agent", "my-model", "off"]) {
+  test(`${titleMode} mode, Solo: a blank-Name Start publishes no 44229 and no 44252`, async () => {
+    const run = await pressInMode(titleMode);
+    assert.equal(run.names.includes("submit"), true, "the create was signed");
+    assert.equal(run.published.filter((kind) => kind === 44229).length, 0);
+    assert.equal(run.published.filter((kind) => kind === 44252).length, 0);
+    const [, submitted] = run.calls.find(([entry]) => entry === "submit");
+    assert.equal(submitted.title, null, "no title rides on the create");
+    // Only "Use my naming model" consults a model after Start — for the
+    // goal's one line, never for a name.
+    assert.equal(
+      run.names.includes("generateGoal"),
+      titleMode === "my-model",
+      "the naming model is consulted only in my-model",
+    );
+  });
+
+  test(`${titleMode} mode, Team: a blank-Name Start publishes no 44229 and no 44252`, async () => {
+    const run = await pressInMode(titleMode, {
+      setup: { mode: "team", lead: FABLE, policySet: true },
+    });
+    assert.equal(run.names.includes("launch"), true);
+    assert.equal(run.published.filter((kind) => kind === 44229).length, 0);
+    assert.equal(run.published.filter((kind) => kind === 44252).length, 0);
+    assert.equal(run.names.includes("generateGoal"), false);
+  });
+
+  test(`${titleMode} mode: a typed Name is the founder's 44229, once, before the create`, async () => {
+    const run = await pressInMode(titleMode, { name: "Typed by hand" });
+    assert.deepEqual(
+      run.published.filter((kind) => kind === 44229),
+      [44229],
+    );
+    assert.equal(run.published.includes(44252), false);
+    assert.ok(run.names.indexOf("flush") < run.names.indexOf("submit"));
+  });
+}
