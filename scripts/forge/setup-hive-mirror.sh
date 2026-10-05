@@ -155,16 +155,24 @@ EOF
         echo "See the header of this script; nothing was flipped." >&2
         exit 1
     fi
-    # An ssh remote (the deploy-key era's `git@<alias>:org/repo.git`) becomes
-    # the https URL the credential helper answers for. Idempotent.
-    GH_URL=$(sudo -u git git -C "$MIRROR_REPO" remote get-url origin)
-    case "$GH_URL" in
-        https://github.com/*) ;;
-        git@*:*) sudo -u git git -C "$MIRROR_REPO" remote set-url origin \
-                     "https://github.com/${GH_URL#git@*:}" ;;
-        *) echo "unexpected GitHub remote URL: $GH_URL" >&2; exit 1 ;;
-    esac
-    sudo -u git git -C "$MIRROR_REPO" remote get-url origin
+    # Every repo that re-publishes to GitHub (mirror.pushRemote set; this
+    # repo before its first flip, below, pushes to origin) moves from an ssh
+    # remote (the deploy-key era's `git@<alias>:org/repo.git`) to the https
+    # URL the credential helper answers for. The app must be installed on
+    # each such repo, or its push fails with 403. Idempotent.
+    for repo in /srv/git/*.git; do
+        push=$(sudo -u git git -C "$repo" config --get mirror.pushRemote || true)
+        [ -z "$push" ] && [ "$repo" = "$MIRROR_REPO" ] && push=origin
+        [ -n "$push" ] || continue
+        GH_URL=$(sudo -u git git -C "$repo" remote get-url "$push")
+        case "$GH_URL" in
+            https://github.com/*) ;;
+            git@*:*) sudo -u git git -C "$repo" remote set-url "$push" \
+                         "https://github.com/${GH_URL#git@*:}" ;;
+            *) echo "unexpected GitHub remote URL in $repo: $GH_URL" >&2; exit 1 ;;
+        esac
+        echo "$repo $push -> $(sudo -u git git -C "$repo" remote get-url "$push")"
+    done
 
     echo "== GitHub push access test =="
     # The bare repo was cloned with --mirror; that push mode is incompatible

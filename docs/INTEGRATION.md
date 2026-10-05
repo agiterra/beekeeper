@@ -425,7 +425,8 @@ re-run it after changing any of them):
   commits. Pushes use forced refspecs but **no prune** — GitHub-only refs are
   left alone.
 - The forge's identities: the GitHub App `agiterra-hive-mirror` (Contents
-  and Workflows read/write, installed on this repo only) for the GitHub push,
+  and Workflows read/write, installed on each hive-mirrored repo: this one
+  and `tankloop`) for the GitHub push,
   and a Nostr key (`/home/git/.nostr/key`, member of the
   community and of the repo's bound channel) for the NIP-98 fetch — the git
   read gate 404s repos to non-members, and `git-credential-nostr` (git 2.46+
