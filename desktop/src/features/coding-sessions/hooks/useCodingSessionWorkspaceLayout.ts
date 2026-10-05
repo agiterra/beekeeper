@@ -224,3 +224,45 @@ export function useCodingSessionReflow(
   });
   return fit;
 }
+
+/**
+ * How far from the end a reader must be before the jump-to-latest pill shows,
+ * in px. A few rows: the bottom anchor's own corrections and a last line half
+ * under the dock's fade are not "scrolled away".
+ */
+export const CODING_SESSION_AWAY_FROM_END_PX = 96;
+
+/** Whether a scroller's viewport has left its end by more than the threshold. */
+export function codingSessionAwayFromEnd(
+  metrics: Pick<HTMLElement, "scrollHeight" | "clientHeight" | "scrollTop">,
+  threshold: number = CODING_SESSION_AWAY_FROM_END_PX,
+): boolean {
+  return (
+    metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop > threshold
+  );
+}
+
+/**
+ * Whether the reader has scrolled the umbrella narrative away from its end
+ * (SV-14). The narrative's scroller is bound by a callback ref the bottom
+ * anchor owns, so this reads the ref after every commit and rebinds to
+ * whichever element it holds; the listener is passive and the state bails out
+ * when nothing changed, so a streamed item costs one comparison.
+ */
+export function useCodingSessionAwayFromEnd(
+  scrollRef: React.RefObject<HTMLElement | null>,
+): boolean {
+  const [away, setAway] = React.useState(false);
+  React.useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) {
+      setAway(false);
+      return;
+    }
+    const update = () => setAway(codingSessionAwayFromEnd(scroller));
+    update();
+    scroller.addEventListener("scroll", update, { passive: true });
+    return () => scroller.removeEventListener("scroll", update);
+  });
+  return away;
+}

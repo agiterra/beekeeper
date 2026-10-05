@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CODING_SESSION_AWAY_FROM_END_PX,
   CODING_SESSION_JUMP_PILL_GAP_PX,
+  codingSessionAwayFromEnd,
   codingSessionJumpPillPosition,
 } from "./useCodingSessionWorkspaceLayout.ts";
 
@@ -36,4 +38,21 @@ test("with no composer the pill clears the sandbox footer, not a ghost dock", ()
     codingSessionJumpPillPosition({ dockHeight: 240, hasDock: false }),
     { className: "bottom-16", style: undefined },
   );
+});
+
+test("the pill shows only once the reader has left the end by a few rows", () => {
+  const at = (scrollTop) =>
+    codingSessionAwayFromEnd({
+      scrollHeight: 2000,
+      clientHeight: 600,
+      scrollTop,
+    });
+  assert.equal(at(1400), false, "at the end");
+  assert.equal(
+    at(1400 - CODING_SESSION_AWAY_FROM_END_PX),
+    false,
+    "at the threshold",
+  );
+  assert.equal(at(1400 - CODING_SESSION_AWAY_FROM_END_PX - 1), true, "past it");
+  assert.equal(at(0), true, "at the top");
 });
