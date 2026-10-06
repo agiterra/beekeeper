@@ -5,10 +5,12 @@
 **Please do not report security vulnerabilities through public GitHub issues.**
 
 If you discover a security vulnerability in Beekeeper, please report it
-privately to the agiterra maintainers rather than in a public issue. There is
-no dedicated security address yet; contact a maintainer directly. (Beekeeper
-began as a fork of Block's `block/buzz`; do not send Beekeeper reports to
-Block's security contact.) Include as much detail as possible:
+privately rather than in a public issue.
+
+**Security contact:** _(none yet)_
+
+Beekeeper began as a fork of Block's `block/buzz`; do not send Beekeeper reports
+to Block's security contact. Include as much detail as possible:
 
 - A description of the vulnerability and its potential impact
 - Steps to reproduce or a proof-of-concept (if available)
