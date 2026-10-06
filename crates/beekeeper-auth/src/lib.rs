@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
-//! `buzz-auth` — Authentication and authorization for the Buzz relay.
+//! `buzz-auth` — Authentication and authorization for the Beekeeper relay.
 //!
 //! ## Auth paths
 //!

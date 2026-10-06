@@ -526,7 +526,7 @@ pub async fn filter_fanout_by_access(
     match visibility {
         Ok(v) if v != "private" => {
             // Open channel — normally zero-cost, but an open channel inside a
-            // private project (NIP-MP Buzz access extension) fans out only to
+            // private project (NIP-MP Beekeeper access extension) fans out only to
             // the project's owner, invited members, and explicit channel
             // members. The gate lookup is one cached read per channel; the
             // common no-gate case stays a fast return.

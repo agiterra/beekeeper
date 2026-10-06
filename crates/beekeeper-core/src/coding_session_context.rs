@@ -89,7 +89,7 @@ pub const MAX_CONTEXT_BRIEF_TEXT_BYTES: usize = 1_024;
 /// Maximum serialized bytes pushed before the first model token.
 pub const MAX_CONTEXT_FIRST_TURN_BRIEF_BYTES: usize = 12 * 1024;
 
-/// A private, bounded reconstruction of one durable Buzz session.
+/// A private, bounded reconstruction of one durable Beekeeper session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CodingSessionContextPackage {

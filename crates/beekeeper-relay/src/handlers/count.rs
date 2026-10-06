@@ -145,7 +145,7 @@ pub async fn handle_count(
         let needs_result_gated_filtering = filter_can_match_result_gated_kinds(filter)
             && !result_gated_count_safe_for_pushdown(filter, &authed_pubkey_hex);
         // Determine if this filter can match kind:30621 projects — private
-        // heads (NIP-MP Buzz access extension) must not be counted for
+        // heads (NIP-MP Beekeeper access extension) must not be counted for
         // readers who are neither the author nor invited, so the fast path
         // is bypassed and the fallback applies event_visible_to_reader.
         let needs_project_gate_filtering = super::req::filter_can_match_project_kind(filter);

@@ -1,4 +1,4 @@
-//! `buzz-shell-host` — a detached PTY host for one Buzz built-in shell session.
+//! `buzz-shell-host` — a detached PTY host for one Beekeeper built-in shell session.
 //!
 //! Spawned by the desktop app (never run by hand); it detaches from the app's
 //! session so it keeps the shell alive across app restarts/updates, and serves
@@ -23,7 +23,7 @@ use beekeeper_shell_host::host::{self, HostOptions};
 #[derive(Parser)]
 #[command(
     name = "buzz-shell-host",
-    about = "Detached PTY host for a Buzz shell session"
+    about = "Detached PTY host for a Beekeeper shell session"
 )]
 struct Cli {
     /// Stable session id (shared with the app and the `shell:<id>` workspace).

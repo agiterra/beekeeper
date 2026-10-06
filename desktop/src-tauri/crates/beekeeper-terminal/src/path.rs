@@ -1,11 +1,11 @@
 //! `PATH` derivation for spawned PTY children.
 //!
-//! Buzz's own process runs under Hermit activation, so its `PATH` leads with
+//! Beekeeper's own process runs under Hermit activation, so its `PATH` leads with
 //! the repo's hermit `bin` and the hermit cache. Inheriting that verbatim
-//! hands the user a shell whose `cargo`, `node`, and `python` are Buzz's
+//! hands the user a shell whose `cargo`, `node`, and `python` are Beekeeper's
 //! pinned build toolchain rather than the ones they installed. That is a
 //! product defect, not merely untidy: `⌘J` then `cargo --version` should
-//! answer for the user's machine, not for Buzz's build.
+//! answer for the user's machine, not for Beekeeper's build.
 //!
 //! The abandoned `feat/terminal` branch tried to solve this by subtracting
 //! hermit roots from the inherited `PATH` (`terminal.rs:504-536`). The
@@ -20,14 +20,14 @@
 //!
 //! So `PATH` is *constructed*, not filtered. The child gets the platform's
 //! standard user path, which is what a login shell would have produced had
-//! Buzz never been in the picture.
+//! Beekeeper never been in the picture.
 
 /// The default user `PATH` for a spawned shell.
 ///
-/// This intentionally does not consult Buzz's own `PATH`. A login shell reads
+/// This intentionally does not consult Beekeeper's own `PATH`. A login shell reads
 /// the user's rc files, which prepend their own entries (homebrew, asdf, mise,
 /// `~/.local/bin`); starting from the platform default lets that happen
-/// normally instead of layering it on top of Buzz's build toolchain.
+/// normally instead of layering it on top of Beekeeper's build toolchain.
 #[cfg(unix)]
 pub fn user_shell_path() -> String {
     // Mirrors the `_PATH_DEFPATH`/`login(1)` default: standard system

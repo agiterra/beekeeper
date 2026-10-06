@@ -1898,7 +1898,7 @@ async fn cancel_sends_notifications_cancelled_to_any_mcp_server() {
 // Reply guard (`BUZZ_AGENT_REQUIRE_REPLY`)
 //
 // The guard reminds the model to publish when a turn is about to end without
-// any recognized attempt to post to Buzz. It rides the existing `_Stop` gate
+// any recognized attempt to post to Beekeeper. It rides the existing `_Stop` gate
 // and shares its rejection budget, so most of these tests count LLM calls:
 // each reminder costs exactly one extra round.
 // ---------------------------------------------------------------------------

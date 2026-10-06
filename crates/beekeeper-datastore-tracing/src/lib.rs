@@ -65,7 +65,7 @@ impl Parse for DatastoreArgs {
     }
 }
 
-/// Instruments an async logical datastore operation according to Buzz policy.
+/// Instruments an async logical datastore operation according to Beekeeper policy.
 ///
 /// PostgreSQL spans always omit function arguments, use the `buzz_datastore`
 /// target, and expose only canonical semantic fields plus explicitly supplied

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Detached PTY host for Buzz built-in shell sessions (dtach-style)"
+description = "Detached PTY host for Beekeeper built-in shell sessions (dtach-style)"
 
 [lib]
 name = "beekeeper_shell_host"

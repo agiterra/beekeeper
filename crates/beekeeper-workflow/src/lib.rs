@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
-//! `buzz-workflow` — Workflow engine for Buzz.
+//! `buzz-workflow` — Workflow engine for Beekeeper.
 //!
 //! Channel-scoped automations with sequential execution, variable substitution,
 //! conditional logic, and execution traces.

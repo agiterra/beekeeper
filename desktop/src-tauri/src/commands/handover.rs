@@ -145,7 +145,7 @@ fn safe_sha(value: &str, what: &str) -> Result<String, String> {
 
 /// The canonical relay-hosted clone URL for a `30617:<owner-hex>:<id>` ref.
 ///
-/// The one shape a Buzz relay serves its own repositories at —
+/// The one shape a Beekeeper relay serves its own repositories at —
 /// `<relay-origin>/git/<owner>/<id>` — and the same one
 /// `deriveRelayCloneUrl` builds on the TypeScript side.
 fn expected_clone_url(repo_ref: &str, relay_origin: &str) -> Option<String> {

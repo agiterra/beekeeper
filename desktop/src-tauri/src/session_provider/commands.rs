@@ -97,7 +97,7 @@ pub async fn install_agent_host_autostart(
         crate::agent_host::autostart::Probe::both(),
     );
     for warning in &registration.warnings {
-        eprintln!("buzz-desktop: agent-host: {warning}");
+        eprintln!("beekeeper-desktop: agent-host: {warning}");
     }
     provider_status(&app, &host, &relay_url).await
 }
@@ -126,9 +126,11 @@ async fn run_app_scoped_host() {
     match tokio::task::spawn_blocking(crate::agent_host::app_scoped::ensure_running).await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
-            eprintln!("buzz-desktop: agent-host: could not run the host for this session: {error}");
+            eprintln!(
+                "beekeeper-desktop: agent-host: could not run the host for this session: {error}"
+            );
         }
-        Err(error) => eprintln!("buzz-desktop: agent-host: host start task failed: {error}"),
+        Err(error) => eprintln!("beekeeper-desktop: agent-host: host start task failed: {error}"),
     }
 }
 
@@ -385,7 +387,7 @@ pub async fn provision_coding_session_provider(
     // the operator chose before provisioning has had nowhere to land. Write it
     // now, before the child starts reading the file.
     if let Err(error) = remateralize_provider_projects_view(&app, &relay_url) {
-        eprintln!("buzz-desktop: failed to materialize coding-session projects view: {error}");
+        eprintln!("beekeeper-desktop: failed to materialize coding-session projects view: {error}");
     }
     // The session-title mode (D9) is this computer's choice; the host reads
     // it from the state directory that only exists from here on, so write it
@@ -396,7 +398,7 @@ pub async fn provision_coding_session_provider(
         &app,
         &record.provider_pubkey,
     ) {
-        eprintln!("buzz-desktop: failed to write the session-title mode: {error}");
+        eprintln!("beekeeper-desktop: failed to write the session-title mode: {error}");
     }
 
     // Hand the identity to the agent host: write `host.json` and the 0600 key
@@ -423,7 +425,7 @@ pub async fn provision_coding_session_provider(
     )
     .warnings
     {
-        eprintln!("buzz-desktop: agent-host: {warning}");
+        eprintln!("beekeeper-desktop: agent-host: {warning}");
     }
 
     ensure_host_running(&app, &host, &relay_url).await;
@@ -446,7 +448,7 @@ async fn ensure_host_running(app: &AppHandle, host: &AgentHost, relay_url: &str)
         // Disclosed, not fatal: the status this returns to carries the
         // reachability, and the surface renders it. Failing the whole command
         // would hide a provisioning that did succeed.
-        eprintln!("buzz-desktop: agent-host: could not start the provider: {error}");
+        eprintln!("beekeeper-desktop: agent-host: could not start the provider: {error}");
     }
     crate::managed_agents::project_admission::reconcile_saved_project_admissions(app, relay_url);
 }
@@ -466,7 +468,7 @@ pub async fn ensure_coding_session_provider_running(
     // reinstalled or pointed at another community since this identity was
     // provisioned, and `host.json` is the only thing that tells it which.
     if let Err(error) = commission::rebind_host(&app, &host, &relay_url).await {
-        eprintln!("buzz-desktop: agent-host: could not rebind: {error}");
+        eprintln!("beekeeper-desktop: agent-host: could not rebind: {error}");
     }
     ensure_host_running(&app, &host, &relay_url).await;
     provider_status(&app, &host, &relay_url).await
@@ -539,7 +541,7 @@ pub(crate) fn mint_provider_record(
         .unwrap_or(&provider_pubkey)
         .to_string();
 
-    // Empty conditions, matching every other Buzz-minted attestation: the tag
+    // Empty conditions, matching every other Beekeeper-minted attestation: the tag
     // proves ownership, and the relay's own scope rules decide what the key may
     // write. `compute_auth_tag` already returns the JSON array of strings that
     // `BUZZ_AUTH_TAG` carries, so it is stored verbatim.

@@ -2502,7 +2502,7 @@ mod pubsub_presence_typing {
     ///
     /// Mutate-bites:
     ///   - Presence: drop/neutralize `ctx.community()` in
-    ///     `buzz-pubsub/src/presence.rs::presence_key` (shared Redis key). The B
+    ///     `beekeeper-pubsub/src/presence.rs::presence_key` (shared Redis key). The B
     ///     publish overwrites A's status for the same pubkey, so A's `/query`
     ///     returns `status_b` and the presence assertion reds.
     ///   - Typing: drop both live-delivery tenant fences at once: ignore

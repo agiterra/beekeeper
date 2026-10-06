@@ -301,7 +301,7 @@ impl Config {
             "BUZZ_CSP_MAX_TURN_DURATION",
             DEFAULT_MAX_TURN_DURATION_SECS,
         )?;
-        // The harness validates this pair (`buzz-acp/src/config.rs`); this side
+        // The harness validates this pair (`beekeeper-acp/src/config.rs`); this side
         // never did, so an idle budget at or above the wall-clock ceiling made
         // the idle guard unreachable — it can only fire if it comes first.
         // Silently having no silence guard is worse than being told the numbers

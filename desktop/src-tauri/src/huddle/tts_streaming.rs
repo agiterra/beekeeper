@@ -89,14 +89,14 @@ pub(super) fn synthesize_streaming(
         }
         Ok(false) => {
             eprintln!(
-                "buzz-desktop: tts stage=synthesis status=cancelled reason=stream_callback route_id={route_id}"
+                "beekeeper-desktop: tts stage=synthesis status=cancelled reason=stream_callback route_id={route_id}"
             );
             *first_append = true;
             Some("cancelled")
         }
         Err(_) => {
             eprintln!(
-                "buzz-desktop: tts stage=synthesis status=failed reason=inference route_id={route_id}"
+                "beekeeper-desktop: tts stage=synthesis status=failed reason=inference route_id={route_id}"
             );
             Some("failed")
         }

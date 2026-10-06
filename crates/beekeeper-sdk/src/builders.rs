@@ -184,7 +184,7 @@ pub const MAX_CUSTOM_EMOJI_REACTION_LEN: usize = MAX_CUSTOM_EMOJI_SHORTCODE_LEN 
 
 /// Validate and normalize a NIP-30 custom emoji shortcode.
 ///
-/// Shortcodes are case-insensitive in Buzz's relay-global set; lowercase
+/// Shortcodes are case-insensitive in Beekeeper's relay-global set; lowercase
 /// normalization prevents `party_parrot` and `Party_Parrot` from colliding.
 pub fn normalize_custom_emoji_shortcode(shortcode: &str) -> Result<String, SdkError> {
     let trimmed = shortcode.trim().trim_matches(':');
@@ -467,7 +467,7 @@ pub struct DeleteMessageOptions<'a> {
     pub public_reason: Option<&'a str>,
 }
 
-/// Build a Buzz-native delete event (kind 9005).
+/// Build a Beekeeper-native delete event (kind 9005).
 pub fn build_delete_message(
     channel_id: Uuid,
     target_event_id: nostr::EventId,
@@ -475,7 +475,7 @@ pub fn build_delete_message(
     build_delete_message_with_options(channel_id, target_event_id, DeleteMessageOptions::default())
 }
 
-/// Build a Buzz-native delete event (kind 9005) with optional moderation metadata.
+/// Build a Beekeeper-native delete event (kind 9005) with optional moderation metadata.
 pub fn build_delete_message_with_options(
     channel_id: Uuid,
     target_event_id: nostr::EventId,
@@ -2199,7 +2199,7 @@ impl ProjectMemberCoord {
 }
 
 /// **Layer A**: Validate a complete kind:30621 envelope against the 12 NIP-MP
-/// ingest rules (including the Buzz access extension).  This is the single
+/// ingest rules (including the Beekeeper access extension).  This is the single
 /// source of protocol truth used by both
 /// `build_project_with_tags` (raw path) and `build_project` (policy path).
 ///
@@ -2225,7 +2225,7 @@ impl ProjectMemberCoord {
 /// 10. Invite cap: raw count of every `p` tag ≤256 (checked before per-tag
 ///     parsing, matching relay rule order).
 /// 11. Invite tag arity: every `p` tag has 2 to 4 elements — pubkey, optional
-///     relay hint, optional role (Buzz roles extension, mirroring the NIP-29
+///     relay hint, optional role (Beekeeper roles extension, mirroring the NIP-29
 ///     39002 grammar). A present 4th element must be a pinned
 ///     [`beekeeper_core::kind::PROJECT_ROLES`] value (rule `invite-role`); a
 ///     role-less invite is a legacy collaborator.
@@ -2347,7 +2347,7 @@ pub fn validate_project_envelope(tags: &[Tag], _content: &str) -> Result<(), Sdk
         }
     }
 
-    // --- Rule 9: access value (Buzz access extension) ---
+    // --- Rule 9: access value (Beekeeper access extension) ---
     // `buzz-access` is an access-control input, not a display hint — an
     // unrecognized value must be rejected rather than silently falling open
     // to public (fail closed), matching relay ingest.
@@ -2372,7 +2372,7 @@ pub fn validate_project_envelope(tags: &[Tag], _content: &str) -> Result<(), Sdk
         }
     }
 
-    // --- Rules 10, 11, 12: invited-member `p` tags (Buzz access extension) ---
+    // --- Rules 10, 11, 12: invited-member `p` tags (Beekeeper access extension) ---
     let p_tags: Vec<&Tag> = tags.iter().filter(|t| tag_name(t) == Some("p")).collect();
 
     // Rule 10: invite cap (checked before per-tag work, matching member-cap order).
@@ -2384,7 +2384,7 @@ pub fn validate_project_envelope(tags: &[Tag], _content: &str) -> Result<(), Sdk
     }
 
     // Rule 11: invite tag arity — `["p", pubkey]` plus NIP-01's optional relay
-    // hint, plus an optional 4th role element (Buzz roles extension). A
+    // hint, plus an optional 4th role element (Beekeeper roles extension). A
     // present role must be from the pinned vocabulary — a role typo must not
     // silently grant or deny (mirrors relay ingest `invite-role`).
     for p in &p_tags {
@@ -6162,7 +6162,7 @@ mod tests {
                 provider_instance_ref: "claude-primary".try_into().expect("alias"),
                 provider_authority_pubkey: "ab".repeat(32),
                 model: None,
-                title: Some("Advance Buzz live sessions".into()),
+                title: Some("Advance Beekeeper live sessions".into()),
                 initial_turn: None,
                 actor: None,
                 role: None,

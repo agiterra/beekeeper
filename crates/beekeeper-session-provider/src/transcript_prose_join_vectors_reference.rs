@@ -8,12 +8,12 @@ use serde_json::{json, Value};
 
 /// Latest-metadata (kind:44223) statuses that end the session itself, so
 /// nothing more of that generation's answer is being written (`SessionStatus`
-/// in `buzz-core/src/coding_session_payload.rs`). Every other status, and no
+/// in `beekeeper-core/src/coding_session_payload.rs`). Every other status, and no
 /// metadata at all, leaves `arriving` to the lease and the turn state.
 ///
 /// `interrupted` and `failed` are deliberately absent: the producer publishes
 /// them at the end of an ordinary turn while the session goes on taking turns
-/// (`buzz-session-provider/src/lib.rs`, the turn-outcome publish: a cancelled
+/// (`beekeeper-session-provider/src/lib.rs`, the turn-outcome publish: a cancelled
 /// turn is `Interrupted`, a failure whose agent is still alive is `Failed`,
 /// and the next turn publishes `Running`). That turn's own `result` or
 /// `interrupted` item already ends its trailing message, so counting them here

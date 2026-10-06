@@ -652,7 +652,7 @@ impl DeletionStore {
 
     /// Check deletion control-plane/schema connectivity.
     ///
-    /// Probe the deployed catalog rather than SQLx's migration ledger. Buzz also
+    /// Probe the deployed catalog rather than SQLx's migration ledger. Beekeeper also
     /// supports desired-state schema application through `pgschema`, which creates
     /// the same deletion objects without creating `_sqlx_migrations`.
     pub async fn ping(&self) -> bool {

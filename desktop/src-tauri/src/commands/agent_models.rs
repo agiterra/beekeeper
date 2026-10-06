@@ -239,7 +239,7 @@ pub async fn discover_agent_models(
         &merged_env,
     );
 
-    // Buzz shared compute discovery must not depend on the local OpenAI ingress: that
+    // Beekeeper shared compute discovery must not depend on the local OpenAI ingress: that
     // client endpoint is started only after a live target is selected.
     #[cfg(feature = "mesh-llm")]
     if input.provider.as_deref().map(str::trim)

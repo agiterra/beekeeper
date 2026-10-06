@@ -6,7 +6,7 @@
 //!
 //! The same plumbing T3 Code uses (`apps/server/src/vcs/GitVcsDriver.ts`
 //! `captureCheckpoint`) and `bee sessions handover` already uses for its
-//! patch (`buzz-cli/src/commands/sessions/handover_git.rs`):
+//! patch (`beekeeper-cli/src/commands/sessions/handover_git.rs`):
 //!
 //! ```text
 //! cp <real index> <git-dir>/beekeeper-checkpoint-index-<uuid>

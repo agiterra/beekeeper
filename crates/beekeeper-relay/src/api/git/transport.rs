@@ -1,4 +1,4 @@
-//! Smart HTTP git transport for Buzz.
+//! Smart HTTP git transport for Beekeeper.
 //!
 //! Three endpoints implement the git Smart HTTP protocol:
 //! - `GET  /git/{owner}/{repo}/info/refs?service={svc}` — ref advertisement
@@ -2434,7 +2434,11 @@ mod track_c_tests {
             "initialize source repository",
         );
         assert_git_success(
-            run_test_git(source.as_path(), &["config", "user.name", "Buzz Test"], &[]),
+            run_test_git(
+                source.as_path(),
+                &["config", "user.name", "Beekeeper Test"],
+                &[],
+            ),
             "configure user name",
         );
         assert_git_success(

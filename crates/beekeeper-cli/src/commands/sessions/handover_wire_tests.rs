@@ -65,7 +65,7 @@ fn receipt_event(transition: &nostr::Event, relay: &Keys) -> nostr::Event {
         object.insert("role".into(), serde_json::Value::String(role));
     }
     // The relay stamps the body onto claim receipts
-    // (`buzz-relay/src/handlers/side_effects.rs`), so the fixture must too —
+    // (`beekeeper-relay/src/handlers/side_effects.rs`), so the fixture must too —
     // a receipt fixture that omitted it would test a wire nobody serves.
     if let (Some(object), Some(body_pubkey)) = (content.as_object_mut(), payload.body_pubkey) {
         object.insert("bodyPubkey".into(), serde_json::Value::String(body_pubkey));
@@ -639,7 +639,7 @@ async fn a_lost_race_exits_five_and_names_the_claimant_who_won() {
 
 #[test]
 fn a_transfer_with_no_claim_in_force_is_refused_exactly_as_the_relay_refuses_it() {
-    // `buzz-db/src/event.rs` answers `NoActiveClaim` before it asks whether
+    // `beekeeper-db/src/event.rs` answers `NoActiveClaim` before it asks whether
     // the signer may transfer, and a voided claim answers that arm too: the
     // way back from a void is a fresh takeover, never a transfer. The
     // projection has to spell the same rule, or a client would fold a link the

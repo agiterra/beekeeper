@@ -1,6 +1,6 @@
 //! Git permission types — ref patterns, protection rules, and policy evaluation inputs.
 //!
-//! This module defines the core data types for the Buzz git permission system.
+//! This module defines the core data types for the Beekeeper git permission system.
 //! The permission model: **channel role or project role = repo role** — a
 //! kind:30617 announcement may bind a channel (`buzz-channel`), declare a
 //! project (`["project", …]`), or both, and a pusher's effective role is the

@@ -2,7 +2,7 @@
 //!
 //! The `english_2026-04` bundle uses SentencePiece tokenization, a learned
 //! voice BOS embedding, recurrent FlowLM state, and stateful Mimi decoding.
-//! Buzz selects the upstream three-graph INT8 variant while retaining the
+//! Beekeeper selects the upstream three-graph INT8 variant while retaining the
 //! full-precision Mimi encoder and text conditioner specified by that variant.
 //!
 //! ## Attribution

@@ -79,7 +79,7 @@ pub(super) fn refresh_builtin_agent_avatars_in_file(
     };
     let Ok(mut records) = serde_json::from_str::<Vec<serde_json::Value>>(&contents) else {
         eprintln!(
-            "buzz-desktop: refresh-builtin-agent-avatars: invalid JSON in {}",
+            "beekeeper-desktop: refresh-builtin-agent-avatars: invalid JSON in {}",
             path.display()
         );
         return;
@@ -159,7 +159,7 @@ pub(super) fn refresh_builtin_agent_avatars_in_file(
     if changed {
         if let Ok(bytes) = serde_json::to_vec_pretty(&records) {
             if let Err(e) = crate::managed_agents::atomic_write_json_restricted(path, &bytes) {
-                eprintln!("buzz-desktop: refresh-builtin-agent-avatars: {e}");
+                eprintln!("beekeeper-desktop: refresh-builtin-agent-avatars: {e}");
             }
         }
     }

@@ -283,7 +283,7 @@ fn update_is_subagent_attributed(update: &serde_json::Value) -> bool {
 
 /// What crossed the wire during one turn, accumulated as it happens.
 ///
-/// This exists because a published transcript records when Buzz *flushed* an
+/// This exists because a published transcript records when Beekeeper *flushed* an
 /// item, not when the frame arrived. Agent prose is buffered to a size, tool,
 /// or turn-end boundary, so a turn that answered at +52s and then went silent
 /// is indistinguishable, in the archive, from one that answered at +952s. The
@@ -840,7 +840,7 @@ fn deep_merge(
 
 /// Build the merged `CODEX_CONFIG` environment-variable value for a Codex agent spawn.
 ///
-/// Returns `Some(json_string)` when `has_generated_codex_config` is true (Buzz injected a
+/// Returns `Some(json_string)` when `has_generated_codex_config` is true (Beekeeper injected a
 /// `CODEX_CONFIG` entry via `codex_network_env()`), `None` otherwise.
 ///
 /// # Merge contract (when `has_generated_codex_config` is true)
@@ -870,7 +870,7 @@ pub(crate) fn build_codex_config_env(
     parent_codex_config: Option<&str>,
     has_generated_codex_config: bool,
 ) -> Result<Option<String>, AcpError> {
-    // Without an explicit Buzz-generated overlay signal, skip the merge entirely.
+    // Without an explicit Beekeeper-generated overlay signal, skip the merge entirely.
     // Any persona CODEX_CONFIG is handled by the caller with operator-wins semantics.
     if !has_generated_codex_config {
         return Ok(None);
@@ -966,11 +966,11 @@ const GOOSE_STEER_METHOD: &str = "_goose/unstable/session/steer";
 /// `{outcome}`. Gated on [`AcpClient::steering_supported`].
 const ACP_STEER_METHOD: &str = "_session/steering";
 
-/// `outcome` value meaning the steer was applied to the turn Buzz is waiting
+/// `outcome` value meaning the steer was applied to the turn Beekeeper is waiting
 /// on, which therefore keeps running.
 const STEER_OUTCOME_INJECTED: &str = "injected";
 
-/// `outcome` value meaning the turn Buzz was steering had already finished, so
+/// `outcome` value meaning the turn Beekeeper was steering had already finished, so
 /// the adapter began a fresh turn carrying the message. Still a delivery
 /// success, but the awaited turn is over — see the steer-response arm for why
 /// this must not renew the hard deadline.
@@ -1261,8 +1261,8 @@ enum PromptExit {
 
 fn build_client_capabilities() -> serde_json::Value {
     serde_json::json!({
-        // Signal to ACP adapters that Buzz can hand users to terminal-native
-        // auth flows. Adapters decide which auth methods to expose; Buzz does
+        // Signal to ACP adapters that Beekeeper can hand users to terminal-native
+        // auth flows. Adapters decide which auth methods to expose; Beekeeper does
         // not hardcode vendor login commands from this capability.
         "auth": {
             "terminal": true
@@ -1295,7 +1295,7 @@ fn build_client_capabilities() -> serde_json::Value {
 /// Environment variables an agent subprocess must not receive.
 ///
 /// A spawn inherits the parent environment wholesale — that is correct for the
-/// managed-agent harness, where the agent is a Buzz participant meant to act as
+/// managed-agent harness, where the agent is a Beekeeper participant meant to act as
 /// itself, and wrong for a host that merely supervises an agent it does not
 /// want speaking in its name. This type is how such a host says so.
 ///
@@ -1473,7 +1473,7 @@ impl AcpClient {
     ) -> Result<Self, AcpError> {
         // The open fence: the managed-agent harness *wants* its agent to
         // inherit `BUZZ_PRIVATE_KEY` and friends, because a managed agent is a
-        // Buzz participant acting as itself.
+        // Beekeeper participant acting as itself.
         Self::spawn_with_env_fence(
             command,
             args,
@@ -2139,7 +2139,7 @@ impl AcpClient {
     ///
     /// Used for slash-command pass-through: ACP connectors detect commands via
     /// the **first** block's text starting with `/`, so the harness sends
-    /// `["/cmd args", "<buzz context>"]` instead of one wrapped block.
+    /// `["/cmd args", "<Beekeeper context>"]` instead of one wrapped block.
     pub async fn session_prompt_blocks_with_idle_timeout(
         &mut self,
         session_id: &str,
@@ -4232,7 +4232,7 @@ mod tests {
         exempt: &["BUZZ_TEST_FENCED_BUT_EXEMPT"],
     };
 
-    /// The managed-agent path. A managed agent is a Buzz participant and is
+    /// The managed-agent path. A managed agent is a Beekeeper participant and is
     /// supposed to inherit `BUZZ_PRIVATE_KEY` from the harness, so the open
     /// fence must remove nothing at all — this is the assertion that the
     /// coding-session fix left the harness alone.
@@ -4721,7 +4721,7 @@ mod tests {
 
     #[test]
     fn session_prompt_request_format() {
-        let prompt_text = "[Buzz @mention]\nChannel: test\nFrom: npub1...\nMessage: hello";
+        let prompt_text = "[Beekeeper @mention]\nChannel: test\nFrom: npub1...\nMessage: hello";
         let msg = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 2u64,
@@ -4747,7 +4747,9 @@ mod tests {
             "sess_abc123",
             &[
                 PromptBlock::Text("/goal ship it".into()),
-                PromptBlock::Text("[Buzz event: @mention]\nContent: @Eva /goal ship it".into()),
+                PromptBlock::Text(
+                    "[Beekeeper event: @mention]\nContent: @Eva /goal ship it".into(),
+                ),
             ],
         );
         let prompt = params["prompt"].as_array().unwrap();
@@ -5367,7 +5369,7 @@ mod tests {
         observed
     }
 
-    /// Buzz-owned Hermes processes get the configured-MCP isolation default,
+    /// Beekeeper-owned Hermes processes get the configured-MCP isolation default,
     /// and an explicit persona entry still overrides it (defaults are applied
     /// before `extra_env`, so the later `Command::env` write wins).
     #[cfg(unix)]
@@ -6976,7 +6978,7 @@ sleep 5
     /// Test 8: **codex `extMethod` silent-loss regression guard.** codex-acp's
     /// ext dispatcher answers unrecognized methods with a bare `{}` — a
     /// JSON-RPC *success*, not `-32601` (`src/CodexAcpServer.ts:255-258`).
-    /// Buzz maps `SteerAck::Success` to `queue.remove_event`, so decoding
+    /// Beekeeper maps `SteerAck::Success` to `queue.remove_event`, so decoding
     /// `{}` as success would delete the user's message with no error, no
     /// fallback, and no log. An absent `outcome` must therefore be a
     /// rejection, which releases the event and fires cancel+merge.
@@ -7053,7 +7055,7 @@ sleep 5
     }
 
     /// Test 6: **red/green for the no-renewal rule.** `startedNewTurn` means
-    /// the turn Buzz was steering had already ended and the adapter began a
+    /// the turn Beekeeper was steering had already ended and the adapter began a
     /// fresh, detached one. It acks `Success` (the message WAS delivered, so
     /// the event must not be redelivered) but must NOT renew the hard
     /// deadline — that clock belongs to a turn which is already settled.
@@ -7786,7 +7788,7 @@ sleep 5
 
     #[test]
     fn build_codex_config_env_generated_only_single_entry_with_signal_true_merges_with_parent() {
-        // No persona: Buzz injects one CODEX_CONFIG; signal=true.
+        // No persona: Beekeeper injects one CODEX_CONFIG; signal=true.
         // Parent may have its own CODEX_CONFIG — deep_merge applies, network_access forced.
         let extra = env(&[("CODEX_CONFIG", GENERATED)]);
         let parent =
@@ -7813,7 +7815,7 @@ sleep 5
 
     #[test]
     fn build_codex_config_env_persona_only_signal_false_returns_none() {
-        // Persona set CODEX_CONFIG; Buzz did not inject a generated overlay (signal=false).
+        // Persona set CODEX_CONFIG; Beekeeper did not inject a generated overlay (signal=false).
         // Must return None — no merging, no sandbox widening.
         let persona = r#"{"some_feature":"on"}"#;
         let extra = env(&[("CODEX_CONFIG", persona)]);

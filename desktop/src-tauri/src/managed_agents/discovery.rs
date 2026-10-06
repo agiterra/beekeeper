@@ -932,7 +932,7 @@ fn runtime_needs_npm(runtime: &KnownAcpRuntime) -> bool {
 
 /// Returns `true` when `cmd` is an npm global install/uninstall invocation.
 ///
-/// Buzz rewrites these catalog commands to an app-private npm prefix before
+/// Beekeeper rewrites these catalog commands to an app-private npm prefix before
 /// execution; the global shape remains in the catalog so existing install plans
 /// and Doctor's Node.js-required detection stay simple.
 pub(crate) fn is_npm_global_install(cmd: &str) -> bool {
@@ -1086,7 +1086,7 @@ pub(crate) fn classify_runtime(
     }
 }
 
-/// The oldest `codex-acp` version supported by Buzz managed agents.
+/// The oldest `codex-acp` version supported by Beekeeper managed agents.
 ///
 /// Older 1.x adapters are detected successfully, but can still bundle a Codex runtime
 /// that does not reliably give `buzz` CLI subprocesses outbound relay access.
@@ -1308,8 +1308,8 @@ fn discover_acp_runtime_phase1(runtime: &'static KnownAcpRuntime) -> PartialEntr
         | AcpAvailabilityStatus::NotInstalled => runtime.cli_install_instructions_url,
     };
 
-    // node_required now means Buzz cannot provide npm for this platform.
-    // On supported desktop platforms, Buzz downloads a private Node/npm
+    // node_required now means Beekeeper cannot provide npm for this platform.
+    // On supported desktop platforms, Beekeeper downloads a private Node/npm
     // runtime into app data before running npm-backed adapter installs.
     let node_required = matches!(
         availability,

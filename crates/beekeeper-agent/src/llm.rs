@@ -366,7 +366,7 @@ impl Llm {
     }
 
     /// OpenAI dispatch. The configured model is sent as given: callers that
-    /// route through a mesh (Buzz shared compute) resolve their own model name
+    /// route through a mesh (Beekeeper shared compute) resolve their own model name
     /// before spawning the agent, so nothing here needs to know about meshes.
     async fn openai_request<F>(
         &self,
@@ -5024,7 +5024,7 @@ mod tests {
     ///
     /// This is the one test that requires real network I/O (loopback only) to
     /// verify that reqwest actually sets is_timeout() for the scenario in which
-    /// Buzz agents stall (server connected but emitting no bytes).
+    /// Beekeeper agents stall (server connected but emitting no bytes).
     #[tokio::test]
     async fn classify_transport_error_read_timeout_is_loopback_verified() {
         use tokio::net::TcpListener;

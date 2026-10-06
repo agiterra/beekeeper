@@ -794,7 +794,7 @@ pub async fn get_members_bulk(
 /// Includes channels where the pubkey is an active member AND all open channels.
 /// Open channels must be included in REQ filter resolution.
 ///
-/// Private-project gate (NIP-MP Buzz access extension): an *open* channel whose
+/// Private-project gate (NIP-MP Beekeeper access extension): an *open* channel whose
 /// `project_ref` resolves to a `project_acl` row with `visibility = 'private'`
 /// is accessible only to the project's owner and invited members. Explicit
 /// channel membership still grants access (the member arm is ungated) — being

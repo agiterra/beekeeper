@@ -191,7 +191,7 @@ impl ChannelSummary {
                 "d" => channel_id = val.map(str::to_string),
                 "name" => name = val.map(str::to_string),
                 "t" => channel_type = val.map(str::to_string),
-                // NIP-29 emits both `private` and `public` (Buzz adds the latter).
+                // NIP-29 emits both `private` and `public` (Beekeeper adds the latter).
                 // The presence of either tag is the source of truth; tag value is unused.
                 "private" => visibility = Some("private".to_string()),
                 "public" => visibility = Some("public".to_string()),

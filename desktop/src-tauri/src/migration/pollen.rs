@@ -25,7 +25,7 @@ fn migrate_pollen_agent_name_in_file(path: &Path, now: &str) {
     };
     let Ok(mut records) = serde_json::from_str::<Vec<serde_json::Value>>(&contents) else {
         eprintln!(
-            "buzz-desktop: migrate-pollen-agent-name: invalid JSON in {}",
+            "beekeeper-desktop: migrate-pollen-agent-name: invalid JSON in {}",
             path.display()
         );
         return;
@@ -184,18 +184,18 @@ fn migrate_pollen_agent_name_in_file(path: &Path, now: &str) {
         // leaves harmless stale items. The loader verifies each queued expected
         // name against the durable record before publishing.
         if let Err(error) = persist_profile_reconcile_queue(path, &profile_reconciliations) {
-            eprintln!("buzz-desktop: migrate-pollen-agent-name: {error}");
+            eprintln!("beekeeper-desktop: migrate-pollen-agent-name: {error}");
             return;
         }
         if let Ok(bytes) = serde_json::to_vec_pretty(&records) {
             if let Err(error) = crate::managed_agents::atomic_write_json_restricted(path, &bytes) {
-                eprintln!("buzz-desktop: migrate-pollen-agent-name: {error}");
+                eprintln!("beekeeper-desktop: migrate-pollen-agent-name: {error}");
             }
         }
     } else if changed {
         if let Ok(bytes) = serde_json::to_vec_pretty(&records) {
             if let Err(error) = crate::managed_agents::atomic_write_json_restricted(path, &bytes) {
-                eprintln!("buzz-desktop: migrate-pollen-agent-name: {error}");
+                eprintln!("beekeeper-desktop: migrate-pollen-agent-name: {error}");
             }
         }
     }

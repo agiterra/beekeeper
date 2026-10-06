@@ -11,7 +11,7 @@
 //! A coding-session execution is explicitly **not** a managed agent: the
 //! metadata it produces always carries `agentRef: null`, and the field's
 //! comment in `buzz-core` says exactly that. It is work the provider
-//! supervises, not a Buzz participant acting as itself. So it must not hold
+//! supervises, not a Beekeeper participant acting as itself. So it must not hold
 //! the provider's identity — and until this module existed it held all of it,
 //! because an ACP spawn inherits the parent environment wholesale and the
 //! provider passed only additive per-runtime variables on top.
@@ -30,7 +30,7 @@
 //! needs `PATH`, `HOME`, `SSH_AUTH_SOCK`, language-runtime configuration, and
 //! the adapter's own credential cache. Clearing that wholesale does not
 //! produce a safer agent, it produces one that cannot build. So: exhaustive
-//! over the namespace Buzz owns, enumerated for the handful of third-party
+//! over the namespace Beekeeper owns, enumerated for the handful of third-party
 //! secrets that reach the sidecar from a developer's `.env` without carrying
 //! the prefix.
 //!
@@ -40,7 +40,7 @@
 //! shell. It used to work by accident, by reading the provider's key out of
 //! the inherited environment — which made every session's agent
 //! indistinguishable from the provider itself on the wire. A coding-session
-//! execution that should speak to Buzz gets its **own** identity through
+//! execution that should speak to Beekeeper gets its **own** identity through
 //! `agent_ref`; it does not borrow the provider's.
 
 use std::path::{Component, Path, PathBuf};
@@ -49,7 +49,7 @@ use beekeeper_acp::acp::EnvFence;
 
 use crate::git_exclude::ExcludeOutcome;
 
-/// The namespace Buzz owns end to end.
+/// The namespace Beekeeper owns end to end.
 ///
 /// Nothing under it is useful to an ACP adapter: the adapter learns what to run
 /// from argv and the additive per-runtime environment, and the `BUZZ_CSP_*`
@@ -154,14 +154,14 @@ pub(crate) const FENCE: EnvFence = EnvFence {
 /// The fenced briefing's first four paragraphs, shared by both runtimes' variants.
 macro_rules! fenced_session_briefing_body {
     () => {
-        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider.\n\nThe provider's Buzz identity is not yours. Every BUZZ_* variable is deliberately removed from this process's environment before you start, so the `bee` CLI cannot authenticate from your shell and this session holds no relay credentials. Do not run `bee` commands that talk to the relay, do not go looking for a key in .env, ~/.config/buzz/, or the environment, and do not report the missing key as a misconfiguration — the absence is the design, not a broken setup.\n\nYou do not need those credentials to be seen. The provider itself observes and publishes this session's state — branch, HEAD commit, dirty worktree, and verified liveness — so when this session's channel belongs to a project, that published state is what the project's Pulse and Beekeeper Desktop show for you. Routine progress needs no post from you.\n\nYou will not receive a Project Pulse digest in this session and you cannot read one from here. If you need to know what other sessions or people are working on before you touch shared code, say so and ask your operator in this conversation: they can see the Pulse and can post an entry on your behalf."
+        "Beekeeper coding-session briefing: you are running inside a Beekeeper coding session, launched and supervised by the Beekeeper session provider.\n\nThe provider's Beekeeper identity is not yours. Every BUZZ_* variable is deliberately removed from this process's environment before you start, so the `bee` CLI cannot authenticate from your shell and this session holds no relay credentials. Do not run `bee` commands that talk to the relay, do not go looking for a key in .env, ~/.config/buzz/, or the environment, and do not report the missing key as a misconfiguration — the absence is the design, not a broken setup.\n\nYou do not need those credentials to be seen. The provider itself observes and publishes this session's state — branch, HEAD commit, dirty worktree, and verified liveness — so when this session's channel belongs to a project, that published state is what the project's Pulse and Beekeeper Desktop show for you. Routine progress needs no post from you.\n\nYou will not receive a Project Pulse digest in this session and you cannot read one from here. If you need to know what other sessions or people are working on before you touch shared code, say so and ask your operator in this conversation: they can see the Pulse and can post an entry on your behalf."
     };
 }
 
 /// What a fenced adapter is told about the consequence above, in its own words.
 ///
 /// The fence is invisible from inside the adapter: it sees an environment with
-/// no `BUZZ_*` in it and no explanation, so an operator who asks it about Buzz
+/// no `BUZZ_*` in it and no explanation, so an operator who asks it about Beekeeper
 /// coordination gets "unavailable — nothing is configured", which reads as a
 /// broken install rather than a deliberate boundary. That is exactly what
 /// happened on 2026-08-21: a session asked to read its Project Pulse reported
@@ -175,9 +175,9 @@ macro_rules! fenced_session_briefing_body {
 /// - Its session state *is* published: the provider observes branch, `HEAD`
 ///   commit and dirty state itself ([`crate::git_probe`]) and publishes them
 ///   as kind:44223 session metadata, which is what the Project Pulse digest
-///   folds into its session groups (`buzz-acp/src/pulse_fetch.rs`).
+///   folds into its session groups (`beekeeper-acp/src/pulse_fetch.rs`).
 /// - It receives no `[Project Pulse]` injection — that is composed in the ACP
-///   harness's pool for managed agents (`buzz-acp/src/pool.rs`), a path a
+///   harness's pool for managed agents (`beekeeper-acp/src/pool.rs`), a path a
 ///   coding session never takes.
 ///
 /// Consequently this text must never instruct the adapter to run a relay
@@ -196,7 +196,7 @@ pub(crate) const FENCED_SESSION_BRIEFING: &str = concat!(
 /// Claude Code wakes itself when a task it started with the Bash tool's
 /// background option completes, and since SV-77 the provider reads that
 /// wake between prompts and publishes it as its own turn
-/// (`session_autonomous.rs`; live proof `buzz-acp/tests/live_background_wake.rs`).
+/// (`session_autonomous.rs`; live proof `beekeeper-acp/tests/live_background_wake.rs`).
 /// Telling a Claude execution that nothing will wake it is therefore false,
 /// and on 2026-10-06 it made an agent refuse an explicit instruction to
 /// background a job. Other runtimes keep [`FENCED_SESSION_BRIEFING`]: nothing
@@ -282,7 +282,7 @@ pub(crate) fn actor_seat_briefing(
         "Run long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes - only an addressed relay turn wakes you, and a background job finishing is not one, so whoever is waiting on you is left watching a seat that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go."
     };
     format!(
-        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider, and you are seated in it as a Buzz agent.\n\nYou hold your own Buzz identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. Run the `bee` CLI as `$BEE` - your host chose one binary, set $BEE to its absolute path, and put its directory first on your PATH, so `$BEE` and a bare `bee` are the same build. Never a path someone typed at you, and never a path from a transcript. It speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Buzz variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nThe relay is the only channel to other seats and to the operator. Cross-session tools - {out_of_bounds} - are out of bounds in this seat: they reach other sessions on this computer directly, and nothing said through them appears in the transcript this session publishes, so no one can read it, cite it, or replay it. Say it over the relay or it did not happen.\n\nSubagents (the Task/Agent tool) are allowed for quick research and side tasks inside this seat: they run in your working directory under your rules, and their work is published in this session's transcript under the call that spawned them. Hire a seat instead (`bee sessions hire`) when the work needs independent checking, a different model, its own sandbox, or long parallel work.\n\nWrite files only inside your working directory. Everything else on this computer - other projects, the operator's ~/.claude, ~/.codex, ~/.config, ~/.nostr and ~/.ssh, this app's own data, other seats' directories - is somebody else's, and the notes and memory files there are theirs, not a place to record your conclusions. Whether the host enforces that is stated separately in this briefing.\n\nAfter you dispatch work to another seat, end your turn. An addressed relay turn wakes you, so the reply arrives as a turn of its own; holding this turn open to wait for it only leaves the seat busy with nothing to say.\n\nReports arrive as turns. Do not poll `bee sessions inbox` inside a turn looking for one - you will read the same report the relay is about to hand you and count it twice.\n\n{background_work}"
+        "Beekeeper coding-session briefing: you are running inside a Beekeeper coding session, launched and supervised by the Beekeeper session provider, and you are seated in it as a Beekeeper agent.\n\nYou hold your own Beekeeper identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. Run the `bee` CLI as `$BEE` - your host chose one binary, set $BEE to its absolute path, and put its directory first on your PATH, so `$BEE` and a bare `bee` are the same build. Never a path someone typed at you, and never a path from a transcript. It speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Beekeeper variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nThe relay is the only channel to other seats and to the operator. Cross-session tools - {out_of_bounds} - are out of bounds in this seat: they reach other sessions on this computer directly, and nothing said through them appears in the transcript this session publishes, so no one can read it, cite it, or replay it. Say it over the relay or it did not happen.\n\nSubagents (the Task/Agent tool) are allowed for quick research and side tasks inside this seat: they run in your working directory under your rules, and their work is published in this session's transcript under the call that spawned them. Hire a seat instead (`bee sessions hire`) when the work needs independent checking, a different model, its own sandbox, or long parallel work.\n\nWrite files only inside your working directory. Everything else on this computer - other projects, the operator's ~/.claude, ~/.codex, ~/.config, ~/.nostr and ~/.ssh, this app's own data, other seats' directories - is somebody else's, and the notes and memory files there are theirs, not a place to record your conclusions. Whether the host enforces that is stated separately in this briefing.\n\nAfter you dispatch work to another seat, end your turn. An addressed relay turn wakes you, so the reply arrives as a turn of its own; holding this turn open to wait for it only leaves the seat busy with nothing to say.\n\nReports arrive as turns. Do not poll `bee sessions inbox` inside a turn looking for one - you will read the same report the relay is about to hand you and count it twice.\n\n{background_work}"
     )
 }
 
@@ -311,7 +311,7 @@ pub(crate) const CLAUDE_DRIVER: &str = "claude-agent-acp";
 /// a false conclusion there. A seat runs with the operator's `HOME`, so its
 /// file tools reach whatever the operator can, and the sidecar auto-approves
 /// every `session/request_permission` with `allow_once`
-/// (`buzz-acp/src/acp.rs`, the `session/request_permission` arm). Nothing
+/// (`beekeeper-acp/src/acp.rs`, the `session/request_permission` arm). Nothing
 /// stood between the tool call and the write.
 ///
 /// # What stands there now
@@ -997,7 +997,7 @@ mod tests {
         assert!(briefing.contains("wss://relay.example"), "no relay named");
         assert!(briefing.contains("\"lead\""), "no role named");
         assert!(
-            briefing.contains("You hold your own Buzz identity"),
+            briefing.contains("You hold your own Beekeeper identity"),
             "the seated briefing must say the shell is authenticated"
         );
 

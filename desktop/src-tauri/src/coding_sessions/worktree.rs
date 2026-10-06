@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, State};
 
+use beekeeper_core_pkg::worktree_placement;
+
 use crate::app_state::AppState;
 use crate::coding_sessions::workdir_store::{
     load_workdir_store, save_workdir_store, seat_worktree_key, CodingSessionSeatCommitIdentity,
@@ -172,8 +174,7 @@ fn resolve_repo(folder: &Path) -> Result<Option<ResolvedRepo>, String> {
     if common_dir.is_empty() {
         return Ok(None);
     }
-    let root =
-        beekeeper_core_pkg::worktree_placement::repo_root_from_common_dir(Path::new(common_dir));
+    let root = worktree_placement::repo_root_from_common_dir(Path::new(common_dir));
     // Bareness is a property of the *repository*, and `--is-bare-repository`
     // answers for the current worktree — from a linked worktree of a bare repo
     // it says `false`. `worktree list --porcelain`'s first record is always
@@ -259,7 +260,7 @@ fn head_branch(repo_root: &Path) -> Option<String> {
 /// `requested` and falling back to a random suffix.
 fn free_slug(
     repo_root: &Path,
-    placement: &beekeeper_core_pkg::worktree_placement::WorktreeParent,
+    placement: &worktree_placement::WorktreeParent,
     requested: &str,
 ) -> Result<(String, bool), String> {
     if !placement.path_for(requested).exists() && !branch_exists(repo_root, requested)? {
@@ -332,7 +333,7 @@ fn plan(
                 .is_ok()
             })
         });
-        if let Some(why) = beekeeper_core_pkg::worktree_placement::chosen_parent_refusal(
+        if let Some(why) = worktree_placement::chosen_parent_refusal(
             &repo_root,
             chosen,
             inside,
@@ -349,15 +350,8 @@ fn plan(
     }
     let holder_ready = holder_exists_and_is_ignored(&repo_root);
     let Some(placement) = chosen
-        .map(|chosen| {
-            beekeeper_core_pkg::worktree_placement::WorktreeParent::Chosen(chosen.to_path_buf())
-        })
-        .or_else(|| {
-            beekeeper_core_pkg::worktree_placement::default_worktree_parent(
-                &repo_root,
-                holder_ready,
-            )
-        })
+        .map(|chosen| worktree_placement::WorktreeParent::Chosen(chosen.to_path_buf()))
+        .or_else(|| worktree_placement::default_worktree_parent(&repo_root, holder_ready))
     else {
         return Ok(CodingSessionWorktreePlan {
             repo_root: Some(repo_root.to_string_lossy().into_owned()),
@@ -799,7 +793,7 @@ fn configure_created_worktree_identity(
         }),
         Err(error) => {
             eprintln!(
-                "buzz-desktop: {} has no commit identity: {error}",
+                "beekeeper-desktop: {} has no commit identity: {error}",
                 created.path
             );
             None
@@ -880,11 +874,7 @@ pub async fn record_coding_session_worktree(
         .map(|store| store.worktree_parents.values().cloned().collect())
         .unwrap_or_default();
     let directory = canonical_enough(&directory);
-    if !beekeeper_core_pkg::worktree_placement::is_managed_worktree_path(
-        &resolved.root,
-        &directory,
-        &chosen,
-    ) {
+    if !worktree_placement::is_managed_worktree_path(&resolved.root, &directory, &chosen) {
         return Ok(false);
     }
     let auth = build_local_git_auth_config()?;

@@ -1,4 +1,4 @@
-//! Canonical `beekeeper://` deep links for Buzz-hosted git entities.
+//! Canonical `beekeeper://` deep links for Beekeeper-hosted git entities.
 //!
 //! Beekeeper Desktop renders these links as rich preview cards in chat and
 //! navigates in-app when they are clicked. The desktop parser lives in

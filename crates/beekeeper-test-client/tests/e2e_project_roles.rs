@@ -1,5 +1,5 @@
 //! End-to-end tests for project member roles and relay-managed membership
-//! ops (NIP-MP Buzz roles extension).
+//! ops (NIP-MP Beekeeper roles extension).
 //!
 //! The buzz-db unit tests pin the `admits_read`/`admits_write` matrix and
 //! the ingest tests pin the op envelopes; these tests prove the tiers are

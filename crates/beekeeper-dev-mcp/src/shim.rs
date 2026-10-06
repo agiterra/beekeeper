@@ -12,7 +12,7 @@ use zeroize::Zeroize;
 /// 3. Prepends the shim dir to PATH
 ///
 /// Shell children receive `path_env`, `git_env`, and `BUZZ_PRIVATE_KEY` (for
-/// the buzz CLI). `NOSTR_PRIVATE_KEY` is removed from the process env after
+/// the `bee` CLI). `NOSTR_PRIVATE_KEY` is removed from the process env after
 /// the keyfile is written — git helpers read from the keyfile only.
 /// Cleaned up on drop (TempDir).
 pub struct Shim {
@@ -241,7 +241,7 @@ fn is_unicode_format(c: char) -> bool {
     )
 }
 
-/// Normalize a Buzz display name into a git author name, or `None` to fall
+/// Normalize a Beekeeper display name into a git author name, or `None` to fall
 /// back to the npub.
 ///
 /// Strips control and Unicode format characters plus angle brackets, collapses
@@ -289,14 +289,14 @@ fn build_git_env(info: &KeyInfo) -> Vec<(String, String)> {
         .and_then(sanitize_git_user_name)
         .unwrap_or_else(|| info.npub.clone());
     let entries: Vec<(&str, String)> = vec![
-        // Identity — Buzz display name (npub fallback), NIP-05-style email
+        // Identity — Beekeeper display name (npub fallback), NIP-05-style email
         ("user.name", user_name),
         ("user.email", email),
-        // Nostr credential helper is additive — it silently declines non-Buzz
+        // Nostr credential helper is additive — it silently declines non-Beekeeper
         // remotes (exits 0, no credential), so git falls through to system
         // helpers (osxkeychain, store, etc.) for GitHub/GitLab/etc.
         ("credential.helper", "nostr".into()),
-        // Required: Buzz relay verifies NIP-98 against the full repo-root URL.
+        // Required: Beekeeper relay verifies NIP-98 against the full repo-root URL.
         // Without useHttpPath, git only passes the host and auth is rejected.
         ("credential.useHttpPath", "true".into()),
         ("nostr.keyfile", info.keyfile_path.clone()),

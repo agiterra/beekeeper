@@ -7,7 +7,7 @@
 //! **Scope, because this was initially claimed too broadly.** The ACP and
 //! session-provider stacks do *not* log through here: `buzz-session-provider`
 //! runs as a supervised child process, installs its own subscriber
-//! (`buzz-session-provider/src/lib.rs:147`), and has its stdout and stderr
+//! (`beekeeper-session-provider/src/lib.rs:147`), and has its stdout and stderr
 //! redirected by `supervisor.rs` to
 //! `<app data>/session-provider/logs/<pubkey>.log`. That file is where
 //! `acp::stall`, `acp::stderr`, `acp::sdk_frame` and every `csp::` line land,

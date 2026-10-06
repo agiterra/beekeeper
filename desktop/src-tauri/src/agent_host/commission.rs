@@ -121,7 +121,7 @@ pub(crate) async fn commission_host(
             // Disclosed rather than swallowed: on a machine with no host yet
             // this is expected, and on a machine with a wedged one it is the
             // only trace.
-            eprintln!("buzz-desktop: agent-host: could not hand the identity over: {error}");
+            eprintln!("beekeeper-desktop: agent-host: could not hand the identity over: {error}");
             Ok(false)
         }
     }

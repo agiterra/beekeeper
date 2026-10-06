@@ -19,7 +19,7 @@ use error::CliError;
 use nostr::Keys;
 use uuid::Uuid;
 
-/// Run the Buzz CLI from raw arguments (including `argv[0]`).
+/// Run the Beekeeper CLI from raw arguments (including `argv[0]`).
 ///
 /// Returns a process exit code (0 = success).
 ///
@@ -930,7 +930,7 @@ pub enum ChannelsCmd {
     },
     /// Create a new channel
     #[command(
-        after_help = "Examples:\n  bee channels create --name general --type stream --visibility open\n  bee channels create --name design --type forum --visibility open --description \"Design discussions\"\n  bee channels create --name standup --type stream --visibility open --ttl 3600  # ephemeral, archived after 1h idle\n  bee channels create --name project-x --template \"Buzz Team\"  # type/visibility/canvas/roster from the template; explicit flags override\n  bee channels create --name x-sessions --type transport --visibility private --project 30621:<owner-hex>:<d>  # the project's hidden session transport, as the desktop founds it"
+        after_help = "Examples:\n  bee channels create --name general --type stream --visibility open\n  bee channels create --name design --type forum --visibility open --description \"Design discussions\"\n  bee channels create --name standup --type stream --visibility open --ttl 3600  # ephemeral, archived after 1h idle\n  bee channels create --name project-x --template \"Beekeeper Team\"  # type/visibility/canvas/roster from the template; explicit flags override\n  bee channels create --name x-sessions --type transport --visibility private --project 30621:<owner-hex>:<d>  # the project's hidden session transport, as the desktop founds it"
     )]
     Create {
         /// Channel name
@@ -1777,7 +1777,7 @@ pub enum RepoPushRole {
 }
 
 /// Access level of a multi-repo project container (`buzz-access`,
-/// NIP-MP Buzz access extension).
+/// NIP-MP Beekeeper access extension).
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub enum ProjectAccess {
     /// Community-readable (the pre-extension default).
@@ -1890,7 +1890,7 @@ pub enum ProjectsCmd {
         /// Project identifier (slug), up to 1024 bytes; without --repo it must
         /// also be a valid repository id (1–64 of [A-Za-z0-9._-])
         slug: String,
-        /// Member repository coordinate: bare Buzz repo id (e.g. `buzz`) or full
+        /// Member repository coordinate: bare Beekeeper repo id (e.g. `buzz`) or full
         /// `30617:<owner-hex>:<repo-d>` for cross-owner or colon-bearing repo ids.
         /// Repeatable. Omit to create the project's own repositories.
         #[arg(long = "repo")]
@@ -1901,7 +1901,7 @@ pub enum ProjectsCmd {
         /// Description (≤2048 bytes)
         #[arg(long)]
         description: Option<String>,
-        /// Associated Buzz channel UUID
+        /// Associated Beekeeper channel UUID
         #[arg(long)]
         channel: Option<String>,
         /// Visibility: `listed` (default) or `unlisted`
@@ -1970,7 +1970,7 @@ pub enum ProjectsCmd {
         /// Remove the description
         #[arg(long, group = "mutation", conflicts_with = "description")]
         clear_description: bool,
-        /// Set the associated Buzz channel UUID
+        /// Set the associated Beekeeper channel UUID
         #[arg(long, group = "mutation")]
         channel: Option<String>,
         /// Remove the associated channel

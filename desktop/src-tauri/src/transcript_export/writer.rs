@@ -268,7 +268,7 @@ mod tests {
             source_absolute_path: source.to_string_lossy().into_owned(),
             exported_file_name: name.to_string(),
         };
-        // The donor would silently overwrite inside attachments/; Buzz
+        // The donor would silently overwrite inside attachments/; Beekeeper
         // refuses loudly — a deliberate, recorded hardening.
         let result = write_transcript_export(
             &plan("export-1", vec![copy("same.png"), copy("same.png")]),

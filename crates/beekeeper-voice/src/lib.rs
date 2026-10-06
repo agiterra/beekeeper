@@ -1,4 +1,4 @@
-//! Reusable local voice primitives for Buzz.
+//! Reusable local voice primitives for Beekeeper.
 
 pub mod imported;
 pub mod pocket;

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Coding-session provider adapter: drives Claude Code over ACP from signed Buzz commands"
+description = "Coding-session provider adapter: drives Claude Code over ACP from signed Beekeeper commands"
 
 [lib]
 name = "beekeeper_session_provider"

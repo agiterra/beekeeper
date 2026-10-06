@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
-//! buzz-db — Postgres event store for Buzz.
+//! buzz-db — Postgres event store for Beekeeper.
 //!
 //! ## Design invariants
 //! - AUTH events (kind 22242) are never stored — they carry bearer tokens.
@@ -45,7 +45,7 @@ pub mod moderation;
 mod parameterized_event;
 /// Monthly table partition management.
 pub mod partition;
-/// Buzz product-feedback sidecar persistence.
+/// Beekeeper product-feedback sidecar persistence.
 pub mod product_feedback;
 pub mod project_acl;
 mod project_pack_source;

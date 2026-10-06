@@ -186,7 +186,7 @@ impl FromStr for MemberRole {
     }
 }
 
-/// A member's role within a project (NIP-MP Buzz access extension).
+/// A member's role within a project (NIP-MP Beekeeper access extension).
 ///
 /// The hierarchy is Owner > Collaborator > Viewer. The project creator (the
 /// kind:30621 address pubkey) is always an implicit Owner and never appears

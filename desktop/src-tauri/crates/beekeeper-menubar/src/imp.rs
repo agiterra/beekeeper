@@ -55,7 +55,7 @@ struct Drawn<R: Runtime> {
 }
 
 /// The rows below the sections. Written out here because the wording is the
-/// product: the desktop tray's "Quit Buzz" ended every agent on the machine,
+/// product: the desktop tray's "Quit Beekeeper" ended every agent on the machine,
 /// and this app's Quit must say — and do — something different.
 fn trailing(model: &MenuModel) -> Vec<MenuRow<'static>> {
     let mut rows = vec![

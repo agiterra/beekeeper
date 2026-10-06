@@ -1,12 +1,12 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
-//! NIP-01 WebSocket relay for Buzz private team communication.
+//! NIP-01 WebSocket relay for Beekeeper private team communication.
 
 mod admission;
 mod build_info;
 /// The build script's own commit/build-time resolution, compiled here only
 /// for its tests — `build.rs` `include!`s the same file, and `cargo test`
-/// never runs a build script. Mirrors `buzz-cli/src/lib.rs`'s identical
+/// never runs a build script. Mirrors `beekeeper-cli/src/lib.rs`'s identical
 /// `#[cfg(test)]`-gated `build_provenance` module for the same reason.
 #[cfg(test)]
 mod build_provenance;

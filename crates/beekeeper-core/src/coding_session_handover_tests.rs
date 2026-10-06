@@ -43,7 +43,7 @@ fn checkpoint_body() -> Value {
                 "bytes": 4096
             }
         ],
-        "tests": [{ "name": "core", "command": "cargo test -p beekeeper-core", "outcome": "passed" }],
+        "tests": [{ "name": "core", "command": "cargo test -p buzz-core", "outcome": "passed" }],
         "unresolved": ["Does a voided claim fence sibling executions?"],
         "nextAction": "Wire the relay envelope validator",
         "missing": ["target/ artefacts on the author's disk"]

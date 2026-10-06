@@ -14,7 +14,7 @@ impl Db {
     /// The entire check → retire old payload → insert runs in a single transaction
     /// with an advisory lock to prevent concurrent-insert races. NIP-RS read-state
     /// coordinates hard-delete the superseded payload and preserve a compact
-    /// ordering watermark. Buzz mesh status coordinates also hard-delete their
+    /// ordering watermark. Beekeeper mesh status coordinates also hard-delete their
     /// superseded heartbeat payload because only the live head has product
     /// value; other NIP-33 kinds retain soft-deleted history.
     ///

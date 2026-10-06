@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 
-//! Buzz instance administration CLI.
+//! Beekeeper instance administration CLI.
 //!
 //! # Member management (NIP-43)
 //!
@@ -35,7 +35,7 @@ use nostr::{EventBuilder, Keys, Kind, Tag};
 use tracing::warn;
 
 #[derive(Parser)]
-#[command(name = "buzz-admin", about = "Buzz instance administration")]
+#[command(name = "buzz-admin", about = "Beekeeper instance administration")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -79,7 +79,7 @@ enum Command {
     GenerateKey,
     /// Run pending database migrations.
     Migrate,
-    /// Inspect deployment-wide Buzz product feedback.
+    /// Inspect deployment-wide Beekeeper product feedback.
     ProductFeedback {
         #[command(subcommand)]
         command: ProductFeedbackCommand,

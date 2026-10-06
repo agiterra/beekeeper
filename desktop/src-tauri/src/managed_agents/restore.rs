@@ -65,7 +65,7 @@ pub fn backfill_persona_snapshots(app: &tauri::AppHandle) -> Result<(), String> 
         }
         let Some(persona) = personas.iter().find(|p| p.id == persona_id) else {
             eprintln!(
-                "buzz-desktop: persona-snapshot backfill: agent {} links persona {persona_id} which no longer exists; leaving it orphaned — spawn will refuse it",
+                "beekeeper-desktop: persona-snapshot backfill: agent {} links persona {persona_id} which no longer exists; leaving it orphaned — spawn will refuse it",
                 record.pubkey
             );
             continue;
@@ -176,7 +176,7 @@ pub async fn restore_managed_agents_on_launch(
         // process group whose parent harness exited).
         super::sweep_system_agent_processes(&super::current_instance_id(app), &tracked_pids);
 
-        // Dead-instance reaping: find agents belonging to Buzz instances
+        // Dead-instance reaping: find agents belonging to Beekeeper instances
         // whose desktop process is no longer running and reap them.
         super::reap_dead_instance_agents(&super::current_instance_id(app), &tracked_pids);
 
@@ -492,7 +492,9 @@ pub async fn restore_managed_agents_on_launch(
                 crate::commands::reconcile_agent_profile(&state, &reconcile_app, &pubkey, &data)
                     .await
             {
-                eprintln!("buzz-desktop: profile reconciliation failed for agent {pubkey}: {e}");
+                eprintln!(
+                    "beekeeper-desktop: profile reconciliation failed for agent {pubkey}: {e}"
+                );
             }
         });
     }
@@ -515,7 +517,7 @@ pub(crate) fn spawn_pending_profile_reconciliations(app: &tauri::AppHandle, work
     let items = match crate::commands::load_pending_profile_reconciliations(app, workspace_relay) {
         Ok(items) => items,
         Err(error) => {
-            eprintln!("buzz-desktop: failed to load pending profile reconciliations: {error}");
+            eprintln!("beekeeper-desktop: failed to load pending profile reconciliations: {error}");
             return;
         }
     };
@@ -538,13 +540,13 @@ pub(crate) fn spawn_pending_profile_reconciliations(app: &tauri::AppHandle, work
                         &relay_url,
                     ) {
                         eprintln!(
-                            "buzz-desktop: failed to record profile reconciliation for agent {pubkey}: {error}"
+                            "beekeeper-desktop: failed to record profile reconciliation for agent {pubkey}: {error}"
                         );
                     }
                 }
                 Ok(_) => {}
                 Err(error) => eprintln!(
-                    "buzz-desktop: profile reconciliation failed for agent {pubkey}: {error}"
+                    "beekeeper-desktop: profile reconciliation failed for agent {pubkey}: {error}"
                 ),
             }
         });

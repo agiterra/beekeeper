@@ -736,7 +736,7 @@ fn codex_adapter_availability_outdated_for_older_1x_binary() {
     );
 }
 
-/// The strict three-component parse fails closed: a version Buzz cannot compare
+/// The strict three-component parse fails closed: a version Beekeeper cannot compare
 /// against the floor is treated as outdated rather than assumed current.
 #[cfg(unix)]
 #[test]

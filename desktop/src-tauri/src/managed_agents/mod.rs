@@ -130,7 +130,7 @@ pub use teams::*;
 pub use types::*;
 pub use types_runtime::*;
 
-/// Returns the Buzz nest directory (`~/.beekeeper`) if it exists as a real
+/// Returns the Beekeeper nest directory (`~/.beekeeper`) if it exists as a real
 /// directory (not a symlink), falling back to the user's home directory.
 ///
 /// Used as the default working directory for spawned agent processes.

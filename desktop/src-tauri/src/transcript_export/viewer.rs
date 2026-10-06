@@ -1,7 +1,7 @@
-//! The embedded Buzz export viewer: a single static, dependency-free HTML
+//! The embedded Beekeeper export viewer: a single static, dependency-free HTML
 //! page compiled into the binary and materialized to an on-disk dist dir so
 //! the writer's viewer-copy (and its refusal law) operate on a real
-//! directory. The page is Buzz-owned and written from scratch — a recorded
+//! directory. The page is Beekeeper-owned and written from scratch — a recorded
 //! architectural divergence from the donor's React viewer.
 
 use std::fs;

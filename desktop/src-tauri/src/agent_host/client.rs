@@ -110,7 +110,7 @@ impl AgentHost {
                 // A home directory this app cannot resolve is not something to
                 // panic over: the socket path then names the failure and every
                 // call reports the host as absent, which is honest.
-                eprintln!("buzz-desktop: agent-host: {error}");
+                eprintln!("beekeeper-desktop: agent-host: {error}");
                 PathBuf::from("/nonexistent/beekeeper-host.sock")
             })
         })

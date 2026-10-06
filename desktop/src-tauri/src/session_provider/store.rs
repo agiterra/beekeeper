@@ -249,11 +249,11 @@ fn hydrate_keys(store: &mut CodingSessionProviderStore) {
         match secrets.load(&provider_keyring_name(&record.provider_pubkey)) {
             Ok(Some(nsec)) => record.private_key_nsec = nsec,
             Ok(None) => eprintln!(
-                "buzz-desktop: coding-session provider {} has no key in JSON or keyring",
+                "beekeeper-desktop: coding-session provider {} has no key in JSON or keyring",
                 record.provider_pubkey
             ),
             Err(error) => eprintln!(
-                "buzz-desktop: coding-session provider {} key unavailable — keyring read failed \
+                "beekeeper-desktop: coding-session provider {} key unavailable — keyring read failed \
                  ({error}); the provider will not start until the keyring is reachable",
                 record.provider_pubkey
             ),
@@ -290,13 +290,13 @@ fn persist_keys(store: &mut CodingSessionProviderStore) {
             Ok(()) => match secrets.verify_stored_raw(&name, &record.private_key_nsec) {
                 Ok(true) => record.private_key_nsec.clear(),
                 _ => eprintln!(
-                    "buzz-desktop: keyring read-back verify failed for coding-session provider {} \
+                    "beekeeper-desktop: keyring read-back verify failed for coding-session provider {} \
                      — keeping the key inline",
                     record.provider_pubkey
                 ),
             },
             Err(error) => eprintln!(
-                "buzz-desktop: keyring write failed for coding-session provider {} ({error}) — \
+                "beekeeper-desktop: keyring write failed for coding-session provider {} ({error}) — \
                  keeping the key inline",
                 record.provider_pubkey
             ),
@@ -312,7 +312,7 @@ pub(crate) fn delete_provider_key(provider_pubkey: &str) {
     };
     if let Err(error) = secrets.delete(&provider_keyring_name(provider_pubkey)) {
         eprintln!(
-            "buzz-desktop: failed to delete coding-session provider key {provider_pubkey}: {error}"
+            "beekeeper-desktop: failed to delete coding-session provider key {provider_pubkey}: {error}"
         );
     }
 }

@@ -1,4 +1,4 @@
-//! End-to-end tests for private-project repository gating (NIP-MP Buzz
+//! End-to-end tests for private-project repository gating (NIP-MP Beekeeper
 //! access extension, phase 2): a kind:30617 announcement carrying a
 //! `["project", "30621:<owner>:<d>"]` back-reference into a private project
 //! hides the repo's whole event surface from readers outside the project.

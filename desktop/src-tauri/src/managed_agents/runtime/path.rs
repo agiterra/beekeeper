@@ -20,8 +20,8 @@ pub(crate) use beekeeper_host_core::path_env::{
 /// Concatenates, in priority order:
 ///   1. exe parent dir — the binaries shipped beside the app itself
 ///      (`Contents/MacOS/`: `bee`, `buzz-acp`, the other sidecars)
-///   2. Buzz-managed npm prefix bin dir — app-private ACP adapter shims
-///   3. Buzz-managed Node.js bin dir — app-private Node/npm runtime
+///   2. Beekeeper-managed npm prefix bin dir — app-private ACP adapter shims
+///   3. Beekeeper-managed Node.js bin dir — app-private Node/npm runtime
 ///   4. `<home>/.local/bin` — the user's own CLI dir
 ///   5. `nvm_bin` — nvm's default Node.js bin dir (if the user uses nvm)
 ///   6. user's login-shell `PATH` — runtimes like node/python from other managers
@@ -63,7 +63,7 @@ pub(in crate::managed_agents) fn build_augmented_path(
 
     // Build the managed/prefix entries (everything before login-shell PATH).
     //
-    // App-owned directories first — the exe parent, then the Buzz-managed npm
+    // App-owned directories first — the exe parent, then the Beekeeper-managed npm
     // and Node bins — so the binaries this build ships win over anything a
     // user (or an earlier debugging session) left in `~/.local/bin`.
     let mut managed: Vec<PathBuf> = Vec::new();
@@ -117,7 +117,7 @@ mod tests {
 
     /// Ledger 77 (Fence, c): a stale `~/.local/bin/bee` shadowed the `bee`
     /// shipped beside the app, so a seat ran a binary the build did not
-    /// produce. The app's own executable directory and the Buzz-managed bins
+    /// produce. The app's own executable directory and the Beekeeper-managed bins
     /// must therefore outrank `~/.local/bin`.
     #[cfg(unix)]
     #[test]
@@ -234,7 +234,7 @@ mod tests {
     }
 
     /// On Unix with no login-shell PATH, `build_augmented_path` must fall back to
-    /// the inherited process PATH — otherwise the child gets only Buzz-managed
+    /// the inherited process PATH — otherwise the child gets only Beekeeper-managed
     /// dirs and loses every system binary (`curl`, `sh`, `tar`).
     #[cfg(unix)]
     #[test]

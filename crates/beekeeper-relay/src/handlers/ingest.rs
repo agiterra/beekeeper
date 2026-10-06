@@ -419,7 +419,7 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         KIND_NIP29_PUT_USER | KIND_NIP29_REMOVE_USER | KIND_NIP29_DELETE_GROUP => {
             Ok(Scope::AdminChannels)
         }
-        // NIP-43: relay membership admin commands (9030–9032) + Buzz
+        // NIP-43: relay membership admin commands (9030–9032) + Beekeeper
         // workspace-profile command (9033).
         k if k == RELAY_ADMIN_ADD_MEMBER
             || k == RELAY_ADMIN_REMOVE_MEMBER
@@ -1201,7 +1201,7 @@ pub(crate) async fn check_channel_membership(
         return Err("restricted: not a channel member".to_string());
     }
     // Open channel — but an open channel inside a private project must not
-    // fall open to non-members of the project (NIP-MP Buzz access extension).
+    // fall open to non-members of the project (NIP-MP Beekeeper access extension).
     // Explicit channel members were admitted above; here only the project's
     // owner and write-capable members may write — a project viewer reads the
     // channel but never posts. Fail closed on lookup errors.
@@ -1885,7 +1885,7 @@ const PROJECT_INVITE_CAP: usize = 256;
 
 /// The kind segments a project member coordinate may carry. NIP-MP proper
 /// allows only repository *announcements* (30617) — notably not kind:30618
-/// repository state. The Buzz container extension additionally accepts the
+/// repository state. The Beekeeper container extension additionally accepts the
 /// agent-surface kinds (30175 persona / 30176 team / 30177 managed agent) as
 /// owner-curated members.
 const PROJECT_MEMBER_KIND_SEGMENTS: [&str; 4] = ["30617", "30175", "30176", "30177"];
@@ -1906,7 +1906,7 @@ const _: () = assert!(KIND_MANAGED_AGENT == 30177);
 /// The IDs match the `reject_rules` strings in `NIP-MP.fixtures.json`
 /// exactly: `d-cardinality`, `d-empty`, `member-cap`, `member-tag-arity`,
 /// `member-coordinate-malformed`, `member-duplicate`, `metadata-cardinality`,
-/// `metadata-length`, plus the Buzz access-extension rules `access-value`,
+/// `metadata-length`, plus the Beekeeper access-extension rules `access-value`,
 /// `invite-cap`, `invite-tag-arity`, `invite-malformed`, `invite-duplicate`.
 #[derive(Debug)]
 struct ProjectRejection {
@@ -1970,9 +1970,9 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
         match tag_name {
             "d" => d_tags.push(value),
             "a" => members.push(value),
-            // Buzz container extension: member channels/forums by channel id.
+            // Beekeeper container extension: member channels/forums by channel id.
             "channel" => channels.push(value),
-            // Buzz access extension: invited-member pubkeys on private projects.
+            // Beekeeper access extension: invited-member pubkeys on private projects.
             "p" => invites.push(value),
             _ => {
                 if let Some(i) = PROJECT_SINGLETON_METADATA_TAGS
@@ -2053,7 +2053,7 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
             ));
         }
     }
-    // Buzz container extension: `channel` member tags must be channel UUIDs.
+    // Beekeeper container extension: `channel` member tags must be channel UUIDs.
     for channel in &channels {
         if Uuid::parse_str(channel).is_err() {
             return Err(ProjectRejection::new(
@@ -7356,13 +7356,13 @@ mod tests {
         }
     }
 
-    // ─── Buzz container-extension tests (agents + channels as members) ───────
+    // ─── Beekeeper container-extension tests (agents + channels as members) ───────
 
     const HEX64: &str = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
 
     #[test]
     fn project_envelope_accepts_agent_and_channel_members() {
-        // The Buzz container extension: agent-surface coordinates ride in the
+        // The Beekeeper container extension: agent-surface coordinates ride in the
         // same `a` member tags, and channels join via `channel` UUID tags.
         let repo = format!("30617:{HEX64}:my-repo");
         let persona = format!("30175:{HEX64}:helper");
@@ -8682,7 +8682,7 @@ mod tests {
                 "providerInstanceRef": "claude-primary",
                 "providerAuthorityPubkey": "abababababababababababababababababababababababababababababababab",
                 "model": null,
-                "title": "Advance Buzz live sessions",
+                "title": "Advance Beekeeper live sessions",
                 "initialTurn": null,
             },
         })
@@ -8933,7 +8933,7 @@ mod tests {
                     "providerInstanceRef": "claude-primary",
                     "providerAuthorityPubkey": "ab".repeat(32),
                     "model": null,
-                    "title": "Advance Buzz live sessions",
+                    "title": "Advance Beekeeper live sessions",
                     "initialTurn": null,
                 },
             });

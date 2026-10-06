@@ -78,7 +78,7 @@ pub(crate) fn retain_managed_agent_pending(
         retain_agent_record(&conn, &scope.owner_keys, record).map(|_| ())
     })();
     if let Err(e) = result {
-        eprintln!("buzz-desktop: agent-retain: {e}");
+        eprintln!("beekeeper-desktop: agent-retain: {e}");
     }
 }
 
@@ -134,7 +134,7 @@ pub(super) fn tombstone_managed_agent_pending(
         )
     })();
     if let Err(e) = result {
-        eprintln!("buzz-desktop: agent-tombstone: {e}");
+        eprintln!("beekeeper-desktop: agent-tombstone: {e}");
     }
 }
 
@@ -212,7 +212,7 @@ pub(super) fn archive_managed_agent_pending(
         )
     })();
     if let Err(e) = result {
-        eprintln!("buzz-desktop: agent-archive: {e}");
+        eprintln!("beekeeper-desktop: agent-archive: {e}");
     }
 }
 
@@ -356,7 +356,7 @@ pub async fn create_managed_agent(
     crate::managed_agents::validate_user_env_keys(&input.env_vars)?;
 
     // Validate & normalize the respond-to allowlist BEFORE any side effects.
-    // The harness has its own validator (buzz-acp/src/config.rs) but we want
+    // The harness has its own validator (beekeeper-acp/src/config.rs) but we want
     // to catch malformed input at the boundary so the agent never tries to
     // start with a list that will crash it on launch. The mode/allowlist
     // pairing (and the definition-default fallback) is resolved later at the

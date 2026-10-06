@@ -427,7 +427,7 @@ pub fn build_delete_compat(
 /// * [`DeleteAuthority::Author`] → kind:5 (NIP-09). The relay authorizes the
 ///   author only (plus the NIP-OA agent owner) and removes the message
 ///   silently, leaving no trace in the channel.
-/// * [`DeleteAuthority::Moderator`] → kind:9005 (Buzz-native). The relay also
+/// * [`DeleteAuthority::Moderator`] → kind:9005 (Beekeeper-native). The relay also
 ///   authorizes channel and community owners/admins, and answers with a
 ///   `message_deleted` system tombstone in the channel.
 ///

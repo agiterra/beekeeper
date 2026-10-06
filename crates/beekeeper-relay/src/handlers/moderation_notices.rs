@@ -4,7 +4,7 @@
 //! nostr message in the DB, authored by the relay moderation key:
 //!
 //! 1. Create/reuse the two-party DM channel `{relay mod key, user}` via the
-//!    participant-hash-idempotent DM model (`buzz-db/src/dm.rs`).
+//!    participant-hash-idempotent DM model (`beekeeper-db/src/dm.rs`).
 //! 2. Emit kind:39000 discovery with `hidden`, `t=dm`, and `p` tags.
 //! 3. Insert a relay-signed kind:9 with `h=<dm_channel_id>`.
 //! 4. Publish a relay kind:0 profile named "{Community} Moderation".

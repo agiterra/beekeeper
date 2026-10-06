@@ -1,4 +1,4 @@
-//! git-credential-nostr — NIP-98 git credential helper for Buzz.
+//! git-credential-nostr — NIP-98 git credential helper for Beekeeper.
 //!
 //! Git calls this via the credential helper protocol (stdin/stdout).
 //! We read the request, sign a kind:27235 event, and return the base64-encoded
@@ -209,7 +209,7 @@ pub fn choose_key(
 
 /// Resolve the key git will present: `$NOSTR_PRIVATE_KEY` first, then `keyfile`.
 ///
-/// This is the resolution every Buzz caller must use — a check that read
+/// This is the resolution every Beekeeper caller must use — a check that read
 /// `BUZZ_PRIVATE_KEY` instead would test a different identity than the one git
 /// presents, and could report success while every push failed.
 ///
@@ -458,9 +458,9 @@ pub fn run() -> i32 {
         };
     }
 
-    // No Nostr challenge from the server — this isn't a Buzz remote.
+    // No Nostr challenge from the server — this isn't a Beekeeper remote.
     // Exit silently so git falls through to the next credential helper.
-    // This check comes FIRST so non-Buzz remotes never hit validation errors.
+    // This check comes FIRST so non-Beekeeper remotes never hit validation errors.
     let wwwauth = match req.wwwauth.as_deref() {
         Some(v) => v,
         None => return 0,

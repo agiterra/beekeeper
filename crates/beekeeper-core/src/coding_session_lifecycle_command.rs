@@ -8,7 +8,7 @@
 //!
 //! # Fork amendment: `projectRef` is optional
 //!
-//! The donor contract required every session to name a Buzz project. Here a
+//! The donor contract required every session to name a Beekeeper project. Here a
 //! session may stand alone: `projectRef` is `Option<String>` and, when present,
 //! must be a NIP-MP project coordinate (`30621:<owner>:<d>`). The field is still
 //! *structurally required* in signed JSON — `null` must be written explicitly —
@@ -104,10 +104,10 @@ const _: () = assert!(KIND_PROJECT == 30621);
     deny_unknown_fields
 )]
 pub enum CodingSessionLifecycleAction {
-    /// Create a new provider session, optionally bound to a Buzz project.
+    /// Create a new provider session, optionally bound to a Beekeeper project.
     #[serde(rename = "session.create")]
     SessionCreate {
-        /// Optional Buzz project reference (`30621:<owner>:<d>`).
+        /// Optional Beekeeper project reference (`30621:<owner>:<d>`).
         ///
         /// `None` creates a standalone session, owned by the channel it is
         /// published into rather than by a project.
@@ -1420,7 +1420,7 @@ mod tests {
                 provider_instance_ref: "claude-primary".try_into().expect("alias"),
                 provider_authority_pubkey: "ab".repeat(32),
                 model: Some("claude-sonnet-4-6".into()),
-                title: Some("Advance Buzz live sessions".into()),
+                title: Some("Advance Beekeeper live sessions".into()),
                 initial_turn: Some("Start with the highest priority task.".into()),
                 actor: None,
                 role: None,

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Durable whole-community deletion engine for Buzz"
+description = "Durable whole-community deletion engine for Beekeeper"
 
 [dependencies]
 anyhow = { workspace = true }

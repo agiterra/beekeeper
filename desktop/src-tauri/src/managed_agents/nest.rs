@@ -1,7 +1,7 @@
-//! Buzz Nest — persistent agent workspace at `~/.beekeeper`.
+//! Beekeeper Nest — persistent agent workspace at `~/.beekeeper`.
 //!
 //! Creates a shared knowledge directory on first launch so every
-//! Buzz-spawned agent starts with orientation (AGENTS.md) and a
+//! Beekeeper-spawned agent starts with orientation (AGENTS.md) and a
 //! place to accumulate research, plans, and logs across sessions.
 //!
 //! Static template content in AGENTS.md (above the managed-section markers)
@@ -109,7 +109,7 @@ pub fn nest_dir() -> Option<PathBuf> {
     }
 }
 
-/// Creates the Buzz nest at `~/.beekeeper` if it doesn't already exist.
+/// Creates the Beekeeper nest at `~/.beekeeper` if it doesn't already exist.
 ///
 /// Delegates to [`ensure_nest_at`] with the resolved nest directory.
 /// Returns an error string if the home directory cannot be resolved.
@@ -118,7 +118,7 @@ pub fn ensure_nest() -> Result<(), String> {
     ensure_nest_at(&root)
 }
 
-/// Creates a Buzz nest at the given `root` path.
+/// Creates a Beekeeper nest at the given `root` path.
 ///
 /// - Creates the root directory and all subdirectories.
 /// - Writes `AGENTS.md` only if it doesn't already exist.
@@ -673,7 +673,7 @@ pub fn regenerate_nest_context(app: &AppHandle) -> Result<(), String> {
 /// a stale AGENTS.md, so we warn and continue rather than propagating the error.
 pub fn try_regenerate_nest(app: &AppHandle) {
     if let Err(error) = regenerate_nest_context(app) {
-        eprintln!("buzz-desktop: nest context regeneration failed: {error}");
+        eprintln!("beekeeper-desktop: nest context regeneration failed: {error}");
     }
 }
 

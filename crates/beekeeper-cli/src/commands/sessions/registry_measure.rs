@@ -40,7 +40,7 @@
 //! Residual, named not fixed: `observed|declared` says *who saw it* and
 //! `measured` says *why it ran*. Two axes, one key. And nothing checks who
 //! signed a `measured` row — see the note in
-//! `buzz-core/src/coding_session_observation_fold.rs`.
+//! `beekeeper-core/src/coding_session_observation_fold.rs`.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;

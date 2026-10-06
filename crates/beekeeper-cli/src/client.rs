@@ -1420,7 +1420,7 @@ const REMEDY_MEMBERSHIP: &str =
 /// The membership gate's sentence when `BUZZ_AUTH_TAG` is set.
 ///
 /// An attested seat is admitted *through its owner*
-/// (`buzz-relay/src/api/mod.rs` `check_relay_membership`): an attestation that
+/// (`beekeeper-relay/src/api/mod.rs` `check_relay_membership`): an attestation that
 /// does not verify, and an owner who is not a member, are the same 403. Both
 /// possibilities are named, and neither of them is fixed by dropping the tag.
 const REMEDY_MEMBERSHIP_ATTESTED: &str =
@@ -1643,7 +1643,7 @@ fn decorate_refusal(message: String) -> String {
 /// The remedy is not conditioned on the HTTP status. The same gate answers
 /// with different statuses depending on the path: a coding-session authority
 /// refusal is `IngestError::Rejected` and reaches `POST /events` as a 400
-/// (`buzz-relay/src/handlers/ingest.rs`, the `check_coding_session_membership`
+/// (`beekeeper-relay/src/handlers/ingest.rs`, the `check_coding_session_membership`
 /// call site), while the membership gate answers 403. The person needs the
 /// same sentence either way, and no status is ever changed by this function.
 pub(crate) fn refusal_with_remedy(message: &str, attested: bool) -> String {
@@ -2753,7 +2753,7 @@ mod tests {
     fn every_named_gate_still_appears_in_the_relays_sources() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
-            .join("buzz-relay")
+            .join("beekeeper-relay")
             .join("src");
         assert!(
             root.is_dir(),

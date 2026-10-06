@@ -142,7 +142,7 @@ pub async fn start_managed_agent(
                     .await
             {
                 eprintln!(
-                    "buzz-desktop: profile reconciliation failed for agent {reconcile_pubkey}: {e}"
+                    "beekeeper-desktop: profile reconciliation failed for agent {reconcile_pubkey}: {e}"
                 );
             }
         });
