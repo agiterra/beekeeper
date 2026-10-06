@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use buzz_core::coding_session_runtime::RuntimeDescriptor;
 
+use crate::layout::{KEY_FILE_VAR, PRIVATE_KEY_VAR};
 use crate::record::CodingSessionProviderRecord;
 
 /// Filename of the host-local working-directory map inside the state dir.
@@ -275,8 +276,17 @@ pub fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, St
 /// the provider inherit it and hand it on. The provider resolves its own —
 /// the sidecar beside it, else `PATH` — and an inherited value could only
 /// make that choice unreadable.
+///
+/// The host's own key variables are the third: a host launched with
+/// [`PRIVATE_KEY_VAR`] or [`KEY_FILE_VAR`] has already resolved the key and
+/// hands it to the provider as `BUZZ_PRIVATE_KEY`, which the agent fence then
+/// removes. The `BEEKEEPER_HOST_*` names sit outside that fence's `BUZZ_`
+/// prefix, so without this entry the raw key would ride along to the provider
+/// and on to every agent it starts.
 pub const INHERITED_KEYS_TO_CLEAR: &[&str] = &[
     "BUZZ_AUTH_TAG",
+    PRIVATE_KEY_VAR,
+    KEY_FILE_VAR,
     BEE_VAR,
     SHARED_WORKDIRS_VAR,
     "BUZZ_ACP_PRIVATE_KEY",

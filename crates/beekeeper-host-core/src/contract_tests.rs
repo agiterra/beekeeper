@@ -20,6 +20,7 @@ use crate::env::{
     build_provider_env, resolve_app_checkout, ProviderEnvInputs, BEE_VAR, DEFAULT_RUST_LOG,
     INHERITED_KEYS_TO_CLEAR, PROJECTS_FILE_NAME, SHARED_WORKDIRS_VAR,
 };
+use crate::layout::{KEY_FILE_VAR, PRIVATE_KEY_VAR};
 use crate::record::{
     canonical_relay_key, CodingSessionProviderRecord, CodingSessionProviderStore, STORE_VERSION,
 };
@@ -582,6 +583,28 @@ fn an_ambient_bee_is_cleared_before_the_provider_child_starts() {
     assert_eq!(
         BEE_VAR, "BEE",
         "this name is kept byte-for-byte in step with buzz_session_provider::seat_bee::BEE_ENV"
+    );
+}
+
+/// The host's own key variables must not survive into the provider child.
+///
+/// The host resolves the provider key from [`PRIVATE_KEY_VAR`] or
+/// [`KEY_FILE_VAR`] and passes it on as `BUZZ_PRIVATE_KEY`, which the agent
+/// fence strips. The `BEEKEEPER_HOST_*` names are outside that fence's `BUZZ_`
+/// prefix, so before this list named them a host launched with either one set
+/// handed the raw key to the provider and, through it, to every agent.
+#[test]
+fn the_host_key_variables_are_cleared_before_the_provider_child_starts() {
+    for key in [PRIVATE_KEY_VAR, KEY_FILE_VAR] {
+        assert!(
+            INHERITED_KEYS_TO_CLEAR.contains(&key),
+            "{key} must be cleared from the inherited environment: {INHERITED_KEYS_TO_CLEAR:?}"
+        );
+    }
+    assert_eq!(
+        (PRIVATE_KEY_VAR, KEY_FILE_VAR),
+        ("BEEKEEPER_HOST_PRIVATE_KEY", "BEEKEEPER_HOST_KEY_FILE"),
+        "these names are kept byte-for-byte in step with buzz_session_provider::agent_fence::KEYS"
     );
 }
 

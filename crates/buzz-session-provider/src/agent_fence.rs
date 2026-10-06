@@ -62,7 +62,15 @@ const PREFIXES: &[&str] = &["BUZZ_"];
 /// than from anything the desktop sets deliberately, and they authorize direct
 /// writes to the media store and the search index — a path that bypasses relay
 /// authorization entirely.
+///
+/// The two `BEEKEEPER_HOST_*` key variables are here for the same reason: the
+/// agent host reads the provider's key from them and clears them before it
+/// spawns this sidecar (`beekeeper_host_core::env::INHERITED_KEYS_TO_CLEAR`),
+/// but a provider started any other way could still inherit one. The names are
+/// kept byte-for-byte with `beekeeper_host_core::layout`.
 const KEYS: &[&str] = &[
+    "BEEKEEPER_HOST_PRIVATE_KEY",
+    "BEEKEEPER_HOST_KEY_FILE",
     "NOSTR_PRIVATE_KEY",
     "TYPESENSE_API_KEY",
     "S3_ACCESS_KEY",
@@ -909,6 +917,8 @@ mod tests {
             "BUZZ_S3_ACCESS_KEY",
             "BUZZ_S3_SECRET_KEY",
             "BUZZ_DEV_KEYRING_SERVICE",
+            "BEEKEEPER_HOST_PRIVATE_KEY",
+            "BEEKEEPER_HOST_KEY_FILE",
             "NOSTR_PRIVATE_KEY",
             "TYPESENSE_API_KEY",
             "S3_ACCESS_KEY",
