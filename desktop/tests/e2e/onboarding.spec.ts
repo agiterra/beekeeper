@@ -1826,7 +1826,7 @@ test("connected first-community profile keeps Back bottom-left and balances the 
   await page.getByRole("tab", { name: "Emoji" }).click();
   await selectFirstEmojiFromPicker(page);
   const liveEmoji = page.getByTestId("community-avatar-live-preview-emoji");
-  await expect(liveEmoji).toHaveClass(/buzz-avatar-squish/);
+  await expect(liveEmoji).toHaveClass(/beekeeper-avatar-squish/);
   await expect(
     page.getByTestId("community-avatar-live-preview-panel"),
   ).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");

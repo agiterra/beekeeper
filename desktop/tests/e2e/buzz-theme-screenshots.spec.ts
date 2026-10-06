@@ -1074,7 +1074,7 @@ test("glass background keeps the content panel solid", async ({ page }) => {
   await toggle.click();
   await expect(toggle).toBeChecked();
   await expect(opacitySlider).toBeVisible();
-  await expect(opacitySlider).toHaveClass(/buzz-avatar-framing-slider/);
+  await expect(opacitySlider).toHaveClass(/beekeeper-avatar-framing-slider/);
   await expect(opacitySlider).toHaveAttribute("aria-valuenow", "65");
   await expect(opacitySlider).toHaveCSS("height", "32px");
   const matchingRadiusControls = [
