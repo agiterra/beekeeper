@@ -80,6 +80,7 @@ export default defineConfig({
         "**/role-packs-project.spec.ts",
         "**/project-agents-tab.spec.ts",
         "**/project-agents-repo.spec.ts",
+        "**/memory-explorer.spec.ts",
         // Project agents and hiring: association, borrowed, lead picker, roster.
         "**/project-agent-hiring.spec.ts",
         "**/coding-session-reachability.spec.ts",

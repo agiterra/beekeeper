@@ -69,6 +69,13 @@
       "description": "Export a coding session as a static, redacted, self-contained transcript bundle with an offline viewer",
       "defaultEnabled": true,
       "platforms": ["desktop"]
+    },
+    {
+      "id": "memory-explorer",
+      "name": "Memory explorer (experimental)",
+      "description": "Explore committed Markdown documents and their explicit connections in Artifacts.",
+      "defaultEnabled": false,
+      "platforms": ["desktop"]
     }
   ]
 }

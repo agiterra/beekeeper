@@ -201,6 +201,12 @@ importers:
       mdast-util-from-markdown:
         specifier: ^2.0.3
         version: 2.0.3
+      mdast-util-gfm:
+        specifier: ^3.1.0
+        version: 3.1.0
+      micromark-extension-gfm:
+        specifier: ^3.0.0
+        version: 3.0.0
       motion:
         specifier: ^12.38.0
         version: 12.40.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)

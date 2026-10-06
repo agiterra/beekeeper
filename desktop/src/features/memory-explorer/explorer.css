@@ -1,0 +1,74 @@
+.explorer-panes {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.explorer-list {
+  width: 13rem;
+  min-width: 12rem;
+  max-width: 28rem;
+  resize: horizontal;
+  overflow: auto;
+  padding: 1rem 0.8rem 1rem 0;
+  border-right: 1px solid hsl(var(--border));
+}
+.explorer-connections {
+  width: 15rem;
+  flex-shrink: 0;
+  overflow: auto;
+  padding: 1rem;
+  border-right: 1px solid hsl(var(--border));
+}
+.explorer-reader {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 1rem 1.5rem;
+}
+.explorer-node {
+  width: 100%;
+  text-align: left;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.6rem;
+  padding: 0.7rem;
+  margin-bottom: 0.6rem;
+  background: hsl(var(--card));
+}
+.explorer-selected {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--accent));
+}
+.explorer-file {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.65rem 0.5rem;
+  border-bottom: 1px solid hsl(var(--border));
+}
+.explorer button:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+@media (max-width: 1050px) {
+  .explorer-panes {
+    display: block;
+    overflow: auto;
+  }
+  .explorer-list {
+    width: 100%;
+    max-width: none;
+    max-height: 15rem;
+    resize: none;
+    border-right: 0;
+  }
+  .explorer-connections {
+    width: 100%;
+    max-height: 20rem;
+    border-right: 0;
+  }
+  .explorer-reader {
+    overflow: visible;
+    padding: 1rem 0.5rem;
+  }
+}

@@ -25,6 +25,10 @@ export type MockAgentsRepoSeed = {
    * `draftIds`, which the mock fills from the request.
    */
   commitResults: Record<string, unknown>[];
+  /** Experimental reader failure/delay fixtures; no production transport. */
+  explorerError?: string;
+  explorerReadDelayMs?: number;
+  explorerOutcomes?: Record<string, string>;
 };
 
 type CommitCall = { request: Record<string, unknown> };
@@ -48,6 +52,15 @@ export function handleMockAgentsRepoCommand(
   payload: unknown,
 ): unknown | undefined {
   switch (command) {
+    case "memory_explorer_release":
+      return null;
+    case "memory_explorer_snapshot":
+      if (seed(command).explorerError)
+        throw new Error(seed(command).explorerError);
+      return {
+        token: "mock-snapshot",
+        listing: structuredClone(seed(command).listing),
+      };
     case "agents_repo_ls": {
       const { listing } = seed(command);
       return {
@@ -55,6 +68,7 @@ export function handleMockAgentsRepoCommand(
         entries: listing.entries.map((entry) => ({ ...entry })),
       };
     }
+    case "memory_explorer_read":
     case "agents_repo_read": {
       const { listing, files } = seed(command);
       const path = (payload as { path?: string }).path ?? "";
@@ -62,6 +76,29 @@ export function handleMockAgentsRepoCommand(
         (candidate) => candidate.path === path,
       );
       const text = files[path];
+      if (command === "memory_explorer_read") {
+        const mocked = seed(command);
+        const outcome =
+          mocked.explorerOutcomes?.[path] ??
+          (entry && entry.size > 4 * 1024 * 1024 ? "too-large" : "on-main");
+        if (mocked.explorerReadDelayMs || outcome !== "on-main") {
+          return new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  path,
+                  text: outcome === "on-main" ? text : null,
+                  state: outcome,
+                  blob: entry?.blob ?? null,
+                  commit: listing.commit,
+                  size: entry?.size ?? null,
+                  syncedAt: listing.syncedAt,
+                }),
+              mocked.explorerReadDelayMs ?? 0,
+            ),
+          );
+        }
+      }
       if (!entry || text === undefined) {
         return {
           path,

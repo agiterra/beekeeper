@@ -1,8 +1,10 @@
 import path from "node:path";
+import { createRequire } from "node:module";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 
+const require = createRequire(import.meta.url);
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
@@ -21,6 +23,22 @@ export default defineConfig(async () => ({
     }),
     react(),
   ],
+  // Memory Explorer's parser runs without a DOM. The package's browser
+  // decoder uses document.createElement; its default export uses a static table.
+  worker: {
+    plugins: () => [
+      {
+        name: "memory-explorer-worker-entities",
+        enforce: "pre",
+        resolveId(source) {
+          if (source !== "decode-named-character-reference") return null;
+          return require.resolve(source, {
+            paths: [path.dirname(require.resolve("mdast-util-from-markdown"))],
+          });
+        },
+      },
+    ],
+  },
   resolve: {
     alias: {
       "@": "/src",

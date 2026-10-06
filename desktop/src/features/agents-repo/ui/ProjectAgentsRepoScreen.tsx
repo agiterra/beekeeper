@@ -80,6 +80,7 @@ export function ProjectAgentsRepoScreen({
   const { project } = useProjectContainerQuery(projectId);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const explorerEnabled = useFeatureEnabled("memory-explorer");
   const pulseEnabled = useFeatureEnabled("project-pulse");
   const coordinate =
     project && project.id !== LOCAL_GENERAL_ID && project.owner.length > 0
@@ -433,6 +434,26 @@ export function ProjectAgentsRepoScreen({
               showPulse={pulseEnabled}
             />
           </div>
+          {explorerEnabled ? (
+            <div className="mb-3 flex gap-2">
+              <span className="rounded-md bg-accent px-3 py-2 text-sm">
+                Files
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  void navigate({
+                    to: "/projects/$projectId/files",
+                    params: { projectId },
+                    search: { view: "explore" },
+                  })
+                }
+              >
+                Explore
+              </Button>
+            </div>
+          ) : null}
           <p className="mb-3 text-sm text-muted-foreground">{copy.subtitle}</p>
         </>
       )}

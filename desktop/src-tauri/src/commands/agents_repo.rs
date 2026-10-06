@@ -181,3 +181,61 @@ async fn fetch_commit_assets(
     }
     Ok(assets)
 }
+
+fn explorer_scope(
+    state: &AppState,
+    project: &str,
+    source: &ProjectPackSource,
+) -> Result<String, String> {
+    Ok(format!(
+        "{}|{}|{}|{}|{:?}|{:?}|{}",
+        crate::relay::relay_ws_url_with_override(state),
+        state.signing_keys()?.public_key().to_hex(),
+        project,
+        source.repo,
+        source.git_ref,
+        source.sha,
+        source.path
+    ))
+}
+
+/// Capture an authorized repository tree for the experimental committed reader.
+#[tauri::command]
+pub async fn memory_explorer_snapshot(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_ref: String,
+) -> Result<crate::managed_agents::memory_explorer::ExplorerSnapshot, String> {
+    let source = source_for(&state, &project_ref).await?;
+    let scope = explorer_scope(&state, &project_ref, &source)?;
+    tokio::task::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app.state::<AppState>();
+        let repo = resolve_agents_repo(&app, &state, &source, true)?;
+        crate::managed_agents::memory_explorer::capture(scope, repo)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Read one regular UTF-8 blob in an authorized captured snapshot (4 MiB ceiling).
+#[tauri::command]
+pub async fn memory_explorer_read(
+    state: State<'_, AppState>,
+    project_ref: String,
+    token: String,
+    path: String,
+) -> Result<AgentsRepoFile, String> {
+    let source = source_for(&state, &project_ref).await?;
+    let scope = explorer_scope(&state, &project_ref, &source)?;
+    let repo = crate::managed_agents::memory_explorer::snapshot_repo(&token, &scope)?;
+    tokio::task::spawn_blocking(move || crate::managed_agents::memory_explorer::read(&repo, &path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Drop a process-local experimental snapshot when its reader unmounts.
+#[tauri::command]
+pub fn memory_explorer_release(token: String) {
+    crate::managed_agents::memory_explorer::release(&token);
+}

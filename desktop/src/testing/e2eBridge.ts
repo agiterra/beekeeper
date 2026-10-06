@@ -104,19 +104,16 @@ import {
   isValidLinkPreviewSnapshotCanonicalUrl,
   parseLinkPreviewSnapshots,
 } from "@/shared/lib/linkPreviewSnapshot";
-
 type TestIdentity = {
   privateKey: string;
   pubkey: string;
   username: string;
 };
-
 type MockCommandAvailability = {
   available?: boolean;
   command?: string;
   resolvedPath?: string | null;
 };
-
 /** Mutable session-settings mock: stored values plus the running child's. */
 const mockCodingSessionCapacity: {
   maxSessions: number | null;
@@ -13519,6 +13516,9 @@ export function maybeInstallE2eTauriMocks() {
         });
         return true;
       }
+      case "memory_explorer_snapshot":
+      case "memory_explorer_read":
+      case "memory_explorer_release":
       case "agents_repo_ls":
       case "agents_repo_read":
       case "agents_repo_commit_drafts":
