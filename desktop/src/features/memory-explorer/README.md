@@ -7,6 +7,12 @@ The native commands capture a process-local authorized snapshot, read regular UT
 git blobs at that immutable commit (4 MiB each), and release its capability on
 unmount. Every blob request rechecks community, identity, project and source.
 The reader owns a disposable worker and in-memory index (256 documents / 16 MiB).
+The initial pass reads at most 12 documents, prioritizing the selected file and
+recognized map/ledger/plan. Other files load on selection and search stays
+explicitly partial. The graph pages six neighbors around its selected node,
+with drawn reference/backlink/containment edges and a rendered Markdown reader.
+Full coordinates stay in expandable source details; raw Source keeps exact bytes.
+
 Archives not reached by explicit links stay visible and load on demand. A budget
 stop is disclosed; loading another file can evict the earlier index.
 

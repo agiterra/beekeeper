@@ -130,6 +130,7 @@ type Loaded = {
   partial: string[];
 };
 const MAX_INDEX_BYTES = 16 * 1024 * 1024;
+const MAX_INITIAL_FILES = 12;
 
 function ExplorerReader({
   projectRef,
@@ -209,6 +210,12 @@ function ExplorerReader({
         const entry = entries.find((e) => e.path === path);
         if (!entry || documents.some((d) => d.path === path) || outcomes[path])
           continue;
+        if (documents.length >= MAX_INITIAL_FILES) {
+          partial.push(
+            "Initial reading budget: 12 documents; select another file to load it",
+          );
+          break;
+        }
         if (documents.length >= 256 || bytes + entry.size > MAX_INDEX_BYTES) {
           partial.push("Index budget: 256 files / 16 MiB");
           break;
