@@ -7,15 +7,15 @@
     "c67f1b575c4dd691dc29117393216549aa320aaccb5345699e1b4de4c94d53d8",
     "f084100708f1842a6f59ce3c7ae9898456eb3cc283ad7088c3b3b410f01e4f29",
     "96413b4e30b36e50ba12d433caabf7d55e334d8dd4ec2021e8af147bf70cbf61",
-    "ff8f335001cb13840bedc981b9138d7b9062969a305c787833fc8512fdfc62aa",
-    "1922189f894ad9eb444bfc3ba8905aa1f538fa9dcf13a4146b7b5a90b469b77e",
-    "eba2ed8e8642041eed7bc9840345c06ea75438017a4534569019bfacccf0de17"
+    "c794ddf2edfb906c355f9032d194483144540f274d0437466df8e314d02ad7aa",
+    "2808c01d7985c3fe18182ba937c4d0e97a51ee42c89dfa541c232926bad7757b",
+    "6ccadfd6d9ce4745c8d6c1092cb886d30b58b1b25ec6cc1cb1e0baae10acd001"
   ],
   "sessionRef": "dc580cfb-6c80-4fc2-8f4e-dfc328acf222",
   "genesisRef": "ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b",
   "checkpoints": [
     {
-      "eventId": "eba2ed8e8642041eed7bc9840345c06ea75438017a4534569019bfacccf0de17",
+      "eventId": "6ccadfd6d9ce4745c8d6c1092cb886d30b58b1b25ec6cc1cb1e0baae10acd001",
       "authorPubkey": "9ac20335eb38768d2052be1dbbc3c8f6178407458e51e6b4ad22f1d91758895b",
       "source": "declared",
       "assignmentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
@@ -33,7 +33,7 @@
       "authorPubkey": "9ac20335eb38768d2052be1dbbc3c8f6178407458e51e6b4ad22f1d91758895b",
       "source": "declared",
       "eventIds": [
-        "1922189f894ad9eb444bfc3ba8905aa1f538fa9dcf13a4146b7b5a90b469b77e"
+        "2808c01d7985c3fe18182ba937c4d0e97a51ee42c89dfa541c232926bad7757b"
       ],
       "droppedEventIds": 0,
       "assignmentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
@@ -49,7 +49,7 @@
       "authorPubkey": "5ab4689e400a4a160cf01cd44730845a54768df8547dcdf073d964f109f18c30",
       "source": "observed",
       "eventIds": [
-        "ff8f335001cb13840bedc981b9138d7b9062969a305c787833fc8512fdfc62aa"
+        "c794ddf2edfb906c355f9032d194483144540f274d0437466df8e314d02ad7aa"
       ],
       "droppedEventIds": 0,
       "assignmentRef": null,

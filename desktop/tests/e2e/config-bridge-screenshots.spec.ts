@@ -193,7 +193,8 @@ test.describe("config bridge screenshots", () => {
     await expect(panel.getByText("gpt-4o-mini", { exact: true })).toHaveCount(
       0,
     );
-    await expect(panel.getByText("Set in Buzz")).toHaveCount(0);
+    // The folded panel carries no product source annotation ("Set in Beekeeper").
+    await expect(panel.getByText("Set in Beekeeper")).toHaveCount(0);
     await settleAnimations(panel);
 
     await panel.screenshot({ path: `${SHOTS}/01-folded-config-panel.png` });
@@ -292,14 +293,14 @@ test.describe("config bridge screenshots", () => {
       managedAgents: [
         {
           pubkey: BUZZ_AGENT_PUBKEY,
-          name: "Buzz Agent",
+          name: "Beekeeper Agent",
           status: "running" as const,
           channelNames: ["agents"],
         },
       ],
     });
 
-    const panel = await openAgentProfileFromChannel(page, "Buzz Agent", {
+    const panel = await openAgentProfileFromChannel(page, "Beekeeper Agent", {
       anchorText: "MCP servers",
       tab: "Runtime",
     });

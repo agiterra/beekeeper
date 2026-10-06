@@ -21,15 +21,20 @@ const HEX = [
   [2, 3, "/"],
 ] as const;
 
+const WORDMARK = "beekeeper";
+
+// `r` is one column narrower than the other glyphs. The wordmark's total width
+// sets where the frame sits, and at the width the full-size `r` gives (86
+// columns at gap 3) the frame lands on a column parity where the animated field
+// steps past the static banner at one edge cell in min-dark, failing the
+// adjacent-cell gate in terminalBannerWave.test.mjs. 85 columns passes.
+
 const GLYPHS: Readonly<Record<string, readonly string[]>> = {
   b: ["██     ", "██▄▄▄  ", "██▀▀██ ", "██  ██ ", "██████ "],
-  u: ["       ", "██  ██ ", "██  ██ ", "██  ██ ", "▀█████ "],
-  z: ["       ", "██████ ", "   ▄██ ", " ▄██▀  ", "██████ "],
-  t: [" ██    ", "█████  ", " ██    ", " ██    ", "  ███  "],
   e: ["       ", " ▄███▄ ", "██▄▄▄█ ", "██     ", " ▀███▀ "],
-  r: ["       ", "██ ▄██ ", "███▀▀  ", "██     ", "██     "],
-  m: ["        ", "██▄██▄██", "██ ██ ██", "██ ██ ██", "██ ██ ██"],
-  " ": ["   ", "   ", "   ", "   ", "   "],
+  k: ["██     ", "██ ▄██ ", "████▀  ", "██▀██▄ ", "██  ██ "],
+  p: ["       ", "██████ ", "██  ██ ", "██▀▀▀  ", "██     "],
+  r: ["      ", "██▄██ ", "███▀▀ ", "██    ", "██    "],
 };
 
 const INK_FRAME = {
@@ -70,10 +75,12 @@ function trimRight(value: string): string {
 
 function wordmark(gap: number): readonly string[] {
   const rows = Array.from({ length: 5 }, () => "");
-  for (const [index, letter] of [..."buzz term"].entries()) {
+  const letters = [...WORDMARK];
+  for (const [index, letter] of letters.entries()) {
     const glyph = GLYPHS[letter];
     for (let row = 0; row < rows.length; row += 1) {
-      rows[row] += glyph[row] + (index < 8 ? " ".repeat(gap) : "");
+      rows[row] +=
+        glyph[row] + (index < letters.length - 1 ? " ".repeat(gap) : "");
     }
   }
   return rows.map(trimRight).filter((row) => row.trim());

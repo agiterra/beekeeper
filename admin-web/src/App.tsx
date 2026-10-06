@@ -237,7 +237,7 @@ function FeedbackList() {
     <Page
       eyebrow="Product"
       title="Feedback"
-      description="Recent product feedback from across Buzz."
+      description="Recent product feedback from across Beekeeper."
     >
       <StateView resource={resource}>
         {(items) => {
@@ -818,7 +818,7 @@ export function App() {
             <BeekeeperMark />
           </span>
           <span>
-            Buzz <b>Admin</b>
+            Beekeeper <b>Admin</b>
           </span>
         </Link>
         <nav>

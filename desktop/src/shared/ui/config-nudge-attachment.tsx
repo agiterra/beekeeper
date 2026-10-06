@@ -400,7 +400,7 @@ function RequirementRow({
     case "cli_config_invalid": {
       // Config-invalid rows are purely informational — the user must edit an
       // external file. No Agent runtimes CTA (Beekeeper can't repair ~/.codex/config.toml)
-      // and no Edit Agent CTA (the field isn't managed by Buzz).
+      // and no Edit Agent CTA (the field isn't managed by Beekeeper).
       const cli = requirement.probe_args[0] ?? "the CLI";
       const configFile = `~/.${cli}/config.toml`;
       return (

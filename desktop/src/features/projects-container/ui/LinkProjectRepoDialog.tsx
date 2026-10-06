@@ -187,8 +187,8 @@ export function LinkProjectRepoDialog({
                     type="radio"
                   />
                   <span className="text-sm">
-                    Keep origin unchanged; add a separate <code>buzz</code>{" "}
-                    remote
+                    Keep origin unchanged; add a separate Beekeeper remote named{" "}
+                    <code>buzz</code>
                   </span>
                 </label>
               </div>

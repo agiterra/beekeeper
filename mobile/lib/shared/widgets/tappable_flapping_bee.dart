@@ -6,7 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'flapping_bee.dart';
 
-/// The Buzz mark with wings that flutter twice when the user taps it.
+/// The Beekeeper mark with wings that flutter twice when the user taps it.
 ///
 /// The geometry and wing tuck match the desktop loading bee. When reduced
 /// motion is enabled, the mark stays static.

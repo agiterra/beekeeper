@@ -49,10 +49,20 @@ import { fileURLToPath } from "node:url";
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /**
- * Cargo package -> the binary it produces, where they differ. `buzz-cli`
- * builds `bee`; every other sidecar package names its own binary.
+ * Cargo package -> the binary it produces, where they differ. The packages
+ * are named `beekeeper-*` but the binaries keep their deployed `buzz-*` names
+ * (and `beekeeper-cli` builds `bee`); a package not listed here names its own
+ * binary (e.g. `beekeeper-host`).
  */
-const BINARY_OF = { "buzz-cli": "bee" };
+const BINARY_OF = {
+  "beekeeper-acp": "buzz-acp",
+  "beekeeper-agent": "buzz-agent",
+  "beekeeper-backend-kubernetes": "buzz-backend-kubernetes",
+  "beekeeper-cli": "bee",
+  "beekeeper-dev-mcp": "buzz-dev-mcp",
+  "beekeeper-session-provider": "buzz-session-provider",
+  "beekeeper-shell-host": "buzz-shell-host",
+};
 const binaryOf = (pkg) => BINARY_OF[pkg] ?? pkg;
 
 /** The one sidecar the base bundle config deliberately does not declare. */

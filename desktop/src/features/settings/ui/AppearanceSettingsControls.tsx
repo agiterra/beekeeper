@@ -33,7 +33,7 @@ import {
 import { Switch } from "@/shared/ui/switch";
 import { SettingsOptionRow } from "./SettingsOptionGroup";
 
-/** Buzz navigation can use either its production tint or a stronger tab. */
+/** Beekeeper navigation can use either its production tint or a stronger tab. */
 export function ProminentActiveTabSetting() {
   const { prominentActiveTab, setProminentActiveTab } = useTheme();
 

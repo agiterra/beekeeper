@@ -72,7 +72,7 @@ export function queryEvents(
 
     ws.addEventListener("open", () => {
       // Wait briefly for an AUTH challenge before sending REQ.
-      // Buzz relays always send AUTH, but other relays may not.
+      // Beekeeper relays always send AUTH, but other relays may not.
       unauthenticatedReqTimer = setTimeout(() => sendReq(), 100);
     });
 
@@ -378,7 +378,7 @@ export function subscribeEvents(
     };
 
     ws.addEventListener("open", () => {
-      // Buzz relays always challenge; other relays never do. Give AUTH a
+      // Beekeeper relays always challenge; other relays never do. Give AUTH a
       // moment before falling back to an unauthenticated REQ.
       graceTimer = setTimeout(() => sendReqs(), AUTH_GRACE_MS);
     });

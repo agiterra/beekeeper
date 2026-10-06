@@ -237,8 +237,8 @@ function applyAccentColor(value: string) {
 }
 
 /**
- * The Buzz themes ship with a fixed neutral accent (the GitHub black/white
- * foreground) rather than a user-selectable accent color. When a Buzz theme is
+ * The Beekeeper themes ship with a fixed neutral accent (the GitHub black/white
+ * foreground) rather than a user-selectable accent color. When a Beekeeper theme is
  * active we force `NEUTRAL_ACCENT` regardless of the stored preference, and the
  * appearance panel hides the accent picker. The user's chosen accent is left
  * untouched in storage so it returns when they switch back to another theme.
@@ -248,7 +248,7 @@ export function isBeekeeperTheme(themeName: string): boolean {
 }
 
 /**
- * Resolve the accent to actually apply for a theme: Buzz themes are pinned to
+ * Resolve the accent to actually apply for a theme: Beekeeper themes are pinned to
  * the neutral accent; every other theme uses the stored/selected accent.
  */
 function resolveEffectiveAccent(
@@ -258,12 +258,12 @@ function resolveEffectiveAccent(
   return isBeekeeperTheme(themeName) ? NEUTRAL_ACCENT : accentColor;
 }
 
-/** Toggle the Buzz-specific gradient marker independently from glass. */
+/** Toggle the Beekeeper-specific gradient marker independently from glass. */
 function applyBeekeeperSidebar(themeName: string) {
   const root = document.documentElement;
   if (isBeekeeperTheme(themeName)) {
     root.setAttribute("data-beekeeper-sidebar", "");
-    // Keep the concrete Buzz variant on the root as well as the generic
+    // Keep the concrete Beekeeper variant on the root as well as the generic
     // marker. The gradient stylesheet matches this attribute directly, which
     // makes WKWebView invalidate the painted background when light/dark mode
     // changes instead of relying only on a custom-property dependency update.
@@ -411,8 +411,8 @@ function applyCachedVars(): string | null {
     glassThemeReady = true;
 
     const accent = getStorageItem(ACCENT_STORAGE_KEY) ?? DEFAULT_ACCENT;
-    // Pin Buzz themes to the neutral accent here too, matching applyTheme.
-    // Otherwise a cached Buzz theme + non-neutral stored accent flashes the
+    // Pin Beekeeper themes to the neutral accent here too, matching applyTheme.
+    // Otherwise a cached Beekeeper theme + non-neutral stored accent flashes the
     // old accent on reload until the async applyTheme effect runs.
     applyAccentColor(resolveEffectiveAccent(themeName, accent));
 
@@ -455,7 +455,7 @@ async function applyTheme(name: SyntaxThemeName): Promise<{
   // Apply the accent synchronously in the same batch as the theme vars so the
   // browser paints the new theme + accent together. Doing this in a later
   // microtask (e.g. the caller's `.then`) let the previous accent flash on the
-  // new theme for a frame — the flicker seen when switching to Buzz. Buzz
+  // new theme for a frame — the flicker seen when switching to Beekeeper. Beekeeper
   // themes resolve to the neutral accent regardless of the stored value.
   applyAccentColor(
     resolveEffectiveAccent(
@@ -524,7 +524,7 @@ export function ThemeProvider({
   const [followSystem, setFollowSystemState] = useState<boolean>(() => {
     const stored = getStorageItem(FOLLOW_SYSTEM_KEY);
     if (stored !== null) return stored === "true";
-    // Fresh profiles (no saved theme) default to System mode so the Buzz
+    // Fresh profiles (no saved theme) default to System mode so the Beekeeper
     // default tracks the OS light/dark scheme. Profiles that picked a theme
     // before this toggle existed keep their fixed theme until they opt in.
     return getStorageItem(THEME_STORAGE_KEY) === null;
@@ -574,8 +574,8 @@ export function ThemeProvider({
     void applyWindowGlass(glassBackground);
   }, [glassBackground]);
 
-  // The stronger selected-row treatment belongs exclusively to Buzz. Keep
-  // the saved preference so it is restored when the user returns to Buzz,
+  // The stronger selected-row treatment belongs exclusively to Beekeeper. Keep
+  // the saved preference so it is restored when the user returns to Beekeeper,
   // but remove the live marker for every other theme.
   useEffect(() => {
     setProminentActiveTabActive(
@@ -626,7 +626,7 @@ export function ThemeProvider({
   }, [followSystem]);
 
   // Re-apply the accent when the user picks a new swatch or the effective theme
-  // changes. applyTheme already applies the (Buzz-neutral-aware) accent in the
+  // changes. applyTheme already applies the (Beekeeper-neutral-aware) accent in the
   // same synchronous batch as the theme vars — the flicker fix — so this effect
   // is idempotent on theme changes and simply covers accent-only changes.
   useEffect(() => {

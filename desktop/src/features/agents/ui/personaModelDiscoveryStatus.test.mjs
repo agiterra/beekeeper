@@ -26,20 +26,30 @@ test("model discovery status names missing OpenAI-compatible credentials", () =>
   assert.match(status?.message ?? "", /OpenAI models/);
 });
 
-test("Buzz shared compute names the empty state and next action", () => {
-  const status = formatModelDiscoveryErrorStatus(
-    new Error("no Buzz shared compute serving members are available"),
-    "relay-mesh",
-  );
+// Exact backend strings: desktop/src-tauri/src/mesh_llm/discovery.rs and
+// desktop/src-tauri/src/commands/agent_models.rs. The pre-rename "Buzz"
+// spellings stay covered so a stale message still classifies.
+for (const backendMessage of [
+  "no Beekeeper shared compute serving members are available",
+  "No live Beekeeper shared compute models are available",
+  "no Buzz shared compute serving members are available",
+  "No live Buzz shared compute models are available",
+]) {
+  test(`shared compute names the empty state and next action: ${backendMessage}`, () => {
+    const status = formatModelDiscoveryErrorStatus(
+      new Error(backendMessage),
+      "relay-mesh",
+    );
 
-  assert.equal(status?.tone, "warning");
-  assert.match(status?.message ?? "", /No members are sharing compute/);
-  assert.match(status?.message ?? "", /Settings > Compute/);
-});
+    assert.equal(status?.tone, "warning");
+    assert.match(status?.message ?? "", /No members are sharing compute/);
+    assert.match(status?.message ?? "", /Settings > Compute/);
+  });
+}
 
-test("Buzz shared compute distinguishes relay lookup failures", () => {
+test("shared compute distinguishes relay lookup failures", () => {
   const status = formatModelDiscoveryErrorStatus(
-    new Error("Buzz shared compute model discovery failed: relay offline"),
+    new Error("Beekeeper shared compute model discovery failed: relay offline"),
     "relay-mesh",
   );
 
@@ -48,9 +58,11 @@ test("Buzz shared compute distinguishes relay lookup failures", () => {
   assert.match(status?.message ?? "", /relay connection/);
 });
 
-test("Buzz shared compute names a missing relay member roster", () => {
+test("shared compute names a missing relay member roster", () => {
   const status = formatModelDiscoveryErrorStatus(
-    new Error("Buzz shared compute is waiting for the current member roster"),
+    new Error(
+      "Beekeeper shared compute is waiting for the current member roster",
+    ),
     "relay-mesh",
   );
 

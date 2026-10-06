@@ -222,7 +222,7 @@ abstract final class EventKind {
   static const channelEventKinds = [
     deletion, // 5
     reaction, // 7
-    nip29DeleteEvent, // 9005 — Buzz-native deletion
+    nip29DeleteEvent, // 9005 — Beekeeper-native deletion
     ...channelMessageEventKinds,
     40001, // legacy pre-migration stream messages
     streamMessageEdit, // 40003
@@ -376,7 +376,7 @@ class NostrFilter {
   /// Tag filters, e.g. `{'#h': ['channel-id']}`.
   final Map<String, List<String>> tags;
 
-  /// Buzz relay bridge filter extensions (for example NIP-CW `top_level`).
+  /// Beekeeper relay bridge filter extensions (for example NIP-CW `top_level`).
   final Map<String, Object?> extensions;
 
   const NostrFilter({
@@ -577,7 +577,7 @@ List<MemberEntry> membersFromEvent(NostrEvent event) {
   ];
 }
 
-/// Parse a Buzz command response from the relay's OK message content.
+/// Parse a Beekeeper command response from the relay's OK message content.
 ///
 /// Command kinds (e.g. 41010, 30620, 46020) return `"response:{...}"` in the
 /// OK message. Returns `null` if the message is not a command response or the

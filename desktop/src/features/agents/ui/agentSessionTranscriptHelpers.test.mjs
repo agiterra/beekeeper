@@ -67,6 +67,35 @@ test("parsePromptText extracts event id, content, hex pubkey, and a title-cased 
   );
 });
 
+// The harness writes `[Beekeeper event: …]` (single) and
+// `[Beekeeper events — N events]` (batched). Transcripts persisted before the
+// rename carry the same headers spelled "Buzz"; the tests above use that old
+// spelling, these cover the current one.
+for (const header of ["Beekeeper event", "Buzz event"]) {
+  test(`parsePromptText recognizes the "[${header}: …]" header`, () => {
+    const text = [
+      `[${header}: @mention]`,
+      `From: Wes (hex: ${HEX})`,
+      "Content: hello",
+    ].join("\n");
+
+    const result = parsePromptText(text);
+    assert.equal(result.userText, "hello");
+    assert.equal(result.userPubkey, HEX);
+    assert.equal(result.userTitle, "@Mention");
+  });
+}
+
+for (const header of ["Beekeeper events", "Buzz events"]) {
+  test(`parsePromptText recognizes the batched "[${header} — N events]" header`, () => {
+    const text = [`[${header} — 2 events]`, "Content: batched"].join("\n");
+
+    const result = parsePromptText(text);
+    assert.equal(result.userText, "batched");
+    assert.equal(result.userTitle, "Relay event");
+  });
+}
+
 test("parsePromptText preserves multiline event content in the user bubble text", () => {
   const text = [
     "[Buzz event: @mention]",

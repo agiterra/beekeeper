@@ -13,6 +13,20 @@ export function extractPromptText(payload: Record<string, unknown>): string {
   return prompt.map(extractBlockText).filter(Boolean).join("\n");
 }
 
+/**
+ * True for the harness's event header section: `[Beekeeper event: …]` /
+ * `[Beekeeper events — N events]`. Persisted transcripts recorded before the
+ * rename carry the same header spelled `[Buzz event: …]`, so both spellings
+ * are accepted.
+ */
+export function isAgentEventSectionTitle(title: string): boolean {
+  const normalized = title.toLowerCase();
+  return (
+    normalized.startsWith("beekeeper event") ||
+    normalized.startsWith("buzz event")
+  );
+}
+
 export function parsePromptText(text: string): {
   sections: PromptSection[];
   userText: string;
@@ -33,10 +47,9 @@ export function parsePromptText(text: string): {
     };
   }
 
-  const eventSection = sections.find((section) => {
-    const title = section.title.toLowerCase();
-    return title.startsWith("buzz event");
-  });
+  const eventSection = sections.find((section) =>
+    isAgentEventSectionTitle(section.title),
+  );
   const eventContent = eventSection
     ? extractEventContent(eventSection.body)
     : "";

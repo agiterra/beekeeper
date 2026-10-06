@@ -113,7 +113,7 @@ export function InviteJoinPolicyNotice({
 
       {policy.terms_markdown || policy.privacy_markdown ? (
         <PolicyCheckbox
-          accessibleLabel="I agree to the Buzz Terms of Service and Privacy Policy."
+          accessibleLabel="I agree to the Beekeeper Terms of Service and Privacy Policy."
           checked={agreementConfirmed}
           onCheckedChange={onAgreementConfirmedChange}
         >

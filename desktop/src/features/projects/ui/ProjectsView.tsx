@@ -218,7 +218,7 @@ export function ProjectsView({
   const projectsWorkItemsQuery = useProjectsWorkItemsQuery(
     filter === "all" || filter === "prs" || filter === "issues" ? projects : [],
   );
-  // One blobless clone per primary Buzz repository, only while the overview
+  // One blobless clone per primary Beekeeper repository, only while the overview
   // header is visible.
   const snapshotProjects = React.useMemo(
     () =>

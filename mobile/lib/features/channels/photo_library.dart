@@ -11,7 +11,7 @@ const _photoPermissionRequest = PermissionRequestOption(
   ),
 );
 
-/// A recent photo exposed to Buzz's compact in-composer gallery.
+/// A recent photo exposed to Beekeeper's compact in-composer gallery.
 @immutable
 class RecentPhoto {
   /// The platform photo-library identifier.

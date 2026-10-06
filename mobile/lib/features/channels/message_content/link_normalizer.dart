@@ -11,7 +11,7 @@ final _backtickRunPattern = RegExp(r'`+');
 
 /// Converts supported Beekeeper and HTTP(S) autolinks and bare links into Markdown
 /// links while leaving inline and fenced code untouched. Punctuation peeling
-/// is limited to Buzz URLs so existing HTTP(S) destinations stay unchanged.
+/// is limited to Beekeeper URLs so existing HTTP(S) destinations stay unchanged.
 String normalizeBareLinks(String content) {
   final buffer = StringBuffer();
   var offset = 0;

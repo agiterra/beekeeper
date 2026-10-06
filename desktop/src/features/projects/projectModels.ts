@@ -221,7 +221,7 @@ export function validateProjectEventEnvelope(
     seenAddresses.add(address);
   }
 
-  // Buzz extension `buzz-access`: singleton access tag, `public` or
+  // Beekeeper extension `buzz-access`: singleton access tag, `public` or
   // `private` only — mirrors the relay's ingest validation (PROJECT_ACCESS_TAG
   // in buzz-core's kind.rs) so desktop and relay agree on head validity.
   const accessTags = tags.filter((tag) => tag[0] === "buzz-access");
@@ -248,7 +248,7 @@ export function validateProjectEventEnvelope(
     );
   }
 
-  // Buzz extension: invited-member `p` tags gate private-project read access.
+  // Beekeeper extension: invited-member `p` tags gate private-project read access.
   // Mirrors the relay's `invite-cap`/`invite-tag-arity`/`invite-role`/
   // `invite-malformed`/`invite-duplicate` rules (buzz-relay ingest.rs).
   const inviteTags = tags.filter((tag) => tag[0] === "p");

@@ -260,11 +260,8 @@ export function AppSidebar({
     }
   }, [canShowSidebarUpdateCard]);
 
-  // Allow the create-channel dialog to be opened from outside (e.g. the
-  // ⌘⇧N global shortcut in AppShell), mirroring the controlled new-DM lift.
-  // When the external flag flips on, open the "stream" create dialog; the
-  // close direction is reported back via `onCreateChannelOpenChange` in the
-  // dialog's `onOpenChange` below.
+  // AppShell (⌘⇧N) can open the "stream" create dialog, like the new-DM lift;
+  // closing reports back via `onCreateChannelOpenChange` in `onOpenChange`.
   React.useEffect(() => {
     if (isCreateChannelOpenProp) {
       openCreateDialog("stream");
@@ -851,8 +848,8 @@ export function AppSidebar({
         </div>
 
         <div
-          className="relative z-30 shrink-0"
           data-beekeeper-glass-footer-wrap
+          className="relative z-30 shrink-0"
         >
           {unreadBelowCount > 0 ? (
             <MoreUnreadButton

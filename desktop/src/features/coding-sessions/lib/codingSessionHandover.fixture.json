@@ -1,7 +1,7 @@
 {
   "events": [
     {
-      "content": "{\"body\":{\"artifacts\":[{\"kind\":\"wip-ref\",\"ref\":\"refs/heads/wip/builder/1f2e3d4c\",\"repoRef\":\"30617:aa/beekeeper\",\"sha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"}],\"assignmentRefs\":[\"abababababababababababababababababababababababababababababababab\"],\"decisions\":[{\"eventId\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"summary\":\"The claim is umbrella-wide\"}],\"missing\":[\"uncommitted changes in target/, above the patch bound\"],\"nextAction\":\"Fetch the wip ref and continue from 2b2b\",\"prevCheckpointRef\":null,\"revision\":{\"baseSha\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"branch\":\"work/handover\",\"dirty\":true,\"headSha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"preserved\":\"partial\",\"repoRef\":\"30617:aa/beekeeper\"},\"task\":\"Fold handover records for one umbrella\",\"tests\":[{\"command\":\"cargo test -p beekeeper-core\",\"name\":\"core\",\"outcome\":\"failed\"}],\"unresolved\":[\"Whether a voided claim fences sibling executions\"]},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"checkpoint\"}",
+      "content": "{\"body\":{\"artifacts\":[{\"kind\":\"wip-ref\",\"ref\":\"refs/heads/wip/builder/1f2e3d4c\",\"repoRef\":\"30617:aa/beekeeper\",\"sha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"}],\"assignmentRefs\":[\"abababababababababababababababababababababababababababababababab\"],\"decisions\":[{\"eventId\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"summary\":\"The claim is umbrella-wide\"}],\"missing\":[\"uncommitted changes in target/, above the patch bound\"],\"nextAction\":\"Fetch the wip ref and continue from 2b2b\",\"prevCheckpointRef\":null,\"revision\":{\"baseSha\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"branch\":\"work/handover\",\"dirty\":true,\"headSha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"preserved\":\"partial\",\"repoRef\":\"30617:aa/beekeeper\"},\"task\":\"Fold handover records for one umbrella\",\"tests\":[{\"command\":\"cargo test -p buzz-core\",\"name\":\"core\",\"outcome\":\"failed\"}],\"unresolved\":[\"Whether a voided claim fences sibling executions\"]},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"checkpoint\"}",
       "created_at": 1800000100,
       "id": "8ce637dc70a8238fc95a047375e8311fb7b1f26d9ba2a7cdda4577a50e513351",
       "kind": 44247,
@@ -31,7 +31,7 @@
       ]
     },
     {
-      "content": "{\"body\":{\"artifacts\":[{\"kind\":\"wip-ref\",\"ref\":\"refs/heads/wip/builder/1f2e3d4c\",\"repoRef\":\"30617:aa/beekeeper\",\"sha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"}],\"assignmentRefs\":[\"abababababababababababababababababababababababababababababababab\"],\"decisions\":[{\"eventId\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"summary\":\"The claim is umbrella-wide\"}],\"missing\":[\"uncommitted changes in target/, above the patch bound\"],\"nextAction\":\"Apply the patch artifact before continuing\",\"prevCheckpointRef\":\"8ce637dc70a8238fc95a047375e8311fb7b1f26d9ba2a7cdda4577a50e513351\",\"revision\":{\"baseSha\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"branch\":\"work/handover\",\"dirty\":true,\"headSha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"preserved\":\"partial\",\"repoRef\":\"30617:aa/beekeeper\"},\"task\":\"Fold handover records for one umbrella\",\"tests\":[{\"command\":\"cargo test -p beekeeper-core\",\"name\":\"core\",\"outcome\":\"failed\"}],\"unresolved\":[\"Whether a voided claim fences sibling executions\"]},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"checkpoint\"}",
+      "content": "{\"body\":{\"artifacts\":[{\"kind\":\"wip-ref\",\"ref\":\"refs/heads/wip/builder/1f2e3d4c\",\"repoRef\":\"30617:aa/beekeeper\",\"sha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"}],\"assignmentRefs\":[\"abababababababababababababababababababababababababababababababab\"],\"decisions\":[{\"eventId\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"summary\":\"The claim is umbrella-wide\"}],\"missing\":[\"uncommitted changes in target/, above the patch bound\"],\"nextAction\":\"Apply the patch artifact before continuing\",\"prevCheckpointRef\":\"8ce637dc70a8238fc95a047375e8311fb7b1f26d9ba2a7cdda4577a50e513351\",\"revision\":{\"baseSha\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"branch\":\"work/handover\",\"dirty\":true,\"headSha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"preserved\":\"partial\",\"repoRef\":\"30617:aa/beekeeper\"},\"task\":\"Fold handover records for one umbrella\",\"tests\":[{\"command\":\"cargo test -p buzz-core\",\"name\":\"core\",\"outcome\":\"failed\"}],\"unresolved\":[\"Whether a voided claim fences sibling executions\"]},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"checkpoint\"}",
       "created_at": 1800000100,
       "id": "5bb28890f6e9385a891760bba737b6f0432f3656ba8d20209b5635b8cf27eab6",
       "kind": 44247,
@@ -91,7 +91,7 @@
       ]
     },
     {
-      "content": "{\"body\":{\"artifacts\":[{\"kind\":\"wip-ref\",\"ref\":\"refs/heads/wip/builder/1f2e3d4c\",\"repoRef\":\"30617:aa/beekeeper\",\"sha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"}],\"assignmentRefs\":[\"abababababababababababababababababababababababababababababababab\"],\"decisions\":[{\"eventId\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"summary\":\"The claim is umbrella-wide\"}],\"missing\":[\"uncommitted changes in target/, above the patch bound\"],\"nextAction\":\"A stranger's plan\",\"prevCheckpointRef\":null,\"revision\":{\"baseSha\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"branch\":\"work/handover\",\"dirty\":true,\"headSha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"preserved\":\"partial\",\"repoRef\":\"30617:aa/beekeeper\"},\"task\":\"Fold handover records for one umbrella\",\"tests\":[{\"command\":\"cargo test -p beekeeper-core\",\"name\":\"core\",\"outcome\":\"failed\"}],\"unresolved\":[\"Whether a voided claim fences sibling executions\"]},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"checkpoint\"}",
+      "content": "{\"body\":{\"artifacts\":[{\"kind\":\"wip-ref\",\"ref\":\"refs/heads/wip/builder/1f2e3d4c\",\"repoRef\":\"30617:aa/beekeeper\",\"sha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"}],\"assignmentRefs\":[\"abababababababababababababababababababababababababababababababab\"],\"decisions\":[{\"eventId\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"summary\":\"The claim is umbrella-wide\"}],\"missing\":[\"uncommitted changes in target/, above the patch bound\"],\"nextAction\":\"A stranger's plan\",\"prevCheckpointRef\":null,\"revision\":{\"baseSha\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"branch\":\"work/handover\",\"dirty\":true,\"headSha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"preserved\":\"partial\",\"repoRef\":\"30617:aa/beekeeper\"},\"task\":\"Fold handover records for one umbrella\",\"tests\":[{\"command\":\"cargo test -p buzz-core\",\"name\":\"core\",\"outcome\":\"failed\"}],\"unresolved\":[\"Whether a voided claim fences sibling executions\"]},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"checkpoint\"}",
       "created_at": 1800000200,
       "id": "a370465b3b0c4dbbc11dc54085fddf01a3d7c630ed7f08490c3648c7448399b1",
       "kind": 44247,
@@ -191,7 +191,7 @@
           "task": "Fold handover records for one umbrella",
           "tests": [
             {
-              "command": "cargo test -p beekeeper-core",
+              "command": "cargo test -p buzz-core",
               "name": "core",
               "outcome": "failed"
             }
@@ -241,7 +241,7 @@
           "task": "Fold handover records for one umbrella",
           "tests": [
             {
-              "command": "cargo test -p beekeeper-core",
+              "command": "cargo test -p buzz-core",
               "name": "core",
               "outcome": "failed"
             }
@@ -291,7 +291,7 @@
           "task": "Fold handover records for one umbrella",
           "tests": [
             {
-              "command": "cargo test -p beekeeper-core",
+              "command": "cargo test -p buzz-core",
               "name": "core",
               "outcome": "failed"
             }
@@ -358,7 +358,7 @@
   "retired": {
     "events": [
       {
-        "content": "{\"body\":{\"artifacts\":[{\"kind\":\"wip-ref\",\"ref\":\"refs/heads/wip/builder/1f2e3d4c\",\"repoRef\":\"30617:aa/beekeeper\",\"sha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"}],\"assignmentRefs\":[\"abababababababababababababababababababababababababababababababab\"],\"decisions\":[{\"eventId\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"summary\":\"The claim is umbrella-wide\"}],\"missing\":[\"uncommitted changes in target/, above the patch bound\"],\"nextAction\":\"Fetch the wip ref and continue from 2b2b\",\"prevCheckpointRef\":null,\"revision\":{\"baseSha\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"branch\":\"work/handover\",\"dirty\":true,\"headSha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"preserved\":\"partial\",\"repoRef\":\"30617:aa/beekeeper\"},\"task\":\"Fold handover records for one umbrella\",\"tests\":[{\"command\":\"cargo test -p beekeeper-core\",\"name\":\"core\",\"outcome\":\"failed\"}],\"unresolved\":[\"Whether a voided claim fences sibling executions\"]},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"checkpoint\"}",
+        "content": "{\"body\":{\"artifacts\":[{\"kind\":\"wip-ref\",\"ref\":\"refs/heads/wip/builder/1f2e3d4c\",\"repoRef\":\"30617:aa/beekeeper\",\"sha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"}],\"assignmentRefs\":[\"abababababababababababababababababababababababababababababababab\"],\"decisions\":[{\"eventId\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"summary\":\"The claim is umbrella-wide\"}],\"missing\":[\"uncommitted changes in target/, above the patch bound\"],\"nextAction\":\"Fetch the wip ref and continue from 2b2b\",\"prevCheckpointRef\":null,\"revision\":{\"baseSha\":\"1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"branch\":\"work/handover\",\"dirty\":true,\"headSha\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"preserved\":\"partial\",\"repoRef\":\"30617:aa/beekeeper\"},\"task\":\"Fold handover records for one umbrella\",\"tests\":[{\"command\":\"cargo test -p buzz-core\",\"name\":\"core\",\"outcome\":\"failed\"}],\"unresolved\":[\"Whether a voided claim fences sibling executions\"]},\"genesisRef\":\"ce5d87ed1b9b4416bb0aa37ea0fb451f211289c54099882917f4ad538d51519b\",\"schema\":\"buzz-coding-session-handover/v1\",\"sessionRef\":\"dc580cfb-6c80-4fc2-8f4e-dfc328acf222\",\"type\":\"checkpoint\"}",
         "created_at": 1800000100,
         "id": "8ce637dc70a8238fc95a047375e8311fb7b1f26d9ba2a7cdda4577a50e513351",
         "kind": 44247,
@@ -457,7 +457,7 @@
             "task": "Fold handover records for one umbrella",
             "tests": [
               {
-                "command": "cargo test -p beekeeper-core",
+                "command": "cargo test -p buzz-core",
                 "name": "core",
                 "outcome": "failed"
               }

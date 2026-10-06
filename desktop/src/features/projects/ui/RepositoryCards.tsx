@@ -115,7 +115,7 @@ function RepositoryIdentity({
 }) {
   // Where the git data lives beats repeating the (often identical) project
   // name — "github.com/agiterra/beekeeper" for external repos, "owner/repo" for
-  // Buzz-hosted ones.
+  // Beekeeper-hosted ones.
   const displayPath = repositoryDisplayPath(
     repository,
     useRelayOrigin(),

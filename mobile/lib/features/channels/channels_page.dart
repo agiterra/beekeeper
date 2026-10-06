@@ -324,9 +324,9 @@ class ChannelsPage extends HookConsumerWidget {
       backgroundGradient: topSectionGradient,
       appBar: FrostedAppBar(
         horizontalInset: _kTopSectionInset,
-        // Let the full Buzz gradient show at rest. Once the list begins to
+        // Let the full Beekeeper gradient show at rest. Once the list begins to
         // move beneath this row, build up blur over the first 64dp of scroll
-        // without adding the usual white frosted wash. The Buzz list is
+        // without adding the usual white frosted wash. The Beekeeper list is
         // transparent, so the blurred pixels remain a continuation of the
         // pinned gradient instead of turning into a white header.
         frosted: !usesPinnedGradient || headerFrostProgress.value > 0,
