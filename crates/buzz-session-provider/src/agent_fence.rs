@@ -143,6 +143,13 @@ pub(crate) const FENCE: EnvFence = EnvFence {
     exempt: EXEMPT,
 };
 
+/// The fenced briefing's first four paragraphs, shared by both runtimes' variants.
+macro_rules! fenced_session_briefing_body {
+    () => {
+        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider.\n\nThe provider's Buzz identity is not yours. Every BUZZ_* variable is deliberately removed from this process's environment before you start, so the `bee` CLI cannot authenticate from your shell and this session holds no relay credentials. Do not run `bee` commands that talk to the relay, do not go looking for a key in .env, ~/.config/buzz/, or the environment, and do not report the missing key as a misconfiguration — the absence is the design, not a broken setup.\n\nYou do not need those credentials to be seen. The provider itself observes and publishes this session's state — branch, HEAD commit, dirty worktree, and verified liveness — so when this session's channel belongs to a project, that published state is what the project's Pulse and Beekeeper Desktop show for you. Routine progress needs no post from you.\n\nYou will not receive a Project Pulse digest in this session and you cannot read one from here. If you need to know what other sessions or people are working on before you touch shared code, say so and ask your operator in this conversation: they can see the Pulse and can post an entry on your behalf."
+    };
+}
+
 /// What a fenced adapter is told about the consequence above, in its own words.
 ///
 /// The fence is invisible from inside the adapter: it sees an environment with
@@ -170,7 +177,36 @@ pub(crate) const FENCE: EnvFence = EnvFence {
 /// agents, which do inherit the harness's credentials — must keep instructing
 /// exactly that. `the_fenced_briefing_never_tells_a_session_to_write_the_pulse`
 /// pins both halves.
-pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider.\n\nThe provider's Buzz identity is not yours. Every BUZZ_* variable is deliberately removed from this process's environment before you start, so the `bee` CLI cannot authenticate from your shell and this session holds no relay credentials. Do not run `bee` commands that talk to the relay, do not go looking for a key in .env, ~/.config/buzz/, or the environment, and do not report the missing key as a misconfiguration — the absence is the design, not a broken setup.\n\nYou do not need those credentials to be seen. The provider itself observes and publishes this session's state — branch, HEAD commit, dirty worktree, and verified liveness — so when this session's channel belongs to a project, that published state is what the project's Pulse and Beekeeper Desktop show for you. Routine progress needs no post from you.\n\nYou will not receive a Project Pulse digest in this session and you cannot read one from here. If you need to know what other sessions or people are working on before you touch shared code, say so and ask your operator in this conversation: they can see the Pulse and can post an entry on your behalf.\n\nRun long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes — nothing will wake you to do so, and your operator will be left watching a session that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go.";
+pub(crate) const FENCED_SESSION_BRIEFING: &str = concat!(
+    fenced_session_briefing_body!(),
+    "\n\n",
+    "Run long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes — nothing will wake you to do so, and your operator will be left watching a session that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go."
+);
+
+/// The fenced briefing for a Claude Code execution (SV-115).
+///
+/// Claude Code wakes itself when a task it started with the Bash tool's
+/// background option completes, and since SV-77 the provider reads that
+/// wake between prompts and publishes it as its own turn
+/// (`session_autonomous.rs`; live proof `buzz-acp/tests/live_background_wake.rs`).
+/// Telling a Claude execution that nothing will wake it is therefore false,
+/// and on 2026-10-06 it made an agent refuse an explicit instruction to
+/// background a job. Other runtimes keep [`FENCED_SESSION_BRIEFING`]: nothing
+/// shows that `codex-acp` wakes on a background completion.
+const FENCED_CLAUDE_SESSION_BRIEFING: &str = concat!(
+    fenced_session_briefing_body!(),
+    "\n\n",
+    "Prefer the foreground for short work. A command you start with your shell tool's background option (run_in_background) is different: when it finishes, its completion wakes you as a turn of your own, and this session shows the task as running until then, so you may background a long build or test run and report on it when it completes. A process you detach yourself (`&`, `nohup`, `disown`) does not wake you, and neither does anything else outside this session — so never end your turn promising a report that depends on something that will not wake you, or your operator will be left watching a session that looks busy and has nothing left to say."
+);
+
+/// The fenced briefing for the runtime `driver` names.
+pub(crate) fn fenced_session_briefing(driver: &str) -> &'static str {
+    if driver == CLAUDE_DRIVER {
+        FENCED_CLAUDE_SESSION_BRIEFING
+    } else {
+        FENCED_SESSION_BRIEFING
+    }
+}
 
 /// The same briefing, for an execution that **is** an agent seat.
 ///
@@ -192,10 +228,10 @@ pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: 
 ///   provider signs the transcript and metadata a human reads as fact; a seat
 ///   that believed it could sign those would be forging its own record.
 /// - The role it holds, so a crew's conventions have something to attach to.
-/// - The same do-not-detach rule the unseated briefing carries: nothing
-///   reads the adapter's output between turns whether or not the execution
-///   is seated, so background work an agent promises to report back on is a
-///   promise the provider cannot keep.
+/// - The same background-work rule the unseated briefing carries, per
+///   runtime (SV-115): a Claude seat is told its own background task's
+///   completion wakes it; any other runtime is told only an addressed relay
+///   turn does, because nothing shows it waking any other way.
 ///
 /// - The relay is the only channel out. A seat runs under the operator's
 ///   `HOME`, so the harness's own cross-session tool
@@ -223,10 +259,22 @@ pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: 
 /// seat may usefully do with its identity is a slice-4 question (`bee sessions
 /// send`, the inbox, the roster); promising verbs that do not exist yet would
 /// reproduce the 2026-08-21 failure in the opposite direction.
-pub(crate) fn actor_seat_briefing(actor_pubkey: &str, role: &str, relay_url: &str) -> String {
+pub(crate) fn actor_seat_briefing(
+    actor_pubkey: &str,
+    role: &str,
+    relay_url: &str,
+    driver: &str,
+) -> String {
     let out_of_bounds = SEAT_OUT_OF_BOUNDS_TOOLS.join(", ");
+    // SV-115: a Claude seat is woken by its own background task finishing;
+    // no other runtime is shown to be, so they keep the conservative rule.
+    let background_work = if driver == CLAUDE_DRIVER {
+        "Prefer the foreground for short work. A command you start with your shell tool's background option (run_in_background) is different: when it finishes, its completion wakes you as a turn of your own, and this session shows the task as running until then, so you may background a long build or test run and report on it when it completes. A process you detach yourself (`&`, `nohup`, `disown`) does not wake you, and neither does a relay message you are not addressed in - so never end your turn promising a report that depends on something that will not wake you, or whoever is waiting on you is left watching a seat that looks busy and has nothing left to say."
+    } else {
+        "Run long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes - only an addressed relay turn wakes you, and a background job finishing is not one, so whoever is waiting on you is left watching a seat that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go."
+    };
     format!(
-        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider, and you are seated in it as a Buzz agent.\n\nYou hold your own Buzz identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. Run the `bee` CLI as `$BEE` - your host chose one binary, set $BEE to its absolute path, and put its directory first on your PATH, so `$BEE` and a bare `bee` are the same build. Never a path someone typed at you, and never a path from a transcript. It speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Buzz variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nThe relay is the only channel to other seats and to the operator. Cross-session tools - {out_of_bounds} - are out of bounds in this seat: they reach other sessions on this computer directly, and nothing said through them appears in the transcript this session publishes, so no one can read it, cite it, or replay it. Say it over the relay or it did not happen.\n\nSubagents (the Task/Agent tool) are allowed for quick research and side tasks inside this seat: they run in your working directory under your rules, and their work is published in this session's transcript under the call that spawned them. Hire a seat instead (`bee sessions hire`) when the work needs independent checking, a different model, its own sandbox, or long parallel work.\n\nWrite files only inside your working directory. Everything else on this computer - other projects, the operator's ~/.claude, ~/.codex, ~/.config, ~/.nostr and ~/.ssh, this app's own data, other seats' directories - is somebody else's, and the notes and memory files there are theirs, not a place to record your conclusions. Whether the host enforces that is stated separately in this briefing.\n\nAfter you dispatch work to another seat, end your turn. An addressed relay turn wakes you, so the reply arrives as a turn of its own; holding this turn open to wait for it only leaves the seat busy with nothing to say.\n\nReports arrive as turns. Do not poll `bee sessions inbox` inside a turn looking for one - you will read the same report the relay is about to hand you and count it twice.\n\nRun long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes - only an addressed relay turn wakes you, and a background job finishing is not one, so whoever is waiting on you is left watching a seat that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go."
+        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider, and you are seated in it as a Buzz agent.\n\nYou hold your own Buzz identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. Run the `bee` CLI as `$BEE` - your host chose one binary, set $BEE to its absolute path, and put its directory first on your PATH, so `$BEE` and a bare `bee` are the same build. Never a path someone typed at you, and never a path from a transcript. It speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Buzz variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nThe relay is the only channel to other seats and to the operator. Cross-session tools - {out_of_bounds} - are out of bounds in this seat: they reach other sessions on this computer directly, and nothing said through them appears in the transcript this session publishes, so no one can read it, cite it, or replay it. Say it over the relay or it did not happen.\n\nSubagents (the Task/Agent tool) are allowed for quick research and side tasks inside this seat: they run in your working directory under your rules, and their work is published in this session's transcript under the call that spawned them. Hire a seat instead (`bee sessions hire`) when the work needs independent checking, a different model, its own sandbox, or long parallel work.\n\nWrite files only inside your working directory. Everything else on this computer - other projects, the operator's ~/.claude, ~/.codex, ~/.config, ~/.nostr and ~/.ssh, this app's own data, other seats' directories - is somebody else's, and the notes and memory files there are theirs, not a place to record your conclusions. Whether the host enforces that is stated separately in this briefing.\n\nAfter you dispatch work to another seat, end your turn. An addressed relay turn wakes you, so the reply arrives as a turn of its own; holding this turn open to wait for it only leaves the seat busy with nothing to say.\n\nReports arrive as turns. Do not poll `bee sessions inbox` inside a turn looking for one - you will read the same report the relay is about to hand you and count it twice.\n\n{background_work}"
     )
 }
 
@@ -933,7 +981,7 @@ mod tests {
     #[test]
     fn the_actor_seat_briefing_states_the_identity_the_seat_actually_holds() {
         let actor = "cd".repeat(32);
-        let briefing = actor_seat_briefing(&actor, "lead", "wss://relay.example");
+        let briefing = actor_seat_briefing(&actor, "lead", "wss://relay.example", CLAUDE_DRIVER);
 
         assert!(briefing.contains(&actor), "the seat is not named");
         assert!(briefing.contains("wss://relay.example"), "no relay named");
@@ -995,7 +1043,12 @@ mod tests {
     /// attributed, so `SendMessage` is the one tool still fenced.
     #[test]
     fn the_seat_briefing_names_the_tools_that_bypass_the_relay() {
-        let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
+        let briefing = actor_seat_briefing(
+            &"cd".repeat(32),
+            "lead",
+            "wss://relay.example",
+            CLAUDE_DRIVER,
+        );
         for tool in SEAT_OUT_OF_BOUNDS_TOOLS {
             assert!(
                 briefing.contains(tool),
@@ -1021,7 +1074,12 @@ mod tests {
     /// to hire instead — and is not told they are out of bounds.
     #[test]
     fn the_seat_briefing_allows_subagents_and_says_when_to_hire() {
-        let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
+        let briefing = actor_seat_briefing(
+            &"cd".repeat(32),
+            "lead",
+            "wss://relay.example",
+            CLAUDE_DRIVER,
+        );
         assert!(briefing.contains("Subagents (the Task/Agent tool) are allowed"));
         assert!(briefing.contains("quick research and side tasks"));
         assert!(briefing.contains("`bee sessions hire`"));
@@ -1043,7 +1101,12 @@ mod tests {
     /// report arrives as its own addressed turn.
     #[test]
     fn the_seat_briefing_tells_a_dispatcher_to_end_its_turn() {
-        let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
+        let briefing = actor_seat_briefing(
+            &"cd".repeat(32),
+            "lead",
+            "wss://relay.example",
+            CLAUDE_DRIVER,
+        );
         assert!(
             briefing.contains("end your turn"),
             "the seated briefing must tell a dispatching seat to end the turn"
@@ -1059,7 +1122,12 @@ mod tests {
     /// counted every report twice.
     #[test]
     fn the_seat_briefing_forbids_polling_the_inbox_inside_a_turn() {
-        let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
+        let briefing = actor_seat_briefing(
+            &"cd".repeat(32),
+            "lead",
+            "wss://relay.example",
+            CLAUDE_DRIVER,
+        );
         assert!(
             briefing.contains("Reports arrive as turns"),
             "the seated briefing must say how a report arrives"
@@ -1074,7 +1142,12 @@ mod tests {
     /// for a seat, and the do-not-detach rule must survive without it.
     #[test]
     fn the_seated_do_not_detach_rule_no_longer_rests_on_a_falsehood() {
-        let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
+        let briefing = actor_seat_briefing(
+            &"cd".repeat(32),
+            "lead",
+            "wss://relay.example",
+            CLAUDE_DRIVER,
+        );
         assert!(
             briefing.contains("foreground"),
             "the seated briefing lost the do-not-detach rule"
@@ -1090,10 +1163,82 @@ mod tests {
                  addressed relay turn disproves"
             );
         }
+        let conservative =
+            actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example", "codex-acp");
         assert!(
-            briefing.contains("a background job finishing is not one"),
-            "the seated briefing must say why detaching still fails a seat"
+            conservative.contains("a background job finishing is not one"),
+            "a non-Claude seat must still be told why detaching fails it"
         );
+    }
+
+    /// The sentence a Claude seat is told about background work (SV-115).
+    const CLAUDE_BACKGROUND_WAKE: &str = "when it finishes, its completion wakes you as a turn of your own, and this session shows the task as running until then";
+
+    /// SV-115: since SV-77 a Claude Code execution wakes on its own background
+    /// task's completion and the provider publishes that turn live, so telling
+    /// it "a background job finishing is not one" made an agent refuse an
+    /// explicit instruction to background a job. Both Claude variants say the
+    /// true thing; every other runtime keeps the conservative rule, because
+    /// nothing shows `codex-acp` waking on a background completion.
+    #[test]
+    fn a_claude_briefing_says_its_background_task_wakes_it() {
+        let seated = actor_seat_briefing(
+            &"cd".repeat(32),
+            "lead",
+            "wss://relay.example",
+            CLAUDE_DRIVER,
+        );
+        let fenced = fenced_session_briefing(CLAUDE_DRIVER);
+        for (label, text) in [("seated", seated.as_str()), ("fenced", fenced)] {
+            assert!(
+                text.contains(CLAUDE_BACKGROUND_WAKE),
+                "the Claude {label} briefing must say a background completion wakes it"
+            );
+            for falsehood in [
+                "a background job finishing is not one",
+                "nothing will wake you to do so",
+            ] {
+                assert!(
+                    !text.contains(falsehood),
+                    "the Claude {label} briefing still claims `{falsehood}`"
+                );
+            }
+            assert!(
+                text.contains("Prefer the foreground for short work"),
+                "the Claude {label} briefing must still prefer the foreground"
+            );
+            assert!(
+                text.contains("never end your turn promising a report that depends on something that will not wake you"),
+                "the Claude {label} briefing must still forbid an unkeepable promise"
+            );
+        }
+        assert!(
+            seated.contains("a relay message you are not addressed in"),
+            "the Claude seat must be told an unaddressed relay reply does not wake it"
+        );
+    }
+
+    #[test]
+    fn a_non_claude_briefing_keeps_the_conservative_background_rule() {
+        for driver in ["codex-acp", "some-future-runtime"] {
+            let seated =
+                actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example", driver);
+            assert!(
+                seated.contains("only an addressed relay turn wakes you, and a background job finishing is not one"),
+                "the {driver} seat lost the conservative rule"
+            );
+            assert!(!seated.contains(CLAUDE_BACKGROUND_WAKE));
+            let fenced = fenced_session_briefing(driver);
+            assert_eq!(fenced, FENCED_SESSION_BRIEFING);
+            assert!(fenced.contains("nothing will wake you to do so"));
+            assert!(!fenced.contains(CLAUDE_BACKGROUND_WAKE));
+        }
+        // The two fenced variants differ only in the background paragraph.
+        let claude = fenced_session_briefing(CLAUDE_DRIVER);
+        let split = FENCED_SESSION_BRIEFING
+            .find("\n\nRun long work in the foreground")
+            .expect("conservative paragraph");
+        assert!(claude.starts_with(&FENCED_SESSION_BRIEFING[..split + 2]));
     }
 
     /// The fence itself is unchanged by seating: `EXEMPT` stays empty, so a
@@ -1167,7 +1312,12 @@ mod tests {
     /// that ships regardless of whether a pack repeats it.
     #[test]
     fn the_seated_briefing_names_the_variable_rather_than_a_bare_command() {
-        let briefing = actor_seat_briefing(&"ab".repeat(32), "builder", "wss://relay.example");
+        let briefing = actor_seat_briefing(
+            &"ab".repeat(32),
+            "builder",
+            "wss://relay.example",
+            CLAUDE_DRIVER,
+        );
         assert!(
             briefing.contains("Run the `bee` CLI as `$BEE`"),
             "the briefing must name the variable the host actually sets"
@@ -1698,7 +1848,12 @@ mod tests {
     /// mechanism it cannot know is in place.
     #[test]
     fn the_seat_briefing_states_the_write_boundary() {
-        let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
+        let briefing = actor_seat_briefing(
+            &"cd".repeat(32),
+            "lead",
+            "wss://relay.example",
+            CLAUDE_DRIVER,
+        );
         assert!(
             briefing.contains("Write files only inside your working directory"),
             "the seated briefing does not state the write boundary"

@@ -2205,18 +2205,22 @@ fn rehydrated_bootstrap(first_turn_brief: &str, access_note: &str, prior_context
 /// The fence briefing is unconditional: every execution this provider spawns is
 /// fenced out of the `BUZZ_*` namespace, whether or not it is rehydrated, so
 /// every execution has to be told what its shell cannot do
-/// ([`crate::agent_fence::FENCED_SESSION_BRIEFING`]). The rehydration bootstrap
+/// ([`crate::agent_fence::fenced_session_briefing`]). The rehydration bootstrap
 /// is appended after it only when there is prior context to declare.
 fn session_briefing(
     bootstrap: Option<&str>,
     seat: Option<&SeatIdentity>,
     seat_role: Option<&SeatRoleBriefing>,
+    driver: &str,
 ) -> String {
     let mut briefing = match seat {
-        Some(seat) => {
-            crate::agent_fence::actor_seat_briefing(&seat.actor_pubkey, &seat.role, &seat.relay_url)
-        }
-        None => crate::agent_fence::FENCED_SESSION_BRIEFING.to_owned(),
+        Some(seat) => crate::agent_fence::actor_seat_briefing(
+            &seat.actor_pubkey,
+            &seat.role,
+            &seat.relay_url,
+            driver,
+        ),
+        None => crate::agent_fence::fenced_session_briefing(driver).to_owned(),
     };
     // The role pack rides with the seat that staged it: its persona body is
     // the role's own instructions, and its skills are files the seat can
@@ -2441,12 +2445,22 @@ async fn open_agent_session(
     let briefing = match bootstrap.as_deref() {
         Some(bootstrap) => format!(
             "{}{}\n\n{bootstrap}",
-            session_briefing(None, request.seat.as_ref(), seat_role),
+            session_briefing(
+                None,
+                request.seat.as_ref(),
+                seat_role,
+                &request.target.driver,
+            ),
             boundary_briefing(&request.execution)
         ),
         None => format!(
             "{}{}",
-            session_briefing(None, request.seat.as_ref(), seat_role),
+            session_briefing(
+                None,
+                request.seat.as_ref(),
+                seat_role,
+                &request.target.driver,
+            ),
             boundary_briefing(&request.execution)
         ),
     };
@@ -5363,7 +5377,7 @@ done
             role: "lead".into(),
             relay_url: "wss://relay.test".into(),
         };
-        let briefing = session_briefing(None, Some(&seat), None);
+        let briefing = session_briefing(None, Some(&seat), None, crate::agent_fence::CLAUDE_DRIVER);
         assert!(briefing.contains("seated with the role \"lead\""));
         assert!(!briefing.contains("Your role pack"));
     }
@@ -6030,7 +6044,7 @@ done
     /// execution is told it does not.
     #[test]
     fn the_session_briefing_follows_the_seat() {
-        let unseated = session_briefing(None, None, None);
+        let unseated = session_briefing(None, None, None, crate::agent_fence::CLAUDE_DRIVER);
         assert!(unseated.contains("cannot authenticate"));
 
         let seat = SeatIdentity {
@@ -6038,14 +6052,19 @@ done
             role: "architect".into(),
             relay_url: "wss://seat.example".into(),
         };
-        let seated = session_briefing(None, Some(&seat), None);
+        let seated = session_briefing(None, Some(&seat), None, crate::agent_fence::CLAUDE_DRIVER);
         assert!(seated.contains(&seat.actor_pubkey));
         assert!(seated.contains("wss://seat.example"));
         assert!(seated.contains("architect"));
         assert!(!seated.contains("cannot authenticate"));
 
         // A rehydration bootstrap still rides behind whichever variant applies.
-        let with_bootstrap = session_briefing(Some("BOOTSTRAP"), Some(&seat), None);
+        let with_bootstrap = session_briefing(
+            Some("BOOTSTRAP"),
+            Some(&seat),
+            None,
+            crate::agent_fence::CLAUDE_DRIVER,
+        );
         assert!(with_bootstrap.ends_with("BOOTSTRAP"));
         assert!(with_bootstrap.contains(&seat.actor_pubkey));
     }
