@@ -81,7 +81,7 @@ export const JS_WORKSPACE_PATHS = new Set([
  * runs the one crate that covers it instead of everything.
  */
 export const PATH_PACKAGE_ROOTS = [
-  { prefix: "personas/", package: "buzz-persona" },
+  { prefix: "personas/", package: "beekeeper-persona" },
 ];
 
 /**

@@ -38,10 +38,11 @@
 set -euo pipefail
 
 SIDECAR_PACKAGES=(
-  buzz-acp buzz-agent buzz-backend-kubernetes buzz-dev-mcp
-  buzz-cli git-credential-nostr buzz-shell-host beekeeper-host buzz-session-provider
+  beekeeper-acp beekeeper-agent beekeeper-backend-kubernetes beekeeper-dev-mcp
+  beekeeper-cli git-credential-nostr beekeeper-shell-host beekeeper-host beekeeper-session-provider
 )
-# The binaries those packages produce — `buzz-cli` builds `bee`. This is the
+# The binaries those packages produce. Every `beekeeper-*` package still builds
+# its `buzz-*` binary, and `beekeeper-cli` builds `bee`. This is the
 # set `desktop/scripts/check-sidecar-parity.mjs` compares against
 # `tauri.conf.json`'s `externalBin` plus the provider; a name added in one
 # place and not the other fails that check rather than a morning.

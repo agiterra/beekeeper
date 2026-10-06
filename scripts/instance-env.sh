@@ -101,7 +101,7 @@ if git rev-parse --is-inside-work-tree &>/dev/null; then
             if [[ -n "$SHARED_IDENTITY" ]]; then
                 export BUZZ_PRIVATE_KEY="$SHARED_IDENTITY"
             else
-                echo "⚠ BUZZ_SHARE_IDENTITY=1 but no identity found in keyring service $KEYRING_SERVICE, at $CANONICAL_KEY, or at $LEGACY_CANONICAL_KEY — run Buzz from repo root first" >&2
+                echo "⚠ BUZZ_SHARE_IDENTITY=1 but no identity found in keyring service $KEYRING_SERVICE, at $CANONICAL_KEY, or at $LEGACY_CANONICAL_KEY — run Beekeeper from repo root first" >&2
             fi
         fi
 

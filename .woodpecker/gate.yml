@@ -148,9 +148,9 @@ steps:
       # "clean it up" by deleting it — it is a working regression guard for the
       # drain-tick frame loss, and `just test-unit` runs it wherever loopback
       # QUIC works.
-      - cargo test --workspace --exclude buzz-agent -- --skip api::mesh_demo
+      - cargo test --workspace --exclude beekeeper-agent -- --skip api::mesh_demo
       - cargo test -p beekeeper-relay --lib api::mesh_demo -- --skip demo_join_forwarded_arm_round_trips_echo
-      # Twelve buzz-relay tests build AppState from a real pool and so need
+      # Twelve beekeeper-relay tests build AppState from a real pool and so need
       # Postgres. They are `#[ignore]`d, which is what lets `just test-unit`
       # run the whole workspace on a machine with no Docker — but this runner
       # HAS Postgres, and it ran them before they were marked. Without this
@@ -212,7 +212,7 @@ steps:
 
   rust-agent:
     image: buzz-ci:1
-    # buzz-agent's regressions harness is CPU-load sensitive (5s canned-LLM
+    # beekeeper-agent's regressions harness is CPU-load sensitive (5s canned-LLM
     # timeouts): running strictly after everything else guarantees free cores
     # (previously "last command in the rust step" — now enforced by the DAG).
     depends_on: [rust, desktop, deploy-scripts]
@@ -223,7 +223,7 @@ steps:
       - /srv/ci-cache/hermit-state:/root/.local/state/hermit
       - /srv/ci-cache/cargo-target:/ci-target
     environment:
-      # Same env as the rust step — buzz-agent previously ran inside it.
+      # Same env as the rust step — beekeeper-agent previously ran inside it.
       CARGO_TARGET_DIR: /ci-target
       CARGO_INCREMENTAL: "0"
       BUZZ_TEST_DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz

@@ -2,7 +2,7 @@
 // Fixture well-formedness check for conformance/project-work.
 //
 // This is NOT the contract's validator and NOT the fold. Those are lane W1's,
-// in buzz-core, and these fixtures are what they bind to. This script only
+// in beekeeper-core, and these fixtures are what they bind to. This script only
 // asserts that the fixtures themselves are well formed — every file parses,
 // every id has the right shape and length, every tag agrees with its content,
 // every sequence's expected output refers to events that exist — so a later

@@ -2,7 +2,7 @@
  * Project Pulse fold implementation binder — runs the REAL Desktop fold
  * against every banked vector in this corpus. `CONTRACT.md` states the law in
  * prose; `fixtures/fold-vectors.json` states it in data; this file binds the
- * production TypeScript to that data, so the Rust fold in `buzz-cli` and the
+ * production TypeScript to that data, so the Rust fold in `beekeeper-cli` and the
  * Slice 2 relay fold have one shared, executable definition of "correct".
  *
  * Import constraint (load-bearing): the fold modules must stay free of runtime

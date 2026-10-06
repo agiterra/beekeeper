@@ -2,7 +2,7 @@
  * Agents-repository draft fold implementation binder — runs the REAL
  * Desktop fold against every banked vector in this corpus. `CONTRACT.md`
  * states the law in prose; the fixtures state it in data; this file binds
- * the production TypeScript to that data, so the Rust fold in `buzz-core`
+ * the production TypeScript to that data, so the Rust fold in `beekeeper-core`
  * (used by `bee agents-repo`) and the Dart fold in Mobile have one shared,
  * executable definition of "correct".
  *

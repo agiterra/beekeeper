@@ -1,0 +1,44 @@
+# M1 gate manifest: 1 orchestrator + 1 worker over one Beekeeper channel solving
+# Harbor's examples/tasks/hello-world via vanilla `harbor run`.
+#
+# Endpoints are LOCAL PLACEHOLDERS for the M1 wiring proof; the pilot/2.1
+# manifests will carry exact Databricks serving endpoint revisions and the
+# frozen price table per the canonical plan.
+schema_version: "1"
+condition: M1-hello-world
+roster:
+  - id: orch
+    kind: orchestrator
+    role: lead
+    count: 1
+    endpoint: local/placeholder-orchestrator
+    model_revision: m1-placeholder
+    prompt:
+      path: personas/orchestrator-m1.md
+      sha256: 983122364726f6610282dd73edeb607c91df032d83e4858c05cc18914c5dac31
+    generation:
+      max_output_tokens: 4096
+      context_window_tokens: 128000
+  - id: worker
+    kind: worker
+    role: implementer
+    count: 1
+    endpoint: local/placeholder-worker
+    model_revision: m1-placeholder
+    prompt:
+      path: personas/worker-m1.md
+      sha256: 3c0ae2849180c0e82adcff8033dabdeb73584dc5a05bcba79d549c68e83a2790
+    generation:
+      max_output_tokens: 4096
+      context_window_tokens: 128000
+prices:
+  local/placeholder-orchestrator:
+    input_per_million_usd: 0
+    cached_input_per_million_usd: 0
+    output_per_million_usd: 0
+  local/placeholder-worker:
+    input_per_million_usd: 0
+    cached_input_per_million_usd: 0
+    output_per_million_usd: 0
+trial_budget:
+  timeout_seconds: 1800

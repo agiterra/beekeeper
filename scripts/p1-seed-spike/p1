@@ -4,7 +4,7 @@
 #
 #   ./scripts/p1-seed-spike/p1 check              # verify auth + list channels
 #   ./scripts/p1-seed-spike/p1 export --channel <uuid> --out /tmp/p1-export
-#   ./scripts/p1-seed-spike/p1 buzz <any buzz-cli args...>
+#   ./scripts/p1-seed-spike/p1 bee <any bee args...>
 #
 # Identity: read at runtime from the macOS keychain blob the desktop app
 # maintains (service beekeeper-desktop, falling back to beekeeper-desktop-dev), field
@@ -16,10 +16,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 export BUZZ_RELAY_URL="${BUZZ_RELAY_URL:-https://hive.agiterra.org}"
-BUZZ_BIN="${BUZZ_BIN:-$ROOT/target/release/buzz}"
+BUZZ_BIN="${BUZZ_BIN:-$ROOT/target/release/bee}"
 
 [ -x "$BUZZ_BIN" ] || {
-  echo "error: buzz CLI not found at $BUZZ_BIN — run: cargo build --release -p beekeeper-cli" >&2
+  echo "error: bee CLI not found at $BUZZ_BIN — run: cargo build --release -p beekeeper-cli" >&2
   exit 1
 }
 
@@ -69,7 +69,7 @@ case "$cmd" in
     load_identity
     exec "$BUZZ_BIN" sessions export "$@"
     ;;
-  buzz)
+  bee|buzz)
     load_identity
     exec "$BUZZ_BIN" "$@"
     ;;

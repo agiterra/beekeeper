@@ -1,5 +1,5 @@
 /**
- * H-08 implementation binder — runs the REAL Buzz transcript-export engine
+ * H-08 implementation binder — runs the REAL Beekeeper transcript-export engine
  * against every banked fixture vector in this corpus. `fixtures.test.mjs`
  * keeps its own independent re-implementations of the donor laws; this file
  * binds the production code to the same vectors, so the two suites
@@ -42,12 +42,12 @@ const BUNDLE = load("bundle-vectors.json");
 const NAMING = load("naming-vectors.json");
 const MANIFEST = load("release-manifest-vectors.json");
 
-test("bundle constants bind the Buzz engine", () => {
+test("bundle constants bind the Beekeeper engine", () => {
   assert.equal(TRANSCRIPT_BUNDLE_VERSION, BUNDLE.bundle_constants.version);
   assert.equal(SHARE_WORKSPACE_PATH, BUNDLE.bundle_constants.sharePath);
 });
 
-test("attachment mode matrix binds the Buzz engine", () => {
+test("attachment mode matrix binds the Beekeeper engine", () => {
   for (const vector of BUNDLE.attachment_cases) {
     const derived = applyAttachmentMode(
       vector.attachment,
@@ -62,7 +62,7 @@ test("attachment mode matrix binds the Buzz engine", () => {
   }
 });
 
-test("share-path rewrite vectors bind the Buzz engine", () => {
+test("share-path rewrite vectors bind the Beekeeper engine", () => {
   for (const vector of BUNDLE.path_rewrite_cases) {
     assert.deepEqual(
       rewriteLocalPathsForShare(vector.input, vector.workspacePath),
@@ -72,7 +72,7 @@ test("share-path rewrite vectors bind the Buzz engine", () => {
   }
 });
 
-test("a Buzz-built bundle never contains the workspace path and pins localPath", () => {
+test("a Beekeeper-built bundle never contains the workspace path and pins localPath", () => {
   const workspacePath = "/Users/op/secret project";
   const plan = buildTranscriptExportPlan({
     chatId: "chat-1",
@@ -115,7 +115,7 @@ test("a Buzz-built bundle never contains the workspace path and pins localPath",
   assert.ok(!plan.transcriptJson.includes(workspacePath));
 });
 
-test("segment sanitization vectors bind the Buzz engine", () => {
+test("segment sanitization vectors bind the Beekeeper engine", () => {
   for (const vector of NAMING.sanitize_cases) {
     assert.equal(
       sanitizeFileNameSegment(vector.input),
@@ -125,13 +125,13 @@ test("segment sanitization vectors bind the Buzz engine", () => {
   }
 });
 
-test("export timestamp vectors bind the Buzz engine", () => {
+test("export timestamp vectors bind the Beekeeper engine", () => {
   for (const vector of NAMING.timestamp_cases) {
     assert.equal(formatExportTimestamp(vector.input), vector.expected, vector.input);
   }
 });
 
-test("unique export directory vectors bind the Buzz engine", () => {
+test("unique export directory vectors bind the Beekeeper engine", () => {
   for (const vector of NAMING.directory_cases) {
     assert.equal(
       resolveUniqueExportDirName(
@@ -146,31 +146,31 @@ test("unique export directory vectors bind the Buzz engine", () => {
   }
 });
 
-test("release asset name vectors bind the Buzz manifest script", () => {
+test("release asset name vectors bind the Beekeeper manifest script", () => {
   for (const vector of MANIFEST.asset_name_cases) {
     assert.equal(toReleaseAssetName(vector.input), vector.expected, vector.input);
   }
 });
 
-test("cache control vectors bind the Buzz manifest script", () => {
+test("cache control vectors bind the Beekeeper manifest script", () => {
   for (const vector of MANIFEST.cache_control_cases) {
     assert.equal(cacheControlFor(vector.input), vector.expected, vector.input);
   }
 });
 
-test("content type vectors bind the Buzz manifest script", () => {
+test("content type vectors bind the Beekeeper manifest script", () => {
   for (const vector of MANIFEST.content_type_cases) {
     assert.equal(contentTypeFor(vector.input), vector.expected, vector.input);
   }
 });
 
-test("release tag vectors bind the Buzz manifest script", () => {
+test("release tag vectors bind the Beekeeper manifest script", () => {
   for (const vector of MANIFEST.release_tag_cases) {
     assert.equal(deriveReleaseTag(vector.input), vector.expected, vector.input);
   }
 });
 
-test("the frozen manifest shape binds the Buzz manifest script", () => {
+test("the frozen manifest shape binds the Beekeeper manifest script", () => {
   const manifest = buildManifest("1.2.3", ["index.html"], "2026-08-06T00:00:00.000Z");
   assert.deepEqual(Object.keys(manifest), MANIFEST.manifest_shape.top_level_keys);
   assert.deepEqual(
