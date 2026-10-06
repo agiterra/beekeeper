@@ -136,6 +136,26 @@ WP_SQLITE=/tmp/wp-$AUTODEPLOY_NAME.sqlite
 # subsequent tick with a redirection error.
 LOCK=${LOCK_DIR:-/run/lock}/$AUTODEPLOY_NAME-autodeploy.lock
 
+# >>> log-target-sed
+# The relay's tracing targets follow crate names, and the crates were renamed
+# buzz-* -> beekeeper-* (ledger 354). A deployed `RUST_LOG=buzz_relay=info`
+# then matches nothing and the relay logs only what other directives allow.
+# The binaries already read the old names as the new ones and warn
+# (beekeeper_core::log_targets), but the file should say what it means, so
+# every deploy rewrites the two filter variables in .env along with
+# BUZZ_IMAGE, in the step whose .env backup a rollback restores. The list is
+# beekeeper_core::log_targets::RENAMED; tests/autodeploy-behavior.sh fails if
+# the two drift. A newline-separated program, because BSD sed (a developer's
+# laptop running the tests) rejects `:a;` on one line.
+LEGACY_LOG_TARGETS='acp|admin|agent|audit|auth|backend_kubernetes|cli|conformance|core|datastore|datastore_tracing|db|deletion|dev_mcp|lib|media|mirror_bridge|pair_relay|pairing_cli|persona|pubsub|push_gateway|relay|relay_mesh|sdk|search|session_provider|shell_host|terminal|test_client|voice|workflow|ws_client'
+LOG_TARGET_SED='/^(RUST_LOG|BUZZ_OTEL_FILTER)=/{
+:a
+s/([=,[:space:]"])buzz_('"$LEGACY_LOG_TARGETS"')([]=,[:space:]"[]|::|$)/\1beekeeper_\2\3/
+ta
+}'
+LOG_TARGET_LEGACY_RE='^(RUST_LOG|BUZZ_OTEL_FILTER)=.*[=,[:space:]"]buzz_('"$LEGACY_LOG_TARGETS"')([]=,[:space:]"[]|::|$)'
+# <<< log-target-sed
+
 log()      { echo "[$AUTODEPLOY_NAME-autodeploy] $*"; }
 forge()    { incus exec forge -- "$@"; }
 instance() { incus exec "$INSTANCE" -- "$@"; }
@@ -295,7 +315,10 @@ if ! instance sh -c "[ \$(stat -c%s $backup) -gt 10000 ] && zcat $backup | tail 
 fi
 
 # ── 5. flip the image and restart ────────────────────────────────────────────
-instance sh -c "cd $COMPOSE && cp .env .env.bak-pre-$short && sed -i 's#^BUZZ_IMAGE=.*#BUZZ_IMAGE=$IMAGE_NAME:$short#' .env"
+if grep -qE "$LOG_TARGET_LEGACY_RE" <<<"$current_raw"; then
+  log "rewriting pre-rename buzz_* log targets in $COMPOSE/.env (RUST_LOG/BUZZ_OTEL_FILTER) to beekeeper_*; the backup is .env.bak-pre-$short"
+fi
+instance sh -c "cd $COMPOSE && cp .env .env.bak-pre-$short && sed -i 's#^BUZZ_IMAGE=.*#BUZZ_IMAGE=$IMAGE_NAME:$short#' .env && sed -i -E '$LOG_TARGET_SED' .env"
 if instance sh -c "cd $COMPOSE && ./run.sh restart" \
    && [[ "$(instance docker inspect -f '{{.State.Health.Status}}' "$RELAY_CONTAINER")" == "healthy" ]]; then
   instance sh -c "if [ -d $BASE/build ] && [ -n '$current' ] && [ ! -e $BASE/build-prev-$current ]; then mv $BASE/build $BASE/build-prev-$current; else rm -rf $BASE/build; fi; mv $BASE/build-incoming $BASE/build"
