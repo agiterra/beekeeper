@@ -124,7 +124,7 @@ pub(crate) fn register_checkout(
         return Err("checkout path is not a directory".to_string());
     }
     let registry_file =
-        registry_path().ok_or_else(|| "cannot resolve the Buzz nest directory".to_string())?;
+        registry_path().ok_or_else(|| "cannot resolve the Beekeeper nest directory".to_string())?;
     let mut registry = load_repo_registry_at(Some(&registry_file));
     registry.version = REPO_REGISTRY_VERSION;
     registry.checkouts.insert(

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Buzz transcript</title>
+    <title>Beekeeper transcript</title>
     <style>
       :root {
         color-scheme: light;
@@ -130,7 +130,7 @@
   <body>
     <main>
       <header class="bundle">
-        <h1 id="title">Buzz transcript</h1>
+        <h1 id="title">Beekeeper transcript</h1>
         <p id="meta"></p>
       </header>
       <section id="messages"></section>
@@ -185,11 +185,11 @@
           document.documentElement.dataset.theme = "dark";
         }
         document.getElementById("title").textContent =
-          bundle.title || "Buzz transcript";
-        document.title = bundle.title || "Buzz transcript";
+          bundle.title || "Beekeeper transcript";
+        document.title = bundle.title || "Beekeeper transcript";
         document.getElementById("meta").textContent = [
           "Exported " + bundle.exportedAt,
-          "Buzz " + bundle.viewerVersion,
+          "Beekeeper " + bundle.viewerVersion,
           bundle.chatId,
         ].join(" · ");
 

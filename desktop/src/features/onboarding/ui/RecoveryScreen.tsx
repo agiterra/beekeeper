@@ -33,7 +33,7 @@ export function RecoveryScreen({
           }}
           type="button"
         >
-          Relaunch Buzz
+          Relaunch Beekeeper
         </Button>
       </div>
     </div>

@@ -76,7 +76,7 @@ export function formatModelDiscoveryErrorStatus(
     if (message.includes("shared compute status is malformed")) {
       return {
         message:
-          "Buzz received an invalid shared compute status. Check the member machine, then try again.",
+          "Beekeeper received an invalid shared compute status. Check the member machine, then try again.",
         tone: "warning",
       };
     }

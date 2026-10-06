@@ -304,7 +304,7 @@ export function HostedCommunityOnboarding({
           hostedCommunityErrorMessage(
             available.error,
             available.correlation_id,
-            "That Buzz address is already taken.",
+            "That community address is already taken.",
           ),
         );
       }
@@ -513,7 +513,7 @@ export function HostedCommunityOnboarding({
           ) : !identity ? (
             <>
               <DialogTitle className="text-xl font-medium text-foreground">
-                Finish connecting Buzz
+                Finish connecting Beekeeper
               </DialogTitle>
               <DialogDescription className="mt-2 text-sm leading-6 text-foreground">
                 Your Builderlab account

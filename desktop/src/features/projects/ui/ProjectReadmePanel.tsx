@@ -187,7 +187,7 @@ export function ReadmePanel({
       },
       network: {
         description:
-          "The Buzz git service could not be reached. Check your connection and try again.",
+          "The relay's git service could not be reached. Check your connection and try again.",
         icon: CloudOff,
         title: "Couldn’t reach repository",
       },

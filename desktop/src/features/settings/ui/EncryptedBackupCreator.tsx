@@ -277,7 +277,7 @@ export function EncryptedBackupCreator({
         <DialogHeader className="pr-8">
           <DialogTitle>Create a key backup</DialogTitle>
           <DialogDescription>
-            You can close this window while Buzz finishes the backup in the
+            You can close this window while Beekeeper finishes the backup in the
             background.
           </DialogDescription>
         </DialogHeader>

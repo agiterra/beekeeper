@@ -37,7 +37,7 @@ export const REPOSITORY_SCOPE_OPTIONS: Array<{
   { label: "All", value: "all" },
   { label: "My Repositories", value: "mine" },
   { label: "Local", value: "local" },
-  { label: "Buzz-hosted", value: "buzz" },
+  { label: "Relay-hosted", value: "buzz" },
   { label: "Linked", value: "linked" },
 ];
 export const PULL_REQUEST_SCOPE_OPTIONS: Array<{

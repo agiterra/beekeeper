@@ -49,7 +49,7 @@ export function BuiltinShellSettingsCard() {
     <div>
       <SettingsSectionHeader
         title="Built-in shell"
-        description="Terminal sessions hosted inside Buzz."
+        description="Terminal sessions hosted inside Beekeeper."
         action={
           <Button
             type="button"

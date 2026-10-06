@@ -16,7 +16,7 @@ Bring the team something you are building, or give them a quick challenge to see
 
 ## Get help
 
-Ask the team a question here, or read the [Buzz user guide](https://github.com/block/buzz#readme).
+Ask the team a question here, or read the [Beekeeper user guide](https://github.com/agiterra/beekeeper#readme).
 `;
 
 type WelcomeCanvasClient = {

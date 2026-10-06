@@ -581,7 +581,7 @@ function MeshModelPicker({
         {catalog
           ? `Recommended for this machine${catalog.gpuName ? ` (${catalog.gpuName}, ${catalog.vramDisplay} AI memory)` : ""}.`
           : "Choose a model or enter a model reference or local file."}{" "}
-        Buzz downloads remote models when sharing starts.
+        Beekeeper downloads remote models when sharing starts.
       </p>
     </div>
   );

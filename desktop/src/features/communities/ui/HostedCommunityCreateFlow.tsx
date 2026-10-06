@@ -231,7 +231,7 @@ export function HostedCommunityCreateFlow({
           hostedCommunityErrorMessage(
             available.error,
             available.correlation_id,
-            "That Buzz address is already taken.",
+            "That community address is already taken.",
           ),
         );
       }

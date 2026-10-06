@@ -585,7 +585,7 @@ pub(crate) fn validate_clone_url(clone_url: &str) -> Result<(), String> {
         })
         .unwrap_or(false);
     if !is_buzz_repo_path {
-        return Err("clone URL must point at a Buzz git repository".into());
+        return Err("clone URL must point at a relay-hosted git repository".into());
     }
     Ok(())
 }
@@ -627,7 +627,7 @@ pub(crate) fn validate_local_clone_url(clone_url: &str) -> Result<(), String> {
     if validate_clone_url(clone_url).is_ok() || validate_github_clone_url(clone_url).is_ok() {
         return Ok(());
     }
-    Err("clone URL must point at a Buzz repository or public GitHub repository".into())
+    Err("clone URL must point at a relay-hosted repository or public GitHub repository".into())
 }
 
 pub(crate) fn validate_local_clone_url_for_workspace(

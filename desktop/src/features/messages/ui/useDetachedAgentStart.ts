@@ -151,7 +151,7 @@ export function useDetachedAgentStart(): (
         // communities.
         warnAgentMayNotRespond(
           agent.name,
-          "Buzz is still connecting to this community — mention the agent again in a moment.",
+          "Beekeeper is still connecting to this community — mention the agent again in a moment.",
         );
         return false;
       }

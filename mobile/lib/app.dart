@@ -247,7 +247,10 @@ class _SplashScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Scaffold(
       body: Center(
-        child: BuzzLoadingIndicator(size: 56, semanticLabel: 'Starting Buzz'),
+        child: BuzzLoadingIndicator(
+          size: 56,
+          semanticLabel: 'Starting Beekeeper',
+        ),
       ),
     );
   }

@@ -69,7 +69,7 @@ export function hostedCommunityErrorMessage(
     missing_mapping:
       "Connect your Beekeeper identity before creating a community.",
     invalid_name: "Use lowercase letters, numbers, and hyphens.",
-    taken: "That Buzz address is already taken.",
+    taken: "That community address is already taken.",
     limit_reached: `You've reached the limit of ${HOSTED_COMMUNITY_LIMIT} hosted communities.`,
     relay_unavailable: "Community provisioning is temporarily unavailable.",
     identity_already_bound:

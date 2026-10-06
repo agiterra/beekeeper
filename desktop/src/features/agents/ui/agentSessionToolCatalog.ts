@@ -182,7 +182,7 @@ export function getBuzzToolInfo(title: string): BuzzToolInfo | null {
   if (name.includes("search") || name === "get_feed") {
     return {
       icon: Search,
-      label: "Searches relay-visible Buzz history.",
+      label: "Searches relay-visible history.",
       tone: "read",
     };
   }
@@ -193,7 +193,7 @@ export function getBuzzToolInfo(title: string): BuzzToolInfo | null {
   ) {
     return {
       icon: Send,
-      label: "Publishes relay-visible Buzz activity.",
+      label: "Publishes relay-visible activity.",
       tone: "write",
     };
   }

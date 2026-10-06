@@ -31,7 +31,7 @@ export function projectCloneErrorPresentation(
     return {
       title: "Repository access required",
       description: github
-        ? "This repository requires GitHub authentication. Buzz currently clones public GitHub repositories without credentials."
+        ? "This repository requires GitHub authentication. Beekeeper currently clones public GitHub repositories without credentials."
         : "Beekeeper could not authenticate with this repository. Check your access and try again.",
     };
   }

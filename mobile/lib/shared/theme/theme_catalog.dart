@@ -25,10 +25,7 @@ class ThemeColors {
   bool get isDark => bg.computeLuminance() < 0.5;
 
   /// Human-readable display name: 'catppuccin-mocha' → 'Catppuccin Mocha'.
-  String get displayName => name
-      .split('-')
-      .map((w) => w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : w)
-      .join(' ');
+  String get displayName => name.split('-').map(themeNameWordLabel).join(' ');
 }
 
 /// Known light theme names — used to show sun/moon icons before loading.
@@ -545,4 +542,11 @@ ThemeColors? findTheme(String name) {
     if (t.name == name) return t;
   }
   return null;
+}
+
+/// Display form of one dash-separated theme-name word. The first-party theme
+/// keeps its `buzz` slug for stored preferences but is shown as Beekeeper.
+String themeNameWordLabel(String word) {
+  if (word == 'buzz') return 'Beekeeper';
+  return word.isEmpty ? word : '${word[0].toUpperCase()}${word.substring(1)}';
 }

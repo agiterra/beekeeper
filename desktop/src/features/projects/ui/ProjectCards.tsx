@@ -300,7 +300,7 @@ function RepositoryUnavailableIndicator({
       label: "No access channel",
     },
     network: {
-      description: "The Buzz git service could not be reached.",
+      description: "The relay's git service could not be reached.",
       label: "Unreachable",
     },
     ref: {

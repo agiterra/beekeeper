@@ -97,7 +97,7 @@ test("parseSupportedLinkPreview parses Buzz relay git clone URLs", () => {
     {
       kind: "buzz-repository",
       href: `beekeeper://repo?owner=${BUZZ_OWNER}&d=buzz-world-galaxy`,
-      provider: "Buzz",
+      provider: "Beekeeper",
       title: "buzz-world-galaxy",
       typeLabel: "repo",
     },
@@ -120,7 +120,7 @@ test("parseSupportedLinkPreview strips .git suffix from clone URLs", () => {
     {
       kind: "buzz-repository",
       href: `beekeeper://repo?owner=${BUZZ_OWNER}&d=buzz-world`,
-      provider: "Buzz",
+      provider: "Beekeeper",
       title: "buzz-world",
       typeLabel: "repo",
     },
@@ -186,7 +186,7 @@ test("parseSupportedLinkPreview parses beekeeper:// PR and issue deep links", ()
     {
       kind: "buzz-pull-request",
       href: `beekeeper://pr?id=${BUZZ_EVENT_ID}&owner=${BUZZ_OWNER}&d=buzz-world`,
-      provider: "Buzz",
+      provider: "Beekeeper",
       title: "buzz-world #c3b589fa",
       typeLabel: "PR",
     },
@@ -204,7 +204,7 @@ test("parseSupportedLinkPreview parses beekeeper:// PR and issue deep links", ()
     {
       kind: "buzz-repository",
       href: `beekeeper://repo?owner=${BUZZ_OWNER}&d=buzz-world`,
-      provider: "Buzz",
+      provider: "Beekeeper",
       title: "buzz-world",
       typeLabel: "repo",
     },
@@ -219,7 +219,7 @@ test("parseSupportedLinkPreview parses beekeeper:// project deep links", () => {
     {
       kind: "buzz-project",
       href: `beekeeper://project?owner=${BUZZ_OWNER}&d=buzz-world`,
-      provider: "Buzz",
+      provider: "Beekeeper",
       title: "buzz-world",
       typeLabel: "project",
     },
@@ -336,7 +336,7 @@ test("extractSupportedLinkPreviews picks up bare Buzz clone URLs in prose", () =
       {
         kind: "buzz-repository",
         href: `beekeeper://repo?owner=${BUZZ_OWNER}&d=buzz-world-galaxy`,
-        provider: "Buzz",
+        provider: "Beekeeper",
         title: "buzz-world-galaxy",
         typeLabel: "repo",
       },

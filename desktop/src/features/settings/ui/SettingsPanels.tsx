@@ -86,10 +86,14 @@ export type SettingsPanelProps = {
   onSetSoundForSlot: (slot: SoundSlot, name: SoundName) => void;
 };
 
+// The first-party theme keeps its `buzz` slug for stored preferences, but it
+// is shown under the product's name.
 function formatThemeLabel(name: string): string {
   return name
     .split("-")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .map((w) =>
+      w === "buzz" ? "Beekeeper" : w.charAt(0).toUpperCase() + w.slice(1),
+    )
     .join(" ");
 }
 
@@ -488,7 +492,7 @@ function ThemeSettingsCard() {
     >
       <SettingsSectionHeader
         title="Appearance"
-        description="Choose how Buzz looks and feels."
+        description="Choose how Beekeeper looks and feels."
       />
 
       <SettingsOptionGroupList>
@@ -568,7 +572,7 @@ function ThemeSettingsCard() {
                 className="text-sm font-normal text-muted-foreground/70"
                 data-settings-subcopy
               >
-                Choose the colors used throughout Buzz.
+                Choose the colors used throughout Beekeeper.
               </p>
             </div>
             <button

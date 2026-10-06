@@ -47,7 +47,7 @@ test("Share compute chooses a model before sharing", async ({ page }) => {
   ).toBeVisible();
   await expect(model).toBeVisible();
   await expect(card).toContainText(
-    "Buzz downloads remote models when sharing starts",
+    "Beekeeper downloads remote models when sharing starts",
   );
   await expect(toggle).toBeChecked();
   await expect(

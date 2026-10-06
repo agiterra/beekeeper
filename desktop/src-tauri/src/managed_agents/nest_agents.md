@@ -57,6 +57,6 @@ A commit carries the identity of whoever actually made it.
 <!-- BEGIN BUZZ MANAGED — regenerated automatically, do not edit below -->
 ## Active Agents
 
-*(No agents deployed yet. Add agents in the Buzz desktop app.)*
+*(No agents deployed yet. Add agents in the Beekeeper desktop app.)*
 
 <!-- END BUZZ MANAGED -->

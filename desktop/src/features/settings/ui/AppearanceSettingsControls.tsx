@@ -350,7 +350,7 @@ export function AccentPickerContent({
           className="text-sm font-normal text-muted-foreground/70"
           data-settings-subcopy
         >
-          Choose the highlight color used throughout Buzz.
+          Choose the highlight color used throughout Beekeeper.
         </p>
       </div>
       <div

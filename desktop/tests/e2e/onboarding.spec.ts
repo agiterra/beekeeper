@@ -1258,7 +1258,7 @@ test("first-community owner can create and connect a hosted community", async ({
   await page.getByTestId("community-choice-create").click();
   await page.getByRole("button", { name: "Sign in to continue" }).click();
   await expect(
-    page.getByRole("heading", { name: "Finish connecting Buzz" }),
+    page.getByRole("heading", { name: "Finish connecting Beekeeper" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Connect and continue" }).click();
   const createSurface = page.getByTestId("hosted-community-create-surface");
@@ -1334,7 +1334,7 @@ test("hosted community address line stays within the card for a long name", asyn
   await page.getByTestId("community-choice-create").click();
   await page.getByRole("button", { name: "Sign in to continue" }).click();
   await expect(
-    page.getByRole("heading", { name: "Finish connecting Buzz" }),
+    page.getByRole("heading", { name: "Finish connecting Beekeeper" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Connect and continue" }).click();
 
@@ -1533,7 +1533,7 @@ test("first-community explains when the local identity belongs to another accoun
     ),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Finish connecting Buzz" }),
+    page.getByRole("heading", { name: "Finish connecting Beekeeper" }),
   ).toBeVisible();
 });
 

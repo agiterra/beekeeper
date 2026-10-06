@@ -149,7 +149,7 @@ Licensed under the Creative Commons Attribution 4.0 International License
 
 Original model: https://huggingface.co/nvidia/parakeet-tdt_ctc-110m
 Converted to ONNX with int8 quantization by the sherpa-onnx project
-(https://github.com/k2-fsa/sherpa-onnx); Buzz ships this conversion
+(https://github.com/k2-fsa/sherpa-onnx); Beekeeper ships this conversion
 unmodified.
 
 Provided \"AS IS\", without warranty of any kind, express or implied. See the

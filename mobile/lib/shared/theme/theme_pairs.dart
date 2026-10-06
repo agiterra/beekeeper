@@ -109,7 +109,5 @@ String pairedThemeLabel(String lightName) {
   // Stripping can remove everything (e.g. "light-plus") — fall back to the raw
   // name so the row is never blank.
   final parts = stripped.isEmpty ? lightName.split('-') : stripped;
-  return parts
-      .map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
-      .join(' ');
+  return parts.map(themeNameWordLabel).join(' ');
 }
