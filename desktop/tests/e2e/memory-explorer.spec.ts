@@ -140,6 +140,24 @@ test("real snapshot bytes through MOCK transport: evidence traversal, exact sour
     .first()
     .click();
   await expect(page.locator(".explorer-reader h2")).toContainText("SV-77");
+  const graph = page.getByTestId("explorer-graph");
+  await expect(graph.locator(".explorer-edges path")).not.toHaveCount(0);
+  expect(await graph.locator(".explorer-node").count()).toBeLessThanOrEqual(7);
+  const graphWidth =
+    (await page.locator(".explorer-connections").boundingBox())?.width ?? 0;
+  const readerWidth =
+    (await page.locator(".explorer-reader").boundingBox())?.width ?? 0;
+  expect(graphWidth).toBeGreaterThan(readerWidth);
+  await expect(
+    page.getByTestId("explorer-read").getByRole("heading").first(),
+  ).toBeVisible();
+  await expect(page.getByTestId("explorer-source")).toHaveCount(0);
+  await expect(page.locator(".explorer-provenance")).not.toHaveAttribute(
+    "open",
+  );
+  await page.locator(".explorer-provenance summary").click();
+  await expect(page.locator(".explorer-provenance")).toContainText(fullSha);
+  await page.locator(".explorer-provenance summary").click();
   await shot(page, "01-sv77");
   await page
     .locator(".explorer-connections .explorer-node")
@@ -203,6 +221,15 @@ test("generic repository: explicit links, anchors, unindexed archives and keyboa
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("explorer-source")).toContainText(
     "## Observations",
+  );
+  await page.getByRole("button", { name: "Read", exact: true }).click();
+  await expect(
+    page
+      .getByTestId("explorer-read")
+      .getByRole("heading", { name: "Observations", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId("explorer-read").locator("table")).toHaveCount(
+    1,
   );
   await shot(page, "04-generic");
   await page.setViewportSize({ width: 800, height: 700 });

@@ -55,7 +55,20 @@ export function enrichBeekeeper(
         // The shared renderer restarts ordered lists at 1. The finding's true
         // number is already in its title; read its prose without that marker.
         // Exact source retains the original numbered bytes.
-        n.readText = n.text.replace(/^\d+\.\s+/, "");
+        const marker = /^\d+\.\s+/.exec(n.text)?.[0] ?? "";
+        // Remove only the list container indentation. Nested lists and code
+        // keep their relative indent; the Source view retains every byte.
+        const indent = " ".repeat(marker.length);
+        n.readText = n.text
+          .split("\n")
+          .map((line, i) =>
+            i === 0
+              ? line.slice(marker.length)
+              : line.startsWith(indent)
+                ? line.slice(indent.length)
+                : line,
+          )
+          .join("\n");
         nodes.push(n);
         // Paragraph positions exclude fenced examples from subitem recognition.
         const subitems: { label: string; line: number }[] = [];

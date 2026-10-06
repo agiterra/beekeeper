@@ -108,3 +108,17 @@ test("frontmatter is preserved separately and giant plain documents have complet
   assert(doc.nodes.some((n) => n.text.includes("line 1499")));
   assert(doc.nodes.every((n) => n.end - n.start <= 400));
 });
+
+test("finding Read removes container indentation without altering exact source or nested code", () => {
+  const text =
+    "## 2. Open — findings\n\n340. **Observation.**\n     Prose continues.\n\n     Another paragraph.\n\n     ```sh\n     echo literal\n     ```\n";
+  const finding = parseMarkdown(
+    "plans/SESSION_STATE.md",
+    text,
+    true,
+  ).nodes.find((n) => n.fragment === "ledger-340");
+  assert(finding);
+  assert(finding.text.includes("\n     Another paragraph."));
+  assert(finding.readText.includes("\n\nAnother paragraph."));
+  assert(finding.readText.includes("\n```sh\necho literal\n```"));
+});

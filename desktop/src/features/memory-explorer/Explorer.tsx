@@ -27,6 +27,8 @@ import {
   releaseSnapshot,
   type Snapshot,
 } from "./queries";
+import { Neighborhood } from "./Neighborhood";
+import { copyTextToClipboard } from "@/shared/lib/clipboard";
 import "./explorer.css";
 
 export function MemoryExplorer({ projectId }: { projectId: string }) {
@@ -144,7 +146,7 @@ function ExplorerReader({
   const [query, setQuery] = React.useState("");
   const [source, setSource] = React.useState(false);
   const [compare, setCompare] = React.useState<SourceNode | null>(null);
-  const [more, setMore] = React.useState(30);
+  const [more, setMore] = React.useState(6);
   const [stale, setStale] = React.useState(false);
   const [refresh, setRefresh] = React.useState(0);
   const workerRef = React.useRef<ReturnType<typeof parserWorker> | null>(null);
@@ -329,6 +331,23 @@ function ExplorerReader({
       ].filter((id) => id !== active.id)
     : [];
   const connections = edges.filter((e) => e.from === selected);
+  const neighborNodes = neighbors
+    .map((id) => nodes.find((n) => n.id === id))
+    .filter((n): n is SourceNode => !!n);
+  // Show explicit references before document containment, without inventing relations.
+  neighborNodes.sort((a, b) => {
+    const priority = (id: string) =>
+      edges.some(
+        (e) =>
+          e.basis !== "contains" &&
+          ((e.from === selected && e.to.includes(id)) ||
+            (e.from === id && e.to.includes(selected))),
+      )
+        ? 0
+        : 1;
+    return priority(a.id) - priority(b.id);
+  });
+  const visibleNeighbors = neighborNodes.slice(more - 6, more);
   const needle = query.trim().toLowerCase();
   const results = needle
     ? nodes
@@ -341,7 +360,7 @@ function ExplorerReader({
   const select = async (id: string, back = false) => {
     if (!loadedRef.current || busy) return;
     setError(null);
-    setMore(30);
+    setMore(6);
     setSource(false);
     if (!back && selected) setHistory((h) => [...h, selected].slice(-100));
     setSelected(id);
@@ -565,19 +584,38 @@ function ExplorerReader({
           </h2>
           {active ? (
             <>
-              {nodeButton(active)}
-              <p className="my-3 text-xs text-muted-foreground">
+              <p className="explorer-map-caption">
                 Explicit references and backlinks · {neighbors.length} neighbors
               </p>
-              {neighbors.slice(more - 30, more - 1).map((id) => {
-                const node = nodes.find((n) => n.id === id);
-                return node ? nodeButton(node) : null;
-              })}
-              {neighbors.length > more - 1 && (
-                <Button size="sm" onClick={() => setMore((n) => n + 29)}>
-                  More
-                </Button>
-              )}
+              <Neighborhood
+                active={active}
+                neighbors={visibleNeighbors}
+                edges={edges}
+                select={(id) => void select(id)}
+              />
+              <div className="explorer-graph-footer">
+                <span>● Documents / sections</span>
+                <span data-kind="row">● Plan rows</span>
+                <span data-kind="finding">● Findings</span>
+                {more > 6 && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setMore((n) => n - 6)}
+                  >
+                    Earlier connections
+                  </Button>
+                )}
+                {neighbors.length > more && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setMore((n) => n + 6)}
+                  >
+                    More
+                  </Button>
+                )}
+              </div>
               {connections
                 .filter((e) => e.to.length !== 1)
                 .map((e) => (
@@ -660,11 +698,28 @@ function ExplorerReader({
                   Open in Artifacts
                 </Button>
               </div>
-              <p className="mb-3 break-all font-mono text-2xs text-muted-foreground">
-                {loaded?.snapshot.listing.repo} @{" "}
-                {loaded?.snapshot.listing.commit} · {active.path}:{active.start}
-                –{active.end}
-              </p>
+              <details className="explorer-provenance">
+                <summary>
+                  Source details · lines {active.start}–{active.end}
+                </summary>
+                <p className="my-2 break-all font-mono text-xs">
+                  {loaded?.snapshot.listing.repo} @{" "}
+                  {loaded?.snapshot.listing.commit}
+                  <br />
+                  {active.path}:{active.start}–{active.end}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    copyTextToClipboard(
+                      `${loaded?.snapshot.listing.repo} @ ${loaded?.snapshot.listing.commit} · ${active.path}:${active.start}–${active.end}`,
+                    )
+                  }
+                >
+                  Copy source location
+                </Button>
+              </details>
               {active.claim && (
                 <details className="mb-3 rounded-md border p-3 text-xs">
                   <summary>
@@ -719,7 +774,7 @@ function ExplorerReader({
                   </pre>
                 </details>
               )}
-              <details className="mb-4" open>
+              <details className="mb-4">
                 <summary className="text-xs font-medium">
                   Passage outline
                 </summary>
@@ -744,7 +799,9 @@ function ExplorerReader({
                   {active.text}
                 </pre>
               ) : (
-                <Markdown content={active.readText ?? active.text} />
+                <div data-testid="explorer-read" className="explorer-prose">
+                  <Markdown content={active.readText ?? active.text} />
+                </div>
               )}
               <div className="mt-5 flex gap-2">
                 {["Previous passage", "Next passage"].map((label, i) => {
