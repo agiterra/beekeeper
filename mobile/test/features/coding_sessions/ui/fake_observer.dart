@@ -1,13 +1,13 @@
-import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
-import 'package:buzz/features/coding_sessions/state/coding_sessions_state.dart'
+import 'package:beekeeper/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:beekeeper/features/coding_sessions/state/coding_sessions_state.dart'
     show
         CodingSessionCommands,
         CodingSessionPendingCreates,
         CodingSessionPendingTurns,
         pendingCreatesProvider,
         pendingTurnsProvider;
-import 'package:buzz/features/coding_sessions/ui/observer_contract.dart';
-import 'package:buzz/shared/relay/signed_event_relay.dart';
+import 'package:beekeeper/features/coding_sessions/ui/observer_contract.dart';
+import 'package:beekeeper/shared/relay/signed_event_relay.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:hooks_riverpod/misc.dart';
 import 'package:nostr/nostr.dart' as nostr;

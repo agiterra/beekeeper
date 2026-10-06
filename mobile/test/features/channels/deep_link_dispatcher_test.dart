@@ -1,12 +1,12 @@
 import 'dart:async';
 
-import 'package:buzz/features/channels/channel.dart';
-import 'package:buzz/features/channels/channels_provider.dart';
-import 'package:buzz/features/channels/deep_link_dispatcher.dart';
-import 'package:buzz/features/invites/invite_join_provider.dart';
-import 'package:buzz/shared/auth/auth.dart';
-import 'package:buzz/shared/deeplink/deep_link.dart';
-import 'package:buzz/shared/deeplink/pending_deep_link_provider.dart';
+import 'package:beekeeper/features/channels/channel.dart';
+import 'package:beekeeper/features/channels/channels_provider.dart';
+import 'package:beekeeper/features/channels/deep_link_dispatcher.dart';
+import 'package:beekeeper/features/invites/invite_join_provider.dart';
+import 'package:beekeeper/shared/auth/auth.dart';
+import 'package:beekeeper/shared/deeplink/deep_link.dart';
+import 'package:beekeeper/shared/deeplink/pending_deep_link_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -422,17 +422,17 @@ class _ThrowingCommunityStorage extends CommunityStorage {
 }
 
 class _QueuedPendingDeepLinkNotifier extends PendingDeepLinkNotifier {
-  _QueuedPendingDeepLinkNotifier(List<BuzzDeepLink> links)
+  _QueuedPendingDeepLinkNotifier(List<BeekeeperDeepLink> links)
     : _links = List.of(links);
 
-  final List<BuzzDeepLink> _links;
+  final List<BeekeeperDeepLink> _links;
   int consumeCalls = 0;
 
-  BuzzDeepLink? get _firstOrNull => _links.isEmpty ? null : _links.first;
-  BuzzDeepLink? get current => _firstOrNull;
+  BeekeeperDeepLink? get _firstOrNull => _links.isEmpty ? null : _links.first;
+  BeekeeperDeepLink? get current => _firstOrNull;
 
   @override
-  BuzzDeepLink? build() => _firstOrNull;
+  BeekeeperDeepLink? build() => _firstOrNull;
 
   @override
   void consume() {
@@ -445,11 +445,11 @@ class _QueuedPendingDeepLinkNotifier extends PendingDeepLinkNotifier {
 class _RecordingPendingDeepLinkNotifier extends PendingDeepLinkNotifier {
   _RecordingPendingDeepLinkNotifier(this.link);
 
-  final BuzzDeepLink link;
+  final BeekeeperDeepLink link;
   int consumeCalls = 0;
 
   @override
-  BuzzDeepLink? build() => link;
+  BeekeeperDeepLink? build() => link;
 
   @override
   void consume() {
@@ -461,10 +461,10 @@ class _RecordingPendingDeepLinkNotifier extends PendingDeepLinkNotifier {
 class _FakePendingDeepLinkNotifier extends PendingDeepLinkNotifier {
   _FakePendingDeepLinkNotifier(this.link);
 
-  final BuzzDeepLink link;
+  final BeekeeperDeepLink link;
 
   @override
-  BuzzDeepLink? build() => link;
+  BeekeeperDeepLink? build() => link;
 }
 
 class _FakeChannelsNotifier extends ChannelsNotifier {
@@ -480,7 +480,7 @@ class _CapturedDestination extends StatelessWidget {
   const _CapturedDestination({required this.channel, required this.link});
 
   final Channel channel;
-  final BuzzDeepLink link;
+  final BeekeeperDeepLink link;
 
   @override
   Widget build(BuildContext context) => const SizedBox();

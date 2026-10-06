@@ -27,7 +27,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::{BuzzTestClient, RelayMessage};
+use beekeeper_test_client::{BeekeeperTestClient, RelayMessage};
 use nostr::{Filter, Keys};
 
 #[tokio::main]
@@ -66,7 +66,7 @@ async fn main() {
 
 async fn run_send(url: &str, keys: &Keys, channel: &str, message: &str, kind: u16) {
     println!("Connecting to {url}...");
-    let mut client = match BuzzTestClient::connect(url, keys).await {
+    let mut client = match BeekeeperTestClient::connect(url, keys).await {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to connect: {e}");
@@ -94,7 +94,7 @@ async fn run_send(url: &str, keys: &Keys, channel: &str, message: &str, kind: u1
 
 async fn run_subscribe(url: &str, keys: &Keys, channel: &str, kind: u16) {
     println!("Connecting to {url}...");
-    let mut client = match BuzzTestClient::connect(url, keys).await {
+    let mut client = match BeekeeperTestClient::connect(url, keys).await {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to connect: {e}");

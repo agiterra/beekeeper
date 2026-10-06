@@ -13,7 +13,7 @@ import {
   type SupportedLinkPreview,
 } from "@/shared/lib/linkPreview";
 
-import { BuzzInlineLink, BuzzLinkChip } from "./BuzzLinkChip";
+import { BeekeeperInlineLink, BeekeeperLinkChip } from "./BeekeeperLinkChip";
 
 function entityLinkPresentation(link: ParsedEntityLink) {
   switch (link.type) {
@@ -148,7 +148,7 @@ export function renderEntityLinkAnchor({
 
   if (!asChip) {
     return (
-      <BuzzInlineLink
+      <BeekeeperInlineLink
         href={href}
         title={href}
         aria-label={presentation.ariaLabel}
@@ -156,13 +156,13 @@ export function renderEntityLinkAnchor({
         onOpenLink={() => onOpenEntityLink(parsed.value)}
       >
         {children}
-      </BuzzInlineLink>
+      </BeekeeperInlineLink>
     );
   }
 
   return (
-    <BuzzLinkChip
-      data-buzz-link-kind={parsed.value.type}
+    <BeekeeperLinkChip
+      data-beekeeper-link-kind={parsed.value.type}
       href={href}
       icon={presentation.icon}
       title={href}
@@ -171,6 +171,6 @@ export function renderEntityLinkAnchor({
       onOpenLink={() => onOpenEntityLink(parsed.value)}
     >
       {presentation.label}
-    </BuzzLinkChip>
+    </BeekeeperLinkChip>
   );
 }

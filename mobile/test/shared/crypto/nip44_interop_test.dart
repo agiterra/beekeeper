@@ -1,4 +1,4 @@
-import 'package:buzz/shared/crypto/nip44.dart';
+import 'package:beekeeper/shared/crypto/nip44.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

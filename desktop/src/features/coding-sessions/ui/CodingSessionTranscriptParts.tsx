@@ -172,12 +172,12 @@ export function CodingSessionActiveTool({
       {open ? (
         <div className={cn(ACTIVITY_ROW_DETAIL_INSET_CLASS, "mt-1 min-w-0")}>
           {Object.keys(item.args).length > 0 ? (
-            <pre className="buzz-code-scrollbar max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
+            <pre className="beekeeper-code-scrollbar max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
               <RedactedText text={safeFormatToolArgs(item.args)} />
             </pre>
           ) : null}
           {item.result.trim() ? (
-            <pre className="buzz-code-scrollbar mt-2 max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
+            <pre className="beekeeper-code-scrollbar mt-2 max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
               <RedactedText text={item.result} />
             </pre>
           ) : null}

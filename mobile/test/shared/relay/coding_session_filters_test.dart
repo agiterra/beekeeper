@@ -1,5 +1,5 @@
-import 'package:buzz/shared/relay/nostr_filters.dart';
-import 'package:buzz/shared/relay/nostr_models.dart';
+import 'package:beekeeper/shared/relay/nostr_filters.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _channelId = 'c0ffee00-0000-4000-8000-000000000001';

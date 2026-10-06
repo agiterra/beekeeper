@@ -86,8 +86,8 @@ async function openAgentsTab(page: Page) {
   await page.addInitScript(
     (events) => {
       (
-        window as unknown as { __BUZZ_E2E_EXTRA_PROJECT_EVENTS__: unknown }
-      ).__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events;
+        window as unknown as { __BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__: unknown }
+      ).__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events;
     },
     [projectHead("attic", "Attic"), projectHead("skunkworks", "Skunkworks")],
   );
@@ -168,7 +168,7 @@ test("the Roles tab explains what a role is in plain language, and Technical det
   }, PROJECT_FEATURES);
   // Exercise an existing project, independent of background General migration.
   await page.addInitScript((event) => {
-    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [event];
+    window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [event];
   }, generalProjectWithChannel());
   await installMockBridge(page, {});
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -701,8 +701,8 @@ async function openRankedProjectRolesTab(page: Page, trustedRelay = false) {
   await page.addInitScript(
     (events) => {
       (
-        window as unknown as { __BUZZ_E2E_EXTRA_PROJECT_EVENTS__: unknown }
-      ).__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events;
+        window as unknown as { __BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__: unknown }
+      ).__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events;
     },
     [generalProjectWithChannel()],
   );
@@ -725,19 +725,19 @@ async function openRankedProjectRolesTab(page: Page, trustedRelay = false) {
     ],
   });
   // Patch the mock's revision-comparison answer after `installMockBridge`'s
-  // own init script runs (it overwrites `window.__BUZZ_E2E__.mock` wholesale),
+  // own init script runs (it overwrites `window.__BEEKEEPER_E2E__.mock` wholesale),
   // so this merge survives rather than being clobbered by it. There is no
   // typed knob for this in `tests/helpers/bridge.ts` — `packRevisionRelations`
   // lives only on `e2eBridge.ts`'s own `E2eConfig`, which reads
-  // `window.__BUZZ_E2E__` directly.
+  // `window.__BEEKEEPER_E2E__` directly.
   await page.addInitScript(
     (behind) => {
       const testWindow = window as unknown as {
-        __BUZZ_E2E__?: { mock?: Record<string, unknown> };
+        __BEEKEEPER_E2E__?: { mock?: Record<string, unknown> };
       };
-      if (!testWindow.__BUZZ_E2E__) return;
-      testWindow.__BUZZ_E2E__.mock = {
-        ...(testWindow.__BUZZ_E2E__.mock ?? {}),
+      if (!testWindow.__BEEKEEPER_E2E__) return;
+      testWindow.__BEEKEEPER_E2E__.mock = {
+        ...(testWindow.__BEEKEEPER_E2E__.mock ?? {}),
         packRevisionRelations: {
           [behind.sha]: { relation: "earlier", behind: behind.behind },
         },
@@ -760,7 +760,7 @@ async function openRankedProjectRolesTab(page: Page, trustedRelay = false) {
 async function seedRankedReports(page: Page) {
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("mock signed-event seam is missing");
       for (const event of events as never[]) seed({ channelName, event });
     },
@@ -936,7 +936,7 @@ for (const operator of [false, true]) {
     // 44224 / 44226 reads too, with no special-casing and no bridge knob.
     await page.evaluate(
       ({ channelName, events }) => {
-        const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+        const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
         if (!seed) throw new Error("mock signed-event seam is missing");
         for (const event of events as never[]) seed({ channelName, event });
       },
@@ -1128,7 +1128,7 @@ test("the Roles page reads as one calm system across viewports, themes and zoom"
     });
   });
   await expect(darkPage.locator("html")).toHaveAttribute(
-    "data-buzz-theme",
+    "data-beekeeper-theme",
     "buzz-dark",
     { timeout: 15_000 },
   );
@@ -1207,8 +1207,8 @@ test("project Roles resolves shared identities without showing another project's
   await page.addInitScript(
     (events) => {
       (
-        window as unknown as { __BUZZ_E2E_EXTRA_PROJECT_EVENTS__: unknown }
-      ).__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events;
+        window as unknown as { __BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__: unknown }
+      ).__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events;
     },
     [generalProjectWithChannel(), projectHead("other-scope", "Other scope")],
   );
@@ -1232,7 +1232,7 @@ test("project Roles resolves shared identities without showing another project's
   await openRolesTab(page);
   await page.evaluate(
     ({ events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seam missing");
       for (const event of events as never[])
         seed({ channelName: "general", event });

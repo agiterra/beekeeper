@@ -42,7 +42,7 @@ use beekeeper_core::seat_git_hooks::wip_ref_name;
 use beekeeper_sdk::{GitPatchMeta, GitRepoCoord};
 use serde_json::{json, Value};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::{sdk_err, validate_lower_hex64};
 use crate::HandoverCheckpointArgs;
@@ -78,7 +78,7 @@ const DEFAULT_RELAY_MESSAGE_LIMIT: usize = 262_144;
 
 /// `bee sessions handover checkpoint`.
 pub(super) async fn cmd_checkpoint(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     args: HandoverCheckpointArgs,
 ) -> Result<(), CliError> {
     let state = load_handover_state(
@@ -367,7 +367,7 @@ fn push_head(
 
 /// Publish the captured patch as a NIP-34 patch event, or as a Blossom blob.
 pub(super) async fn carry_patch(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     captured: &CapturedTree,
     repo_ref: &str,
     repo_owner: Option<&str>,
@@ -427,7 +427,7 @@ pub(super) async fn carry_patch(
 
 /// Build and publish one NIP-34 patch event carrying the capture.
 async fn publish_patch_event(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     captured: &CapturedTree,
     repo_ref: &str,
     owner: &str,
@@ -472,7 +472,7 @@ async fn publish_patch_event(
 /// than assumed, minus an envelope margin. An unreadable document falls back
 /// to the documented default, which is a stated guess and not a silent one:
 /// being wrong here costs a blob upload, never a lost patch.
-async fn relay_patch_limit(client: &BuzzClient) -> usize {
+async fn relay_patch_limit(client: &BeekeeperClient) -> usize {
     let advertised = client
         .get_public("/")
         .await

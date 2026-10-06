@@ -27,7 +27,7 @@ use beekeeper_core::kind::KIND_CODING_SESSION_POLICY;
 use nostr::Event;
 use serde_json::json;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// This session's fold context with `verifier_required` read from the wire.
@@ -36,7 +36,7 @@ use crate::error::CliError;
 /// which is small (one record per revision) and scoped by `h`, `d` and
 /// `csp-genesis` exactly as `bee sessions policy get` scopes it.
 pub(super) async fn fetch_context_with_verifier_gate(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: &str,
@@ -64,7 +64,7 @@ pub(super) async fn fetch_context_with_verifier_gate(
 /// here only when it is not an `Event` at all — exactly as `bee sessions
 /// policy get` reads them.
 async fn fetch_policy_records(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: &str,

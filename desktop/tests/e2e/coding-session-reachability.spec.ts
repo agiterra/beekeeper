@@ -174,7 +174,7 @@ async function seedAndOpen(page: Page, events: RelayEvent[]) {
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
   await page.evaluate(
     ({ channelName, seeds }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("mock signed-event seam is missing");
       for (const event of seeds as never[]) seed({ channelName, event });
     },

@@ -30,7 +30,7 @@ use beekeeper_core::pulse_overlap::{
     fold_pulse_overlaps, render_pulse_overlap_rows, PulseOverlapSide,
 };
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::commands::sessions::operations_reads::{
     fetch_session_authority, fetch_transactions, SessionAuthority,
 };
@@ -93,7 +93,7 @@ fn steering_signers(authority: &SessionAuthority, now_unix: i64) -> Vec<String> 
 }
 
 async fn fetch_signed(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     filter: Value,
     scope: &str,
     errors: &mut Vec<PulseMissionError>,
@@ -118,7 +118,7 @@ async fn fetch_signed(
 /// records with, so the two surfaces cannot resolve different provider sets
 /// from the same channel.
 async fn fetch_bounded(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     filter: Value,
     scope: &str,
     errors: &mut Vec<PulseMissionError>,
@@ -140,7 +140,7 @@ async fn fetch_bounded(
 /// resolve falls back to the 8 hex the fold already carries, which is a weaker
 /// rendering of the same fact rather than a wrong one.
 pub async fn fetch_display_names(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     pubkeys: &BTreeSet<String>,
 ) -> BTreeMap<String, String> {
     let mut names = BTreeMap::new();
@@ -232,7 +232,7 @@ pub struct MissionSessionTarget {
 /// authority chain hangs off, and inventing one would attribute another
 /// umbrella's seats to this row.
 pub async fn discover_mission_sessions(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channels: &[String],
     wanted: &BTreeMap<String, (Option<String>, Option<i64>)>,
     errors: &mut Vec<PulseMissionError>,
@@ -308,7 +308,7 @@ fn genesis_session_ref(event: &Value) -> Option<String> {
 /// target and `bee pulse digest` with the project's open sessions, so the two
 /// commands cannot print different sentences about the same wire.
 pub async fn compose_mission_rows(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     targets: &[MissionSessionTarget],
     open_session_count: usize,
     repo: Option<&str>,
@@ -489,7 +489,7 @@ pub fn mission_rows_sibling_keys(rows: &PulseMissionRows) -> Value {
 
 /// `bee pulse missions --channel <uuid> --session-ref <uuid> --genesis <hex64>`.
 pub async fn cmd_missions(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: &str,

@@ -49,10 +49,11 @@ export function respondToMockMultiChannelSessionFacts(
     return false;
   }
 
-  const hungKinds = window.__BUZZ_E2E_HANG_PROJECT_QUERY_KINDS__ ?? [];
+  const hungKinds = window.__BEEKEEPER_E2E_HANG_PROJECT_QUERY_KINDS__ ?? [];
   if (kinds.some((kind) => hungKinds.includes(kind))) return true;
 
-  const rejectedKinds = window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ ?? [];
+  const rejectedKinds =
+    window.__BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__ ?? [];
   if (kinds.some((kind) => rejectedKinds.includes(kind))) {
     send(["CLOSED", subId, "mock session fact query failure"]);
     return true;

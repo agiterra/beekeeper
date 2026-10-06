@@ -1,4 +1,4 @@
-import 'package:buzz/shared/animated_avatar.dart';
+import 'package:beekeeper/shared/animated_avatar.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

@@ -35,7 +35,7 @@ use beekeeper_sdk::coding_session_team_transaction::{
     parse_coding_session_team_transaction,
 };
 use beekeeper_sdk::{build_coding_session_command, build_coding_session_turn_receipt, build_join};
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use nostr::{Alphabet, Event, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
 use uuid::Uuid;
 
@@ -46,7 +46,7 @@ fn relay_url() -> String {
     std::env::var("RELAY_URL").unwrap_or_else(|_| "ws://localhost:3000".to_owned())
 }
 
-async fn create_channel(client: &mut BuzzTestClient, owner: &Keys) -> Uuid {
+async fn create_channel(client: &mut BeekeeperTestClient, owner: &Keys) -> Uuid {
     let channel_id = Uuid::new_v4();
     let event = EventBuilder::new(Kind::Custom(9007), "")
         .tags([
@@ -62,7 +62,7 @@ async fn create_channel(client: &mut BuzzTestClient, owner: &Keys) -> Uuid {
     channel_id
 }
 
-async fn join_channel(client: &mut BuzzTestClient, keys: &Keys, channel_id: Uuid) {
+async fn join_channel(client: &mut BeekeeperTestClient, keys: &Keys, channel_id: Uuid) {
     let event = build_join(channel_id)
         .expect("build join")
         .sign_with_keys(keys)
@@ -150,10 +150,10 @@ async fn the_relay_stores_every_delivery_class_and_the_new_turn_stages() {
     let url = relay_url();
     let operator = Keys::generate();
     let provider = Keys::generate();
-    let mut operator_ws = BuzzTestClient::connect(&url, &operator)
+    let mut operator_ws = BeekeeperTestClient::connect(&url, &operator)
         .await
         .expect("operator connect");
-    let mut provider_ws = BuzzTestClient::connect(&url, &provider)
+    let mut provider_ws = BeekeeperTestClient::connect(&url, &provider)
         .await
         .expect("provider connect");
 
@@ -318,13 +318,13 @@ async fn team_operation_is_stored_before_pointer_wake_and_strictly_admitted() {
     let operator = Keys::generate();
     let provider = Keys::generate();
     let outsider = Keys::generate();
-    let mut operator_ws = BuzzTestClient::connect(&url, &operator)
+    let mut operator_ws = BeekeeperTestClient::connect(&url, &operator)
         .await
         .expect("operator connect");
-    let mut provider_ws = BuzzTestClient::connect(&url, &provider)
+    let mut provider_ws = BeekeeperTestClient::connect(&url, &provider)
         .await
         .expect("provider connect");
-    let mut outsider_ws = BuzzTestClient::connect(&url, &outsider)
+    let mut outsider_ws = BeekeeperTestClient::connect(&url, &outsider)
         .await
         .expect("outsider connect");
     let channel_id = create_channel(&mut operator_ws, &operator).await;

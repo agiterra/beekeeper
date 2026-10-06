@@ -25,7 +25,7 @@ use uuid::Uuid;
 pub(super) use super::operations_authority::{fetch_projected_authority, ProjectedAuthority};
 use super::operations_precheck::{precheck_operation, PrecheckRequest, PrecheckedOperation};
 use super::operations_reads::{fetch_founder_context, fetch_transactions};
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
 use crate::{TeamDecisionCmd, TeamNoteArgs, TeamOperationCmd, TeamTransactionWriteArgs};
@@ -81,7 +81,7 @@ pub(super) fn resolve_delivery_command_id(
 
 /// Publish one operation after strict local structural validation.
 pub async fn cmd_write(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     args: TeamTransactionWriteArgs,
     transaction_type: CodingSessionTeamTransactionType,
 ) -> Result<(), CliError> {
@@ -193,7 +193,7 @@ pub(super) fn wake_omission_delivery(omission: &WakeOmission) -> Value {
 }
 
 async fn publish_operation(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     operation: PublishOperation,
 ) -> Result<(), CliError> {
     validate_coordinates(
@@ -347,7 +347,7 @@ pub(super) fn disclose_adopted_correction(
 /// A note carries no `--supersedes` and no `--wake-to` by construction. It can
 /// never correct another record, and waking a seat for a record that changes
 /// no state would spend a turn to deliver an interruption.
-pub async fn cmd_note(client: &BuzzClient, args: TeamNoteArgs) -> Result<(), CliError> {
+pub async fn cmd_note(client: &BeekeeperClient, args: TeamNoteArgs) -> Result<(), CliError> {
     for reference in &args.refs {
         validate_lower_hex64("--ref", reference)?;
     }
@@ -371,7 +371,7 @@ pub async fn cmd_note(client: &BuzzClient, args: TeamNoteArgs) -> Result<(), Cli
 }
 
 /// Publish a `decision.request` or a `decision.answer`.
-pub async fn cmd_decide(client: &BuzzClient, cmd: TeamDecisionCmd) -> Result<(), CliError> {
+pub async fn cmd_decide(client: &BeekeeperClient, cmd: TeamDecisionCmd) -> Result<(), CliError> {
     match cmd {
         TeamDecisionCmd::Request {
             channel,
@@ -556,7 +556,7 @@ pub(super) fn held_on_wake_role(
 /// reported explicitly under `delivery` as
 /// [`WakeOmission::NoSeat`] — never as an absent key (REVIEW-L1 F4).
 async fn resolve_asker_role(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: &str,
@@ -638,7 +638,7 @@ where
 }
 
 /// Read one or all operations with signed provenance and fold disclosure.
-pub async fn cmd_read(client: &BuzzClient, cmd: TeamOperationCmd) -> Result<(), CliError> {
+pub async fn cmd_read(client: &BeekeeperClient, cmd: TeamOperationCmd) -> Result<(), CliError> {
     let (channel, session_ref, genesis, wanted) = match cmd {
         TeamOperationCmd::Get {
             channel,
@@ -737,7 +737,7 @@ struct OperationCoordinates {
 /// query verifies the record before its signed `h`, `d`, and `cstx-genesis`
 /// values are allowed to scope the canonical fold.
 async fn resolve_operation_coordinates(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     operation_id: &str,
 ) -> Result<OperationCoordinates, CliError> {
     let values = client

@@ -25,7 +25,7 @@ use beekeeper_sdk::builders::build_coding_session_lifecycle_receipt;
 use beekeeper_sdk::kind::KIND_CODING_SESSION_METADATA;
 
 use super::stop::{classify_stop_receipts, cmd_stop, StopAnswer};
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 const CHANNEL: &str = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
@@ -234,8 +234,8 @@ async fn spawn_relay(
     (url, relay, server)
 }
 
-fn client(url: String) -> BuzzClient {
-    BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client")
+fn client(url: String) -> BeekeeperClient {
+    BeekeeperClient::new(url, nostr::Keys::generate(), None, None).expect("client")
 }
 
 /// Two generations of one live execution: the stop must name the newest.

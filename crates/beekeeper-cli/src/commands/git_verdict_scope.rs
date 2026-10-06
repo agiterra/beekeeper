@@ -29,7 +29,7 @@ use beekeeper_core::coding_session_verdict_admission::{
 use beekeeper_core::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION;
 use std::collections::HashMap;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// How many kind:39000 channel-metadata events one prediction may page through
@@ -65,7 +65,7 @@ pub(crate) struct PredictionScope {
 
 /// Resolve the scope, or `None` when there is nowhere to look at all.
 pub(crate) async fn resolve_prediction_scope(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     bound_channel: Option<&str>,
     project_ref: Option<&str>,
     pusher_pubkey: &str,
@@ -173,7 +173,7 @@ fn narrowing_clause(
 /// `(channel, genesis event id)` for each mission that currently seats
 /// `pusher`, newest first and bounded like the relay's own lookup.
 async fn pusher_seat_missions(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     pusher_pubkey: &str,
 ) -> Result<Vec<(String, String)>, CliError> {
     let rows = client
@@ -225,7 +225,7 @@ async fn pusher_seat_missions(
 /// The session (transport) channels of one project, from the relay-signed
 /// kind:39000 projection.
 async fn project_session_channels(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project_ref: &str,
 ) -> Result<Vec<String>, CliError> {
     let rows = client

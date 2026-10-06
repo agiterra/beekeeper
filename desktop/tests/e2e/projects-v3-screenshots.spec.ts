@@ -20,7 +20,7 @@ const SHOTS = "test-results/projects-v3-screenshots";
 //     `/projects/$projectId/code/$repoId`, reached by opening a repository
 //     from the container screen's Code section
 //     (ProjectContainerScreen.tsx:552-566).
-async function openBuzzProject(page: import("@playwright/test").Page) {
+async function openBeekeeperProject(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   const projectEntry = page.getByTestId("project-open-buzz");
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
@@ -38,7 +38,7 @@ async function openBuzzProject(page: import("@playwright/test").Page) {
 // plus, issue detail with inline copy link + avatar timeline, PR detail).
 test("projects v3 workspace screenshot states", async ({ page }) => {
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
   await expect(
     page.getByRole("button", { name: "Open Discussion" }),
   ).toHaveCount(0);

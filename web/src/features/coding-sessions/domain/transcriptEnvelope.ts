@@ -24,7 +24,7 @@ const MAX_TRANSCRIPT_CONTENT_BYTES = 32 * 1024;
 const MAX_TRANSCRIPT_ITEM_DEPTH = 24;
 const MAX_TRANSCRIPT_IDENTITY_BYTES = 512;
 
-export type BuzzCodingSessionTranscriptV1 = {
+export type BeekeeperCodingSessionTranscriptV1 = {
   schema: typeof BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA;
   session: CodingSessionTarget;
   eventSeq: number;
@@ -34,9 +34,9 @@ export type BuzzCodingSessionTranscriptV1 = {
 };
 
 /** Decode one 44225 content, or null. Never throws. */
-export function parseBuzzCodingSessionTranscript(
+export function parseBeekeeperCodingSessionTranscript(
   content: unknown,
-): Readonly<BuzzCodingSessionTranscriptV1> | null {
+): Readonly<BeekeeperCodingSessionTranscriptV1> | null {
   const value = parseBoundedJson(content, MAX_TRANSCRIPT_CONTENT_BYTES);
   if (
     !isPlainRecord(value) ||

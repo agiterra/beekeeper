@@ -54,7 +54,7 @@ use beekeeper_sdk::coding_session_handover::build_coding_session_handover;
 use nostr::Event;
 use serde_json::{json, Value};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::{sdk_err, validate_lower_hex64, validate_uuid};
 use crate::HandoverCmd;
@@ -269,7 +269,7 @@ pub(super) fn classify_own_write(raw: &str) -> Result<OwnWriteOutcome, CliError>
 /// read is reported as [`GENESIS_UNAVAILABLE_REASON`], which is a different
 /// state with a different exit code.
 pub(super) async fn load_handover_state(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: Option<&str>,
@@ -353,7 +353,7 @@ pub(super) async fn load_handover_state(
 
 /// Resolve `--genesis`, or find the umbrella's genesis on the relay.
 async fn resolve_genesis(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: Option<&str>,
@@ -371,7 +371,7 @@ async fn resolve_genesis(
 
 /// Every verified 44247 record for this umbrella.
 async fn fetch_handover_events(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis_ref: &str,
@@ -402,7 +402,7 @@ async fn fetch_handover_events(
 /// deletions exist only as a kind 5 plus an absent genesis — so a relay that
 /// serves none is not an error.
 async fn deletion_receipt_reason(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     genesis_ref: &str,
 ) -> Result<Option<String>, CliError> {
@@ -455,7 +455,7 @@ async fn deletion_receipt_reason(
 /// The payload's own validation message when the record is out of bounds, so
 /// a caller learns which field is wrong before anything is published.
 pub(super) fn build_handover_event(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis_ref: &str,
@@ -487,7 +487,7 @@ pub(super) struct ExecutionRow {
 
 /// Read this umbrella's executions and each one's published fence.
 pub(super) async fn fetch_executions(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
 ) -> Result<Vec<ExecutionRow>, CliError> {
@@ -636,7 +636,7 @@ pub(super) fn is_reachable(row: &ExecutionRow) -> bool {
 
 /// `bee sessions handover status` — print the fold.
 pub(super) async fn cmd_status(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: Option<&str>,
@@ -900,7 +900,7 @@ fn print_executions(rows: &[ExecutionRow]) {
 }
 
 /// Route one `handover` subcommand.
-pub async fn dispatch(cmd: HandoverCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(cmd: HandoverCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     match cmd {
         HandoverCmd::Checkpoint(args) => {
             super::handover_checkpoint::cmd_checkpoint(client, args).await

@@ -1,5 +1,5 @@
-import 'package:buzz/shared/relay/nostr_models.dart';
-import 'package:buzz/shared/relay/project_coordinate.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
+import 'package:beekeeper/shared/relay/project_coordinate.dart';
 import 'package:flutter/foundation.dart';
 
 import 'agents_repo_draft_fold.dart' show canonicalRepositoryCoordinate;

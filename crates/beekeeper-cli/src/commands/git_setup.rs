@@ -1442,7 +1442,7 @@ pub async fn run_check(request: &CheckRequest) -> Result<CheckReport, CliError> 
     // The live failure was letting it decide: it refused a seat whose `git push`
     // succeeded seconds later.
     let client =
-        crate::client::BuzzClient::new(request.relay_url.clone(), keys.clone(), None, None)?;
+        crate::client::BeekeeperClient::new(request.relay_url.clone(), keys.clone(), None, None)?;
     let announcements = client
         .query(&serde_json::json!({ "kinds": [30617], "limit": 500 }))
         .await;
@@ -1571,7 +1571,7 @@ fn resolve_sha(sha: Option<&str>) -> Option<String> {
 /// accepted projection. That, and the commit actually pushed, are why the
 /// answer is printed as a prediction.
 async fn predict_ref(
-    client: &crate::client::BuzzClient,
+    client: &crate::client::BeekeeperClient,
     target: &ProbeTarget,
     ref_name: &str,
     sha: Option<&str>,
@@ -1746,7 +1746,7 @@ async fn predict_ref(
 
 /// The repository's current kind:30617 announcement, as its owner published it.
 async fn fetch_repo_announcement(
-    client: &crate::client::BuzzClient,
+    client: &crate::client::BeekeeperClient,
     owner: &str,
     repo: &str,
 ) -> Result<Option<nostr::Event>, CliError> {
@@ -1834,7 +1834,7 @@ fn policy_sentence(policy: &VerdictAdmissionPolicyEvidence) -> String {
 /// the channel its genesis was published in — a 44244 signed somewhere else
 /// naming this umbrella's refs is not this mission speaking.
 async fn fetch_verdict_candidates(
-    client: &crate::client::BuzzClient,
+    client: &crate::client::BeekeeperClient,
     scope: &crate::commands::git_verdict_scope::PredictionScope,
     founders: &beekeeper_core::repository_founders::RepositoryFounders,
     repository: &str,
@@ -2119,7 +2119,7 @@ fn mission_policy_filter(
 /// the audit's policy-signer parity asked for (S2). The count is a floor, like
 /// every other bound here: it can only see the records its own page held.
 async fn fetch_mission_policies(
-    client: &crate::client::BuzzClient,
+    client: &crate::client::BeekeeperClient,
     channel: &str,
     session_ref: &str,
     signers: &[String],

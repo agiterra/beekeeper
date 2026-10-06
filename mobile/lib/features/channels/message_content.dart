@@ -356,13 +356,13 @@ class MessageContent extends HookConsumerWidget {
     final baseStyle = fallbackStyle ?? linkStyle;
     final uri = Uri.tryParse(url);
     final buzzLink = uri?.scheme == 'beekeeper'
-        ? parseBuzzDeepLink(uri!) ?? parseEntityDeepLink(uri)
+        ? parseBeekeeperDeepLink(uri!) ?? parseEntityDeepLink(uri)
         : null;
-    final isBuzzLink =
+    final isBeekeeperLink =
         buzzLink is ChannelDeepLink ||
         buzzLink is MessageDeepLink ||
         buzzLink is EntityDeepLink;
-    final isCanonicalBuzzLabel = isBuzzLink && text == url;
+    final isCanonicalBeekeeperLabel = isBeekeeperLink && text == url;
     final buzzPresentation = switch (buzzLink) {
       ChannelDeepLink(:final channelId) => (
         icon: LucideIcons.hash,
@@ -406,7 +406,7 @@ class MessageContent extends HookConsumerWidget {
       decoration: TextDecoration.underline,
       decorationColor: context.colors.primary,
     );
-    final linkTextWidget = isCanonicalBuzzLabel
+    final linkTextWidget = isCanonicalBeekeeperLabel
         ? Text(
             text,
             style: baseStyle.copyWith(
@@ -416,7 +416,7 @@ class MessageContent extends HookConsumerWidget {
           )
         : Text.rich(TextSpan(style: authoredLinkStyle, children: [linkText]));
 
-    final renderedLink = isCanonicalBuzzLabel && buzzPresentation != null
+    final renderedLink = isCanonicalBeekeeperLabel && buzzPresentation != null
         ? _TokenPill(
             key: ValueKey('buzz-link-chip:$url'),
             icon: buzzPresentation.icon,
@@ -443,7 +443,7 @@ class MessageContent extends HookConsumerWidget {
         // Message and join links still need the top-level authenticated
         // dispatcher.
         if (uri.scheme == 'beekeeper') {
-          final deepLink = parseBuzzDeepLink(uri);
+          final deepLink = parseBeekeeperDeepLink(uri);
           if (deepLink case ChannelDeepLink(:final channelId)) {
             resolvedChannelTap(channelId);
           } else if (deepLink is MessageDeepLink ||

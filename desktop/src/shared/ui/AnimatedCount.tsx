@@ -161,7 +161,7 @@ export function AnimatedCount({ className, value }: AnimatedCountProps) {
   const slots = getAnimatedCountSlots(transition.previous, transition.current);
 
   return (
-    <span className={cn("buzz-animated-count", className)}>
+    <span className={cn("beekeeper-animated-count", className)}>
       <span className="sr-only">{transition.current}</span>
       <span aria-hidden className="buzz-animated-count__motion">
         {slots.map((slot) => (

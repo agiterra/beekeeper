@@ -1,8 +1,8 @@
-import 'package:buzz/features/project_todos/domain/project_todo_fold.dart';
-import 'package:buzz/features/project_todos/domain/project_todo_op.dart';
-import 'package:buzz/features/project_todos/state/project_todo_actions.dart';
-import 'package:buzz/features/project_todos/state/project_todos_provider.dart';
-import 'package:buzz/shared/relay/relay.dart';
+import 'package:beekeeper/features/project_todos/domain/project_todo_fold.dart';
+import 'package:beekeeper/features/project_todos/domain/project_todo_op.dart';
+import 'package:beekeeper/features/project_todos/state/project_todo_actions.dart';
+import 'package:beekeeper/features/project_todos/state/project_todos_provider.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
 
 import '../../helpers/recording_relay_session.dart';
 

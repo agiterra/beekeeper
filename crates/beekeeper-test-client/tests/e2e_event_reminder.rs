@@ -18,7 +18,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::{BuzzTestClient, RelayMessage};
+use beekeeper_test_client::{BeekeeperTestClient, RelayMessage};
 use nostr::{EventBuilder, Filter, Keys, Kind, Tag, Timestamp};
 use reqwest::Client;
 use serde_json::Value;
@@ -602,7 +602,9 @@ async fn test_author_can_subscribe_to_own_reminders_ws() {
     assert!(accepted, "setup failed: {msg}");
 
     // Subscribe via WebSocket as the author
-    let mut ws = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut ws = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let sid = sub_id("author-read");
     let filter = Filter::new()
         .kind(Kind::Custom(KIND_EVENT_REMINDER))
@@ -645,7 +647,7 @@ async fn test_other_user_subscription_closed_for_author_only_kind_ws() {
     assert!(accepted, "setup failed: {msg}");
 
     // Other user tries to subscribe to author's reminders
-    let mut ws = BuzzTestClient::connect(&url, &other_keys)
+    let mut ws = BeekeeperTestClient::connect(&url, &other_keys)
         .await
         .expect("connect");
     let sid = sub_id("other-read");
@@ -722,7 +724,7 @@ async fn test_mixed_kind_filter_omits_other_authors_reminders_ws() {
     assert!(accepted, "reminder setup failed: {msg}");
 
     // Reader sends a kind:9 message in the channel
-    let mut ws_reader = BuzzTestClient::connect(&url, &reader_keys)
+    let mut ws_reader = BeekeeperTestClient::connect(&url, &reader_keys)
         .await
         .expect("connect reader");
     let unique_content = format!("mixed-filter-test-{}", uuid::Uuid::new_v4());
@@ -885,7 +887,7 @@ async fn test_fanout_isolation_other_user_does_not_receive_reminder() {
     let other_keys = Keys::generate();
 
     // Connect user B and open a wildcard subscription BEFORE the reminder is published.
-    let mut ws_other = BuzzTestClient::connect(&url, &other_keys)
+    let mut ws_other = BeekeeperTestClient::connect(&url, &other_keys)
         .await
         .expect("connect other");
     let sid = sub_id("fanout-isolation");
@@ -966,7 +968,7 @@ async fn test_ws_search_isolation_other_user_cannot_find_reminder() {
     assert!(accepted, "reminder setup failed: {msg}");
 
     // User B does a NIP-50 search with kinds including 30300
-    let mut ws_other = BuzzTestClient::connect(&url, &other_keys)
+    let mut ws_other = BeekeeperTestClient::connect(&url, &other_keys)
         .await
         .expect("connect other");
     let sid = sub_id("search-isolation");
@@ -1021,7 +1023,7 @@ async fn test_ws_count_returns_zero_for_other_users_reminders() {
     // User B sends a COUNT for kind:30300 targeting author A — should get CLOSED
     // with "restricted:" because the filter exclusively targets author-only kinds
     // with another user's pubkey.
-    let mut ws_other = BuzzTestClient::connect(&url, &other_keys)
+    let mut ws_other = BeekeeperTestClient::connect(&url, &other_keys)
         .await
         .expect("connect other");
     let sid = sub_id("ws-count");
@@ -1096,7 +1098,7 @@ fn has_d_tag(event: &nostr::Event, d_tag: &str) -> bool {
 /// scheduler's push — with the scheduler disabled, no such frame ever arrives
 /// and this returns `Timeout`.
 async fn await_scheduler_push(
-    ws: &mut BuzzTestClient,
+    ws: &mut BeekeeperTestClient,
     sub_id: &str,
     d_tag: &str,
     timeout_dur: Duration,
@@ -1164,7 +1166,9 @@ async fn test_scheduler_delivers_due_reminder_to_author_subscription() {
 
     // Now subscribe as the author and wait for the scheduler to push the due
     // reminder live (after the historical EOSE).
-    let mut ws = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut ws = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let sid = sub_id("scheduler-delivery");
     let filter = Filter::new()
         .kind(Kind::Custom(KIND_EVENT_REMINDER))

@@ -47,7 +47,7 @@ use beekeeper_core::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
 use beekeeper_sdk::coding_session_team_transaction::parse_coding_session_team_transaction;
 use nostr::Event;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::validate_lower_hex64;
 use crate::{SessionsCmd, TeamTransactionWriteArgs};
@@ -372,7 +372,7 @@ fn read_body_argument(input: &str) -> Result<Value, CliError> {
 /// objective's prose (ledger 178(d)). Reading it off the report removes the one
 /// step a human or a model can get wrong.
 async fn apply_verifies(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     args: &TeamTransactionWriteArgs,
     report_ref: &str,
     body: &mut Value,
@@ -422,7 +422,7 @@ fn merge_base_sha(body: &mut Value, head_sha: &str, report_ref: &str) -> Result<
 /// Shared by `--verifies` (reads `headSha`) and the verdict `assignmentRef`
 /// check (reads `assignmentRef`), so both read the same record the same way.
 async fn fetch_report(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     report_ref: &str,
@@ -463,7 +463,7 @@ async fn fetch_report(
 
 /// The `headSha` of one stored report, by event id, inside this session.
 async fn fetch_report_head_sha(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     report_ref: &str,
@@ -514,7 +514,7 @@ pub fn check_verdict_assignment_ref(
 /// Whatever [`fetch_report`] returns, or [`check_verdict_assignment_ref`]'s
 /// refusal.
 async fn verify_verdict_assignment_ref(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     args: &TeamTransactionWriteArgs,
     body: &Value,
 ) -> Result<(), CliError> {
@@ -584,7 +584,7 @@ pub fn example_request(
 /// [`CliError::Usage`] for a missing envelope flag, an undecodable body, or a
 /// `--verifies` disagreement; otherwise whatever the publish path returns.
 pub async fn dispatch_write(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     command: &str,
     mut args: TeamTransactionWriteArgs,
     transaction_type: CodingSessionTeamTransactionType,

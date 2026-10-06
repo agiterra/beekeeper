@@ -56,7 +56,7 @@ async function renderSpoiler() {
       createElement("a", { href: "https://example.com" }, "secret"),
     ),
   );
-  const spoiler = container.querySelector(".buzz-spoiler");
+  const spoiler = container.querySelector(".beekeeper-spoiler");
   const link = container.querySelector("a");
   assert.ok(spoiler && link);
   return { link, spoiler };

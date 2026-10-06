@@ -5,7 +5,7 @@ import {
   parseChannelLink,
 } from "@/features/messages/lib/channelLink";
 
-import { BuzzInlineLink, BuzzLinkChip } from "./BuzzLinkChip";
+import { BeekeeperInlineLink, BeekeeperLinkChip } from "./BeekeeperLinkChip";
 import { MessageLinkPill } from "./MessageLinkPill";
 import { useMarkdownRuntime } from "./runtimeContext";
 import { getReactNodeText } from "./utils";
@@ -43,7 +43,7 @@ export function ChannelDeepLinkAnchor({
   const authoredLabel = getReactNodeText(children);
   if (authoredLabel !== href) {
     return (
-      <BuzzInlineLink
+      <BeekeeperInlineLink
         href={href}
         title={href}
         aria-label={`${messageLink ? "Open message" : "Open channel"}: ${authoredLabel}`}
@@ -51,7 +51,7 @@ export function ChannelDeepLinkAnchor({
         onOpenLink={openLink}
       >
         {children}
-      </BuzzInlineLink>
+      </BeekeeperInlineLink>
     );
   }
   if (messageLink) {
@@ -67,7 +67,7 @@ export function ChannelDeepLinkAnchor({
   }
   const label = channelPermalinkLabel(channels, parsed.value.channelId);
   return (
-    <BuzzLinkChip
+    <BeekeeperLinkChip
       href={href}
       icon="channel"
       title={href}
@@ -76,7 +76,7 @@ export function ChannelDeepLinkAnchor({
       onOpenLink={() => onOpenChannel(parsed.value.channelId)}
     >
       {label}
-    </BuzzLinkChip>
+    </BeekeeperLinkChip>
   );
 }
 
@@ -111,7 +111,7 @@ export function MarkdownChannelDeepLink({
   }
   const label = channelPermalinkLabel(channels, parsed.value.channelId);
   return (
-    <BuzzLinkChip
+    <BeekeeperLinkChip
       data-channel-deep-link=""
       href={href}
       icon="channel"
@@ -121,7 +121,7 @@ export function MarkdownChannelDeepLink({
       onOpenLink={() => onOpenChannel(parsed.value.channelId)}
     >
       {label}
-    </BuzzLinkChip>
+    </BeekeeperLinkChip>
   );
 }
 
@@ -141,7 +141,7 @@ export function MarkdownChannelReference({
       candidate.name.toLowerCase() === channelName.toLowerCase(),
   );
   return (
-    <BuzzLinkChip
+    <BeekeeperLinkChip
       data-channel-link=""
       href={channel ? buildChannelLink(channel.id) : undefined}
       icon="channel"
@@ -154,6 +154,6 @@ export function MarkdownChannelReference({
       }}
     >
       {channelName}
-    </BuzzLinkChip>
+    </BeekeeperLinkChip>
   );
 }

@@ -1064,7 +1064,7 @@ async function seedAndOpen(
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },
@@ -1604,7 +1604,7 @@ test("Mission remains accessible in dark, narrow, reduced-motion layout", async 
   });
   await seedAndOpen(page);
   await expect(page.locator("html")).toHaveAttribute(
-    "data-buzz-theme",
+    "data-beekeeper-theme",
     "buzz-dark",
   );
   await expect

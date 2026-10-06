@@ -9,7 +9,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../shared/security/sensitive_action_authorizer.dart';
 import '../../shared/theme/theme.dart';
-import '../../shared/widgets/buzz_loading_indicator.dart';
+import '../../shared/widgets/beekeeper_loading_indicator.dart';
 import '../../shared/widgets/tappable_flapping_bee.dart';
 import 'pairing_provider.dart';
 import 'pairing_qr_scanner.dart';
@@ -328,7 +328,7 @@ class _SasVerificationView extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  BuzzLoadingIndicator(
+                  BeekeeperLoadingIndicator(
                     size: 24,
                     color: context.colors.primary,
                     semanticLabel: 'Connecting',

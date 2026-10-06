@@ -44,7 +44,7 @@ use super::{
     decode_rows, envelope_session, print_example, read_failed, report_existing, BoundDeclaration,
     GitPlans, PlanSource, SessionContext, WorkBindRefArgs, WorkWire,
 };
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::validate_lower_hex64;
 
@@ -54,7 +54,10 @@ use crate::validate::validate_lower_hex64;
 /// [`CliError::Usage`] for a refusal named in the module doc,
 /// [`CliError::NotFound`] when the relay holds no usable observation, and a
 /// read error naming the read that failed.
-pub async fn cmd_bind_ref(client: &BuzzClient, args: &WorkBindRefArgs) -> Result<(), CliError> {
+pub async fn cmd_bind_ref(
+    client: &BeekeeperClient,
+    args: &WorkBindRefArgs,
+) -> Result<(), CliError> {
     if let Some(label) = &args.envelope.example {
         return print_example("bind ref", label);
     }

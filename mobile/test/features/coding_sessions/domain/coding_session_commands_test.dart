@@ -1,6 +1,6 @@
-import 'package:buzz/features/coding_sessions/domain/coding_session_wire.dart';
-import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
-import 'package:buzz/shared/relay/nostr_models.dart';
+import 'package:beekeeper/features/coding_sessions/domain/coding_session_wire.dart';
+import 'package:beekeeper/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _channel = '0b3a7d9c-3d0f-4c2b-9d0e-9f6a1c2b3d4e';

@@ -37,7 +37,7 @@ use beekeeper_sdk::builders::{
 };
 use beekeeper_sdk::coding_session::CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::commands::parse_write_response;
 use crate::error::CliError;
 use crate::validate::{read_file_or_stdin, sdk_err};
@@ -288,7 +288,7 @@ pub(crate) fn find_registration_ack(
 /// than raised: the write already landed, and a transient read error must
 /// not be reported as if the registration itself failed.
 async fn await_registration_ack(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     command_id: &str,
     target: &CodingSessionTarget,
@@ -342,7 +342,7 @@ fn print_output(format: &OutputFormat, mut value: Value, compact_drop: &[&str]) 
 /// receipt.
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_continue(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     format: &OutputFormat,
     channel_id: &str,
     target_key: Option<&str>,
@@ -618,7 +618,7 @@ pub(crate) fn resolve_continuation_status(
 /// registration `commandId`. Read-only: stored replay only, no wait, no
 /// write.
 pub async fn cmd_continuation_status(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     format: &OutputFormat,
     channel_id: &str,
     command_id: &str,

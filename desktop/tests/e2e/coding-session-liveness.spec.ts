@@ -241,7 +241,7 @@ async function openSession(page: Page, events: RelayEvent[], text: string) {
   await page.getByTestId(`channel-${channelName}`).click();
   await page.evaluate(
     ({ channelName: name, events: signedEvents }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of signedEvents) seed({ channelName: name, event });
     },
@@ -473,7 +473,7 @@ test("SV-104: a team session's running call shimmers in both lenses", async ({
   await page.getByTestId(`channel-${channelName}`).click();
   await page.evaluate(
     ({ channelName: name, events: signedEvents }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of signedEvents) seed({ channelName: name, event });
     },

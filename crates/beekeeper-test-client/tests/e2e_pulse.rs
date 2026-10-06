@@ -43,7 +43,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use beekeeper_ws_client::RelayMessage;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
 use reqwest::{Client, StatusCode};
@@ -167,7 +167,7 @@ fn pulse_filter(coordinate: &str) -> Filter {
 }
 
 /// Create a channel signed by `keys`. `visibility` is the 9007 tag value.
-async fn create_channel(client: &mut BuzzTestClient, keys: &Keys, visibility: &str) -> String {
+async fn create_channel(client: &mut BeekeeperTestClient, keys: &Keys, visibility: &str) -> String {
     let channel_uuid = uuid::Uuid::new_v4();
     let tags = vec![
         Tag::parse(["h", &channel_uuid.to_string()]).unwrap(),
@@ -185,7 +185,7 @@ async fn create_channel(client: &mut BuzzTestClient, keys: &Keys, visibility: &s
 }
 
 /// Subscribe with `filter` and drain to EOSE.
-async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
+async fn query(client: &mut BeekeeperTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
     let sid = sub_id(name);
     client
         .subscribe(&sid, vec![filter])
@@ -272,7 +272,7 @@ async fn count_pulse_http(client: &Client, pubkey_hex: &str, coordinate: &str) -
 
 /// Publish a project head and one entry, returning the entry's id.
 async fn seed_entry(
-    client: &mut BuzzTestClient,
+    client: &mut BeekeeperTestClient,
     author: &Keys,
     coordinate: &str,
     text: &str,
@@ -295,7 +295,7 @@ async fn test_pulse_entries_visible_to_members_hidden_from_stranger() {
     let d_tag = unique("pulse-private");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(&owner, &d_tag, Some("private"), &[(&viewer, "viewer")]);
@@ -316,14 +316,14 @@ async fn test_pulse_entries_visible_to_members_hidden_from_stranger() {
     assert_eq!(seen[0].id, entry_id);
 
     // A read-only member reads it too — viewers read the Pulse.
-    let mut viewer_client = BuzzTestClient::connect(&relay_url(), &viewer)
+    let mut viewer_client = BeekeeperTestClient::connect(&relay_url(), &viewer)
         .await
         .expect("viewer connect");
     let seen = query(&mut viewer_client, "viewer", pulse_filter(&coordinate)).await;
     assert_eq!(seen.len(), 1, "invited member must read the pulse entry");
 
     // A stranger sees nothing, on any surface.
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let seen = query(&mut stranger_client, "stranger", pulse_filter(&coordinate)).await;
@@ -370,7 +370,7 @@ async fn test_unscoped_ws_req_cannot_read_private_project_entries() {
     let d_tag = unique("pulse-ws");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(&owner, &d_tag, Some("private"), &[]);
@@ -398,7 +398,7 @@ async fn test_unscoped_ws_req_cannot_read_private_project_entries() {
         "control: an unscoped WS REQ must return the author's own entry"
     );
 
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let seen = query(&mut stranger_client, "ws-unscoped", unscoped()).await;
@@ -419,7 +419,7 @@ async fn test_pulse_entry_fanout_filtered_live() {
     let d_tag = unique("pulse-live");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(
@@ -431,10 +431,10 @@ async fn test_pulse_entry_fanout_filtered_live() {
     let ok = owner_client.send_event(head).await.expect("send project");
     assert!(ok.accepted, "private project rejected: {}", ok.message);
 
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
 
@@ -512,7 +512,7 @@ async fn test_private_project_writer_publishes_viewer_cannot() {
     let d_tag = unique("pulse-roles");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(
@@ -524,7 +524,7 @@ async fn test_private_project_writer_publishes_viewer_cannot() {
     let ok = owner_client.send_event(head).await.expect("send project");
     assert!(ok.accepted, "private project rejected: {}", ok.message);
 
-    let mut writer_client = BuzzTestClient::connect(&relay_url(), &writer)
+    let mut writer_client = BeekeeperTestClient::connect(&relay_url(), &writer)
         .await
         .expect("writer connect");
     let entry = pulse_entry(
@@ -538,7 +538,7 @@ async fn test_private_project_writer_publishes_viewer_cannot() {
     let ok = writer_client.send_event(entry).await.expect("writer send");
     assert!(ok.accepted, "collaborator write rejected: {}", ok.message);
 
-    let mut viewer_client = BuzzTestClient::connect(&relay_url(), &viewer)
+    let mut viewer_client = BeekeeperTestClient::connect(&relay_url(), &viewer)
         .await
         .expect("viewer connect");
     let entry = pulse_entry(
@@ -604,7 +604,7 @@ async fn test_private_project_writer_publishes_viewer_cannot() {
 async fn test_pulse_entry_for_unknown_coordinate_is_rejected() {
     let author = Keys::generate();
     let coordinate = project_coordinate(&author, &unique("never-created"));
-    let mut client = BuzzTestClient::connect(&relay_url(), &author)
+    let mut client = BeekeeperTestClient::connect(&relay_url(), &author)
         .await
         .expect("connect");
     let entry = pulse_entry(
@@ -639,7 +639,7 @@ async fn test_h_tagged_entry_requires_channel_admission() {
 
     // A public project, so the *only* thing that can refuse the write below is
     // the channel gate.
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(&owner, &d_tag, Some("public"), &[]);
@@ -647,7 +647,7 @@ async fn test_h_tagged_entry_requires_channel_admission() {
     assert!(ok.accepted, "public project rejected: {}", ok.message);
 
     // A private channel owned by someone else entirely.
-    let mut outsider_client = BuzzTestClient::connect(&relay_url(), &outsider)
+    let mut outsider_client = BeekeeperTestClient::connect(&relay_url(), &outsider)
         .await
         .expect("outsider connect");
     let private_channel = create_channel(&mut outsider_client, &outsider, "private").await;
@@ -769,7 +769,7 @@ async fn test_inadmissible_pulse_read_is_empty_200_never_403() {
     let d_tag = unique("pulse-403");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(&owner, &d_tag, Some("private"), &[]);
@@ -820,7 +820,7 @@ async fn test_supersession_does_not_mutate_the_old_event() {
     let d_tag = unique("pulse-supersede");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(&owner, &d_tag, Some("public"), &[]);
@@ -887,7 +887,7 @@ async fn test_pulse_entries_do_not_cross_communities() {
     let d_tag = unique("pulse-xcomm");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut client_a = BuzzTestClient::connect(&relay_url_a(), &owner)
+    let mut client_a = BeekeeperTestClient::connect(&relay_url_a(), &owner)
         .await
         .expect("community A connect");
     let head = project_event(&owner, &d_tag, Some("public"), &[]);
@@ -902,7 +902,7 @@ async fn test_pulse_entries_do_not_cross_communities() {
     );
 
     // The same identity, the same coordinate, the other community.
-    let mut client_b = BuzzTestClient::connect(&relay_url_b(), &owner)
+    let mut client_b = BeekeeperTestClient::connect(&relay_url_b(), &owner)
         .await
         .expect("community B connect");
 
@@ -994,7 +994,7 @@ async fn test_channel_window_withholds_private_project_entries() {
     let d_tag = unique("pulse-window");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(&owner, &d_tag, Some("private"), &[]);

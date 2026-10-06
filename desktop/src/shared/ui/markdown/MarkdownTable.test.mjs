@@ -241,7 +241,7 @@ test("SV-11: a copied cell drops controls and hidden text, keeps app links as te
 });
 
 // Interactive markdown renders pills, chips and image triggers as buttons
-// (RedactedPill, BuzzLinkChip, MessageLinkPill, the image zoom trigger).
+// (RedactedPill, BeekeeperLinkChip, MessageLinkPill, the image zoom trigger).
 // "Copy table always copies every cell in full" must hold for them too, and
 // the two formats must agree about the words a reader sees.
 

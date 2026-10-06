@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
-import 'package:buzz/features/settings/accent_picker_page.dart';
-import 'package:buzz/features/settings/theme_picker_page.dart';
-import 'package:buzz/features/settings/settings_page.dart';
-import 'package:buzz/shared/theme/theme.dart';
+import 'package:beekeeper/features/settings/accent_picker_page.dart';
+import 'package:beekeeper/features/settings/theme_picker_page.dart';
+import 'package:beekeeper/features/settings/settings_page.dart';
+import 'package:beekeeper/shared/theme/theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../helpers/widget_helpers.dart';

@@ -36,7 +36,7 @@ use super::{
     content_of, decode_metadata, decode_receipts, fetch_channel_events, resolve_sessions,
     ReceiptRecord, SessionRow,
 };
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::{sdk_err, validate_lower_hex64};
 
@@ -192,7 +192,7 @@ pub(super) fn classify_stop_receipts(
 /// refusal before publishing, or the provider's signed refusal; 5 the relay
 /// accepted the command and no receipt arrived in time (`unconfirmed`).
 pub async fn cmd_stop(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_id: &str,
     provider_authority: &str,

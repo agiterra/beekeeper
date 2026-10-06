@@ -123,7 +123,7 @@ function paintRecorder(canvas) {
 /** Draws issued to the grid canvas only, newest paint pass included. */
 function gridDraws(view) {
   const grid = view.container.querySelector(
-    ".buzz-terminal-viewport > canvas:not(.buzz-terminal-welcome)",
+    ".beekeeper-terminal-viewport > canvas:not(.beekeeper-terminal-welcome)",
   );
   return paintLog.filter((entry) => entry.canvas === grid);
 }
@@ -152,7 +152,7 @@ function fixture(overrides = {}) {
       ThemeProvider,
       null,
       createElement("div", {
-        className: "buzz-huddle-app-surface",
+        className: "beekeeper-huddle-app-surface",
         tabIndex: -1,
       }),
       createElement(TerminalSubstrate, nextProps),
@@ -170,7 +170,7 @@ function fixture(overrides = {}) {
 
 async function ready(view) {
   await waitFor(() =>
-    assert.ok(view.container.querySelector(".buzz-terminal-substrate")),
+    assert.ok(view.container.querySelector(".beekeeper-terminal-substrate")),
   );
 }
 
@@ -190,7 +190,9 @@ function toggleChord(composing = false) {
 test("mounted IME paths neither toggle nor emit preedit text", async () => {
   const { calls, view } = fixture();
   await ready(view);
-  const substrate = view.container.querySelector(".buzz-terminal-substrate");
+  const substrate = view.container.querySelector(
+    ".beekeeper-terminal-substrate",
+  );
   toggleChord(true);
   assert.equal(substrate.dataset.terminalOwner, "buzz");
 
@@ -236,7 +238,9 @@ test("tab actions restore terminal input focus", async () => {
 test("drag resize batches visual updates and commits state only on release", async () => {
   const { view } = fixture({ mode: "docked" });
   await ready(view);
-  const substrate = view.container.querySelector(".buzz-terminal-substrate");
+  const substrate = view.container.querySelector(
+    ".beekeeper-terminal-substrate",
+  );
   const handle = view.getByLabelText("Resize Terminal");
 
   fireEvent.pointerDown(handle, { clientY: 500, pointerId: 1 });
@@ -276,7 +280,7 @@ test("drag resize repaints the canvas without reporting PTY geometry until relea
   });
   await ready(view);
   const canvas = view.container.querySelector(
-    ".buzz-terminal-viewport > canvas:not(.buzz-terminal-welcome)",
+    ".beekeeper-terminal-viewport > canvas:not(.beekeeper-terminal-welcome)",
   );
   const handle = view.getByLabelText("Resize Terminal");
   await waitFor(() => assert.equal(canvas.height, 280));
@@ -301,7 +305,7 @@ test("unmount cancels a queued drag update", async () => {
   const { view } = fixture({ mode: "docked" });
   await ready(view);
   const handle = view.getByLabelText("Resize Terminal");
-  const previousHeight = handle.closest(".buzz-terminal-substrate").style
+  const previousHeight = handle.closest(".beekeeper-terminal-substrate").style
     .height;
 
   fireEvent.pointerDown(handle, { clientY: 500, pointerId: 1 });
@@ -311,7 +315,7 @@ test("unmount cancels a queued drag update", async () => {
 
   assert.equal(window.localStorage.getItem("buzz-terminal-dock-height"), null);
   assert.equal(
-    handle.closest(".buzz-terminal-substrate").style.height,
+    handle.closest(".beekeeper-terminal-substrate").style.height,
     previousHeight,
   );
 });
@@ -345,14 +349,16 @@ async function expectWelcome(view, present) {
   // walk the whole fiber graph — a failure takes ~2min to report instead of ms.
   await waitFor(() =>
     assert.equal(
-      view.container.querySelector(".buzz-terminal-welcome") !== null,
+      view.container.querySelector(".beekeeper-terminal-welcome") !== null,
       present,
     ),
   );
 }
 
 async function reveal(view) {
-  const substrate = view.container.querySelector(".buzz-terminal-substrate");
+  const substrate = view.container.querySelector(
+    ".beekeeper-terminal-substrate",
+  );
   toggleChord();
   await waitFor(() =>
     assert.equal(substrate.dataset.terminalOwner, "terminal"),
@@ -441,7 +447,9 @@ test("the first keystroke dismisses the welcome overlay early", async () => {
 test("mounted wheel path accumulates fractional lines per active session", async () => {
   const { calls, view } = fixture();
   await ready(view);
-  const substrate = view.container.querySelector(".buzz-terminal-substrate");
+  const substrate = view.container.querySelector(
+    ".beekeeper-terminal-substrate",
+  );
   fireEvent.wheel(substrate, { deltaMode: 0, deltaY: 8 });
   assert.deepEqual(calls.scroll, []);
   fireEvent.wheel(substrate, { deltaMode: 0, deltaY: 10 });
@@ -451,7 +459,9 @@ test("mounted wheel path accumulates fractional lines per active session", async
 test("canvas failure atomically restores Buzz ownership", async () => {
   const { props, view } = fixture();
   await ready(view);
-  const substrate = view.container.querySelector(".buzz-terminal-substrate");
+  const substrate = view.container.querySelector(
+    ".beekeeper-terminal-substrate",
+  );
   toggleChord();
   await waitFor(() =>
     assert.equal(substrate.dataset.terminalOwner, "terminal"),
@@ -462,7 +472,7 @@ test("canvas failure atomically restores Buzz ownership", async () => {
       ThemeProvider,
       null,
       createElement("div", {
-        className: "buzz-huddle-app-surface",
+        className: "beekeeper-huddle-app-surface",
         tabIndex: -1,
       }),
       createElement(TerminalSubstrate, {
@@ -535,8 +545,8 @@ test("reduced motion keeps the terminal cursor solid", async () => {
     toggleChord();
     await waitFor(() =>
       assert.equal(
-        subject.view.container.querySelector(".buzz-terminal-substrate").dataset
-          .terminalOwner,
+        subject.view.container.querySelector(".beekeeper-terminal-substrate")
+          .dataset.terminalOwner,
         "terminal",
       ),
     );
@@ -844,7 +854,7 @@ test("the handoff chord still toggles with the tab layer installed", async () =>
   const subject = tabFixture();
   await ready(subject.view);
   const substrate = subject.view.container.querySelector(
-    ".buzz-terminal-substrate",
+    ".beekeeper-terminal-substrate",
   );
   toggleChord();
   await waitFor(() =>
@@ -869,7 +879,7 @@ test("mirrors the active canvas grid into a selectable plain-text layer", async 
   });
   await ready(subject.view);
   const selectionLayer = subject.view.container.querySelector(
-    ".buzz-terminal-selection-layer",
+    ".beekeeper-terminal-selection-layer",
   );
   await waitFor(() =>
     assert.equal(
@@ -931,7 +941,7 @@ test("lays out screen rows separately but copies soft wraps as one logical line"
   });
   await ready(subject.view);
   const selectionLayer = subject.view.container.querySelector(
-    ".buzz-terminal-selection-layer",
+    ".beekeeper-terminal-selection-layer",
   );
   await waitFor(() =>
     assert.equal(
@@ -991,7 +1001,7 @@ test("copy normalizes grapheme and empty-row DOM endpoints", async () => {
   const subject = fixture({ sessionFrames: [{ frame, sessionId: "one" }] });
   await ready(subject.view);
   const layer = subject.view.container.querySelector(
-    ".buzz-terminal-selection-layer",
+    ".beekeeper-terminal-selection-layer",
   );
   await waitFor(() =>
     assert.equal(

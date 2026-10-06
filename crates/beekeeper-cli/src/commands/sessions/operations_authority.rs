@@ -22,7 +22,7 @@ use nostr::Event;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 pub(super) const AUTHORITY_ACCEPTANCE_RECEIPT_TYPE: &str =
@@ -140,7 +140,7 @@ pub(super) fn decode_authority_acceptance_receipt(
     Ok(receipt)
 }
 
-pub(super) async fn fetch_trusted_relay_self(client: &BuzzClient) -> Result<String, CliError> {
+pub(super) async fn fetch_trusted_relay_self(client: &BeekeeperClient) -> Result<String, CliError> {
     let raw = client
         .get_public("/")
         .await
@@ -161,7 +161,7 @@ pub(super) async fn fetch_trusted_relay_self(client: &BuzzClient) -> Result<Stri
 
 /// Read the relay-receipt-backed accepted authority chain for one genesis.
 pub(super) async fn fetch_projected_authority(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     genesis: &str,
     founder: &str,

@@ -19,7 +19,7 @@
 
 use serde_json::{json, Value};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
 
@@ -60,8 +60,8 @@ pub struct EventsQueryArgs<'a> {
 pub struct PreparedQuery {
     /// The Nostr filter, exactly as it goes to `POST /query`.
     pub filter: Value,
-    /// `Some(n)` runs [`BuzzClient::query_paginated`]; `None` runs
-    /// [`BuzzClient::query_all`].
+    /// `Some(n)` runs [`BeekeeperClient::query_paginated`]; `None` runs
+    /// [`BeekeeperClient::query_all`].
     pub limit: Option<u32>,
 }
 
@@ -238,7 +238,7 @@ pub fn compact_row(event: &Value) -> Value {
 /// An empty result prints `[]` and exits 0: "nothing matched" is an answer,
 /// not a failure.
 pub async fn cmd_query(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     args: &EventsQueryArgs<'_>,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
@@ -263,7 +263,7 @@ pub async fn cmd_query(
 /// Route one `bee events` subcommand.
 pub async fn dispatch(
     cmd: crate::EventsCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     match cmd {

@@ -86,7 +86,7 @@ class AgentsRepoFilePage extends HookConsumerWidget {
 
     Future<void> edit() async {
       if (main == null && head == null) return;
-      final result = await showBuzzModalBottomSheet<_EditResult>(
+      final result = await showBeekeeperModalBottomSheet<_EditResult>(
         context: context,
         title: path,
         isScrollControlled: true,

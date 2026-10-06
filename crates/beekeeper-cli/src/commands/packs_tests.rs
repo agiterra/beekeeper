@@ -387,9 +387,9 @@ mod rollback {
         (format!("http://{addr}"), received)
     }
 
-    fn test_client(relay_url: String) -> BuzzClient {
+    fn test_client(relay_url: String) -> BeekeeperClient {
         let keys = nostr::Keys::generate();
-        BuzzClient::new(relay_url, keys, None, None).expect("client construction")
+        BeekeeperClient::new(relay_url, keys, None, None).expect("client construction")
     }
 
     #[tokio::test]

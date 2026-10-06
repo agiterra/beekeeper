@@ -35,7 +35,7 @@ const LAST_SEEN_PREFIX = "beekeeper:session-last-seen:v1:";
 async function seed(page: Page, events: RelayEvent[]) {
   await page.evaluate(
     ({ channelName, signedEvents }) => {
-      const seedEvent = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seedEvent = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seedEvent) throw new Error("signed-event seeding hook is missing");
       for (const event of signedEvents) seedEvent({ channelName, event });
     },
@@ -233,8 +233,10 @@ test("SV-26, SV-27: umbrella — marks, card, reveal past the window, since rule
   // the open `decision.request` reaches the minimap as a waiting ruling.
   await page.addInitScript(() => {
     (
-      window as Window & { __BUZZ_E2E_WAVE_B_MINIMAP_TEAM_FOLD__?: boolean }
-    ).__BUZZ_E2E_WAVE_B_MINIMAP_TEAM_FOLD__ = true;
+      window as Window & {
+        __BEEKEEPER_E2E_WAVE_B_MINIMAP_TEAM_FOLD__?: boolean;
+      }
+    ).__BEEKEEPER_E2E_WAVE_B_MINIMAP_TEAM_FOLD__ = true;
   });
   await installMockBridge(page, {
     // The handover read trusts only receipts from the relay's own key.

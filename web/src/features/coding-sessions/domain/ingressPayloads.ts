@@ -231,7 +231,7 @@ export function isCodingSessionTurnReceipt(
  * never a dialect. `verifiedAt` is non-null exactly when `relayReachable` is
  * non-null: both come from the same verification probe.
  */
-export type BuzzCodingSessionMetadataV1 = {
+export type BeekeeperCodingSessionMetadataV1 = {
   schema: typeof BUZZ_CODING_SESSION_METADATA_SCHEMA;
   session: CodingSessionTarget;
   projectRef: string | null;
@@ -449,9 +449,9 @@ function parseTurnReceipt(
   });
 }
 
-export function parseBuzzCodingSessionMetadata(
+export function parseBeekeeperCodingSessionMetadata(
   content: unknown,
-): Readonly<BuzzCodingSessionMetadataV1> | null {
+): Readonly<BeekeeperCodingSessionMetadataV1> | null {
   const value = parseBoundedJson(content, MAX_METADATA_CONTENT_BYTES);
   const required = [
     "schema",

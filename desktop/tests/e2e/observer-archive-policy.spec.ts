@@ -145,7 +145,7 @@ test.describe("observer archive policy — reconciliation gate", () => {
     await page.waitForFunction(
       () => {
         const counters = (window as Record<string, unknown>)
-          .__BUZZ_E2E_IPC_COUNTERS__ as Record<string, number> | undefined;
+          .__BEEKEEPER_E2E_IPC_COUNTERS__ as Record<string, number> | undefined;
         return (counters?.list_save_subscriptions ?? 0) > 0;
       },
       null,
@@ -154,7 +154,7 @@ test.describe("observer archive policy — reconciliation gate", () => {
 
     const count = await page.evaluate(() => {
       const counters = (window as Record<string, unknown>)
-        .__BUZZ_E2E_IPC_COUNTERS__ as Record<string, number> | undefined;
+        .__BEEKEEPER_E2E_IPC_COUNTERS__ as Record<string, number> | undefined;
       return counters?.list_save_subscriptions ?? 0;
     });
     expect(count).toBeGreaterThan(0);
@@ -168,12 +168,12 @@ test.describe("observer archive policy — reconciliation gate", () => {
             (ownerPubkey) =>
               (
                 window as Window & {
-                  __BUZZ_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?: (input: {
+                  __BEEKEEPER_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?: (input: {
                     ownerPubkey: string;
                     kind: number;
                   }) => boolean;
                 }
-              ).__BUZZ_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?.({
+              ).__BEEKEEPER_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?.({
                 ownerPubkey,
                 kind: 24200,
               }) ?? false,
@@ -205,12 +205,12 @@ test.describe("observer archive policy — reconciliation gate", () => {
             (ownerPubkey) =>
               (
                 window as Window & {
-                  __BUZZ_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?: (input: {
+                  __BEEKEEPER_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?: (input: {
                     ownerPubkey: string;
                     kind: number;
                   }) => boolean;
                 }
-              ).__BUZZ_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?.({
+              ).__BEEKEEPER_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?.({
                 ownerPubkey,
                 kind: 24200,
               }) ?? false,
@@ -222,8 +222,8 @@ test.describe("observer archive policy — reconciliation gate", () => {
 
     const commands = await page.evaluate(
       () =>
-        (window as Window & { __BUZZ_E2E_COMMANDS__?: string[] })
-          .__BUZZ_E2E_COMMANDS__ ?? [],
+        (window as Window & { __BEEKEEPER_E2E_COMMANDS__?: string[] })
+          .__BEEKEEPER_E2E_COMMANDS__ ?? [],
     );
     expect(commands).toContain("merge_save_subscription_kinds");
   });

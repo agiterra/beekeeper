@@ -19,7 +19,7 @@
 //! ```
 
 use beekeeper_sdk::nip_oa;
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use nostr::{EventBuilder, Keys, Kind, Tag};
 
 fn relay_url() -> String {
@@ -79,10 +79,10 @@ fn make_nip_oa_auth_tag(owner_keys: &Keys, agent_keys: &Keys) -> Tag {
 
 /// Connect `agent_keys` to the relay with NIP-OA, establishing owner→agent in the DB.
 /// Returns the connected (authenticated) client for the agent.
-async fn connect_agent_with_owner(agent_keys: &Keys, owner_keys: &Keys) -> BuzzTestClient {
+async fn connect_agent_with_owner(agent_keys: &Keys, owner_keys: &Keys) -> BeekeeperTestClient {
     let url = relay_url();
     let auth_tag = make_nip_oa_auth_tag(owner_keys, agent_keys);
-    let mut client = BuzzTestClient::connect_unauthenticated(&url)
+    let mut client = BeekeeperTestClient::connect_unauthenticated(&url)
         .await
         .expect("connect agent unauthenticated");
     client
@@ -115,7 +115,7 @@ async fn test_owner_can_edit_agent_message() {
     let msg_event_id = ok.event_id;
 
     // Owner sends a kind:40003 edit event targeting the agent's message.
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner_keys)
         .await
         .expect("connect owner");
 
@@ -160,7 +160,7 @@ async fn test_third_party_cannot_edit_agent_message() {
     assert!(ok.accepted, "agent message rejected: {}", ok.message);
     let msg_event_id = ok.event_id;
 
-    let mut third_party_client = BuzzTestClient::connect(&relay_url(), &third_party_keys)
+    let mut third_party_client = BeekeeperTestClient::connect(&relay_url(), &third_party_keys)
         .await
         .expect("connect third party");
 
@@ -240,7 +240,7 @@ async fn test_owner_can_delete_agent_message() {
     assert!(ok.accepted, "agent message rejected: {}", ok.message);
     let msg_event_id = ok.event_id;
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner_keys)
         .await
         .expect("connect owner");
 
@@ -285,7 +285,7 @@ async fn test_third_party_cannot_delete_agent_message() {
     assert!(ok.accepted, "agent message rejected: {}", ok.message);
     let msg_event_id = ok.event_id;
 
-    let mut third_party_client = BuzzTestClient::connect(&relay_url(), &third_party_keys)
+    let mut third_party_client = BeekeeperTestClient::connect(&relay_url(), &third_party_keys)
         .await
         .expect("connect third party");
 
@@ -331,7 +331,7 @@ async fn test_owner_can_delete_agent_message_kind5() {
     assert!(ok.accepted, "agent message rejected: {}", ok.message);
     let msg_event_id = ok.event_id;
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner_keys)
         .await
         .expect("connect owner");
 
@@ -376,7 +376,7 @@ async fn test_third_party_cannot_delete_agent_message_kind5() {
     assert!(ok.accepted, "agent message rejected: {}", ok.message);
     let msg_event_id = ok.event_id;
 
-    let mut third_party_client = BuzzTestClient::connect(&relay_url(), &third_party_keys)
+    let mut third_party_client = BeekeeperTestClient::connect(&relay_url(), &third_party_keys)
         .await
         .expect("connect third party");
 
@@ -419,7 +419,7 @@ async fn test_owner_can_edit_agent_channel_metadata() {
     agent_client.disconnect().await.ok();
 
     // Owner sends kind:9002 to rename the channel — owner is NOT a member.
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner_keys)
         .await
         .expect("connect owner");
 
@@ -455,7 +455,7 @@ async fn test_owner_can_archive_agent_channel() {
     let agent_client = connect_agent_with_owner(&agent_keys, &owner_keys).await;
     agent_client.disconnect().await.ok();
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner_keys)
         .await
         .expect("connect owner");
 
@@ -492,7 +492,7 @@ async fn test_third_party_cannot_edit_agent_channel_metadata() {
     let agent_client = connect_agent_with_owner(&agent_keys, &owner_keys).await;
     agent_client.disconnect().await.ok();
 
-    let mut third_party_client = BuzzTestClient::connect(&relay_url(), &third_party_keys)
+    let mut third_party_client = BeekeeperTestClient::connect(&relay_url(), &third_party_keys)
         .await
         .expect("connect third party");
 
@@ -532,7 +532,7 @@ async fn test_owner_can_delete_agent_channel() {
     agent_client.disconnect().await.ok();
 
     // Owner sends kind:9008 to delete the channel — owner is NOT a member.
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner_keys)
         .await
         .expect("connect owner");
 
@@ -566,7 +566,7 @@ async fn test_third_party_cannot_delete_agent_channel() {
     let agent_client = connect_agent_with_owner(&agent_keys, &owner_keys).await;
     agent_client.disconnect().await.ok();
 
-    let mut third_party_client = BuzzTestClient::connect(&relay_url(), &third_party_keys)
+    let mut third_party_client = BeekeeperTestClient::connect(&relay_url(), &third_party_keys)
         .await
         .expect("connect third party");
 
@@ -658,7 +658,7 @@ async fn test_owner_can_edit_agent_message_in_private_channel() {
     agent_client.disconnect().await.ok();
 
     // Owner (not a channel member) edits the agent's message.
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner_keys)
         .await
         .expect("connect owner");
     let edit_event = EventBuilder::new(Kind::Custom(40003), "edited content")
@@ -702,7 +702,7 @@ async fn test_owner_can_delete_agent_message_in_private_channel() {
     let msg_event_id = ok.event_id;
     agent_client.disconnect().await.ok();
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner_keys)
         .await
         .expect("connect owner");
     let delete_event = EventBuilder::new(Kind::Custom(9005), "")
@@ -735,7 +735,7 @@ async fn test_owner_can_edit_metadata_of_private_agent_channel() {
     let agent_client = connect_agent_with_owner(&agent_keys, &owner_keys).await;
     agent_client.disconnect().await.ok();
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner_keys)
         .await
         .expect("connect owner");
     let edit_event = EventBuilder::new(Kind::Custom(9002), "")
@@ -768,7 +768,7 @@ async fn test_owner_can_delete_private_agent_channel() {
     let agent_client = connect_agent_with_owner(&agent_keys, &owner_keys).await;
     agent_client.disconnect().await.ok();
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner_keys)
         .await
         .expect("connect owner");
     let delete_event = EventBuilder::new(Kind::Custom(9008), "")
@@ -853,7 +853,7 @@ async fn test_removed_author_cannot_edit_own_message_in_private_channel() {
     );
 
     // Victim connects and sends a message while still a member.
-    let mut victim_client = BuzzTestClient::connect(&relay_url(), &victim_keys)
+    let mut victim_client = BeekeeperTestClient::connect(&relay_url(), &victim_keys)
         .await
         .expect("connect victim");
     let content = format!("victim-msg-{}", uuid::Uuid::new_v4());
@@ -937,7 +937,7 @@ async fn test_removed_author_cannot_delete_own_message_in_private_channel() {
     );
 
     // Victim connects and sends a message while still a member.
-    let mut victim_client = BuzzTestClient::connect(&relay_url(), &victim_keys)
+    let mut victim_client = BeekeeperTestClient::connect(&relay_url(), &victim_keys)
         .await
         .expect("connect victim");
     let content = format!("victim-msg-{}", uuid::Uuid::new_v4());

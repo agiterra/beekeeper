@@ -298,7 +298,7 @@ export function isCodingSessionTurnReceipt(
  * budget. `used` may exceed `limit`, because the session founder is never
  * refused; that is reported as it happened rather than clamped.
  */
-export type BuzzCodingSessionMetadataV1 = {
+export type BeekeeperCodingSessionMetadataV1 = {
   schema: typeof BUZZ_CODING_SESSION_METADATA_SCHEMA;
   session: CodingSessionCommandTarget;
   projectRef: string | null;
@@ -667,9 +667,9 @@ function isSeatActorPubkeyOrNull(value: unknown): value is string | null {
   );
 }
 
-export function parseBuzzCodingSessionMetadata(
+export function parseBeekeeperCodingSessionMetadata(
   content: unknown,
-): Readonly<BuzzCodingSessionMetadataV1> | null {
+): Readonly<BeekeeperCodingSessionMetadataV1> | null {
   const value = parseBoundedJson(content, MAX_METADATA_CONTENT_BYTES);
   const required = [
     "schema",

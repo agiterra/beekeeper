@@ -1,5 +1,5 @@
-import 'package:buzz/shared/custom_emoji/custom_emoji.dart';
-import 'package:buzz/shared/emoji/emoji_only.dart';
+import 'package:beekeeper/shared/custom_emoji/custom_emoji.dart';
+import 'package:beekeeper/shared/emoji/emoji_only.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _customEmoji = [

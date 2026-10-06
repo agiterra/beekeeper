@@ -1,4 +1,4 @@
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::commands::with_git_provenance;
 use crate::error::CliError;
 use crate::validate::{
@@ -8,7 +8,7 @@ use beekeeper_sdk::{GitAppliedPatchRef, GitPatchMeta, GitRepoCoord, GitStatus, G
 
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_send_patch(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_owner: &str,
     repo_id: &str,
     patch: &str,
@@ -73,7 +73,7 @@ fn parse_committer(spec: &str) -> Result<(String, String, String, String), CliEr
     }
 }
 
-pub async fn cmd_get_patch(client: &BuzzClient, event: &str) -> Result<(), CliError> {
+pub async fn cmd_get_patch(client: &BeekeeperClient, event: &str) -> Result<(), CliError> {
     validate_hex64(event)?;
     let filter = serde_json::json!({
         "kinds": [1617],
@@ -85,7 +85,7 @@ pub async fn cmd_get_patch(client: &BuzzClient, event: &str) -> Result<(), CliEr
 }
 
 pub async fn cmd_list_patches(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_owner: &str,
     repo_id: &str,
     author: Option<&str>,
@@ -115,7 +115,7 @@ pub async fn cmd_list_patches(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_patch_status(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     root: &str,
     status: &str,
     content: Option<&str>,
@@ -208,7 +208,7 @@ pub(crate) fn parse_status(s: &str) -> Result<GitStatus, CliError> {
     }
 }
 
-pub async fn dispatch(cmd: crate::PatchesCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(cmd: crate::PatchesCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     use crate::PatchesCmd;
     match cmd {
         PatchesCmd::Send {

@@ -56,7 +56,7 @@ use beekeeper_sdk::kind::{
 
 use nostr::{EventBuilder, Kind, Tag};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::commands::parse_write_response;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
@@ -1270,7 +1270,7 @@ fn rfc3339(seconds: i64) -> String {
 /// `kinds` is never omitted and never empty: an open-ended filter trips the
 /// relay's p-gate and comes back 403.
 async fn fetch_channel_events(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     kinds: &[u32],
 ) -> Result<Vec<Value>, CliError> {
@@ -1427,7 +1427,7 @@ pub fn session_deletion_breakdown(selected: &[(String, u32)]) -> BTreeMap<String
 /// identity, so nothing can be re-founded under a reference that already
 /// existed.
 async fn cmd_delete_session(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_ref: &str,
     dry_run: bool,
@@ -1503,7 +1503,7 @@ async fn cmd_delete_session(
 }
 
 async fn cmd_list(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
@@ -1578,7 +1578,7 @@ async fn cmd_list(
 
 /// Turn `--target` or `--session` into one exact generation.
 async fn resolve_target(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     target: Option<&str>,
     session: Option<&str>,
@@ -1624,7 +1624,7 @@ async fn resolve_target(
 }
 
 async fn cmd_transcript(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     target: Option<&str>,
     session: Option<&str>,
@@ -1677,7 +1677,7 @@ async fn cmd_transcript(
 }
 
 async fn cmd_tools(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     target: Option<&str>,
     format: &crate::OutputFormat,
@@ -2106,7 +2106,7 @@ pub fn diagnose_turns(
 }
 
 async fn cmd_doctor(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     target: Option<&str>,
     format: &crate::OutputFormat,
@@ -2236,7 +2236,7 @@ async fn cmd_doctor(
     Ok(())
 }
 
-async fn cmd_export(client: &BuzzClient, channel_id: &str, out: &str) -> Result<(), CliError> {
+async fn cmd_export(client: &BeekeeperClient, channel_id: &str, out: &str) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
     let directory = Path::new(out);
     prepare_export_dir(directory)?;
@@ -2430,7 +2430,7 @@ fn resolve_grantee_pubkey(label: &str, value: &str) -> Result<String, CliError> 
 /// Fetch the raw kind:40099 receipts for a channel and fold the chain state
 /// for one genesis.
 async fn fetch_authority_state(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     genesis: &str,
 ) -> Result<AuthorityChainState, CliError> {
@@ -2456,7 +2456,7 @@ fn is_chain_head_conflict(error: &CliError) -> bool {
 /// injection — the chain's authority model is the signature itself (the
 /// relay checks the signer against the session owner).
 pub(super) async fn submit_authority_transition_value(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     genesis: &str,
     transition_type: CodingSessionAuthorityTransitionType,
@@ -2537,7 +2537,7 @@ pub(super) async fn submit_authority_transition_value(
 /// `bee sessions grant` — role→type mapping: collaborator ⇒ grant-operator,
 /// viewer ⇒ grant-viewer.
 async fn cmd_grant(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     genesis: &str,
     pubkey: &str,
@@ -2556,7 +2556,7 @@ async fn cmd_grant(
 
 /// `bee sessions revoke`
 async fn cmd_revoke(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     genesis: &str,
     pubkey: &str,
@@ -2592,7 +2592,7 @@ fn agent_pubkeys_in_channel(metadata: &[Value]) -> HashSet<String> {
 /// coding-session metadata has ever named that pubkey as a seated actor
 /// (`agentRef`, D1/D6) — never a guess from the pubkey's shape alone.
 async fn cmd_authority_roster(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     genesis: &str,
 ) -> Result<(), CliError> {
@@ -2666,7 +2666,7 @@ async fn cmd_authority_roster(
 /// Route one `sessions` subcommand.
 pub async fn dispatch(
     cmd: crate::SessionsCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     use crate::SessionsCmd;

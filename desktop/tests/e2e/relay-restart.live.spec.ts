@@ -77,9 +77,11 @@ async function seedLiveChannel(relayUrl: string) {
 async function connectionState(page: Page): Promise<string> {
   return page.evaluate(() => {
     const win = window as Window & {
-      __BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?: () => string;
+      __BEEKEEPER_E2E_GET_RELAY_CONNECTION_STATE__?: () => string;
     };
-    return win.__BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?.() ?? "uninstalled";
+    return (
+      win.__BEEKEEPER_E2E_GET_RELAY_CONNECTION_STATE__?.() ?? "uninstalled"
+    );
   });
 }
 
@@ -87,7 +89,7 @@ async function exerciseBackgroundTraffic(page: Page, durationMs: number) {
   await page.evaluate(async (duration) => {
     const deadline = Date.now() + duration;
     while (Date.now() < deadline) {
-      void window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+      void window.__BEEKEEPER_E2E_QUERY_CLIENT__?.invalidateQueries({
         queryKey: ["channels"],
       });
       await new Promise((resolve) => window.setTimeout(resolve, 100));
@@ -97,13 +99,13 @@ async function exerciseBackgroundTraffic(page: Page, durationMs: number) {
 
 async function resetConnectAttempts(page: Page) {
   await page.evaluate(() => {
-    window.__BUZZ_E2E_RESET_WEBSOCKET_CONNECT_ATTEMPTS__?.();
+    window.__BEEKEEPER_E2E_RESET_WEBSOCKET_CONNECT_ATTEMPTS__?.();
   });
 }
 
 async function assertConnectAttemptsArePaced(page: Page) {
   const attempts = await page.evaluate(
-    () => window.__BUZZ_E2E_GET_WEBSOCKET_CONNECT_ATTEMPTS__?.() ?? [],
+    () => window.__BEEKEEPER_E2E_GET_WEBSOCKET_CONNECT_ATTEMPTS__?.() ?? [],
   );
   expect(attempts.length).toBeGreaterThanOrEqual(2);
   expect(attempts.length).toBeLessThanOrEqual(4);

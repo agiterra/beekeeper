@@ -197,7 +197,7 @@ test("add-community deep link opens one editable prefill and acknowledges the qu
   await expect(communityInput).toHaveValue("");
 
   const acknowledgements = await page.evaluate(() =>
-    (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).filter(
+    (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? []).filter(
       (entry) => entry.command === "acknowledge_pending_community_deep_link",
     ),
   );
@@ -230,7 +230,7 @@ test("queued add-community links open and acknowledge one at a time", async ({
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window.__BUZZ_E2E_COMMAND_LOG__ ?? [])
+        (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? [])
           .filter(
             (entry) =>
               entry.command === "acknowledge_pending_community_deep_link",
@@ -248,7 +248,7 @@ test("queued add-community links open and acknowledge one at a time", async ({
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window.__BUZZ_E2E_COMMAND_LOG__ ?? [])
+        (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? [])
           .filter(
             (entry) =>
               entry.command === "acknowledge_pending_community_deep_link",
@@ -311,7 +311,7 @@ test("deleted public starter channels do not strand community onboarding", async
   expect(
     await page.evaluate(
       () =>
-        window.__BUZZ_E2E_COMMANDS__?.filter(
+        window.__BEEKEEPER_E2E_COMMANDS__?.filter(
           (command) => command === "ensure_starter_channels",
         ).length ?? 0,
     ),

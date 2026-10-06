@@ -32,7 +32,7 @@ use beekeeper_sdk::{
     build_coding_session_closure, build_coding_session_genesis, build_coding_session_goal,
     build_coding_session_metadata, build_coding_session_transcript_item, build_join,
 };
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use nostr::{Event, EventBuilder, Keys, Kind, Tag};
 use uuid::Uuid;
 
@@ -79,7 +79,7 @@ async fn create_test_channel(keys: &Keys) -> Uuid {
     channel_uuid
 }
 
-async fn join_channel(ws: &mut BuzzTestClient, keys: &Keys, channel_id: Uuid) {
+async fn join_channel(ws: &mut BeekeeperTestClient, keys: &Keys, channel_id: Uuid) {
     let event = build_join(channel_id)
         .expect("build join event")
         .sign_with_keys(keys)
@@ -89,7 +89,7 @@ async fn join_channel(ws: &mut BuzzTestClient, keys: &Keys, channel_id: Uuid) {
 }
 
 /// Publish one event and assert the relay took it, returning its id.
-async fn publish(ws: &mut BuzzTestClient, event: Event, what: &str) -> String {
+async fn publish(ws: &mut BeekeeperTestClient, event: Event, what: &str) -> String {
     let id = event.id.to_hex();
     let ok = ws.send_event(event).await.expect("send event");
     assert!(ok.accepted, "{what} was not accepted: {}", ok.message);
@@ -121,10 +121,10 @@ async fn a_founder_deletes_a_whole_session_live() {
     let provider = Keys::generate();
     let channel_id = create_test_channel(&founder).await;
 
-    let mut founder_ws = BuzzTestClient::connect(&url, &founder)
+    let mut founder_ws = BeekeeperTestClient::connect(&url, &founder)
         .await
         .expect("founder connect");
-    let mut provider_ws = BuzzTestClient::connect(&url, &provider)
+    let mut provider_ws = BeekeeperTestClient::connect(&url, &provider)
         .await
         .expect("provider connect");
     join_channel(&mut provider_ws, &provider, channel_id).await;
@@ -240,7 +240,7 @@ async fn an_ordinary_deletion_still_names_one_target_live() {
     let url = relay_url();
     let author = Keys::generate();
     let channel_id = create_test_channel(&author).await;
-    let mut ws = BuzzTestClient::connect(&url, &author)
+    let mut ws = BeekeeperTestClient::connect(&url, &author)
         .await
         .expect("author connect");
 

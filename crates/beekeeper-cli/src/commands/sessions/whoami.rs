@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use beekeeper_core::kind::KIND_CODING_SESSION_GENESIS;
 
 use super::operations::fetch_projected_authority;
-use crate::client::{extract_d_tag, BuzzClient};
+use crate::client::{extract_d_tag, BeekeeperClient};
 use crate::error::CliError;
 
 /// `bee sessions whoami` — print the signer's identity as one JSON object.
@@ -22,7 +22,7 @@ use crate::error::CliError;
 /// command's whole output is already the minimal shape `compact` reduces
 /// other reads to, so there is nothing left for it to drop.
 pub async fn cmd_whoami(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     _format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     let pubkey = client.keys().public_key().to_hex();
@@ -67,7 +67,10 @@ fn whoami_json(
 /// `Ok(None)` is the claim "the relay holds no name for this pubkey" — a
 /// query that fails propagates as `Err` via `?` before it ever reaches this
 /// return, so it can never be misread as `None`.
-async fn fetch_display_name(client: &BuzzClient, pubkey: &str) -> Result<Option<String>, CliError> {
+async fn fetch_display_name(
+    client: &BeekeeperClient,
+    pubkey: &str,
+) -> Result<Option<String>, CliError> {
     let filter = json!({ "kinds": [0], "authors": [pubkey], "limit": 1 });
     let raw = client.query(&filter).await?;
     let events: Vec<Value> = serde_json::from_str(&raw)
@@ -106,7 +109,7 @@ fn parse_display_name(events: &[Value]) -> Option<String> {
 /// unknown elsewhere in this module tree, rather than failing the whole
 /// command over a record this identity may have nothing to do with.
 async fn resolve_active_role(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     pubkey: &str,
 ) -> Result<Option<String>, CliError> {
     let membership = client
@@ -296,7 +299,7 @@ mod tests {
 
     /// `fetch_display_name`/`resolve_active_role` propagate `client.query*`
     /// failures with `?` before any JSON is built — a compile-time guarantee
-    /// from `?`'s early-return, not a runtime branch this crate's `BuzzClient`
+    /// from `?`'s early-return, not a runtime branch this crate's `BeekeeperClient`
     /// can be made to take without an HTTP test double (buzz-cli has no
     /// mocking harness; see the report's residuals). This pins the exit-code
     /// contract those propagated errors carry instead.

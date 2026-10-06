@@ -500,7 +500,7 @@ export function OnboardingFlow({
   return (
     <>
       <div
-        className="buzz-onboarding-neutral-theme buzz-startup-shell flex items-start justify-center overflow-y-auto bg-background px-4 pb-28 pt-[106px] text-foreground"
+        className="beekeeper-onboarding-neutral-theme beekeeper-startup-shell flex items-start justify-center overflow-y-auto bg-background px-4 pb-28 pt-[106px] text-foreground"
         data-testid="onboarding-gate"
         data-system-color-scheme={systemColorScheme}
       >

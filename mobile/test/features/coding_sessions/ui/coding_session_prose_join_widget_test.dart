@@ -1,8 +1,8 @@
 import 'dart:io';
 
-import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
-import 'package:buzz/features/coding_sessions/ui/coding_session_page.dart';
-import 'package:buzz/features/coding_sessions/ui/observer_contract.dart';
+import 'package:beekeeper/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:beekeeper/features/coding_sessions/ui/coding_session_page.dart';
+import 'package:beekeeper/features/coding_sessions/ui/observer_contract.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';

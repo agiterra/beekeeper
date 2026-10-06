@@ -32,7 +32,7 @@ use serde_json::{json, Value};
 
 use super::pulse::resolve_project;
 use super::repos::next_replaceable_created_at;
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// The relay's ingest window is ±900 s; a bump that would land past this
@@ -61,7 +61,7 @@ impl Snapshot {
 }
 
 /// Read the project's agents repository coordinate and its pin log.
-async fn snapshot(client: &BuzzClient, project: Option<&str>) -> Result<Snapshot, CliError> {
+async fn snapshot(client: &BeekeeperClient, project: Option<&str>) -> Result<Snapshot, CliError> {
     let coordinate = resolve_project(client, project).await?;
     let sources = super::packs::query_pack_sources(client, &coordinate).await?;
     let Some((source, _)) = sources.into_iter().next() else {
@@ -127,7 +127,7 @@ fn honesty(snap: &Snapshot, out: &mut Value) {
 
 async fn publish(
     snap: &mut Snapshot,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     op: &ProjectArtifactPinOp,
 ) -> Result<Value, CliError> {
     let now = Timestamp::now().as_secs();
@@ -194,7 +194,7 @@ fn rank_at(snap: &Snapshot, target: &str, index: Option<usize>) -> Result<String
 
 pub async fn dispatch(
     cmd: crate::PinsCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     _format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     use crate::PinsCmd;

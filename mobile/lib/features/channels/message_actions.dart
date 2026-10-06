@@ -67,7 +67,7 @@ void showMessageActions({
     return;
   }
 
-  showBuzzModalBottomSheet<void>(
+  showBeekeeperModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
@@ -183,7 +183,7 @@ void showImageActions({
   required bool canManageMessage,
   VoidCallback? onDeleted,
 }) {
-  showBuzzModalBottomSheet<void>(
+  showBeekeeperModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
@@ -870,7 +870,7 @@ void _showEditSheet({
   required String channelId,
 }) {
   final controller = TextEditingController(text: message.content);
-  showBuzzModalBottomSheet<void>(
+  showBeekeeperModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
@@ -937,7 +937,7 @@ void _confirmDelete({
   required String messageId,
   VoidCallback? onDeleted,
 }) {
-  showBuzzDialog<void>(
+  showBeekeeperDialog<void>(
     context: context,
     builder: (dialogContext) => AlertDialog(
       title: const Text('Delete message'),

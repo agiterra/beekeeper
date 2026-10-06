@@ -88,7 +88,7 @@ function getCodeBlockText(children: React.ReactNode) {
 
 export function StaticCodeBlock({ children }: { children?: React.ReactNode }) {
   return (
-    <pre className="buzz-code-scrollbar max-w-full overflow-x-auto rounded-lg border border-border/70 bg-muted/60 px-3 py-1.5">
+    <pre className="beekeeper-code-scrollbar max-w-full overflow-x-auto rounded-lg border border-border/70 bg-muted/60 px-3 py-1.5">
       {children}
     </pre>
   );
@@ -305,7 +305,7 @@ export function MarkdownCodeBlock({
       <pre
         onScroll={measureOverflow}
         ref={codeBlockRef}
-        className="buzz-code-scrollbar max-w-full overflow-x-auto px-3 pb-2 pt-0.5"
+        className="beekeeper-code-scrollbar max-w-full overflow-x-auto px-3 pb-2 pt-0.5"
       >
         {children}
       </pre>

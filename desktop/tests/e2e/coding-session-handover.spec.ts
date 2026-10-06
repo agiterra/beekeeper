@@ -114,7 +114,7 @@ test("B takes the session over, reconstructs it, and the panel says what came ac
   const [hint] = await recordedHints(page);
   expect(hint.path).toBe(CHECKOUT_PATH);
   const createCommandId = await page.evaluate(() => {
-    const signed = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    const signed = window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [];
     for (const event of signed) {
       if (event.kind !== 44221) continue;
       const content = JSON.parse(event.content) as {
@@ -157,7 +157,7 @@ test("B takes the session over, reconstructs it, and the panel says what came ac
   // Nothing was steered on A's execution: the whole point of reconstruction is
   // that the absent machine is not commanded.
   const commands = await page.evaluate(
-    () => window.__BUZZ_E2E_COMMANDS__ ?? [],
+    () => window.__BEEKEEPER_E2E_COMMANDS__ ?? [],
   );
   expect(commands.filter((command) => command.includes("turn"))).toEqual([]);
   // The checkout itself is asserted above, from the stub's own record: it
@@ -224,7 +224,7 @@ test("a takeover that lands while the session is open reaches the panel", async 
         async () =>
           page.evaluate(
             ({ channelName, one }) =>
-              window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
                 channelName,
                 kind: one,
               }) ?? false,

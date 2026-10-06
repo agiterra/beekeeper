@@ -39,7 +39,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use nostr::{Alphabet, Filter, Keys, Kind, SingleLetterTag};
 
 /// NIP-51 bookmark set used for client-owned Mesh discovery notes.
@@ -97,7 +97,7 @@ async fn trust_member_reads_mesh_status() {
     let Some(member) = keys_from_env("MEMBER_NSEC") else {
         return;
     };
-    let mut client = BuzzTestClient::connect(&url, &member)
+    let mut client = BeekeeperTestClient::connect(&url, &member)
         .await
         .expect("member connect+auth");
 
@@ -184,7 +184,7 @@ async fn trust_nonmember_read_denied() {
     let Some(stranger) = keys_from_env("STRANGER_NSEC") else {
         return;
     };
-    let mut client = match BuzzTestClient::connect(&url, &stranger).await {
+    let mut client = match BeekeeperTestClient::connect(&url, &stranger).await {
         Ok(c) => c,
         // A closed relay may refuse NIP-42 auth for a non-member outright —
         // that is also a valid "denied" outcome.

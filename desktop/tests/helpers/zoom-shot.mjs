@@ -77,8 +77,8 @@ await page.addInitScript(() => {
     value: MockNotification,
     writable: true,
   });
-  window.__BUZZ_E2E__ = { mode: "mock" };
-  window.__BUZZ_E2E_APP_BADGE_COUNT__ = 0;
+  window.__BEEKEEPER_E2E__ = { mode: "mock" };
+  window.__BEEKEEPER_E2E_APP_BADGE_COUNT__ = 0;
 });
 
 try {
@@ -102,7 +102,7 @@ try {
     // Send a message via mock so we have something to thread.
     await page.evaluate(
       ({ ch }) => {
-        window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?.({
           channelName: ch,
           content: "Header spacing comparison anchor message",
           pubkey: "deadbeef".repeat(8),

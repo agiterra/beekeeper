@@ -885,7 +885,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
           />
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto px-4 pb-4">
-            <div className="w-full space-y-3 pt-[calc(var(--buzz-channel-content-top-padding,5.75rem)_+_1px)]">
+            <div className="w-full space-y-3 pt-[calc(var(--beekeeper-channel-content-top-padding,5.75rem)_+_1px)]">
               <WorkspaceTabs
                 key={`${project.id}:${repository.id}:${tabsResetKey}`}
                 initialTab={

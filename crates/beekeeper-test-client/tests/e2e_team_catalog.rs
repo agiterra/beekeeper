@@ -18,7 +18,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::{BuzzTestClient, RelayMessage};
+use beekeeper_test_client::{BeekeeperTestClient, RelayMessage};
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag, Timestamp};
 
 const TEAM_CATALOG_KIND: u16 = 30178;
@@ -88,7 +88,9 @@ async fn test_team_catalog_publish_and_query_own_unshared() {
     let keys = Keys::generate();
     let d_tag = uuid::Uuid::new_v4().to_string();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let event = catalog_event(&keys, &d_tag, false);
     let event_id = event.id;
     let ok = client.send_event(event).await.expect("send catalog");
@@ -121,7 +123,9 @@ async fn test_team_catalog_accepts_builtin_colon_d_tag() {
     let keys = Keys::generate();
     let d_tag = format!("builtin-team:{}", &uuid::Uuid::new_v4().to_string()[..8]);
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let ok = client
         .send_event(catalog_event(&keys, &d_tag, true))
         .await
@@ -143,7 +147,9 @@ async fn test_team_catalog_rejects_empty_d_tag() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let ok = client
         .send_event(catalog_event(&keys, "", false))
         .await
@@ -180,7 +186,9 @@ async fn test_team_catalog_rejects_valueless_plus_valued_d_tags() {
     .sign_with_keys(&keys)
     .unwrap();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let ok = client.send_event(event).await.expect("send catalog");
     assert!(
         !ok.accepted,
@@ -217,7 +225,9 @@ async fn test_team_catalog_rejects_three_element_shared_tag() {
     .sign_with_keys(&keys)
     .unwrap();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let ok = client.send_event(event).await.expect("send catalog");
     assert!(!ok.accepted, "three-element shared tag must be rejected");
     assert!(
@@ -241,7 +251,7 @@ async fn test_team_catalog_foreign_sees_only_shared() {
     let d_unshared = format!("priv-{}", uuid::Uuid::new_v4());
     let d_shared = format!("pub-{}", uuid::Uuid::new_v4());
 
-    let mut author = BuzzTestClient::connect(&url, &author_keys)
+    let mut author = BeekeeperTestClient::connect(&url, &author_keys)
         .await
         .expect("connect author");
     let shared_event = catalog_event(&author_keys, &d_shared, true);
@@ -254,7 +264,7 @@ async fn test_team_catalog_foreign_sees_only_shared() {
     let ok = author.send_event(shared_event).await.expect("send shared");
     assert!(ok.accepted, "shared ingest rejected: {}", ok.message);
 
-    let mut foreign = BuzzTestClient::connect(&url, &foreign_keys)
+    let mut foreign = BeekeeperTestClient::connect(&url, &foreign_keys)
         .await
         .expect("connect foreign");
     let sid = sub_id("fg-all");
@@ -309,14 +319,14 @@ async fn test_team_catalog_ids_lookup_unshared_returns_nothing_to_foreign() {
     let event = catalog_event(&author_keys, &uuid::Uuid::new_v4().to_string(), false);
     let event_id = event.id;
 
-    let mut author = BuzzTestClient::connect(&url, &author_keys)
+    let mut author = BeekeeperTestClient::connect(&url, &author_keys)
         .await
         .expect("connect author");
     let ok = author.send_event(event).await.expect("send");
     assert!(ok.accepted, "ingest rejected: {}", ok.message);
     author.disconnect().await.expect("disconnect author");
 
-    let mut foreign = BuzzTestClient::connect(&url, &foreign_keys)
+    let mut foreign = BeekeeperTestClient::connect(&url, &foreign_keys)
         .await
         .expect("connect foreign");
     let sid = sub_id("ids-unshared");
@@ -347,7 +357,7 @@ async fn test_team_catalog_count_excludes_foreign_unshared() {
     let author_keys = Keys::generate();
     let foreign_keys = Keys::generate();
 
-    let mut author = BuzzTestClient::connect(&url, &author_keys)
+    let mut author = BeekeeperTestClient::connect(&url, &author_keys)
         .await
         .expect("connect author");
     let ok = author
@@ -370,7 +380,7 @@ async fn test_team_catalog_count_excludes_foreign_unshared() {
     assert!(ok.accepted, "shared rejected: {}", ok.message);
     author.disconnect().await.expect("disconnect author");
 
-    let mut foreign = BuzzTestClient::connect(&url, &foreign_keys)
+    let mut foreign = BeekeeperTestClient::connect(&url, &foreign_keys)
         .await
         .expect("connect foreign");
     let sid = sub_id("count");
@@ -406,7 +416,7 @@ async fn test_team_catalog_live_fanout_and_unshare_retracts() {
 
     // Subscribe BEFORE publishing, scoped to this author so parallel tests
     // publishing their own 30178s cannot trip the leak assertion.
-    let mut foreign = BuzzTestClient::connect(&url, &foreign_keys)
+    let mut foreign = BeekeeperTestClient::connect(&url, &foreign_keys)
         .await
         .expect("connect foreign");
     let sid = sub_id("fanout");
@@ -419,7 +429,7 @@ async fn test_team_catalog_live_fanout_and_unshare_retracts() {
         .await
         .expect("drain eose");
 
-    let mut author = BuzzTestClient::connect(&url, &author_keys)
+    let mut author = BeekeeperTestClient::connect(&url, &author_keys)
         .await
         .expect("connect author");
 

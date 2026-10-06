@@ -59,7 +59,7 @@ use beekeeper_core::registry_bench::{
     BENCH_MIN_REPEAT, BENCH_TASK_TIMEOUT_SECS, REGISTRY_BENCH_RELATIVE_PATH,
 };
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::validate_uuid;
 use crate::{
@@ -574,7 +574,7 @@ pub fn run_manifest(
 /// signs nothing, so it must not demand an identity.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub async fn cmd_registry_measure(
-    client: Option<&BuzzClient>,
+    client: Option<&BeekeeperClient>,
     role: &str,
     runtime: &str,
     model: &str,
@@ -773,7 +773,7 @@ fn incumbent_scores(registry: &Registry, role: &str, plan: &SpawnPlan) -> Value 
 
 #[allow(clippy::too_many_arguments)]
 async fn publish_rows(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     role: &str,

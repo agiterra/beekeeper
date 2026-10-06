@@ -1,5 +1,5 @@
-import 'package:buzz/shared/relay/nostr_filter_match.dart';
-import 'package:buzz/shared/relay/nostr_models.dart';
+import 'package:beekeeper/shared/relay/nostr_filter_match.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Mirrors `crates/beekeeper-core/src/filter.rs` tests row for row so the two

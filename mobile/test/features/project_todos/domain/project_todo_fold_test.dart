@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:buzz/features/project_todos/domain/project_todo_fold.dart';
-import 'package:buzz/features/project_todos/domain/project_todo_op.dart';
-import 'package:buzz/shared/relay/nostr_models.dart';
+import 'package:beekeeper/features/project_todos/domain/project_todo_fold.dart';
+import 'package:beekeeper/features/project_todos/domain/project_todo_op.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// The Dart fold binds to `conformance/project-todo-fold/fixtures/

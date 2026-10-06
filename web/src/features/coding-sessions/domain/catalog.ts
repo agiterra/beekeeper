@@ -34,7 +34,7 @@ import {
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_NAME,
 } from "../../../shared/lib/kinds.ts";
-import type { BuzzCodingSessionMetadataV1 } from "./ingressPayloads.ts";
+import type { BeekeeperCodingSessionMetadataV1 } from "./ingressPayloads.ts";
 import { isCodingSessionTurnReceiptStatus } from "./ingressPayloads.ts";
 import {
   buildCodingSessionExecutionKey,
@@ -60,7 +60,7 @@ import {
   parseCodingSessionGoal,
   parseCodingSessionName,
 } from "./sessionRecords.ts";
-import type { BuzzCodingSessionTranscriptV1 } from "./transcriptEnvelope.ts";
+import type { BeekeeperCodingSessionTranscriptV1 } from "./transcriptEnvelope.ts";
 import { projectCodingSessionTranscript } from "./transcriptProjection.ts";
 import { classifyCodingSessionEvent, isSignatureVerified } from "./trust.ts";
 import type {
@@ -98,7 +98,7 @@ type Stored<T> = {
 type MetadataBucket = {
   channelId: string;
   targetKey: string;
-  records: Map<string, Stored<Readonly<BuzzCodingSessionMetadataV1>>>;
+  records: Map<string, Stored<Readonly<BeekeeperCodingSessionMetadataV1>>>;
 };
 
 type TranscriptBucket = {
@@ -106,7 +106,7 @@ type TranscriptBucket = {
   targetKey: string;
   signerPubkey: string;
   eventSeq: number;
-  records: Map<string, Stored<Readonly<BuzzCodingSessionTranscriptV1>>>;
+  records: Map<string, Stored<Readonly<BeekeeperCodingSessionTranscriptV1>>>;
 };
 
 type LifecycleReceiptRecord = {
@@ -816,10 +816,13 @@ export function codingSessionTargetFactKey(
 }
 
 function resolveNewestMetadata(
-  records: ReadonlyMap<string, Stored<Readonly<BuzzCodingSessionMetadataV1>>>,
+  records: ReadonlyMap<
+    string,
+    Stored<Readonly<BeekeeperCodingSessionMetadataV1>>
+  >,
   signerPubkey: string,
 ): {
-  value: Stored<Readonly<BuzzCodingSessionMetadataV1>> | null;
+  value: Stored<Readonly<BeekeeperCodingSessionMetadataV1>> | null;
   conflictCount: number;
 } {
   const matching = [...records.values()].filter(

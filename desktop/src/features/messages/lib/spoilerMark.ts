@@ -49,7 +49,7 @@ export function registerSpoilerMarkdownIt(
   // the composer WYSIWYG surface.
   md.inline.ruler.before("emphasis", SPOILER_MARKDOWN_RULE, rule);
   md.renderer.rules[SPOILER_OPEN_TOKEN] = () =>
-    '<span data-spoiler="" class="buzz-spoiler">';
+    '<span data-spoiler="" class="beekeeper-spoiler">';
   md.renderer.rules[SPOILER_CLOSE_TOKEN] = () => "</span>";
 }
 
@@ -85,7 +85,7 @@ export const SpoilerMark = Mark.create({
       "span",
       mergeAttributes(HTMLAttributes, {
         "data-spoiler": "",
-        class: "buzz-spoiler",
+        class: "beekeeper-spoiler",
       }),
       0,
     ];

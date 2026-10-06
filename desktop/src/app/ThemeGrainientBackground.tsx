@@ -2,7 +2,7 @@ export function ThemeGrainientBackground() {
   return (
     <div
       aria-hidden="true"
-      className="buzz-setup-grainient"
+      className="beekeeper-setup-grainient"
       data-testid="setup-grainient-background"
     >
       <div className="buzz-setup-grainient__wash" />

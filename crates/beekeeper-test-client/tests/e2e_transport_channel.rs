@@ -22,7 +22,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use beekeeper_ws_client::RelayMessage;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag, Timestamp};
 
@@ -42,7 +42,9 @@ fn sub_id(name: &str) -> String {
 /// kind:9000 does not prove (the event can be stored while its membership side
 /// effect fails).
 async fn member_role(url: &str, keys: &Keys, channel_id: &str, pubkey_hex: &str) -> Option<String> {
-    let mut ws = BuzzTestClient::connect(url, keys).await.expect("connect");
+    let mut ws = BeekeeperTestClient::connect(url, keys)
+        .await
+        .expect("connect");
     let sid = sub_id("members");
     let filter = Filter::new()
         .kind(Kind::Custom(39002))
@@ -99,7 +101,7 @@ fn project_event(
 
 /// Create a private channel of `channel_type` bound to `project_ref`.
 async fn create_private_channel(
-    client: &mut BuzzTestClient,
+    client: &mut BeekeeperTestClient,
     keys: &Keys,
     channel_type: &str,
     project_ref: &str,
@@ -135,7 +137,7 @@ fn discovery_filter(channel_id: &str) -> Filter {
 }
 
 /// Subscribe with `filter` and drain to EOSE.
-async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
+async fn query(client: &mut BeekeeperTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
     let sid = sub_id(name);
     client
         .subscribe(&sid, vec![filter])
@@ -150,7 +152,7 @@ async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<n
 }
 
 /// Subscribe expecting the relay to CLOSE the subscription with `restricted:`.
-async fn expect_restricted(client: &mut BuzzTestClient, name: &str, filter: Filter) {
+async fn expect_restricted(client: &mut BeekeeperTestClient, name: &str, filter: Filter) {
     let sid = sub_id(name);
     client
         .subscribe(&sid, vec![filter])
@@ -183,7 +185,7 @@ async fn expect_restricted(client: &mut BuzzTestClient, name: &str, filter: Filt
 
 /// Post a kind-9 message into a channel and assert acceptance.
 async fn post_message(
-    client: &mut BuzzTestClient,
+    client: &mut BeekeeperTestClient,
     keys: &Keys,
     channel_id: &str,
 ) -> nostr::EventId {
@@ -208,7 +210,7 @@ async fn test_transport_channel_admits_project_members_readonly_paths() {
     let stranger = Keys::generate();
     let d_tag = unique("read");
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(&owner, &d_tag, Some("private"), &[&member], None);
@@ -222,7 +224,7 @@ async fn test_transport_channel_admits_project_members_readonly_paths() {
     let message_id = post_message(&mut owner_client, &owner, &transport_id).await;
 
     // Invited project member: history + discovery, no channel_members row.
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
     let events = query(
@@ -256,7 +258,7 @@ async fn test_transport_channel_admits_project_members_readonly_paths() {
     .await;
 
     // Stranger: nothing.
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     expect_restricted(
@@ -277,7 +279,7 @@ async fn test_transport_channel_live_fanout_and_revocation() {
     let member = Keys::generate();
     let d_tag = unique("live");
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let base_ts = Timestamp::now().as_secs();
@@ -291,7 +293,7 @@ async fn test_transport_channel_live_fanout_and_revocation() {
 
     // Member subscribes live (allowed through the transport arm), then the
     // owner posts.
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
     let member_sid = sub_id("live-member");
@@ -335,7 +337,7 @@ async fn test_transport_channel_live_fanout_and_revocation() {
         .expect("send revoked head");
     assert!(ok.accepted, "revoking republish rejected: {}", ok.message);
 
-    let mut revoked_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut revoked_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("revoked member connect");
     expect_restricted(
@@ -358,7 +360,7 @@ async fn test_transport_channel_bot_add_authority() {
     let bot = Keys::generate();
     let d_tag = unique("botadd");
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(&owner, &d_tag, Some("private"), &[&member], None);
@@ -381,7 +383,7 @@ async fn test_transport_channel_bot_add_authority() {
     };
 
     // Project member adds their provider bot: allowed, member-level.
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
     let ok = member_client
@@ -423,7 +425,7 @@ async fn test_transport_channel_bot_add_authority() {
     );
 
     // A stranger may not PUT_USER at all.
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let ok = stranger_client

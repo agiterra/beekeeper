@@ -6,7 +6,7 @@ import {
   deriveNumericDescriptors,
   structuredEnvKeys,
 } from "./agentConfigCore.ts";
-import { NUMERIC_KIND_MIN } from "../ui/buzzAgentModelTuningFields.tsx";
+import { NUMERIC_KIND_MIN } from "../ui/beekeeperAgentModelTuningFields.tsx";
 
 const config = {
   env_vars: { BUZZ_AGENT_THINKING_EFFORT: "high" },

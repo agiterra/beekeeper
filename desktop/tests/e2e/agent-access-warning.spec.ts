@@ -70,7 +70,7 @@ test("open agent access explains the available access before save", async ({
   await expect(saveAccess).toBeVisible();
 
   const commandsBeforeSave = await page.evaluate(
-    () => window.__BUZZ_E2E_COMMAND_LOG__?.length ?? 0,
+    () => window.__BEEKEEPER_E2E_COMMAND_LOG__?.length ?? 0,
   );
   await accessSelect.selectOption("owner-only");
   await expect(page.getByTestId("agent-access-warning")).toHaveCount(0);
@@ -87,7 +87,7 @@ test("open agent access explains the available access before save", async ({
   await expect
     .poll(async () =>
       page.evaluate((start) => {
-        const commands = window.__BUZZ_E2E_COMMAND_LOG__ ?? [];
+        const commands = window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? [];
         return commands
           .slice(start)
           .some(
@@ -242,7 +242,7 @@ test("full agent editor tightens the exact sidebar agent instance", async ({
 
   const updateCommand = await page.evaluate(
     (pubkey) =>
-      window.__BUZZ_E2E_COMMAND_LOG__?.findLast(
+      window.__BEEKEEPER_E2E_COMMAND_LOG__?.findLast(
         (entry) =>
           entry.command === "update_managed_agent" &&
           (entry.payload as { input?: { pubkey?: string } })?.input?.pubkey ===
@@ -278,7 +278,7 @@ test("full agent editor tightens the exact sidebar agent instance", async ({
 
   const unrelatedEditCommand = await page.evaluate(
     (pubkey) =>
-      window.__BUZZ_E2E_COMMAND_LOG__?.findLast(
+      window.__BEEKEEPER_E2E_COMMAND_LOG__?.findLast(
         (entry) =>
           entry.command === "update_managed_agent" &&
           (entry.payload as { input?: { pubkey?: string } })?.input?.pubkey ===
@@ -355,14 +355,14 @@ test("existing agent edit warns before saving open access", async ({
   );
 
   const commandsBeforeSave = await page.evaluate(
-    () => window.__BUZZ_E2E_COMMAND_LOG__?.length ?? 0,
+    () => window.__BEEKEEPER_E2E_COMMAND_LOG__?.length ?? 0,
   );
   await page.getByTestId("edit-agent-dialog-submit").click();
   await expect(dialog).not.toBeVisible();
   await expect
     .poll(async () =>
       page.evaluate((start) => {
-        const commands = window.__BUZZ_E2E_COMMAND_LOG__ ?? [];
+        const commands = window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? [];
         return commands
           .slice(start)
           .some(

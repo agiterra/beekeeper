@@ -665,8 +665,10 @@ async function boot(
   await page.addInitScript(
     ({ events, installed, channelProject, setup }) => {
       const w = window as HiringWindow;
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events;
-      window.__BUZZ_E2E_PROJECT_TEAM_SETUP__ = { installedRoles: installed };
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events;
+      window.__BEEKEEPER_E2E_PROJECT_TEAM_SETUP__ = {
+        installedRoles: installed,
+      };
       w.__HIRING_CHANNEL_PROJECT__ = channelProject;
       w.__HIRING_SETUP__ = setup;
     },
@@ -745,7 +747,7 @@ async function openProjectTab(
 async function seedTankSessions(page: Page) {
   await page.evaluate(
     ({ channelName, events }) => {
-      const seedEvent = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seedEvent = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seedEvent) throw new Error("mock signed-event seam is missing");
       for (const event of events as never[]) seedEvent({ channelName, event });
     },

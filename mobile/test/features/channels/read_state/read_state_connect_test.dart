@@ -1,7 +1,7 @@
-import 'package:buzz/shared/community/community_provider.dart';
-import 'package:buzz/shared/read_state/read_state_provider.dart';
-import 'package:buzz/shared/relay/relay.dart';
-import 'package:buzz/shared/theme/theme_provider.dart';
+import 'package:beekeeper/shared/community/community_provider.dart';
+import 'package:beekeeper/shared/read_state/read_state_provider.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
+import 'package:beekeeper/shared/theme/theme_provider.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';

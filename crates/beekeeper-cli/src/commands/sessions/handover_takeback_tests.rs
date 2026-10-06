@@ -246,7 +246,7 @@ async fn takeback_against(lease_live: bool) -> (String, Option<String>, Vec<nost
         axum::serve(listener, app).await.expect("fake relay");
     });
 
-    let client = BuzzClient::new(url, founder.clone(), None, None).expect("client");
+    let client = BeekeeperClient::new(url, founder.clone(), None, None).expect("client");
     let state = load_handover_state(&client, CHANNEL, SESSION, Some(&genesis_ref))
         .await
         .expect("state");

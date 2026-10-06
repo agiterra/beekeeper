@@ -5,15 +5,15 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:hooks_riverpod/misc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:nostr/nostr.dart' as nostr;
-import 'package:buzz/features/channels/channel.dart';
-import 'package:buzz/features/channels/channels_provider.dart';
-import 'package:buzz/features/channels/message_content.dart';
-import 'package:buzz/features/channels/media_viewer_page.dart';
-import 'package:buzz/shared/deeplink/deep_link.dart';
-import 'package:buzz/shared/deeplink/pending_deep_link_provider.dart';
-import 'package:buzz/shared/emoji/emoji_only.dart';
-import 'package:buzz/shared/relay/relay.dart';
-import 'package:buzz/shared/theme/theme.dart';
+import 'package:beekeeper/features/channels/channel.dart';
+import 'package:beekeeper/features/channels/channels_provider.dart';
+import 'package:beekeeper/features/channels/message_content.dart';
+import 'package:beekeeper/features/channels/media_viewer_page.dart';
+import 'package:beekeeper/shared/deeplink/deep_link.dart';
+import 'package:beekeeper/shared/deeplink/pending_deep_link_provider.dart';
+import 'package:beekeeper/shared/emoji/emoji_only.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
+import 'package:beekeeper/shared/theme/theme.dart';
 
 Widget _testable(
   Widget child, {

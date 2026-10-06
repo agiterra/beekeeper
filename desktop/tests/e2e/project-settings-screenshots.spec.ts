@@ -38,7 +38,7 @@ test("project settings set icon and color, and the tint reaches both surfaces", 
     .poll(async () =>
       page.evaluate(() => {
         // General's head is published first; look for Honeycomb's own.
-        const head = (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).find(
+        const head = (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).find(
           (event) =>
             event.kind === 30621 &&
             event.tags.some((tag) => tag[0] === "d" && tag[1] === "honeycomb"),
@@ -93,7 +93,7 @@ test("project settings set icon and color, and the tint reaches both surfaces", 
   await expect
     .poll(async () =>
       page.evaluate(() => {
-        const events = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+        const events = window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [];
         const head = [...events]
           .reverse()
           .find((event) => event.kind === 30621);

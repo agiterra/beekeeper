@@ -50,7 +50,7 @@ use beekeeper_core::kind::{
     KIND_WORKFLOW_HOST_STEP_REQUESTED, KIND_WORKFLOW_TRIGGER,
 };
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::validate_uuid;
 
@@ -184,7 +184,7 @@ fn wake_fact(command_id: &str) -> Option<&str> {
 /// narrows every per-seat and coordination number to one umbrella; without it
 /// the whole channel is folded and the report says so.
 pub async fn cmd_measure(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_ref: Option<&str>,
     since: Option<&str>,
@@ -293,7 +293,7 @@ fn parse_time(flag: &str, raw: &str) -> Result<i64, CliError> {
 
 /// One bounded, fully paged query. A refusal is returned, never swallowed.
 async fn fetch_window(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     kinds: &[u32],
     since: Option<i64>,

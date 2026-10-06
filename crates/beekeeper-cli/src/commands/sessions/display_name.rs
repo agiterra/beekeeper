@@ -255,7 +255,7 @@ pub fn show_output(
 /// `bee sessions show --channel <uuid> --session-ref <uuid>`: one umbrella,
 /// its display name and where that name came from, and its executions.
 pub async fn cmd_show(
-    client: &crate::client::BuzzClient,
+    client: &crate::client::BeekeeperClient,
     channel_id: &str,
     session_ref: &str,
     format: &crate::OutputFormat,

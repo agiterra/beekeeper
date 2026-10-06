@@ -94,7 +94,7 @@ test("machine onboarding: landing, backup, setup docked CTAs", async ({
   const optionPanels = page.getByTestId("backup-option-panel");
   await expect(optionPanels).toHaveCount(3);
   await expect(
-    page.getByTestId("backup-options").locator(".buzz-card-textured"),
+    page.getByTestId("backup-options").locator(".beekeeper-card-textured"),
   ).toHaveCount(0);
   await expect(optionPanels.first()).toHaveCSS("padding-left", "24px");
   const titleTops = await optionPanels

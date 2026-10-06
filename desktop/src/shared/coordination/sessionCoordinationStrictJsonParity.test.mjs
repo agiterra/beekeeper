@@ -2,7 +2,7 @@
  * Parity between the Pulse's strict gate and the session decoder — over the
  * **shared** vectors, not over a fixture list of this file's own.
  *
- * `isStrictMetadataContent` (this directory) and `parseBuzzCodingSessionMetadata`
+ * `isStrictMetadataContent` (this directory) and `parseBeekeeperCodingSessionMetadata`
  * (`features/coding-sessions/lib/codingSessionIngressPayloads.ts`) both read
  * kind 44223. They are allowed to disagree in one direction only: the gate may
  * be *more* open than the decoder (finding 34's fix makes `capabilities` and a
@@ -28,7 +28,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { parseBuzzCodingSessionMetadata } from "../../features/coding-sessions/lib/codingSessionIngressPayloads.ts";
+import { parseBeekeeperCodingSessionMetadata } from "../../features/coding-sessions/lib/codingSessionIngressPayloads.ts";
 import { isStrictMetadataContent } from "./sessionCoordinationStrictJson.ts";
 
 /** Every 44223 vector, as `[name, content string]`. */
@@ -51,7 +51,7 @@ function sharedVectors() {
 
 test("the strict gate never rejects a shape the session decoder accepts", () => {
   for (const [name, source] of sharedVectors()) {
-    if (parseBuzzCodingSessionMetadata(source) === null) continue;
+    if (parseBeekeeperCodingSessionMetadata(source) === null) continue;
     assert.equal(
       isStrictMetadataContent(source),
       true,
@@ -68,7 +68,7 @@ test("the shared vectors actually reach the decoder (the test proves something)"
   // decode, that loop would pass trivially without checking anything.
   const vectors = sharedVectors();
   const decoded = vectors.filter(
-    ([, source]) => parseBuzzCodingSessionMetadata(source) !== null,
+    ([, source]) => parseBeekeeperCodingSessionMetadata(source) !== null,
   ).length;
   assert.ok(
     decoded >= 10,
@@ -90,6 +90,6 @@ test("the gate may be more open than the decoder — the one allowed divergence"
     ...base,
     capabilities: { ...base.capabilities, futureThing: true },
   });
-  assert.equal(parseBuzzCodingSessionMetadata(source), null);
+  assert.equal(parseBeekeeperCodingSessionMetadata(source), null);
   assert.equal(isStrictMetadataContent(source), true);
 });

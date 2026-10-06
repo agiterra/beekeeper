@@ -147,7 +147,7 @@ class _IdentityRow extends StatelessWidget {
 }
 
 void _confirmRemoveCommunity(BuildContext context, WidgetRef ref) {
-  showBuzzDialog<void>(
+  showBeekeeperDialog<void>(
     context: context,
     builder: (ctx) => AlertDialog(
       title: const Text('Remove Community'),

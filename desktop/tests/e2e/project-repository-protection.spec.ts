@@ -12,7 +12,7 @@ import { installMockBridge } from "../helpers/bridge";
  * enabled only for that signer.
  *
  * Both repositories and the project linking them are seeded directly via
- * `__BUZZ_E2E_EXTRA_PROJECT_EVENTS__` (raw store injection, no signature
+ * `__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__` (raw store injection, no signature
  * needed — the same mechanism `project-container-screen.spec.ts` uses for a
  * standalone repo) so the test can put one repo under the viewer's own key
  * and one under someone else's without switching identities mid-spec.
@@ -54,7 +54,7 @@ test("Repository → Protection: lists real buzz-protect rules, and gates the sw
         "buzz-feature-overrides-v1",
         JSON.stringify({ projects: true, forum: true }),
       );
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
           id: "seeded-protect-container",
           kind: 30621,
@@ -162,7 +162,7 @@ test("Repository → Protection: lists real buzz-protect rules, and gates the sw
   await capture(page, "05-protection-after-toggle");
 
   const published = await page.evaluate(() => {
-    const events = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    const events = window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [];
     return [...events]
       .reverse()
       .find(
@@ -199,7 +199,7 @@ test("Repository → Protection: a co-founder sets the rule with a record of the
         "buzz-feature-overrides-v1",
         JSON.stringify({ projects: true, forum: true }),
       );
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
           id: "seeded-cofounder-container",
           kind: 30621,
@@ -270,7 +270,7 @@ test("Repository → Protection: a co-founder sets the rule with a record of the
   await capture(page, "09-cofounder-after-toggle");
 
   const signed = await page.evaluate(() => {
-    const events = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    const events = window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [];
     return {
       records: events.filter((event) => event.kind === 30625),
       announcements: events.filter((event) => event.kind === 30617),
@@ -301,13 +301,13 @@ test("Repository → Protection: a co-founder sets the rule with a record of the
   });
   const cleared = await page.evaluate(
     () =>
-      (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).filter(
+      (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).filter(
         (event) => event.kind === 30625,
       ).length,
   );
   expect(cleared).toBe(2);
   const clearRow = await page.evaluate(() => {
-    const events = (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).filter(
+    const events = (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).filter(
       (event) => event.kind === 30625,
     );
     return events[events.length - 1]?.tags;

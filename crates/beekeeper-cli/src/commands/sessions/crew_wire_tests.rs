@@ -27,7 +27,7 @@ use super::crew_cmds::{
     boundary_free_content, build_turn_command, classify_create_receipts, cmd_create,
     coding_session_navigation_url, refuse_unsupported_create_flags, CreateWaitOutcome,
 };
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 const CHANNEL: &str = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
@@ -404,7 +404,7 @@ async fn managed_bare_create_founds_grants_verified_owner_then_dispatches() {
         .expect("owner attestation");
     let auth_tag = beekeeper_sdk::nip_oa::parse_auth_tag(&auth_json).expect("auth tag");
     let client =
-        BuzzClient::new(url, agent.clone(), Some(auth_tag), Some(auth_json)).expect("client");
+        BeekeeperClient::new(url, agent.clone(), Some(auth_tag), Some(auth_json)).expect("client");
     let provider = nostr::Keys::generate().public_key().to_hex();
 
     let invalid = cmd_create(
@@ -543,7 +543,7 @@ async fn creator_owner_grant_failure_prevents_session_dispatch() {
     let auth_json = beekeeper_sdk::nip_oa::compute_auth_tag(&owner, &agent.public_key(), "")
         .expect("owner attestation");
     let auth_tag = beekeeper_sdk::nip_oa::parse_auth_tag(&auth_json).expect("auth tag");
-    let client = BuzzClient::new(url, agent, Some(auth_tag), Some(auth_json)).expect("client");
+    let client = BeekeeperClient::new(url, agent, Some(auth_tag), Some(auth_json)).expect("client");
 
     let error = cmd_create(
         &client,
@@ -627,7 +627,7 @@ async fn managed_join_never_infers_a_creator_owner_grant() {
     let auth_json = beekeeper_sdk::nip_oa::compute_auth_tag(&owner, &agent.public_key(), "")
         .expect("owner attestation");
     let auth_tag = beekeeper_sdk::nip_oa::parse_auth_tag(&auth_json).expect("auth tag");
-    let client = BuzzClient::new(url, agent, Some(auth_tag), Some(auth_json)).expect("client");
+    let client = BeekeeperClient::new(url, agent, Some(auth_tag), Some(auth_json)).expect("client");
     let provider = nostr::Keys::generate().public_key().to_hex();
     let session_ref = "10e635a2-4150-4f65-ad5d-37c2afb0dd93";
     let genesis_ref = "ab".repeat(32);
@@ -673,7 +673,7 @@ async fn invalid_owner_attestation_fails_before_any_session_write() {
     let auth_json = beekeeper_sdk::nip_oa::compute_auth_tag(&owner, &other_agent.public_key(), "")
         .expect("mismatched attestation");
     let auth_tag = beekeeper_sdk::nip_oa::parse_auth_tag(&auth_json).expect("auth tag");
-    let client = BuzzClient::new(
+    let client = BeekeeperClient::new(
         "http://127.0.0.1:1".into(),
         agent,
         Some(auth_tag),
@@ -756,7 +756,7 @@ async fn lost_managed_create_response_reports_unconfirmed_command() {
     let auth_json = beekeeper_sdk::nip_oa::compute_auth_tag(&owner, &agent.public_key(), "")
         .expect("owner attestation");
     let auth_tag = beekeeper_sdk::nip_oa::parse_auth_tag(&auth_json).expect("auth tag");
-    let client = BuzzClient::new(url, agent, Some(auth_tag), Some(auth_json)).expect("client");
+    let client = BeekeeperClient::new(url, agent, Some(auth_tag), Some(auth_json)).expect("client");
     let error = cmd_create(
         &client,
         CHANNEL,
@@ -907,9 +907,9 @@ async fn create_wait_uses_one_publish_and_exact_receipt_query() {
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.expect("recording relay");
     });
-    let client = BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+    let client = BeekeeperClient::new(url, nostr::Keys::generate(), None, None).expect("client");
 
-    async fn create(client: &BuzzClient, provider_authority: &str) -> Result<(), CliError> {
+    async fn create(client: &BeekeeperClient, provider_authority: &str) -> Result<(), CliError> {
         cmd_create(
             client,
             &CHANNEL.to_ascii_uppercase(),
@@ -1054,7 +1054,7 @@ async fn create_with_cwd_writes_the_hint_before_publishing_the_create() {
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.expect("recording relay");
     });
-    let client = BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+    let client = BeekeeperClient::new(url, nostr::Keys::generate(), None, None).expect("client");
     let provider = nostr::Keys::generate().public_key().to_hex();
     let session_ref = "10e635a2-4150-4f65-ad5d-37c2afb0dd93";
     let genesis_ref = "ab".repeat(32);

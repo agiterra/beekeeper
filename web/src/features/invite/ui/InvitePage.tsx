@@ -2,10 +2,10 @@ import buzzAppIcon from "@/assets/app-icon@3x.png";
 import { claimInviteInBrowser } from "@/features/invite/invite-api";
 import {
   BUZZ_RELEASES_URL,
-  type BuzzDownloadPlatform,
-  detectBuzzDownloadPlatform,
-  resolveBuzzDownloadUrlForPlatform,
-} from "@/shared/lib/buzz-download";
+  type BeekeeperDownloadPlatform,
+  detectBeekeeperDownloadPlatform,
+  resolveBeekeeperDownloadUrlForPlatform,
+} from "@/shared/lib/beekeeper-download";
 import { hasNip07Provider } from "@/shared/lib/nostr-signer";
 import { relayWsUrl } from "@/shared/lib/relay-url";
 import { Button } from "@/shared/ui/button";
@@ -62,7 +62,7 @@ export function InvitePage({ code }: { code: string }) {
 
   React.useEffect(() => {
     let active = true;
-    detectBuzzDownloadPlatform(navigator).then(async (platform) => {
+    detectBeekeeperDownloadPlatform(navigator).then(async (platform) => {
       if (!active) return;
       if (
         platform.operatingSystem === "macos" &&
@@ -71,7 +71,7 @@ export function InvitePage({ code }: { code: string }) {
         setNeedsMacChoice(true);
         return;
       }
-      const url = await resolveBuzzDownloadUrlForPlatform(platform);
+      const url = await resolveBeekeeperDownloadUrlForPlatform(platform);
       if (active) setDownloadUrl(url);
     });
     return () => {
@@ -157,7 +157,7 @@ export function InvitePage({ code }: { code: string }) {
   }, []);
   const chooseMacDownload = async (
     event: React.MouseEvent<HTMLAnchorElement>,
-    platform: BuzzDownloadPlatform,
+    platform: BeekeeperDownloadPlatform,
   ) => {
     event.preventDefault();
     if (choosingMacDownloadRef.current) return;
@@ -167,7 +167,7 @@ export function InvitePage({ code }: { code: string }) {
     if (downloadWindow) downloadWindow.opener = null;
     setShowMacChoice(false);
     try {
-      const url = await resolveBuzzDownloadUrlForPlatform(platform);
+      const url = await resolveBeekeeperDownloadUrlForPlatform(platform);
       downloadWindow?.location.replace(url);
     } finally {
       choosingMacDownloadRef.current = false;

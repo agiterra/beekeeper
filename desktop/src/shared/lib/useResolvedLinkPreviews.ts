@@ -263,7 +263,7 @@ function compactMetadata(
 }
 
 /** Resolve builder-focused metadata only from the active relay. */
-export async function fetchBuzzEntityMetadata(
+export async function fetchBeekeeperEntityMetadata(
   href: string,
   fetchEvents: EntityEventFetcher = (filter) =>
     relayClient.fetchEventsCoalesced(filter),
@@ -379,7 +379,7 @@ export async function fetchBuzzEntityMetadata(
 }
 
 const entityMetadataLoader = createMetadataLoader({
-  fetcher: fetchBuzzEntityMetadata,
+  fetcher: fetchBeekeeperEntityMetadata,
 });
 
 /** Clear ephemeral metadata when the active relay/community changes. */
@@ -417,7 +417,7 @@ export function resolveLinkPreview(
   if (metadata === undefined) {
     return {
       ...preview,
-      imageState: isBuzzEntityPreview(preview) ? "none" : "pending",
+      imageState: isBeekeeperEntityPreview(preview) ? "none" : "pending",
     };
   }
   if (metadata === null) {
@@ -439,7 +439,7 @@ export function resolveLinkPreview(
     description: metadata.description,
     faviconDataUrl: metadata.faviconDataUrl,
     provider:
-      (preview.kind === "generic-link" || isBuzzEntityPreview(preview)) &&
+      (preview.kind === "generic-link" || isBeekeeperEntityPreview(preview)) &&
       metadata.siteName
         ? metadata.siteName
         : preview.provider,
@@ -449,7 +449,9 @@ export function resolveLinkPreview(
   };
 }
 
-export function isBuzzEntityPreview(preview: SupportedLinkPreview): boolean {
+export function isBeekeeperEntityPreview(
+  preview: SupportedLinkPreview,
+): boolean {
   return (
     preview.kind === "buzz-pull-request" ||
     preview.kind === "buzz-issue" ||
@@ -475,7 +477,7 @@ export function withEntityFallbacks(
   return previews.flatMap((preview) => {
     const match = byHref.get(preview.href);
     if (match) return [match];
-    return isBuzzEntityPreview(preview)
+    return isBeekeeperEntityPreview(preview)
       ? [{ ...preview, imageState: "none" as const }]
       : [];
   });

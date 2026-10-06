@@ -302,7 +302,7 @@ function seededEvents(): RelayEvent[] {
 async function seed(page: Page, events: RelayEvent[]) {
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },
@@ -313,7 +313,7 @@ async function seed(page: Page, events: RelayEvent[]) {
 /** Send one instruction while the execution works, and return the command it signed. */
 async function steerFromComposer(page: Page, text: string) {
   const before = await page.evaluate(
-    () => (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).length,
+    () => (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).length,
   );
   const editor = page.getByLabel("Coding-session instruction");
   await expect(editor).toBeEnabled();
@@ -328,7 +328,7 @@ async function steerFromComposer(page: Page, text: string) {
   await steer.click();
 
   const signed = await page.waitForFunction((count) => {
-    const events = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    const events = window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [];
     return events.slice(count).find((event) => event.kind === 44220) ?? null;
   }, before);
   const value = (await signed.jsonValue()) as { content: string };
@@ -497,7 +497,7 @@ async function sendFromComposer(
     | "coding-session-composer-queue-next",
 ) {
   const before = await page.evaluate(
-    () => (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).length,
+    () => (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).length,
   );
   const editor = page.getByLabel("Coding-session instruction");
   await expect(editor).toBeEnabled();
@@ -506,7 +506,7 @@ async function sendFromComposer(
   await expect(button).toBeVisible();
   await button.click();
   const signed = await page.waitForFunction((count) => {
-    const events = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    const events = window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [];
     return events.slice(count).find((event) => event.kind === 44220) ?? null;
   }, before);
   const value = (await signed.jsonValue()) as { content: string };
@@ -639,7 +639,7 @@ test("copy to draft recovers the words at 250% text without sending or settling 
   await editor.fill("meanwhile, check CI");
 
   const signedBefore = await page.evaluate(
-    () => (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).length,
+    () => (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).length,
   );
   // Where a person is after sending, and after a resize: looking at the
   // latest. The conversation reserves the composer dock's *measured* height,
@@ -667,7 +667,7 @@ test("copy to draft recovers the words at 250% text without sending or settling 
   expect(
     await page.evaluate(
       (from) =>
-        (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [])
+        (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [])
           .slice(from)
           .map((event) => ({ kind: event.kind, tags: event.tags })),
       signedBefore,

@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:buzz/shared/security/sensitive_action_authorizer.dart';
+import 'package:beekeeper/shared/security/sensitive_action_authorizer.dart';
 
 class _MockLocalAuthentication extends Mock implements LocalAuthentication {}
 

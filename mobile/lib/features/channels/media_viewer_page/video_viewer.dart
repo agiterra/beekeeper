@@ -361,7 +361,7 @@ class _VideoLoadingPoster extends StatelessWidget {
             _videoPlaceholder(context),
           const ColoredBox(color: Color.fromRGBO(0, 0, 0, 0.24)),
           const Center(
-            child: BuzzLoadingIndicator(
+            child: BeekeeperLoadingIndicator(
               size: 44,
               color: Colors.white,
               semanticLabel: 'Loading video',

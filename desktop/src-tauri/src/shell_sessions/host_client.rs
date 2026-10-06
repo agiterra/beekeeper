@@ -45,7 +45,7 @@ impl HostClient {
 
     /// Narrow to an `AttachedClient` sharing this same connection: the write
     /// half itself never leaves this module, only the narrowed handle does.
-    /// `pub(super)`: `session_driver::BuzzShellHostDriver::attach_existing`
+    /// `pub(super)`: `session_driver::BeekeeperShellHostDriver::attach_existing`
     /// (the sole caller) is a sibling module, not a child, so `pub(super)` —
     /// visible to all of `shell_sessions` — is the narrowest visibility Rust
     /// offers here; `pub(in path)` requires `path` to be an ancestor of this

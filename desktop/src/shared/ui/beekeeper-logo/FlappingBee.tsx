@@ -2,7 +2,7 @@ import { useId } from "react";
 
 /**
  * The Buzz bee mark with flapping wings. Geometry is identical to the static
- * {@link BuzzMark} (v8 final keyframe) — the same silhouette, rendered in
+ * {@link BeekeeperMark} (v8 final keyframe) — the same silhouette, rendered in
  * `currentColor` so it tints per-theme — with the wing-flap keyframes (ported
  * from the Buzz website) beating the wings on an infinite loop.
  *

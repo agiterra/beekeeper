@@ -80,7 +80,7 @@ class _ItemSheet extends HookConsumerWidget {
     );
 
     Future<void> pickAssignee() async {
-      final pick = await showBuzzModalBottomSheet<_AssigneePick>(
+      final pick = await showBeekeeperModalBottomSheet<_AssigneePick>(
         context: context,
         title: 'Assign to',
         isScrollControlled: true,
@@ -106,7 +106,7 @@ class _ItemSheet extends HookConsumerWidget {
         run(() => actions().setDue(listId, current.id, null));
 
     Future<void> remove() async {
-      final confirmed = await showBuzzDialog<bool>(
+      final confirmed = await showBeekeeperDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Remove this item?'),

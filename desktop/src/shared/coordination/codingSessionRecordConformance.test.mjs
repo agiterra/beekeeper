@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "node:test";
 
-import { parseBuzzCodingSessionMetadata } from "../../features/coding-sessions/lib/codingSessionIngressPayloads.ts";
+import { parseBeekeeperCodingSessionMetadata } from "../../features/coding-sessions/lib/codingSessionIngressPayloads.ts";
 import {
   hasStrictClosureJson,
   hasStrictLifecycleCommandJson,
@@ -125,7 +125,7 @@ const lifecycleReceipt = (source) => {
 const metadataGate = (source) => isStrictMetadataContent(source);
 
 const metadataIngress = (source) =>
-  parseBuzzCodingSessionMetadata(source) !== null;
+  parseBeekeeperCodingSessionMetadata(source) !== null;
 
 const receiptIngress = (source) =>
   parseCodingSessionLifecycleReceipt(source) !== null;

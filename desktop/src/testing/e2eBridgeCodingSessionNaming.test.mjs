@@ -52,7 +52,7 @@ test("seeded, a save is recorded with its titleMode and then read back", () => {
   );
   assert.equal(saved.titleMode, "off");
   assert.deepEqual(
-    globalThis.window.__BUZZ_E2E_CODING_SESSION_NAMING_SET_CALLS__,
+    globalThis.window.__BEEKEEPER_E2E_CODING_SESSION_NAMING_SET_CALLS__,
     [{ provider: "off", titleMode: "off" }],
   );
   assert.equal(

@@ -56,8 +56,8 @@ async function bootAgentProgress(
         "buzz-feature-overrides-v1",
         JSON.stringify({ "agent-progress": true }),
       );
-      if (hang) window.__BUZZ_E2E_HANG_PROJECT_QUERY_KINDS__ = hang;
-      if (reject) window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = reject;
+      if (hang) window.__BEEKEEPER_E2E_HANG_PROJECT_QUERY_KINDS__ = hang;
+      if (reject) window.__BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__ = reject;
     },
     { hang: mode.hang ?? null, reject: mode.reject ?? null },
   );
@@ -138,7 +138,9 @@ test("SV-50: a mention sent before members resolve still asks to invite", async 
   await expect(invite).toHaveCount(0);
   await expect(input).toContainText("hello");
 
-  await page.evaluate(() => window.__BUZZ_E2E_RELEASE_CHANNEL_MEMBERS__?.());
+  await page.evaluate(() =>
+    window.__BEEKEEPER_E2E_RELEASE_CHANNEL_MEMBERS__?.(),
+  );
   await expect(invite).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("alertdialog")).toContainText("quinn");
   await shoot(page, page.getByRole("alertdialog"), "SV-50-invite-prompt");

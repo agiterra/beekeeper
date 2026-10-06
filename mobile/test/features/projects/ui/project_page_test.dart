@@ -1,10 +1,10 @@
-import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
-import 'package:buzz/features/coding_sessions/ui/coding_session_page.dart';
-import 'package:buzz/features/coding_sessions/ui/coding_sessions_page.dart';
-import 'package:buzz/features/projects/ui/project_page.dart';
-import 'package:buzz/features/projects/ui/project_tree.dart';
-import 'package:buzz/features/terminals/domain/terminals_domain.dart';
-import 'package:buzz/features/terminals/state/terminals_index_provider.dart';
+import 'package:beekeeper/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:beekeeper/features/coding_sessions/ui/coding_session_page.dart';
+import 'package:beekeeper/features/coding_sessions/ui/coding_sessions_page.dart';
+import 'package:beekeeper/features/projects/ui/project_page.dart';
+import 'package:beekeeper/features/projects/ui/project_tree.dart';
+import 'package:beekeeper/features/terminals/domain/terminals_domain.dart';
+import 'package:beekeeper/features/terminals/state/terminals_index_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/misc.dart';

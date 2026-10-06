@@ -113,7 +113,7 @@ export const HEAD_SHA = "07c470be07c470be07c470be07c470be07c470be";
  * `FOUNDER` is both the umbrella's founder and this announcement's signer, so
  * a create that names it exercises the real write→read path end to end: the
  * seeded create's `repoRef` is read by `readCodingSessionRepository` against
- * this very announcement (via `__BUZZ_E2E_EXTRA_PROJECT_EVENTS__`), and the
+ * this very announcement (via `__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__`), and the
  * resolved owner pubkey reaches the (mocked) `coding_session_land` request.
  */
 export const REPO_DTAG = "beekeeper";
@@ -1022,7 +1022,7 @@ export async function openMissionLens(page: Page, mission: FounderActMission) {
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },

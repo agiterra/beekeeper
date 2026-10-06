@@ -42,7 +42,7 @@ use beekeeper_core::registry_bench::{
     MeasuredTrait, ProposalInput, RunScore, BENCH_MIN_REPEAT,
 };
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::validate_uuid;
 
@@ -308,7 +308,7 @@ pub fn provenance_disclosure(registry: &Registry, block: &MeasuredBlock) -> Stri
 /// every reason the proposal was refused.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub async fn cmd_registry_propose(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     role: &str,
     runtime: &str,
     model: &str,
@@ -546,7 +546,7 @@ pub fn proposal_digest(label: &str, block: &MeasuredBlock) -> [u8; 32] {
 /// see — a session whose founder cannot be established is one nobody may
 /// propose for.
 pub async fn founder_of_session(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
 ) -> Result<String, CliError> {

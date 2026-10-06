@@ -38,14 +38,14 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
  *
  * The entries are really signed and really decoded: the screen fails closed on
  * an unsigned event, so seeding real bytes is the only way to see it paint.
- * The read-only states arrive through `__BUZZ_E2E_EXTRA_PROJECT_EVENTS__`,
+ * The read-only states arrive through `__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__`,
  * which stores arbitrary kinds and matches them by `filter.kinds` + `#a` —
  * exactly the filter the Pulse read issues.
  *
  * Session facts take the other path on purpose: 24223/44223/44227/44229 carry
  * no `a` tag, so the Pulse read finds them by `#h` over the project's own
  * channels. They are seeded into a real mock channel with
- * `__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__`, and the project head that names that
+ * `__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__`, and the project head that names that
  * channel is injected as a 30621 — the same join the product uses.
  *
  * Authors are signed with the bridge's fixture identities, whose display names
@@ -604,12 +604,12 @@ async function boot(
   }
   await page.addInitScript(
     ({ events, hangKinds, rejectKinds }) => {
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events as never;
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events as never;
       if (hangKinds) {
-        window.__BUZZ_E2E_HANG_PROJECT_QUERY_KINDS__ = hangKinds;
+        window.__BEEKEEPER_E2E_HANG_PROJECT_QUERY_KINDS__ = hangKinds;
       }
       if (rejectKinds) {
-        window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = rejectKinds;
+        window.__BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__ = rejectKinds;
       }
     },
     {
@@ -629,7 +629,7 @@ async function boot(
 async function seedSessionFacts(page: Page, events: RelayEvent[]) {
   await page.evaluate(
     ({ channelName, seeds }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("mock signed-event seam is missing");
       for (const event of seeds as never[]) {
         seed({ channelName, event });
@@ -648,7 +648,7 @@ async function waitForLeaseLiveSubscription(page: Page) {
       () =>
         page.evaluate(
           ({ channelName, kind }) =>
-            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+            window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
               channelName,
               kind,
             }) ?? false,

@@ -13,7 +13,7 @@ import psycopg
 from harbor_buzz_orchestra.manifest import ExperimentManifest
 from harbor_buzz_orchestra.provisioning import AgentCredential, TrialHandle
 
-from .buzz_cli import BuzzCli
+from .buzz_cli import BeekeeperCli
 from .keys import compute_auth_tag, generate_keypair, keypair_from_secret
 
 
@@ -44,12 +44,12 @@ class TestbedConfig:
     archive_on_teardown: bool = True
 
 
-def provisioner_from_dict(config: dict[str, object]) -> BuzzTrialProvisioner:
+def provisioner_from_dict(config: dict[str, object]) -> BeekeeperTrialProvisioner:
     """Harbor CLI factory for a JSON-decoded testbed configuration."""
-    return BuzzTrialProvisioner(TestbedConfig(**config))
+    return BeekeeperTrialProvisioner(TestbedConfig(**config))
 
 
-class BuzzTrialProvisioner:
+class BeekeeperTrialProvisioner:
     """Implements the TrialHandle v1.1 contract against a live Buzz relay.
 
     Guarantees (contract PLANS/HARBOR_BUZZ_TRIALHANDLE_CONTRACT.md):
@@ -220,8 +220,8 @@ class BuzzTrialProvisioner:
             llm_api_key="",
         )
 
-    def _cli_for(self, credential: AgentCredential) -> BuzzCli:
-        return BuzzCli(
+    def _cli_for(self, credential: AgentCredential) -> BeekeeperCli:
+        return BeekeeperCli(
             relay_url=self._config.relay_http_url,
             secret_key=credential.nostr_secret_key,
             auth_tag=credential.nostr_auth_tag,

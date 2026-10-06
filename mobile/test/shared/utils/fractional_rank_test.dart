@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:buzz/shared/utils/fractional_rank.dart';
+import 'package:beekeeper/shared/utils/fractional_rank.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// The Dart rank binds to the same vectors as the Rust and TypeScript

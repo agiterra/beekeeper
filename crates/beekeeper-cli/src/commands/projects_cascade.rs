@@ -39,7 +39,7 @@ use beekeeper_core::kind::{
 };
 use serde_json::{json, Value};
 
-use crate::client::{extract_d_tag, extract_tag_value, BuzzClient};
+use crate::client::{extract_d_tag, extract_tag_value, BeekeeperClient};
 use crate::commands::parse_write_response;
 use crate::error::CliError;
 
@@ -573,7 +573,7 @@ pub fn plan_json(plan: &CascadePlan, dry_run: bool) -> Value {
 /// `head_channel_ids` are the head's `["channel", <uuid>]` forward refs, which
 /// bind a channel to the project independently of the relay's back-reference.
 pub async fn enumerate_cascade(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     coordinate: &str,
     head_member_coords: &[String],
@@ -660,7 +660,7 @@ enum StepOutcome {
 }
 
 /// Publish a kind:9008 delete-group event for one channel.
-async fn delete_channel(client: &BuzzClient, channel: &CascadeChannel) -> StepOutcome {
+async fn delete_channel(client: &BeekeeperClient, channel: &CascadeChannel) -> StepOutcome {
     let uuid = match uuid::Uuid::parse_str(&channel.channel_id) {
         Ok(uuid) => uuid,
         Err(e) => return StepOutcome::Failed(format!("invalid channel id: {e}")),
@@ -673,7 +673,7 @@ async fn delete_channel(client: &BuzzClient, channel: &CascadeChannel) -> StepOu
 }
 
 /// Publish a kind:5 `a`-tag tombstone for one workflow definition.
-async fn delete_workflow(client: &BuzzClient, workflow: &CascadeWorkflow) -> StepOutcome {
+async fn delete_workflow(client: &BeekeeperClient, workflow: &CascadeWorkflow) -> StepOutcome {
     let uuid = match uuid::Uuid::parse_str(&workflow.workflow_id) {
         Ok(uuid) => uuid,
         Err(e) => return StepOutcome::Failed(format!("invalid workflow id: {e}")),
@@ -691,7 +691,7 @@ async fn delete_workflow(client: &BuzzClient, workflow: &CascadeWorkflow) -> Ste
 /// The tombstone names the announce's own coordinate, so it works whether
 /// the caller announced the terminal themselves or is deleting it as an
 /// Owner of the project it sits in — the relay authorizes both.
-async fn delete_terminal(client: &BuzzClient, terminal: &CascadeTerminal) -> StepOutcome {
+async fn delete_terminal(client: &BeekeeperClient, terminal: &CascadeTerminal) -> StepOutcome {
     let builder = match beekeeper_sdk::build_delete_addressable(
         KIND_SHELL_SESSION,
         &terminal.owner_hex,
@@ -707,7 +707,7 @@ async fn delete_terminal(client: &BuzzClient, terminal: &CascadeTerminal) -> Ste
 /// means the tombstone is already in effect — that is success, not failure,
 /// or a retried cascade could never converge.
 async fn submit_delete(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     builder: nostr::EventBuilder,
     duplicate_msg: &str,
 ) -> StepOutcome {
@@ -737,7 +737,7 @@ async fn submit_delete(
 /// [`CliError::Other`] (exit code 4) — a partially-completed cascade is never
 /// reported as success.
 pub async fn execute_cascade<F, Fut>(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     plan: &CascadePlan,
     publish_tombstone: F,
 ) -> Result<(), CliError>

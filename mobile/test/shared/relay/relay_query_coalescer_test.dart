@@ -1,5 +1,5 @@
-import 'package:buzz/shared/relay/nostr_models.dart';
-import 'package:buzz/shared/relay/relay_query_coalescer.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
+import 'package:beekeeper/shared/relay/relay_query_coalescer.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'relay_session_test_support.dart';

@@ -338,7 +338,7 @@ async function openApp(page: Page) {
         () =>
           page.evaluate(
             ({ channelName, kind }) =>
-              window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
                 channelName,
                 kind,
               }) ?? false,
@@ -353,7 +353,7 @@ async function openApp(page: Page) {
   }
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },

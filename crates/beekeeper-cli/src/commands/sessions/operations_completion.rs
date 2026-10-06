@@ -206,7 +206,7 @@ pub(super) fn disclose_completion_outcome(output: &mut Value, outcome: &Completi
 /// [`CliError::Usage`] listing every criterion that is not covered, with its
 /// reason; or the error naming a read that failed.
 pub(super) async fn refuse_incomplete_coverage(
-    client: &crate::client::BuzzClient,
+    client: &crate::client::BeekeeperClient,
     transaction_type: beekeeper_core::coding_session_team_transaction::CodingSessionTeamTransactionType,
     channel: &str,
     session_ref: &str,

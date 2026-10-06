@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:collection';
 
-import 'package:buzz/shared/relay/nostr_models.dart';
-import 'package:buzz/shared/relay/relay_session.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
+import 'package:beekeeper/shared/relay/relay_session.dart';
 
 /// A relay session that records what a provider asks of it and lets a test
 /// answer on its own schedule.

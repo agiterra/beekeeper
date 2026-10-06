@@ -31,7 +31,7 @@ import 'shared/emoji/emoji_burst.dart';
 import 'shared/relay/relay.dart';
 import 'shared/read_state/read_state_provider.dart';
 import 'shared/theme/theme.dart';
-import 'shared/widgets/buzz_loading_indicator.dart';
+import 'shared/widgets/beekeeper_loading_indicator.dart';
 
 /// App-shell projection that joins Activity state for the Home navigation.
 ///
@@ -247,7 +247,7 @@ class _SplashScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Scaffold(
       body: Center(
-        child: BuzzLoadingIndicator(
+        child: BeekeeperLoadingIndicator(
           size: 56,
           semanticLabel: 'Starting Beekeeper',
         ),

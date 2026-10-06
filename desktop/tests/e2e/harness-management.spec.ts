@@ -286,8 +286,8 @@ test.describe("your harnesses split", () => {
       page.evaluate(
         () =>
           (
-            (window as Window & { __BUZZ_E2E_COMMANDS__?: string[] })
-              .__BUZZ_E2E_COMMANDS__ ?? []
+            (window as Window & { __BEEKEEPER_E2E_COMMANDS__?: string[] })
+              .__BEEKEEPER_E2E_COMMANDS__ ?? []
           ).filter((command) => command === "install_acp_runtime").length,
       );
 

@@ -21,7 +21,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::{BuzzTestClient, RelayMessage, TestClientError};
+use beekeeper_test_client::{BeekeeperTestClient, RelayMessage, TestClientError};
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
 
 fn relay_url() -> String {
@@ -268,7 +268,9 @@ async fn test_nip50_search_returns_results_and_eose() {
     let unique_token = format!("searchtoken_{}", uuid::Uuid::new_v4().simple());
     let content = format!("Hello world {unique_token}");
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let ok = client
         .send_text_message(&keys, &channel, &content, 9)
@@ -344,7 +346,9 @@ async fn test_nip50_search_mixed_filters_rejected() {
     let keys = Keys::generate();
     let channel = create_test_channel(&keys).await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let sid = sub_id("nip50-mixed");
 
@@ -404,7 +408,9 @@ async fn test_nip50_search_empty_results() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let sid = sub_id("nip50-empty");
     // Must include kinds to avoid triggering P_GATED_KINDS check (wildcard
@@ -444,7 +450,9 @@ async fn test_nip10_thread_reply_creates_metadata() {
     // Send root message via REST.
     let root_event_id = send_rest_message(&keys, &channel, "root message for NIP-10 test").await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Build reply event with NIP-10 e-tag.
     let h_tag = Tag::parse(["h", &channel]).expect("h tag");
@@ -508,7 +516,9 @@ async fn test_nip10_unknown_parent_rejected() {
     let keys = Keys::generate();
     let channel = create_test_channel(&keys).await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Use a random 32-byte hex as a nonexistent parent ID.
     let fake_parent_id = hex::encode([0xdeu8; 32]);
@@ -552,7 +562,9 @@ async fn test_nip10_root_mismatch_rejected() {
     // Use a different random ID as the claimed root.
     let wrong_root_id = hex::encode([0xabu8; 32]);
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let h_tag = Tag::parse(["h", &channel]).expect("h tag");
     // wrong_root as "root" marker, real_parent as "reply" marker — mismatch.
@@ -591,7 +603,7 @@ async fn test_nip17_gift_wrap_accepted() {
     let auth_keys = Keys::generate();
     let recipient_keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &auth_keys)
+    let mut client = BeekeeperTestClient::connect(&url, &auth_keys)
         .await
         .expect("connect");
 
@@ -623,7 +635,9 @@ async fn test_nip17_gift_wrap_requires_p_filter() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let sid = sub_id("nip17-no-p");
     // No #p filter — should be rejected.
@@ -681,7 +695,7 @@ async fn test_nip17_gift_wrap_recipient_receives() {
     let b_pubkey_hex = keys_b.public_key().to_hex();
 
     // Connect B first and subscribe.
-    let mut client_b = BuzzTestClient::connect(&url, &keys_b)
+    let mut client_b = BeekeeperTestClient::connect(&url, &keys_b)
         .await
         .expect("client B connect");
 
@@ -703,7 +717,7 @@ async fn test_nip17_gift_wrap_recipient_receives() {
         .expect("client B EOSE");
 
     // Connect A and send gift wrap addressed to B.
-    let mut client_a = BuzzTestClient::connect(&url, &keys_a)
+    let mut client_a = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("client A connect");
 
@@ -774,7 +788,7 @@ async fn test_dm_discovery_events_emitted() {
     // catching a live fan-out. (The previous ordering subscribed first, then let
     // the discovery subscription's drain silently discard the live membership
     // event before the test could read it, hanging the recv forever.)
-    let mut client_a = BuzzTestClient::connect(&url, &keys_a)
+    let mut client_a = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("client A connect");
 
@@ -884,7 +898,9 @@ async fn test_nip10_thread_reply_not_in_top_level() {
     let root_content = format!("root-toplevel-{}", uuid::Uuid::new_v4());
     let root_event_id = send_rest_message(&keys, &channel, &root_content).await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let h_tag = Tag::parse(["h", &channel]).expect("h tag");
     let e_reply_tag = Tag::parse(["e", &root_event_id, "", "reply"]).expect("e reply tag");
 
@@ -987,7 +1003,7 @@ async fn test_nip17_gift_wrap_not_searchable() {
     let keys_b = Keys::generate();
     let channel = create_test_channel(&keys_a).await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys_a)
+    let mut client = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("connect");
 
@@ -1070,7 +1086,9 @@ async fn test_nip50_search_relevance_order() {
     // Wait for FTS indexing.
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let sid = sub_id("nip50-relevance");
     let query = format!("{prefix} alpha bravo charlie");
@@ -1121,7 +1139,9 @@ async fn test_historical_req_dedup_preserves_or_semantics() {
     let content = format!("dedup-or-{}", uuid::Uuid::new_v4());
     let event_id = send_rest_message(&keys, &channel, &content).await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Generate a random wrong author key.
     let wrong_author = Keys::generate();
@@ -1175,7 +1195,9 @@ async fn test_empty_kinds_returns_zero_events() {
     // Send a message so there IS data in the channel.
     send_rest_message(&keys, &channel, "should not appear").await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let sid = sub_id("empty-kinds");
     // kinds:[] = match nothing per NIP-01.
@@ -1206,7 +1228,7 @@ async fn test_empty_kinds_returns_zero_events() {
 /// (kind:30622, queried by `#p` since snapshots are `#p`-gated to their owner).
 /// Returns `None` if no snapshot exists yet.
 async fn read_snapshot_event(
-    client: &mut BuzzTestClient,
+    client: &mut BeekeeperTestClient,
     viewer_hex: &str,
 ) -> Option<nostr::Event> {
     let sid = sub_id("nipdv-snapshot");
@@ -1232,7 +1254,7 @@ async fn read_snapshot_event(
 }
 
 /// Helper: the set of hidden DM channel ids from the viewer's latest snapshot.
-async fn read_hidden_dms(client: &mut BuzzTestClient, viewer_hex: &str) -> Vec<String> {
+async fn read_hidden_dms(client: &mut BeekeeperTestClient, viewer_hex: &str) -> Vec<String> {
     match read_snapshot_event(client, viewer_hex).await {
         None => Vec::new(),
         Some(ev) => ev
@@ -1263,7 +1285,7 @@ async fn test_nipdv_hide_then_reopen_updates_snapshot() {
     // A opens a DM with B.
     let channel_id = create_dm(&keys_a, &b_pubkey_hex).await;
 
-    let mut client_a = BuzzTestClient::connect(&url, &keys_a)
+    let mut client_a = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("client A connect");
 
@@ -1330,7 +1352,7 @@ async fn test_nipdv_same_second_reopen_supersedes_hide() {
 
     let channel_id = create_dm(&keys_a, &b_pubkey_hex).await;
 
-    let mut client_a = BuzzTestClient::connect(&url, &keys_a)
+    let mut client_a = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("client A connect");
 
@@ -1444,7 +1466,7 @@ async fn test_nipdv_two_viewers_independent_snapshots() {
     post_signed_event(&keys_b, 41012, vec![Tag::parse(["h", &dm_b]).unwrap()]).await;
 
     // A's snapshot must still list A's hidden DM (B's write must not clobber it).
-    let mut client_a = BuzzTestClient::connect(&url, &keys_a)
+    let mut client_a = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("client A connect");
     let a_hidden = read_hidden_dms(&mut client_a, &a_pubkey_hex).await;
@@ -1459,7 +1481,7 @@ async fn test_nipdv_two_viewers_independent_snapshots() {
     client_a.disconnect().await.expect("disconnect A");
 
     // B's snapshot lists only B's hidden DM.
-    let mut client_b = BuzzTestClient::connect(&url, &keys_b)
+    let mut client_b = BeekeeperTestClient::connect(&url, &keys_b)
         .await
         .expect("client B connect");
     let b_hidden = read_hidden_dms(&mut client_b, &b_pubkey_hex).await;
@@ -1495,7 +1517,7 @@ async fn test_nipdv_ws_req_rejects_third_party() {
     .await;
 
     // B subscribes for A's snapshot over WS — must be CLOSED, never EVENT.
-    let mut client_b = BuzzTestClient::connect(&url, &keys_b)
+    let mut client_b = BeekeeperTestClient::connect(&url, &keys_b)
         .await
         .expect("client B connect");
     let sid = sub_id("nipdv-cross-ws");
@@ -1557,7 +1579,7 @@ async fn test_nipdv_ids_query_rejects_third_party() {
     .await;
 
     // A reads its own snapshot to learn its event id.
-    let mut client_a = BuzzTestClient::connect(&url, &keys_a)
+    let mut client_a = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("client A connect");
     let snapshot = read_snapshot_event(&mut client_a, &a_pubkey_hex)
@@ -1613,7 +1635,7 @@ async fn test_nipdv_explicit_kind_query_forbidden_for_third_party() {
     )
     .await;
 
-    let mut client_a = BuzzTestClient::connect(&url, &keys_a)
+    let mut client_a = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("client A connect");
     let snapshot = read_snapshot_event(&mut client_a, &a_pubkey_hex)
@@ -1663,7 +1685,7 @@ async fn test_nipdv_search_rejects_third_party() {
     )
     .await;
 
-    let mut client_a = BuzzTestClient::connect(&url, &keys_a)
+    let mut client_a = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("client A connect");
     let snapshot = read_snapshot_event(&mut client_a, &a_pubkey_hex)
@@ -1677,7 +1699,7 @@ async fn test_nipdv_search_rejects_third_party() {
 
     // B issues a kindless search filter carrying A's snapshot id — the bypass
     // shape. Must return zero results, not A's hidden set.
-    let mut client_b = BuzzTestClient::connect(&url, &keys_b)
+    let mut client_b = BeekeeperTestClient::connect(&url, &keys_b)
         .await
         .expect("client B connect");
     let sid = sub_id("nipdv-search-bypass");
@@ -1796,7 +1818,9 @@ async fn test_channel_window_rows_overlays_and_exact_multiple_exhaustion() {
         .as_str()
         .expect("probe row id")
         .to_string();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let reply = EventBuilder::new(Kind::Custom(9), "window reply")
         .tags([
             Tag::parse(["h", &channel]).unwrap(),
@@ -1971,7 +1995,9 @@ async fn test_channel_window_rejects_half_cursor_and_client_overlay_kinds() {
     );
 
     // Client-submitted overlay kinds are rejected at ingest.
-    let mut ws = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut ws = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     for kind in [39005u16, 39006u16] {
         let forged = EventBuilder::new(Kind::Custom(kind), "{}")
             .tags([Tag::parse(["h", &channel]).unwrap()])

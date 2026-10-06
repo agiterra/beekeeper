@@ -36,7 +36,7 @@ use beekeeper_core::repository_protection::{
 };
 use nostr::{Event, EventBuilder, Kind, Tag};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// How many rule records the CLI reads for one repository — the relay's own
@@ -116,7 +116,7 @@ impl WritableRecord {
 /// which is what made a co-founder's `protect list` a `NotFound` on a
 /// repository they co-found.
 pub(crate) async fn fetch_repo_announcement(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_id: &str,
 ) -> Result<Option<Event>, CliError> {
     let filter = serde_json::json!({
@@ -133,7 +133,7 @@ pub(crate) async fn fetch_repo_announcement(
 
 /// Every stored rule record addressing this repository.
 pub(crate) async fn fetch_rule_records(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_owner_hex: &str,
     repo_id: &str,
 ) -> Result<Vec<Event>, CliError> {
@@ -152,7 +152,7 @@ pub(crate) async fn fetch_rule_records(
 /// The founder filter is the same one the gate applies: a record whose author
 /// founded the repository yesterday and does not today contributes nothing.
 pub(crate) async fn read_repository_rules(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_id: &str,
 ) -> Result<RepositoryRules, CliError> {
     crate::validate::validate_repo_id(repo_id)?;
@@ -210,7 +210,7 @@ pub(crate) async fn read_repository_rules(
 
 /// The caller's own current rule record for this repository, if any.
 pub(crate) async fn fetch_own_rule_record(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_owner_hex: &str,
     repo_id: &str,
 ) -> Result<Option<Event>, CliError> {
@@ -269,7 +269,7 @@ pub(crate) fn next_rule_record_rows(
 /// write actually takes effect under last-write-wins rather than losing
 /// silently to a newer announcement.
 pub(crate) async fn publish_rule_record(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_owner_hex: &str,
     repo_id: &str,
     rows: &[Vec<String>],

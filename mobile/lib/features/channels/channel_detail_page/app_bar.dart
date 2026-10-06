@@ -97,7 +97,7 @@ class _MembersIconButton extends ConsumerWidget {
     return IconButton(
       color: context.colors.primary,
       onPressed: () {
-        showBuzzModalBottomSheet<void>(
+        showBeekeeperModalBottomSheet<void>(
           context: context,
           title: 'Members',
           isScrollControlled: true,

@@ -2,7 +2,7 @@ import * as React from "react";
 
 import { useBakedBuildEnvQuery } from "../hooks";
 import { useGlobalAgentConfig } from "../useGlobalAgentConfig";
-import { BUZZ_AGENT_THINKING_EFFORT } from "./buzzAgentConfig";
+import { BUZZ_AGENT_THINKING_EFFORT } from "./beekeeperAgentConfig";
 import { getInheritedAgentDefaults } from "./bakedEnvHelpers";
 
 export function useAgentDialogDefaults({

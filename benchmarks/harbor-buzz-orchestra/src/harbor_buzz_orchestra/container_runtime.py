@@ -61,7 +61,7 @@ class _Agent:
     stderr_log: str  # container path
 
 
-class BuzzContainerRuntime:
+class BeekeeperContainerRuntime:
     """Launch one production Buzz agent stack per identity in the container."""
 
     def __init__(
@@ -582,7 +582,7 @@ class BuzzContainerRuntime:
         """
         if trial.user_relay_url:
             return trial.user_relay_url
-        return BuzzContainerRuntime._cli_relay_url(trial.relay_ws_url)
+        return BeekeeperContainerRuntime._cli_relay_url(trial.relay_ws_url)
 
     @staticmethod
     def _cli_relay_url(relay_ws_url: str) -> str:

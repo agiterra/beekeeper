@@ -1,6 +1,6 @@
-import 'package:buzz/features/home/home_page.dart';
-import 'package:buzz/features/projects/ui/project_tree.dart';
-import 'package:buzz/shared/theme/theme.dart';
+import 'package:beekeeper/features/home/home_page.dart';
+import 'package:beekeeper/features/projects/ui/project_tree.dart';
+import 'package:beekeeper/shared/theme/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';

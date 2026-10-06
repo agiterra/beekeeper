@@ -13,7 +13,7 @@ import { installMockBridge } from "../helpers/bridge";
  * `signRelayEvent` + `relayClient.publishEvent`, the same client-side
  * publish path `publishProjectContainer` uses for kind:30621 — so this spec
  * drives the real dialog, the real form, and reads the real signed event
- * back off `window.__BUZZ_E2E_SIGNED_EVENTS__`, exactly like
+ * back off `window.__BEEKEEPER_E2E_SIGNED_EVENTS__`, exactly like
  * `project-settings-screenshots.spec.ts` does for icon/color.
  */
 
@@ -111,7 +111,7 @@ test("the project owner sets a pack source, and the row reads it back off the re
   await capture(page, "03-packs-source-set");
 
   const published = await page.evaluate(() => {
-    const events = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    const events = window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [];
     const event = [...events].reverse().find((entry) => entry.kind === 30624);
     return event
       ? {
@@ -260,7 +260,7 @@ test("Create packs repository: a chosen repository id reaches the host, and the 
   // The chosen id — not a project-derived one — is exactly what reached the
   // host, and the name defaulted to it exactly as the field showed.
   const calls = await page.evaluate(
-    () => window.__BUZZ_E2E_PROJECT_PACKS_INIT_CALLS__ ?? [],
+    () => window.__BEEKEEPER_E2E_PROJECT_PACKS_INIT_CALLS__ ?? [],
   );
   const call = calls.at(-1);
   expect(call?.projectRef).toBe(projectRef);

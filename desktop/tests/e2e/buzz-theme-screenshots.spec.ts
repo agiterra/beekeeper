@@ -63,7 +63,10 @@ async function openChannel(page: Page) {
   await expect(page.getByTestId("app-sidebar")).toBeVisible();
 }
 
-async function expectBuzzSidebarPalette(page: Page, mode: "light" | "dark") {
+async function expectBeekeeperSidebarPalette(
+  page: Page,
+  mode: "light" | "dark",
+) {
   const mutedColor =
     mode === "light" ? "rgba(0, 0, 0, 0.4)" : "rgba(255, 255, 255, 0.4)";
   const searchSurface =
@@ -76,7 +79,7 @@ async function expectBuzzSidebarPalette(page: Page, mode: "light" | "dark") {
     mode === "light" ? "rgba(0, 0, 0, 0.5)" : "rgba(255, 255, 255, 0.5)";
   const search = page.getByTestId("open-search");
   const pinnedHeader = page.getByTestId("sidebar-pinned-header");
-  const sidebarScroller = page.locator(".buzz-sidebar-scrollbar");
+  const sidebarScroller = page.locator(".beekeeper-sidebar-scrollbar");
   const scrollContent = page.getByTestId("sidebar-scroll-content");
   const primaryMenu = page.getByTestId("sidebar-primary-menu");
   const sectionLabel = page
@@ -156,10 +159,9 @@ async function expectBuzzSidebarPalette(page: Page, mode: "light" | "dark") {
     const rowRightSpacing = scrollContentBox.right - (rowBox.x + rowBox.width);
     expect(Math.abs(rowLeftSpacing - rowRightSpacing)).toBeLessThanOrEqual(0.5);
   }
-  await expect(page.locator("[data-buzz-sidebar-secondary]").first()).toHaveCSS(
-    "color",
-    mutedColor,
-  );
+  await expect(
+    page.locator("[data-beekeeper-sidebar-secondary]").first(),
+  ).toHaveCSS("color", mutedColor);
   await expect(page.locator('[data-sidebar="trigger"]')).toHaveCSS(
     "color",
     chromeColor,
@@ -254,12 +256,15 @@ async function expectIconlessSectionTitleAligned(
   expect(Math.abs(titleBox.x - firstRowIconX)).toBeLessThanOrEqual(0.5);
 }
 
-async function expectBuzzContentShadow(page: Page, mode: "light" | "dark") {
+async function expectBeekeeperContentShadow(
+  page: Page,
+  mode: "light" | "dark",
+) {
   const effects = await page.evaluate(() => {
-    const shell = document.querySelector(".buzz-huddle-shell");
-    const content = document.querySelector("[data-buzz-content-surface]");
+    const shell = document.querySelector(".beekeeper-huddle-shell");
+    const content = document.querySelector("[data-beekeeper-content-surface]");
     const shadowViewport = document.querySelector(
-      "[data-buzz-shadow-viewport]",
+      "[data-beekeeper-shadow-viewport]",
     );
     return {
       appStroke: shell ? getComputedStyle(shell, "::before").boxShadow : "",
@@ -282,15 +287,19 @@ async function expectBuzzContentShadow(page: Page, mode: "light" | "dark") {
   }
 }
 
-async function expectBuzzGradientPaint(
+async function expectBeekeeperGradientPaint(
   page: Page,
   mode: "light" | "dark",
 ): Promise<string> {
   const paint = await page.evaluate(() => {
     const root = document.documentElement;
-    const appSurface = document.querySelector(".buzz-huddle-app-surface");
-    const lightLayer = document.querySelector('[data-buzz-gradient="light"]');
-    const darkLayer = document.querySelector('[data-buzz-gradient="dark"]');
+    const appSurface = document.querySelector(".beekeeper-huddle-app-surface");
+    const lightLayer = document.querySelector(
+      '[data-beekeeper-gradient="light"]',
+    );
+    const darkLayer = document.querySelector(
+      '[data-beekeeper-gradient="dark"]',
+    );
     const sidebarRoot = document.querySelector(
       '[data-testid="app-sidebar"], [data-testid="settings-sidebar"]',
     );
@@ -301,7 +310,7 @@ async function expectBuzzGradientPaint(
     const darkStyles = darkLayer ? getComputedStyle(darkLayer) : null;
     return {
       isDark: root.classList.contains("dark"),
-      theme: root.getAttribute("data-buzz-theme"),
+      theme: root.getAttribute("data-beekeeper-theme"),
       surfaceImage: appStyles?.backgroundImage ?? "",
       lightImage: lightStyles?.backgroundImage ?? "",
       lightOpacity: lightStyles?.opacity ?? "",
@@ -327,7 +336,10 @@ async function expectBuzzGradientPaint(
   return mode === "light" ? paint.lightImage : paint.darkImage;
 }
 
-async function expectBuzzSettingsPalette(page: Page, mode: "light" | "dark") {
+async function expectBeekeeperSettingsPalette(
+  page: Page,
+  mode: "light" | "dark",
+) {
   const mutedColor =
     mode === "light" ? "rgba(0, 0, 0, 0.4)" : "rgba(255, 255, 255, 0.4)";
   const sidebar = page.getByTestId("settings-sidebar");
@@ -341,7 +353,7 @@ async function expectBuzzSettingsPalette(page: Page, mode: "light" | "dark") {
     mutedColor,
   );
 
-  await expectBuzzGradientPaint(page, mode);
+  await expectBeekeeperGradientPaint(page, mode);
 
   const version = page.getByTestId("settings-version");
   if ((await version.count()) > 0) {
@@ -349,7 +361,7 @@ async function expectBuzzSettingsPalette(page: Page, mode: "light" | "dark") {
   }
 }
 
-async function expectAppliedBuzzTheme(
+async function expectAppliedBeekeeperTheme(
   page: Page,
   themeName: "buzz" | "buzz-dark",
   storedTheme: "buzz" | "buzz-dark" = themeName,
@@ -363,10 +375,12 @@ async function expectAppliedBuzzTheme(
         return {
           storedTheme: window.localStorage.getItem(storageKey),
           isDark: root.classList.contains("dark"),
-          buzzTheme: root.getAttribute("data-buzz-theme"),
-          gradientTop: styles.getPropertyValue("--buzz-gradient-top").trim(),
+          buzzTheme: root.getAttribute("data-beekeeper-theme"),
+          gradientTop: styles
+            .getPropertyValue("--beekeeper-gradient-top")
+            .trim(),
           gradientBottom: styles
-            .getPropertyValue("--buzz-gradient-bottom")
+            .getPropertyValue("--beekeeper-gradient-bottom")
             .trim(),
         };
       }, THEME_STORAGE_KEY),
@@ -403,9 +417,9 @@ test("buzz light sidebar gradient", async ({ page }) => {
   await seedTheme(page, "buzz");
   await installMockBridge(page);
   await openChannel(page);
-  await expectBuzzGradientPaint(page, "light");
-  await expectBuzzSidebarPalette(page, "light");
-  await expectBuzzContentShadow(page, "light");
+  await expectBeekeeperGradientPaint(page, "light");
+  await expectBeekeeperSidebarPalette(page, "light");
+  await expectBeekeeperContentShadow(page, "light");
   await expectIconlessSectionTitleAligned(page, "stream-list");
   await expectIconlessSectionTitleAligned(page, "dm-list");
   await waitForAnimations(page);
@@ -418,12 +432,12 @@ test("buzz dark sidebar gradient", async ({ page }) => {
   await seedTheme(page, "buzz-dark");
   await installMockBridge(page);
   await openChannel(page);
-  await expectBuzzGradientPaint(page, "dark");
-  await expectBuzzSidebarPalette(page, "dark");
-  await expectBuzzContentShadow(page, "dark");
+  await expectBeekeeperGradientPaint(page, "dark");
+  await expectBeekeeperSidebarPalette(page, "dark");
+  await expectBeekeeperContentShadow(page, "dark");
   await expectIconlessSectionTitleAligned(page, "stream-list");
   await expectIconlessSectionTitleAligned(page, "dm-list");
-  await expect(page.locator("[data-buzz-content-surface]")).toHaveCSS(
+  await expect(page.locator("[data-beekeeper-content-surface]")).toHaveCSS(
     "background-color",
     "rgb(26, 26, 26)",
   );
@@ -700,7 +714,7 @@ test("settings nav uses Buzz active pill + hover (light)", async ({ page }) => {
     throw new Error("Settings nav label geometry is missing");
   }
   expect(Math.abs(selectedLabelBox.width - unselectedLabelBox.width)).toBe(0);
-  await expectBuzzSettingsPalette(page, "light");
+  await expectBeekeeperSettingsPalette(page, "light");
   const activeRow = page.getByTestId("settings-nav-appearance");
   await expect(activeRow).toHaveAttribute("data-active", "true");
   await waitForAnimations(page);
@@ -716,7 +730,7 @@ test("settings nav uses Buzz active pill + hover (dark)", async ({ page }) => {
   const sidebar = page.getByTestId("settings-sidebar");
   await expect(sidebar).toBeVisible({ timeout: 10_000 });
   await page.getByTestId("settings-nav-appearance").click();
-  await expectBuzzSettingsPalette(page, "dark");
+  await expectBeekeeperSettingsPalette(page, "dark");
   await expect(page.getByTestId("settings-content-surface")).toHaveCSS(
     "background-color",
     "rgb(26, 26, 26)",
@@ -1053,10 +1067,9 @@ test("glass background keeps the content panel solid", async ({ page }) => {
     .toBeNull();
   await expect(opacitySlider).toHaveCount(0);
   await expect(root).not.toHaveAttribute("data-glass-background", "");
-  await expect(page.locator(".buzz-theme-gradient-underlay")).not.toHaveCSS(
-    "background-image",
-    "none",
-  );
+  await expect(
+    page.locator(".beekeeper-theme-gradient-underlay"),
+  ).not.toHaveCSS("background-image", "none");
 
   await toggle.click();
   await expect(toggle).toBeChecked();
@@ -1088,7 +1101,7 @@ test("glass background keeps the content panel solid", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("glass-opacity-value")).toHaveCount(0);
   await expect(
-    opacitySlider.locator(".buzz-avatar-framing-slider-handle"),
+    opacitySlider.locator(".beekeeper-avatar-framing-slider-handle"),
   ).toHaveCSS("opacity", "1");
   await expect(root).toHaveAttribute("data-glass-background", "");
   const buzzSettingOrder = await page
@@ -1104,7 +1117,7 @@ test("glass background keeps the content panel solid", async ({ page }) => {
     "glass-opacity-row",
     "prominent-active-tab-row",
   ]);
-  await expect(page.locator(".buzz-theme-gradient-underlay")).toHaveCSS(
+  await expect(page.locator(".beekeeper-theme-gradient-underlay")).toHaveCSS(
     "background-image",
     "none",
   );
@@ -1121,7 +1134,7 @@ test("glass background keeps the content panel solid", async ({ page }) => {
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).some(
+        (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? []).some(
           (entry) =>
             entry.command === "set_window_vibrancy" &&
             (entry.payload as { enabled?: boolean } | undefined)?.enabled ===
@@ -1193,7 +1206,7 @@ test("glass background is unavailable on Linux", async ({ page }) => {
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).some(
+        (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? []).some(
           (entry) => entry.command === "set_window_vibrancy",
         ),
       ),
@@ -1224,12 +1237,12 @@ test("non-Buzz glass preserves the selected theme sidebar tint", async ({
   await openAppearance(page, "light");
 
   const root = page.locator("html");
-  await expect(root).not.toHaveAttribute("data-buzz-sidebar", "");
+  await expect(root).not.toHaveAttribute("data-beekeeper-sidebar", "");
   await page.getByTestId("glass-background-toggle").click();
   await expect(root).toHaveAttribute("data-glass-background", "");
 
   const tint = await page
-    .locator(".buzz-theme-gradient-layer")
+    .locator(".beekeeper-theme-gradient-layer")
     .evaluate((element) => {
       const rootStyles = getComputedStyle(document.documentElement);
       const sidebar = rootStyles
@@ -1269,13 +1282,13 @@ test("accent picker reveals/hides when toggling Buzz", async ({ page }) => {
   await installMockBridge(page);
   await openAppearance(page, "light");
   await expect(page.getByTestId("accent-color-neutral")).toBeVisible();
-  const nonBuzzSettingOrder = await page
+  const nonBeekeeperSettingOrder = await page
     .getByTestId("appearance-theme-card")
     .locator(
       '[data-testid="appearance-color-mode-row"], [data-testid="theme-style-row"], [data-testid="accent-color-options"], [data-testid="glass-background-row"], [data-testid="prominent-active-tab-row"]',
     )
     .evaluateAll((rows) => rows.map((row) => row.getAttribute("data-testid")));
-  expect(nonBuzzSettingOrder).toEqual([
+  expect(nonBeekeeperSettingOrder).toEqual([
     "appearance-color-mode-row",
     "theme-style-row",
     "accent-color-options",
@@ -1339,22 +1352,22 @@ test("Buzz light and dark modes apply live without a reload", async ({
   await seedTheme(page, "buzz");
   await installMockBridge(page);
   await openAppearance(page, "light");
-  await expectAppliedBuzzTheme(page, "buzz");
-  const lightGradient = await expectBuzzGradientPaint(page, "light");
+  await expectAppliedBeekeeperTheme(page, "buzz");
+  const lightGradient = await expectBeekeeperGradientPaint(page, "light");
 
   await page.getByTestId("appearance-mode-dark").click();
-  await expectAppliedBuzzTheme(page, "buzz-dark");
-  const darkGradient = await expectBuzzGradientPaint(page, "dark");
+  await expectAppliedBeekeeperTheme(page, "buzz-dark");
+  const darkGradient = await expectBeekeeperGradientPaint(page, "dark");
   expect(darkGradient).not.toBe(lightGradient);
 
   await page.getByTestId("appearance-mode-light").click();
-  await expectAppliedBuzzTheme(page, "buzz");
-  await expectBuzzGradientPaint(page, "light");
+  await expectAppliedBeekeeperTheme(page, "buzz");
+  await expectBeekeeperGradientPaint(page, "light");
 
   // Exercise the overlap that previously let a slower, stale theme load win.
   await page.getByTestId("appearance-mode-dark").click();
   await page.getByTestId("appearance-mode-light").click();
-  await expectAppliedBuzzTheme(page, "buzz");
+  await expectAppliedBeekeeperTheme(page, "buzz");
 });
 
 test("Buzz follows native system theme changes without a reload", async ({
@@ -1368,10 +1381,10 @@ test("Buzz follows native system theme changes without a reload", async ({
   await openAppearance(page, "system");
 
   await emitNativeThemeChange(page, "dark");
-  await expectAppliedBuzzTheme(page, "buzz-dark", "buzz");
-  await expectBuzzGradientPaint(page, "dark");
+  await expectAppliedBeekeeperTheme(page, "buzz-dark", "buzz");
+  await expectBeekeeperGradientPaint(page, "dark");
 
   await emitNativeThemeChange(page, "light");
-  await expectAppliedBuzzTheme(page, "buzz", "buzz");
-  await expectBuzzGradientPaint(page, "light");
+  await expectAppliedBeekeeperTheme(page, "buzz", "buzz");
+  await expectBeekeeperGradientPaint(page, "light");
 });

@@ -47,7 +47,7 @@ async function timelineIds(page: Page) {
 
 async function cachedMessageIds(page: Page) {
   return page.evaluate((channelId) => {
-    const client = window.__BUZZ_E2E_QUERY_CLIENT__ as unknown as {
+    const client = window.__BEEKEEPER_E2E_QUERY_CLIENT__ as unknown as {
       getQueryData: (
         key: readonly unknown[],
       ) => Array<{ id: string }> | undefined;
@@ -82,7 +82,7 @@ function isDmWindowQuery(route: Route) {
 async function dmLiveRequestCount(page: Page) {
   return page.evaluate((channelId) => {
     let count = 0;
-    for (const entry of window.__BUZZ_E2E_COMMAND_LOG__ ?? []) {
+    for (const entry of window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? []) {
       if (entry.command !== "plugin:websocket|send") continue;
       const data = (
         entry.payload as { message?: { data?: string } } | undefined
@@ -141,7 +141,7 @@ test("existing DM history remains when the first live DM reaches a pageless wind
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect.poll(() => cachedMessageIds(page)).toEqual(historyIds);
   await page.evaluate((channelId) => {
-    const client = window.__BUZZ_E2E_QUERY_CLIENT__ as unknown as {
+    const client = window.__BEEKEEPER_E2E_QUERY_CLIENT__ as unknown as {
       removeQueries: (filters: {
         queryKey: readonly unknown[];
         exact: boolean;

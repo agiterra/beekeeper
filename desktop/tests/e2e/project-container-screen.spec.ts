@@ -71,7 +71,7 @@ test("owner can edit a project from its screen; General cannot be deleted", asyn
     .poll(async () =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+          window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.filter(
             (event) =>
               event.kind === 30621 &&
               event.tags.some(
@@ -132,7 +132,7 @@ test("section + buttons create items scoped to the project", async ({
     .poll(async () =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+          window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.filter(
             (event) =>
               event.kind === 30617 &&
               event.tags.some(
@@ -152,7 +152,7 @@ test("section + buttons create items scoped to the project", async ({
   expect(
     await page.evaluate(
       () =>
-        window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+        window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.filter(
           (event) =>
             event.kind === 30621 &&
             event.tags.some((tag) => tag[0] === "d" && tag[1] === "widget-lib"),
@@ -174,7 +174,7 @@ test("the Code section + menu attaches an existing repository", async ({
   // (deadbeef…, the mock-mode default) so the attach picker has a candidate
   // and the move can republish its back-ref.
   await page.addInitScript(() => {
-    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+    window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
       {
         id: "seeded-standalone-repo",
         kind: 30617,
@@ -202,7 +202,7 @@ test("the Code section + menu attaches an existing repository", async ({
     .poll(async () =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+          window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.filter(
             (event) =>
               event.kind === 30617 &&
               event.tags.some(
@@ -243,7 +243,7 @@ test("the Code section + menu imports a local repository", async ({ page }) => {
     .poll(async () =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+          window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.filter(
             (event) =>
               event.kind === 30617 &&
               event.tags.some(
@@ -260,7 +260,9 @@ test("the Code section + menu imports a local repository", async ({ page }) => {
     )
     .toBe(1);
   // The import command received the chosen path and the derived clone URL.
-  const imported = await page.evaluate(() => window.__BUZZ_E2E_IMPORTED_REPO__);
+  const imported = await page.evaluate(
+    () => window.__BEEKEEPER_E2E_IMPORTED_REPO__,
+  );
   expect(imported?.path).toBe("/tmp/buzz/import/widget-lib");
   expect(imported?.dtag).toBe("widget-lib");
   expect(imported?.remoteStrategy).toBe("set-origin");
@@ -271,7 +273,7 @@ test("importing a checkout with a foreign origin offers the buzz remote", async 
   page,
 }) => {
   await page.addInitScript(() => {
-    window.__BUZZ_E2E_IMPORT_FOLDER__ = {
+    window.__BEEKEEPER_E2E_IMPORT_FOLDER__ = {
       path: "/tmp/buzz/import/forked-lib",
       name: "forked-lib",
       is_git_repo: true,
@@ -295,7 +297,9 @@ test("importing a checkout with a foreign origin offers the buzz remote", async 
 
   await expect
     .poll(async () =>
-      page.evaluate(() => window.__BUZZ_E2E_IMPORTED_REPO__?.remoteStrategy),
+      page.evaluate(
+        () => window.__BEEKEEPER_E2E_IMPORTED_REPO__?.remoteStrategy,
+      ),
     )
     .toBe("add-buzz-remote");
 });
@@ -307,7 +311,7 @@ test("a repo row links an existing local checkout without publishing", async ({
   // names the external GitHub upstream. Linking must work for any readable
   // repo and always target the derived relay URL, never the upstream.
   await page.addInitScript(() => {
-    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+    window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
       {
         id: "seeded-foreign-repo",
         kind: 30617,
@@ -321,7 +325,7 @@ test("a repo row links an existing local checkout without publishing", async ({
         ],
       },
     ];
-    window.__BUZZ_E2E_IMPORT_FOLDER__ = {
+    window.__BEEKEEPER_E2E_IMPORT_FOLDER__ = {
       path: "/tmp/buzz/checkouts/drifter",
       name: "drifter",
       is_git_repo: true,
@@ -334,7 +338,7 @@ test("a repo row links an existing local checkout without publishing", async ({
   await openProjectScreen(page, "general");
 
   const signedBefore = await page.evaluate(
-    () => window.__BUZZ_E2E_SIGNED_EVENTS__?.length ?? 0,
+    () => window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.length ?? 0,
   );
 
   const repoRow = page
@@ -358,10 +362,12 @@ test("a repo row links an existing local checkout without publishing", async ({
 
   await expect
     .poll(async () =>
-      page.evaluate(() => window.__BUZZ_E2E_LINKED_REPO__?.dtag),
+      page.evaluate(() => window.__BEEKEEPER_E2E_LINKED_REPO__?.dtag),
     )
     .toBe("drifter");
-  const linked = await page.evaluate(() => window.__BUZZ_E2E_LINKED_REPO__);
+  const linked = await page.evaluate(
+    () => window.__BEEKEEPER_E2E_LINKED_REPO__,
+  );
   expect(linked?.owner).toBe("feedface".repeat(8));
   expect(linked?.path).toBe("/tmp/buzz/checkouts/drifter");
   expect(linked?.remoteStrategy).toBe("add-buzz-remote");
@@ -369,7 +375,7 @@ test("a repo row links an existing local checkout without publishing", async ({
   expect(linked?.cloneUrl).toMatch(/\/git\/(feedface){8}\/drifter$/);
   // Linking signs nothing.
   const signedAfter = await page.evaluate(
-    () => window.__BUZZ_E2E_SIGNED_EVENTS__?.length ?? 0,
+    () => window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.length ?? 0,
   );
   expect(signedAfter).toBe(signedBefore);
 });

@@ -13,7 +13,7 @@ import {
   getCachedRelayOrigin,
 } from "@/shared/lib/mediaUrl";
 import {
-  isBuzzEntityPreview,
+  isBeekeeperEntityPreview,
   type ResolvedLinkPreview,
   useResolvedLinkPreviews,
   withEntityFallbacks,
@@ -87,7 +87,7 @@ function ComposerLinkPreviewCard({
   // entities never snapshot; recipients resolve them from the relay, so they
   // are complete as soon as the recognized entity card exists.
   const snapshotTagReady = Boolean(preview.snapshotReady && tagReady);
-  const done = snapshotTagReady || isBuzzEntityPreview(preview);
+  const done = snapshotTagReady || isBeekeeperEntityPreview(preview);
 
   return (
     <div

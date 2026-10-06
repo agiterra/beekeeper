@@ -1,7 +1,7 @@
 import { CircleAlert } from "lucide-react";
 
 import type { resolveCodingSessionWorkspace } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
-import { FuzzyLogo } from "@/shared/ui/buzz-logo/FuzzyLogo";
+import { FuzzyLogo } from "@/shared/ui/beekeeper-logo/FuzzyLogo";
 
 import { CodingSessionHeader } from "./CodingSessionHeader";
 

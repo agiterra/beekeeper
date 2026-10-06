@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   isCodingSessionTurnReceiptStatus,
-  parseBuzzCodingSessionMetadata,
+  parseBeekeeperCodingSessionMetadata,
   parseCodingSessionLifecycleReceipt,
 } from "./ingressPayloads.ts";
 import { parseCodingSessionLifecycleCommand } from "./lifecycleCommand.ts";
@@ -13,7 +13,7 @@ import {
   parseCodingSessionGoal,
   parseCodingSessionName,
 } from "./sessionRecords.ts";
-import { parseBuzzCodingSessionTranscript } from "./transcriptEnvelope.ts";
+import { parseBeekeeperCodingSessionTranscript } from "./transcriptEnvelope.ts";
 import {
   CHANNEL_ID,
   capabilities,
@@ -192,24 +192,31 @@ test("metadata accepts exactly the ten declared statuses", () => {
     "disconnected",
     "unknown",
   ]) {
-    assert.ok(parseBuzzCodingSessionMetadata(metadataJson({ status })), status);
+    assert.ok(
+      parseBeekeeperCodingSessionMetadata(metadataJson({ status })),
+      status,
+    );
   }
   assert.equal(
-    parseBuzzCodingSessionMetadata(metadataJson({ status: "busy" })),
+    parseBeekeeperCodingSessionMetadata(metadataJson({ status: "busy" })),
     null,
   );
 });
 
 test("a sessionRef echo must be the canonical UUID or the payload is refused", () => {
   assert.ok(
-    parseBuzzCodingSessionMetadata(metadataJson({ sessionRef: SESSION_REF })),
+    parseBeekeeperCodingSessionMetadata(
+      metadataJson({ sessionRef: SESSION_REF }),
+    ),
   );
   assert.equal(
-    parseBuzzCodingSessionMetadata(metadataJson({ sessionRef: "not-a-uuid" })),
+    parseBeekeeperCodingSessionMetadata(
+      metadataJson({ sessionRef: "not-a-uuid" }),
+    ),
     null,
   );
   assert.equal(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       metadataJson({ sessionRef: "ABCDEF12-2222-4222-8222-222222222222" }),
     ),
     null,
@@ -219,7 +226,7 @@ test("a sessionRef echo must be the canonical UUID or the payload is refused", (
 
 test("the four code-coordinate facts travel all-or-none", () => {
   assert.ok(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       metadataJson({
         observedCommit: "abc",
         dirty: false,
@@ -229,7 +236,9 @@ test("the four code-coordinate facts travel all-or-none", () => {
     ),
   );
   assert.equal(
-    parseBuzzCodingSessionMetadata(metadataJson({ observedCommit: "abc" })),
+    parseBeekeeperCodingSessionMetadata(
+      metadataJson({ observedCommit: "abc" }),
+    ),
     null,
     "a partial subset is corruption, never a version skew",
   );
@@ -241,7 +250,7 @@ test("the four code-coordinate facts travel all-or-none", () => {
 // gets a payload only it can refuse.
 test("an oversized title is refused by the label bound", () => {
   assert.equal(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       metadataJson({ title: "x".repeat(3 * 1024) }),
     ),
     null,
@@ -259,7 +268,9 @@ test("an oversized title is refused by the label bound", () => {
 test("a summary key is refused as the unknown key it always was", () => {
   for (const key of ["contextSummary", "diffSummary", "planSummary"]) {
     assert.equal(
-      parseBuzzCodingSessionMetadata(metadataJson({ [key]: "a summary." })),
+      parseBeekeeperCodingSessionMetadata(
+        metadataJson({ [key]: "a summary." }),
+      ),
       null,
       `${key} is not a field of SessionMetadata, so a 44223 carrying one is ` +
         `malformed at any length — vector context-summary in ` +
@@ -276,7 +287,7 @@ test("metadata over 32 KiB is refused rather than truncated", () => {
   // saying otherwise would be the kind of comment that outlives its code.
   const huge = metadataJson({ title: "t".repeat(40 * 1024) });
   assert.ok(huge.length > 32 * 1024, "the payload really is over the bound");
-  assert.equal(parseBuzzCodingSessionMetadata(huge), null);
+  assert.equal(parseBeekeeperCodingSessionMetadata(huge), null);
 });
 
 test("a transcript envelope has exactly six keys and a positive eventSeq", () => {
@@ -288,17 +299,21 @@ test("a transcript envelope has exactly six keys and a positive eventSeq", () =>
     turnId: null,
     item: { kind: "assistant_text", text: "x" },
   };
-  assert.ok(parseBuzzCodingSessionTranscript(JSON.stringify(base)));
+  assert.ok(parseBeekeeperCodingSessionTranscript(JSON.stringify(base)));
   assert.equal(
-    parseBuzzCodingSessionTranscript(JSON.stringify({ ...base, eventSeq: 0 })),
+    parseBeekeeperCodingSessionTranscript(
+      JSON.stringify({ ...base, eventSeq: 0 }),
+    ),
     null,
   );
   assert.equal(
-    parseBuzzCodingSessionTranscript(JSON.stringify({ ...base, extra: 1 })),
+    parseBeekeeperCodingSessionTranscript(
+      JSON.stringify({ ...base, extra: 1 }),
+    ),
     null,
   );
   assert.equal(
-    parseBuzzCodingSessionTranscript(
+    parseBeekeeperCodingSessionTranscript(
       JSON.stringify({ ...base, item: { kind: "" } }),
     ),
     null,
@@ -310,7 +325,7 @@ test("a transcript item deeper than 24 levels is refused", () => {
   let nested = { deep: true };
   for (let index = 0; index < 30; index += 1) nested = { nested };
   assert.equal(
-    parseBuzzCodingSessionTranscript(
+    parseBeekeeperCodingSessionTranscript(
       JSON.stringify({
         schema: "buzz-coding-session-transcript/v1",
         session: target(),
@@ -526,19 +541,19 @@ const ROUTING = {
 };
 
 test("metadata carrying a seat's role is read, not dropped", () => {
-  const parsed = parseBuzzCodingSessionMetadata(
+  const parsed = parseBeekeeperCodingSessionMetadata(
     metadataJson({ agentRef: "d".repeat(64), role: "builder" }),
   );
   assert.equal(parsed?.role, "builder");
   assert.equal(
-    parseBuzzCodingSessionMetadata(metadataJson({ role: "builder" })),
+    parseBeekeeperCodingSessionMetadata(metadataJson({ role: "builder" })),
     null,
     "a role with no actor is a claim about a seat nobody holds",
   );
 });
 
 test("metadata carrying an umbrella's turn budget is read, not dropped", () => {
-  const parsed = parseBuzzCodingSessionMetadata(
+  const parsed = parseBeekeeperCodingSessionMetadata(
     metadataJson({
       sessionRef: SESSION_REF,
       turnBudget: { used: 3, limit: 20 },
@@ -546,7 +561,7 @@ test("metadata carrying an umbrella's turn budget is read, not dropped", () => {
   );
   assert.deepEqual(parsed?.turnBudget, { used: 3, limit: 20 });
   assert.equal(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       metadataJson({ turnBudget: { used: 3, limit: 20 } }),
     ),
     null,
@@ -555,7 +570,7 @@ test("metadata carrying an umbrella's turn budget is read, not dropped", () => {
 });
 
 test("metadata carrying a routing record is read, and a malformed one refused", () => {
-  const parsed = parseBuzzCodingSessionMetadata(
+  const parsed = parseBeekeeperCodingSessionMetadata(
     metadataJson({ routing: ROUTING }),
   );
   assert.deepEqual(parsed?.routing, ROUTING);
@@ -565,7 +580,7 @@ test("metadata carrying a routing record is read, and a malformed one refused", 
     { ...ROUTING, risk: { ...ROUTING.risk, score: 1 } },
   ]) {
     assert.equal(
-      parseBuzzCodingSessionMetadata(metadataJson({ routing })),
+      parseBeekeeperCodingSessionMetadata(metadataJson({ routing })),
       null,
       `decoded ${JSON.stringify(routing)}`,
     );
@@ -587,7 +602,8 @@ test("the router's own review reasons are read, value and all", () => {
     ],
   };
   assert.deepEqual(
-    parseBuzzCodingSessionMetadata(metadataJson({ routing: routed }))?.routing,
+    parseBeekeeperCodingSessionMetadata(metadataJson({ routing: routed }))
+      ?.routing,
     routed,
   );
   // Open is not unbounded: blank, oversized, non-string and over-long lists
@@ -599,7 +615,7 @@ test("the router's own review reasons are read, value and all", () => {
     Array(17).fill("leadRequests"),
   ]) {
     assert.equal(
-      parseBuzzCodingSessionMetadata(
+      parseBeekeeperCodingSessionMetadata(
         metadataJson({
           routing: { ...ROUTING, reviewRequired: true, reviewReasons },
         }),
@@ -609,7 +625,7 @@ test("the router's own review reasons are read, value and all", () => {
     );
   }
   assert.ok(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       metadataJson({
         routing: {
           ...ROUTING,
@@ -655,7 +671,7 @@ test("a routed create is read, and a malformed routing record is not", () => {
  * refused it would drop exactly the records that disclose a disagreement.
  */
 test("a record with profile: null is read, not refused", () => {
-  const parsed = parseBuzzCodingSessionMetadata(
+  const parsed = parseBeekeeperCodingSessionMetadata(
     metadataJson({ routing: { ...ROUTING, profile: null } }),
   );
   assert.equal(parsed?.routing?.profile, null);
@@ -668,12 +684,12 @@ test("a record disclosing a disagreement with the proposal is read", () => {
       "the request proposed codex-primary/gpt-5.6-luna (low); this host routed claude-primary/sonnet (medium).",
   };
   assert.deepEqual(
-    parseBuzzCodingSessionMetadata(metadataJson({ routing: disagreed }))
+    parseBeekeeperCodingSessionMetadata(metadataJson({ routing: disagreed }))
       ?.routing,
     disagreed,
   );
   assert.equal(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       metadataJson({ routing: { ...ROUTING, proposedDisagreement: "  " } }),
     ),
     null,
@@ -702,7 +718,7 @@ test("every record in the shared fixture is read by this decoder", () => {
   );
   assert.equal(fixture.records.length, 3);
   for (const entry of fixture.records) {
-    const parsed = parseBuzzCodingSessionMetadata(
+    const parsed = parseBeekeeperCodingSessionMetadata(
       metadataJson({ routing: entry.routing }),
     );
     assert.deepEqual(parsed?.routing, entry.routing, entry.name);

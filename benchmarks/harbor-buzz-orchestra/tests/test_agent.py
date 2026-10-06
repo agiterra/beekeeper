@@ -6,7 +6,7 @@ from harbor.models.agent.context import AgentContext
 
 from harbor_buzz_orchestra import (
     AgentCredential,
-    BuzzOrchestraAgent,
+    BeekeeperOrchestraAgent,
     RuntimeResult,
     TrialHandle,
 )
@@ -76,7 +76,7 @@ class Runtime:
 async def test_agent_lifecycle_and_context(tmp_path, manifest_data):
     provisioner, runtime, context_id = Provisioner(), Runtime(), uuid4()
     environment = SimpleNamespace(context_id=context_id, environment_name="hello-world")
-    agent = BuzzOrchestraAgent(
+    agent = BeekeeperOrchestraAgent(
         logs_dir=tmp_path,
         manifest=manifest_data,
         provisioner=provisioner,
@@ -110,7 +110,7 @@ async def test_teardown_runs_when_runtime_fails(tmp_path, manifest_data):
         uuid4(),
     )
     environment = SimpleNamespace(context_id=context_id)
-    agent = BuzzOrchestraAgent(
+    agent = BeekeeperOrchestraAgent(
         logs_dir=tmp_path,
         manifest=manifest_data,
         provisioner=provisioner,
@@ -123,7 +123,7 @@ async def test_teardown_runs_when_runtime_fails(tmp_path, manifest_data):
 
 
 async def test_missing_integrations_fail_explicitly(tmp_path, manifest_data):
-    agent = BuzzOrchestraAgent(logs_dir=tmp_path, manifest=manifest_data)
+    agent = BeekeeperOrchestraAgent(logs_dir=tmp_path, manifest=manifest_data)
     with pytest.raises(RuntimeError, match="M1 wiring is incomplete"):
         await agent.run("solve it", SimpleNamespace(context_id=uuid4()), AgentContext())
 
@@ -136,7 +136,7 @@ async def test_cli_runtime_construction_from_json(tmp_path, manifest_data):
         '"worker/rev":{"provider":"openai",'
         '"api_key_env":"OPENAI_API_KEY"}}'
     )
-    agent = BuzzOrchestraAgent(
+    agent = BeekeeperOrchestraAgent(
         logs_dir=tmp_path / "logs",
         manifest=manifest_data,
         artifact_root=tmp_path,
@@ -156,13 +156,13 @@ async def test_cli_runtime_construction_from_json(tmp_path, manifest_data):
 
 async def test_cli_construction_requires_complete_pairs(tmp_path, manifest_data):
     with pytest.raises(ValueError, match="artifact_root"):
-        BuzzOrchestraAgent(
+        BeekeeperOrchestraAgent(
             logs_dir=tmp_path,
             manifest=manifest_data,
             endpoint_config={},
         )
     with pytest.raises(ValueError, match="provisioner_factory"):
-        BuzzOrchestraAgent(
+        BeekeeperOrchestraAgent(
             logs_dir=tmp_path,
             manifest=manifest_data,
             provisioner_config={},

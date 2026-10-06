@@ -30,7 +30,7 @@ use beekeeper_core::project_pack_source::{
 use beekeeper_persona::template::TemplateCatalog;
 use beekeeper_sdk::build_delete_addressable;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// How a `set-source` names the tree to stage.
@@ -70,7 +70,7 @@ impl PackSourcePin<'_> {
 /// the relay's own refusal otherwise — missing publication authority gets
 /// HTTP 403 and exit 3.
 pub async fn cmd_set_source(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: &str,
     repo: &str,
     pin: &PackSourcePin<'_>,
@@ -107,7 +107,7 @@ pub enum PackSourceCondition<'a> {
 /// [`CliError::Conflict`] (exit 5). Auth and transport refusals remain distinct.
 /// A conflict never signs or submits a replacement event.
 pub async fn cmd_set_source_conditionally(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: &str,
     repo: &str,
     pin: &PackSourcePin<'_>,
@@ -169,7 +169,7 @@ fn pack_source_error(error: CliError) -> CliError {
 /// # Errors
 /// [`CliError::Usage`] for a coordinate that is not a project coordinate;
 /// transport and auth errors from the relay.
-pub async fn cmd_get_source(client: &BuzzClient, project: &str) -> Result<(), CliError> {
+pub async fn cmd_get_source(client: &BeekeeperClient, project: &str) -> Result<(), CliError> {
     let coordinate = normalize_project(project)?;
     let rows = query_pack_sources(client, &coordinate).await?;
     println!(
@@ -185,7 +185,7 @@ pub async fn cmd_get_source(client: &BuzzClient, project: &str) -> Result<(), Cl
 /// [`CliError::Usage`] for a malformed coordinate or role slug; transport and
 /// auth errors from the relay.
 pub async fn cmd_status(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: &str,
     role: Option<&str>,
     packs_dir: Option<&Path>,
@@ -511,7 +511,10 @@ pub struct PackInitRequest<'a> {
 /// not exist or holds no role directories, or a project that already has a
 /// pack source (replace it with `set-source`, deliberately). Relay and git
 /// failures surface with what had already landed.
-pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Result<(), CliError> {
+pub async fn cmd_init(
+    client: &BeekeeperClient,
+    request: &PackInitRequest<'_>,
+) -> Result<(), CliError> {
     let coordinate = normalize_project(request.project)?;
     let slug = coordinate
         .rsplit(':')
@@ -752,7 +755,7 @@ pub async fn cmd_init(client: &BuzzClient, request: &PackInitRequest<'_>) -> Res
 /// withdrawal is reported, not retried, and `cmd_init` already has the
 /// coordinate to hand the operator for a manual `bee repos delete`.
 pub(crate) async fn withdraw_repo_announcement(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     owner: &str,
     repo_id: &str,
 ) -> (Option<String>, Option<String>) {
@@ -934,7 +937,7 @@ fn resolve_seed_dir(from: Option<&Path>) -> Result<PathBuf, CliError> {
 /// them at ingest, so one on a read is either a pre-gate record or a bug, and
 /// either way a client must not act on a record it cannot fully read.
 pub(crate) async fn query_pack_sources(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     coordinate: &str,
 ) -> Result<
     Vec<(

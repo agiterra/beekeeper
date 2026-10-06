@@ -5,7 +5,7 @@ const BUZZ_RELEASES_API_URL =
 const CACHE_KEY = "buzz.latestDownload.v1";
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
-export type BuzzDownloadPlatform = {
+export type BeekeeperDownloadPlatform = {
   operatingSystem: "linux" | "macos" | "windows" | "unknown";
   architecture: "arm64" | "x64" | "unknown";
 };
@@ -27,7 +27,7 @@ type UserAgentData = {
 function normalizeOperatingSystem(
   navigatorValue: Navigator,
   userAgentData?: UserAgentData,
-): BuzzDownloadPlatform["operatingSystem"] {
+): BeekeeperDownloadPlatform["operatingSystem"] {
   const userAgent = navigatorValue.userAgent.toLowerCase();
   const platform = (
     userAgentData?.platform ??
@@ -71,16 +71,16 @@ function normalizeOperatingSystem(
 
 function normalizeArchitecture(
   value: string,
-): BuzzDownloadPlatform["architecture"] {
+): BeekeeperDownloadPlatform["architecture"] {
   const normalized = value.toLowerCase();
   if (/arm|aarch64/.test(normalized)) return "arm64";
   if (/x86|x64|amd64|64/.test(normalized)) return "x64";
   return "unknown";
 }
 
-export async function detectBuzzDownloadPlatform(
+export async function detectBeekeeperDownloadPlatform(
   navigatorValue: Navigator,
-): Promise<BuzzDownloadPlatform> {
+): Promise<BeekeeperDownloadPlatform> {
   const userAgentData = (
     navigatorValue as Navigator & { userAgentData?: UserAgentData }
   ).userAgentData;
@@ -108,7 +108,7 @@ export async function detectBuzzDownloadPlatform(
   return { operatingSystem, architecture };
 }
 
-function assetPattern(platform: BuzzDownloadPlatform): RegExp | undefined {
+function assetPattern(platform: BeekeeperDownloadPlatform): RegExp | undefined {
   switch (platform.operatingSystem) {
     case "macos":
       if (platform.architecture === "arm64") return /_aarch64\.dmg$/i;
@@ -125,9 +125,9 @@ function assetPattern(platform: BuzzDownloadPlatform): RegExp | undefined {
   }
 }
 
-export function selectBuzzDownloadUrl(
+export function selectBeekeeperDownloadUrl(
   releases: GitHubRelease[],
-  platform: BuzzDownloadPlatform,
+  platform: BeekeeperDownloadPlatform,
 ): string | undefined {
   const pattern = assetPattern(platform);
   if (!pattern) return undefined;
@@ -140,13 +140,13 @@ export function selectBuzzDownloadUrl(
   return undefined;
 }
 
-export async function resolveBuzzDownloadUrlForPlatform(
-  platform: BuzzDownloadPlatform,
+export async function resolveBeekeeperDownloadUrlForPlatform(
+  platform: BeekeeperDownloadPlatform,
 ): Promise<string> {
   try {
     const cached = JSON.parse(sessionStorage.getItem(CACHE_KEY) ?? "null") as {
       expiresAt: number;
-      platform: BuzzDownloadPlatform;
+      platform: BeekeeperDownloadPlatform;
       url: string;
     } | null;
     if (
@@ -166,7 +166,7 @@ export async function resolveBuzzDownloadUrlForPlatform(
       headers: { Accept: "application/vnd.github+json" },
     });
     if (!response.ok) return BUZZ_RELEASES_URL;
-    const url = selectBuzzDownloadUrl(
+    const url = selectBeekeeperDownloadUrl(
       (await response.json()) as GitHubRelease[],
       platform,
     );
@@ -189,8 +189,8 @@ export async function resolveBuzzDownloadUrlForPlatform(
   }
 }
 
-export async function resolveBuzzDownloadUrl(): Promise<string> {
-  return resolveBuzzDownloadUrlForPlatform(
-    await detectBuzzDownloadPlatform(navigator),
+export async function resolveBeekeeperDownloadUrl(): Promise<string> {
+  return resolveBeekeeperDownloadUrlForPlatform(
+    await detectBeekeeperDownloadPlatform(navigator),
   );
 }

@@ -24,7 +24,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use beekeeper_ws_client::RelayMessage;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
 
@@ -109,7 +109,7 @@ fn watch_event(keys: &Keys, owner: &Keys, session_id: &str, coordinate: &str) ->
         .unwrap()
 }
 
-async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
+async fn query(client: &mut BeekeeperTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
     let sid = sub_id(name);
     client
         .subscribe(&sid, vec![filter])
@@ -131,7 +131,7 @@ fn announce_filter(session_id: &str) -> Filter {
 
 /// Wait for one specific event id on a live subscription; `true` if it landed.
 async fn recv_specific(
-    client: &mut BuzzTestClient,
+    client: &mut BeekeeperTestClient,
     sid: &str,
     id: nostr::EventId,
     window: Duration,
@@ -163,7 +163,7 @@ async fn test_private_project_terminal_gated_end_to_end() {
     let session_id = unique("sess");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let ok = owner_client
@@ -179,10 +179,10 @@ async fn test_private_project_terminal_gated_end_to_end() {
     assert!(ok.accepted, "announce rejected: {}", ok.message);
 
     // REQ: owner and member see the announce; the stranger gets nothing.
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
 
@@ -288,7 +288,7 @@ async fn test_public_project_terminal_open_to_members() {
     let session_id = unique("sess");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let ok = owner_client
@@ -303,7 +303,7 @@ async fn test_public_project_terminal_open_to_members() {
         .expect("send announce");
     assert!(ok.accepted, "announce rejected: {}", ok.message);
 
-    let mut viewer_client = BuzzTestClient::connect(&relay_url(), &viewer)
+    let mut viewer_client = BeekeeperTestClient::connect(&relay_url(), &viewer)
         .await
         .expect("viewer connect");
     let seen = query(&mut viewer_client, "pub", announce_filter(&session_id)).await;
@@ -341,7 +341,7 @@ async fn test_malformed_shell_events_rejected() {
     let session_id = unique("sess");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("connect");
     let ok = client

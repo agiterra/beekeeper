@@ -70,7 +70,7 @@ export function SortableProjectShell({
 export function DragOverlayProject({ name }: { name: string }) {
   return (
     <div
-      data-buzz-flat
+      data-beekeeper-flat
       className="flex cursor-grabbing items-center gap-2 rounded-md bg-sidebar px-2 py-1.5 text-sm text-sidebar-foreground opacity-90 shadow-lg ring-1 ring-sidebar-border"
       data-sidebar-drag-overlay
       data-testid="sidebar-project-drag-overlay"

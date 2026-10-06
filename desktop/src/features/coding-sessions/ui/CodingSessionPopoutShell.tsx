@@ -1,6 +1,6 @@
 import { Outlet } from "@tanstack/react-router";
 
-import * as BuzzTheme from "@/app/BuzzThemeSurfaces";
+import * as BeekeeperTheme from "@/app/BeekeeperThemeSurfaces";
 import { PreventSleepProvider } from "@/features/agents/usePreventSleep";
 import type { Channel } from "@/shared/api/types";
 import { ChannelNavigationProvider } from "@/shared/context/ChannelNavigationContext";
@@ -15,10 +15,10 @@ export function CodingSessionPopoutShell({
     <PreventSleepProvider>
       <ChannelNavigationProvider channels={channels}>
         <div className="relative flex h-dvh overflow-hidden bg-background">
-          <BuzzTheme.GradientLayer />
-          <BuzzTheme.ContentSurface>
+          <BeekeeperTheme.GradientLayer />
+          <BeekeeperTheme.ContentSurface>
             <Outlet />
-          </BuzzTheme.ContentSurface>
+          </BeekeeperTheme.ContentSurface>
         </div>
       </ChannelNavigationProvider>
     </PreventSleepProvider>

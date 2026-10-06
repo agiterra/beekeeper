@@ -227,9 +227,9 @@ test("rejects a stale card toggle without overwriting a newer edit", async ({
     .first();
 
   await page.evaluate(async (name) => {
-    const invoke = window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
+    const invoke = window.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__;
     if (!invoke) throw new Error("mock command bridge unavailable");
-    const createCall = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
+    const createCall = [...(window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])]
       .reverse()
       .find((call) => call.command === "create_workflow");
     const channelId = (
@@ -263,9 +263,9 @@ test("rejects a stale card toggle without overwriting a newer edit", async ({
       .filter({ hasText: "workflow changed since it was loaded" }),
   ).toBeVisible();
   const authoritativeName = await page.evaluate(async () => {
-    const invoke = window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
+    const invoke = window.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__;
     if (!invoke) throw new Error("mock command bridge unavailable");
-    const createCall = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
+    const createCall = [...(window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])]
       .reverse()
       .find((call) => call.command === "create_workflow");
     const channelId = (
@@ -286,9 +286,10 @@ test("reports a rejected workflow status change", async ({ page }) => {
   await navigateToWorkflows(page);
   await createWorkflow(page, workflowName);
   await page.evaluate(() => {
-    window.__BUZZ_E2E__ ??= {};
-    window.__BUZZ_E2E__.mock ??= {};
-    window.__BUZZ_E2E__.mock.workflowUpdateError = "relay refused the update";
+    window.__BEEKEEPER_E2E__ ??= {};
+    window.__BEEKEEPER_E2E__.mock ??= {};
+    window.__BEEKEEPER_E2E__.mock.workflowUpdateError =
+      "relay refused the update";
   });
 
   const workflowCard = page

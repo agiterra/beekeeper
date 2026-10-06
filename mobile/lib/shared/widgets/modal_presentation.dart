@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/theme.dart';
-import 'buzz_sheet_header.dart';
-import 'buzz_titled_sheet_layout.dart';
+import 'beekeeper_sheet_header.dart';
+import 'beekeeper_titled_sheet_layout.dart';
 import 'concentric_sheet_surface.dart';
 
 /// Shared motion for occasional modal UI.
@@ -23,7 +23,7 @@ const buzzModalAnimationStyle = AnimationStyle(
 /// uses native concentric corners when available and paints a requested drag
 /// handle inside the shared header so its spacing is consistent on every
 /// platform.
-Future<T?> showBuzzModalBottomSheet<T>({
+Future<T?> showBeekeeperModalBottomSheet<T>({
   required BuildContext context,
   required WidgetBuilder builder,
   String? title,
@@ -120,7 +120,7 @@ class _SheetContent extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (showCloseButton)
-            BuzzSheetHeader(title: title, showDragHandle: showDragHandle)
+            BeekeeperSheetHeader(title: title, showDragHandle: showDragHandle)
           else if (showDragHandle)
             const Padding(
               padding: EdgeInsets.only(top: Grid.xxs, bottom: Grid.xs),
@@ -131,7 +131,7 @@ class _SheetContent extends StatelessWidget {
       );
     }
 
-    return BuzzTitledSheetLayout(
+    return BeekeeperTitledSheetLayout(
       title: title!,
       showDragHandle: showDragHandle,
       surfaceColor: surfaceColor,
@@ -164,7 +164,7 @@ class _StandaloneSheetDragHandle extends StatelessWidget {
 }
 
 /// Shows a dialog with Buzz's shared motion, respecting reduced-motion settings.
-Future<T?> showBuzzDialog<T>({
+Future<T?> showBeekeeperDialog<T>({
   required BuildContext context,
   required WidgetBuilder builder,
   bool barrierDismissible = true,

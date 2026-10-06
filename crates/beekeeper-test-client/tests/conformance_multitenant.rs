@@ -917,7 +917,7 @@ mod membership_allowlist {
 mod users_profiles_nip05 {
     use super::*;
 
-    use beekeeper_test_client::BuzzTestClient;
+    use beekeeper_test_client::BeekeeperTestClient;
     use nostr::{EventBuilder, Keys, Kind};
 
     /// Convert any base form to `ws(s)://` for WS connect.
@@ -950,7 +950,11 @@ mod users_profiles_nip05 {
     /// relay's ingest side-effect at `crates/beekeeper-relay/src/handlers/side_effects.rs::handle_kind0_profile`
     /// also syncs the parsed fields into `users` via
     /// `update_user_profile(tenant.community(), pubkey, ...)`.
-    async fn publish_kind0(client: &mut BuzzTestClient, keys: &Keys, content_json: &str) -> String {
+    async fn publish_kind0(
+        client: &mut BeekeeperTestClient,
+        keys: &Keys,
+        content_json: &str,
+    ) -> String {
         let event = EventBuilder::new(Kind::Metadata, content_json)
             .sign_with_keys(keys)
             .unwrap();
@@ -1054,12 +1058,12 @@ mod users_profiles_nip05 {
         let content_b = serde_json::json!({"display_name": "B profile"}).to_string();
 
         // Connect each side, publish each side's kind:0.
-        let mut client_a = BuzzTestClient::connect(&ws_a, &keys)
+        let mut client_a = BeekeeperTestClient::connect(&ws_a, &keys)
             .await
             .expect("connect A");
         let _id_a = publish_kind0(&mut client_a, &keys, &content_a).await;
 
-        let mut client_b = BuzzTestClient::connect(&ws_b, &keys)
+        let mut client_b = BeekeeperTestClient::connect(&ws_b, &keys)
             .await
             .expect("connect B");
         let _id_b = publish_kind0(&mut client_b, &keys, &content_b).await;
@@ -1183,12 +1187,12 @@ mod users_profiles_nip05 {
         let content_b = serde_json::json!({"display_name": local, "nip05": handle_b}).to_string();
 
         // Register each pubkey under the same local-part in its own community.
-        let mut client_a = BuzzTestClient::connect(&ws_a, &keys_a)
+        let mut client_a = BeekeeperTestClient::connect(&ws_a, &keys_a)
             .await
             .expect("connect A");
         let _ = publish_kind0(&mut client_a, &keys_a, &content_a).await;
 
-        let mut client_b = BuzzTestClient::connect(&ws_b, &keys_b)
+        let mut client_b = BeekeeperTestClient::connect(&ws_b, &keys_b)
             .await
             .expect("connect B");
         let _ = publish_kind0(&mut client_b, &keys_b, &content_b).await;
@@ -1341,7 +1345,7 @@ mod feed_read_side_isolation {
 mod channels_membership {
     use super::*;
 
-    use beekeeper_test_client::BuzzTestClient;
+    use beekeeper_test_client::BeekeeperTestClient;
     use nostr::{EventBuilder, Keys, Kind, Tag};
 
     /// Convert any base form to `ws(s)://` for WS connect.
@@ -1420,7 +1424,7 @@ mod channels_membership {
     /// community), so a post to A's channel via A's connection resolves to
     /// A's channel row, never B's.
     async fn post_kind9(
-        client: &mut BuzzTestClient,
+        client: &mut BeekeeperTestClient,
         keys: &Keys,
         channel_id: &str,
         content: &str,
@@ -1579,12 +1583,12 @@ mod channels_membership {
         let content_b = "B message in shared-UUID channel".to_string();
 
         // Connect each side, post each side's kind:9.
-        let mut client_a = BuzzTestClient::connect(&ws_a, &keys)
+        let mut client_a = BeekeeperTestClient::connect(&ws_a, &keys)
             .await
             .expect("connect A");
         let _id_a = post_kind9(&mut client_a, &keys, &chan_a, &content_a).await;
 
-        let mut client_b = BuzzTestClient::connect(&ws_b, &keys)
+        let mut client_b = BeekeeperTestClient::connect(&ws_b, &keys)
             .await
             .expect("connect B");
         let _id_b = post_kind9(&mut client_b, &keys, &chan_b, &content_b).await;
@@ -1954,7 +1958,7 @@ mod workflows {
 mod search_fts {
     use super::*;
 
-    use beekeeper_test_client::{BuzzTestClient, RelayMessage};
+    use beekeeper_test_client::{BeekeeperTestClient, RelayMessage};
     use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
 
     /// Convert an `http(s)://host[:port]` base into the `ws(s)://` form the
@@ -2028,7 +2032,7 @@ mod search_fts {
     /// Post a kind:9 with `content` to `channel_id` over the WS connection
     /// `client`. Returns the event id hex (so we can target it with NIP-09).
     async fn post_kind9(
-        client: &mut BuzzTestClient,
+        client: &mut BeekeeperTestClient,
         keys: &Keys,
         channel_id: &str,
         content: &str,
@@ -2047,7 +2051,7 @@ mod search_fts {
     /// Run a one-shot NIP-50 search for `token` scoped to `channel_id` and
     /// return the events received before EOSE.
     async fn search_for(
-        client: &mut BuzzTestClient,
+        client: &mut BeekeeperTestClient,
         channel_id: &str,
         token: &str,
     ) -> Vec<nostr::Event> {
@@ -2166,7 +2170,7 @@ mod search_fts {
         let content_b = format!("B community probe {token}");
 
         // Connect to A, post in A.
-        let mut client_a = BuzzTestClient::connect(&ws_a, &keys)
+        let mut client_a = BeekeeperTestClient::connect(&ws_a, &keys)
             .await
             .expect("connect A");
         let id_a = post_kind9(&mut client_a, &keys, &chan_a, &content_a).await;
@@ -2174,7 +2178,7 @@ mod search_fts {
         // Connect to B, post in B (same key, same channel UUID, same token —
         // only the community label in the content + the community itself
         // differ).
-        let mut client_b = BuzzTestClient::connect(&ws_b, &keys)
+        let mut client_b = BeekeeperTestClient::connect(&ws_b, &keys)
             .await
             .expect("connect B");
         let _id_b = post_kind9(&mut client_b, &keys, &chan_b, &content_b).await;
@@ -2290,7 +2294,7 @@ mod search_fts {
 mod pubsub_presence_typing {
     use super::*;
 
-    use beekeeper_test_client::{BuzzTestClient, RelayMessage};
+    use beekeeper_test_client::{BeekeeperTestClient, RelayMessage};
     use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
 
     const KIND_PRESENCE_UPDATE: u16 = 20001;
@@ -2358,7 +2362,7 @@ mod pubsub_presence_typing {
         channel_uuid.to_string()
     }
 
-    async fn publish_presence(client: &mut BuzzTestClient, keys: &Keys, status: &str) {
+    async fn publish_presence(client: &mut BeekeeperTestClient, keys: &Keys, status: &str) {
         let event = EventBuilder::new(Kind::Custom(KIND_PRESENCE_UPDATE), status)
             .sign_with_keys(keys)
             .unwrap();
@@ -2393,7 +2397,7 @@ mod pubsub_presence_typing {
         resp.json().await.expect("parse /query JSON")
     }
 
-    async fn subscribe_typing(client: &mut BuzzTestClient, sub_id: &str, channel_id: &str) {
+    async fn subscribe_typing(client: &mut BeekeeperTestClient, sub_id: &str, channel_id: &str) {
         let filter = Filter::new()
             .kind(Kind::Custom(KIND_TYPING_INDICATOR))
             .custom_tags(SingleLetterTag::lowercase(Alphabet::H), [channel_id]);
@@ -2413,7 +2417,7 @@ mod pubsub_presence_typing {
     }
 
     async fn publish_typing(
-        client: &mut BuzzTestClient,
+        client: &mut BeekeeperTestClient,
         keys: &Keys,
         channel_id: &str,
         content: &str,
@@ -2433,7 +2437,7 @@ mod pubsub_presence_typing {
     /// after the expected local event so a cross-community leak has a window to
     /// surface as a second/wrong-content live delivery.
     async fn drain_live_events(
-        client: &mut BuzzTestClient,
+        client: &mut BeekeeperTestClient,
         sub_id: &str,
         quiet_for: Duration,
     ) -> Vec<nostr::Event> {
@@ -2524,10 +2528,10 @@ mod pubsub_presence_typing {
         let keys = Keys::generate();
         let pubkey_hex = keys.public_key().to_hex();
 
-        let mut client_a = BuzzTestClient::connect(&ws_a, &keys)
+        let mut client_a = BeekeeperTestClient::connect(&ws_a, &keys)
             .await
             .expect("connect A");
-        let mut client_b = BuzzTestClient::connect(&ws_b, &keys)
+        let mut client_b = BeekeeperTestClient::connect(&ws_b, &keys)
             .await
             .expect("connect B");
 

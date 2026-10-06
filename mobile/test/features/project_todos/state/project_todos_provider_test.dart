@@ -1,9 +1,9 @@
 import 'dart:convert';
 
-import 'package:buzz/features/project_todos/domain/project_todo_op.dart';
-import 'package:buzz/features/project_todos/state/project_todo_actions.dart';
-import 'package:buzz/features/project_todos/state/project_todos_provider.dart';
-import 'package:buzz/shared/relay/relay.dart';
+import 'package:beekeeper/features/project_todos/domain/project_todo_op.dart';
+import 'package:beekeeper/features/project_todos/state/project_todo_actions.dart';
+import 'package:beekeeper/features/project_todos/state/project_todos_provider.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:nostr/nostr.dart' as nostr;

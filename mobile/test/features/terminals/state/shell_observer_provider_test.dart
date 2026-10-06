@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:buzz/features/terminals/state/shell_announce_head_provider.dart';
-import 'package:buzz/features/terminals/state/shell_observer_provider.dart';
-import 'package:buzz/shared/relay/relay.dart';
+import 'package:beekeeper/features/terminals/state/shell_announce_head_provider.dart';
+import 'package:beekeeper/features/terminals/state/shell_observer_provider.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';

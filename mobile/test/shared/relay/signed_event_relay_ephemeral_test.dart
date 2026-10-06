@@ -1,6 +1,6 @@
-import 'package:buzz/shared/relay/nostr_models.dart';
-import 'package:buzz/shared/relay/poll_schedule.dart';
-import 'package:buzz/shared/relay/signed_event_relay.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
+import 'package:beekeeper/shared/relay/poll_schedule.dart';
+import 'package:beekeeper/shared/relay/signed_event_relay.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nostr/nostr.dart' as nostr;
 

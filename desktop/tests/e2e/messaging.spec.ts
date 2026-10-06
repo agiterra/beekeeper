@@ -463,14 +463,14 @@ test("markdown tables overflow wide content and fill the message when narrow", a
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await page.waitForFunction(
-    () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
+    () => typeof window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__ === "function",
   );
 
   await expect
     .poll(
       () =>
         page.evaluate(() =>
-          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+          window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
             channelName: "general",
           }),
         ),
@@ -482,12 +482,12 @@ test("markdown tables overflow wide content and fill the message when narrow", a
   await page.evaluate(
     ({ wide, narrow }) => {
       const createdAt = Math.floor(Date.now() / 1000);
-      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+      window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?.({
         channelName: "general",
         content: wide,
         createdAt,
       });
-      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+      window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?.({
         channelName: "general",
         content: narrow,
         createdAt: createdAt + 1,
@@ -571,7 +571,7 @@ test("sent link preview media uses the authenticated proxy in compact and rich c
   await expect(compactFavicon).toHaveAttribute("src", fallbackMediaPattern);
 
   const releasedPort = await page.evaluate(() =>
-    window.__BUZZ_E2E_RELEASE_MEDIA_PROXY__?.(),
+    window.__BEEKEEPER_E2E_RELEASE_MEDIA_PROXY__?.(),
   );
   expect(releasedPort).toBe(54321);
   await expect(compactThumbnail).toHaveAttribute("src", proxyMediaPattern);
@@ -748,7 +748,7 @@ for (const [pasteShape, wrapUrl] of [
       );
       return {
         elapsedMs: performance.now() - startedAt,
-        resolverStarted: (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).some(
+        resolverStarted: (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? []).some(
           (entry) => entry.command === "fetch_link_preview_metadata",
         ),
         text: element.textContent,
@@ -797,7 +797,7 @@ test("display-text link preview produces and sends its preview", async ({
   ).toHaveAttribute("href", previewUrl);
   await expect(row.locator("[data-link-preview]")).toBeVisible();
   const linkPreviewTags = await page.evaluate(() => {
-    const call = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
+    const call = [...(window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])]
       .reverse()
       .find((entry) => entry.command === "send_channel_message");
     return (
@@ -878,7 +878,7 @@ test("completed link previews normalize a trailing-fragment URL and still send",
   await expect(page.getByTestId("message-input")).toHaveText("");
 
   const calls = await page.evaluate(() =>
-    (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+    (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? []).filter(
       (entry) => entry.command === "send_channel_message",
     ),
   );
@@ -975,7 +975,7 @@ test("explicit cancellation suppresses a pending link preview and sends without 
   await expect(row.locator("[data-link-preview]")).toHaveCount(0);
 
   const linkPreviewTags = await page.evaluate(() => {
-    const call = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
+    const call = [...(window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])]
       .reverse()
       .find((entry) => entry.command === "send_channel_message");
     return (
@@ -1006,7 +1006,7 @@ test("Enter during an in-flight snapshot upload hands off and sends once", async
 
   const sendsDuringUpload = await page.evaluate(
     () =>
-      (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+      (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? []).filter(
         (entry) => entry.command === "send_channel_message",
       ).length,
   );
@@ -1018,7 +1018,7 @@ test("Enter during an in-flight snapshot upload hands off and sends once", async
   await expect(progress).toHaveCount(0);
   const sends = await page.evaluate(
     () =>
-      (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+      (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? []).filter(
         (entry) => entry.command === "send_channel_message",
       ).length,
   );
@@ -1070,7 +1070,7 @@ test("async upload beyond metadata budget retains preview image", async ({
     "image",
   );
   const tags = await page.evaluate(() => {
-    const call = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
+    const call = [...(window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])]
       .reverse()
       .find((entry) => entry.command === "send_channel_message");
     return (call?.payload as { linkPreviewTags?: string[][] }).linkPreviewTags;
@@ -1101,7 +1101,7 @@ test("Skip wins the upload race and sends without preview", async ({
   await expect(row.locator("[data-link-preview]")).toHaveCount(0);
   await page.waitForTimeout(1_500);
   const calls = await page.evaluate(() =>
-    (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+    (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? []).filter(
       (entry) => entry.command === "send_channel_message",
     ),
   );
@@ -1128,7 +1128,7 @@ test("promoted link preview send clears Sending after REST publication", async (
   await expect(row).not.toContainText("Sending…");
 
   const restCalls = await page.evaluate(() =>
-    (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+    (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? []).filter(
       (entry) => entry.command === "send_channel_message",
     ),
   );
@@ -1156,10 +1156,10 @@ test("settled-empty promoted link preview send uses REST and clears Sending afte
   await expect(row.locator("[data-link-preview]")).toHaveCount(0);
 
   const result = await page.evaluate(() => ({
-    restCalls: (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+    restCalls: (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? []).filter(
       (entry) => entry.command === "send_channel_message",
     ),
-    websocketSends: (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).filter(
+    websocketSends: (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).filter(
       (event) => event.kind === 9,
     ),
   }));
@@ -1236,7 +1236,7 @@ test("draft auto-send promotes link preview preparation and sends exactly once",
     .poll(async () =>
       page.evaluate(
         () =>
-          (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+          (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? []).filter(
             (entry) => entry.command === "send_channel_message",
           ).length,
       ),
@@ -1244,7 +1244,7 @@ test("draft auto-send promotes link preview preparation and sends exactly once",
     .toBe(1);
 
   const linkPreviewTags = await page.evaluate(() => {
-    const call = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
+    const call = [...(window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])]
       .reverse()
       .find((entry) => entry.command === "send_channel_message");
     return (
@@ -1283,7 +1283,7 @@ test("rapid Enter presses on a ready link preview send exactly once", async ({
     .poll(async () =>
       page.evaluate(
         () =>
-          (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+          (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? []).filter(
             (entry) => entry.command === "send_channel_message",
           ).length,
       ),
@@ -1308,7 +1308,7 @@ test("pasting a link and immediately pressing Enter prepares it after submit", a
   await expect(row).toContainText(previewUrl);
   await expect(row.locator("[data-link-preview]")).toBeVisible();
   const calls = await page.evaluate(() =>
-    (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+    (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? []).filter(
       (entry) => entry.command === "send_channel_message",
     ),
   );
@@ -1329,7 +1329,7 @@ test("a snapshot media upload failure preserves a metadata-only preview", async 
   await expect(row).toContainText(previewUrl);
   await expect(row.locator("[data-link-preview]")).toBeVisible();
   const tags = await page.evaluate(() => {
-    const call = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
+    const call = [...(window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])]
       .reverse()
       .find((entry) => entry.command === "send_channel_message");
     return (call?.payload as { linkPreviewTags?: string[][] }).linkPreviewTags;
@@ -1370,7 +1370,7 @@ test("editing a message excludes link previews entirely", async ({ page }) => {
   // No snapshot upload was attempted for the edited link.
   const uploadedPreviewMedia = await page.evaluate(
     () =>
-      (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+      (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? []).filter(
         (entry) =>
           entry.command === "upload_media_bytes" &&
           typeof (entry.payload as { filename?: string })?.filename ===
@@ -1407,7 +1407,7 @@ test("hiding composer link previews suppresses the whole draft and emits the bla
   await expect(row).toContainText(secondUrl);
   await expect(row.locator("[data-link-preview]")).toHaveCount(0);
   const linkPreviewTags = await page.evaluate(() => {
-    const call = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
+    const call = [...(window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])]
       .reverse()
       .find((entry) => entry.command === "send_channel_message");
     return (
@@ -2036,12 +2036,12 @@ test("send message to DM channel p-tags the recipient", async ({ page }) => {
       page.evaluate((content) => {
         const events = (
           window as Window & {
-            __BUZZ_E2E_SIGNED_EVENTS__?: Array<{
+            __BEEKEEPER_E2E_SIGNED_EVENTS__?: Array<{
               content: string;
               tags: string[][];
             }>;
           }
-        ).__BUZZ_E2E_SIGNED_EVENTS__;
+        ).__BEEKEEPER_E2E_SIGNED_EVENTS__;
         return events?.find((event) => event.content === content)?.tags ?? [];
       }, message),
     )
@@ -2100,8 +2100,8 @@ test("sends a thread message to its parent channel with a root-thread link", asy
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await page.waitForFunction(
     () =>
-      typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function" &&
-      (window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+      typeof window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__ === "function" &&
+      (window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
         channelName: "general",
       }) ??
         false),
@@ -2109,7 +2109,7 @@ test("sends a thread message to its parent channel with a root-thread link", asy
 
   const { ownReplyId, rootId } = await page.evaluate(
     ({ alicePubkey, ownReply, root, semanticTags }) => {
-      const emit = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+      const emit = window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__;
       if (!emit) throw new Error("Mock message emitter is unavailable.");
       const rootEvent = emit({
         channelName: "general",
@@ -2195,7 +2195,7 @@ test("sends a thread message to its parent channel with a root-thread link", asy
     .poll(() =>
       page.evaluate((content) => {
         return Boolean(
-          (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).findLast(
+          (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? []).findLast(
             (entry) =>
               entry.command === "send_channel_message" &&
               (entry.payload as { content?: string } | undefined)?.content ===
@@ -2207,7 +2207,7 @@ test("sends a thread message to its parent channel with a root-thread link", asy
     .toBe(true);
   const sentPayload = await page.evaluate(
     (content) =>
-      (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).findLast(
+      (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? []).findLast(
         (entry) =>
           entry.command === "send_channel_message" &&
           (entry.payload as { content?: string } | undefined)?.content ===
@@ -2581,7 +2581,7 @@ test("opens a single-level thread panel with inline expansion", async ({
 
   await page.waitForFunction(
     () =>
-      window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+      window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
         channelName: "general",
       }),
     undefined,
@@ -2589,7 +2589,7 @@ test("opens a single-level thread panel with inline expansion", async ({
   );
   await page.evaluate(
     ({ content, parentEventId, pubkey }) => {
-      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+      window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?.({
         channelName: "general",
         content,
         parentEventId,
@@ -2852,7 +2852,7 @@ test("thread refetch preserves a live reply and reaction received in flight", as
     .poll(
       () =>
         page.evaluate(() =>
-          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+          window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
             channelName: "general",
           }),
         ),
@@ -2876,12 +2876,12 @@ test("thread refetch preserves a live reply and reaction received in flight", as
   const replyId = await page.evaluate(
     async ({ channelId, content, parentEventId }) => {
       const bridgeWindow = window as Window & {
-        __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: (
+        __BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?: (
           command: string,
           payload?: Record<string, unknown>,
         ) => Promise<unknown>;
       };
-      const invoke = bridgeWindow.__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
+      const invoke = bridgeWindow.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__;
       if (!invoke) throw new Error("Mock Tauri invoke bridge is unavailable.");
       const sent = (await invoke("send_channel_message", {
         channelId,

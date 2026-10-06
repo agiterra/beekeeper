@@ -28,7 +28,7 @@ use std::time::Duration;
 use beekeeper_core::agents_repo_draft::{AgentsRepoDraftOp, AgentsRepoDraftOpValue, DraftBase};
 use beekeeper_core::agents_repo_draft_fold::{fold_agents_repo_drafts, DraftFoldEvent};
 use beekeeper_core::project_pack_source::{build_project_pack_source, PackPin};
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
@@ -166,7 +166,7 @@ fn draft_filter(coordinate: &str) -> Filter {
         .custom_tags(SingleLetterTag::lowercase(Alphabet::A), [coordinate])
 }
 
-async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
+async fn query(client: &mut BeekeeperTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
     let sid = format!("e2e-draft-{name}-{}", uuid::Uuid::new_v4());
     client
         .subscribe(&sid, vec![filter])
@@ -180,14 +180,18 @@ async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<n
     events
 }
 
-async fn send_ok(client: &mut BuzzTestClient, event: nostr::Event, what: &str) -> nostr::EventId {
+async fn send_ok(
+    client: &mut BeekeeperTestClient,
+    event: nostr::Event,
+    what: &str,
+) -> nostr::EventId {
     let id = event.id;
     let ok = client.send_event(event).await.expect("send");
     assert!(ok.accepted, "{what} rejected: {}", ok.message);
     id
 }
 
-async fn send_refused(client: &mut BuzzTestClient, event: nostr::Event, needle: &str) {
+async fn send_refused(client: &mut BeekeeperTestClient, event: nostr::Event, needle: &str) {
     let rejected = client.send_event(event).await.expect("send");
     assert!(
         !rejected.accepted,
@@ -205,12 +209,12 @@ async fn project_with_source(
     owner: &Keys,
     access: Option<&str>,
     members: &[(&Keys, &str)],
-) -> (BuzzTestClient, String, String) {
+) -> (BeekeeperTestClient, String, String) {
     let d_tag = unique("draft-proj");
     let coordinate = project_coordinate(owner, &d_tag);
     let repo_id = format!("{d_tag}-beekeeper-agents");
     let repo = repo_coordinate(owner, &repo_id);
-    let mut client = BuzzTestClient::connect(&relay_url(), owner)
+    let mut client = BeekeeperTestClient::connect(&relay_url(), owner)
         .await
         .expect("owner connect");
     send_ok(
@@ -255,7 +259,7 @@ async fn test_collaborator_drafts_viewer_is_refused_403_and_the_fold_agrees() {
     let first_at = first_event.created_at.as_secs();
     let first = send_ok(&mut owner_client, first_event, "owner draft").await;
 
-    let mut collab_client = BuzzTestClient::connect(&relay_url(), &collaborator)
+    let mut collab_client = BeekeeperTestClient::connect(&relay_url(), &collaborator)
         .await
         .expect("collaborator connect");
     let second = send_ok(
@@ -321,7 +325,7 @@ async fn test_collaborator_drafts_viewer_is_refused_403_and_the_fold_agrees() {
 
     // A stranger sees nothing of the private project.
     let stranger = Keys::generate();
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let seen = query(&mut stranger_client, "stranger", draft_filter(&coordinate)).await;

@@ -43,7 +43,7 @@ test("Buzz Git pull request renders and stays actionable in Inbox", async ({
   await openInboxTab(page);
   await page.evaluate(
     ({ author, id, repoAddress, viewer }) => {
-      window.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__?.({
+      window.__BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__?.({
         id,
         kind: 1618,
         pubkey: author,

@@ -5,8 +5,8 @@ import { JSDOM } from "jsdom";
 
 import {
   __linkPreviewMetadataTest,
-  fetchBuzzEntityMetadata,
-  isBuzzEntityPreview,
+  fetchBeekeeperEntityMetadata,
+  isBeekeeperEntityPreview,
   resetLinkPreviewMetadataCache,
   resolveLinkPreview,
   withEntityFallbacks,
@@ -244,7 +244,7 @@ test("withEntityFallbacks keeps resolved previews and preserves order", () => {
 
 test("entity fallback eligibility is kind-scoped", () => {
   assert.equal(
-    isBuzzEntityPreview({
+    isBeekeeperEntityPreview({
       ...preview,
       kind: "buzz-repository",
       href: `beekeeper://repo?owner=${"cd".repeat(32)}&d=buzz`,
@@ -252,7 +252,10 @@ test("entity fallback eligibility is kind-scoped", () => {
     true,
   );
   assert.equal(
-    isBuzzEntityPreview({ ...preview, href: "beekeeper://future?id=example" }),
+    isBeekeeperEntityPreview({
+      ...preview,
+      href: "beekeeper://future?id=example",
+    }),
     false,
   );
 });
@@ -356,7 +359,7 @@ test("Buzz PR metadata includes repository identity and trusted root context", a
       .sort((left, right) => right.created_at - left.created_at)
       .slice(0, filter.limit);
 
-  const result = await fetchBuzzEntityMetadata(
+  const result = await fetchBeekeeperEntityMetadata(
     `beekeeper://pr?id=${id}&owner=${owner}&d=buzz`,
     fetchEvents,
   );
@@ -398,7 +401,7 @@ test("Buzz entity roots reject ambiguous repository tags", async () => {
         ["subject", "Misbound entity"],
       ],
     });
-    const result = await fetchBuzzEntityMetadata(
+    const result = await fetchBeekeeperEntityMetadata(
       `beekeeper://${type}?id=${id}&owner=${owner}&d=buzz`,
       async (filter) =>
         filter.kinds?.includes(30617)
@@ -413,7 +416,7 @@ test("Buzz entity roots reject ambiguous repository tags", async () => {
 
 test("Buzz repository metadata stays image-less and exposes default branch", async () => {
   const owner = "cd".repeat(32);
-  const result = await fetchBuzzEntityMetadata(
+  const result = await fetchBeekeeperEntityMetadata(
     `beekeeper://repo?owner=${owner}&d=relay-tools`,
     async () => [
       relayEvent({
@@ -441,7 +444,7 @@ test("Buzz repository metadata stays image-less and exposes default branch", asy
 
 test("Buzz project metadata resolves from the 30621 announcement", async () => {
   const owner = "cd".repeat(32);
-  const result = await fetchBuzzEntityMetadata(
+  const result = await fetchBeekeeperEntityMetadata(
     `beekeeper://project?owner=${owner}&d=pollinator`,
     async () => [
       relayEvent({
@@ -467,7 +470,7 @@ test("Buzz project metadata resolves from the 30621 announcement", async () => {
 test("Buzz project metadata declines a missing or invalid announcement", async () => {
   const owner = "cd".repeat(32);
   assert.equal(
-    await fetchBuzzEntityMetadata(
+    await fetchBeekeeperEntityMetadata(
       `beekeeper://project?owner=${owner}&d=pollinator`,
       async () => [],
     ),
@@ -475,7 +478,7 @@ test("Buzz project metadata declines a missing or invalid announcement", async (
   );
   // Two `d` tags fail NIP-MP envelope validation.
   assert.equal(
-    await fetchBuzzEntityMetadata(
+    await fetchBeekeeperEntityMetadata(
       `beekeeper://project?owner=${owner}&d=pollinator`,
       async () => [
         relayEvent({

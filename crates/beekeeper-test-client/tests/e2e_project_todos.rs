@@ -35,7 +35,7 @@
 use std::time::Duration;
 
 use beekeeper_core::project_todo_fold::{fold_project_todos, TodoFoldEvent};
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use beekeeper_ws_client::RelayMessage;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
 use reqwest::{Client, StatusCode};
@@ -206,7 +206,7 @@ fn todo_filter(coordinate: &str) -> Filter {
         .custom_tags(SingleLetterTag::lowercase(Alphabet::A), [coordinate])
 }
 
-async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
+async fn query(client: &mut BeekeeperTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
     let sid = sub_id(name);
     client
         .subscribe(&sid, vec![filter])
@@ -244,14 +244,18 @@ fn todo_query_body(coordinate: &str) -> Value {
     json!([{ "kinds": [TODO_OP_KIND], "#a": [coordinate], "limit": 50 }])
 }
 
-async fn send_ok(client: &mut BuzzTestClient, event: nostr::Event, what: &str) -> nostr::EventId {
+async fn send_ok(
+    client: &mut BeekeeperTestClient,
+    event: nostr::Event,
+    what: &str,
+) -> nostr::EventId {
     let id = event.id;
     let ok = client.send_event(event).await.expect("send");
     assert!(ok.accepted, "{what} rejected: {}", ok.message);
     id
 }
 
-async fn send_refused(client: &mut BuzzTestClient, event: nostr::Event, needle: &str) {
+async fn send_refused(client: &mut BeekeeperTestClient, event: nostr::Event, needle: &str) {
     let rejected = client.send_event(event).await.expect("send");
     assert!(
         !rejected.accepted,
@@ -275,7 +279,7 @@ async fn test_todo_ops_visible_to_members_hidden_from_stranger() {
     let d_tag = unique("todo-private");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(&owner, &d_tag, Some("private"), &[(&viewer, "viewer")]);
@@ -293,13 +297,13 @@ async fn test_todo_ops_visible_to_members_hidden_from_stranger() {
     assert_eq!(seen.len(), 1, "author must read their own op");
     assert_eq!(seen[0].id, op_id);
 
-    let mut viewer_client = BuzzTestClient::connect(&relay_url(), &viewer)
+    let mut viewer_client = BeekeeperTestClient::connect(&relay_url(), &viewer)
         .await
         .expect("viewer connect");
     let seen = query(&mut viewer_client, "viewer", todo_filter(&coordinate)).await;
     assert_eq!(seen.len(), 1, "invited viewer must read the op");
 
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let seen = query(&mut stranger_client, "stranger", todo_filter(&coordinate)).await;
@@ -377,7 +381,7 @@ async fn test_todo_op_fanout_filtered_live() {
     let d_tag = unique("todo-live");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(
@@ -388,10 +392,10 @@ async fn test_todo_op_fanout_filtered_live() {
     );
     send_ok(&mut owner_client, head, "private project").await;
 
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
 
@@ -469,7 +473,7 @@ async fn test_private_project_writer_publishes_viewer_cannot() {
     let d_tag = unique("todo-roles");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(
@@ -481,7 +485,7 @@ async fn test_private_project_writer_publishes_viewer_cannot() {
     send_ok(&mut owner_client, head, "private project").await;
 
     let list_id = todo_id();
-    let mut writer_client = BuzzTestClient::connect(&relay_url(), &writer)
+    let mut writer_client = BeekeeperTestClient::connect(&relay_url(), &writer)
         .await
         .expect("writer connect");
     send_ok(
@@ -491,7 +495,7 @@ async fn test_private_project_writer_publishes_viewer_cannot() {
     )
     .await;
 
-    let mut viewer_client = BuzzTestClient::connect(&relay_url(), &viewer)
+    let mut viewer_client = BeekeeperTestClient::connect(&relay_url(), &viewer)
         .await
         .expect("viewer connect");
     send_refused(
@@ -543,7 +547,7 @@ async fn test_malformed_and_unscoped_ops_are_refused() {
     let owner = Keys::generate();
     let d_tag = unique("todo-shape");
     let coordinate = project_coordinate(&owner, &d_tag);
-    let mut client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("connect");
 
@@ -635,7 +639,7 @@ async fn test_bridge_shape_rules_for_project_scoped_kinds() {
     let owner = Keys::generate();
     let d_tag = unique("todo-bridge");
     let coordinate = project_coordinate(&owner, &d_tag);
-    let mut client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("connect");
     send_ok(
@@ -731,7 +735,7 @@ async fn test_two_writers_fold_to_one_list() {
     let d_tag = unique("todo-fold");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     send_ok(
@@ -745,7 +749,7 @@ async fn test_two_writers_fold_to_one_list() {
         "private project",
     )
     .await;
-    let mut collab_client = BuzzTestClient::connect(&relay_url(), &collaborator)
+    let mut collab_client = BeekeeperTestClient::connect(&relay_url(), &collaborator)
         .await
         .expect("collaborator connect");
 
@@ -856,7 +860,7 @@ async fn test_two_writers_fold_to_one_list() {
     )
     .await;
 
-    let mut viewer_client = BuzzTestClient::connect(&relay_url(), &viewer)
+    let mut viewer_client = BeekeeperTestClient::connect(&relay_url(), &viewer)
         .await
         .expect("viewer connect");
     let events = query(&mut viewer_client, "viewer-fold", todo_filter(&coordinate)).await;
@@ -910,7 +914,7 @@ async fn test_personal_list_is_withheld_from_other_members() {
     let d_tag = unique("todo-personal");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     send_ok(
@@ -919,7 +923,7 @@ async fn test_personal_list_is_withheld_from_other_members() {
         "public project",
     )
     .await;
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
 
@@ -927,7 +931,7 @@ async fn test_personal_list_is_withheld_from_other_members() {
     // writes anything; the connection does nothing else until the receive
     // loop, since a REQ drained on the same socket would swallow the live
     // events of every other subscription.
-    let mut owner_live = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_live = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner live connect");
     let owner_sid = sub_id("personal-owner-live");
@@ -1103,7 +1107,7 @@ async fn test_todo_ops_do_not_cross_communities() {
     let d_tag = unique("todo-xcomm");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut client_a = BuzzTestClient::connect(&relay_url_a(), &owner)
+    let mut client_a = BeekeeperTestClient::connect(&relay_url_a(), &owner)
         .await
         .expect("community A connect");
     send_ok(
@@ -1125,7 +1129,7 @@ async fn test_todo_ops_do_not_cross_communities() {
         "community A reads its own op"
     );
 
-    let mut client_b = BuzzTestClient::connect(&relay_url_b(), &owner)
+    let mut client_b = BeekeeperTestClient::connect(&relay_url_b(), &owner)
         .await
         .expect("community B connect");
     let b_tag = unique("todo-xcomm-b");

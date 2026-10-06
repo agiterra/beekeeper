@@ -156,12 +156,12 @@ export function TerminalSubstrate({
   );
   const terminalStyle = terminalPalette
     ? ({
-        "--buzz-terminal-background": terminalPalette.background,
-        "--buzz-terminal-foreground": terminalPalette.foreground,
+        "--beekeeper-terminal-background": terminalPalette.background,
+        "--beekeeper-terminal-foreground": terminalPalette.foreground,
       } as React.CSSProperties)
     : undefined;
 
-  const forceBuzzFallback = React.useEffectEvent(() => {
+  const forceBeekeeperFallback = React.useEffectEvent(() => {
     handoffRef.current = { ...INITIAL_HANDOFF_STATE };
     setOwner("buzz");
   });
@@ -244,7 +244,7 @@ export function TerminalSubstrate({
   );
 
   React.useEffect(() => {
-    if (!enabled) forceBuzzFallback();
+    if (!enabled) forceBeekeeperFallback();
   }, [enabled]);
 
   React.useEffect(() => {
@@ -304,7 +304,7 @@ export function TerminalSubstrate({
 
   React.useLayoutEffect(() => {
     if (!enabled) {
-      forceBuzzFallback();
+      forceBeekeeperFallback();
       return;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -400,7 +400,7 @@ export function TerminalSubstrate({
     if (!canvas || !terminalPalette) return;
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) {
-      forceBuzzFallback();
+      forceBeekeeperFallback();
       return;
     }
     const dpr = window.devicePixelRatio || 1;
@@ -476,7 +476,7 @@ export function TerminalSubstrate({
   return (
     <section
       aria-label="Terminal"
-      className="buzz-terminal-substrate"
+      className="beekeeper-terminal-substrate"
       data-terminal-mode={mode}
       data-terminal-owner={owner}
       data-terminal-visible={visible ? "true" : "false"}
@@ -510,7 +510,7 @@ export function TerminalSubstrate({
           aria-valuemax={Math.round(window.innerHeight * 0.7)}
           aria-valuemin={180}
           aria-valuenow={Math.round(dockHeight)}
-          className="buzz-terminal-resize-handle"
+          className="beekeeper-terminal-resize-handle"
           onKeyDown={(event) => {
             if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
             event.preventDefault();
@@ -531,7 +531,7 @@ export function TerminalSubstrate({
             window.cancelAnimationFrame(resizeReportFrameRef.current);
             const handle = event.currentTarget;
             const substrate = handle.closest<HTMLElement>(
-              ".buzz-terminal-substrate",
+              ".beekeeper-terminal-substrate",
             );
             if (!substrate) return;
             const pointerId = event.pointerId;
@@ -600,20 +600,20 @@ export function TerminalSubstrate({
           tabIndex={0}
         />
       ) : null}
-      <div className="buzz-terminal-contract-bar">
-        <div className="buzz-terminal-tabs" role="tablist">
+      <div className="beekeeper-terminal-contract-bar">
+        <div className="beekeeper-terminal-tabs" role="tablist">
           {sessions.map((session, index) => (
             <div
               className={cn(
-                "buzz-terminal-tab",
-                session.active && "buzz-terminal-tab-active",
+                "beekeeper-terminal-tab",
+                session.active && "beekeeper-terminal-tab-active",
               )}
               key={session.id}
               role="presentation"
             >
               <button
                 aria-label={`Close ${session.title}`}
-                className="buzz-terminal-close"
+                className="beekeeper-terminal-close"
                 disabled={session.closing}
                 onClick={() => runTabAction(() => onCloseSession(session.id))}
                 type="button"
@@ -623,13 +623,13 @@ export function TerminalSubstrate({
               <button
                 aria-label={`Terminal ${index + 1}${session.closing ? ", closing" : session.title !== "SHELL" ? `, ${session.title}` : ""}`}
                 aria-selected={session.active}
-                className="buzz-terminal-tab-select"
+                className="beekeeper-terminal-tab-select"
                 disabled={session.closing}
                 onClick={() => runTabAction(() => onSelectSession(session.id))}
                 role="tab"
                 type="button"
               >
-                <span className="buzz-terminal-designator buzz-terminal-tab-title">
+                <span className="beekeeper-terminal-designator beekeeper-terminal-tab-title">
                   {session.title === "SHELL" ? (
                     <>
                       <ChevronRight />
@@ -640,26 +640,26 @@ export function TerminalSubstrate({
                   )}
                 </span>
                 {session.closing ? (
-                  <span className="buzz-terminal-tab-title">Closing…</span>
+                  <span className="beekeeper-terminal-tab-title">Closing…</span>
                 ) : null}
               </button>
             </div>
           ))}
           <button
             aria-label="New Terminal tab"
-            className="buzz-terminal-new-tab"
+            className="beekeeper-terminal-new-tab"
             onClick={() => runTabAction(onNewSession)}
             type="button"
           >
             <Plus />
           </button>
         </div>
-        <div className="buzz-terminal-readout">
+        <div className="beekeeper-terminal-readout">
           <button
             aria-label={
               mode === "maximized" ? "Restore Terminal" : "Maximize Terminal"
             }
-            className="buzz-terminal-window-action"
+            className="beekeeper-terminal-window-action"
             onClick={() =>
               onModeChange(mode === "maximized" ? "docked" : "maximized")
             }
@@ -669,7 +669,7 @@ export function TerminalSubstrate({
           </button>
           <button
             aria-label="Hide Terminal"
-            className="buzz-terminal-window-action"
+            className="beekeeper-terminal-window-action"
             onClick={onHide}
             type="button"
           >
@@ -677,11 +677,11 @@ export function TerminalSubstrate({
           </button>
         </div>
       </div>
-      <div className="buzz-terminal-viewport px-5 pt-2">
+      <div className="beekeeper-terminal-viewport px-5 pt-2">
         <canvas ref={canvasRef} />
         <div
           aria-hidden="true"
-          className="buzz-terminal-selection-layer"
+          className="beekeeper-terminal-selection-layer"
           onCopy={(event) => {
             const selection = window.getSelection();
             const grid = gridRef.current;
@@ -756,13 +756,16 @@ export function TerminalSubstrate({
           ))}
         </div>
         {welcomeVisible && banner ? (
-          <canvas className="buzz-terminal-welcome" ref={bannerCanvasRef} />
+          <canvas
+            className="beekeeper-terminal-welcome"
+            ref={bannerCanvasRef}
+          />
         ) : null}
         <textarea
           aria-label="Terminal input"
           autoCapitalize="off"
           autoComplete="off"
-          className="buzz-terminal-input"
+          className="beekeeper-terminal-input"
           onCompositionEnd={() => {
             handoffRef.current = reduceHandoff(handoffRef.current, {
               type: "composition-end",

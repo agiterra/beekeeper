@@ -195,7 +195,9 @@ test("a refused directory is repaired with its prompt retained and a fresh signe
     .poll(
       async () =>
         (
-          await page.evaluate(() => window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [])
+          await page.evaluate(
+            () => window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [],
+          )
         ).filter((event) => event.kind === 44227).length,
     )
     .toBe(1);
@@ -207,7 +209,7 @@ test("a refused directory is repaired with its prompt retained and a fresh signe
 
   const creates = () =>
     page.evaluate(async (channelId) => {
-      const query = window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
+      const query = window.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__;
       if (!query) throw new Error("mock query missing");
       const answer = await query("query_relay_filters", {
         filters: [{ kinds: [44221], "#h": [channelId], limit: 100 }],
@@ -256,7 +258,7 @@ test("a refused directory is repaired with its prompt retained and a fresh signe
       PROVIDER_SECRET,
     );
     await page.evaluate((event) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seed missing");
       seed({ channelName: "engineering", event });
     }, receipt);
@@ -326,14 +328,14 @@ test("a refused directory is repaired with its prompt retained and a fresh signe
   ]);
   // The prompt was published once, by the field — never by either Start.
   expect(
-    (await page.evaluate(() => window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [])).filter(
-      (event) => event.kind === 44227,
-    ),
+    (
+      await page.evaluate(() => window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [])
+    ).filter((event) => event.kind === 44227),
   ).toHaveLength(1);
   await answer(repaired.commandId, false);
   const receipts = await page.evaluate(
     async ({ kind, channelId }) => {
-      const answer = await window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.(
+      const answer = await window.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?.(
         "query_relay_filters",
         {
           filters: [{ kinds: [kind], "#h": [channelId], limit: 100 }],

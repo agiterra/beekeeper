@@ -7,11 +7,11 @@ import subprocess
 from typing import Any
 
 
-class BuzzCliError(RuntimeError):
+class BeekeeperCliError(RuntimeError):
     """A buzz CLI invocation failed."""
 
 
-class BuzzCli:
+class BeekeeperCli:
     """Run buzz CLI commands as one relay identity (key + NIP-OA auth tag)."""
 
     def __init__(
@@ -47,9 +47,9 @@ class BuzzCli:
                 },
             )
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise BuzzCliError(f"buzz {args[0]}: {error}") from error
+            raise BeekeeperCliError(f"buzz {args[0]}: {error}") from error
         if completed.returncode != 0:
-            raise BuzzCliError(
+            raise BeekeeperCliError(
                 f"buzz {' '.join(args)} exited {completed.returncode}: "
                 f"{completed.stderr.strip() or completed.stdout.strip()}"
             )
@@ -58,7 +58,7 @@ class BuzzCli:
         try:
             return json.loads(completed.stdout)
         except json.JSONDecodeError as error:
-            raise BuzzCliError(
+            raise BeekeeperCliError(
                 f"buzz {args[0]} returned non-JSON output: {completed.stdout[:200]!r}"
             ) from error
 
@@ -78,7 +78,7 @@ class BuzzCli:
         )
         channel_id = response.get("channel_id") if isinstance(response, dict) else None
         if not channel_id:
-            raise BuzzCliError(f"channel create returned no channel_id: {response}")
+            raise BeekeeperCliError(f"channel create returned no channel_id: {response}")
         return channel_id
 
     def add_member(self, channel_id: str, pubkey: str) -> None:

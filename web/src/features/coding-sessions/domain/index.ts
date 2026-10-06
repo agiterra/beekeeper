@@ -29,10 +29,10 @@ export {
   isTruncatedHistoryPage,
 } from "./filters.ts";
 export {
-  type BuzzCodingSessionMetadataV1,
+  type BeekeeperCodingSessionMetadataV1,
   type CodingSessionLifecycleReceipt,
   isCodingSessionTurnReceiptStatus,
-  parseBuzzCodingSessionMetadata,
+  parseBeekeeperCodingSessionMetadata,
   parseCodingSessionLifecycleReceipt,
 } from "./ingressPayloads.ts";
 export {
@@ -94,8 +94,8 @@ export {
   UNTITLED_SESSION_NAME,
 } from "./sessionTitle.ts";
 export {
-  type BuzzCodingSessionTranscriptV1,
-  parseBuzzCodingSessionTranscript,
+  type BeekeeperCodingSessionTranscriptV1,
+  parseBeekeeperCodingSessionTranscript,
 } from "./transcriptEnvelope.ts";
 export {
   type CodingSessionTranscriptBlock,

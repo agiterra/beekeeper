@@ -43,7 +43,7 @@ Future<void> showNewCodingSessionSheet(
     );
     return;
   }
-  await showBuzzModalBottomSheet<void>(
+  await showBeekeeperModalBottomSheet<void>(
     context: context,
     title: 'New coding session',
     isScrollControlled: true,

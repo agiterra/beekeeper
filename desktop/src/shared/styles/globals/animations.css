@@ -2,7 +2,7 @@
   animation: sprout-arc-spinner-spin 500ms linear infinite;
 }
 
-@keyframes buzz-qr-cell-reveal {
+@keyframes beekeeper-qr-cell-reveal {
   0% {
     opacity: 0;
     transform: scale(0);
@@ -49,16 +49,16 @@
   }
 }
 
-.buzz-qr-cell-reveal {
+.beekeeper-qr-cell-reveal {
   opacity: 0;
   transform-box: fill-box;
   transform-origin: center;
-  animation: buzz-qr-cell-reveal 58ms linear var(--buzz-qr-reveal-delay, 0ms)
-    forwards;
+  animation: beekeeper-qr-cell-reveal 58ms linear
+    var(--beekeeper-qr-reveal-delay, 0ms) forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .buzz-qr-cell-reveal {
+  .beekeeper-qr-cell-reveal {
     opacity: 1;
     transform: none;
     animation: none;
@@ -71,25 +71,25 @@
   }
 }
 
-.buzz-wave-hand {
+.beekeeper-wave-hand {
   display: inline-block;
   transform-origin: 70% 70%;
   will-change: transform;
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .buzz-wave-hover-trigger:hover .buzz-wave-hand {
-    animation: buzz-wave-hand 1200ms ease-in-out both;
+  .beekeeper-wave-hover-trigger:hover .beekeeper-wave-hand {
+    animation: beekeeper-wave-hand 1200ms ease-in-out both;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .buzz-wave-hover-trigger:hover .buzz-wave-hand {
+  .beekeeper-wave-hover-trigger:hover .beekeeper-wave-hand {
     animation: none;
   }
 }
 
-@keyframes buzz-wave-hand {
+@keyframes beekeeper-wave-hand {
   0%,
   100% {
     transform: rotate(0deg);
@@ -108,7 +108,7 @@
   }
 }
 
-.buzz-emoji-mart {
+.beekeeper-emoji-mart {
   align-items: stretch;
   display: flex;
   justify-content: stretch;
@@ -116,7 +116,7 @@
   width: 100%;
 }
 
-.buzz-emoji-mart > div {
+.beekeeper-emoji-mart > div {
   align-items: stretch;
   display: flex;
   height: 100%;
@@ -127,17 +127,17 @@
   width: 100%;
 }
 
-.buzz-emoji-mart em-emoji-picker {
+.beekeeper-emoji-mart em-emoji-picker {
   --border-radius: 12px;
   --category-icon-size: 24px;
   --color-border: transparent;
   --color-border-over: rgb(255 255 255 / 0.1);
   --font-family: inherit;
   --font-size: 14px;
-  --rgb-accent: var(--buzz-emoji-picker-rgb-color, 245, 247, 255);
-  --rgb-background: var(--buzz-emoji-picker-rgb-background, 54, 58, 79);
-  --rgb-color: var(--buzz-emoji-picker-rgb-color, 245, 247, 255);
-  --rgb-input: var(--buzz-emoji-picker-rgb-input, 47, 51, 68);
+  --rgb-accent: var(--beekeeper-emoji-picker-rgb-color, 245, 247, 255);
+  --rgb-background: var(--beekeeper-emoji-picker-rgb-background, 54, 58, 79);
+  --rgb-color: var(--beekeeper-emoji-picker-rgb-color, 245, 247, 255);
+  --rgb-input: var(--beekeeper-emoji-picker-rgb-input, 47, 51, 68);
   --shadow: none;
   height: 100%;
   max-height: 100%;
@@ -146,60 +146,60 @@
   width: 100%;
 }
 
-@keyframes buzz-avatar-squish {
+@keyframes beekeeper-avatar-squish {
   0% {
     transform: translate(
-        var(--buzz-avatar-emoji-offset-x, 0px),
-        var(--buzz-avatar-emoji-offset-y, 0px)
+        var(--beekeeper-avatar-emoji-offset-x, 0px),
+        var(--beekeeper-avatar-emoji-offset-y, 0px)
       )
       scale(1);
   }
 
   42% {
     transform: translate(
-        var(--buzz-avatar-emoji-offset-x, 0px),
-        var(--buzz-avatar-emoji-offset-y, 0px)
+        var(--beekeeper-avatar-emoji-offset-x, 0px),
+        var(--beekeeper-avatar-emoji-offset-y, 0px)
       )
       scaleX(0.96) scaleY(0.88);
   }
 
   100% {
     transform: translate(
-        var(--buzz-avatar-emoji-offset-x, 0px),
-        var(--buzz-avatar-emoji-offset-y, 0px)
+        var(--beekeeper-avatar-emoji-offset-x, 0px),
+        var(--beekeeper-avatar-emoji-offset-y, 0px)
       )
       scale(1);
   }
 }
 
-.buzz-avatar-emoji-glyph {
-  --buzz-avatar-emoji-offset-x: 1px;
-  --buzz-avatar-emoji-offset-y: 7px;
+.beekeeper-avatar-emoji-glyph {
+  --beekeeper-avatar-emoji-offset-x: 1px;
+  --beekeeper-avatar-emoji-offset-y: 7px;
   transform: translate(
-    var(--buzz-avatar-emoji-offset-x),
-    var(--buzz-avatar-emoji-offset-y)
+    var(--beekeeper-avatar-emoji-offset-x),
+    var(--beekeeper-avatar-emoji-offset-y)
   );
 }
 
-.buzz-avatar-squish {
-  animation: buzz-avatar-squish 200ms ease-out;
+.beekeeper-avatar-squish {
+  animation: beekeeper-avatar-squish 200ms ease-out;
   transform-origin: center;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .buzz-avatar-squish {
+  .beekeeper-avatar-squish {
     animation: none;
   }
 }
 
-.buzz-shimmer {
-  --buzz-shimmer-duration: 2600ms;
-  --buzz-shimmer-highlight: color-mix(
+.beekeeper-shimmer {
+  --beekeeper-shimmer-duration: 2600ms;
+  --beekeeper-shimmer-highlight: color-mix(
     in srgb,
     hsl(var(--background)) 60%,
     hsl(var(--muted-foreground)) 40%
   );
-  --buzz-shimmer-spread: 2rem;
+  --beekeeper-shimmer-spread: 2rem;
 
   color: hsl(var(--muted-foreground));
   display: inline-block;
@@ -218,14 +218,15 @@
  * content) is used so the duplicate text can be aria-hidden — pseudo-element
  * text is inconsistently exposed to screen readers and cannot be hidden.
  */
-.buzz-shimmer > .buzz-shimmer-overlay {
-  animation: buzz-shimmer var(--buzz-shimmer-duration) ease-in-out infinite;
+.beekeeper-shimmer > .beekeeper-shimmer-overlay {
+  animation: beekeeper-shimmer var(--beekeeper-shimmer-duration) ease-in-out
+    infinite;
   background-clip: text;
   background-image: linear-gradient(
     90deg,
-    transparent calc(50% - var(--buzz-shimmer-spread)),
-    var(--buzz-shimmer-highlight) 50%,
-    transparent calc(50% + var(--buzz-shimmer-spread))
+    transparent calc(50% - var(--beekeeper-shimmer-spread)),
+    var(--beekeeper-shimmer-highlight) 50%,
+    transparent calc(50% + var(--beekeeper-shimmer-spread))
   );
   color: transparent;
   inset: 0;
@@ -238,7 +239,7 @@
   -webkit-text-fill-color: transparent;
 }
 
-@keyframes buzz-shimmer {
+@keyframes beekeeper-shimmer {
   0%,
   100% {
     opacity: 0;
@@ -250,13 +251,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .buzz-shimmer > .buzz-shimmer-overlay {
+  .beekeeper-shimmer > .beekeeper-shimmer-overlay {
     animation: none;
     display: none;
   }
 }
 
-.buzz-poof-layer {
+.beekeeper-poof-layer {
   inset: 0;
   overflow: hidden;
   pointer-events: none;
@@ -264,22 +265,22 @@
   z-index: 2147483647;
 }
 
-.buzz-poof-burst {
+.beekeeper-poof-burst {
   contain: layout paint style;
-  height: var(--buzz-poof-size);
+  height: var(--beekeeper-poof-size);
   left: 0;
   position: absolute;
   top: 0;
   transform: translate3d(
-    calc(var(--buzz-poof-x) - 50%),
-    calc(var(--buzz-poof-y) - 50%),
+    calc(var(--beekeeper-poof-x) - 50%),
+    calc(var(--beekeeper-poof-y) - 50%),
     0
   );
-  width: var(--buzz-poof-size);
+  width: var(--beekeeper-poof-size);
 }
 
-.buzz-poof-frame {
-  animation: buzz-poof-frame 400ms linear both;
+.beekeeper-poof-frame {
+  animation: beekeeper-poof-frame 400ms linear both;
   height: 100%;
   inset: 0;
   object-fit: contain;
@@ -290,27 +291,27 @@
   width: 100%;
 }
 
-.buzz-poof-frame-1 {
-  animation-name: buzz-poof-frame-1;
+.beekeeper-poof-frame-1 {
+  animation-name: beekeeper-poof-frame-1;
 }
 
-.buzz-poof-frame-2 {
-  animation-name: buzz-poof-frame-2;
+.beekeeper-poof-frame-2 {
+  animation-name: beekeeper-poof-frame-2;
 }
 
-.buzz-poof-frame-3 {
-  animation-name: buzz-poof-frame-3;
+.beekeeper-poof-frame-3 {
+  animation-name: beekeeper-poof-frame-3;
 }
 
-.buzz-poof-frame-4 {
-  animation-name: buzz-poof-frame-4;
+.beekeeper-poof-frame-4 {
+  animation-name: beekeeper-poof-frame-4;
 }
 
-.buzz-poof-frame-5 {
-  animation-name: buzz-poof-frame-5;
+.beekeeper-poof-frame-5 {
+  animation-name: beekeeper-poof-frame-5;
 }
 
-@keyframes buzz-poof-frame-1 {
+@keyframes beekeeper-poof-frame-1 {
   0%,
   19.99% {
     opacity: 1;
@@ -324,7 +325,7 @@
   }
 }
 
-@keyframes buzz-poof-frame-2 {
+@keyframes beekeeper-poof-frame-2 {
   0%,
   19.99% {
     opacity: 0;
@@ -343,7 +344,7 @@
   }
 }
 
-@keyframes buzz-poof-frame-3 {
+@keyframes beekeeper-poof-frame-3 {
   0%,
   39.99% {
     opacity: 0;
@@ -362,7 +363,7 @@
   }
 }
 
-@keyframes buzz-poof-frame-4 {
+@keyframes beekeeper-poof-frame-4 {
   0%,
   59.99% {
     opacity: 0;
@@ -381,7 +382,7 @@
   }
 }
 
-@keyframes buzz-poof-frame-5 {
+@keyframes beekeeper-poof-frame-5 {
   0%,
   79.99% {
     opacity: 0;
@@ -400,11 +401,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .buzz-poof-frame {
+  .beekeeper-poof-frame {
     animation: buzz-poof-frame-reduced 180ms ease-out both;
   }
 
-  .buzz-poof-frame:not(.buzz-poof-frame-3) {
+  .beekeeper-poof-frame:not(.beekeeper-poof-frame-3) {
     display: none;
   }
 }
@@ -419,7 +420,7 @@
   }
 }
 
-.buzz-avatar-hue-scrubber {
+.beekeeper-avatar-hue-scrubber {
   background: linear-gradient(
     90deg,
     #ff0000 0%,
@@ -436,7 +437,7 @@
   -webkit-user-select: none;
 }
 
-.buzz-animated-count {
+.beekeeper-animated-count {
   display: inline-block;
   font-kerning: none;
   font-variant-numeric: tabular-nums;
@@ -453,7 +454,7 @@
   display: none;
 }
 
-.buzz-sidebar-action-card--success {
+.beekeeper-sidebar-action-card--success {
   background-color: color-mix(
     in srgb,
     var(--status-added) 12%,
@@ -467,7 +468,7 @@
   color: hsl(var(--foreground));
 }
 
-.buzz-sidebar-action-card--success:hover {
+.beekeeper-sidebar-action-card--success:hover {
   background-color: color-mix(
     in srgb,
     var(--status-added) 16%,
@@ -475,7 +476,7 @@
   );
 }
 
-.dark .buzz-sidebar-action-card--success {
+.dark .beekeeper-sidebar-action-card--success {
   background-color: color-mix(
     in srgb,
     var(--status-added) 15%,
@@ -488,7 +489,7 @@
   );
 }
 
-.dark .buzz-sidebar-action-card--success:hover {
+.dark .beekeeper-sidebar-action-card--success:hover {
   background-color: color-mix(
     in srgb,
     var(--status-added) 19%,
@@ -500,17 +501,17 @@
   color: var(--status-added);
 }
 
-.buzz-sidebar-action-description {
-  --buzz-sidebar-action-description-line-height: 1.375em;
+.beekeeper-sidebar-action-description {
+  --beekeeper-sidebar-action-description-line-height: 1.375em;
   display: inline-block;
-  line-height: var(--buzz-sidebar-action-description-line-height);
+  line-height: var(--beekeeper-sidebar-action-description-line-height);
   max-width: 100%;
   overflow-wrap: break-word;
 }
 
 .buzz-sidebar-action-description__motion {
   display: block;
-  height: var(--buzz-sidebar-action-description-line-height);
+  height: var(--beekeeper-sidebar-action-description-line-height);
   overflow: hidden;
 }
 
@@ -519,7 +520,7 @@
     cubic-bezier(0.2, 0.8, 0.2, 1) both;
   display: flex;
   flex-direction: column;
-  line-height: var(--buzz-sidebar-action-description-line-height);
+  line-height: var(--beekeeper-sidebar-action-description-line-height);
   will-change: transform;
 }
 
@@ -528,8 +529,8 @@
    state above wraps freely. */
 .buzz-sidebar-action-description__reel > span {
   display: block;
-  height: var(--buzz-sidebar-action-description-line-height);
-  line-height: var(--buzz-sidebar-action-description-line-height);
+  height: var(--beekeeper-sidebar-action-description-line-height);
+  line-height: var(--beekeeper-sidebar-action-description-line-height);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -542,7 +543,7 @@
 
   to {
     transform: translateY(
-      calc(-1 * var(--buzz-sidebar-action-description-line-height))
+      calc(-1 * var(--beekeeper-sidebar-action-description-line-height))
     );
   }
 }
@@ -659,73 +660,73 @@
    gate. Restored from pre-#1570; the animated Buzz mark is the hero (see
    AppLoadingGate in app/App.tsx). */
 
-@property --buzz-grainient-x-0 {
+@property --beekeeper-grainient-x-0 {
   syntax: "<percentage>";
   inherits: false;
   initial-value: 85%;
 }
 
-@property --buzz-grainient-y-0 {
+@property --beekeeper-grainient-y-0 {
   syntax: "<percentage>";
   inherits: false;
   initial-value: 80%;
 }
 
-@property --buzz-grainient-x-1 {
+@property --beekeeper-grainient-x-1 {
   syntax: "<percentage>";
   inherits: false;
   initial-value: 60%;
 }
 
-@property --buzz-grainient-y-1 {
+@property --beekeeper-grainient-y-1 {
   syntax: "<percentage>";
   inherits: false;
   initial-value: 24%;
 }
 
-@property --buzz-grainient-x-2 {
+@property --beekeeper-grainient-x-2 {
   syntax: "<percentage>";
   inherits: false;
   initial-value: 13%;
 }
 
-@property --buzz-grainient-y-2 {
+@property --beekeeper-grainient-y-2 {
   syntax: "<percentage>";
   inherits: false;
   initial-value: 82%;
 }
 
-@property --buzz-grainient-x-3 {
+@property --beekeeper-grainient-x-3 {
   syntax: "<percentage>";
   inherits: false;
   initial-value: 24%;
 }
 
-@property --buzz-grainient-y-3 {
+@property --beekeeper-grainient-y-3 {
   syntax: "<percentage>";
   inherits: false;
   initial-value: 7%;
 }
 
-.buzz-setup-loading-shell {
-  --buzz-grainient-alpha-strong: 0.46;
-  --buzz-grainient-alpha-medium: 0.34;
-  --buzz-grainient-alpha-soft: 0.24;
-  --buzz-grainient-color-0: hsl(
+.beekeeper-setup-loading-shell {
+  --beekeeper-grainient-alpha-strong: 0.46;
+  --beekeeper-grainient-alpha-medium: 0.34;
+  --beekeeper-grainient-alpha-soft: 0.24;
+  --beekeeper-grainient-color-0: hsl(
     var(--chart-5) /
-    var(--buzz-grainient-alpha-strong)
+    var(--beekeeper-grainient-alpha-strong)
   );
-  --buzz-grainient-color-1: hsl(
+  --beekeeper-grainient-color-1: hsl(
     var(--chart-3) /
-    var(--buzz-grainient-alpha-strong)
+    var(--beekeeper-grainient-alpha-strong)
   );
-  --buzz-grainient-color-2: hsl(
+  --beekeeper-grainient-color-2: hsl(
     var(--primary) /
-    var(--buzz-grainient-alpha-medium)
+    var(--beekeeper-grainient-alpha-medium)
   );
-  --buzz-grainient-color-3: hsl(
+  --beekeeper-grainient-color-3: hsl(
     var(--chart-2) /
-    var(--buzz-grainient-alpha-strong)
+    var(--beekeeper-grainient-alpha-strong)
   );
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
@@ -733,13 +734,13 @@
   position: relative;
 }
 
-.dark .buzz-setup-loading-shell {
-  --buzz-grainient-alpha-strong: 0.68;
-  --buzz-grainient-alpha-medium: 0.5;
-  --buzz-grainient-alpha-soft: 0.34;
+.dark .beekeeper-setup-loading-shell {
+  --beekeeper-grainient-alpha-strong: 0.68;
+  --beekeeper-grainient-alpha-medium: 0.5;
+  --beekeeper-grainient-alpha-soft: 0.34;
 }
 
-.buzz-setup-grainient {
+.beekeeper-setup-grainient {
   inset: 0;
   overflow: hidden;
   pointer-events: none;
@@ -754,44 +755,44 @@
 }
 
 .buzz-setup-grainient__wash {
-  --buzz-grainient-s-start-0: 9%;
-  --buzz-grainient-s-end-0: 55%;
-  --buzz-grainient-s-start-1: 5%;
-  --buzz-grainient-s-end-1: 72%;
-  --buzz-grainient-s-start-2: 5%;
-  --buzz-grainient-s-end-2: 52%;
-  --buzz-grainient-s-start-3: 13%;
-  --buzz-grainient-s-end-3: 68%;
-  --buzz-grainient-x-0: 85%;
-  --buzz-grainient-y-0: 80%;
-  --buzz-grainient-x-1: 60%;
-  --buzz-grainient-y-1: 24%;
-  --buzz-grainient-x-2: 13%;
-  --buzz-grainient-y-2: 82%;
-  --buzz-grainient-x-3: 24%;
-  --buzz-grainient-y-3: 7%;
+  --beekeeper-grainient-s-start-0: 9%;
+  --beekeeper-grainient-s-end-0: 55%;
+  --beekeeper-grainient-s-start-1: 5%;
+  --beekeeper-grainient-s-end-1: 72%;
+  --beekeeper-grainient-s-start-2: 5%;
+  --beekeeper-grainient-s-end-2: 52%;
+  --beekeeper-grainient-s-start-3: 13%;
+  --beekeeper-grainient-s-end-3: 68%;
+  --beekeeper-grainient-x-0: 85%;
+  --beekeeper-grainient-y-0: 80%;
+  --beekeeper-grainient-x-1: 60%;
+  --beekeeper-grainient-y-1: 24%;
+  --beekeeper-grainient-x-2: 13%;
+  --beekeeper-grainient-y-2: 82%;
+  --beekeeper-grainient-x-3: 24%;
+  --beekeeper-grainient-y-3: 7%;
   animation: buzz-grainient-orbit 10s linear infinite alternate;
   background-color: hsl(var(--background));
   background-image:
     radial-gradient(
-      circle at var(--buzz-grainient-x-0) var(--buzz-grainient-y-0),
-      var(--buzz-grainient-color-0) var(--buzz-grainient-s-start-0),
-      transparent var(--buzz-grainient-s-end-0)
+      circle at var(--beekeeper-grainient-x-0) var(--beekeeper-grainient-y-0),
+      var(--beekeeper-grainient-color-0) var(--beekeeper-grainient-s-start-0),
+      transparent var(--beekeeper-grainient-s-end-0)
     ),
     radial-gradient(
-      circle at var(--buzz-grainient-x-1) var(--buzz-grainient-y-1),
-      var(--buzz-grainient-color-1) var(--buzz-grainient-s-start-1),
-      transparent var(--buzz-grainient-s-end-1)
+      circle at var(--beekeeper-grainient-x-1) var(--beekeeper-grainient-y-1),
+      var(--beekeeper-grainient-color-1) var(--beekeeper-grainient-s-start-1),
+      transparent var(--beekeeper-grainient-s-end-1)
     ),
     radial-gradient(
-      circle at var(--buzz-grainient-x-2) var(--buzz-grainient-y-2),
-      var(--buzz-grainient-color-2) var(--buzz-grainient-s-start-2),
-      transparent var(--buzz-grainient-s-end-2)
+      circle at var(--beekeeper-grainient-x-2) var(--beekeeper-grainient-y-2),
+      var(--beekeeper-grainient-color-2) var(--beekeeper-grainient-s-start-2),
+      transparent var(--beekeeper-grainient-s-end-2)
     ),
     radial-gradient(
-      circle at var(--buzz-grainient-x-3) var(--buzz-grainient-y-3),
-      var(--buzz-grainient-color-3) var(--buzz-grainient-s-start-3),
-      transparent var(--buzz-grainient-s-end-3)
+      circle at var(--beekeeper-grainient-x-3) var(--beekeeper-grainient-y-3),
+      var(--beekeeper-grainient-color-3) var(--beekeeper-grainient-s-start-3),
+      transparent var(--beekeeper-grainient-s-end-3)
     );
   background-blend-mode: normal, normal, normal, normal;
   contain: paint;
@@ -817,25 +818,25 @@
 
 @keyframes buzz-grainient-orbit {
   0% {
-    --buzz-grainient-x-0: 85%;
-    --buzz-grainient-y-0: 80%;
-    --buzz-grainient-x-1: 60%;
-    --buzz-grainient-y-1: 24%;
-    --buzz-grainient-x-2: 13%;
-    --buzz-grainient-y-2: 82%;
-    --buzz-grainient-x-3: 24%;
-    --buzz-grainient-y-3: 7%;
+    --beekeeper-grainient-x-0: 85%;
+    --beekeeper-grainient-y-0: 80%;
+    --beekeeper-grainient-x-1: 60%;
+    --beekeeper-grainient-y-1: 24%;
+    --beekeeper-grainient-x-2: 13%;
+    --beekeeper-grainient-y-2: 82%;
+    --beekeeper-grainient-x-3: 24%;
+    --beekeeper-grainient-y-3: 7%;
   }
 
   100% {
-    --buzz-grainient-x-0: 31%;
-    --buzz-grainient-y-0: 94%;
-    --buzz-grainient-x-1: 2%;
-    --buzz-grainient-y-1: 25%;
-    --buzz-grainient-x-2: 98%;
-    --buzz-grainient-y-2: 20%;
-    --buzz-grainient-x-3: 95%;
-    --buzz-grainient-y-3: 92%;
+    --beekeeper-grainient-x-0: 31%;
+    --beekeeper-grainient-y-0: 94%;
+    --beekeeper-grainient-x-1: 2%;
+    --beekeeper-grainient-y-1: 25%;
+    --beekeeper-grainient-x-2: 98%;
+    --beekeeper-grainient-y-2: 20%;
+    --beekeeper-grainient-x-3: 95%;
+    --beekeeper-grainient-y-3: 92%;
   }
 }
 

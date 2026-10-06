@@ -47,7 +47,7 @@ use beekeeper_core::model_registry_source::{
     ResolvedModelRegistry, AGENTS_REPO_REGISTRY_FILE,
 };
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 use super::catalog::{load_catalogs, CatalogSnapshot};
@@ -138,7 +138,7 @@ pub fn catalog_revision(snapshot: &CatalogSnapshot) -> Option<u64> {
 /// Never fails the check — a relay that cannot be reached is not a stale
 /// registry — but a row whose runs do not resolve says so, and never reads
 /// `confidence: high`.
-pub async fn resolve_measured_runs(client: &BuzzClient, registry: &Registry) -> Vec<Value> {
+pub async fn resolve_measured_runs(client: &BeekeeperClient, registry: &Registry) -> Vec<Value> {
     let mut rows = Vec::new();
     for target in &registry.targets {
         let Some(measured) = &target.measured else {
@@ -189,7 +189,7 @@ pub async fn resolve_measured_runs(client: &BuzzClient, registry: &Registry) -> 
 /// Exit 4 ([`CliError::Other`]) when the registry is stale — an offered target
 /// has no row. A dormant row is reported and does **not** fail.
 pub async fn cmd_registry_check(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     registry_path: Option<&str>,
     format: &crate::OutputFormat,

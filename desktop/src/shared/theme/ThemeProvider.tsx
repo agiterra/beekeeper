@@ -201,13 +201,13 @@ function applyAccentColor(value: string) {
     const styles = window.getComputedStyle(root);
     const foreground = styles.getPropertyValue("--foreground").trim();
     const background = styles.getPropertyValue("--background").trim();
-    root.style.setProperty("--buzz-selected-accent", foreground);
+    root.style.setProperty("--beekeeper-selected-accent", foreground);
     root.style.setProperty(
-      "--buzz-video-review-accent",
+      "--beekeeper-video-review-accent",
       VIDEO_REVIEW_NEUTRAL_ACCENT,
     );
     root.style.setProperty(
-      "--buzz-video-review-accent-foreground",
+      "--beekeeper-video-review-accent-foreground",
       VIDEO_REVIEW_NEUTRAL_ACCENT,
     );
     root.style.setProperty("--primary", foreground);
@@ -222,10 +222,10 @@ function applyAccentColor(value: string) {
   const hex = value;
   const accentHsl = hexToHsl(hex);
   const fgHsl = hexToHsl(getContrastColor(hex));
-  root.style.setProperty("--buzz-selected-accent", accentHsl);
-  root.style.setProperty("--buzz-video-review-accent", accentHsl);
+  root.style.setProperty("--beekeeper-selected-accent", accentHsl);
+  root.style.setProperty("--beekeeper-video-review-accent", accentHsl);
   root.style.setProperty(
-    "--buzz-video-review-accent-foreground",
+    "--beekeeper-video-review-accent-foreground",
     getReviewAccentForeground(hex),
   );
   root.style.setProperty("--primary", accentHsl);
@@ -243,7 +243,7 @@ function applyAccentColor(value: string) {
  * appearance panel hides the accent picker. The user's chosen accent is left
  * untouched in storage so it returns when they switch back to another theme.
  */
-export function isBuzzTheme(themeName: string): boolean {
+export function isBeekeeperTheme(themeName: string): boolean {
   return themeName === "buzz" || themeName === "buzz-dark";
 }
 
@@ -255,22 +255,22 @@ function resolveEffectiveAccent(
   themeName: string,
   accentColor: string,
 ): string {
-  return isBuzzTheme(themeName) ? NEUTRAL_ACCENT : accentColor;
+  return isBeekeeperTheme(themeName) ? NEUTRAL_ACCENT : accentColor;
 }
 
 /** Toggle the Buzz-specific gradient marker independently from glass. */
-function applyBuzzSidebar(themeName: string) {
+function applyBeekeeperSidebar(themeName: string) {
   const root = document.documentElement;
-  if (isBuzzTheme(themeName)) {
-    root.setAttribute("data-buzz-sidebar", "");
+  if (isBeekeeperTheme(themeName)) {
+    root.setAttribute("data-beekeeper-sidebar", "");
     // Keep the concrete Buzz variant on the root as well as the generic
     // marker. The gradient stylesheet matches this attribute directly, which
     // makes WKWebView invalidate the painted background when light/dark mode
     // changes instead of relying only on a custom-property dependency update.
-    root.setAttribute("data-buzz-theme", themeName);
+    root.setAttribute("data-beekeeper-theme", themeName);
   } else {
-    root.removeAttribute("data-buzz-sidebar");
-    root.removeAttribute("data-buzz-theme");
+    root.removeAttribute("data-beekeeper-sidebar");
+    root.removeAttribute("data-beekeeper-theme");
   }
 }
 
@@ -407,7 +407,7 @@ function applyCachedVars(): string | null {
     }
     root.classList.remove("light", "dark");
     root.classList.add(isDark ? "dark" : "light");
-    applyBuzzSidebar(themeName);
+    applyBeekeeperSidebar(themeName);
     glassThemeReady = true;
 
     const accent = getStorageItem(ACCENT_STORAGE_KEY) ?? DEFAULT_ACCENT;
@@ -448,7 +448,7 @@ async function applyTheme(name: SyntaxThemeName): Promise<{
 
   root.classList.remove("light", "dark");
   root.classList.add(isDark ? "dark" : "light");
-  applyBuzzSidebar(name);
+  applyBeekeeperSidebar(name);
   glassThemeReady = true;
   maybeEnableGlassBackground(glassVibrancyRequest);
 
@@ -579,7 +579,7 @@ export function ThemeProvider({
   // but remove the live marker for every other theme.
   useEffect(() => {
     setProminentActiveTabActive(
-      prominentActiveTab && isBuzzTheme(effectiveTheme),
+      prominentActiveTab && isBeekeeperTheme(effectiveTheme),
     );
   }, [effectiveTheme, prominentActiveTab]);
 

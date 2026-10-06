@@ -10,8 +10,8 @@ library;
 import '../relay/relay_validation.dart';
 
 /// A parsed deep link supported by the app.
-sealed class BuzzDeepLink {
-  const BuzzDeepLink();
+sealed class BeekeeperDeepLink {
+  const BeekeeperDeepLink();
 }
 
 /// A parsed relay invite link.
@@ -19,7 +19,7 @@ sealed class BuzzDeepLink {
 /// Canonical share links are `https://<relay>/invite/<code>`. The custom
 /// `beekeeper://join?relay=<ws(s)://relay>&code=<code>` form is only an installed-app
 /// handoff from the web landing page.
-class InviteDeepLink extends BuzzDeepLink {
+class InviteDeepLink extends BeekeeperDeepLink {
   /// Relay URL normalized to the websocket scheme used by the app.
   final String relayUrl;
 
@@ -53,7 +53,7 @@ class InviteDeepLink extends BuzzDeepLink {
 /// A parsed channel-only deep link.
 ///
 /// Canonical form: `beekeeper://channel/<channel-uuid>`.
-class ChannelDeepLink extends BuzzDeepLink {
+class ChannelDeepLink extends BeekeeperDeepLink {
   /// Channel UUID from the sole path segment.
   final String channelId;
 
@@ -71,7 +71,7 @@ class ChannelDeepLink extends BuzzDeepLink {
 }
 
 /// A parsed `beekeeper://message` deep link.
-class MessageDeepLink extends BuzzDeepLink {
+class MessageDeepLink extends BeekeeperDeepLink {
   /// Channel UUID from the `channel` query param.
   final String channelId;
 
@@ -284,13 +284,13 @@ InviteDeepLink? parseInviteDeepLink(Uri uri) {
 }
 
 /// Parse any supported Buzz deep link.
-BuzzDeepLink? parseBuzzDeepLink(Uri uri) =>
+BeekeeperDeepLink? parseBeekeeperDeepLink(Uri uri) =>
     parseInviteDeepLink(uri) ??
     parseChannelDeepLink(uri) ??
     parseMessageDeepLink(uri);
 
 /// A validated Buzz repository, pull request, or issue permalink.
-class EntityDeepLink extends BuzzDeepLink {
+class EntityDeepLink extends BeekeeperDeepLink {
   final String type;
   final String owner;
   final String repository;

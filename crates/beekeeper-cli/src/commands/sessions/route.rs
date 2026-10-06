@@ -31,7 +31,7 @@ use beekeeper_core::coding_session_routing::{
     RoutingDecision,
 };
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 use super::catalog::CatalogSnapshot;
@@ -318,7 +318,7 @@ pub fn route_error(error: &RouteError) -> CliError {
 /// when nothing clears the bar.
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_route(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     registry_path: Option<&str>,
     request: &RouteRequest,

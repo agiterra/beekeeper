@@ -29,8 +29,8 @@ export type MockCodingSessionNamingSetCall = Record<string, unknown>;
 
 declare global {
   interface Window {
-    __BUZZ_E2E_CODING_SESSION_NAMING__?: MockCodingSessionNamingSettings;
-    __BUZZ_E2E_CODING_SESSION_NAMING_SET_CALLS__?: MockCodingSessionNamingSetCall[];
+    __BEEKEEPER_E2E_CODING_SESSION_NAMING__?: MockCodingSessionNamingSettings;
+    __BEEKEEPER_E2E_CODING_SESSION_NAMING_SET_CALLS__?: MockCodingSessionNamingSetCall[];
   }
 }
 
@@ -95,15 +95,15 @@ export function handleMockCodingSessionNamingCommand(
 ): unknown | undefined {
   if (!COMMANDS.has(command)) return undefined;
   if (!seed) throw new Error(`Unsupported mocked Tauri command: ${command}`);
-  window.__BUZZ_E2E_CODING_SESSION_NAMING__ ??= { ...seed };
-  const current = window.__BUZZ_E2E_CODING_SESSION_NAMING__;
+  window.__BEEKEEPER_E2E_CODING_SESSION_NAMING__ ??= { ...seed };
+  const current = window.__BEEKEEPER_E2E_CODING_SESSION_NAMING__;
   if (command === "coding_session_naming_settings") {
     return { hostModeMismatch: null, ...current };
   }
   const request = { ...((payload ?? {}) as Record<string, unknown>) };
-  window.__BUZZ_E2E_CODING_SESSION_NAMING_SET_CALLS__ ??= [];
-  window.__BUZZ_E2E_CODING_SESSION_NAMING_SET_CALLS__.push(request);
+  window.__BEEKEEPER_E2E_CODING_SESSION_NAMING_SET_CALLS__ ??= [];
+  window.__BEEKEEPER_E2E_CODING_SESSION_NAMING_SET_CALLS__.push(request);
   const next = applyMockCodingSessionNamingSave(current, request);
-  window.__BUZZ_E2E_CODING_SESSION_NAMING__ = next;
+  window.__BEEKEEPER_E2E_CODING_SESSION_NAMING__ = next;
   return { ...next };
 }

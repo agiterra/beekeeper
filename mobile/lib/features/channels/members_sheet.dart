@@ -5,7 +5,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../shared/theme/theme.dart';
 import '../../shared/widgets/avatar_image.dart';
-import '../../shared/widgets/buzz_loading_indicator.dart';
+import '../../shared/widgets/beekeeper_loading_indicator.dart';
 import '../../shared/widgets/modal_presentation.dart';
 import '../profile/user_cache_provider.dart';
 import '../profile/user_profile.dart';
@@ -52,7 +52,7 @@ class MembersSheet extends HookConsumerWidget {
       navigator.pop();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!navigator.mounted) return;
-        showBuzzModalBottomSheet<void>(
+        showBeekeeperModalBottomSheet<void>(
           context: navigator.context,
           isScrollControlled: true,
           showDragHandle: true,
@@ -142,7 +142,7 @@ class MembersSheet extends HookConsumerWidget {
             ],
           ),
           loading: () => const Center(
-            child: BuzzLoadingIndicator(
+            child: BeekeeperLoadingIndicator(
               size: 44,
               semanticLabel: 'Loading members',
             ),
@@ -232,7 +232,7 @@ class _MemberTile extends ConsumerWidget {
           ? Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                BuzzLoadingIndicator(
+                BeekeeperLoadingIndicator(
                   size: 14,
                   color: context.appColors.success,
                   semanticLabel: 'Agent working',
@@ -288,7 +288,7 @@ class _MemberTile extends ConsumerWidget {
               ? profile!.displayName!.trim()
               : member.labelFor(currentPubkey));
     final canChangeRole = showManagementActions && !member.isBot;
-    showBuzzModalBottomSheet<void>(
+    showBeekeeperModalBottomSheet<void>(
       context: context,
       title: label,
       showDragHandle: true,
@@ -342,7 +342,7 @@ class _MemberTile extends ConsumerWidget {
                 ),
                 onTap: () async {
                   Navigator.of(context).pop();
-                  final confirmed = await showBuzzDialog<bool>(
+                  final confirmed = await showBeekeeperDialog<bool>(
                     context: context,
                     builder: (context) => AlertDialog(
                       title: const Text('Remove member'),

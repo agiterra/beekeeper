@@ -249,8 +249,8 @@ async function openSession(page: Page) {
     // A test-only surface with an activity badge, available, so its tab can
     // open and carry the badge (SV-38's e2e hook; no product file names it).
     (
-      window as Window & { __BUZZ_E2E_EXTRA_SURFACES__?: unknown }
-    ).__BUZZ_E2E_EXTRA_SURFACES__ = [
+      window as Window & { __BEEKEEPER_E2E_EXTRA_SURFACES__?: unknown }
+    ).__BEEKEEPER_E2E_EXTRA_SURFACES__ = [
       {
         id: "memory",
         label: "Memory",
@@ -283,7 +283,7 @@ async function openSession(page: Page) {
         () =>
           page.evaluate(
             ({ channelName, kind }) =>
-              window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
                 channelName,
                 kind,
               }) ?? false,
@@ -298,7 +298,7 @@ async function openSession(page: Page) {
   }
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },

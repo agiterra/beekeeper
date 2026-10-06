@@ -1755,7 +1755,7 @@ bee sessions whoami
 - **`display_name`** — the relay's kind:0 name for that pubkey, or `null` when
   the relay holds none. A *failed* kind:0 lookup is not `null`: it exits 2
   with the CLI's standard error envelope and prints no object at all.
-- **`relay_url`** — `BuzzClient::relay_url()` verbatim, not a second read of
+- **`relay_url`** — `BeekeeperClient::relay_url()` verbatim, not a second read of
   `BUZZ_RELAY_URL`. The two can disagree: a live run with
   `BUZZ_RELAY_URL=wss://hive.agiterra.org` printed
   `"relay_url":"https://hive.agiterra.org"` (scheme normalized). `whoami`

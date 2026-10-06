@@ -1,7 +1,7 @@
-import 'package:buzz/features/profile/profile_provider.dart';
-import 'package:buzz/features/profile/user_profile.dart';
-import 'package:buzz/shared/relay/relay.dart';
-import 'package:buzz/shared/theme/theme.dart';
+import 'package:beekeeper/features/profile/profile_provider.dart';
+import 'package:beekeeper/features/profile/user_profile.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
+import 'package:beekeeper/shared/theme/theme.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';

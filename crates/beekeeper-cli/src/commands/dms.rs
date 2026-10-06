@@ -1,11 +1,11 @@
 use uuid::Uuid;
 
-use crate::client::{extract_d_tag, normalize_write_response, BuzzClient};
+use crate::client::{extract_d_tag, normalize_write_response, BeekeeperClient};
 use crate::error::CliError;
 use crate::validate::{parse_uuid, sdk_err, validate_hex64};
 
 /// List DM conversations by querying kind:41001 (relay-confirmed DMs) filtered by our pubkey.
-pub async fn cmd_list_dms(client: &BuzzClient, limit: Option<u32>) -> Result<(), CliError> {
+pub async fn cmd_list_dms(client: &BeekeeperClient, limit: Option<u32>) -> Result<(), CliError> {
     let my_pk = client.keys().public_key().to_hex();
     let limit = limit.unwrap_or(50).min(200);
     let filter = serde_json::json!({
@@ -48,7 +48,7 @@ pub async fn cmd_list_dms(client: &BuzzClient, limit: Option<u32>) -> Result<(),
 }
 
 /// Open a DM with one or more users — sign and submit a kind:41010 event with a d-tag.
-pub async fn cmd_open_dm(client: &BuzzClient, pubkeys: &[String]) -> Result<(), CliError> {
+pub async fn cmd_open_dm(client: &BeekeeperClient, pubkeys: &[String]) -> Result<(), CliError> {
     if pubkeys.is_empty() || pubkeys.len() > 8 {
         return Err(CliError::Usage("--pubkey: must provide 1-8 pubkeys".into()));
     }
@@ -93,7 +93,7 @@ pub async fn cmd_open_dm(client: &BuzzClient, pubkeys: &[String]) -> Result<(), 
 }
 
 /// Hide a DM channel — sign and submit a kind:41012 event with h-tag.
-pub async fn cmd_hide_dm(client: &BuzzClient, channel_id: &str) -> Result<(), CliError> {
+pub async fn cmd_hide_dm(client: &BeekeeperClient, channel_id: &str) -> Result<(), CliError> {
     let channel_uuid = parse_uuid(channel_id)?;
 
     use nostr::{EventBuilder, Kind, Tag};
@@ -110,7 +110,7 @@ pub async fn cmd_hide_dm(client: &BuzzClient, channel_id: &str) -> Result<(), Cl
 
 /// Add a member to a DM group — sign and submit a kind:41011 event.
 pub async fn cmd_add_dm_member(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     pubkey: &str,
 ) -> Result<(), CliError> {
@@ -125,7 +125,7 @@ pub async fn cmd_add_dm_member(
     Ok(())
 }
 
-pub async fn dispatch(cmd: crate::DmsCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(cmd: crate::DmsCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     use crate::DmsCmd;
     match cmd {
         DmsCmd::List { limit } => cmd_list_dms(client, limit).await,

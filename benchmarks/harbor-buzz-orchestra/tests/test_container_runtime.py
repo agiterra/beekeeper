@@ -11,7 +11,7 @@ from harbor.environments.base import ExecResult
 from harbor_buzz_orchestra.container_runtime import (
     REMOTE_BIN,
     REMOTE_LOGS,
-    BuzzContainerRuntime,
+    BeekeeperContainerRuntime,
     EndpointLaunchConfig,
     RuntimeLaunchError,
 )
@@ -99,7 +99,7 @@ def trial_handle(credentials, user_relay_url=""):
 
 
 def runtime(tmp_path, **kwargs):
-    return BuzzContainerRuntime(
+    return BeekeeperContainerRuntime(
         logs_dir=tmp_path / "logs",
         artifact_root=tmp_path,
         endpoints={
@@ -462,7 +462,7 @@ async def test_stop_agents_sweeps_the_uploaded_stack(tmp_path):
 
     environment = Environment()
     agents = [_Agent(credential("orch-1", "orchestrator", "orch-model"), 1, "o", "e")]
-    await BuzzContainerRuntime._stop_agents(environment, agents)
+    await BeekeeperContainerRuntime._stop_agents(environment, agents)
     sweeps = [cmd for cmd, _ in environment.commands if REMOTE_BIN in cmd]
     assert len(sweeps) == 2
     assert "kill -TERM" in sweeps[0] and "kill -KILL" in sweeps[1]

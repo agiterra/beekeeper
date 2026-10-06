@@ -19,9 +19,11 @@ export function projectRepoHost(
   try {
     const clone = new URL(cloneUrl);
     const relay = new URL(relayOrigin);
-    const isBuzzPath = /^\/git\/[0-9a-f]{64}\/[^/]+\/?$/i.test(clone.pathname);
+    const isBeekeeperPath = /^\/git\/[0-9a-f]{64}\/[^/]+\/?$/i.test(
+      clone.pathname,
+    );
 
-    if (clone.origin === relay.origin && isBuzzPath) {
+    if (clone.origin === relay.origin && isBeekeeperPath) {
       return { kind: "buzz" };
     }
 

@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:buzz/features/agents_repo/domain/agents_repo_draft_op.dart';
+import 'package:beekeeper/features/agents_repo/domain/agents_repo_draft_op.dart';
 
 /// The Dart reader binds to `conformance/agents-repo-draft-path/fixtures/
 /// path-vectors.json`, the same corpus the Rust reader in `buzz-core` and the

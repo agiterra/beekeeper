@@ -26,7 +26,7 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// The MIME a captured patch travels under, on the way up and on the way down.
@@ -138,7 +138,7 @@ pub fn verify_blob(
 /// A sentence naming the artifact and what was wrong with it, suitable for a
 /// continuation's `missing` list verbatim.
 pub async fn fetch_verified_blob(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     hash: Option<&str>,
     expected_bytes: Option<u64>,
 ) -> Result<String, CliError> {

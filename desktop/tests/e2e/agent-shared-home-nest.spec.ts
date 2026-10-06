@@ -77,7 +77,7 @@ test("an agent whose shared home refuses its pack says so, and can be given a ne
 
   const commands = await page.evaluate(
     () =>
-      (window.__BUZZ_E2E_COMMAND_LOG__ ?? [])
+      (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? [])
         .map((entry) => (entry as { command?: string }).command)
         .filter((command) => command === "give_agent_its_own_nest").length,
   );

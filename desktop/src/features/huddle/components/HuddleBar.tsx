@@ -568,7 +568,7 @@ export function HuddleBar({
       aria-hidden={isDrawerClosing}
       data-state={isDrawerClosing ? "closing" : "open"}
       className={cn(
-        "buzz-huddle-drawer grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-5 py-3 text-foreground",
+        "beekeeper-huddle-drawer grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-5 py-3 text-foreground",
         isDrawerClosing && "pointer-events-none",
         className,
       )}
@@ -749,7 +749,7 @@ export function HuddleBar({
                     aria-label="Emoji reactions"
                     aria-pressed={isReactionPickerOpen}
                     className={cn(
-                      "buzz-huddle-control-button h-12 w-12 shrink-0 rounded-md",
+                      "beekeeper-huddle-control-button h-12 w-12 shrink-0 rounded-md",
                       isReactionPickerOpen && "text-foreground",
                     )}
                     size="icon"
@@ -760,7 +760,7 @@ export function HuddleBar({
                   </Button>
                 </PopoverTrigger>
               </TooltipTrigger>
-              <TooltipContent className="buzz-huddle-tooltip" side="top">
+              <TooltipContent className="beekeeper-huddle-tooltip" side="top">
                 Emoji reactions
               </TooltipContent>
             </Tooltip>
@@ -781,7 +781,7 @@ export function HuddleBar({
                   transcriptionEnabled ? "Stop transcript" : "Start transcript"
                 }
                 aria-pressed={transcriptionEnabled}
-                className="buzz-huddle-control-button h-12 w-12 shrink-0 rounded-md"
+                className="beekeeper-huddle-control-button h-12 w-12 shrink-0 rounded-md"
                 onClick={() => void handleToggleTranscript()}
                 size="icon"
                 type="button"
@@ -790,7 +790,7 @@ export function HuddleBar({
                 <Captions className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent className="buzz-huddle-tooltip" side="top">
+            <TooltipContent className="beekeeper-huddle-tooltip" side="top">
               {transcriptionEnabled ? "Stop transcript" : "Start transcript"}
             </TooltipContent>
           </Tooltip>
@@ -799,7 +799,7 @@ export function HuddleBar({
             <TooltipTrigger asChild>
               <Button
                 aria-label="Add agent to huddle"
-                className="buzz-huddle-control-button h-12 w-12 shrink-0 rounded-md"
+                className="beekeeper-huddle-control-button h-12 w-12 shrink-0 rounded-md"
                 onClick={() => setShowAddAgent(true)}
                 size="icon"
                 type="button"
@@ -808,7 +808,7 @@ export function HuddleBar({
                 <Bot className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent className="buzz-huddle-tooltip" side="top">
+            <TooltipContent className="beekeeper-huddle-tooltip" side="top">
               Add agent
             </TooltipContent>
           </Tooltip>
@@ -821,7 +821,7 @@ export function HuddleBar({
             <TooltipTrigger asChild>
               <Button
                 aria-label="Open huddle in a new window"
-                className="buzz-huddle-control-button h-12 w-12 shrink-0 rounded-md"
+                className="beekeeper-huddle-control-button h-12 w-12 shrink-0 rounded-md"
                 onClick={() => void handleOpenHuddleWindow()}
                 size="icon"
                 type="button"
@@ -830,7 +830,7 @@ export function HuddleBar({
                 <PictureInPicture2 className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent className="buzz-huddle-tooltip" side="top">
+            <TooltipContent className="beekeeper-huddle-tooltip" side="top">
               Open huddle window
             </TooltipContent>
           </Tooltip>
@@ -839,7 +839,7 @@ export function HuddleBar({
             <TooltipTrigger asChild>
               <Button
                 aria-label="Return huddle to drawer"
-                className="buzz-huddle-control-button h-12 w-12 shrink-0 rounded-md"
+                className="beekeeper-huddle-control-button h-12 w-12 shrink-0 rounded-md"
                 onClick={() => void handleReturnToDrawer()}
                 size="icon"
                 type="button"
@@ -848,7 +848,7 @@ export function HuddleBar({
                 <PictureInPicture className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent className="buzz-huddle-tooltip" side="top">
+            <TooltipContent className="beekeeper-huddle-tooltip" side="top">
               Return huddle to drawer
             </TooltipContent>
           </Tooltip>

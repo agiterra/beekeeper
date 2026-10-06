@@ -79,7 +79,7 @@ test.beforeEach(() => {
 async function searchUsersCount(page: Page): Promise<number> {
   return page.evaluate(
     () =>
-      (window.__BUZZ_E2E_COMMANDS__ ?? []).filter(
+      (window.__BEEKEEPER_E2E_COMMANDS__ ?? []).filter(
         (command) => command === "search_users",
       ).length,
   );

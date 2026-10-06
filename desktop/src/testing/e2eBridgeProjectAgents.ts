@@ -14,7 +14,7 @@ import { normalizeProjectCoordinate } from "@/shared/lib/projectAgentAssociation
 
 /**
  * Relay kinds the association surfaces read that the mock serves from the
- * project event store (`__BUZZ_E2E_EXTRA_PROJECT_EVENTS__`): the agent's
+ * project event store (`__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__`): the agent's
  * owner-signed kind:30177 (by `authors`) and the relay-signed kind:39010
  * roster (by `#d`). Without a seeded event both answer empty, exactly as a
  * relay with none would.

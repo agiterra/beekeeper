@@ -3,10 +3,10 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../theme/theme.dart';
 
-/// Height of an idle [BuzzSearchField].
+/// Height of an idle [BeekeeperSearchField].
 const double buzzSearchIdleFieldHeight = 45;
 
-/// Font size used for idle [BuzzSearchField] text.
+/// Font size used for idle [BeekeeperSearchField] text.
 const double buzzSearchIdleTextSize = 15;
 const double _searchIdleIconSize = 26;
 const double _searchCompactIconSize = 18;
@@ -17,9 +17,9 @@ const double _searchCompactTextInset =
     _searchIdleIconInset + _searchCompactIconSize + Grid.xxs;
 
 /// Buzz's global-search text field treatment, shared by search-like inputs.
-class BuzzSearchField extends StatelessWidget {
+class BeekeeperSearchField extends StatelessWidget {
   /// Creates a search field with Buzz's shared styling.
-  const BuzzSearchField({
+  const BeekeeperSearchField({
     required this.controller,
     required this.focusNode,
     required this.hintText,

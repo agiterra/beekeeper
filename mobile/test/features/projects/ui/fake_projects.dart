@@ -1,14 +1,14 @@
-import 'package:buzz/features/channels/channel.dart';
-import 'package:buzz/features/channels/channels_provider.dart';
-import 'package:buzz/features/profile/user_cache_provider.dart';
-import 'package:buzz/features/profile/user_profile.dart';
-import 'package:buzz/features/projects/domain/project_models.dart';
-import 'package:buzz/features/projects/state/projects_provider.dart';
-import 'package:buzz/features/projects/ui/project_tree.dart';
-import 'package:buzz/features/terminals/domain/terminals_domain.dart';
-import 'package:buzz/features/terminals/state/terminals_index_provider.dart';
-import 'package:buzz/shared/relay/nostr_models.dart';
-import 'package:buzz/shared/relay/relay_provider.dart';
+import 'package:beekeeper/features/channels/channel.dart';
+import 'package:beekeeper/features/channels/channels_provider.dart';
+import 'package:beekeeper/features/profile/user_cache_provider.dart';
+import 'package:beekeeper/features/profile/user_profile.dart';
+import 'package:beekeeper/features/projects/domain/project_models.dart';
+import 'package:beekeeper/features/projects/state/projects_provider.dart';
+import 'package:beekeeper/features/projects/ui/project_tree.dart';
+import 'package:beekeeper/features/terminals/domain/terminals_domain.dart';
+import 'package:beekeeper/features/terminals/state/terminals_index_provider.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
+import 'package:beekeeper/shared/relay/relay_provider.dart';
 import 'package:hooks_riverpod/misc.dart';
 
 const testOwner =

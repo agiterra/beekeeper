@@ -422,7 +422,7 @@ async function seedCodingSession(
 ) {
   await page.evaluate(
     async ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) {
         seed({ channelName, event });
@@ -564,7 +564,7 @@ test("a legacy session stays usable through the unified composer", async ({
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
   await page.evaluate(
     async ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },
@@ -596,7 +596,7 @@ test("a multi-provider session exposes a resizable and collapsible agent rail", 
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },
@@ -699,7 +699,7 @@ test("a resumed session renders every earlier generation, not just the newest", 
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },
@@ -883,7 +883,7 @@ test("a prompt's image reference renders as an image, not as markdown", async ({
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
   await page.evaluate(
     async ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },
@@ -935,7 +935,7 @@ test("an image-only prompt still renders its pictures", async ({ page }) => {
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
   await page.evaluate(
     async ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },

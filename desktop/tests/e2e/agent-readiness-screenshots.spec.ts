@@ -66,8 +66,8 @@ async function setCustomModel(
     .poll(() =>
       page.evaluate(
         () =>
-          (window as Window & { __BUZZ_E2E_COMMANDS__?: string[] })
-            .__BUZZ_E2E_COMMANDS__ ?? [],
+          (window as Window & { __BEEKEEPER_E2E_COMMANDS__?: string[] })
+            .__BEEKEEPER_E2E_COMMANDS__ ?? [],
       ),
     )
     .toContain("discover_agent_models");
@@ -184,8 +184,8 @@ test.describe("agent readiness gate screenshots", () => {
     const createCountBefore = await page.evaluate(
       () =>
         (
-          window as Window & { __BUZZ_E2E_COMMANDS__?: string[] }
-        ).__BUZZ_E2E_COMMANDS__?.filter(
+          window as Window & { __BEEKEEPER_E2E_COMMANDS__?: string[] }
+        ).__BEEKEEPER_E2E_COMMANDS__?.filter(
           (command) => command === "create_persona",
         ).length ?? 0,
     );
@@ -197,8 +197,8 @@ test.describe("agent readiness gate screenshots", () => {
         page.evaluate(
           () =>
             (
-              window as Window & { __BUZZ_E2E_COMMANDS__?: string[] }
-            ).__BUZZ_E2E_COMMANDS__?.filter(
+              window as Window & { __BEEKEEPER_E2E_COMMANDS__?: string[] }
+            ).__BEEKEEPER_E2E_COMMANDS__?.filter(
               (command) => command === "create_persona",
             ).length ?? 0,
         ),

@@ -37,7 +37,7 @@ use super::{
     decode_metadata, decode_receipts, decode_transcripts, fetch_channel_events,
     filter_transcripts_by_target, rfc3339, sort_transcripts, TranscriptRecord,
 };
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::validate_uuid;
 
@@ -70,7 +70,7 @@ const ELISION_MARKER: &str = "…[elided ";
 /// `session_ref` narrows the report to one umbrella's executions; without it
 /// every execution in the channel is folded.
 pub async fn cmd_audit(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_ref: Option<&str>,
     format: &crate::OutputFormat,
@@ -514,7 +514,7 @@ fn handled_keys(tool: Option<&Value>) -> Vec<(&'static str, String)> {
 ///
 /// Modelled on the desktop classifier's own scan
 /// (`desktop/src/features/agents/ui/agentSessionToolClassifier.ts`,
-/// `findBuzzCommand`): find the executable, skip its flags — and the values
+/// `findBeekeeperCommand`): find the executable, skip its flags — and the values
 /// they take — then read the group and its verb.
 ///
 /// The executable is only recognized in **command position**: the start of the

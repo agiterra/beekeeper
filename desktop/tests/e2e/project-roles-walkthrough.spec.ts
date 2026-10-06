@@ -51,7 +51,7 @@ import { openDashboardTab } from "../helpers/dashboard";
  *    stays steerable for a project owner, and read-only for a viewer.
  *
  * Installed roles come from the setup journals, seeded through the bridge's
- * `__BUZZ_E2E_PROJECT_TEAM_SETUP__`. Everything else the app reads — managed
+ * `__BEEKEEPER_E2E_PROJECT_TEAM_SETUP__`. Everything else the app reads — managed
  * agents, projects, channels, signed session facts — goes through the normal
  * mock paths, with a thin invoke wrapper only where the bridge has no fixture
  * (a channel's `project_ref`, the workdir state) or where the spec must read
@@ -224,8 +224,10 @@ async function bootWalkthrough(
   }, FOUNDER_IDENTITY);
   await page.addInitScript(
     ({ events, installed, channel }) => {
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events;
-      window.__BUZZ_E2E_PROJECT_TEAM_SETUP__ = { installedRoles: installed };
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events;
+      window.__BEEKEEPER_E2E_PROJECT_TEAM_SETUP__ = {
+        installedRoles: installed,
+      };
       (window as WalkthroughWindow).__WALKTHROUGH_CHANNEL__ = channel;
     },
     {
@@ -465,7 +467,11 @@ test("Who leads offers only the project's agents, counts the rest and preselects
   await expect
     .poll(
       async () =>
-        (await page.evaluate(() => window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []))
+        (
+          await page.evaluate(
+            () => window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [],
+          )
+        )
           .filter((event) => event.kind === 44221)
           .map((event) => JSON.parse(event.content))
           .filter((payload) => payload.action?.type === "session.create"),
@@ -473,7 +479,7 @@ test("Who leads offers only the project's agents, counts the rest and preselects
     )
     .toHaveLength(1);
   const create = (
-    await page.evaluate(() => window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [])
+    await page.evaluate(() => window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [])
   )
     .filter((event) => event.kind === 44221)
     .map((event) => JSON.parse(event.content))
@@ -656,7 +662,7 @@ async function setChannel(
 ) {
   await page.evaluate(async (next) => {
     (window as WalkthroughWindow).__WALKTHROUGH_CHANNEL__ = next;
-    await window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+    await window.__BEEKEEPER_E2E_QUERY_CLIENT__?.invalidateQueries({
       queryKey: ["channels"],
     });
   }, channel);
@@ -688,7 +694,7 @@ test("a project owner steers a transport session without channel membership; a p
   await expect(trigger).toBeVisible();
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },

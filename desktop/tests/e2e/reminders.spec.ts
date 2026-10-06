@@ -27,12 +27,12 @@ async function seedReminders(
   events: unknown[],
 ) {
   await page.evaluate((seeded) => {
-    window.__BUZZ_E2E_SEED_MOCK_REMINDERS__?.(
+    window.__BEEKEEPER_E2E_SEED_MOCK_REMINDERS__?.(
       seeded as Parameters<
-        NonNullable<typeof window.__BUZZ_E2E_SEED_MOCK_REMINDERS__>
+        NonNullable<typeof window.__BEEKEEPER_E2E_SEED_MOCK_REMINDERS__>
       >[0],
     );
-    window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+    window.__BEEKEEPER_E2E_QUERY_CLIENT__?.invalidateQueries({
       queryKey: ["reminders"],
     });
   }, events);

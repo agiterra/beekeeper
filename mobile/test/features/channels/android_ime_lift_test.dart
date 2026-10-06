@@ -1,5 +1,5 @@
-import 'package:buzz/features/channels/android_ime_lift.dart';
-import 'package:buzz/shared/theme/theme.dart';
+import 'package:beekeeper/features/channels/android_ime_lift.dart';
+import 'package:beekeeper/shared/theme/theme.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

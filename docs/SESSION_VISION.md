@@ -312,16 +312,16 @@ The full mechanics are documented in `docs/INTEGRATION.md`.
 
 As of 2026-08-12:
 
-- `/Users/briansweet/agiterra/BuzzForkV2-coding-sessions` is the
+- `/Users/briansweet/agiterra/BeekeeperForkV2-coding-sessions` is the
   `feature/coding-sessions` worktree;
 - that branch has local commits for reliable provider startup and Claude model
   discovery that have not been pushed;
 - the current Claude-specific implementation should be treated as a starting
   artifact, not as a constraint on the provider-neutral session vision;
-- `/Users/briansweet/agiterra/BuzzForkV2-integration-glue` is the
+- `/Users/briansweet/agiterra/BeekeeperForkV2-integration-glue` is the
   `integration/glue` worktree and contains local project/session navigation
   adaptation;
-- `/Users/briansweet/agiterra/BuzzForkV2` is the generated `integrated`
+- `/Users/briansweet/agiterra/BeekeeperForkV2` is the generated `integrated`
   worktree used for running the assembled product and currently contains local
   exploratory changes that must not be overwritten.
 

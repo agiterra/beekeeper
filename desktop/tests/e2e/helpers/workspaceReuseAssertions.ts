@@ -268,7 +268,7 @@ export async function signedEvents(
 ): Promise<Array<{ kind: number; content: string; tags: string[][] }>> {
   return page.evaluate(
     () =>
-      (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []) as Array<{
+      (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []) as Array<{
         kind: number;
         content: string;
         tags: string[][];
@@ -486,7 +486,7 @@ export function seededSessionEvents(input: {
 export async function seedEvents(page: Page, events: RelayEvent[]) {
   await page.evaluate(
     ({ channelName, seeds }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of seeds as never[]) seed({ channelName, event });
     },

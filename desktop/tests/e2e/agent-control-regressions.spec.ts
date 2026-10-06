@@ -19,7 +19,7 @@ type ControlRequest = {
 
 async function waitForActiveTurnSeed(page: Page) {
   await page.waitForFunction(
-    () => typeof window.__BUZZ_E2E_SEED_ACTIVE_TURNS__ === "function",
+    () => typeof window.__BEEKEEPER_E2E_SEED_ACTIVE_TURNS__ === "function",
     null,
     { timeout: 10_000 },
   );
@@ -28,7 +28,7 @@ async function waitForActiveTurnSeed(page: Page) {
 async function seedActiveTurn(page: Page, channelId: string) {
   await page.evaluate(
     ({ agentPubkey, channelId }) => {
-      return window.__BUZZ_E2E_SEED_ACTIVE_TURNS__?.({
+      return window.__BEEKEEPER_E2E_SEED_ACTIVE_TURNS__?.({
         agentPubkey,
         channelId,
         turnId: `e2e-stop-${channelId}`,
@@ -82,7 +82,8 @@ async function openAgentActivity(
 
 async function readControlRequests(page: Page): Promise<ControlRequest[]> {
   return page.evaluate(
-    () => (window.__BUZZ_E2E_OBSERVER_CONTROLS__ ?? []) as ControlRequest[],
+    () =>
+      (window.__BEEKEEPER_E2E_OBSERVER_CONTROLS__ ?? []) as ControlRequest[],
   );
 }
 

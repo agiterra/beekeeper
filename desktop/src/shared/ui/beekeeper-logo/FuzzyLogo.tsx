@@ -1,7 +1,7 @@
 import { cn } from "@/shared/lib/cn";
-import BuzzLogoAnimation, {
-  type BuzzLogoAnimationProps,
-} from "./BuzzLogoAnimation";
+import BeekeeperLogoAnimation, {
+  type BeekeeperLogoAnimationProps,
+} from "./BeekeeperLogoAnimation";
 
 export type FuzzyLogoProps = {
   /** When false, skips the looping feTurbulence texture filter and uses a CSS pulse instead. */
@@ -14,7 +14,7 @@ export type FuzzyLogoProps = {
   /** Set false when a parent drives its own opacity animation over the mark. */
   pulse?: boolean;
   reverse?: boolean;
-  variant?: BuzzLogoAnimationProps["variant"];
+  variant?: BeekeeperLogoAnimationProps["variant"];
 };
 
 /**
@@ -37,10 +37,10 @@ export function FuzzyLogo({
   const hasRestWindow = loop && loopRestSeconds > 0;
 
   return (
-    <BuzzLogoAnimation
+    <BeekeeperLogoAnimation
       ariaLabel={ariaLabel}
       className={cn(
-        pulse && !fuzz && !hasRestWindow && "buzz-logo--pulse",
+        pulse && !fuzz && !hasRestWindow && "beekeeper-logo--pulse",
         className,
       )}
       fullScreen={false}

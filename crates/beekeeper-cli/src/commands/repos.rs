@@ -6,7 +6,7 @@ use beekeeper_core::{
 use beekeeper_sdk::build_delete_addressable;
 use nostr::{Event, EventBuilder, Tag, Timestamp};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::commands::parse_write_response;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_repo_id};
@@ -17,7 +17,7 @@ fn parse_events(json: &str) -> Result<Vec<Event>, CliError> {
 }
 
 async fn fetch_own_repo_announcement(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_id: &str,
 ) -> Result<Option<Event>, CliError> {
     let filter = serde_json::json!({
@@ -265,7 +265,10 @@ fn validate_write_response(raw: &str) -> Result<String, CliError> {
     )
 }
 
-async fn submit_repo_update(client: &BuzzClient, builder: EventBuilder) -> Result<(), CliError> {
+async fn submit_repo_update(
+    client: &BeekeeperClient,
+    builder: EventBuilder,
+) -> Result<(), CliError> {
     submit_repo_update_with(client, builder, None).await
 }
 
@@ -276,7 +279,7 @@ async fn submit_repo_update(client: &BuzzClient, builder: EventBuilder) -> Resul
 /// folded into `message`: the `{event_id, accepted, message}` shape every
 /// agent parses is unchanged, and the disclosure is additive.
 async fn submit_repo_update_with(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     builder: EventBuilder,
     founders: Option<String>,
 ) -> Result<(), CliError> {
@@ -395,7 +398,7 @@ pub fn build_packs_repo_announcement(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_create_repo(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_id: &str,
     name: Option<&str>,
     description: Option<&str>,
@@ -428,7 +431,7 @@ pub async fn cmd_create_repo(
 }
 
 pub async fn cmd_get_repo(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_id: &str,
     owner: Option<&str>,
 ) -> Result<(), CliError> {
@@ -500,7 +503,7 @@ pub async fn cmd_get_repo(
 }
 
 pub async fn cmd_list_repos(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     owner: Option<&str>,
     limit: Option<u32>,
 ) -> Result<(), CliError> {
@@ -537,7 +540,7 @@ pub async fn cmd_list_repos(
 /// [`beekeeper_core::repository_founders::RepositoryFounders::rules_sentence`] says
 /// so — a partial set presented as whole is exactly the shape of finding 33.
 pub(crate) async fn repository_founders(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     announcement: &Event,
 ) -> RepositoryFounders {
     let tags: Vec<Vec<String>> = announcement
@@ -554,7 +557,7 @@ pub(crate) async fn repository_founders(
 /// parsed event to do it — the relay strips signatures on reads, and a
 /// round-trip through `nostr::Event` would put one back.
 pub(crate) async fn repository_founders_from_parts(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     signer_pubkey: &str,
     tags: &[Vec<String>],
 ) -> RepositoryFounders {
@@ -575,7 +578,7 @@ pub(crate) async fn repository_founders_from_parts(
     }
 }
 
-async fn current_repo(client: &BuzzClient, repo_id: &str) -> Result<Event, CliError> {
+async fn current_repo(client: &BeekeeperClient, repo_id: &str) -> Result<Event, CliError> {
     validate_repo_id(repo_id)?;
     fetch_own_repo_announcement(client, repo_id)
         .await?
@@ -594,7 +597,7 @@ async fn current_repo(client: &BuzzClient, repo_id: &str) -> Result<Event, CliEr
 /// founder's rule record, and prints the decision per pattern: the rule, the
 /// record, and the key that signed it. A repository with no rule record prints
 /// exactly what it always did, with `"record": "announcement"` on every row.
-async fn cmd_protect_list(client: &BuzzClient, repo_id: &str) -> Result<(), CliError> {
+async fn cmd_protect_list(client: &BeekeeperClient, repo_id: &str) -> Result<(), CliError> {
     let rules = crate::commands::repos_protection::read_repository_rules(client, repo_id).await?;
     let event = rules.announcement.clone();
     let mut listing = protection_rules_json(&event)?;
@@ -680,7 +683,7 @@ async fn cmd_protect_list(client: &BuzzClient, repo_id: &str) -> Result<(), CliE
 /// L26 this command answered them with `NotFound`, or — given the same
 /// repository id under their own key — silently published a second repository.
 async fn cmd_protect_set(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_id: &str,
     ref_pattern: &str,
     push_role: Option<crate::RepoPushRole>,
@@ -748,7 +751,7 @@ fn guard_founder(
 /// Publish the caller's own rule record, stamped past whatever currently wins
 /// the pattern so the write actually takes effect.
 async fn write_rule_record(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     rules: &crate::commands::repos_protection::RepositoryRules,
     ref_pattern: &str,
     row: Option<Vec<String>>,
@@ -815,7 +818,7 @@ fn print_with_record(
 /// `submit_repo_update_with`, plus the record the write landed in and the
 /// relay build that took it.
 async fn submit_repo_update_with_record(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     builder: EventBuilder,
     founders: String,
     record: &'static str,
@@ -834,7 +837,7 @@ async fn submit_repo_update_with_record(
 /// land a verdict-gated ref. The list is replaced whole, never merged, so what
 /// the command prints is what the announcement now says.
 pub async fn cmd_update_repo(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_id: &str,
     maintainers: &[String],
     clear_maintainers: bool,
@@ -878,7 +881,7 @@ pub async fn cmd_update_repo(
 /// their own row instead would fall back to the announcement's rule, which is
 /// the opposite of what "remove" was asked to do.
 async fn cmd_protect_remove(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_id: &str,
     ref_pattern: &str,
 ) -> Result<(), CliError> {
@@ -937,7 +940,7 @@ async fn cmd_protect_remove(
 /// git-access time; a CLI-side network pre-check would just be TOCTOU with
 /// extra latency.
 async fn cmd_bind_repo(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_id: &str,
     channel: Option<&str>,
     project: Option<&str>,
@@ -983,7 +986,7 @@ async fn cmd_bind_repo(
 /// with forks and identical trees, so reclaiming them here could destroy a
 /// neighbour's history).
 pub async fn cmd_delete_repo(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_id: &str,
     owner: Option<&str>,
 ) -> Result<(), CliError> {
@@ -1007,7 +1010,7 @@ pub async fn cmd_delete_repo(
     Ok(())
 }
 
-pub async fn dispatch(cmd: crate::ReposCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(cmd: crate::ReposCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     use crate::{ReposCmd, ReposProtectCmd};
     match cmd {
         ReposCmd::Create {

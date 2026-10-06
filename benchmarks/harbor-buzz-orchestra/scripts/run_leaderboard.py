@@ -33,7 +33,7 @@ from pathlib import Path
 import yaml
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
-AGENT_IMPORT = "harbor_buzz_orchestra:BuzzOrchestraAgent"
+AGENT_IMPORT = "harbor_buzz_orchestra:BeekeeperOrchestraAgent"
 PROVISIONER_FACTORY = "harbor_buzz_testbed:provisioner_from_dict"
 # Host-side: the harness speaks to the relay as the trial user via this CLI.
 BINARIES = ("buzz",)

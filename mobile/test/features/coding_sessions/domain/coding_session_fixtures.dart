@@ -1,7 +1,7 @@
 import 'dart:convert';
 
-import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
-import 'package:buzz/shared/relay/nostr_models.dart';
+import 'package:beekeeper/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
 
 /// Deterministic fixture builders for signed coding-session events.
 ///

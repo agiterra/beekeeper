@@ -32,7 +32,7 @@ use beekeeper_core::coding_session_team_transaction::{
 use beekeeper_sdk::coding_session_team_transaction::parse_coding_session_team_transaction;
 use nostr::Event;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// Everything the pre-publish check read, kept so the caller need not fetch the
@@ -100,7 +100,7 @@ pub(super) struct PrecheckRequest<'a> {
 /// transcript (COMMS-MAP §2), and adding two unconditional full-session reads
 /// to every write would have made a safety check into a bandwidth problem.
 pub(super) async fn precheck_operation(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     request: PrecheckRequest<'_>,
 ) -> Result<PrecheckedOperation, CliError> {
     if request.payload.causal_references().is_empty()

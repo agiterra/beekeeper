@@ -9,13 +9,13 @@ from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
-from .container_runtime import BuzzContainerRuntime, EndpointLaunchConfig
+from .container_runtime import BeekeeperContainerRuntime, EndpointLaunchConfig
 from .manifest import ExperimentManifest
 from .provisioning import TrialProvisioner
 from .runtime import OrchestraRuntime
 
 
-class BuzzOrchestraAgent(BaseAgent):
+class BeekeeperOrchestraAgent(BaseAgent):
     """Coordinate an arbitrary manifest-defined team through a Buzz trial."""
 
     # Set True only once the runtime writes a validated agent/trajectory.json.
@@ -132,7 +132,7 @@ class BuzzOrchestraAgent(BaseAgent):
             )
             for name, value in endpoint_data.items()
         }
-        return BuzzContainerRuntime(
+        return BeekeeperContainerRuntime(
             logs_dir=logs_dir,
             artifact_root=Path(artifact_root),
             endpoints=endpoints,
@@ -157,7 +157,7 @@ class BuzzOrchestraAgent(BaseAgent):
     ) -> None:
         if self.provisioner is None or self.runtime is None:
             raise RuntimeError(
-                "BuzzOrchestraAgent requires provisioner and runtime integrations; "
+                "BeekeeperOrchestraAgent requires provisioner and runtime integrations; "
                 "the adapter contract is installed but M1 wiring is incomplete"
             )
 

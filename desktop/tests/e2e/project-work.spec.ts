@@ -26,7 +26,7 @@ const FIXTURE = resolve(
 );
 
 type BridgeWindow = Window & {
-  __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: (
+  __BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?: (
     command: string,
     payload?: Record<string, unknown>,
   ) => Promise<unknown>;
@@ -43,7 +43,7 @@ async function waitForBridge(page: import("@playwright/test").Page) {
     () => {
       const bridge = window as BridgeWindow;
       return (
-        typeof bridge.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ === "function" ||
+        typeof bridge.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__ === "function" ||
         typeof bridge.__TAURI_INTERNALS__?.invoke === "function"
       );
     },
@@ -78,7 +78,7 @@ test("the native work-coverage projection crosses the bridge verbatim", async ({
   const answer = await page.evaluate(async () => {
     const bridge = window as BridgeWindow;
     const invoke =
-      bridge.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ ??
+      bridge.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__ ??
       bridge.__TAURI_INTERNALS__?.invoke;
     if (!invoke) throw new Error("the mock Tauri bridge is not installed");
     return invoke("project_work_coverage", {
@@ -133,7 +133,7 @@ test("a coverage read that cannot answer fails, and never returns an empty contr
   const outcome = await page.evaluate(async () => {
     const bridge = window as BridgeWindow;
     const invoke =
-      bridge.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ ??
+      bridge.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__ ??
       bridge.__TAURI_INTERNALS__?.invoke;
     if (!invoke) throw new Error("the mock Tauri bridge is not installed");
     try {
@@ -163,7 +163,7 @@ test("a request missing what the native fold requires is refused, not answered",
   const outcome = await page.evaluate(async () => {
     const bridge = window as BridgeWindow;
     const invoke =
-      bridge.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ ??
+      bridge.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__ ??
       bridge.__TAURI_INTERNALS__?.invoke;
     if (!invoke) throw new Error("the mock Tauri bridge is not installed");
     try {
@@ -216,7 +216,7 @@ test("R1: one read answers with a body and the hash of those bytes", async ({
   const answer = await page.evaluate(async () => {
     const bridge = window as BridgeWindow;
     const invoke =
-      bridge.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ ??
+      bridge.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__ ??
       bridge.__TAURI_INTERNALS__?.invoke;
     if (!invoke) throw new Error("the mock Tauri bridge is not installed");
     return invoke("get_workflow_definition", {

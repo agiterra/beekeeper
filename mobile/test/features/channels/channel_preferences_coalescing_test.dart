@@ -1,8 +1,8 @@
-import 'package:buzz/features/channels/channel_mutes/channel_mutes_manager.dart';
-import 'package:buzz/features/channels/channel_sections/channel_sections_manager.dart';
-import 'package:buzz/features/channels/channel_sort/channel_sort_manager.dart';
-import 'package:buzz/features/channels/channel_stars/channel_stars_manager.dart';
-import 'package:buzz/shared/relay/relay.dart';
+import 'package:beekeeper/features/channels/channel_mutes/channel_mutes_manager.dart';
+import 'package:beekeeper/features/channels/channel_sections/channel_sections_manager.dart';
+import 'package:beekeeper/features/channels/channel_sort/channel_sort_manager.dart';
+import 'package:beekeeper/features/channels/channel_stars/channel_stars_manager.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nostr/nostr.dart' as nostr;
 import 'package:shared_preferences/shared_preferences.dart';

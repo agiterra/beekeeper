@@ -356,8 +356,8 @@ async function settleCreatedDraft(
   );
   await page.evaluate(
     async ({ channelId, events }) => {
-      const query = window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const query = window.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!query || !seed)
         throw new Error("mock channel or event seam missing");
       const result = await query("get_channels", {});

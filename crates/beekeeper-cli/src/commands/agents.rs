@@ -4,12 +4,12 @@ use nostr::PublicKey;
 use serde_json::json;
 
 use crate::agent_management::{build_create, build_update, CreateAgentDraft, UpdateAgentDraft};
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::{read_or_stdin, validate_hex64};
 use crate::{AgentsCmd, RespondToArg};
 
-pub async fn dispatch(command: AgentsCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(command: AgentsCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     match command {
         AgentsCmd::DraftCreate {
             channel,
@@ -169,7 +169,7 @@ pub async fn dispatch(command: AgentsCmd, client: &BuzzClient) -> Result<(), Cli
 
 /// Require `BUZZ_AUTH_TAG` and parse the owner pubkey from it. Used only by
 /// the `draft-create` and `draft-update` paths.
-fn require_owner(client: &BuzzClient) -> Result<PublicKey, CliError> {
+fn require_owner(client: &BeekeeperClient) -> Result<PublicKey, CliError> {
     let hex = client
         .auth_tag_owner_hex()
         .ok_or_else(|| CliError::Auth("agent draft requests require BUZZ_AUTH_TAG".into()))?;
@@ -290,7 +290,7 @@ fn classify_owner_auth_tag(
 /// event was found), return the auth tag or the typed failure reason.
 ///
 /// Separated from [`resolve_auth`] so pure-unit tests can exercise all
-/// failure cases without a live `BuzzClient` or async runtime.
+/// failure cases without a live `BeekeeperClient` or async runtime.
 fn extract_auth(
     profile: Option<&serde_json::Value>,
     target_hex: &str,
@@ -321,7 +321,7 @@ fn extract_auth(
 ///       send) for relay-admin callers.
 /// - Network/parse failures surface as `Err` regardless of `allow_bare`.
 async fn resolve_auth(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     target_hex: &str,
     signer_hex: &str,
     allow_bare: bool,
@@ -364,7 +364,7 @@ async fn resolve_auth(
 /// Fetch the most-recent kind:0 for `target_hex` from the relay.
 /// Returns `None` when no event was found, `Err` on network/parse failure.
 async fn fetch_kind0(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     target_hex: &str,
 ) -> Result<Option<serde_json::Value>, CliError> {
     let filter = json!({"kinds": [0], "authors": [target_hex], "limit": 1});
@@ -414,7 +414,9 @@ fn normalize_relay_self_hex(self_hex: &str) -> Result<String, CliError> {
 /// - State 1: no events — `Ok(vec![])`
 /// - State 2: event passes all checks — `Ok(<pubkeys>)`
 /// - State 3: trust failure — `Err`, naming the specific failure
-pub(crate) async fn fetch_archived_snapshot(client: &BuzzClient) -> Result<Vec<String>, CliError> {
+pub(crate) async fn fetch_archived_snapshot(
+    client: &BeekeeperClient,
+) -> Result<Vec<String>, CliError> {
     // Fetch NIP-11 info to get the relay's self pubkey.
     let nip11_raw = client
         .get_public("/")
@@ -454,7 +456,7 @@ pub(crate) async fn fetch_archived_snapshot(client: &BuzzClient) -> Result<Vec<S
 /// `bee agents archived`: read path over [`fetch_archived_snapshot`] for
 /// direct invocation — a trust failure (state 3) is fatal here so a
 /// verification command can never look like success.
-async fn cmd_archived(client: &BuzzClient) -> Result<(), CliError> {
+async fn cmd_archived(client: &BeekeeperClient) -> Result<(), CliError> {
     let archived = fetch_archived_snapshot(client).await?;
     println!("{}", json!({"archived": archived}));
     Ok(())
@@ -887,9 +889,9 @@ mod tests {
         (format!("http://{addr}"), counter)
     }
 
-    fn test_client(base_url: &str) -> crate::client::BuzzClient {
+    fn test_client(base_url: &str) -> crate::client::BeekeeperClient {
         let keys = nostr::Keys::generate();
-        crate::client::BuzzClient::new(base_url.to_string(), keys, None, None).unwrap()
+        crate::client::BeekeeperClient::new(base_url.to_string(), keys, None, None).unwrap()
     }
 
     fn kind0_response(signer_hex: &str) -> String {

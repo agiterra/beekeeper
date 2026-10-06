@@ -20,23 +20,23 @@ import {
 } from "./codingSessionCommand";
 import type { CodingSessionIngressAuthority } from "./codingSessionIngressAuthority";
 import {
-  type BuzzCodingSessionMetadataV1,
+  type BeekeeperCodingSessionMetadataV1,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
   type CodingSessionLifecycleReceipt,
   codingSessionMetadataSemanticKey,
   codingSessionReceiptSemanticKey,
   isCodingSessionTurnReceipt,
-  parseBuzzCodingSessionMetadata,
+  parseBeekeeperCodingSessionMetadata,
   parseCodingSessionLifecycleReceipt,
 } from "./codingSessionIngressPayloads";
 import { encodeStructuredKey } from "./codingSessionKeys";
 import { canonicalizeProjectionPayload } from "./codingSessionPayload";
 import {
-  type BuzzCodingSessionTranscriptV1,
+  type BeekeeperCodingSessionTranscriptV1,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
   codingSessionTranscriptSemanticKey,
-  parseBuzzCodingSessionTranscript,
+  parseBeekeeperCodingSessionTranscript,
   type TrustedCodingSessionTranscriptEntry,
 } from "./codingSessionTranscriptPresentation";
 import {
@@ -57,7 +57,7 @@ import {
 export type { CodingSessionTurnProgress } from "./codingSessionTurnReceiptIndex";
 export {
   BUZZ_CODING_SESSION_METADATA_SCHEMA,
-  type BuzzCodingSessionMetadataV1,
+  type BeekeeperCodingSessionMetadataV1,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
@@ -71,15 +71,15 @@ export {
   isCodingSessionTurnReceipt,
   isCodingSessionTurnReceiptStatus,
   lifecycleReceiptSemanticKey,
-  parseBuzzCodingSessionMetadata,
+  parseBeekeeperCodingSessionMetadata,
   parseCodingSessionLifecycleReceipt,
 } from "./codingSessionIngressPayloads";
 export {
   BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
-  type BuzzCodingSessionTranscriptV1,
+  type BeekeeperCodingSessionTranscriptV1,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
   codingSessionTranscriptSemanticKey,
-  parseBuzzCodingSessionTranscript,
+  parseBeekeeperCodingSessionTranscript,
   type TrustedCodingSessionTranscriptEntry,
 } from "./codingSessionTranscriptPresentation";
 export { isExactProviderAuthorityPubkey } from "./codingSessionWireDecode";
@@ -106,7 +106,7 @@ export type TrustedCodingSessionMetadataEntry = {
   channelId: string;
   targetKey: string;
   signerPubkey: string;
-  metadata: Readonly<BuzzCodingSessionMetadataV1>;
+  metadata: Readonly<BeekeeperCodingSessionMetadataV1>;
   eventId: string;
   createdAt: number;
   conflictCount: number;
@@ -138,13 +138,13 @@ export type CodingSessionLifecycleResolution =
       state: "created";
       commandId: string;
       target: CodingSessionCommandTarget;
-      metadata: Readonly<BuzzCodingSessionMetadataV1>;
+      metadata: Readonly<BeekeeperCodingSessionMetadataV1>;
     }
   | {
       state: "created-with-failed-initial-turn";
       commandId: string;
       target: CodingSessionCommandTarget;
-      metadata: Readonly<BuzzCodingSessionMetadataV1>;
+      metadata: Readonly<BeekeeperCodingSessionMetadataV1>;
       error: { code: "INITIAL_TURN_FAILED"; message: string };
     }
   /**
@@ -158,7 +158,7 @@ export type CodingSessionLifecycleResolution =
       state: "resumed-without-context";
       commandId: string;
       target: CodingSessionCommandTarget;
-      metadata: Readonly<BuzzCodingSessionMetadataV1>;
+      metadata: Readonly<BeekeeperCodingSessionMetadataV1>;
       error: { code: "CONTEXT_NOT_RECOVERED"; message: string };
     }
   | { state: "conflict"; commandId: string };
@@ -234,7 +234,7 @@ type ParsedTrustedIngressEvent =
       kind: "metadata";
       channelId: string;
       signerPubkey: string;
-      metadata: Readonly<BuzzCodingSessionMetadataV1>;
+      metadata: Readonly<BeekeeperCodingSessionMetadataV1>;
       targetKey: string;
       canonicalPayload: string;
     }
@@ -242,7 +242,7 @@ type ParsedTrustedIngressEvent =
       kind: "transcript";
       channelId: string;
       signerPubkey: string;
-      transcript: Readonly<BuzzCodingSessionTranscriptV1>;
+      transcript: Readonly<BeekeeperCodingSessionTranscriptV1>;
       targetKey: string;
       canonicalPayload: string;
     };
@@ -266,7 +266,7 @@ export type TrustedIngressClassification =
 
 type MetadataBucket = Map<
   string,
-  StoredValue<Readonly<BuzzCodingSessionMetadataV1>>
+  StoredValue<Readonly<BeekeeperCodingSessionMetadataV1>>
 >;
 type StoredMetadataBucket = {
   channelId: string;
@@ -275,7 +275,7 @@ type StoredMetadataBucket = {
 };
 type TranscriptBucket = Map<
   string,
-  StoredValue<Readonly<BuzzCodingSessionTranscriptV1>>
+  StoredValue<Readonly<BeekeeperCodingSessionTranscriptV1>>
 >;
 type StoredTranscriptBucket = {
   channelId: string;
@@ -383,7 +383,7 @@ export function classifyTrustedCodingSessionIngressEvent(
     ) {
       return { kind: "malformed" };
     }
-    const transcript = parseBuzzCodingSessionTranscript(event.content);
+    const transcript = parseBeekeeperCodingSessionTranscript(event.content);
     if (!transcript) return { kind: "malformed" };
     const targetKey = buildCodingSessionTargetKey(transcript.session);
     if (
@@ -422,7 +422,7 @@ export function classifyTrustedCodingSessionIngressEvent(
   ) {
     return { kind: "malformed" };
   }
-  const metadata = parseBuzzCodingSessionMetadata(event.content);
+  const metadata = parseBeekeeperCodingSessionMetadata(event.content);
   if (!metadata) {
     // Tags verified but the payload did not decode. Attribute the rejection
     // to its target so the wait state can surface schema drift.
@@ -927,7 +927,7 @@ export class TrustedCodingSessionIngressStore {
 }
 
 function resolveImmutableTranscript(bucket: TranscriptBucket): {
-  value: StoredValue<Readonly<BuzzCodingSessionTranscriptV1>> | null;
+  value: StoredValue<Readonly<BeekeeperCodingSessionTranscriptV1>> | null;
   conflictCount: number;
 } {
   const records = [...bucket.values()];
@@ -954,7 +954,7 @@ function resolveNewestMetadata(
   bucket: MetadataBucket,
   providerAuthorityPubkey?: string,
 ): {
-  value: StoredValue<Readonly<BuzzCodingSessionMetadataV1>> | null;
+  value: StoredValue<Readonly<BeekeeperCodingSessionMetadataV1>> | null;
   conflictCount: number;
   matchedCount: number;
 } {

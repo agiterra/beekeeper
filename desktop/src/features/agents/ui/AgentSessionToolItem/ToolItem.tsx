@@ -8,7 +8,7 @@ import {
 import { cn } from "@/shared/lib/cn";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import type { TranscriptItem } from "../agentSessionTypes";
-import { getBuzzToolInfo } from "../agentSessionToolCatalog";
+import { getBeekeeperToolInfo } from "../agentSessionToolCatalog";
 import { buildCompactToolSummary } from "../agentSessionToolSummary";
 import type { AgentTranscriptIdentityProps } from "../activityRenderClasses/types";
 import {
@@ -93,7 +93,7 @@ export const ToolItem = React.memo(function ToolItem({
   const failureTone = failureToneProp ?? contextFailureTone;
   const quietFailure = failed && failureTone === "quiet";
   const canonicalToolName = item.buzzToolName ?? item.toolName;
-  const buzzTool = getBuzzToolInfo(canonicalToolName);
+  const buzzTool = getBeekeeperToolInfo(canonicalToolName);
   const compactSummary = React.useMemo(
     () => buildCompactToolSummary(item),
     [item],

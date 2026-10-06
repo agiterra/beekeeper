@@ -1,6 +1,6 @@
 use crate::client::{
     extract_d_tag, extract_relay_response_field, normalize_write_response, print_create_response,
-    BuzzClient,
+    BeekeeperClient,
 };
 use crate::error::CliError;
 use crate::validate::{parse_uuid, read_or_stdin, sdk_err, validate_hex64, validate_uuid};
@@ -8,7 +8,10 @@ use crate::validate::{parse_uuid, read_or_stdin, sdk_err, validate_hex64, valida
 // TODO(phase-4): Replace raw nostr::EventBuilder usage with buzz-sdk builder functions
 
 /// List workflows in a channel — query kind:30620 workflow definition events.
-pub async fn cmd_list_workflows(client: &BuzzClient, channel_id: &str) -> Result<(), CliError> {
+pub async fn cmd_list_workflows(
+    client: &BeekeeperClient,
+    channel_id: &str,
+) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
     let filter = serde_json::json!({
         "kinds": [30620],
@@ -33,7 +36,7 @@ pub async fn cmd_list_workflows(client: &BuzzClient, channel_id: &str) -> Result
 }
 
 /// Get a single workflow definition.
-pub async fn cmd_get_workflow(client: &BuzzClient, workflow_id: &str) -> Result<(), CliError> {
+pub async fn cmd_get_workflow(client: &BeekeeperClient, workflow_id: &str) -> Result<(), CliError> {
     validate_uuid(workflow_id)?;
     let filter = serde_json::json!({
         "kinds": [30620],
@@ -69,7 +72,7 @@ pub async fn cmd_get_workflow(client: &BuzzClient, workflow_id: &str) -> Result<
 /// `cancelled` — read straight off the relay's own status column, plus the
 /// triggering event id and author when the trigger context recorded one.
 pub async fn cmd_get_workflow_runs(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     workflow_id: &str,
     limit: Option<u32>,
 ) -> Result<(), CliError> {
@@ -124,7 +127,7 @@ fn disclose_run_checkouts(body: &str) -> String {
 /// exit code, `headSha`, `dirty`, duration, and the result event id — plus
 /// every approval, so a caller never has to first resolve the workflow id
 /// just to ask about a run it already has by hand.
-pub async fn cmd_get_run_status(client: &BuzzClient, run_id: &str) -> Result<(), CliError> {
+pub async fn cmd_get_run_status(client: &BeekeeperClient, run_id: &str) -> Result<(), CliError> {
     validate_uuid(run_id)?;
     let resp = client
         .get_authed(&format!("/workflow-runs/{run_id}"))
@@ -135,7 +138,7 @@ pub async fn cmd_get_run_status(client: &BuzzClient, run_id: &str) -> Result<(),
 
 /// Create a workflow — sign and submit a kind:30620 event.
 pub async fn cmd_create_workflow(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     yaml: &str,
 ) -> Result<(), CliError> {
@@ -156,7 +159,7 @@ pub async fn cmd_create_workflow(
 
 /// Update a workflow — sign and submit an updated kind:30620 event with same d-tag.
 pub async fn cmd_update_workflow(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     workflow_id: &str,
     yaml: &str,
@@ -192,7 +195,10 @@ pub async fn cmd_update_workflow(
 }
 
 /// Delete a workflow — sign and submit a kind:5 deletion event.
-pub async fn cmd_delete_workflow(client: &BuzzClient, workflow_id: &str) -> Result<(), CliError> {
+pub async fn cmd_delete_workflow(
+    client: &BeekeeperClient,
+    workflow_id: &str,
+) -> Result<(), CliError> {
     let wf_uuid = parse_uuid(workflow_id)?;
     let keys = client.keys();
 
@@ -268,7 +274,7 @@ pub fn trigger_content(
 /// that commit, and a step declaring `checkout: required` refuses a run
 /// without one. When neither is given, the event content is `{}`.
 pub async fn cmd_trigger_workflow(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     workflow_id: &str,
     inputs: Option<&str>,
     checkout: Option<&str>,
@@ -322,7 +328,7 @@ pub fn normalize_approval_ref(value: &str) -> Result<String, CliError> {
 /// through unchanged, exactly as `beekeeper_sdk::build_workflow_approval` and the
 /// relay's own lookup (`get_approval_by_stored_hash`) expect.
 pub async fn cmd_approve_step(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     approval_ref: &str,
     approved: bool,
     note: Option<&str>,
@@ -356,7 +362,7 @@ pub async fn cmd_approve_step(
     Ok(())
 }
 
-pub async fn dispatch(cmd: crate::WorkflowsCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(cmd: crate::WorkflowsCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     use crate::WorkflowsCmd;
     match cmd {
         WorkflowsCmd::List { channel } => cmd_list_workflows(client, &channel).await,

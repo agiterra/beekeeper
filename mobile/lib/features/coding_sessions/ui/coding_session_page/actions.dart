@@ -143,7 +143,7 @@ class _SessionActionsMenu extends ConsumerWidget {
   Future<CodingSessionExecution?> _pickExecution(
     BuildContext context,
     List<CodingSessionExecution> executions,
-  ) => showBuzzModalBottomSheet<CodingSessionExecution>(
+  ) => showBeekeeperModalBottomSheet<CodingSessionExecution>(
     context: context,
     title: 'Which execution?',
     builder: (sheetContext) => ListView(
@@ -217,7 +217,7 @@ Future<void> _showTextSheet(
   required bool multiline,
   required int maxBytes,
   required Future<void> Function(String value) onSave,
-}) => showBuzzModalBottomSheet<void>(
+}) => showBeekeeperModalBottomSheet<void>(
   context: context,
   title: title,
   isScrollControlled: true,

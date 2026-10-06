@@ -87,7 +87,7 @@ class _PairingWelcomeView extends StatelessWidget {
                               ? const SizedBox(
                                   width: 20,
                                   height: 20,
-                                  child: BuzzLoadingIndicator(
+                                  child: BeekeeperLoadingIndicator(
                                     size: 20,
                                     color: _onboardingCtaLabel,
                                     semanticLabel: 'Opening scanner',
@@ -174,11 +174,14 @@ class _PairingWelcomeView extends StatelessWidget {
                                             ? const SizedBox(
                                                 width: 20,
                                                 height: 20,
-                                                child: BuzzLoadingIndicator(
-                                                  size: 20,
-                                                  color: _onboardingCtaLabel,
-                                                  semanticLabel: 'Connecting',
-                                                ),
+                                                child:
+                                                    BeekeeperLoadingIndicator(
+                                                      size: 20,
+                                                      color:
+                                                          _onboardingCtaLabel,
+                                                      semanticLabel:
+                                                          'Connecting',
+                                                    ),
                                               )
                                             : const Text('Connect'),
                                       ),

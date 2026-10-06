@@ -34,19 +34,19 @@ async function readMockGlobalAgentConfig(
     () =>
       typeof (
         window as unknown as {
-          __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: unknown;
+          __BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?: unknown;
         }
-      ).__BUZZ_E2E_INVOKE_MOCK_COMMAND__ === "function",
+      ).__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__ === "function",
   );
   return page.evaluate(() =>
     (
       window as unknown as {
-        __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: (
+        __BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?: (
           command: string,
           payload: unknown,
         ) => Promise<MockGlobalAgentConfig>;
       }
-    ).__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.("get_global_agent_config", null),
+    ).__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?.("get_global_agent_config", null),
   );
 }
 

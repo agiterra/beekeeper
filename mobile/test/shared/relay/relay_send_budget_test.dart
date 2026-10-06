@@ -1,4 +1,4 @@
-import 'package:buzz/shared/relay/relay_send_budget.dart';
+import 'package:beekeeper/shared/relay/relay_send_budget.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'relay_session_test_support.dart';

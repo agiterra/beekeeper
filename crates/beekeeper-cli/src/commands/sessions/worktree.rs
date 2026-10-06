@@ -37,7 +37,7 @@ use beekeeper_core::worktree_lifecycle::{
 
 use crate::commands::sandbox;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// Kind 30618 — the relay-signed NIP-34 repository state announcement.
@@ -232,7 +232,7 @@ pub fn repo_id_of(repo_root: &Path) -> Option<String> {
 
 /// Every commit id a relay-signed kind 30618 currently names for `repo_id`.
 pub async fn relay_ref_oids(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_id: &str,
 ) -> Result<BTreeSet<String>, CliError> {
     let events = client
@@ -314,7 +314,7 @@ pub struct SessionSettlement {
 /// its trees keep reading `not-settled`. That is the honest answer: nothing
 /// on the relay attributes such a tombstone to a session.
 pub async fn session_deletion(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     session_ref: &str,
     now_secs: i64,
 ) -> Result<Option<u64>, CliError> {
@@ -331,7 +331,7 @@ pub async fn session_deletion(
 
 /// Whether a 44230 revision settles this session, and how long ago.
 pub async fn session_settlement(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     session_ref: &str,
     now_secs: i64,
 ) -> Result<(bool, Option<u64>), CliError> {
@@ -383,7 +383,7 @@ pub async fn session_settlement(
 /// and the grace window runs from whichever is newer, because that is the
 /// moment the work last stopped being somebody's live work.
 pub async fn session_end(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     session_ref: &str,
     now_secs: i64,
 ) -> Result<SessionSettlement, CliError> {
@@ -574,7 +574,7 @@ pub fn row_for(
 
 /// Gather every row for one session, or for every recorded session.
 async fn rows_for(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     store: &RecordedWorktreeStore,
     session_ref: Option<&str>,
     seat: Option<&str>,
@@ -650,7 +650,7 @@ pub fn print_rows(rows: &[WorktreeRow], format: &crate::OutputFormat) {
 
 /// `bee sessions worktree status` — every recorded tree and its disposition.
 pub async fn cmd_status(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     session_ref: Option<&str>,
     all: bool,
     store_path: Option<&str>,
@@ -678,7 +678,7 @@ pub async fn cmd_status(
 /// row that is not `prunable` is refused rather than skipped: a sweep that
 /// silently passed over held work is exactly how work gets lost.
 pub async fn cmd_prune(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     session_ref: &str,
     seat: Option<&str>,
     confirm: bool,
@@ -747,7 +747,7 @@ pub fn remove_worktree(repo_root: &Path, path: &Path) -> Result<(), CliError> {
 /// commit, and both are ignored by git, which is why neither ever appears in
 /// `dirtyFiles`.
 pub async fn cmd_reclaim(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     session_ref: &str,
     seat: Option<&str>,
     confirm: bool,
@@ -805,7 +805,7 @@ pub async fn cmd_reclaim(
 /// ownership is module lines only, and every verb this subcommand gains stays
 /// off it.
 pub async fn dispatch(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     cmd: crate::SessionWorktreeCmd,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
