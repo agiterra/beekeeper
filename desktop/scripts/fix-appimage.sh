@@ -188,8 +188,8 @@ APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$(uname -m)" appimagetool \
 # this branch could publish a stale tarball containing the unfixed AppImage.
 if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
   # `tauri signer sign` reads TAURI_SIGNING_PRIVATE_KEY and
-  # TAURI_SIGNING_PRIVATE_KEY_PASSWORD from the environment (same as the
-  # macOS jobs in release.yml) — never pass the password via argv, where
+  # TAURI_SIGNING_PRIVATE_KEY_PASSWORD from the environment — never pass the
+  # password via argv, where
   # it would be visible in /proc/<pid>/cmdline.
   echo "==> Re-signing AppImage"
   (cd "$DESKTOP_DIR" && pnpm tauri signer sign "$APPIMAGE_ABS")

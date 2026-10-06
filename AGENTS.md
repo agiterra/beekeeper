@@ -797,5 +797,5 @@ usage.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — setup, code style, PR process, how to add event kinds / CLI subcommands / HTTP endpoints
 - [TESTING.md](TESTING.md) — multi-agent E2E test guide
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system design and component relationships
-- [RELEASING.md](RELEASING.md) — release process: `release-desktop`, `release-relay`, `scripts/mobile-release.sh`, candidate tags, internal builds
+- [RELEASING.md](RELEASING.md) — release process: what `just release-desktop` prepares, and which publishing and signing lanes (inherited from Block and removed) must be rebuilt before releases ship
 - [README.md](README.md) — project overview and quick start

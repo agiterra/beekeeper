@@ -49,7 +49,6 @@ import { ModerationQueueCard } from "./ModerationQueueCard";
 import { NotificationSettingsCard } from "./NotificationSettingsCard";
 import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
 import { CodingSessionsSettingsPanel } from "./CodingSessionsSettingsPanel";
-import { HostedCommunitiesSettingsCard } from "./HostedCommunitiesSettingsCard";
 import {
   SettingsOptionGroup,
   SettingsOptionGroupList,
@@ -725,8 +724,6 @@ export function renderSettingsSection(
       return <ThemeSettingsCard />;
     case "shortcuts":
       return <KeyboardShortcutsCard />;
-    case "hosted-communities":
-      return <HostedCommunitiesSettingsCard />;
     case "community-members":
       return (
         <CommunityMembersSettingsCard currentPubkey={props.currentPubkey} />

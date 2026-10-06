@@ -10,7 +10,6 @@ type SettingsSection =
   | "experimental"
   | "appearance"
   | "shortcuts"
-  | "hosted-communities"
   | "tokens"
   | "community-members"
   | "mobile"

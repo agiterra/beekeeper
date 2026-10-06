@@ -27,7 +27,7 @@ let cachedPort: number | null = null;
 let portPromise: Promise<number | null> | null = null;
 
 /**
- * Cached relay origin (e.g. "https://buzz-oss.stage.blox.sqprod.co"),
+ * Cached relay origin (e.g. "https://hive.agiterra.org"),
  * canonicalized via {@link canonicalOrigin} so comparisons are stable.
  */
 let cachedRelayOrigin: string | null = null;
@@ -315,7 +315,7 @@ export function resetMediaCaches(): void {
 }
 
 /**
- * The relay origin (e.g. `https://buzz-oss.stage.blox.sqprod.co`) if it has
+ * The relay origin (e.g. `https://hive.agiterra.org`) if it has
  * been resolved, else `null`. Synchronous best-effort read of the same cache
  * `rewriteRelayUrl` uses. Callers that need a hard SSRF guarantee must still
  * rely on the Rust `validate_download_url` gate; this only drives UX (e.g.
@@ -359,7 +359,7 @@ export function rewriteRelayUrl(url: string): string {
   // as a safe default (relay URLs need the proxy to avoid Cloudflare 403s).
   // Compare canonicalized origins: hosts are case-insensitive, and the relay
   // always returns lowercased media URLs even when the saved community URL
-  // was typed with uppercase (e.g. wss://PENDING-SEED.communities.buzz.xyz).
+  // was typed with uppercase (e.g. wss://PENDING-SEED.example.com).
   if (cachedRelayOrigin) {
     const urlOrigin = canonicalOrigin(url);
     if (!urlOrigin || !sameRelayOrigin(urlOrigin, cachedRelayOrigin)) {

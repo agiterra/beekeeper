@@ -54,10 +54,7 @@ test("migrateLegacyCommunityStorage does not overwrite new community state", () 
 });
 
 test("signed-build relay defaults auto-connect during first-run onboarding", () => {
-  assert.equal(
-    shouldAutoConnectDefaultRelay("wss://buzz.block.builderlab.xyz"),
-    true,
-  );
+  assert.equal(shouldAutoConnectDefaultRelay("wss://hive.agiterra.org"), true);
   assert.equal(shouldAutoConnectDefaultRelay("ws://localhost:3000"), false);
   assert.equal(shouldAutoConnectDefaultRelay("ws://127.0.0.1:3000"), false);
   assert.equal(shouldAutoConnectDefaultRelay("ws://[::1]:3000"), false);

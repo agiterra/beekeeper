@@ -4,7 +4,7 @@
 > 2026-10-06 with the relay chart: both were inherited from block/buzz and unmaintained here. The
 > runtime requirements below still hold for any deployment of the gateway.
 
-`buzz-push-gateway` is the standalone public APNs last hop intended for `push.buzz.xyz`. Build it with `Dockerfile.push-gateway`; do not run it in the relay image or give relays APNs credentials.
+`buzz-push-gateway` is the standalone public APNs last hop. Its wire format still names `push.buzz.xyz` — Block's deployment, not one Beekeeper runs — in the signed audiences and the delivery URL below; Beekeeper operates no push gateway today. Build it with `Dockerfile.push-gateway`; do not run it in the relay image or give relays APNs credentials.
 
 ## Network and health
 
@@ -76,10 +76,15 @@ Alerting rules ship as an opt-in prometheus-operator `PrometheusRule` (`promethe
 
 ## Relay configuration
 
-Relays default `BUZZ_PUSH_GATEWAY_DELIVERY_URL` to the exact public delivery URL
-`https://push.buzz.xyz/v1/deliveries/apns`. Operators can override it with
-another exact HTTPS `/v1/deliveries/apns` URL, or explicitly disable NIP-PL push
-by setting the variable to an empty string. When enabled, the relay advertises
+NIP-PL push is **off unless configured**. A relay enables it only when
+`BUZZ_PUSH_GATEWAY_DELIVERY_URL` is set to an exact HTTPS `/v1/deliveries/apns`
+URL of a gateway that can deliver to the relay's app; unset or empty both leave
+push disabled, and there is no default gateway. (Relays once defaulted to
+Block's `https://push.buzz.xyz/v1/deliveries/apns`, which cannot deliver to
+Beekeeper's `io.agiterra.beekeeper.mobile` app; that default was removed.)
+While push is off the relay omits the NIP-PL descriptor from NIP-11, refuses
+kind:30350 leases with `push not supported`, and starts neither the matcher nor
+the delivery worker. When enabled, the relay advertises
 its host-scoped NIP-PL descriptor in NIP-11 and starts the matcher and delivery
 worker. Relays retain lease matching, authorization, coalescing, durable
 jobs/retries, and generation checks; they receive only opaque capabilities and

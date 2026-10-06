@@ -5,11 +5,12 @@
 //! distinguishes them from digests for exactly this reason — so a tag-only
 //! reference is rejected, not just `:latest`.
 //!
-//! There is no parse-time fallback: `image` is required, and its absence
-//! fails closed with a named field. The published `ghcr.io/block/buzz-sprig`
-//! digest is offered only as a schema `default` (a UI prefill the desktop
-//! submits explicitly — see `config::DEFAULT_IMAGE`), so the create-intent
-//! fingerprint never depends on compiled-in provider state.
+//! There is no fallback and no default: `image` is required, its absence
+//! fails closed with a named field, and the `info` schema offers no prefill —
+//! Beekeeper publishes no sprig image, so the operator supplies the
+//! digest-pinned reference they built. The value therefore always arrives
+//! explicitly in `provider_config`, and the create-intent fingerprint never
+//! depends on compiled-in provider state.
 
 /// A validated, digest-qualified image reference.
 ///
@@ -37,9 +38,9 @@ impl std::fmt::Display for ImageRef {
 pub fn parse(raw: &str) -> Result<ImageRef, String> {
     let reference = raw.trim();
     if reference.is_empty() {
-        return Err("provider_config.image is required: no image is assumed \
-                    at parse time, so the digest-pinned image to run must be \
-                    given explicitly"
+        return Err("provider_config.image is required: there is no default \
+                    image, so the digest-pinned image to run (one containing \
+                    the buzz-acp runtime ABI) must be given explicitly"
             .to_string());
     }
 
@@ -100,8 +101,11 @@ mod tests {
     #[test]
     fn accepts_digest_pinned_reference() {
         let d = "a".repeat(64);
-        let r = parse(&format!("ghcr.io/block/buzz-sprig@sha256:{d}")).unwrap();
-        assert_eq!(r.as_str(), format!("ghcr.io/block/buzz-sprig@sha256:{d}"));
+        let r = parse(&format!("registry.example.com/beekeeper-sprig@sha256:{d}")).unwrap();
+        assert_eq!(
+            r.as_str(),
+            format!("registry.example.com/beekeeper-sprig@sha256:{d}")
+        );
     }
 
     /// The normalization that keeps the fingerprint stable: two spellings of
@@ -109,8 +113,11 @@ mod tests {
     #[test]
     fn strips_tag_from_tag_plus_digest_form() {
         let d = "b".repeat(64);
-        let tagged = parse(&format!("ghcr.io/block/buzz-sprig:v1.2@sha256:{d}")).unwrap();
-        let plain = parse(&format!("ghcr.io/block/buzz-sprig@sha256:{d}")).unwrap();
+        let tagged = parse(&format!(
+            "registry.example.com/beekeeper-sprig:v1.2@sha256:{d}"
+        ))
+        .unwrap();
+        let plain = parse(&format!("registry.example.com/beekeeper-sprig@sha256:{d}")).unwrap();
         assert_eq!(tagged, plain);
     }
 
@@ -134,10 +141,10 @@ mod tests {
     #[test]
     fn rejects_every_tag_only_reference() {
         for bad in [
-            "ghcr.io/block/buzz-sprig:latest",
-            "ghcr.io/block/buzz-sprig:v1.2.3",
-            "ghcr.io/block/buzz-sprig:sha-abc1234",
-            "ghcr.io/block/buzz-sprig",
+            "registry.example.com/beekeeper-sprig:latest",
+            "registry.example.com/beekeeper-sprig:v1.2.3",
+            "registry.example.com/beekeeper-sprig:sha-abc1234",
+            "registry.example.com/beekeeper-sprig",
             "localhost:5000/buzz-sprig",
         ] {
             let err = parse(bad).unwrap_err();

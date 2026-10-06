@@ -32,13 +32,13 @@ cleanup() {
     managed="$(kubectl --context "$CONTEXT" get namespace "$NAMESPACE" \
         -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || true)"
     binding="$(kubectl --context "$CONTEXT" get namespace "$NAMESPACE" \
-        -o jsonpath='{.metadata.labels.buzz\.block\.xyz/binding-version}' 2>/dev/null || true)"
+        -o jsonpath='{.metadata.labels.beekeeper\.agiterra\.io/binding-version}' 2>/dev/null || true)"
     if [[ "$managed" != "$MANAGED_BY" || "$binding" != "$BINDING_VERSION" ]]; then
         echo "REFUSING cleanup: namespace ownership markers changed: $NAMESPACE" >&2
         return 1
     fi
     foreign="$(kubectl --context "$CONTEXT" --namespace "$NAMESPACE" get pods -o json \
-        | jq '[.items[] | select(.metadata.labels["app.kubernetes.io/managed-by"] != "buzz-backend-kubernetes" or .metadata.labels["buzz.block.xyz/binding-version"] != "v1")] | length')"
+        | jq '[.items[] | select(.metadata.labels["app.kubernetes.io/managed-by"] != "buzz-backend-kubernetes" or .metadata.labels["beekeeper.agiterra.io/binding-version"] != "v1")] | length')"
     if [[ "$foreign" != 0 ]]; then
         echo "REFUSING cleanup: namespace contains an unowned pod: $NAMESPACE" >&2
         return 1
@@ -59,7 +59,7 @@ kubectl --context "$CONTEXT" create namespace "$NAMESPACE"
 CREATED=1
 kubectl --context "$CONTEXT" label namespace "$NAMESPACE" \
     "app.kubernetes.io/managed-by=$MANAGED_BY" \
-    "buzz.block.xyz/binding-version=$BINDING_VERSION"
+    "beekeeper.agiterra.io/binding-version=$BINDING_VERSION"
 
 cat <<YAML | kubectl --context "$CONTEXT" --namespace "$NAMESPACE" apply -f -
 apiVersion: v1
@@ -68,7 +68,7 @@ metadata:
   name: digest-resolution-probe
   labels:
     app.kubernetes.io/managed-by: $MANAGED_BY
-    buzz.block.xyz/binding-version: $BINDING_VERSION
+    beekeeper.agiterra.io/binding-version: $BINDING_VERSION
 spec:
   restartPolicy: Never
   containers:

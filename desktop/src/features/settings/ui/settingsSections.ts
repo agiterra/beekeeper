@@ -7,7 +7,6 @@ import {
   FlaskConical,
   Keyboard,
   LayoutTemplate,
-  MessagesSquare,
   MonitorCog,
   ShieldAlert,
   Smartphone,
@@ -37,7 +36,6 @@ export type SettingsSection =
   | "compute"
   | "appearance"
   | "shortcuts"
-  | "hosted-communities"
   | "community-members"
   | "moderation"
   | "custom-emoji"
@@ -59,7 +57,6 @@ const SETTINGS_SECTION_VALUES: readonly SettingsSection[] = [
   "compute",
   "appearance",
   "shortcuts",
-  "hosted-communities",
   "community-members",
   "moderation",
   "custom-emoji",
@@ -136,11 +133,6 @@ export const settingsSections: SettingsSectionDescriptor[] = [
     value: "shortcuts",
     label: "Shortcuts",
     icon: Keyboard,
-  },
-  {
-    value: "hosted-communities",
-    label: "Hosted communities",
-    icon: MessagesSquare,
   },
   {
     value: "community-members",

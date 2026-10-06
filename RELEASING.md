@@ -1,364 +1,145 @@
 # Releasing Beekeeper
 
-> **Much of this lane is inherited and not all of it is ours yet.** Beekeeper
-> began as a fork of block/buzz, and the signed-release machinery described
-> below was Block's: the `buzz-release-bot` GitHub App, the
-> `block/apple-codesign-action` signing role, the tag-protection rulesets and
-> the private `buzz-releases` mobile pipeline all live in Block's organization
-> and are **not available here**. Nothing in this repository pulls from or
-> pushes to block/buzz any more, and the commands below have been pointed at
-> `agiterra/beekeeper`; what has *not* been re-established is the signing and
-> tag-protection side. Treat the desktop and mobile lanes as unverified for
-> agiterra until someone has cut one — see § Prerequisites for the specific
-> gaps.
+> **No desktop or mobile build is published or signed today.** Beekeeper began
+> as a fork of block/buzz, and every lane that built, signed, tagged and
+> published a release ran on Block's infrastructure: the `buzz-release-bot`
+> GitHub App, the `block/apple-codesign-action` signing role, Block's
+> tag-protection rulesets, the `ghcr.io/block/buzz` image registry and Block's
+> private Buildkite mobile pipelines. Those workflows and the scripts that served
+> them have been removed from this repository (§ What was removed). What remains
+> prepares release pull requests on `agiterra/beekeeper`; **a publishing and
+> signing lane of agiterra's own must be built before any release ships.**
 >
 > What does work today, and is exercised continuously: the relay deploys itself
 > from the newest green `main` pipeline, building its own image on the relay
 > host. See [docs/INTEGRATION.md](docs/INTEGRATION.md) § Deploying.
 
-Beekeeper has three independent release lanes. Desktop and relay use release PRs.
-Mobile uses immutable release-candidate tags cut directly from remote `main`:
-
-| Lane | Entry point | Artifact |
-|------|-------------|----------|
-| Desktop | `just release-desktop <version>` | Packaged desktop app (signed/notarized macOS, unsigned Windows, and Linux) |
-| Relay | `just release-relay` | Published relay container image (registry set by the `GHCR_IMAGE` repo variable) |
-| Mobile | `scripts/mobile-release.sh candidate X.Y.Z` | Exact `mobile-vX.Y.Z-rc.N` source identity |
-
-The lanes version independently. Desktop reads its manifests, relay reads its
-crate manifest, and mobile derives both source and marketing version from the
-exact candidate tag. The mobile lane previously handed off to a private
-`buzz-releases` pipeline in Block's organization; that handoff is gone and no
-replacement exists, so a mobile candidate tag currently produces a source
-identity and nothing else.
-
-## Quick Start
-
-Prepare desktop releases locally from an up-to-date, clean `main` checkout:
-
-```sh
-just release-desktop 0.5.3
-```
-
-The recipe generates the immutable candidate and opens or updates its pull
-request. Candidate branch creation uses the operator's GitHub permissions; the
-release App is intentionally limited to creating protected release tags.
-
-```sh
-# Relay release
-just release-relay
-just release-relay 0.4.0
-
-# Publish the next mobile candidate from the exact current remote main commit
-scripts/mobile-release.sh candidate 0.5.0
-```
-
-Desktop uses an immutable generated candidate PR; relay continues using its
-metadata PR. Mobile does not. Each `mobile-vX.Y.Z-rc.N` tag is an immutable
-candidate and the artifact of record.
-There is no mobile release branch, stable mobile tag alias, finalization step,
-or mobile GitHub Release.
+| Lane | Entry point | What it produces today |
+|------|-------------|------------------------|
+| Relay | none needed | hive runs the newest green `main` (`beekeeper-autodeploy.timer`); no image is pushed to a registry |
+| Relay version | `just release-relay [X.Y.Z]` | A PR bumping `crates/buzz-relay` and its changelog. Nothing tags or builds from it |
+| Desktop | `just release-desktop [X.Y.Z]` | A deterministic release-candidate PR on `agiterra/beekeeper`. Nothing tags, builds or publishes from it |
+| Mobile | none | No release lane exists |
 
 ---
 
-## How It Works
+## Desktop
 
-### Desktop
+Run from a clean checkout that can fetch `main` (the remote defaults to
+`origin`; set `RELEASE_REMOTE` to use another):
 
-1. Run `just release-desktop <version>` from a clean, up-to-date `main` checkout.
-   The script creates one deterministic candidate commit and records both its
-   frozen base and the verified prior release ledger in candidate metadata.
-2. Review the exact candidate SHA, complete changelog, and CI. Regenerating or
-   pushing the branch creates a new candidate and requires checks to run again.
-3. **Squash merge** the PR after all protected-branch checks pass. The merge is
-   the human authorization event; an authorized owner/admin bypass is treated
-   the same way. Unrelated changes reaching `main` do not invalidate the
-   reviewed candidate.
-4. `auto-tag-on-release-pr-merge` verifies the closed event against GitHub's PR
-   identity, validates candidate content, and proves every required check came
-   from its trusted producer and was successful when the PR merged. It creates
-   `desktop-v<version>` at the exact reviewed PR head—not the squash commit.
-   Retries accept that tag only at the same SHA and never move it. GitHub does
-   not expose when an individual check rerun was created, so an ordinary rerun
-   after merge deliberately makes tag verification fail closed; inspect that
-   run and create a new candidate version rather than retrying the blocked tag.
-5. The tag triggers `release.yml`. It builds and stages all platform artifacts,
-   publishes the versioned release only after the complete set succeeds, then
-   updates the rolling updater manifest last for stable versions.
+```sh
+just release-desktop 0.5.3     # or `patch` / no argument for the next patch
+```
 
-Because squash merging leaves immutable candidate tags on side history, the next
-release uses validated prior candidate metadata as its ledger boundary. It
-includes unrelated commits after the prior frozen base and excludes exactly the
-prior release's recorded squash commit; tag ancestry is deliberately irrelevant.
+`scripts/prepare-desktop-release.sh`:
 
-### Relay
+1. Fetches `main` and the existing `desktop-v*` tags, and freezes the base at
+   the fetched `main` tip.
+2. Checks out `version-bump/<version>`, runs `just bump-desktop-version`, and
+   has `scripts/desktop_release.py generate` write `CHANGELOG.md` and
+   `.release/desktop-candidate.json` (frozen base, prior release, commit list).
+   Changelog links point at `github.com/agiterra/beekeeper`.
+3. Commits the candidate as you, signed off (`git commit -s`), and validates it
+   with `scripts/desktop_release.py validate`.
+4. Pushes the branch to hive through `scripts/push-with-floor.sh` (the same
+   floor `just push` runs), waits for the hive-to-GitHub bridge to mirror it,
+   and opens or updates the PR on `agiterra/beekeeper` with `gh`.
 
-1. **`just release-relay`** runs locally on `main`, creates or updates a
-   `relay-release/<version>` PR, bumps `crates/buzz-relay/Cargo.toml`,
-   regenerates `Cargo.lock`, and updates the relay changelog.
-2. **Merge the PR.** `auto-tag-on-release-pr-merge` pushes
-   `relay-v<version>`.
-3. **The tag triggers `docker.yml`.** Stable releases update the version
-   aliases and `latest`; prereleases do not. Each release also publishes an
-   optimized, symbol-bearing image under matching `debug-` tags (for example,
-   `debug-0.3.0` and `debug-latest`) for native profiling. The ordinary tags
-   remain stripped and are the default for deployments that do not need it.
+`scripts/prepare-desktop-release.sh <version> validate-only` stops after step
+3, without pushing.
 
-Every push to `main` continues to publish the rolling relay `:main` and
-`:sha-<7>` tags, plus matching `:debug-main` and `:debug-sha-<7>` variants.
+**The PR is for review only — do not merge it on GitHub.** GitHub is a
+mirror of hive: a merge there writes the mirror, never reaches hive, and races
+the bridge ([docs/INTEGRATION.md](docs/INTEGRATION.md) § Remotes). To land a
+reviewed release, fast-forward `main` to it and push to hive with `just push`.
+Landing records the version and changelog. **No tag is created and no build
+follows**: the auto-tagger and `release.yml` that used to do that were
+Block's and are removed. The candidate metadata stays useful as the ledger
+boundary for the next release whenever a publishing lane exists.
 
-### Mobile
+To get an installable build today, build locally: `just desktop-release-build
+[target]` (unsigned) or `just prod-desktop [rev]`
+([docs/local-desktop-instances.md](docs/local-desktop-instances.md)).
 
-1. **Publish a candidate.** From a clean checkout whose `origin` is the
-   canonical `agiterra/beekeeper` repository, run
-   `scripts/mobile-release.sh candidate X.Y.Z`. The script resolves and fetches
-   the exact current `origin/main` commit, derives the next number from exact
-   remote tags for that marketing version, and publishes an annotated
-   `mobile-vX.Y.Z-rc.N` tag there through the dedicated `buzz-release-bot`
-   GitHub App. It never uses the operator's checked-out commit and never moves
-   an existing candidate.
-2. **Build the exact tag.** Enter the candidate tag as `mobile_ref` in the
-   private Buzz mobile Buildkite pipeline. OSS CI deliberately cannot trigger
-   that private pipeline. The tag supplies both source commit and release
-   version. Flutter receives clean marketing version `X.Y.Z`; Buildkite's
-   monotonically increasing build number supplies the platform build number.
-3. **Promote tested artifacts.** Promote the already-built signed artifact for
-   each platform through its store workflow. Record the exact tag with the
-   build or rollout record. No source ref is changed and no final build is cut.
+The in-app updater has no endpoint configured
+(`desktop/src-tauri/tauri.conf.json`), so update checks fall back to linking
+<https://github.com/agiterra/beekeeper/releases/latest>, which has nothing on it
+until a release is published there.
 
-The iOS and Android artifacts for one marketing version may come from different
-RC tags. For example, iOS can ship `mobile-v0.5.0-rc.2` while Android ships
-`mobile-v0.5.0-rc.3`. Each platform's exact candidate tag is its source record.
-There is intentionally no single selected or final candidate for the marketing
-version.
+### Unsigned platform canaries
 
-The simplification trades away a separate stabilization line. Unrelated commits
-that reach `main` become part of every later candidate, and there is no retained
-hotfix branch or branch-ancestry history. Add a dedicated hotfix flow later if a
-release actually needs isolation from `main`.
-
-`mobile/pubspec.yaml` keeps `0.0.0+1` only as a valid, visibly non-release
-fallback for local development and validation builds. Release jobs always
-inject both version fields. `mobile/CHANGELOG.md` is retained as historical
-release data. It is not a release ledger for this flow.
+`.github/workflows/{linux,macos-intel,windows}-canary.yml` build unsigned
+packages of `main` on manual dispatch and upload them as short-lived Actions
+artifacts. They are guarded to run only on `agiterra/beekeeper`, and GitHub
+Actions is currently disabled there, so they do not run today. The Linux
+AppImage is post-processed by `desktop/scripts/fix-appimage.sh`, which strips
+infra libraries over-bundled by linuxdeploy (they crash on Mesa 25+ / GLib 2.88
+distros; see
+[tauri-apps/tauri#15665](https://github.com/tauri-apps/tauri/issues/15665)), so
+it relies on the host's Wayland/GStreamer/graphics stack and needs GLib >= 2.72.
 
 ---
 
-## Version Sources
+## Relay
+
+The relay needs no release step to reach hive: the deployer builds and runs the
+newest `main` commit with a green Woodpecker pipeline. NIP-11 reports exactly
+which commit is running (`software_commit`; see [AGENTS.md](AGENTS.md)).
+
+`just release-relay [X.Y.Z]` remains for recording a version: on a clean,
+up-to-date `main` it creates `relay-release/<version>`, bumps
+`crates/buzz-relay/Cargo.toml`, regenerates `Cargo.lock`, prepends
+`crates/buzz-relay/CHANGELOG.md`, pushes, and opens or updates the PR on
+`agiterra/beekeeper` for review — land it on hive the same way, never by merging
+on GitHub. Landing it tags nothing and publishes no image.
+
+---
+
+## Mobile
+
+There is no mobile release lane. Candidate tags were published by a Block-owned
+GitHub App and built by Block's private Buildkite pipeline; both are gone, and
+`scripts/mobile-release.sh` was removed with them. `mobile/pubspec.yaml` keeps
+`0.0.0+1` as a visibly non-release version for local builds, and
+`mobile/CHANGELOG.md` is historical release data.
+
+---
+
+## Version sources
 
 | Lane | Release version authority |
 |------|---------------------------|
-| Desktop | `desktop/package.json` and synchronized desktop manifests |
-| Relay | `crates/buzz-relay/Cargo.toml` |
-| Mobile | Exact `mobile-vX.Y.Z-rc.N` remote tag |
-
-`just bump-desktop-version <version>` updates the desktop manifests and
-regenerates their lockfiles. `just bump-relay-version <version>` updates the
-relay crate and regenerates `Cargo.lock`. Mobile has no bump recipe or
-release-metadata PR.
+| Desktop | `desktop/package.json` and the synchronized desktop manifests (`just bump-desktop-version`) |
+| Relay | `crates/buzz-relay/Cargo.toml` (`just bump-relay-version`) |
+| Mobile | none |
 
 ---
 
-## Signed macOS Canary
+## What was removed
 
-Use the manual **Signed macOS Canary** workflow when you need an Apple Silicon
-build of current `main` for explicit testing without publishing a release:
+Workflows (all ran only on, or published through, Block's infrastructure):
+`release.yml` (desktop build, signing, GitHub Release), `docker.yml` (relay
+images to `ghcr.io/block/buzz`), `sprig-image.yml`, `signed-macos-canary.yml`,
+`desktop-release-cache-proof.yml`, `desktop-release-candidate.yml`,
+`mobile-release-candidate.yml`, `auto-tag-on-release-pr-merge.yml` and
+`promote-oss-desktop-release.yml`; and the scripts that served only them
+(`mobile-release.sh`, `publish-mobile-release-candidate.sh`,
+`promote-oss-desktop-release.sh`, `release-rulesets.sh`,
+`verify-release-ref.sh`, `verify-desktop-release-merge.sh`, their `.jq`
+filters and contract tests). The relay deployment-identity attestations that
+`docker.yml` produced went with it.
 
-```sh
-gh workflow run signed-macos-canary.yml --repo agiterra/beekeeper --ref main
-```
+## Building a publishing lane
 
-The workflow derives a `-test.<run-number>` version, signs and notarizes the
-DMG, verifies it with Gatekeeper, and uploads it as a short-lived Actions
-artifact with seven-day retention. Because this is a public repository, any
-signed-in GitHub user can download that artifact while it exists; it is
-unpublished, not private. The workflow has no release permissions, does not
-create or move tags, and cannot update `buzz-desktop-latest` or `latest.json`.
+Whoever builds one needs, at minimum, decisions on:
 
-Download the artifact from the completed run:
-
-```sh
-gh run download <run-id> --repo agiterra/beekeeper --name <artifact-name>
-```
-
-The workflow intentionally accepts only `main`. Use the normal release process
-for distributable builds or builds from an immutable release tag.
-
----
-
-## Release Retry
-
-`release.yml` has no manual dispatch and cannot build from `main` or another
-caller-selected ref. If a run for an existing immutable
-`desktop-v<version>` tag fails, rerun that failed workflow from GitHub Actions
-(or use `gh run rerun <run-id> --failed --repo agiterra/beekeeper`). A rerun
-repairs the versioned draft if publication did not complete. It does not
-promote that version to the auto-updater; promotion is a separate manual
-action. Do not recreate, move, or push the immutable tag again.
-
-Mobile intentionally has no branch or arbitrary-ref fallback. The private
-Buildkite pipeline accepts only an exact candidate tag.
-
----
-
-## Internal Releases
-
-For mobile, trigger the private
-[Release Mobile pipeline](https://buildkite.com/runway/buzz-mobile-releases) with
-an exact RC tag for the platform build being cut. For desktop, start
-[Release Desktop](https://buildkite.com/runway/sprout-releases) and enter the
-exact public source tag as `desktop_ref=desktop-v<version>`; a generic
-`v<version>` tag is intentionally rejected. See the
-the mobile store-submission process, which no longer has an automated
-pipeline
-for the rest of the private pipeline contract.
-
----
-
-## What Gets Published
-
-Desktop publishes two GitHub releases:
-
-1. **`desktop-v<version>`**: the user-facing release with installers and the
-   exact `updater-manifest.json` promotion candidate. Publishing this release
-   does not expose it through in-app auto-update.
-2. **`buzz-desktop-latest`**: the rolling auto-updater release. Its
-   `latest.json` changes only through the manual promotion workflow.
-
-### Promote an OSS desktop release to auto-update
-
-After installing and testing the published `desktop-v<version>` artifacts, run
-**Promote OSS Desktop Auto-Update** from the `main` branch and enter the exact
-stable `X.Y.Z` version. The workflow validates the immutable tag and release,
-the retained manifest and every referenced updater asset, and requires the
-version to be newer than the currently promoted version before replacing
-`buzz-desktop-latest/latest.json`. Same-version retries succeed only when the
-manifest is identical; downgrades are rejected.
-
-Withholding promotion leaves existing clients on the previous version. If a
-promoted release is bad, ship and promote a higher patch version; changing the
-manifest to an older version does not downgrade clients that already updated.
-
-Mobile publishes only annotated `mobile-vX.Y.Z-rc.N` git tags. Store artifacts
-and rollout records retain the exact tag they used. Mobile does not publish a
-GitHub Release or a stable `mobile-vX.Y.Z` alias.
-
----
-
-## Platform Support
-
-The release workflow builds **two separate macOS DMGs**: Apple
-Silicon (`darwin-aarch64`, the `release` job) and Intel
-(`darwin-x86_64`, the `release-macos-x64` job), an unsigned Windows x64
-NSIS installer (its filename includes `_alpha-unsigned`), and Linux `.deb` and
-`.AppImage` packages. Both macOS DMGs are codesigned, notarized, and attached
-to the same `desktop-v<version>` release. Intel users
-download the `_x64.dmg`.
-
-The Linux AppImage is post-processed by `desktop/scripts/fix-appimage.sh`,
-which strips infra libraries over-bundled by linuxdeploy (they crash on
-Mesa 25+ / GLib 2.88 distros; see
-[tauri-apps/tauri#15665](https://github.com/tauri-apps/tauri/issues/15665))
-and re-signs the artifact. As a result the AppImage relies on the
-host's Wayland/GStreamer/graphics stack and requires GLib >= 2.72
-(Ubuntu 22.04 or newer). The `release-linux` job builds inside a
-`ubuntu:22.04` container for broad GLIBC compatibility.
-
----
-
-## Prerequisites
-
-- **Write access** to the `agiterra/beekeeper` GitHub repository. Note that
-  GitHub is a mirror here: `hive.agiterra.org` is canonical for ordinary
-  pushes, and these release lanes are the one place that operates on GitHub
-  directly, because that is where Actions run.
-- An `origin` remote whose configured URL is the canonical repository. The
-  mobile publisher resolves `origin` to find the commit to tag, so a checkout
-  whose `origin` is the relay needs the GitHub remote named explicitly.
-- `gh` CLI authenticated with permission to push the candidate branch and open
-  its pull request
-- The Default `main` ruleset configured for squash-only merging, strict required
-  checks, stale-review dismissal, and the **Desktop Release Candidate** check
-- **Not established for agiterra:** a release tag ruleset for `desktop-v*` and
-  `mobile-v*` with creation, update, deletion and non-fast-forward protections,
-  and a release App as its sole always-bypass actor. Block's was ruleset
-  `14378754` on `block/buzz` with `buzz-release-bot`; neither is reachable from
-  here, so an equivalent has to be created on `agiterra/beekeeper` before the
-  protected-tag flow below can work at all.
-- **Not established for agiterra:** release App credentials configured for
-  GitHub Actions
-- The following **GitHub Actions variables and secrets** configured for the
-  desktop release lane:
-
-  | Name | Kind | Purpose |
-  |------|------|---------|
-  | `BUZZ_RELEASE_TAGGER_CLIENT_ID` | Variable | GitHub App client ID used to create protected release tags |
-  | `BUZZ_RELEASE_TAGGER_PRIVATE_KEY` | Secret | GitHub App private key |
-  | `OSX_CODESIGN_ROLE` | Secret | macOS signing role. Block's lane used `block/apple-codesign-action`, which is not available here; macOS signing needs a replacement action and an Apple Developer identity of agiterra's own |
-  | `CODESIGN_S3_BUCKET` | Secret | macOS signing exchange bucket |
-  | `BUZZ_UPDATER_PUBLIC_KEY` or `SPROUT_UPDATER_PUBLIC_KEY` | Secret | Tauri updater public key |
-  | `TAURI_SIGNING_PRIVATE_KEY` | Secret | Tauri updater private key |
-  | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret | Password for the private key |
-
-Mobile candidate publication requires workflow-dispatch access and a release App
-because strict tag protection denies direct human creation. The App must be
-installed on `agiterra/beekeeper`, have Contents write and Metadata read, and
-retain an `always` bypass on the immutable `mobile-v*` tag rules. It does not
-require GitHub Releases permissions, repository Administration permission, or a
-mobile release-branch ruleset. The publisher validates the App token's effective
-`current_user_can_bypass` value rather than reading the ruleset's hidden bypass
-actor list.
-
----
-
-## Troubleshooting
-
-### The desktop candidate is stale or cannot be squash merged
-
-Do not update the branch manually and do not weaken the ruleset. Run
-`just release-desktop <version>` again from current `main`; this regenerates the
-candidate, reruns CI, and requires a fresh trusted approval on the new exact
-head. The post-merge verifier refuses to tag a squash whose parent differs from
-the recorded candidate base or whose tree differs from the validated PR head.
-
-### Local `just release-desktop` fails with "must be on main branch"
-Switch to `main` and pull latest before running the release recipe.
-
-### Local `just release-desktop` fails with "working tree is dirty"
-Commit or stash your changes before running the release recipe.
-
-### New commits land after publishing a mobile candidate
-
-Run `scripts/mobile-release.sh candidate <version>` again after the intended
-fix reaches remote `main`. It publishes a new immutable RC tag at the new exact
-remote commit. Continue referring to each tested or shipped platform artifact by
-its own exact tag.
-
-### `scripts/mobile-release.sh candidate` fails because `main` moved during publication
-
-The App-backed workflow may already have published the requested immutable RC
-at the prior `main` tip before the operator command detects the race. Do not
-move or delete that tag, and do not treat it as the candidate for current
-`main`. Inspect the run URL from the command output, then rerun
-`scripts/mobile-release.sh candidate <version>` to publish the next RC from the
-new current `main` tip.
-
-### A mobile candidate command selects the wrong RC number
-
-Do not retry by moving or deleting a tag. Inspect the exact remote `mobile-v*`
-tags and resolve the unexpected state. Candidate numbers are monotonically
-increasing remote identities.
-
-### A mobile candidate publication is rejected by repository rules
-
-Confirm `buzz-release-bot` remains the sole always-bypass actor for the active
-`mobile-v*` ruleset and that its Actions credentials are available. Do not grant
-direct human creation or weaken update or deletion protection. Existing
-candidate tags must remain immutable.
-
-### Auto-updater reports "no update available"
-Verify that the `buzz-desktop-latest` release exists and contains a
-valid `latest.json`. The manifest covers all four platform keys
-(`darwin-aarch64`, `darwin-x86_64`, `linux-x86_64`,
-`windows-x86_64`); a missing entry usually means that platform's
-release job failed. Check the workflow run.
+- **Where it runs.** Woodpecker (`ci.agiterra.org`) is the live CI; GitHub
+  Actions is disabled on `agiterra/beekeeper`.
+- **macOS signing and notarization** with an Apple Developer identity of
+  agiterra's own. `desktop/scripts/build-release-config.mjs` still emits a
+  release Tauri config with `--no-sign` in mind, and `scripts/stage-menubar.sh`
+  notes the tray app's entitlements over-grant to fix on the way.
+- **Tauri updater keys and an endpoint**, so installed apps can update.
+- **Tag protection**, if releases are to be bound to immutable tags again.
+- **A mobile build and store-submission path.**

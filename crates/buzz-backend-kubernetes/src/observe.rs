@@ -549,14 +549,17 @@ mod tests {
     /// can echo a registry token.
     #[test]
     fn pull_failure_messages_are_actionable_and_redacted() {
-        let image = format!("ghcr.io/block/buzz-sprig@sha256:{}", "a".repeat(64));
+        let image = format!(
+            "registry.example.com/beekeeper-sprig@sha256:{}",
+            "a".repeat(64)
+        );
         for failure in [
             PullFailure::Unauthorized,
             PullFailure::ManifestUnknown,
             PullFailure::ArchMismatch,
         ] {
             let msg = pull_failure_message(failure, &image);
-            assert!(msg.contains("ghcr.io"), "{msg}");
+            assert!(msg.contains("registry.example.com"), "{msg}");
             assert!(msg.contains(&image), "{msg}");
             for secret in ["Bearer", "password", "nsec1", "token"] {
                 assert!(!msg.contains(secret), "leaked {secret}: {msg}");

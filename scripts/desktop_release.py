@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(os.environ.get("DESKTOP_RELEASE_ROOT", Path(__file__).resolve().parent.parent))
 CHANGELOG = ROOT / "CHANGELOG.md"
 METADATA = ROOT / ".release" / "desktop-candidate.json"
+DEFAULT_REPO = "agiterra/beekeeper"
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 STABLE_TAG = re.compile(r"desktop-v([0-9]+)\.([0-9]+)\.([0-9]+)$")
 DESKTOP_PATHS = (
@@ -186,7 +187,9 @@ def generate(args: argparse.Namespace) -> None:
     if not SEMVER.fullmatch(args.version):
         raise SystemExit(f"invalid semver: {args.version}")
     base_sha = git("rev-parse", args.base)
-    repo = args.repo or re.sub(r".*github\.com[:/]", "", git("remote", "get-url", "origin")).removesuffix(".git")
+    # `origin` is the relay's own git hosting, not GitHub, so the GitHub
+    # repository that changelog links point at is named, not derived.
+    repo = args.repo or DEFAULT_REPO
     previous = previous_release(args.version, repo)
     block, commits = render(args.version, base_sha, previous, repo)
     old = CHANGELOG.read_text() if CHANGELOG.exists() else "# Changelog\n"
@@ -228,7 +231,7 @@ def validate(args: argparse.Namespace) -> None:
         if missing:
             detail.append(f"missing required files: {', '.join(sorted(missing))}")
         raise SystemExit("candidate is not version-only (" + "; ".join(detail) + ")")
-    repo = args.repo or "block/buzz"
+    repo = args.repo or DEFAULT_REPO
     previous = previous_release(version, repo, allow_target_sha=candidate)
     recorded_previous = {
         "tag": data.get("previous_tag"),
@@ -259,10 +262,10 @@ def validate(args: argparse.Namespace) -> None:
         raise SystemExit(f"version mismatch in: {', '.join(bad)}")
     author = git("show", "-s", "--format=%an <%ae>", candidate)
     body = git("show", "-s", "--format=%B", candidate)
-    if author != "Wes <wesbillman@users.noreply.github.com>":
-        raise SystemExit(f"unexpected candidate author: {author}")
-    if "Signed-off-by: Wes <wesbillman@users.noreply.github.com>" not in body:
-        raise SystemExit("candidate is missing Wes Signed-off-by trailer")
+    # The candidate is committed by whoever runs `just release-desktop`; the
+    # DCO gate needs that same person's sign-off on it.
+    if f"Signed-off-by: {author}" not in body:
+        raise SystemExit(f"candidate is missing its author's Signed-off-by trailer: {author}")
     if not re.search(r"(?m)^Co-authored-by: .+ <.+>$", body):
         raise SystemExit("candidate is missing automation Co-authored-by trailer")
     print(f"validated immutable desktop candidate {candidate} for desktop-v{version}")

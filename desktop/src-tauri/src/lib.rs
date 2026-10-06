@@ -4,7 +4,6 @@ mod app_menu;
 mod app_state;
 mod archive;
 mod artifact_preview;
-mod builderlab;
 mod coding_sessions;
 mod commands;
 mod deep_link;
@@ -58,7 +57,6 @@ mod util;
 #[cfg(target_os = "linux")]
 pub mod webkit_rendering;
 use app_state::{build_app_state, resolve_persisted_identity, AppState};
-use builderlab::*;
 #[doc(hidden)]
 pub use commands::print_agent_access_owner_only_probe_if_requested;
 use commands::*;
@@ -288,8 +286,6 @@ pub fn run() {
         .manage(PendingCommunityDeepLinks::default())
         .manage(PendingNavigationDeepLinks::default())
         .manage(PendingEntityDeepLinks::default())
-        .manage(BuilderlabSession::default())
-        .manage(BuilderlabLogin::default())
         .manage(commands::pairing::PairingHandle::new())
         .manage(terminal_runtime::TerminalSessions::default())
         // The app is a client of the agent host, not its owner: this holds
@@ -556,7 +552,7 @@ pub fn run() {
 
             // Periodic sweep: reap orphaned agents from dead instances every 60s.
             // Catches agents that escaped both the Justfile trap and boot-time
-            // reaping (e.g. a `just staging` Ctrl+C leak that only gets collected
+            // reaping (e.g. a `just dev` Ctrl+C leak that only gets collected
             // by a different instance's periodic sweep).
             let sweep_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

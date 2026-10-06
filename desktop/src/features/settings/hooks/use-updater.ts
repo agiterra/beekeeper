@@ -34,7 +34,8 @@ const BACKGROUND_BLOCKED_STATES = new Set<UpdateStatus["state"]>([
   "manual-required",
 ]);
 
-const GITHUB_RELEASES_URL = "https://github.com/block/buzz/releases/latest";
+const GITHUB_RELEASES_URL =
+  "https://github.com/agiterra/beekeeper/releases/latest";
 
 function toErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

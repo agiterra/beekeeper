@@ -134,11 +134,7 @@ By default the app connects to `ws://localhost:3000`. To point it at a relay you
 
 ### I want my own hosted relay
 
-To run a relay for your team without managing servers, you can deploy one to Railway in a click:
-
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/buzz-relay-block)
-
-See [here](https://engineering.block.xyz/blog/run-your-own-buzz-relay) for details.
+There is no one-click hosted template for Beekeeper. To run a relay for your team, build it from source (below) and run it on a server you control; `deploy/` holds the configuration agiterra uses for its own relay.
 
 ### I want to build & run from source
 
@@ -281,5 +277,5 @@ just reset          # ⚠️  Wipe data + recreate
 
 <p align="center">
   <sub>Buzz 🐝</sub><br>
-  <sub>Apache 2.0 · Built by <a href="https://block.xyz">Block, Inc.</a></sub>
+  <sub>Apache 2.0 · Maintained by agiterra · Began as a fork of <a href="https://github.com/block/buzz">block/buzz</a> by Block, Inc.</sub>
 </p>

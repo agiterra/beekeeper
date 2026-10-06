@@ -15,9 +15,10 @@ import { resolve } from "node:path";
 //    Both BUZZ_UPDATER_PUBLIC_KEY and BUZZ_UPDATER_ENDPOINT are required -
 //    the script fails if either is missing (OSS builds always ship with updater).
 //
-// Apple code signing and notarization happen post-build via
-// block/apple-codesign-action in release.yml, so no signingIdentity is
-// emitted here and the Tauri build is invoked with --no-sign.
+// No signingIdentity is emitted here and the Tauri build is invoked with
+// --no-sign: Apple code signing and notarization were a post-build step of
+// Block's release workflow, which is removed (see RELEASING.md). A signing
+// lane must be rebuilt before a signed desktop release can ship.
 
 const outputConfigPath = resolve(
   process.cwd(),

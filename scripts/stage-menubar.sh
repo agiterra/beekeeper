@@ -13,7 +13,7 @@
 #
 # ── Why declared rather than copied afterwards ───────────────────────────────
 #
-# A post-bundle copy cannot work in the release pipeline. `release.yml` builds
+# A post-bundle copy cannot work in a release pipeline. A release build makes
 # the `.app` *and* the `.dmg` in one `tauri build`, then signs **the DMG** — so
 # an app nested after that is not in the artifact anyone installs, and
 # rebuilding the DMG by hand would mean reimplementing Tauri's dmg bundler
@@ -46,12 +46,14 @@
 #
 # ── Known over-grant, named rather than discovered ───────────────────────────
 #
-# `block/apple-codesign-action` takes one `entitlements-plist-path`, and
-# `Entitlements.plist` carries audio-input, camera and
-# `cs.disable-library-validation`. So the nested tray app is signed with camera
-# and microphone entitlements it never uses. Same team id and hardened runtime
-# either way, so the risk is small — but it is real, and fixing it needs
-# upstream support for a second entitlements file.
+# The signing lane this was written for (Block's, using
+# `block/apple-codesign-action`, now removed — see RELEASING.md) took one
+# `entitlements-plist-path`, and `Entitlements.plist` carries audio-input,
+# camera and `cs.disable-library-validation`. So the nested tray app was signed
+# with camera and microphone entitlements it never uses. Same team id and
+# hardened runtime either way, so the risk is small — but it is real, and
+# whatever signing lane replaces it should sign the tray app with its own,
+# narrower entitlements file.
 # =============================================================================
 
 set -euo pipefail
@@ -146,7 +148,7 @@ EXECUTABLE=$(read_plist "$PLIST" CFBundleExecutable)
 mkdir -p "$STAGE_DIR"
 rm -rf "$STAGE_DIR/$BUNDLE_NAME"
 # `ditto`, not `cp -R`: symlinks, resource forks and modes. The repo already
-# reaches for it for exactly this, in scripts/app-from.sh and release.yml.
+# reaches for it for exactly this, in scripts/app-from.sh.
 ditto "$BUILT" "$STAGE_DIR/$BUNDLE_NAME"
 
 echo "Staged $BUNDLE_NAME ($PROFILE) at $STAGE_DIR"

@@ -670,8 +670,7 @@ of anything). Two additive NIP-11 fields fix that:
   **Shallow checkouts disclose `null`, never a number.** In a
   `fetch-depth: 1` clone `rev-list --count` returns the size of the graft
   rather than the ordinal, so a client subtracting it would announce a drift
-  of the entire history. `build.rs` refuses to count a shallow checkout, and
-  `.github/workflows/docker.yml`'s ordinal step refuses in the same way.
+  of the entire history. `build.rs` refuses to count a shallow checkout.
 
   The commit and its count are resolved **together** (`resolve_stamp` in
   `crates/buzz-relay/build.rs`), never independently: a count read from a
@@ -685,10 +684,11 @@ Resolution (`crates/buzz-relay/build.rs` / `src/build_provenance.rs`, and see
 1. `git rev-parse HEAD` in the crate's own checkout, when `.git` is present —
    a native `cargo build`.
 2. `BUZZ_SOURCE_SHA`, the build-arg `Dockerfile` already declares (`ARG`
-   default `unknown`, then `ENV`) and every image-build path threads through:
-   `.github/workflows/docker.yml` (`github.sha`, for the published relay
-   image) and `deploy/autodeploy/autodeploy` (the full
-   `$sha` it already selects from Woodpecker, for hive). This is the
+   default `unknown`, then `ENV`) and the image-build path threads through:
+   `deploy/autodeploy/autodeploy` passes the full `$sha` it already selects
+   from Woodpecker, for hive. (The inherited `.github/workflows/docker.yml`
+   lane that published a relay image to Block's registry was removed on
+   2026-10-06.) This is the
    case `git` cannot answer on its own: the relay's `.dockerignore` excludes
    `.git/`, and `deploy/autodeploy/autodeploy` builds from a `git archive`
    export, which never had one — without the build-arg, every relay built

@@ -2251,8 +2251,8 @@ async fn openrouter_post(
         let resp = match http
             .post(url)
             .header("content-type", "application/json")
-            .header("HTTP-Referer", "https://github.com/block/buzz")
-            .header("X-OpenRouter-Title", "Buzz")
+            .header("HTTP-Referer", "https://github.com/agiterra/beekeeper")
+            .header("X-OpenRouter-Title", "Beekeeper")
             .bearer_auth(bearer)
             .body(body_bytes.clone())
             .timeout(per_request_timeout)
@@ -7670,11 +7670,11 @@ mod tests {
             .expect("one request captured")
             .to_lowercase();
         assert!(
-            header_str.contains("http-referer: https://github.com/block/buzz"),
+            header_str.contains("http-referer: https://github.com/agiterra/beekeeper"),
             "got: {header_str}"
         );
         assert!(
-            header_str.contains("x-openrouter-title: buzz"),
+            header_str.contains("x-openrouter-title: beekeeper"),
             "got: {header_str}"
         );
     }

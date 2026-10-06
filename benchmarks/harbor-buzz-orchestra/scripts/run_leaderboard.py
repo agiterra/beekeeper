@@ -250,9 +250,9 @@ def write_metadata_template(args: argparse.Namespace, job_dir: Path) -> Path:
             }
         )
     metadata = {
-        "agent_url": "https://github.com/block/buzz",
-        "agent_display_name": f"Buzz Orchestra ({manifest.get('condition', 'team')})",
-        "agent_org_display_name": "Block",
+        "agent_url": "https://github.com/agiterra/beekeeper",
+        "agent_display_name": f"Beekeeper Orchestra ({manifest.get('condition', 'team')})",
+        "agent_org_display_name": "agiterra",
         "models": models,
     }
     path = job_dir / "metadata.yaml"

@@ -4,11 +4,12 @@ name: Linux Canary
 # creating a tag, GitHub Release, or auto-updater artifact. Artifacts are
 # available as a short-lived GitHub Actions artifact for explicit testing.
 #
-# Design notes vs. signed-macos-canary.yml:
+# Design notes:
 #   - fix-appimage.sh is run without signing env vars; the script detects
 #     their absence and skips re-signing, repacking only (documented inline).
-#   - Build tools match release.yml; cache keys derive the concrete linker and
-#     native library identity rather than assuming the moving runner image.
+#   - Build tools match the former Block-run desktop release lane (removed;
+#     see RELEASING.md); cache keys derive the concrete linker and native
+#     library identity rather than assuming the moving runner image.
 #   - pnpm store restore/save pattern mirrors ci.yml:149-196.
 on:
   workflow_dispatch:
@@ -19,7 +20,7 @@ permissions:
 jobs:
   build:
     name: Build Linux canary
-    if: github.repository == 'block/buzz'
+    if: github.repository == 'agiterra/beekeeper'
     runs-on: ubuntu-latest
     container: ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
     timeout-minutes: 60

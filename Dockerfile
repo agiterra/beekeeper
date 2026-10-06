@@ -1,15 +1,15 @@
 # syntax=docker/dockerfile:1.7
 #
-# Public Buzz relay image — published as ghcr.io/block/buzz:<tag>.
+# Beekeeper relay image. The relay host builds it from this file with a plain
+# `docker build` (deploy/autodeploy); it is not published to a registry.
 #
 # Builds the `buzz-relay` binary (Rust 1.95) and the `buzz-web` static bundle
 # (pnpm + vite), then assembles them into a small debian-slim runtime with
 # `git` available (the relay shells out to git for repo hydrate / receive-pack
 # / upload-pack — see crates/buzz-relay/src/api/git).
 #
-# Multi-arch is handled by running this same Dockerfile on native amd64 and
-# native arm64 runners (see .github/workflows/docker.yml). The Dockerfile
-# itself is platform-agnostic; do not add --platform pins.
+# The Dockerfile is platform-agnostic: it builds natively for whatever host
+# runs it (amd64 or arm64). Do not add --platform pins.
 
 ARG RUST_VERSION=1.95
 ARG NODE_VERSION=24
@@ -134,14 +134,13 @@ RUN pnpm -C web build && pnpm -C admin-web build
 # ─── Stage 5: shared runtime ────────────────────────────────────────────────
 FROM debian:${DEBIAN_VERSION}-slim AS runtime-base
 
-# OCI annotations: required for GHCR to auto-link the image to this repo and
-# inherit its visibility. org.opencontainers.image.source is the load-bearing
-# one — without it GHCR keeps the image private even when the repo is public.
-LABEL org.opencontainers.image.title="Buzz" \
-      org.opencontainers.image.description="WebSocket relay server for the Buzz communications platform" \
-      org.opencontainers.image.source="https://github.com/block/buzz" \
-      org.opencontainers.image.url="https://github.com/block/buzz" \
-      org.opencontainers.image.documentation="https://github.com/block/buzz#readme" \
+# OCI annotations. org.opencontainers.image.source is the one registries (GHCR
+# among them) use to link an image to its repository, should it ever be pushed.
+LABEL org.opencontainers.image.title="Beekeeper" \
+      org.opencontainers.image.description="WebSocket relay server for the Beekeeper communications platform" \
+      org.opencontainers.image.source="https://github.com/agiterra/beekeeper" \
+      org.opencontainers.image.url="https://github.com/agiterra/beekeeper" \
+      org.opencontainers.image.documentation="https://github.com/agiterra/beekeeper#readme" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 RUN apt-get update \

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Tripwire: this fork's docs/ carries our deploy state, open defects, test
-# session names and relay URL. Today there is no block/buzz remote, so nothing
-# can leak. The day someone adds one, this stops the first push to it.
+# Tripwire: docs/ carries our deploy state, open defects, test session names
+# and relay URL. Beekeeper pushes only to agiterra's own remotes; the day
+# someone adds any other remote (block/buzz, a personal fork), this stops the
+# first push to it.
 #
 # Ours: the agiterra relays and github.com/agiterra. Anything else is outward.
 set -euo pipefail

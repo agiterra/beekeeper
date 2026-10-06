@@ -1,4 +1,4 @@
-package xyz.block.buzz.mobile
+package io.agiterra.beekeeper.mobile
 
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets

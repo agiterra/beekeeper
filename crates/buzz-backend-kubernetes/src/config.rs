@@ -1,8 +1,8 @@
 //! `provider_config` parsing and the `info` config schema
 //! (spec §`provider_config` v1 fields, `docs/remote-agents.md:1384-1389`).
 //!
-//! Nine fields, all optional except `image` (required at parse time; the
-//! schema offers the published sprig image as a prefill default — §Image).
+//! Nine fields, all optional except `image` (required, with no default and
+//! no schema prefill — §Image).
 //! No credential field exists, by I2: cluster auth comes from ambient
 //! kubeconfig resolution and nothing else (`:196-198`).
 
@@ -33,15 +33,6 @@ impl Default for Resources {
 /// Default inactivity budget: the I5 opt-in (§Auto-Stop). The config field and
 /// `BUZZ_ACP_EXIT_AFTER_INACTIVITY` are one knob, not two.
 pub const DEFAULT_INACTIVITY_SECONDS: u64 = 7200;
-
-/// Default `image` schema prefill: the published sprig image, in tag+digest
-/// form so the tag stays human-traceable to its git SHA while the digest does
-/// the pinning (§Image — tag-only refs are rejected; `image::parse` drops the
-/// tag on normalization). This is a UI prefill, not a baked fallback: `image`
-/// stays required, an empty value still fails closed, and the value always
-/// arrives explicitly in `provider_config`, so create-intent fingerprints are
-/// unaffected by provider upgrades.
-pub const DEFAULT_IMAGE: &str = "ghcr.io/block/buzz-sprig:sha-6530b58@sha256:17facfc7608d8ddb33bc056c9aaba1098f4ef6abe5655702fbfd7584d1f74d76";
 
 /// Fixed nonzero UID/GID for the agent container (§Pod shape hardening).
 pub const RUN_AS_UID: i64 = 10001;
@@ -211,8 +202,7 @@ pub fn config_schema() -> serde_json::Value {
             "image": {
                 "type": "string",
                 "title": "Agent image",
-                "description": "Digest-pinned image containing the buzz-acp runtime ABI, e.g. ghcr.io/block/buzz-sprig@sha256:<digest>. Tags alone are not accepted: this pod holds the agent's private key.",
-                "default": DEFAULT_IMAGE
+                "description": "Required; there is no default. A digest-pinned image containing the buzz-acp runtime ABI, e.g. registry.example.com/beekeeper-sprig@sha256:<digest>, built from this repository's Dockerfile.sprig. Tags alone are not accepted: this pod holds the agent's private key."
             },
             "cpu_request": {
                 "type": "string", "title": "CPU request", "default": defaults.cpu_request
@@ -247,7 +237,10 @@ mod tests {
     use super::*;
 
     fn digest_ref() -> String {
-        format!("ghcr.io/block/buzz-sprig@sha256:{}", "a".repeat(64))
+        format!(
+            "registry.example.com/beekeeper-sprig@sha256:{}",
+            "a".repeat(64)
+        )
     }
 
     fn minimal() -> serde_json::Value {
@@ -339,7 +332,7 @@ mod tests {
         cfg.as_object_mut().unwrap().remove("image");
         assert!(parse(&cfg).unwrap_err().contains("provider_config.image"));
 
-        cfg["image"] = "ghcr.io/block/buzz-sprig:latest".into();
+        cfg["image"] = "registry.example.com/beekeeper-sprig:latest".into();
         assert!(parse(&cfg).unwrap_err().contains("digest-pinned"));
     }
 
@@ -407,20 +400,40 @@ mod tests {
         assert_eq!(parse(&cfg).unwrap().namespace, default);
     }
 
-    /// Same guarantee for the image prefill: the schema's default must be a
-    /// value `image::parse` accepts, or the UI prefills a form that fails on
-    /// submit. Its tag+digest form normalizes to the tagless canonical form.
+    /// The image has no prefill: Beekeeper publishes no sprig image, so a
+    /// default would either point at someone else's registry or at nothing.
+    /// The schema must say `image` is required and offer no `default`.
     #[test]
-    fn schema_default_image_round_trips_through_parse() {
+    fn schema_offers_no_image_default_and_requires_it() {
         let schema = config_schema();
-        let default = schema["properties"]["image"]["default"].as_str().unwrap();
-        assert_eq!(default, DEFAULT_IMAGE);
-        let cfg = serde_json::json!({"namespace": "buzz-agents-abc123", "image": default});
-        let parsed = parse(&cfg).unwrap();
-        assert_eq!(
-            parsed.image.as_str(),
-            "ghcr.io/block/buzz-sprig@sha256:17facfc7608d8ddb33bc056c9aaba1098f4ef6abe5655702fbfd7584d1f74d76"
-        );
+        let image = &schema["properties"]["image"];
+        assert!(image.get("default").is_none(), "image default: {image}");
+        assert!(image["description"]
+            .as_str()
+            .unwrap()
+            .contains("there is no default"));
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f == "image"));
+    }
+
+    #[test]
+    fn missing_or_blank_image_is_refused_with_a_named_error() {
+        for cfg in [
+            serde_json::json!({"namespace": "buzz-agents-abc123"}),
+            serde_json::json!({"namespace": "buzz-agents-abc123", "image": ""}),
+            serde_json::json!({"namespace": "buzz-agents-abc123", "image": "   "}),
+            serde_json::json!({"namespace": "buzz-agents-abc123", "image": null}),
+        ] {
+            let err = parse(&cfg).unwrap_err();
+            assert!(
+                err.contains("provider_config.image is required"),
+                "{cfg}: {err}"
+            );
+            assert!(err.contains("no default"), "{cfg}: {err}");
+        }
     }
 
     /// Nine fields exactly (§`provider_config` v1 fields). The cap is 20; the

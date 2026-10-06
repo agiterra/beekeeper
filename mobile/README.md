@@ -22,8 +22,8 @@ cd mobile && flutter run
 ### Worktree-aware debug identity
 
 Debug builds produced from a git worktree get a unique app identifier keyed
-to the **worktree directory name** (`com.buzz.buzzMobile.<slug>` on iOS,
-`xyz.block.buzz.mobile.<slug>` on Android) plus a display-only branch label
+to the **worktree directory name** (`io.agiterra.beekeeper.mobile.<slug>` on
+both iOS and Android) plus a display-only branch label
 in the app name (`Buzz (my-branch)`, or a short SHA when the worktree is
 detached). Because the identifier follows the directory rather than the
 branch, one worktree keeps exactly one installed app — and its login state —

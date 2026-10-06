@@ -2633,7 +2633,6 @@ test("settings subtitles share the Appearance secondary color", async ({
     "custom-emoji",
     "local-archive",
     "channel-templates",
-    "hosted-communities",
     "agents",
     "compute",
     "experimental",

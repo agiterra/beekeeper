@@ -13,8 +13,7 @@
 //! Order, and why:
 //! 1. `BUZZ_SOURCE_SHA` + `BUZZ_SOURCE_COMMIT_COUNT`, the pair every packaging
 //!    path in this repo already threads through (`Dockerfile`,
-//!    `.github/workflows/docker.yml`, `deploy/autodeploy/autodeploy`,
-//!    `scripts/app-from.sh`). Checked first because a pipeline supplying it is
+//!    `deploy/autodeploy/autodeploy`, `scripts/app-from.sh`). Checked first because a pipeline supplying it is
 //!    *stating* the artifact identity, which should not be second-guessed by
 //!    whatever `.git` happens to be in the build context.
 //! 2. This checkout's `HEAD`, with its own `rev-list --count`.

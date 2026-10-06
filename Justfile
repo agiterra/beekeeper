@@ -6,10 +6,9 @@ desktop_dir := "desktop"
 desktop_tauri_manifest := "desktop/src-tauri/Cargo.toml"
 web_dir := "web"
 
-# Opt-in mesh-llm. Off by default so `just dev`/`just staging`/`just production`
-# skip ~420 extra crates + the llama.cpp native runtime build and stay fast to
-# iterate on. Turn on to test mesh compute features: `just mesh=1 dev` /
-# `just mesh=1 staging` / `just mesh=1 production`.
+# Opt-in mesh-llm. Off by default so `just dev` skips ~420 extra crates + the
+# llama.cpp native runtime build and stays fast to iterate on. Turn on to test
+# mesh compute features: `just mesh=1 dev`.
 mesh := ""
 
 # Reset only the current standalone desktop instance before launch.
@@ -1007,76 +1006,6 @@ desktop-standalone *ARGS: _ensure-sidecar-stubs
     fi
     pnpm exec tauri dev ${TAURI_FLAGS[@]+"${TAURI_FLAGS[@]}"} --config "$BUZZ_TAURI_CONFIG" {{ARGS}}
 
-# Run the desktop app against the internal staging relay (installs deps + builds agent tools automatically)
-staging *ARGS: bootstrap _ensure-sidecar-stubs
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export PATH="{{justfile_directory()}}/bin:$PATH"
-    pnpm install  # unconditional: staging must always start with a clean dep tree
-    cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-shell-host -p beekeeper-host
-    FEATURES=()
-    if [[ -n "{{mesh}}" ]]; then
-        FEATURES=(--features mesh-llm)
-    fi
-    # Replace 0-byte sidecar stubs with real binaries so tauri dev picks them up.
-    # buzz: the CLI sidecar. buzz-backend-kubernetes: provider discovery scans the
-    # exe dir for executable buzz-backend-* files, so the non-executable stub that
-    # tauri dev copies next to the exe would hide the provider from "Run on".
-    TARGET=$(rustc -vV | sed -n 's|host: ||p')
-    TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).target_directory")
-    STAGING_SIDECARS=(bee)
-    if [[ "$TARGET" != *windows* ]]; then
-        STAGING_SIDECARS+=(buzz-backend-kubernetes)
-    fi
-    for bin in "${STAGING_SIDECARS[@]}"; do
-        cp "${TARGET_DIR}/release/${bin}" "desktop/src-tauri/binaries/${bin}-${TARGET}"
-        chmod +x "desktop/src-tauri/binaries/${bin}-${TARGET}"
-    done
-    cd {{desktop_dir}}
-    export BUZZ_RELAY_URL="wss://sprout-oss.stage.blox.sqprod.co"
-    source ../scripts/instance-env.sh
-    # Ctrl+C kills the Tauri app before its in-process sweep finishes, leaking
-    # agent workers. Reap this instance's agents on exit as a backstop.
-    INSTANCE_ID=$(node -e "console.log(JSON.parse(process.env.BUZZ_TAURI_CONFIG).identifier)")
-    trap '../scripts/cleanup-instance-agents.sh "$INSTANCE_ID" || true' EXIT
-    echo "Starting staging on Vite port ${BUZZ_VITE_PORT}, relay ${BUZZ_RELAY_URL}"
-    pnpm exec tauri dev ${FEATURES[@]+"${FEATURES[@]}"} --config "$BUZZ_TAURI_CONFIG" {{ARGS}}
-
-# Run the desktop app against the production relay (installs deps + builds agent tools automatically)
-production *ARGS: bootstrap _ensure-sidecar-stubs
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export PATH="{{justfile_directory()}}/bin:$PATH"
-    pnpm install  # unconditional: production must always start with a clean dep tree
-    cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-shell-host -p beekeeper-host
-    FEATURES=()
-    if [[ -n "{{mesh}}" ]]; then
-        FEATURES=(--features mesh-llm)
-    fi
-    # Replace 0-byte sidecar stubs with real binaries so tauri dev picks them up.
-    # buzz: the CLI sidecar. buzz-backend-kubernetes: provider discovery scans the
-    # exe dir for executable buzz-backend-* files, so the non-executable stub that
-    # tauri dev copies next to the exe would hide the provider from "Run on".
-    TARGET=$(rustc -vV | sed -n 's|host: ||p')
-    TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).target_directory")
-    PRODUCTION_SIDECARS=(bee)
-    if [[ "$TARGET" != *windows* ]]; then
-        PRODUCTION_SIDECARS+=(buzz-backend-kubernetes)
-    fi
-    for bin in "${PRODUCTION_SIDECARS[@]}"; do
-        cp "${TARGET_DIR}/release/${bin}" "desktop/src-tauri/binaries/${bin}-${TARGET}"
-        chmod +x "desktop/src-tauri/binaries/${bin}-${TARGET}"
-    done
-    cd {{desktop_dir}}
-    export BUZZ_RELAY_URL="wss://buzz.block.builderlab.xyz"
-    source ../scripts/instance-env.sh
-    # Ctrl+C kills the Tauri app before its in-process sweep finishes, leaking
-    # agent workers. Reap this instance's agents on exit as a backstop.
-    INSTANCE_ID=$(node -e "console.log(JSON.parse(process.env.BUZZ_TAURI_CONFIG).identifier)")
-    trap '../scripts/cleanup-instance-agents.sh "$INSTANCE_ID" || true' EXIT
-    echo "Starting production on Vite port ${BUZZ_VITE_PORT}, relay ${BUZZ_RELAY_URL}"
-    pnpm exec tauri dev ${FEATURES[@]+"${FEATURES[@]}"} --config "$BUZZ_TAURI_CONFIG" {{ARGS}}
-
 # Run the desktop frontend dev server (port derived from worktree)
 desktop-dev:
     #!/usr/bin/env bash
@@ -1271,7 +1200,7 @@ release-desktop *ARGS:
     fi
     scripts/prepare-desktop-release.sh "$VERSION"
 
-# Open or update the relay release PR (ghcr.io/block/buzz image)
+# Open or update the relay release PR (version bump + crates/buzz-relay/CHANGELOG.md)
 release-relay *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1283,8 +1212,8 @@ release-relay *ARGS:
     fi
     just _release-pr relay "$VERSION"
 
-# Shared release-PR engine for desktop and relay. Mobile publishes immutable
-# candidate tags directly from remote main instead of using metadata-only PRs.
+# Shared release-PR engine for desktop and relay. Mobile has no release lane:
+# the mobile candidate publisher was Block's and is removed (see RELEASING.md).
 _release-pr lane version:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1363,7 +1292,9 @@ _release-pr lane version:
     esac
     # Generate the changelog from commits since this lane's last release tag.
     LAST_TAG=$(git describe --tags --abbrev=0 --match "$TAG_MATCH" --exclude "$TAG_EXCLUDE" 2>/dev/null || echo "")
-    REPO=$(git remote get-url origin | sed -E 's|.*github\.com[:/]||; s|\.git$||')
+    # `origin` is the relay's git hosting, not GitHub, so the GitHub copy that
+    # changelog links and the release PR live on is named rather than derived.
+    REPO="agiterra/beekeeper"
     format_log() {
         local range="$1"
         git log "$range" --format="%h %H %s" --no-merges -- "${LOG_PATHS[@]}" | while IFS=' ' read -r short full rest; do
@@ -1401,12 +1332,23 @@ _release-pr lane version:
     git add "${ADD_FILES[@]}"
     RELEASE_MSG="chore(release): release ${ARTIFACT} version ${VERSION}"
     if [[ "$(git log -1 --format='%s' 2>/dev/null)" == "$RELEASE_MSG" ]]; then
-        git commit --amend --no-edit
+        git commit -s --amend --no-edit
     else
-        git commit -m "$RELEASE_MSG"
+        git commit -s -m "$RELEASE_MSG"
     fi
-    # Push and open/update the PR.
-    git push --force-with-lease -u origin "$BRANCH"
+    # Push through the floor wrapper (a bare `git push` can outlive the relay's
+    # NIP-98 token window on a crate-touching commit; AGENTS.md § Quality
+    # Gates), then wait for the bridge to carry the branch to GitHub before
+    # opening the PR there (docs/INTEGRATION.md § Remotes).
+    ./scripts/push-with-floor.sh --force-with-lease -u origin "$BRANCH"
+    for i in $(seq 1 30); do
+        gh api "repos/$REPO/branches/$BRANCH" --silent 2>/dev/null && break
+        if [[ "$i" == 30 ]]; then
+            echo "Error: $BRANCH never reached $REPO on GitHub; check the bridge (docs/INTEGRATION.md § Remotes)"
+            exit 1
+        fi
+        sleep 2
+    done
     PR_BODY="## ${ARTIFACT} release v${VERSION}"$'\n\n'
     if [[ -n "$LAST_TAG" ]]; then
         PR_BODY+="### Changes since ${LAST_TAG}:"$'\n\n'
@@ -1424,20 +1366,20 @@ _release-pr lane version:
     else
         PR_BODY+="Initial release."$'\n\n'
     fi
-    PR_BODY+="**To release:** merge this PR. The tag and build will happen automatically."
+    PR_BODY+="**Review only — do not merge this PR on GitHub.** GitHub is a mirror of hive; merging here writes the mirror, never reaches hive, and races the bridge. To land, fast-forward \`main\` on hive to the reviewed branch and push with \`just push\` (RELEASING.md). Nothing tags, builds or publishes from it: the release workflows were Block's and are removed, and hive deploys the newest green \`main\` regardless of version."
     PR_TITLE="chore(release): release ${ARTIFACT} version ${VERSION}"
-    EXISTING_PR=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null || true)
+    EXISTING_PR=$(gh pr list --repo "$REPO" --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null || true)
     if [[ -n "$EXISTING_PR" ]]; then
-        gh pr edit "$BRANCH" --title "$PR_TITLE" --body "$PR_BODY"
+        gh pr edit --repo "$REPO" "$BRANCH" --title "$PR_TITLE" --body "$PR_BODY"
         PR_URL="$EXISTING_PR"
         echo ""
         echo "Updated existing release PR: ${PR_URL}"
     else
-        PR_URL=$(gh pr create --title "$PR_TITLE" --body "$PR_BODY")
+        PR_URL=$(gh pr create --repo "$REPO" --base main --head "$BRANCH" --title "$PR_TITLE" --body "$PR_BODY")
         echo ""
         echo "Release PR opened: ${PR_URL}"
     fi
-    echo "Merge it to trigger the release build."
+    echo "Merging records the version only; no release build follows (see RELEASING.md)."
 
 # ─── Agent Harness ────────────────────────────────────────────────────────────
 

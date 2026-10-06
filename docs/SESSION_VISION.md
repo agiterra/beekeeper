@@ -279,9 +279,9 @@ by fidelity to today's coding-session implementation.
 
 ## Andy's Git and integration workflow
 
-This repository is an Agiterra integration fork of `block/buzz`. Andy set it up
-linux-next-style so features remain independently maintainable while the daily
-product combines them.
+This repository began as an Agiterra integration fork of `block/buzz`, set up
+linux-next-style. It is now its own product: nothing is pulled from or pushed
+to `block/buzz`, and `main` is the single integration point.
 
 ### Branch roles
 
@@ -291,15 +291,16 @@ product combines them.
 | topic branches | Short-lived, merged back when the user has confirmed the behavior. |
 | `build/YYYY-MM-DD[.n]` | Immutable pins for deployed builds. |
 
-Upstream `block/buzz` is a remote, not a branch here: it is merged in
-occasionally. See [INTEGRATION.md](INTEGRATION.md) for the two checks that
-precede one.
+There is no `block/buzz` remote and nothing is merged from it. The two remotes,
+`origin` (hive) and `upstream` (agiterra's GitHub copy), are both ours; see
+[INTEGRATION.md](INTEGRATION.md) § Remotes.
 
 ### Important working rules
 
 - `main` is the product. Commit to it directly, or via a short-lived topic
   branch — there is no generated branch and nothing is force-pushed.
-- Upstream is **merged** in occasionally, never rebased.
+- Topic branches are rebased onto `main` (`git rebase --signoff main`), never
+  merged into it.
 - Activate the repository's Hermit environment before Git commands and hooks.
 - Sign commits with `git commit -s`.
 - A push to `main` runs the Woodpecker gate and, when green, triggers the

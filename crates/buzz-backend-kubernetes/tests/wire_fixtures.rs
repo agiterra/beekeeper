@@ -114,13 +114,12 @@ fn info_response_carries_the_contract_fields() {
         default.starts_with("buzz-agents-"),
         "unexpected namespace default: {default}"
     );
-    let image_default = schema["properties"]["image"]["default"]
-        .as_str()
-        .expect("no image default");
+    // No image prefill: Beekeeper publishes no sprig image, so the operator
+    // must supply one and the form must not suggest someone else's.
     assert!(
-        image_default.starts_with("ghcr.io/block/buzz-sprig:")
-            && image_default.contains("@sha256:"),
-        "unexpected image default: {image_default}"
+        schema["properties"]["image"].get("default").is_none(),
+        "unexpected image default: {}",
+        schema["properties"]["image"]
     );
 }
 

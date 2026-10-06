@@ -120,8 +120,10 @@ sudo apt-get install -y --no-install-recommends \
   patchelf wget
 ```
 
-This is the same list CI installs (see `.github/workflows/ci.yml`), so matching
-it locally keeps your results comparable to CI. Other distributions ship these
+This is the list the inherited `.github/workflows/ci.yml` installs for its
+Linux desktop jobs. GitHub Actions are disabled on agiterra's GitHub copy, so
+that workflow is a reference rather than a running check; the live gate is
+Woodpecker (`.woodpecker/`). Other distributions ship these
 under different package names — see the
 [Tauri prerequisites](https://tauri.app/start/prerequisites/) for the
 equivalents.

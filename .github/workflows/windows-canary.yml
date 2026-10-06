@@ -4,8 +4,8 @@ name: Windows Canary
 # a tag, GitHub Release, or auto-updater artifact. The installer is available
 # only as a short-lived GitHub Actions artifact for explicit testing.
 #
-# Design notes vs. signed-macos-canary.yml:
-#   - No mesh-llm: release-windows doesn't build it.
+# Design notes:
+#   - No mesh-llm: the former Windows release build did not include it.
 #   - pnpm store restore/save pattern mirrors ci.yml:149-196.
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ permissions:
 jobs:
   build:
     name: Build Windows canary
-    if: github.repository == 'block/buzz'
+    if: github.repository == 'agiterra/beekeeper'
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:

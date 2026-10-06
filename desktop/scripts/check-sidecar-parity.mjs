@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The sidecar set is declared in nine places. This asserts they are one set.
+ * The sidecar set is declared in several places. This asserts they are one set.
  *
  * `tauri.conf.json`'s `externalBin` is what the bundle *declares*; the refresh
  * recipes are what actually gets built and copied next to the app. When those
@@ -245,10 +245,8 @@ compare(
 //    Linux build: the script's list and the `cargo build` line above it were
 //    free to disagree, and did.
 const CI_WORKFLOWS = [
-  ".github/workflows/release.yml",
   ".github/workflows/linux-canary.yml",
   ".github/workflows/macos-intel-canary.yml",
-  ".github/workflows/signed-macos-canary.yml",
   ".github/workflows/windows-canary.yml",
 ];
 const packageOf = Object.fromEntries(
@@ -280,9 +278,9 @@ for (const workflow of CI_WORKFLOWS) {
       return;
     }
     // Which platform this step runs on comes from its **job**, not from the
-    // build line: `release.yml`'s Windows job takes its target from an env
-    // var, so its `cargo build` reads identically to the macOS one. The
-    // nearest `runs-on:` above is the job's.
+    // build line: a Windows job can take its target from an env var, so its
+    // `cargo build` reads identically to the macOS one. The nearest
+    // `runs-on:` above is the job's.
     const runsOn = lines
       .slice(0, index)
       .reverse()
@@ -309,9 +307,9 @@ for (const workflow of CI_WORKFLOWS) {
 // A guard on the guard: if a workflow stops calling the script, or the call
 // moves out of this checker's reach, the loop above would pass by finding
 // nothing to check.
-if (ciSteps < 8) {
+if (ciSteps < 3) {
   fail(
-    `expected at least 8 CI steps calling bundle-sidecars.sh, found ${ciSteps} — a step was removed or renamed, and this check silently stopped covering it`,
+    `expected at least 3 CI steps calling bundle-sidecars.sh, found ${ciSteps} — a step was removed or renamed, and this check silently stopped covering it`,
   );
 }
 

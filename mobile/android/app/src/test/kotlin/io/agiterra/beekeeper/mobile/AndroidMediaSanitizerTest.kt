@@ -1,4 +1,4 @@
-package xyz.block.buzz.mobile
+package io.agiterra.beekeeper.mobile
 
 import kotlin.test.Test
 import kotlin.test.assertContentEquals

@@ -740,7 +740,7 @@ observation; on any conflict, *re-enter from step 1* rather than fail:
 | live and **started** (harness container running) | **strict no-op; return existing `agent_id`** | Start must never silently kill a live agent mid-turn; "already running" is the honest answer, consistent with I3 |
 | exists but **never started**, provably non-recoverable — referenced Secret confirmed absent (by a consistent read, below), or invalid image reference | delete (preconditioned, below), wait for disappearance, re-enter (→ create) | a pod whose harness never ran is not a live agent: nothing can be killed mid-turn (I3), it never held the identity (I4), auto-stop cannot bound it (I5's reaper lives in the harness), and no-op'ing it would return a permanently inert instance as success on every future Start. "Provably" means the provider verified the referenced object's absence or the spec-level defect itself — never a reason string alone |
 | exists, **never started**, recoverable, **fingerprint matches** current desired create intent (below) — self-healable startup states: `Unschedulable` (scale-from-zero autoscaling), image pull / `ImagePullBackOff`, transient `CreateContainerConfigError` | observe until started or the operation deadline expires, then return the latest redacted condition — **never delete, on this call or any later one** | these states routinely self-heal — an autoscaler provisions the node, the pull retries, the kubelet re-resolves the Secret (it retries a never-created container regardless of `restartPolicy`). And recoverable-timeout MUST stay observational *across calls*: any finite pod-age threshold can collide with the cluster's own pod-age thresholds (Cluster Autoscaler's `--new-pod-scale-up-delay` / per-pod `pod-scale-up-delay` annotation — the FAQ's example is `"600s"`), and delete-recreate resets exactly the age the autoscaler keys on, converting a slow cold start into a livelock in which every individual decision is correct. A later deploy re-reads: started → strict no-op; still recoverable and same intent → observe under the new call's deadline without resetting pod age; provably non-recoverable → the non-recoverable row. Repeated **identical** Starts can therefore never delete anything, whatever the pod's age — a genuinely slow cluster persists until it heals or an operator acts, and M1 already makes substrate residue the operator's boundary |
-| exists, **never started**, recoverable, **fingerprint differs or absent** — the recorded create-intent fingerprint does not match what *this* deploy would create | delete (preconditioned, below), wait for disappearance, re-enter (→ create) | this is not the same generation the user is waiting on — it is a pod built from configuration the user has since *changed*, and without this row the change can never materialize: the pod name is deterministic, GC only reaps terminated pods, Stop needs a live harness, I5's reaper lives in the harness, and there is no `undeploy` — so a never-started pod wedged by its own config (a `memory_request` no node satisfies, a quota-blocked namespace) would swallow every future edit while reporting only "startup not confirmed", indistinguishable from a slow cluster. Divergence is evidence, not a clock — but it has **two** sources, not one: a user config change, and a provider upgrade that moves the baked default image digest (§K8s image; the default is compile-time provider state, so upgrading the provider changes the computed intent with no user action). Both are deliberate: the second is the *only* escape from a wedge caused by a bad baked default (unpullable digest, wrong arch) — a fingerprint blind to the default resolution would hand that wedge back to exactly the population that cannot override `image`. The accepted cost is that a provider upgrade mid-cold-pull discards in-flight startup progress; neither source is clocked to anything the cluster keys on, so no threshold exists to collide with the autoscaler. A **started** pod is never touched by this row: live → strict no-op regardless of divergence (edits reach it via the documented next-generation consequence) |
+| exists, **never started**, recoverable, **fingerprint differs or absent** — the recorded create-intent fingerprint does not match what *this* deploy would create | delete (preconditioned, below), wait for disappearance, re-enter (→ create) | this is not the same generation the user is waiting on — it is a pod built from configuration the user has since *changed*, and without this row the change can never materialize: the pod name is deterministic, GC only reaps terminated pods, Stop needs a live harness, I5's reaper lives in the harness, and there is no `undeploy` — so a never-started pod wedged by its own config (a `memory_request` no node satisfies, a quota-blocked namespace) would swallow every future edit while reporting only "startup not confirmed", indistinguishable from a slow cluster. Divergence is evidence, not a clock. Its source is a user config change — including a change of `image`. (This row once named a second source, a provider upgrade moving a baked default image digest; there is no default image any more — §Image — so `image` always arrives explicitly in `provider_config` and that source no longer exists.) That source is not clocked to anything the cluster keys on, so no threshold exists to collide with the autoscaler. A **started** pod is never touched by this row: live → strict no-op regardless of divergence (edits reach it via the documented next-generation consequence) |
 
 **Startup is part of create — phase is not readiness.** `Pending` (and even
 `Running` at the pod level) does not mean the harness started: a pod can sit
@@ -848,7 +848,7 @@ the latter, not the former.
 
 **Create-intent fingerprint (normative).** The divergence discriminator
 in the never-started rows is a recorded annotation,
-`buzz.block.xyz/create-intent`, written at pod create — the same shape as
+`beekeeper.agiterra.io/create-intent`, written at pod create — the same shape as
 the image-reference and pubkey annotations the pod already carries. Its
 value is an **unkeyed SHA-256** over a canonical serialization of the
 provider's **non-secret create-intent template**, computed *before* the
@@ -1031,7 +1031,7 @@ agent-level I5 into substrate-level I5.
 
 ## The Kubernetes Binding (`buzz-backend-kubernetes`)
 
-The first conforming provider: a Rust crate in `block/buzz`, distributed as a
+The first conforming provider: a Rust crate in this repository, distributed as a
 standalone binary. Everything above is the contract; this section is its
 realization.
 
@@ -1039,8 +1039,8 @@ realization.
 
 Standard kubeconfig resolution (`$KUBECONFIG` → `~/.kube/config`) via
 `kube-rs`. `provider_config` carries **`context`** and **`namespace`** only
-(I2: credentials never transit config). Because kubeconfigs at Block
-near-universally use `exec` credential plugins (`aws eks get-token`,
+(I2: credentials never transit config). Because kubeconfigs for managed
+clusters near-universally use `exec` credential plugins (`aws eks get-token`,
 `gke-gcloud-auth-plugin`) that resolve via PATH, and the provider inherits a
 Finder-launched desktop's minimal PATH, the provider MUST prepend
 `/opt/homebrew/bin`, `/usr/local/bin`, and `~/.local/bin` to its own PATH
@@ -1059,7 +1059,18 @@ run — it MUST NOT fall back to `default`.
 
 ### Image
 
-`ghcr.io/block/buzz-sprig`: Alpine base + `bash` (required by the dev-MCP
+**`image` is required and has no default.** Beekeeper publishes no sprig
+image to any registry, so the provider neither bakes a fallback nor offers a
+schema `default` prefill: an operator builds the image from this repository's
+`Dockerfile.sprig`, pushes it to a registry their cluster can pull from, and
+enters its digest-pinned reference. An absent or blank `image` fails at parse
+time with a named error (`provider_config.image is required: there is no
+default image …`), before any cluster call. (Earlier revisions of this section
+specified a compile-time default pointing at the upstream fork's registry;
+that image was never ours to ship, and the default was removed on
+2026-10-06.)
+
+What the image contains: Alpine base + `bash` (required by the dev-MCP
 shell tool) + `git` + CA certificates + the static musl `sprig` multicall
 binary with its personality links (`buzz-acp`, `buzz-agent`, `buzz-dev-mcp`,
 `rg`, `tree`, `buzz`, `git-credential-nostr`, `git-sign-nostr`) + a baked
@@ -1068,25 +1079,19 @@ credential-helper config MUST be scoped to the relay's git URL — mirroring
 the local spawn's `credential.<relay-url>/git.helper` scoping — never a
 global `credential.helper`: a global nostr helper would answer for every
 remote, including github.com. ~15–25MB;
-not FROM-scratch (bash and git preclude it). Sprig-only: alternate-harness
-dependencies (node for Claude Code / Codex) come via the `image` override
-field, not a fatter default. Tagging follows the relay image's matrix —
-`sha-<short>` on main, semver on `sprig-v*` tags (the sprig tarball's
-`+git.<sha>` version string is not a legal Docker tag). **The default image
-reference MUST be pinned by digest, not tag**: the provider bakes, at
-compile time, the multi-arch manifest digest of the image built from its
-own commit and defaults `image` to
-`ghcr.io/block/buzz-sprig@sha256:<that-digest>` — a `sha-<git-sha>` *tag*
-is traceable but still movable (registry tags are mutable pointers;
-Kubernetes distinguishes movable tags from immutable digests for exactly
-this reason), and the object holding it runs with an nsec. The provider
-records the reference it used in a pod annotation, and rejects `:latest`.
-User `image` overrides accept tag, digest, or full custom registry
-reference — visibly the user's trust decision, with the resolved image ID
-recorded in the same annotation for post-hoc attribution.
-**An image override MUST contain the runtime ABI** — the `buzz-acp`
+not FROM-scratch (bash and git preclude it). Alternate-harness
+dependencies (node for Claude Code / Codex) go in a derived image, not a
+fatter base. **The reference MUST be pinned by digest**
+(`name@sha256:<64 hex>`, optionally `name:tag@sha256:…`, whose tag is
+dropped on normalization): a tag alone is traceable but still movable
+(registry tags are mutable pointers; Kubernetes distinguishes movable tags
+from immutable digests for exactly this reason), and the object holding it
+runs with an nsec, so tag-only references — not just `:latest` — are
+rejected. The provider records the reference it used in a pod annotation
+(`beekeeper.agiterra.io/image`) for post-hoc attribution.
+**Any image MUST contain the runtime ABI** — the `buzz-acp`
 entrypoint and everything §Entrypoint and launch ABI requires — not merely
-alternate-harness dependencies. A conforming custom image is "buzz-sprig
+alternate-harness dependencies. A conforming custom image is "sprig
 plus your tools", never "your tools instead".
 
 ### Entrypoint and launch ABI {#k8s-entrypoint}
@@ -1202,22 +1207,22 @@ regardless of `HOME`.
   pubkey is 64 chars, one over):
   - pod name: `buzz-agent-<first-12-hex-of-pubkey>` — also the returned
     `agent_id`
-  - label `buzz.block.xyz/agent-pubkey: <first-32-hex>` — the selector key
+  - label `beekeeper.agiterra.io/agent-pubkey: <first-32-hex>` — the selector key
     for reconciliation and GC. 128 bits is collision-*resistant*, not
     collision-free, which is why the annotation check below is normative,
     not decorative
   - label `app.kubernetes.io/managed-by: buzz-backend-kubernetes` and label
-    `buzz.block.xyz/binding-version: <schema-version>` — the **management
+    `beekeeper.agiterra.io/binding-version: <schema-version>` — the **management
     marker** (§Deploy State Machine auto-repair fence): present on every
     pod and Secret this provider creates, and **required before any
     destructive repair or GC action**. Identity labels/annotations prove
     identity; the marker asserts protocol ownership — without it, an object
     that merely matches our schema fails closed to the operator
-  - annotation `buzz.block.xyz/agent-pubkey-full: <full-64-hex>` —
+  - annotation `beekeeper.agiterra.io/agent-pubkey-full: <full-64-hex>` —
     **load-bearing**: per §Deploy State Machine step 1, every label-selected
     object's annotation MUST equal the derived pubkey before the provider
     no-ops against it, deletes it, mutates its Secret, or returns its name
-  - annotation `buzz.block.xyz/create-intent: <sha256-of-intent-template>` — the
+  - annotation `beekeeper.agiterra.io/create-intent: <sha256-of-intent-template>` — the
     recorded create intent (§Deploy State Machine, create-intent
     fingerprint), written at pod create; the divergence discriminator for
     never-started pods
@@ -1599,10 +1604,7 @@ winner adoption, never treated as a failed delete; identical desired
 intent + permanently-Pending pod → no delete across arbitrarily many
 Starts, regardless of age; a resource/image correction against a
 never-started pod → fingerprint differs, preconditioned
-delete-and-recreate (the wedge-escape case); same user config but the
-provider's **baked default image digest** changed (provider upgrade)
-against a never-started pod → divergence, replace (the second intent
-source — the only escape from a bad-default-image wedge); the same correction against
+delete-and-recreate (the wedge-escape case); the same correction against
 a **started** pod → strict zero-mutation no-op; admission
 defaulting/mutating the live pod → no false divergence (the comparison
 uses the recorded annotation); the fingerprint serializer property,

@@ -199,7 +199,9 @@ test("sidebar rows separate hover, selected, and reorder states", async ({
     .toBe("none");
 });
 
-test("add community starts with create and join choices", async ({ page }) => {
+test("add community offers join and explains self-hosting", async ({
+  page,
+}) => {
   await installMockBridge(page, {});
   await page.goto("/");
 
@@ -208,9 +210,8 @@ test("add community starts with create and join choices", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Add community" }),
   ).toBeVisible();
-  await expect(page.getByTestId("add-community-create")).toContainText(
-    "Create a new community",
-  );
+  await expect(page.getByTestId("add-community-create")).toHaveCount(0);
+  await expect(page.getByTestId("add-community-self-host-note")).toBeVisible();
   await expect(page.getByTestId("add-community-join")).toContainText(
     "Join an existing community",
   );
@@ -223,14 +224,6 @@ test("add community starts with create and join choices", async ({ page }) => {
   ).toBeVisible();
   await expect(page.getByLabel("Community URL or invite link")).toBeVisible();
   await page.getByTestId("add-community-back").click();
-
-  await page.getByTestId("add-community-create").click();
-  await expect(
-    page.getByRole("heading", { name: "Create a new community" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Continue to Builderlab" }).click();
-  await page.getByRole("button", { name: "Connect and continue" }).click();
-  await expect(page.getByLabel("Community address")).toBeVisible();
 });
 
 test("automatically shows community join requirements near the community URL", async ({

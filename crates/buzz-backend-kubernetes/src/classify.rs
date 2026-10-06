@@ -74,7 +74,7 @@ pub struct VerifiedPod {
     /// *before* startup state or the dying pod reads as the no-op row.
     pub deletion_marked: bool,
     pub startup: Startup,
-    /// The `buzz.block.xyz/create-intent` annotation as recorded at create.
+    /// The `beekeeper.agiterra.io/create-intent` annotation as recorded at create.
     /// `None` for a pod written before the annotation existed, which counts
     /// as divergence.
     pub recorded_intent: Option<Fingerprint>,

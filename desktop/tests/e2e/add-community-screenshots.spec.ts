@@ -4,7 +4,6 @@ import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
 
 const OUTDIR = "test-results/add-community";
-const DEFAULT_MOCK_PUBKEY = "deadbeef".repeat(8);
 const COMMUNITIES = [
   {
     id: "ws-a",
@@ -30,13 +29,7 @@ test.beforeEach(async ({ page }) => {
   }, COMMUNITIES);
   await installMockBridge(
     page,
-    {
-      builderlabAuth: {
-        email: "owner@example.com",
-        expiresAt: "2099-01-01T00:00:00Z",
-      },
-      builderlabIdentity: { pubkey_hex: DEFAULT_MOCK_PUBKEY },
-    },
+    {},
     {
       skipCommunitySeed: true,
     },
@@ -62,12 +55,4 @@ test("capture: join an existing community", async ({ page }) => {
   });
   await waitForAnimations(page);
   await dialog.screenshot({ path: `${OUTDIR}/02-join.png` });
-});
-
-test("capture: create a new community", async ({ page }) => {
-  await page.getByTestId("add-community-create").click();
-  const dialog = page.getByTestId("add-community-dialog");
-  await page.getByLabel("Community address").waitFor();
-  await waitForAnimations(page);
-  await dialog.screenshot({ path: `${OUTDIR}/03-create.png` });
 });

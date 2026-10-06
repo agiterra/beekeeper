@@ -134,4 +134,4 @@ If none of the above match your situation:
 
 3. Try `--safe-rendering` first — if it resolves the issue, it's a WebKit rendering incompatibility and the crash log will help narrow down which driver is involved.
 
-4. File a [new issue](https://github.com/block/buzz/issues/new) with your distro, GPU, driver version, and the terminal output.
+4. File a [new issue](https://github.com/agiterra/beekeeper/issues/new) with your distro, GPU, driver version, and the terminal output.

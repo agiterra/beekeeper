@@ -45,8 +45,8 @@ const BLOB_KEY: &str = "secrets";
 
 // ── Interprocess advisory lock ─────────────────────────────────────────────
 //
-// Two concurrent Buzz processes (e.g. the signed DMG build and an unsigned dev
-// build via `just staging`) share the same OS keychain blob because the
+// Two concurrent Beekeeper processes (e.g. an installed build and an unsigned
+// dev build via `just dev`) share the same OS keychain blob because the
 // service name `"beekeeper-desktop"` is a constant — it does not key off the bundle
 // identifier. Each process holds its own in-memory cache, so without an
 // interprocess lock a warm-cache write in process A drops keys added by process

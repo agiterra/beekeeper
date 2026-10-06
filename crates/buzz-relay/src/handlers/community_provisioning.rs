@@ -18,7 +18,7 @@
 //! ## Request shape
 //!
 //! ```json
-//! { "host": "acme.communities.buzz.xyz", "initial_owner_pubkey": "<hex>" }
+//! { "host": "acme.communities.example.com", "initial_owner_pubkey": "<hex>" }
 //! ```
 //!
 //! `initial_owner_pubkey` is optional. When present for an existing community,

@@ -4,17 +4,19 @@
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-If you discover a security vulnerability in Buzz, please report it by emailing
-**buzz@block.xyz**. Include as much detail as possible:
+If you discover a security vulnerability in Beekeeper, please report it
+privately to the agiterra maintainers rather than in a public issue. There is
+no dedicated security address yet; contact a maintainer directly. (Beekeeper
+began as a fork of Block's `block/buzz`; do not send Beekeeper reports to
+Block's security contact.) Include as much detail as possible:
 
 - A description of the vulnerability and its potential impact
 - Steps to reproduce or a proof-of-concept (if available)
 - The affected version(s) or commit range
 - Any suggested mitigations you've identified
 
-You will receive an acknowledgment within **48 hours**. We aim to provide a
-full response — including a timeline for a fix — within **7 days** of initial
-contact. We'll keep you informed as we work toward a resolution.
+We will acknowledge your report and keep you informed as we work toward a
+resolution. We do not yet commit to fixed response times.
 
 We ask that you:
 
@@ -22,7 +24,7 @@ We ask that you:
 - Avoid accessing or modifying data that does not belong to you
 - Not perform denial-of-service attacks or disrupt production systems
 
-We will credit reporters in release notes unless you prefer to remain anonymous.
+We will credit reporters unless you prefer to remain anonymous.
 
 ---
 
@@ -33,7 +35,7 @@ We will credit reporters in release notes unless you prefer to remain anonymous.
 | `main` (latest) | ✅ Active |
 | Previous releases | ⚠️ Best-effort; upgrade recommended |
 
-Buzz is pre-1.0. We do not maintain long-term support branches at this stage.
+Beekeeper is pre-1.0. We do not maintain long-term support branches at this stage.
 All security fixes land on `main` first.
 
 ---
@@ -75,7 +77,7 @@ for SOX-grade compliance and eDiscovery.
 
 ### Desktop Secret Storage — OS Keyring
 
-The Buzz desktop app stores nsec private keys in the operating system keyring
+The Beekeeper desktop app stores nsec private keys in the operating system keyring
 rather than in plaintext files: macOS Keychain, Windows Credential Manager, or
 the Linux Secret Service (`gnome-keyring` / `kwallet` via D-Bus). This covers
 both the human identity key and every managed-agent key.
@@ -113,7 +115,10 @@ controllers.
 
 ### Dependency Management
 
-We use `cargo audit` in CI to scan for known vulnerabilities in dependencies.
+`deny.toml` configures `cargo-deny` for advisory and license checks. It ran in
+the inherited GitHub Actions workflow, which is disabled on agiterra's GitHub
+copy, and is not yet part of the Woodpecker gate — run `cargo-deny check`
+locally until it is.
 `#![deny(unsafe_code)]` is enforced across all crates — no unsafe Rust.
 
 ---

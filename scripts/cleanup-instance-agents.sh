@@ -4,7 +4,7 @@
 # `tauri dev` Ctrl+C tears down the Rust app before its in-process system sweep
 # can finish, so agent workers (goose, buzz-agent, ...) it spawned in their
 # own process groups survive as orphans. This script is the shell-side backstop:
-# run it from an EXIT trap in the `just dev`/`just staging` recipes.
+# run it from an EXIT trap in the `just dev` recipe.
 #
 # It reads the PID-file receipts the desktop already writes — one file per agent
 # under `<app-data>/agents/agent-pids/<pubkey>.pid`, each containing the agent's

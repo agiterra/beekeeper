@@ -206,7 +206,6 @@ def write_env_file(state: dict[str, str]) -> Path:
     """Compose interpolation env — regenerated from state on every run."""
     env_path = STATE_DIR / ".env"
     lines = {
-        "BUZZ_IMAGE": os.environ.get("BUZZ_IMAGE", "ghcr.io/block/buzz:main"),
         "BUZZ_DOMAIN": "localhost",
         "RELAY_URL": f"ws://localhost:{RELAY_HTTP_PORT}",
         "BUZZ_MEDIA_BASE_URL": f"http://localhost:{RELAY_HTTP_PORT}/media",
@@ -232,6 +231,22 @@ def write_env_file(state: dict[str, str]) -> Path:
         "BUZZ_PG_HOST_PORT": str(PG_HOST_PORT),
         "BUZZ_METRICS_HOST_PORT": str(METRICS_HOST_PORT),
     }
+    # No published relay image to default to: unset, compose falls back to the
+    # locally built image named in deploy/compose/compose.yml. Check it exists
+    # now, or compose would try to pull it from Docker Hub and fail obscurely.
+    if image := os.environ.get("BUZZ_IMAGE"):
+        lines["BUZZ_IMAGE"] = image
+    elif (
+        subprocess.run(
+            ["docker", "image", "inspect", "beekeeper-relay:latest"],
+            capture_output=True,
+        ).returncode
+        != 0
+    ):
+        raise SystemExit(
+            "No relay image: set BUZZ_IMAGE, or build one from the repository "
+            "root with `docker build -t beekeeper-relay:latest .`"
+        )
     env_path.touch(mode=0o600)
     env_path.write_text("".join(f"{k}={v}\n" for k, v in lines.items()))
     return env_path
@@ -480,7 +495,7 @@ def launch_gui(state: dict[str, str]) -> subprocess.Popen:
         subprocess.run(["pnpm", "install"], cwd=desktop_dir, check=True)
 
     # tauri dev needs sidecar files present; stub them and drop in the real
-    # CLI binary (mirrors the just staging recipe).
+    # CLI binary (mirrors the `just dev` recipe).
     target = subprocess.run(
         ["rustc", "-vV"], capture_output=True, text=True, check=True
     ).stdout

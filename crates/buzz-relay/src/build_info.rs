@@ -5,7 +5,7 @@
 /// Set by `build.rs` (`BUZZ_RELAY_SOURCE_SHA`): `git rev-parse HEAD` when
 /// this crate's own `.git` is present (a native build), else the
 /// `BUZZ_SOURCE_SHA` build-arg the Dockerfile threads through from CI/deploy
-/// (`.github/workflows/docker.yml`, `deploy/autodeploy/autodeploy`) for the
+/// (`deploy/autodeploy/autodeploy`) for the
 /// case `.git` is not present — the relay's Docker build context is a `git
 /// archive` export with no `.git` at all (see `.dockerignore`). Always set:
 /// `build.rs` falls back to the literal `unknown` when neither source
