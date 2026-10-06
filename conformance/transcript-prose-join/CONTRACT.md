@@ -2,7 +2,7 @@
 
 A coding-session answer reaches the wire as several signed kind:44225
 `assistant_text` items: the producer cuts prose at 24 KiB
-(`COALESCE_FLUSH_BYTES`, `crates/buzz-session-provider/src/transcript.rs:109`)
+(`COALESCE_FLUSH_BYTES`, `crates/beekeeper-session-provider/src/transcript.rs:109`)
 whether or not paragraph streaming is on, at every tool call, and — with
 `BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` — at paragraph boundaries of at least
 512 bytes (`MIN_PARAGRAPH_FLUSH_BYTES`, `:122`, scanner at `:826-855`). Every
@@ -78,13 +78,13 @@ turn's latest **own** `assistant_text` message (no `parentToolId`); both
 
 `fixtures/vectors.json` (`schema: buzz.conformance/transcript-prose-join@1`)
 is written **only** by
-`crates/buzz-session-provider/src/transcript_prose_join_vectors_tests.rs`. Its
+`crates/beekeeper-session-provider/src/transcript_prose_join_vectors_tests.rs`. Its
 default run regenerates the vectors in memory and fails if the checked-in file
 differs, so a producer change that moves a cut fails there first. To
 regenerate on purpose:
 
 ```bash
-BUZZ_REGEN_PROSE_JOIN_VECTORS=1 cargo test -p buzz-session-provider transcript_prose_join
+BUZZ_REGEN_PROSE_JOIN_VECTORS=1 cargo test -p beekeeper-session-provider transcript_prose_join
 ```
 
 then re-run every reader's binding test below. Keys are sorted and the file is
@@ -136,8 +136,8 @@ reader nobody listed is a reader nobody checked.
 
 | Reader | Joins today? | Binds to these vectors? | Owner (SV-36 slice) |
 | --- | --- | --- | --- |
-| `bee sessions transcript --format md` — `crates/buzz-cli/src/commands/sessions.rs` (`render_markdown_with_evidence`, `cmd_transcript`), join in `sessions/prose_join.rs` (`bee sessions export` stays raw signed JSONL) | **yes**; subagent prose headed `**Assistant (subagent …)**`; still-writing line only under rule 7 | **yes** — `crates/buzz-cli/src/commands/sessions/prose_join_tests.rs` | S2a |
-| Context brief — `crates/buzz-core/src/coding_session_context.rs` (`coding_session_first_turn_brief`), join in `coding_session_context_prose_join.rs` | **yes**; one evidence slot per message; `latestAssistantEventId` / `latestAssistantFirstEventId` name the last **own** message | **yes** (`expectedBrief`) — `crates/buzz-core/src/coding_session_context_prose_join_tests.rs` | S2b |
+| `bee sessions transcript --format md` — `crates/beekeeper-cli/src/commands/sessions.rs` (`render_markdown_with_evidence`, `cmd_transcript`), join in `sessions/prose_join.rs` (`bee sessions export` stays raw signed JSONL) | **yes**; subagent prose headed `**Assistant (subagent …)**`; still-writing line only under rule 7 | **yes** — `crates/beekeeper-cli/src/commands/sessions/prose_join_tests.rs` | S2a |
+| Context brief — `crates/beekeeper-core/src/coding_session_context.rs` (`coding_session_first_turn_brief`), join in `coding_session_context_prose_join.rs` | **yes**; one evidence slot per message; `latestAssistantEventId` / `latestAssistantFirstEventId` name the last **own** message | **yes** (`expectedBrief`) — `crates/beekeeper-core/src/coding_session_context_prose_join_tests.rs` | S2b |
 | Mobile — `mobile/lib/features/coding_sessions/domain/coding_session_transcript.dart` (`_projectStream`), join in `coding_session_prose_join.dart`; leases wired at `coding_session_view.dart` (`transcriptFor`) | **yes** | **yes** — `mobile/test/features/coding_sessions/domain/coding_session_prose_join_conformance_test.dart` | S3 |
 | Web — `web/src/features/coding-sessions/domain/transcriptProjection.ts`, join in `transcriptProseJoin.ts`; leases wired at `ui/observer-contract.ts` (`buildCodingSessionTranscriptBlocks`) | **yes** | **yes** — `web/src/features/coding-sessions/domain/transcriptProseJoin.test.mjs` | S4 |
 | Desktop session view — `desktop/src/features/coding-sessions/lib/codingSessionTranscriptModelText.ts:24-75`, called at `codingSessionTranscriptModel.ts:297` | **yes** — turn, `sessionId`, author, bridge signer, `parentToolId`, `messageId` | **deferred**: its binding test (`codingSessionTranscriptProseJoin.conformance.test.mjs`) belongs to S5, after Wave A, which owns that directory now | S5 |

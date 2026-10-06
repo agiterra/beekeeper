@@ -76,10 +76,10 @@ pub(crate) fn app_commit_identity_from_profile(
     profile_content: Option<&str>,
 ) -> (String, String) {
     let short = pubkey_short(pubkey_hex);
-    // One spelling of this address, in `buzz_core_pkg::seat_commit_identity`:
+    // One spelling of this address, in `beekeeper_core_pkg::seat_commit_identity`:
     // the app's own commits and every seat worktree the host configures must
     // resolve a key to the same author (ledger 239).
-    let email = buzz_core_pkg::seat_commit_identity::beekeeper_local_email(pubkey_hex);
+    let email = beekeeper_core_pkg::seat_commit_identity::beekeeper_local_email(pubkey_hex);
     let name = profile_content
         .and_then(|content| serde_json::from_str::<serde_json::Value>(content).ok())
         .and_then(|value| {
@@ -124,16 +124,17 @@ pub(crate) async fn resolve_app_commit_identity(
 
 /// Kind of a project's pack-source record — read from the registry in
 /// `buzz-core` rather than restated, so the number cannot drift.
-const KIND_PROJECT_PACK_SOURCE: u16 = buzz_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16;
+const KIND_PROJECT_PACK_SOURCE: u16 = beekeeper_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16;
 
 /// Kind of a NIP-34 git repository announcement.
 pub(crate) const KIND_REPO_ANNOUNCEMENT: u16 = 30617;
 
-/// Kind of the relay-derived ref state a push produces (`buzz_core::kind`).
+/// Kind of the relay-derived ref state a push produces (`beekeeper_core::kind`).
 pub(crate) const KIND_REPO_REF_STATE: u16 = 30618;
 
 /// Schema string in a 30624's content, as `buzz-core` declares it.
-const PACK_SOURCE_SCHEMA: &str = buzz_core_pkg::project_pack_source::PROJECT_PACK_SOURCE_SCHEMA;
+const PACK_SOURCE_SCHEMA: &str =
+    beekeeper_core_pkg::project_pack_source::PROJECT_PACK_SOURCE_SCHEMA;
 
 /// Suffix appended to a project's slug to name its packs repository.
 pub const PACKS_REPO_SUFFIX: &str = "-packs";
@@ -681,7 +682,7 @@ async fn project_packs_init_with_paths(
 
 /// Withdraw this host's own `30617:<viewer>:<repo_id>` announcement: a kind:5
 /// carrying `["a", "30617:<viewer>:<repo_id>"]`, the same shape `bee repos
-/// delete` publishes (`crates/buzz-cli/src/commands/repos.rs::cmd_delete_repo`).
+/// delete` publishes (`crates/beekeeper-cli/src/commands/repos.rs::cmd_delete_repo`).
 ///
 /// Called only after the announcement is known to have landed and the seed
 /// or push that was supposed to fill it then failed — see
@@ -695,7 +696,7 @@ pub(crate) async fn withdraw_announcement(
     repo_id: &str,
 ) -> (Option<String>, Option<String>) {
     let owner = keys.public_key().to_hex();
-    let builder = match buzz_sdk_pkg::build_delete_addressable(
+    let builder = match beekeeper_sdk_pkg::build_delete_addressable(
         u32::from(KIND_REPO_ANNOUNCEMENT),
         &owner,
         repo_id,

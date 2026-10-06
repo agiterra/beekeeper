@@ -348,12 +348,12 @@ jobs:
         env:
           RUSTC_WRAPPER: sccache
         run: |
-          cargo build --profile ci -p buzz-relay -p git-credential-nostr
+          cargo build --profile ci -p beekeeper-relay -p git-credential-nostr
           cargo nextest archive \
             --cargo-profile ci \
-            -p buzz-db \
-            -p buzz-relay \
-            -p buzz-test-client \
+            -p beekeeper-db \
+            -p beekeeper-relay \
+            -p beekeeper-test-client \
             --lib \
             --test e2e_event_reminder \
             --archive-file target/ci/backend-integration-tests.tar.zst
@@ -765,9 +765,9 @@ jobs:
           ./scripts/start-relay-for-tests.sh --no-build
       - name: Relay E2E tests
         run: |
-          cargo test -p buzz-test-client --test e2e_persona --test e2e_team_catalog --test e2e_nostr_interop --test e2e_project -- --ignored --nocapture
-          cargo test -p buzz-test-client --test e2e_relay invite -- --ignored --nocapture
-          cargo test -p buzz-test-client --test e2e_relay nip43_membership_snapshots_are_rejected -- --ignored --nocapture
+          cargo test -p beekeeper-test-client --test e2e_persona --test e2e_team_catalog --test e2e_nostr_interop --test e2e_project -- --ignored --nocapture
+          cargo test -p beekeeper-test-client --test e2e_relay invite -- --ignored --nocapture
+          cargo test -p beekeeper-test-client --test e2e_relay nip43_membership_snapshots_are_rejected -- --ignored --nocapture
         env:
           RELAY_URL: ws://localhost:3000
           GIT_CREDENTIAL_NOSTR_BIN: ${{ github.workspace }}/target/ci/git-credential-nostr
@@ -780,7 +780,7 @@ jobs:
         # --no-fail-fast: without it cargo stops after the first failing binary,
         # so one broken case hides every later binary's result.
         run: |
-          cargo test -p buzz-test-client --no-fail-fast --test e2e_media --test e2e_media_extended --test e2e_media_video -- --ignored --nocapture
+          cargo test -p beekeeper-test-client --no-fail-fast --test e2e_media --test e2e_media_extended --test e2e_media_video -- --ignored --nocapture
         env:
           RELAY_URL: ws://localhost:3000
           RELAY_HTTP_URL: http://localhost:3000
@@ -955,10 +955,10 @@ jobs:
           CARGO_CMD: ${{ github.event_name == 'pull_request' && 'check' || 'build' }}
         run: |
           cross "$CARGO_CMD" --release --target "$TARGET" \
-            -p buzz-relay \
-            -p buzz-acp \
-            -p buzz-agent \
-            -p buzz-dev-mcp \
+            -p beekeeper-relay \
+            -p beekeeper-acp \
+            -p beekeeper-agent \
+            -p beekeeper-dev-mcp \
             -p git-credential-nostr \
             -p git-sign-nostr
 
@@ -1008,7 +1008,7 @@ jobs:
         # only gate if this crate is tested ON Windows.
         # Serial: windows_resolver_tests mutate process-global env
         # (BUZZ_SHELL/GIT_BASH/SystemRoot) that SharedState::new reads.
-        run: cargo test -p buzz-dev-mcp --target $env:TARGET -- --test-threads=1
+        run: cargo test -p beekeeper-dev-mcp --target $env:TARGET -- --test-threads=1
       # Smoke-test the new host-prereq contract: Git for Windows (which provides
       # bash) is available on the runner, a shell command round-trips, and bash
       # does NOT resolve from System32 (so WSL's launcher is never picked up).

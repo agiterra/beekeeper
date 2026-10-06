@@ -443,7 +443,7 @@ pub fn scan_role_packs(directory: &Path) -> Result<RolePackScan, String> {
             });
             continue;
         }
-        let resolved = match buzz_persona_pkg::resolve::resolve_pack(&child) {
+        let resolved = match beekeeper_persona_pkg::resolve::resolve_pack(&child) {
             Ok(resolved) => resolved,
             Err(error) => {
                 // A pack that cannot be read is a different fact from a pack

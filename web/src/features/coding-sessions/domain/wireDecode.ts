@@ -24,7 +24,7 @@ export const MAX_REFERENCE_BYTES = 2 * 1024;
  * there were two, so a decoder that validates the parsed object cannot see
  * `{"status":"failed","status":"running"}` for what it is. `serde_json`
  * refuses the repeated field when `buzz-core` decodes the same bytes into its
- * typed payload (`crates/buzz-core/src/coding_session_payload.rs:775`,
+ * typed payload (`crates/beekeeper-core/src/coding_session_payload.rs:775`,
  * `:1813`), so accepting it here would render a session no other party agrees
  * exists.
  *
@@ -278,7 +278,7 @@ const ROUTING_TIERS = new Set(["fast", "standard", "deep"]);
  *
  * The canonical router renders the two numeric §6 triggers with the value that
  * fired them — `risk 80 >= 40`, `irreversibility 4 >= 4` — so a reader is told
- * the fact rather than the rule (`crates/buzz-core/src/coding_session_routing.rs:1555`).
+ * the fact rather than the rule (`crates/beekeeper-core/src/coding_session_routing.rs:1555`).
  * A closed vocabulary here would make this observer reject the router's own
  * record as malformed, which is exactly the kind of lie that shows up as
  * "the seat says nothing about why it is that model".
@@ -438,7 +438,7 @@ function isRoutingOverride(value: unknown): boolean {
   // `null` is "take the tier's effort", and it is the shape the canonical
   // producer writes: buzz-core's `RoutingOverride.effort` is an
   // `Option<String>` with no `skip_serializing_if`
-  // (crates/buzz-core/src/coding_session_routing.rs:1005), so every override
+  // (crates/beekeeper-core/src/coding_session_routing.rs:1005), so every override
   // on the wire carries the key explicitly null. Refusing it would drop the
   // whole routing record of every seat a human overrode.
   return (

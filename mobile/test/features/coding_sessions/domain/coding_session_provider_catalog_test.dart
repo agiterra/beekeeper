@@ -13,7 +13,7 @@ const _secretB =
     '7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26';
 
 /// The provider's own canonical catalog, verbatim from
-/// `crates/buzz-session-provider/src/catalog.rs` (`to_canonical_json`).
+/// `crates/beekeeper-session-provider/src/catalog.rs` (`to_canonical_json`).
 const rustCatalogContent =
     '{"schema":"buzz-coding-session-provider-catalog/v1","revision":3,'
     '"providers":[{"providerInstanceRef":"claude-primary",'

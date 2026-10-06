@@ -2,7 +2,7 @@
  * Transcript copy for the host's project execution boundary disclosure.
  *
  * Each generation's transcript carries one status item from
- * `execution_scope::boundary_status_item` (`crates/buzz-session-provider`):
+ * `execution_scope::boundary_status_item` (`crates/beekeeper-session-provider`):
  * `execution_boundary_enforced` with the backend that enforced it as
  * `reason`, or `execution_boundary_not_enforced` with a stable reason slug.
  * The host emits "enforced" only after the boundary started around the whole
@@ -85,7 +85,7 @@ export const CODING_SESSION_ISOLATION_TITLE = "Session isolation";
 
 /**
  * What the provider withheld from this session beyond the project boundary
- * (`crates/buzz-session-provider/src/session_isolation.rs`
+ * (`crates/beekeeper-session-provider/src/session_isolation.rs`
  * `isolation_status_items`). Published only when the provider's setting is
  * on, and only beside an enforced boundary, so each row states a fact the
  * host applied; the `reason` is a fixed slug and adds nothing to the copy.

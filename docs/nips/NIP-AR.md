@@ -16,7 +16,7 @@ This NIP defines `kind:44251`, a **project artifact pin op**: one signed stateme
 
 A project's written material lives in its agents repository (NIP-AD): plan artifacts under `plans/`, document artifacts under `docs/`. All of it sits behind a tab, which is the right place for forty files and the wrong place for the two or three a team reads every day. A to-do list has had `list.pinned` since NIP-TD — "show in every member's project sidebar" — and a document is at least as worth reaching for.
 
-Why not another op on NIP-AD's kind:44250, which already carries everything else about these files? Because 44250's fold is a per-path **draft chain** that a `commit.record` closes. A pin is not a draft of a file's contents and must never be closed by a commit; threading an exception through that fold would complicate a contract three languages are already bound to, for an op that shares none of its shape. What the two kinds do share is the **gate**, and that is shared through one predicate (`buzz_core::kind::is_project_a_scoped_kind`), so none of the admission, withholding, fan-out, pushdown or request-shape rules is written twice.
+Why not another op on NIP-AD's kind:44250, which already carries everything else about these files? Because 44250's fold is a per-path **draft chain** that a `commit.record` closes. A pin is not a draft of a file's contents and must never be closed by a commit; threading an exception through that fold would complicate a contract three languages are already bound to, for an op that shares none of its shape. What the two kinds do share is the **gate**, and that is shared through one predicate (`beekeeper_core::kind::is_project_a_scoped_kind`), so none of the admission, withholding, fan-out, pushdown or request-shape rules is written twice.
 
 Why not NIP-33: replacement keys are one head per *author*, and a pin is shared — two members pinning different documents would produce two independent heads and the reader would have to guess which is the sidebar. This is the hazard NIP-TD § Motivation records for to-do lists and kind:30624 met for the pack pin, and the answer is the same: an append-only kind folded client-side, one field per op.
 
@@ -46,13 +46,13 @@ Content is JSON, at most 2048 bytes, with `schema` = `buzz-project-artifact-pin/
 - `targetKind` is `file` or `folder`.
 - A **file** target is any path NIP-AD's grammar admits — a plan, a document, an asset, a role, the manifest — except a `document-folder` keep. The keep is how an empty directory exists in git; pinning it instead of the folder it holds open would put a row called `.gitkeep` in the sidebar.
 - A **folder** target is `docs/<segment>/…` with one to seven segments, each a document name. It is deliberately **not** a path the grammar admits: git has no directory object, so a folder is named here by the prefix its files share. Seven and not eight so a file under the deepest pinnable folder still fits the path cap.
-- `rank` is a fractional-indexing order key over the base-62 alphabet, the same one NIP-TD uses (`crates/buzz-core/src/fractional_rank.rs`, `conformance/project-todo-fold/fixtures/rank-vectors.json`). Both ops carry one: a `pin.set` establishes the order a target enters at, and a `pin.rank` moves it.
+- `rank` is a fractional-indexing order key over the base-62 alphabet, the same one NIP-TD uses (`crates/beekeeper-core/src/fractional_rank.rs`, `conformance/project-todo-fold/fixtures/rank-vectors.json`). Both ops carry one: a `pin.set` establishes the order a target enters at, and a `pin.rank` moves it.
 
-The single validator is `crates/buzz-core/src/project_artifact_pin.rs`; the relay, the SDK builder and `bee pins` call it and keep no copy.
+The single validator is `crates/beekeeper-core/src/project_artifact_pin.rs`; the relay, the SDK builder and `bee pins` call it and keep no copy.
 
 ## Relay behaviour
 
-Admission, withholding, live fan-out, the SQL pushdown and the HTTP request-shape rule are the Pulse, to-do and draft rules, inherited through `buzz_core::kind::is_project_a_scoped_kind` (44240, 44248, 44250, 44251): a private project's owner or collaborator may write, a viewer may not (`OK false "restricted: …"`, **403** over `POST /events`, CLI exit 3); a stored op is withheld from a reader whose hidden-private-project set contains its coordinate; `{"kinds":[44251],"#a":[c]}` is accepted, an unscoped or mixed filter is `400`.
+Admission, withholding, live fan-out, the SQL pushdown and the HTTP request-shape rule are the Pulse, to-do and draft rules, inherited through `beekeeper_core::kind::is_project_a_scoped_kind` (44240, 44248, 44250, 44251): a private project's owner or collaborator may write, a viewer may not (`OK false "restricted: …"`, **403** over `POST /events`, CLI exit 3); a stored op is withheld from a reader whose hidden-private-project set contains its coordinate; `{"kinds":[44251],"#a":[c]}` is accepted, an unscoped or mixed filter is `400`.
 
 One check is this kind's own, made at ingest and answered as a rejection (**400**, CLI exit 2) because it is a fact about the event against the world, not about the author's authority:
 
@@ -88,8 +88,8 @@ The relay refuses any event whose `created_at` is more than 900 s from its clock
 
 ## Reference
 
-- Kind and predicates: `crates/buzz-core/src/kind.rs` (`KIND_PROJECT_ARTIFACT_PIN_OP`, `is_project_a_scoped_kind`).
-- Validator: `crates/buzz-core/src/project_artifact_pin.rs`. Fold: `crates/buzz-core/src/project_artifact_pin_fold.rs`. Ranks: `crates/buzz-core/src/fractional_rank.rs`.
-- Relay: `crates/buzz-relay/src/handlers/ingest.rs`, `handlers/agents_repo_draft.rs` (`admit_pin_repository`), `handlers/req.rs`, `api/bridge.rs`; `crates/buzz-db/src/event.rs` pushdown.
-- SDK: `crates/buzz-sdk/src/builders.rs` (`build_project_artifact_pin_op`, `build_delete_event`). CLI: `crates/buzz-cli/src/commands/pins.rs`.
+- Kind and predicates: `crates/beekeeper-core/src/kind.rs` (`KIND_PROJECT_ARTIFACT_PIN_OP`, `is_project_a_scoped_kind`).
+- Validator: `crates/beekeeper-core/src/project_artifact_pin.rs`. Fold: `crates/beekeeper-core/src/project_artifact_pin_fold.rs`. Ranks: `crates/beekeeper-core/src/fractional_rank.rs`.
+- Relay: `crates/beekeeper-relay/src/handlers/ingest.rs`, `handlers/agents_repo_draft.rs` (`admit_pin_repository`), `handlers/req.rs`, `api/bridge.rs`; `crates/beekeeper-db/src/event.rs` pushdown.
+- SDK: `crates/beekeeper-sdk/src/builders.rs` (`build_project_artifact_pin_op`, `build_delete_event`). CLI: `crates/beekeeper-cli/src/commands/pins.rs`.
 - Folds: Desktop `desktop/src/features/agents-repo/lib/artifactPinFold.ts`, Mobile `mobile/lib/features/agents_repo/domain/artifact_pin_fold.dart`, both beside the draft modules whose path grammar a target is drawn from.

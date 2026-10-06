@@ -65,7 +65,7 @@ export type PulseDigestEntry = {
    * Present **only** when the entry carried a `cost`, so a costless entry
    * serializes byte-identically to the pre-cost digest and every
    * `conformance/project-pulse-fold/` vector keeps passing unchanged. The Rust
-   * digest twin (`buzz_core::pulse_fold::PulseDigestEntry`) does not carry the
+   * digest twin (`beekeeper_core::pulse_fold::PulseDigestEntry`) does not carry the
    * key yet, so no fold vector may carry one until it does — the two folds are
    * pinned byte-for-byte against the same corpus.
    */

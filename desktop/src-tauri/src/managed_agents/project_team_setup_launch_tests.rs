@@ -1,5 +1,5 @@
 use super::*;
-use buzz_core_pkg::coding_session_payload::LifecycleReceipt;
+use beekeeper_core_pkg::coding_session_payload::LifecycleReceipt;
 use uuid::Uuid;
 
 struct Fixture {
@@ -40,9 +40,11 @@ impl Fixture {
         };
         let channel = Uuid::new_v4();
         let session_ref = Uuid::new_v4().to_string();
-        let genesis = buzz_sdk_pkg::build_coding_session_genesis(
+        let genesis = beekeeper_sdk_pkg::build_coding_session_genesis(
             channel,
-            &buzz_core_pkg::coding_session_genesis::CodingSessionGenesisPayload::new(&session_ref),
+            &beekeeper_core_pkg::coding_session_genesis::CodingSessionGenesisPayload::new(
+                &session_ref,
+            ),
         )
         .expect("genesis")
         .sign_with_keys(&owner)
@@ -100,7 +102,7 @@ impl Fixture {
         }
     }
     fn receipt(&self, receipt: &LifecycleReceipt, signer: &Keys) -> Event {
-        buzz_sdk_pkg::builders::build_coding_session_lifecycle_receipt(
+        beekeeper_sdk_pkg::builders::build_coding_session_lifecycle_receipt(
             Uuid::parse_str(&self.saved.reservation.channel_id).expect("channel"),
             &receipt.command_id,
             &serde_json::to_string(receipt).expect("json"),
@@ -200,7 +202,7 @@ fn wrong_signer_command_channel_instance_driver_and_turn_receipts_are_ignored() 
     }
     let turn = LifecycleReceipt::turn_queued(&f.saved.reservation.create_command_id, &f.target());
     assert!(wire::verified_receipt(&f.receipt(&turn, &f.provider), &f.saved).is_none());
-    let other = buzz_sdk_pkg::builders::build_coding_session_lifecycle_receipt(
+    let other = beekeeper_sdk_pkg::builders::build_coding_session_lifecycle_receipt(
         Uuid::new_v4(),
         &receipt.command_id,
         &serde_json::to_string(&receipt).expect("json"),
@@ -332,7 +334,8 @@ async fn relay_stub(stub: std::sync::Arc<RelayStub>) -> (String, tokio::task::Jo
         let event: Event = serde_json::from_str(&body).expect("signed event");
         event.verify().expect("signature");
         stub.events.lock().expect("events").push(event.clone());
-        if event.kind.as_u16() == buzz_core_pkg::kind::KIND_CODING_SESSION_LIFECYCLE_COMMAND as u16
+        if event.kind.as_u16()
+            == beekeeper_core_pkg::kind::KIND_CODING_SESSION_LIFECYCLE_COMMAND as u16
             && stub.fail_create.load(std::sync::atomic::Ordering::SeqCst)
         {
             return (
@@ -505,7 +508,7 @@ fn transition_cannot_replace_a_validly_signed_create_or_change_the_fixed_brief()
         *initial_turn = Some("Override local instructions".into());
     }
     changed = f.saved.clone();
-    changed.create_event = buzz_sdk_pkg::builders::build_coding_session_lifecycle_command(
+    changed.create_event = beekeeper_sdk_pkg::builders::build_coding_session_lifecycle_command(
         Uuid::parse_str(&changed.reservation.channel_id).expect("channel"),
         &payload,
     )

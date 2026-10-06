@@ -98,11 +98,11 @@ run_integration_tests() {
   ensure_infra
 
   run_test_step "buzz-db tests" \
-    cargo test -p buzz-db -- --nocapture
+    cargo test -p beekeeper-db -- --nocapture
 
-  if find crates/buzz-auth/tests -maxdepth 1 -name '*.rs' -print -quit 2>/dev/null | grep -q .; then
+  if find crates/beekeeper-auth/tests -maxdepth 1 -name '*.rs' -print -quit 2>/dev/null | grep -q .; then
     run_test_step "buzz-auth integration tests" \
-      cargo test -p buzz-auth --test '*' -- --nocapture
+      cargo test -p beekeeper-auth --test '*' -- --nocapture
   else
     run_test_step "buzz-auth (no integration tests found)" true
   fi

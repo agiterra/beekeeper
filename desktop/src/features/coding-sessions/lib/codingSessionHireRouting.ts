@@ -369,7 +369,7 @@ function readRequestOverride(value: unknown):
   }
   // `effort` is optional *and* nullable. buzz-core's `RoutingOverride` writes
   // the key unconditionally with `null` for "take the tier's effort"
-  // (crates/buzz-core/src/coding_session_routing.rs:1005), so a parser that
+  // (crates/beekeeper-core/src/coding_session_routing.rs:1005), so a parser that
   // refused an explicit null would refuse every override the CLI emits — the
   // 2026-08-30 drop again, one key further in.
   const effortStated =

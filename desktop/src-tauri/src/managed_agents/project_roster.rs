@@ -12,7 +12,7 @@
 //! editor publish: kind 9010 with `["a", coord]` and one
 //! `["p", <hex>, "", <role>]` (arity exactly 4) per member; kind 9011 with
 //! `["a", coord]` and `["p", <hex>]` per removed member
-//! (`crates/buzz-cli/src/commands/projects.rs::cmd_put_member`,
+//! (`crates/beekeeper-cli/src/commands/projects.rs::cmd_put_member`,
 //! `desktop/src/features/projects-container/lib/projectMembers.ts`). The
 //! relay accepts them only from the project's creator or a roster owner, so
 //! the check is made here first and its refusal is reported in words rather
@@ -24,7 +24,7 @@ use tauri::AppHandle;
 use crate::agent_host::AgentHost;
 use crate::app_state::AppState;
 use crate::managed_agents::project_agent_association::normalize_project_ref;
-use buzz_core_pkg::kind::{
+use beekeeper_core_pkg::kind::{
     is_valid_project_role, KIND_PROJECT, KIND_PROJECT_MEMBERS, KIND_PROJECT_PUT_MEMBER,
     KIND_PROJECT_REMOVE_MEMBER, PROJECT_ROLE_COLLABORATOR, PROJECT_ROLE_OWNER,
 };

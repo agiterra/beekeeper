@@ -53,7 +53,7 @@ export type WorktreeClosureSummary = {
 
 /**
  * Bytes as `{N} GB`, one decimal — the same shape
- * `buzz_core::worktree_lifecycle::render_reclaimable_bytes` prints, so the CLI
+ * `beekeeper_core::worktree_lifecycle::render_reclaimable_bytes` prints, so the CLI
  * and the app never word the same number two ways.
  */
 export function formatReclaimableBytes(bytes: number | null): string {

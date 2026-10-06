@@ -3,7 +3,7 @@
 # ci-mesh-lifecycle-smoke.sh — relay-driven mesh lifecycle smoke
 # =============================================================================
 # Provisions a membership-gated buzz-relay and runs the full relay-driven
-# mesh lifecycle harness (crates/buzz-relay/examples/mesh_relay_lifecycle_smoke.rs):
+# mesh lifecycle harness (crates/beekeeper-relay/examples/mesh_relay_lifecycle_smoke.rs):
 # membership → signed discovery notes → relay-derived allowlist → join →
 # inference over QUIC → stranger denied.
 #
@@ -47,8 +47,8 @@ if [[ "${SKIP_BUILD}" == "true" ]]; then
   log "Skipping build (--no-build)"
 else
   log "Building relay, admin CLI, and lifecycle harness (profile: ${CARGO_PROFILE})..."
-  cargo build --profile "${CARGO_PROFILE}" -p buzz-relay -p buzz-admin -p git-credential-nostr
-  cargo build --profile "${CARGO_PROFILE}" -p buzz-relay --example mesh_relay_lifecycle_smoke
+  cargo build --profile "${CARGO_PROFILE}" -p beekeeper-relay -p beekeeper-admin -p git-credential-nostr
+  cargo build --profile "${CARGO_PROFILE}" -p beekeeper-relay --example mesh_relay_lifecycle_smoke
 fi
 
 ADMIN_BIN="target/${CARGO_PROFILE}/buzz-admin"

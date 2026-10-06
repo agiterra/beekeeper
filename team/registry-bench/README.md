@@ -29,7 +29,7 @@ than silently believed.
 
 ## What a check may ask
 
-Seven kinds, and no more (`buzz_core::registry_bench::Check`). **No model
+Seven kinds, and no more (`beekeeper_core::registry_bench::Check`). **No model
 judges anything in v1**: a grader would put the opinion straight back into the
 number this exists to remove, and it would make two runs of the same artifacts
 disagree.

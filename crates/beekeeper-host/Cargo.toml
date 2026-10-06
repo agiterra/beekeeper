@@ -25,7 +25,7 @@ name = "beekeeper_host"
 path = "src/lib.rs"
 
 [dependencies]
-buzz-core = { path = "../buzz-core" }
+beekeeper-core = { path = "../beekeeper-core" }
 beekeeper-host-core = { path = "../beekeeper-host-core" }
 chrono = { workspace = true }
 clap = { version = "4", features = ["derive"] }

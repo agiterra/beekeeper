@@ -154,7 +154,7 @@ services:
 
   # A long-lived mc client sharing RustFS's network namespace, so
   # `docker exec buzz-mc mc ...` reaches it at localhost:9000. The live
-  # versioned-bucket tests in crates/buzz-media drive bucket setup through it;
+  # versioned-bucket tests in crates/beekeeper-media drive bucket setup through it;
   # the RustFS image ships no mc of its own.
   mc:
     image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z

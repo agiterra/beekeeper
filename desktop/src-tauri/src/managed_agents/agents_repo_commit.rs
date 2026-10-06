@@ -4,7 +4,7 @@
 //! The same sequence `bee agents-repo commit` runs, in this host's git
 //! terms: a throwaway object database fed from the packs cache, the tip
 //! this run read, a base check per head, the tree built with plumbing,
-//! materialized and validated by `buzz_persona::agents_repo::validate_root`
+//! materialized and validated by `beekeeper_persona::agents_repo::validate_root`
 //! before anything leaves this computer, one commit as the viewer with a
 //! `Co-authored-by:` per draft author, a push under `--force-with-lease`
 //! on the tip, and an `ls-remote` verify whose failure is reported
@@ -15,8 +15,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use buzz_core_pkg::agents_repo_draft::AgentsRepoDraftOpKind;
-use buzz_persona_pkg::agents_repo::{validate_root, ActionsCheck};
+use beekeeper_core_pkg::agents_repo_draft::AgentsRepoDraftOpKind;
+use beekeeper_persona_pkg::agents_repo::{validate_root, ActionsCheck};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
@@ -215,7 +215,7 @@ pub(crate) fn commit_in(
     committer: &(String, String),
     tip: &str,
     draft_ids: Vec<String>,
-    catalog: &buzz_persona_pkg::template::TemplateCatalog,
+    catalog: &beekeeper_persona_pkg::template::TemplateCatalog,
     assets: &AssetBytes,
 ) -> Result<AgentsRepoCommitResult, String> {
     if let Some(expected) = request.expected_tip.as_deref().filter(|e| !e.is_empty()) {
@@ -428,7 +428,7 @@ pub(crate) fn commit_in(
     run_git(&["checkout-index", "-a", "-f", &prefix], cwd, &auth)?;
     let project = request.project_ref.clone();
     let mut actions_parser = move |text: &str| -> Result<usize, String> {
-        buzz_workflow_pkg::actions_file::parse_actions_yml(text, &project)
+        beekeeper_workflow_pkg::actions_file::parse_actions_yml(text, &project)
             .map(|entries| entries.len())
             .map_err(|error| error.to_string())
     };

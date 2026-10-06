@@ -195,7 +195,7 @@ be closed in-model or by a named axiom:
    reach it. Closed by a **typed-input code-fence**: the doc-build function
    consumes only relay-static configuration types — no database handle, no tenant
    context, no audit service. Today `RelayInfo::build`
-   (`crates/buzz-relay/src/nip11.rs:122`) takes only static inputs and
+   (`crates/beekeeper-relay/src/nip11.rs:122`) takes only static inputs and
    `nip11_facts` (`:176`) reads only `state.config`/`state.relay_keypair`, so the
    surface is clean — but by *current code*, not by the proof; adding a
    `total_events` counter is one `&PgPool` argument away and the labeling
@@ -236,7 +236,7 @@ silently omits cardinality, error, status-code, and global-document channels.
 There is no third category.** Each entry below names its code seam so the TLA+
 model, the Tamarin model, and the red-team audit reference the same surface.
 
-**O.WS — WebSocket transport** (`crates/buzz-relay/src/protocol.rs:180-215`). The
+**O.WS — WebSocket transport** (`crates/beekeeper-relay/src/protocol.rs:180-215`). The
 relay emits exactly these client-bound messages:
 
 - **`O.WS.EVENT(sub_id, event)`** — a delivered Nostr event. Its `content` is
@@ -262,7 +262,7 @@ relay emits exactly these client-bound messages:
 **O.REST — HTTP API surface.**
 
 - **`O.REST.BODY`** — JSON response: row content, projection results, and audit
-  entries (`crates/buzz-audit/src/service.rs:get_entries`) must all be B-labeled.
+  entries (`crates/beekeeper-audit/src/service.rs:get_entries`) must all be B-labeled.
 - **`O.REST.META`** — status code, headers, structured error envelope. The status
   code is itself observable: `IngestError::{Rejected,AuthFailed,Internal}` →
   `400/401|403/500` (`handlers/ingest.rs:138-146`) must be a function of
@@ -325,7 +325,7 @@ high-labeled value flows into a low observation"):
   prefixes — `auth-required`, `restricted`, `invalid`, `duplicate`, `pow`,
   `rate-limited`, `blocked`, `error`, `frame-too-large`). Emitting a non-`Σ_err`
   string is a structural code violation (the C2.2 code-fence — a lint, not a model
-  property). Today `RelayError::Database(#[from] buzz_db::DbError)` (`error.rs:11`)
+  property). Today `RelayError::Database(#[from] beekeeper_db::DbError)` (`error.rs:11`)
   is the seam. The *unauthenticated/REST* error surface (`not-found`,
   `bad-request`) is a **distinct fence** — C2.4's typed-input constraint, not
   `Σ_err` — because it has no tenant scope and no label, so it sits outside the
@@ -893,7 +893,7 @@ The model's obligations map to concrete code seams:
   `RelayInfo::build` signature lints.
 - **I1 / I4** — every DB entry point takes `TenantContext` and `SET LOCAL
   app.community_id`; the unscoped `get_accessible_channel_ids()`
-  (`crates/buzz-db/src/channel.rs:545-560`, which unions every open channel in the
+  (`crates/beekeeper-db/src/channel.rs:545-560`, which unions every open channel in the
   DB) must not exist in any tenant-scoped path. RLS is the backstop.
 - **C2.1 / A-RLS-5** — the message-uniqueness constraint must be composite over
   `(community_id, …, id)`, never `UNIQUE (id)` alone. This is the closure for the
@@ -904,12 +904,12 @@ The model's obligations map to concrete code seams:
   the C2.4 `RelayInfo::build` signature lint.
 - **S3 / S4** — the relay keypair becomes a per-community signing key
   (`communities.signing_key`), distinct from relay-instance identity; the single
-  global audit chain (`crates/buzz-audit/src/service.rs`) becomes N per-community
+  global audit chain (`crates/beekeeper-audit/src/service.rs`) becomes N per-community
   chains `AuditEntry(community, seq, prev, hash)`.
 - **P3 / S2** — the NIP-98 mint freshness obligation the Tamarin model abstracts
   as a fresh `~time` nonce is carried by two code seams: the ±60s window in
-  `crates/buzz-auth/src/nip98.rs:77-83` and the event-id seen-set
-  `check_nip98_replay` in `crates/buzz-relay/src/api/bridge.rs:76-94`, called
+  `crates/beekeeper-auth/src/nip98.rs:77-83` and the event-id seen-set
+  `check_nip98_replay` in `crates/beekeeper-relay/src/api/bridge.rs:76-94`, called
   before every mint (`bridge.rs:181`, `:254`, `:514`). The seen-set
   (`state.nip98_seen`, `state.rs:249`/`:407`) is the structural analog of the
   model's nonce: it makes a replayed mint within the window non-fresh, so the
@@ -925,7 +925,7 @@ The model's obligations map to concrete code seams:
 - **C2.2** — the client-facing error path must map all DB errors to a fixed
   sanitized alphabet; no `sqlx::Error::to_string()` reaches a tenant connection.
 - **C2.4** — the NIP-11 builder `RelayInfo::build`
-  (`crates/buzz-relay/src/nip11.rs:122`) must keep its relay-static-only signature
+  (`crates/beekeeper-relay/src/nip11.rs:122`) must keep its relay-static-only signature
   (no `&PgPool`, no tenant context, no audit service); a signature lint enforces
   the typed-input fence on the unauthenticated `/` surface.
 - **P-RESOLVE-HOST / row-zero conformance** — every externally reachable
@@ -1023,7 +1023,7 @@ observational interface require a new entry here in the same commit. This
 rule is what surfaced F1 (A_HASH closure mis-attribution) and F2 (the
 subscription-pipeline abstraction itself).
 
-#### G1 — establishment (`crates/buzz-relay/src/handlers/req.rs:79-204`)
+#### G1 — establishment (`crates/beekeeper-relay/src/handlers/req.rs:79-204`)
 
 A `REQ` from a connection authenticated under pubkey *p* and token *t*
 registers a subscription only after:
@@ -1045,7 +1045,7 @@ registers a subscription only after:
    calls are confined to test setup; production subscription registration goes
    through the community-scoped API in `req.rs`.
 
-#### G2 — delivery (`crates/buzz-relay/src/handlers/event.rs:59-113`)
+#### G2 — delivery (`crates/beekeeper-relay/src/handlers/event.rs:59-113`)
 
 Every candidate from `sub_registry.fan_out` passes through
 `filter_fanout_by_access` before any `send_to`. The function (`:59`) and its

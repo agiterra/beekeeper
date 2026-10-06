@@ -705,7 +705,7 @@ pub async fn mint_agent_card(
     if lock_keys.is_some() {
         let json_len =
             crate::managed_agents::agent_snapshot::encode_snapshot_json(&snapshot)?.len();
-        if json_len > buzz_core_pkg::engram::NIP44_PLAINTEXT_MAX {
+        if json_len > beekeeper_core_pkg::engram::NIP44_PLAINTEXT_MAX {
             let hint = if memory_level == MemoryLevel::None {
                 "Reduce the avatar size or mint an unlocked card."
             } else {
@@ -714,7 +714,7 @@ pub async fn mint_agent_card(
             return Err(format!(
                 "Agent manifest is too large to lock ({json_len} bytes; the encrypted \
                  format caps at {}). {hint}",
-                buzz_core_pkg::engram::NIP44_PLAINTEXT_MAX
+                beekeeper_core_pkg::engram::NIP44_PLAINTEXT_MAX
             ));
         }
     }

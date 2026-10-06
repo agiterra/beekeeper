@@ -10,7 +10,7 @@
 //!
 //! The provider closes that gap on its side: it maintains `seat-requests.json`
 //! in its state dir, one row per open seated generation, rewritten on create,
-//! resume, stop/close, and recovery (`crates/buzz-session-provider`, module
+//! resume, stop/close, and recovery (`crates/beekeeper-session-provider`, module
 //! `seat_requests`). It carries no secret — an `actor` pubkey, a `role`, an
 //! optional project reference, and identifiers, nothing this desktop did not
 //! already know. This module is the other side: after every provider (re)start

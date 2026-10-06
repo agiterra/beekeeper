@@ -42,7 +42,7 @@ pub(crate) fn extract_oa_owner(target_kind0: &nostr::Event) -> Option<(String, [
             continue;
         }
         let json = serde_json::to_string(slice).ok()?;
-        match buzz_sdk_pkg::nip_oa::verify_auth_tag(&json, &target_compat) {
+        match beekeeper_sdk_pkg::nip_oa::verify_auth_tag(&json, &target_compat) {
             Ok(owner) => {
                 let raw: [String; 4] = [
                     slice[0].clone(),
@@ -495,9 +495,9 @@ mod tests {
             nostr::SecretKey::from_slice(owner.secret_key().as_secret_bytes()).unwrap();
         let owner_compat_keys = nostr::Keys::new(owner_compat_secret);
         let tag_json =
-            buzz_sdk_pkg::nip_oa::compute_auth_tag(&owner_compat_keys, &agent_compat, "")
+            beekeeper_sdk_pkg::nip_oa::compute_auth_tag(&owner_compat_keys, &agent_compat, "")
                 .expect("compute_auth_tag");
-        let compat_tag = buzz_sdk_pkg::nip_oa::parse_auth_tag(&tag_json).unwrap();
+        let compat_tag = beekeeper_sdk_pkg::nip_oa::parse_auth_tag(&tag_json).unwrap();
         let tag = Tag::parse(compat_tag.as_slice()).unwrap();
         EventBuilder::new(Kind::Metadata, "{}")
             .tags([tag])

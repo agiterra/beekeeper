@@ -3,7 +3,7 @@
 # With a bare `[workspace]` and no `members`, `cargo test/check --workspace`
 # expands to a set that excludes this crate, and its gates pass green-and-empty
 # over a real defect. Verified: Sami Arm A/D, Dawn `.scratch/armA`.
-members = ["crates/buzz-terminal", "crates/beekeeper-tray", "crates/beekeeper-menubar"]
+members = ["crates/beekeeper-terminal", "crates/beekeeper-tray", "crates/beekeeper-menubar"]
 
 [package]
 name = "beekeeper-desktop"
@@ -18,7 +18,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "buzz_lib"
+name = "beekeeper_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
@@ -105,15 +105,15 @@ percent-encoding = "2"
 reqwest = { version = "0.13", features = ["json", "query", "stream", "blocking"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
 url = "2"
-buzz_core_pkg = { package = "buzz-core", path = "../../crates/buzz-core" }
-buzz_persona_pkg = { package = "buzz-persona", path = "../../crates/buzz-persona" }
-buzz_sdk_pkg = { package = "buzz-sdk", path = "../../crates/buzz-sdk" }
-buzz_agent_pkg = { package = "buzz-agent", path = "../../crates/buzz-agent" }
-buzz_voice_pkg = { package = "buzz-voice", path = "../../crates/buzz-voice" }
-buzz_terminal = { package = "buzz-terminal", path = "crates/buzz-terminal" }
+beekeeper_core_pkg = { package = "beekeeper-core", path = "../../crates/beekeeper-core" }
+beekeeper_persona_pkg = { package = "beekeeper-persona", path = "../../crates/beekeeper-persona" }
+beekeeper_sdk_pkg = { package = "beekeeper-sdk", path = "../../crates/beekeeper-sdk" }
+beekeeper_agent_pkg = { package = "beekeeper-agent", path = "../../crates/beekeeper-agent" }
+beekeeper_voice_pkg = { package = "beekeeper-voice", path = "../../crates/beekeeper-voice" }
+beekeeper_terminal = { package = "beekeeper-terminal", path = "crates/beekeeper-terminal" }
 # The tray rows, shared with the standalone menu bar app.
 beekeeper_tray = { package = "beekeeper-tray", path = "crates/beekeeper-tray" }
-buzz-shell-host = { path = "../../crates/buzz-shell-host" }
+beekeeper-shell-host = { path = "../../crates/beekeeper-shell-host" }
 # The publication compiler for `actions.yml`, and nothing else. A criterion
 # proved by an action is covered only when the run's definition hash equals
 # the hash of the definition compiled **at the declaration's plan commit**, so
@@ -121,12 +121,12 @@ buzz-shell-host = { path = "../../crates/buzz-shell-host" }
 # compiling the same file twice two ways is exactly how two surfaces come to
 # disagree about a criterion while both sound confident. Already in the tree
 # through buzz-session-provider, so this adds no transitive weight.
-buzz_workflow_pkg = { package = "buzz-workflow", path = "../../crates/buzz-workflow" }
+beekeeper_workflow_pkg = { package = "beekeeper-workflow", path = "../../crates/beekeeper-workflow" }
 # Linked for its *configuration contract* only — the session ceiling's default
 # and the value that means unlimited. The desktop spawns the provider as a
 # binary; duplicating those numbers here is how a settings panel comes to
 # advertise a default the sidecar stopped using.
-buzz_session_provider_pkg = { package = "buzz-session-provider", path = "../../crates/buzz-session-provider" }
+beekeeper_session_provider_pkg = { package = "beekeeper-session-provider", path = "../../crates/beekeeper-session-provider" }
 # The launcher contract the desktop shares with `beekeeper-host`: identity records,
 # the child environment, binary discovery, and where the host's socket lives.
 # Shared rather than duplicated because two launchers assembling the same
@@ -192,4 +192,4 @@ tauri-utils = "2"
 tokio = { version = "1", features = ["test-util"] }
 # The relay's media validation, so the snapshot-sharing tests can prove the
 # full export → sanitize → relay-accept → import contract end to end.
-buzz_media_pkg = { package = "buzz-media", path = "../../crates/buzz-media" }
+beekeeper_media_pkg = { package = "beekeeper-media", path = "../../crates/beekeeper-media" }

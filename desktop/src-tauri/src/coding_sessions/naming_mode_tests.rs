@@ -1,4 +1,4 @@
-use buzz_session_provider_pkg::session_title_mode::{read, SESSION_TITLE_MODE_FILE};
+use beekeeper_session_provider_pkg::session_title_mode::{read, SESSION_TITLE_MODE_FILE};
 
 use super::*;
 

@@ -157,8 +157,8 @@ fn legacy_store_without_optional_fields_loads() {
     assert_eq!(store.turn_budget, None);
 }
 
-fn sample_runtimes() -> Vec<buzz_core::coding_session_runtime::RuntimeDescriptor> {
-    use buzz_core::coding_session_runtime::{CliEnvVar, RuntimeDescriptor, SteerIdleGuard};
+fn sample_runtimes() -> Vec<beekeeper_core::coding_session_runtime::RuntimeDescriptor> {
+    use beekeeper_core::coding_session_runtime::{CliEnvVar, RuntimeDescriptor, SteerIdleGuard};
     vec![
         RuntimeDescriptor {
             steer_idle_guard: Some(SteerIdleGuard::PromptRequired),
@@ -267,7 +267,7 @@ fn env_carries_the_required_provider_contract() {
 fn env_carries_a_parseable_runtime_list() {
     let env = env_for(&sample_record());
     let raw = env.get("BUZZ_CSP_RUNTIMES").expect("runtimes in env");
-    let parsed = buzz_core::coding_session_runtime::parse_runtime_descriptors(raw)
+    let parsed = beekeeper_core::coding_session_runtime::parse_runtime_descriptors(raw)
         .expect("the sidecar parser must accept what the host writes");
     assert_eq!(parsed, sample_runtimes());
     // The legacy variables stay exported alongside the list, so an older
@@ -562,7 +562,7 @@ fn an_app_checkout_is_the_repository_the_process_is_running_inside() {
 /// An operator's ambient `BEE` must not survive into the provider child.
 ///
 /// `BEE` names the `bee` a seat runs. It sits outside the `BUZZ_` prefix, so
-/// the provider's own agent fence (`buzz_session_provider::agent_fence`) does
+/// the provider's own agent fence (`beekeeper_session_provider::agent_fence`) does
 /// not cover it and an inherited value would pass straight through to every
 /// seat this host starts — which is exactly the 2026-09-01 failure with the
 /// variable's name on it: a binary nobody chose, answering as though somebody
@@ -581,7 +581,7 @@ fn an_ambient_bee_is_cleared_before_the_provider_child_starts() {
     );
     assert_eq!(
         BEE_VAR, "BEE",
-        "this name is kept byte-for-byte in step with buzz_session_provider::seat_bee::BEE_ENV"
+        "this name is kept byte-for-byte in step with beekeeper_session_provider::seat_bee::BEE_ENV"
     );
 }
 
@@ -604,7 +604,7 @@ fn the_desktop_names_no_bee_of_its_own() {
 /// carry *nothing* — not `null` — for one that was not.
 #[test]
 fn env_declares_the_steer_idle_guard_for_claude_and_omits_it_for_codex() {
-    use buzz_core::coding_session_runtime::{RuntimeDescriptor, SteerIdleGuard};
+    use beekeeper_core::coding_session_runtime::{RuntimeDescriptor, SteerIdleGuard};
     let record = sample_record();
     let env = build_provider_env(&ProviderEnvInputs {
         record: &record,
@@ -674,7 +674,7 @@ fn env_declares_the_steer_idle_guard_for_claude_and_omits_it_for_codex() {
         "codex must carry no guard key at all, not null: {codex}"
     );
     // And the sidecar's own parser reads both rows back exactly.
-    let parsed = buzz_core::coding_session_runtime::parse_runtime_descriptors(raw)
+    let parsed = beekeeper_core::coding_session_runtime::parse_runtime_descriptors(raw)
         .expect("the sidecar parser must accept what the host writes");
     assert_eq!(
         parsed[0].steer_idle_guard,

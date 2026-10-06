@@ -49,7 +49,8 @@ const session = {
   generation: 1,
 };
 const targetKey = buildCodingSessionTargetKey(session);
-const SUBAGENT_STEP = "Reading crates/buzz-session-provider/src/transcript.rs";
+const SUBAGENT_STEP =
+  "Reading crates/beekeeper-session-provider/src/transcript.rs";
 const LEAD_ANSWER = "fit_item has three callers; all bound before publishing.";
 const SUBAGENT_ANSWER = "Three callers, all bounded.";
 const PROMPT =
@@ -155,7 +156,7 @@ function spawnTurn(): RelayEvent[] {
         toolName: "Read",
         toolKind: "read",
         toolId: "read-sv79",
-        input: { path: "crates/buzz-session-provider/src/transcript.rs" },
+        input: { path: "crates/beekeeper-session-provider/src/transcript.rs" },
       },
       parentToolId: "task-sv79",
     }),

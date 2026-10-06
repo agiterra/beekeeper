@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'agents_repo_draft_op.dart';
 
 /// NIP-AR kind:44251 — the Dart twin of
-/// `crates/buzz-core/src/project_artifact_pin.rs`.
+/// `crates/beekeeper-core/src/project_artifact_pin.rs`.
 ///
 /// Which documents, plans and folders of a project's agents repository show in
 /// every member's sidebar, and in what order. A pin is shared: every member

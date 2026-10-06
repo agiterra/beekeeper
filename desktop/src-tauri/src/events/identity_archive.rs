@@ -13,7 +13,7 @@
 //! guard — a self-contained builder pair with no state shared beyond the
 //! parent module's `tag`/`check_content`/`check_pubkey` helpers.
 
-use buzz_core_pkg::kind::{KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST};
+use beekeeper_core_pkg::kind::{KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST};
 use nostr::{EventBuilder, Kind, Tag};
 
 use super::{check_content, check_pubkey, tag};

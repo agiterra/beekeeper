@@ -237,7 +237,7 @@ fn register_live_session_with_fake_host(
     std::fs::create_dir_all(&dir).unwrap();
     let socket = dir.join("host.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-    let hello = buzz_shell_host::proto::Hello {
+    let hello = beekeeper_shell_host::proto::Hello {
         total: 0,
         cwd: "/tmp".to_string(),
         shell_pid: None,

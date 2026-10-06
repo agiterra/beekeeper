@@ -5,7 +5,7 @@
  * just to have something for its "Approve and allow future runs" click to
  * answer. Now that a grant can stand with no run at all
  * (`grant_standing_approval`, `handle_standing_approval_grant` in
- * `crates/buzz-relay/src/handlers/command_executor.rs`), the tab must say so
+ * `crates/beekeeper-relay/src/handlers/command_executor.rs`), the tab must say so
  * honestly — "autorun" next to zero runs must never read as "approved run".
  */
 

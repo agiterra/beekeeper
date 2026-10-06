@@ -183,7 +183,7 @@ const HEX40 = /^[0-9a-f]{40}$/;
  * Sub-lane T found the contract fixture carrying two 66-character actor values
  * and, rather than absorb them, left the width unpinned with a test naming the
  * defect. The lane owner corrected the fixture's generator
- * (`crates/buzz-core/src/pulse_mission_fixture_tests.rs`), so the pin is back
+ * (`crates/beekeeper-core/src/pulse_mission_fixture_tests.rs`), so the pin is back
  * where every other reader in this app has it. A producer that widens an actor
  * pubkey now fails at the one bad field instead of quietly becoming the
  * decoder's new normal.

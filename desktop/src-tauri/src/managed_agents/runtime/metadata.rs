@@ -109,13 +109,13 @@ pub(crate) fn resolve_session_title(display_name: Option<&str>, name: &str) -> O
 }
 
 /// Build the `RUST_LOG` value forwarded to the agent child: keep an existing
-/// filter that already mentions `buzz_acp`, append `buzz_acp=info` to any other
-/// non-empty filter, and default to `buzz_acp=info` when unset.
+/// filter that already mentions `buzz_acp`, append `beekeeper_acp=info` to any other
+/// non-empty filter, and default to `beekeeper_acp=info` when unset.
 pub(crate) fn child_rust_log_filter() -> String {
     match std::env::var("RUST_LOG") {
-        Ok(existing) if existing.contains("buzz_acp") => existing,
-        Ok(existing) if !existing.trim().is_empty() => format!("{existing},buzz_acp=info"),
-        _ => "buzz_acp=info".to_string(),
+        Ok(existing) if existing.contains("beekeeper_acp") => existing,
+        Ok(existing) if !existing.trim().is_empty() => format!("{existing},beekeeper_acp=info"),
+        _ => "beekeeper_acp=info".to_string(),
     }
 }
 

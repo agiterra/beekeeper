@@ -21,11 +21,11 @@
 //!    session's tree; and a hired seat works only in the worktree cut for it,
 //!    so for a hire the project's checkout is "exactly the wrong answer"
 //!    (`hired_seat_cwd_refusal`, `SEAT_CWD_PROJECT_ROOT`, in
-//!    `crates/buzz-session-provider/src/commands.rs`).
+//!    `crates/beekeeper-session-provider/src/commands.rs`).
 //!
 //! The project-before-channel order is the provider's own
 //! (`ProjectsFile::resolve_default` in
-//! `crates/buzz-session-provider/src/commands.rs`): a default the provider
+//! `crates/beekeeper-session-provider/src/commands.rs`): a default the provider
 //! would not have chosen is not where the agent works. DB9 in
 //! `plans/SESSION_VIEW_PARITY_WAVE_B.md` (agents repository) was amended on
 //! 2026-10-04 to this order, so plan and code agree; a test pins it. The

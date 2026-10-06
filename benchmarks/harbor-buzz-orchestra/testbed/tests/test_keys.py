@@ -14,7 +14,7 @@ from harbor_buzz_testbed.keys import (
 )
 
 # Produced by the Rust reference implementation
-# (crates/buzz-sdk/examples/compute_auth_tag.rs) for owner secret 0x...03 and
+# (crates/beekeeper-sdk/examples/compute_auth_tag.rs) for owner secret 0x...03 and
 # agent pubkey "a" * 64. Pins the preimage format across implementations.
 RUST_OWNER_SECRET = "0" * 63 + "3"
 RUST_AGENT_PUBKEY = "a" * 64

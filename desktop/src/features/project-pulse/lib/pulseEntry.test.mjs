@@ -107,7 +107,7 @@ test("code areas are repository-relative, deduplicated, and capped", () => {
   ]) {
     assert.notEqual(validatePulseCodeArea(bad), null, bad);
   }
-  assert.equal(validatePulseCodeArea("crates/buzz-acp/src/pool.rs"), null);
+  assert.equal(validatePulseCodeArea("crates/beekeeper-acp/src/pool.rs"), null);
   assert.equal(validatePulseCodeArea("./crates/pool.rs"), null);
   assert.equal(
     validatePulseCodeArea("x".repeat(MAX_PULSE_CODE_AREA_BYTES)),

@@ -22,7 +22,7 @@ use crate::AppState;
 /// what can be read can be drafted, and a file past it is disclosed rather
 /// than silently truncated.
 pub const MAX_READ_BYTES: u64 =
-    buzz_core_pkg::agents_repo_draft::MAX_AGENTS_REPO_DRAFT_TEXT_BYTES as u64;
+    beekeeper_core_pkg::agents_repo_draft::MAX_AGENTS_REPO_DRAFT_TEXT_BYTES as u64;
 
 /// The project's agents repository as this computer holds it.
 #[derive(Clone)]
@@ -105,7 +105,7 @@ pub(crate) fn resolve_agents_repo(
     source: &packs_cache::ProjectPackSource,
     refresh: bool,
 ) -> Result<AgentsRepoCheckout, String> {
-    if !buzz_core_pkg::project_pack_source::is_root_pack_path(&source.path) {
+    if !beekeeper_core_pkg::project_pack_source::is_root_pack_path(&source.path) {
         return Err(format!(
             "this project's source is a pack-layout repository ({} at path {:?}), not an agents \
              repository; the Files tab edits the flat layout at a repository root",
@@ -173,7 +173,7 @@ fn fetch_time(checkout: &Path) -> Option<String> {
 
 /// Where a path sits in the layout, for the tree's grouping.
 pub(crate) fn classify(path: &str) -> &'static str {
-    use buzz_core_pkg::agents_repo_draft::{validate_draft_path, DraftPathClass};
+    use beekeeper_core_pkg::agents_repo_draft::{validate_draft_path, DraftPathClass};
     // The grammar is asked first, because a `.gitkeep` under `docs/` is a
     // folder the person created — a row to list and pin — while one under
     // `plans/` or `roles/archive/` is only the seed holding a directory open.
@@ -257,7 +257,7 @@ pub(crate) fn blob_at_tip(repo: &AgentsRepoCheckout, path: &str) -> Option<Strin
 /// Unlike [`read_tip`] this does not decode: an image is bytes, and the
 /// preview scheme serves them verbatim.
 pub(crate) fn blob_bytes_at_tip(repo: &AgentsRepoCheckout, path: &str) -> Option<Vec<u8>> {
-    if buzz_core_pkg::agents_repo_draft::validate_draft_path(path).is_err() {
+    if beekeeper_core_pkg::agents_repo_draft::validate_draft_path(path).is_err() {
         return None;
     }
     let blob = blob_at_tip(repo, path)?;
@@ -280,7 +280,7 @@ pub(crate) fn blob_bytes_at_tip(repo: &AgentsRepoCheckout, path: &str) -> Option
 
 /// Read one file at the tip.
 pub(crate) fn read_tip(repo: &AgentsRepoCheckout, path: &str) -> Result<AgentsRepoFile, String> {
-    buzz_core_pkg::agents_repo_draft::validate_draft_path(path)?;
+    beekeeper_core_pkg::agents_repo_draft::validate_draft_path(path)?;
     let Some(blob) = blob_at_tip(repo, path) else {
         return Ok(AgentsRepoFile {
             path: path.to_owned(),

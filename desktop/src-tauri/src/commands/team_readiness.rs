@@ -409,7 +409,7 @@ fn identity_projection(
 }
 
 fn registry_targets(text: &str) -> Result<Vec<(String, String)>, String> {
-    buzz_core_pkg::coding_session_routing::parse_registry(text)
+    beekeeper_core_pkg::coding_session_routing::parse_registry(text)
         .map_err(|error| error.to_string())
         .map(|registry| {
             registry

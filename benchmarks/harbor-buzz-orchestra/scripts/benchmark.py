@@ -216,7 +216,7 @@ def write_env_file(state: dict[str, str]) -> Path:
         "BUZZ_ALLOW_NIP_OA_AUTH": "true",
         "BUZZ_AUTO_MIGRATE": "true",
         "BUZZ_GIT_CONFORMANCE_PROBE": "true",
-        "RUST_LOG": "buzz_relay=info,buzz_db=info,buzz_auth=info",
+        "RUST_LOG": "beekeeper_relay=info,beekeeper_db=info,beekeeper_auth=info",
         "RELAY_OWNER_PUBKEY": state["owner_pubkey"],
         "BUZZ_RELAY_PRIVATE_KEY": state["relay_private_key"],
         "BUZZ_GIT_HOOK_HMAC_SECRET": state["git_hook_hmac_secret"],

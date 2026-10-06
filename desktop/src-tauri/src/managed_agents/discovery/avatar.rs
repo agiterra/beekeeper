@@ -1,5 +1,5 @@
 //! The Beekeeper Agent avatar, bundled rather than fetched: a 128px JPEG of
-//! `crates/buzz-agent/sprout-agent.png` (`buzz-agent-avatar.jpg`), inlined as a
+//! `crates/beekeeper-agent/sprout-agent.png` (`buzz-agent-avatar.jpg`), inlined as a
 //! base64 data URL. It becomes the agent's kind:0 `picture`, so it must render
 //! in any client without reaching a host we do not control, and it is kept
 //! small (~10 KB) because it travels inside that event.

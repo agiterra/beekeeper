@@ -169,13 +169,13 @@ install-git-credentials relay="":
     # path when the install root is not on PATH, rather than writing a config
     # entry that silently resolves to nothing.
     if command -v git-credential-nostr >/dev/null 2>&1; then
-        cargo run --quiet -p buzz-cli -- --relay "$RELAY" git setup
+        cargo run --quiet -p beekeeper-cli -- --relay "$RELAY" git setup
     else
         echo "note: $INSTALL_ROOT/bin is not on PATH — pinning the absolute path instead."
-        cargo run --quiet -p buzz-cli -- --relay "$RELAY" git setup --helper "$HELPER"
+        cargo run --quiet -p beekeeper-cli -- --relay "$RELAY" git setup --helper "$HELPER"
     fi
     echo
-    cargo run --quiet -p buzz-cli -- --relay "$RELAY" git status
+    cargo run --quiet -p beekeeper-cli -- --relay "$RELAY" git status
 
 # There is no other standalone install path for `bee` or `beekeeper-host`: the
 # desktop app ships them as sidecars inside its bundle, which is no use on a
@@ -194,7 +194,7 @@ install-bee:
     # taking the login registration's target with them. Install somewhere the
     # user's shell already looks. (Same reasoning as install-git-credentials.)
     INSTALL_ROOT="${CARGO_INSTALL_ROOT:-$HOME/.local}"
-    cargo install --quiet --path crates/buzz-cli --root "$INSTALL_ROOT"
+    cargo install --quiet --path crates/beekeeper-cli --root "$INSTALL_ROOT"
     cargo install --quiet --path crates/beekeeper-host --root "$INSTALL_ROOT"
     echo "Installed $INSTALL_ROOT/bin/bee"
     echo "Installed $INSTALL_ROOT/bin/beekeeper-host"
@@ -393,7 +393,7 @@ _ensure-services:
 
 # Apply database migrations and seed the local dev community if the dev database is running
 _ensure-migrations: _ensure-services
-    cargo run -p buzz-admin -- migrate
+    cargo run -p beekeeper-admin -- migrate
     ./scripts/seed-local-community.sh
 
 # Run clippy on the desktop Tauri Rust crate
@@ -416,7 +416,7 @@ desktop-tauri-test: _ensure-sidecar-stubs
 # This is intentionally excluded from shared CI: scheduler contention makes a
 # wall-clock assertion flaky, and the release profile is the shipped shape.
 desktop-terminal-performance-test:
-    cargo test --manifest-path desktop/src-tauri/crates/buzz-terminal/Cargo.toml --release --test latency g3_renderer_acquire_stays_within_frame_budget -- --ignored --exact --nocapture
+    cargo test --manifest-path desktop/src-tauri/crates/beekeeper-terminal/Cargo.toml --release --test latency g3_renderer_acquire_stays_within_frame_budget -- --ignored --exact --nocapture
 
 # Verify compiled-flag behavior under both compile states (clean + capability set).
 # Runs the auto-connect and owner-only access focused tests twice with
@@ -558,7 +558,7 @@ test: test-genesis test-git-push-gate test-ci-completion
 # Same shape and the same reason as `test-genesis` below. These drive the real
 # `hook_policy_check` through a live database, so they are
 # `#[ignore = "requires Postgres"]`; `scripts/run-tests.sh` runs the workspace
-# *without* `--ignored` and only ever names `-p buzz-db` for the DB-backed
+# *without* `--ignored` and only ever names `-p beekeeper-db` for the DB-backed
 # steps, so before this recipe existed nothing in the repo executed them. They
 # decide who may push to a protected ref — they may not sit unexecuted.
 #
@@ -605,10 +605,10 @@ test-git-push-gate: _ensure-services
     cleanup
     pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
     scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
-    DATABASE_URL="${scratch}" cargo run -q -p buzz-admin -- migrate
+    DATABASE_URL="${scratch}" cargo run -q -p beekeeper-admin -- migrate
     echo "==> git push-gate acceptance cases against ${db} (serial, isolated)"
     DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
-        cargo test -p buzz-relay --lib -- \
+        cargo test -p beekeeper-relay --lib -- \
         api::git::policy::tests::gate api::git::verdict_admission::tests \
         api::git::verdict_admission::observed_tests \
         api::git::verdict_admission::verified_tests \
@@ -626,7 +626,7 @@ test-git-push-gate: _ensure-services
 # reference cannot both be accepted (genesis), and that two rival authority
 # transitions for one chain cannot both be accepted (authority transitions) —
 # so they may not sit unexecuted. They are `#[ignore]`d because they need
-# Postgres, and `run-tests.sh` deliberately runs `cargo test -p buzz-db`
+# Postgres, and `run-tests.sh` deliberately runs `cargo test -p beekeeper-db`
 # *without* `--ignored`, so nothing else in this repo ever runs them.
 #
 # The filter is two substrings — `genesis` and `authority_transition` — passed
@@ -653,10 +653,10 @@ test-genesis: _ensure-services
     pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
     scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
     # The event tests expect a migrated schema; they do not build one themselves.
-    DATABASE_URL="${scratch}" cargo run -q -p buzz-admin -- migrate
+    DATABASE_URL="${scratch}" cargo run -q -p beekeeper-admin -- migrate
     echo "==> genesis + authority-chain proofs against ${db} (serial, isolated)"
     DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
-        cargo test -p buzz-db --lib -- genesis authority_transition --ignored --test-threads=1
+        cargo test -p beekeeper-db --lib -- genesis authority_transition --ignored --test-threads=1
 
 # CI callback composition and atomic result proofs require Postgres. Keep them
 # in the integration entrypoint so their #[ignore] annotations cannot hide them.
@@ -670,13 +670,13 @@ test-ci-completion: _ensure-services
     trap cleanup EXIT
     pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
     scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
-    DATABASE_URL="${scratch}" cargo run -q -p buzz-admin -- migrate
+    DATABASE_URL="${scratch}" cargo run -q -p beekeeper-admin -- migrate
     DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
-        cargo test -p buzz-db --lib ci_result -- --ignored --test-threads=1
-    cargo build -p buzz-cli --bin bee
+        cargo test -p beekeeper-db --lib ci_result -- --ignored --test-threads=1
+    cargo build -p beekeeper-cli --bin bee
     target_dir="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
     DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" BUZZ_TEST_BEE_BIN="${target_dir}/debug/bee" \
-        cargo test -p buzz-relay --lib ci_result -- --ignored --test-threads=1
+        cargo test -p beekeeper-relay --lib ci_result -- --ignored --test-threads=1
 
 # CI-managed turn continuation (docs/CI_MANAGED_CONTINUATION_IMPL.md): composes
 # the real buzz-relay binary (its own scratch database, dropped on exit; Redis
@@ -688,8 +688,8 @@ test-ci-completion: _ensure-services
 # what each step proves and what this does not cover (the private-project
 # read path, §3f).
 test-ci-continuation: _ensure-services
-    cargo build -p buzz-cli --bin bee -p buzz-relay --bin buzz-relay -p buzz-session-provider --bin buzz-session-provider
-    cargo test -p buzz-session-provider --test ci_continuation_composition -- --ignored --test-threads=1
+    cargo build -p beekeeper-cli --bin bee -p beekeeper-relay --bin buzz-relay -p beekeeper-session-provider --bin buzz-session-provider
+    cargo test -p beekeeper-session-provider --test ci_continuation_composition -- --ignored --test-threads=1
 
 # Absent-participant handover (docs/HANDOVER_IMPL.md §6): composes the real
 # buzz-relay binary (its own scratch database, dropped on exit; Redis logical
@@ -711,7 +711,7 @@ test-ci-continuation: _ensure-services
 #
 # Absent-participant handover composition: two providers, one relay-hosted repo
 test-handover: _ensure-services
-    cargo build -p buzz-cli --bin bee -p buzz-relay --bin buzz-relay -p buzz-session-provider --bin buzz-session-provider -p git-credential-nostr --bin git-credential-nostr
+    cargo build -p beekeeper-cli --bin bee -p beekeeper-relay --bin buzz-relay -p beekeeper-session-provider --bin buzz-session-provider -p git-credential-nostr --bin git-credential-nostr
     ./scripts/handover-acceptance.sh
 
 # Composes a real `beekeeper-host`, a real `buzz-session-provider` as its
@@ -759,7 +759,7 @@ test-unit:
         # cannot forge the issuer→JWKS authority; nextest does not run
         # doctests, and the `--workspace` nextest run above therefore does not
         # cover them.
-        cargo test -p buzz-auth --doc
+        cargo test -p beekeeper-auth --doc
     else
         ./scripts/run-tests.sh unit
     fi
@@ -775,7 +775,7 @@ test-integration:
 # any model-capabilities.json edit, then commit the regenerated file. The
 # `corpus_matches_generated_snapshot` gate fails CI if the committed file drifts.
 regen-model-corpus:
-    cargo test -p buzz-agent --lib model_capabilities::tests::regen_corpus_file -- --ignored --exact
+    cargo test -p beekeeper-agent --lib model_capabilities::tests::regen_corpus_file -- --ignored --exact
 
 # Buzz shared compute e2e: current desktop discovery/admission logic and
 # Playwright UI coverage.
@@ -805,23 +805,23 @@ mesh-dev-fresh:
 mesh-e2e-hardware:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo run -p buzz-relay --example mesh_serve_client_smoke
+    cargo run -p beekeeper-relay --example mesh_serve_client_smoke
 
 # Three isolated node processes: trusted member joins and infers; stranger is rejected.
 # Uses temp homes and explicit mesh owner keystores. Never reads the Buzz Keychain.
 mesh-e2e-admission:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo run -p buzz-relay --example mesh_admission_smoke
+    cargo run -p beekeeper-relay --example mesh_admission_smoke
 
 # Full hardware confidence suite: routing, owner admission, and real agent inference.
 mesh-e2e-confidence:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -p buzz-agent -p buzz-dev-mcp
-    cargo run -p buzz-relay --example mesh_serve_client_smoke
-    cargo run -p buzz-relay --example mesh_admission_smoke
-    cargo run -p buzz-relay --example mesh_agent_e2e
+    cargo build --release -p beekeeper-agent -p beekeeper-dev-mcp
+    cargo run -p beekeeper-relay --example mesh_serve_client_smoke
+    cargo run -p beekeeper-relay --example mesh_admission_smoke
+    cargo run -p beekeeper-relay --example mesh_agent_e2e
 
 # Take desktop screenshots using the mock bridge
 desktop-screenshot *ARGS:
@@ -849,7 +849,7 @@ relay: bootstrap _ensure-migrations
     set -o allexport
     source .env
     set +o allexport
-    cargo run -p buzz-relay
+    cargo run -p beekeeper-relay
 
 # Start the relay with the built web UI served from it
 relay-web: bootstrap _ensure-migrations
@@ -861,7 +861,7 @@ relay-web: bootstrap _ensure-migrations
     set +o allexport
     [[ -d node_modules ]] || pnpm install
     pnpm -C web build
-    BUZZ_WEB_DIR=./web/dist cargo run -p buzz-relay
+    BUZZ_WEB_DIR=./web/dist cargo run -p beekeeper-relay
 
 # Build and run the private read-only admin dashboard
 admin: bootstrap _ensure-migrations
@@ -876,7 +876,7 @@ admin: bootstrap _ensure-migrations
     export BUZZ_ADMIN_HOST="${BUZZ_ADMIN_HOST:-admin.localhost:3000}"
     export BUZZ_ADMIN_WEB_DIR="${BUZZ_ADMIN_WEB_DIR:-{{justfile_directory()}}/admin-web/dist}"
     echo "Admin dashboard: http://${BUZZ_ADMIN_HOST}/reports"
-    cargo run -p buzz-relay
+    cargo run -p beekeeper-relay
 
 # Seed deterministic reports and product feedback for local admin dashboard review
 admin-seed: _ensure-migrations
@@ -884,9 +884,9 @@ admin-seed: _ensure-migrations
 
 # Run focused relay and browser checks for the read-only admin dashboard
 admin-check: fmt-check
-    cargo check -p buzz-relay --all-targets
-    cargo test -p buzz-relay api::admin
-    cargo test -p buzz-relay router::tests
+    cargo check -p beekeeper-relay --all-targets
+    cargo test -p beekeeper-relay api::admin
+    cargo test -p beekeeper-relay router::tests
     pnpm -C admin-web check
     pnpm -C admin-web exec playwright test
 
@@ -897,7 +897,7 @@ relay-release: bootstrap _ensure-migrations
     set -o allexport
     source .env
     set +o allexport
-    cargo run -p buzz-relay --release
+    cargo run -p beekeeper-relay --release
 
 
 # Run the desktop Tauri app in dev mode with a local relay (ports and identity derived from worktree)
@@ -923,7 +923,7 @@ dev *ARGS: bootstrap _ensure-sidecar-stubs _ensure-migrations
             fi
         done
     fi
-    cargo build -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-shell-host -p beekeeper-host -p buzz-relay
+    cargo build -p beekeeper-acp -p beekeeper-agent -p beekeeper-backend-kubernetes -p beekeeper-dev-mcp -p beekeeper-cli -p git-credential-nostr -p beekeeper-shell-host -p beekeeper-host -p beekeeper-relay
     # Docker Desktop's forwarded MinIO port can stall under the deployment
     # probe's 32 concurrent writers. Keep the gate enabled in local dev, using
     # the bounded profile already used by the relay test launcher.
@@ -967,7 +967,7 @@ desktop-standalone *ARGS: _ensure-sidecar-stubs
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
-    cargo build -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-shell-host -p beekeeper-host -p buzz-session-provider
+    cargo build -p beekeeper-acp -p beekeeper-agent -p beekeeper-backend-kubernetes -p beekeeper-dev-mcp -p beekeeper-cli -p git-credential-nostr -p beekeeper-shell-host -p beekeeper-host -p beekeeper-session-provider
     TARGET=$(rustc -vV | sed -n 's|host: ||p')
     TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).target_directory")
     for bin in buzz-acp buzz-agent buzz-backend-kubernetes buzz-dev-mcp git-credential-nostr bee buzz-shell-host beekeeper-host; do
@@ -1135,7 +1135,7 @@ get-current-version:
 
 # Read the current relay version from its crate manifest
 get-current-relay-version:
-    @grep -m1 '^version = ' crates/buzz-relay/Cargo.toml | sed -E 's/version = "(.*)"/\1/'
+    @grep -m1 '^version = ' crates/beekeeper-relay/Cargo.toml | sed -E 's/version = "(.*)"/\1/'
 
 # Compute next minor version (e.g., 0.3.0 → 0.4.0)
 get-next-minor-version:
@@ -1184,8 +1184,8 @@ bump-relay-version version:
     set -euo pipefail
     # buzz-relay carries its own `version =` (not version.workspace), so the
     # replace targets the package version line only.
-    perl -i -pe 's/^version = ".*"/version = "{{ version }}"/' crates/buzz-relay/Cargo.toml
-    cargo update -p buzz-relay
+    perl -i -pe 's/^version = ".*"/version = "{{ version }}"/' crates/beekeeper-relay/Cargo.toml
+    cargo update -p beekeeper-relay
     echo "Bumped buzz-relay to {{ version }} and regenerated Cargo.lock"
 
 # Open or update the desktop release PR from an immutable origin/main snapshot
@@ -1200,7 +1200,7 @@ release-desktop *ARGS:
     fi
     scripts/prepare-desktop-release.sh "$VERSION"
 
-# Open or update the relay release PR (version bump + crates/buzz-relay/CHANGELOG.md)
+# Open or update the relay release PR (version bump + crates/beekeeper-relay/CHANGELOG.md)
 release-relay *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1237,7 +1237,7 @@ _release-pr lane version:
             # ones are added rather than joining them, because a host change
             # that never appears in the changelog is a change nobody reviewing
             # the release can see.
-            LOG_PATHS=(desktop/ crates/buzz-core/ crates/buzz-persona/ crates/buzz-sdk/ crates/buzz-agent/ crates/beekeeper-host/ crates/beekeeper-host-core/)
+            LOG_PATHS=(desktop/ crates/beekeeper-core/ crates/beekeeper-persona/ crates/beekeeper-sdk/ crates/beekeeper-agent/ crates/beekeeper-host/ crates/beekeeper-host-core/)
             ARTIFACT="Beekeeper Desktop" ;;
         relay)
             BRANCH_PREFIX="relay-release"
@@ -1245,9 +1245,9 @@ _release-pr lane version:
             TAG_MATCH='relay-v[0-9]*'
             TAG_EXCLUDE='relay-v*-*'
             TAG_PREFIX="relay-v"
-            CHANGELOG="crates/buzz-relay/CHANGELOG.md"
-            ADD_FILES=(crates/buzz-relay/Cargo.toml Cargo.lock crates/buzz-relay/CHANGELOG.md)
-            LOG_PATHS=(crates/buzz-relay/ crates/buzz-core/ crates/buzz-db/ crates/buzz-auth/ crates/buzz-pubsub/ crates/buzz-search/ crates/buzz-audit/ crates/buzz-media/ crates/buzz-sdk/ crates/buzz-workflow/ crates/buzz-conformance/ migrations/)
+            CHANGELOG="crates/beekeeper-relay/CHANGELOG.md"
+            ADD_FILES=(crates/beekeeper-relay/Cargo.toml Cargo.lock crates/beekeeper-relay/CHANGELOG.md)
+            LOG_PATHS=(crates/beekeeper-relay/ crates/beekeeper-core/ crates/beekeeper-db/ crates/beekeeper-auth/ crates/beekeeper-pubsub/ crates/beekeeper-search/ crates/beekeeper-audit/ crates/beekeeper-media/ crates/beekeeper-sdk/ crates/beekeeper-workflow/ crates/beekeeper-conformance/ migrations/)
             ARTIFACT="Buzz Relay" ;;
         *)
             echo "Error: unknown release lane '{{ lane }}'"
@@ -1448,7 +1448,7 @@ sandbox-seed TREE *ARGS:
         BEE="$candidate"
     done
     if [[ -z "$BEE" || ! -x "$BEE" ]]; then
-        echo "no 'bee' found. Build it with 'cargo build -p buzz-cli', install the app," >&2
+        echo "no 'bee' found. Build it with 'cargo build -p beekeeper-cli', install the app," >&2
         echo "or set BUZZ_BEE to a binary." >&2
         exit 1
     fi
@@ -1461,7 +1461,7 @@ sandbox-plan *ARGS:
     export PATH="{{justfile_directory()}}/bin:$PATH"
     BEE="${BUZZ_BEE:-$(command -v bee 2>/dev/null || true)}"
     [[ -n "$BEE" && -x "$BEE" ]] || BEE="{{justfile_directory()}}/target/debug/bee"
-    [[ -x "$BEE" ]] || { echo "no 'bee' found; run 'cargo build -p buzz-cli'" >&2; exit 1; }
+    [[ -x "$BEE" ]] || { echo "no 'bee' found; run 'cargo build -p beekeeper-cli'" >&2; exit 1; }
     "$BEE" sandbox plan {{ARGS}}
 
 

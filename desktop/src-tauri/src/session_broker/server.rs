@@ -23,7 +23,7 @@ const SOCKET_PATH_ENV: &str = "BUZZ_SESSION_BROKER_SOCK";
 /// `<state_dir>/session-broker.sock` (`~/.local/state/buzz` in production,
 /// `…/buzz-dev` for dev builds — so two instances on one machine don't steal
 /// each other's bind). The `bee session` CLI defaults to the production
-/// path (`crates/buzz-cli/src/commands/session.rs` — keep in lockstep);
+/// path (`crates/beekeeper-cli/src/commands/session.rs` — keep in lockstep);
 /// reaching a dev instance requires the env override.
 pub fn socket_path() -> Result<PathBuf, String> {
     if let Ok(explicit) = std::env::var(SOCKET_PATH_ENV) {
@@ -147,7 +147,7 @@ fn agent_may_drive(app: &tauri::AppHandle, workspace_id: &str, caller: Option<&s
         return false;
     }
     if info.roster.iter().any(|entry| {
-        entry.pubkey == caller && entry.role == buzz_core_pkg::kind::SHELL_ROLE_COLLABORATOR
+        entry.pubkey == caller && entry.role == beekeeper_core_pkg::kind::SHELL_ROLE_COLLABORATOR
     }) {
         return true;
     }
@@ -259,7 +259,7 @@ fn shell_sessions_as_broker_sessions() -> Vec<BrokerSession> {
             let agents_enabled = info
                 .roster
                 .iter()
-                .any(|entry| entry.role == buzz_core_pkg::kind::SHELL_ROLE_COLLABORATOR);
+                .any(|entry| entry.role == beekeeper_core_pkg::kind::SHELL_ROLE_COLLABORATOR);
             BrokerSession {
                 workspace_id: workspace_id.clone(),
                 window_id: None,
@@ -463,7 +463,7 @@ async fn request_access(
                 app,
                 session_id,
                 agent_pubkey,
-                buzz_core_pkg::kind::SHELL_ROLE_COLLABORATOR,
+                beekeeper_core_pkg::kind::SHELL_ROLE_COLLABORATOR,
             ) {
                 return BrokerResponse::err(e);
             }

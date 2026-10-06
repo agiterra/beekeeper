@@ -9,7 +9,7 @@ It is **data and documentation only**. No parser, no fold and no command lives
 here. Lane W1 implements the parser and the fold in `buzz-core`, W2 the CLI,
 W3 the brief, W5 the surface — all against the fixtures in `fixtures/`. The
 one piece of code this lane landed is the kind constant,
-`KIND_PROJECT_WORK_RECORD = 44249` in `crates/buzz-core/src/kind.rs`.
+`KIND_PROJECT_WORK_RECORD = 44249` in `crates/beekeeper-core/src/kind.rs`.
 
 **This README is normative until `docs/nips/NIP-PW.md` exists.** Lane W1
 writes that NIP from this file when it implements the kind; the NIP must not
@@ -135,7 +135,7 @@ a malformed `code_repository` or `delivery_ref`.
 - The git commit is the version. There is no second version counter.
 - **The blob is read with `git show <commit>:<path>`, never the working copy
   and never the fetched tip.** The existing agents-file reader reads the tip
-  (`crates/buzz-session-provider/src/agents_checkout.rs:98`) and must not be
+  (`crates/beekeeper-session-provider/src/agents_checkout.rs:98`) and must not be
   reused unchanged for contracts. A plan the fold cannot read at the pinned
   commit yields `unknown`, never `open` and never `covered`.
 
@@ -294,7 +294,7 @@ A `ref_observation` evidence ref carries **no new record**. Its `eventId` is a
 
 - the 30618's signer must equal the relay's NIP-11 `self` key — the relay is
   the authoritative source of ref state for repositories it hosts
-  (`crates/buzz-relay/src/api/git/manifest_event.rs`), and an owner-signed
+  (`crates/beekeeper-relay/src/api/git/manifest_event.rs`), and an owner-signed
   claim about its own branch is not an observation;
 - its `d` tag names the plan's `code_repository`;
 - its `refs/heads/<branch of delivery_ref>` tag must equal the binding's
@@ -311,7 +311,7 @@ fixture pair is `sequences/superseded-observation/`.
 
 All three records require the **same** authority: the `may_lead` predicate the
 44244 fold already implements
-(`crates/buzz-core/src/coding_session_team_transaction_fold.rs`
+(`crates/beekeeper-core/src/coding_session_team_transaction_fold.rs`
 `CodingSessionTeamFoldContext::may_lead`). It admits **three** actors, and
 this contract adds no fourth and subtracts none:
 
@@ -899,7 +899,7 @@ never becomes an empty success.
 
 Every write verb takes `--example [<label>]`, dispatched **before** the key
 gate exactly as lane 182 built it
-(`crates/buzz-cli/src/lib.rs:5137-5153`), so a seat learning the wire needs
+(`crates/beekeeper-cli/src/lib.rs:5137-5153`), so a seat learning the wire needs
 neither an identity nor a relay. Each example is a serialized constructed
 value, never a hand-typed string, and each must pass the publication
 validator in a test.

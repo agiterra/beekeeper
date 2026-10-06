@@ -1,6 +1,6 @@
 {
   "schema": "buzz-project-pack-source-conformance/v1",
-  "note": "Shared vectors for NIP-PK: kind 30624 (packSourceVectors, decoded from tags+content) and the kind 44223 packRef amendment (metadataVectors, decoded from content alone). Rust reads this file in crates/buzz-core/src/project_pack_source_tests.rs and crates/buzz-core/src/coding_session_payload.rs; the desktop wire decoder reads the same file.",
+  "note": "Shared vectors for NIP-PK: kind 30624 (packSourceVectors, decoded from tags+content) and the kind 44223 packRef amendment (metadataVectors, decoded from content alone). Rust reads this file in crates/beekeeper-core/src/project_pack_source_tests.rs and crates/beekeeper-core/src/coding_session_payload.rs; the desktop wire decoder reads the same file.",
   "packSourceVectors": [
     {
       "name": "valid-pinned-sha",

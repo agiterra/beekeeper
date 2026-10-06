@@ -1,6 +1,6 @@
 /**
  * The kind 44250 agents-repository draft op — TypeScript twin of
- * `crates/buzz-core/src/agents_repo_draft.rs` and `docs/nips/NIP-AD.md`.
+ * `crates/beekeeper-core/src/agents_repo_draft.rs` and `docs/nips/NIP-AD.md`.
  *
  * A draft is one proposed change to one file of the project's agents
  * repository: the whole new text (`file.put`), an archive move
@@ -24,7 +24,7 @@ export const MAX_AGENTS_REPO_DRAFT_CONTENT_BYTES = 65_536;
 export const MAX_AGENTS_REPO_DRAFT_TEXT_BYTES = 60_000;
 export const MAX_AGENTS_REPO_DRAFT_MESSAGE_BYTES = 512;
 export const MAX_COMMIT_RECORD_ENTRIES = 256;
-/** The reserved directory; equal to `buzz_persona::team::ARCHIVE_DIR`. */
+/** The reserved directory; equal to `beekeeper_persona::team::ARCHIVE_DIR`. */
 export const ARCHIVE_SEGMENT = "archive";
 /** Root files a draft may put but never move or delete. */
 export const ROOT_FILES = ["README.md", "team.yml", "actions.yml"] as const;

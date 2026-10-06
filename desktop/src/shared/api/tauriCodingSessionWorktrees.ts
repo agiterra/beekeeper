@@ -58,7 +58,7 @@ export type CodingSessionWorktreeCreated = {
    * What the project's `sandbox.yml` seeded into this tree, entry by entry,
    * and what it did not. Absent when the project declares no `sandbox.yml`.
    *
-   * Shaped by Rust (`buzz_core::sandbox_seed::SeedReceipt`) and carried
+   * Shaped by Rust (`beekeeper_core::sandbox_seed::SeedReceipt`) and carried
    * through as-is: nothing here decides anything from it, it is shown. The
    * reason it is shown at all is that a sandbox which started cold, or whose
    * setup recipe failed, otherwise looks exactly like one that worked — right
@@ -255,7 +255,7 @@ export async function createCodingSessionWorktree(input: {
 //
 // The create path above records what it made; everything below reads that
 // record. Every disposition was decided in Rust
-// (`buzz_core::worktree_lifecycle`) — these wrappers carry the answer across,
+// (`beekeeper_core::worktree_lifecycle`) — these wrappers carry the answer across,
 // and the UI renders the strings it is given rather than re-deciding anything.
 
 /** The stable tokens `classify_seat_worktree` can answer with. */

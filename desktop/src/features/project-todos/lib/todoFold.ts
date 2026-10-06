@@ -1,6 +1,6 @@
 /**
  * The project to-do fold — TypeScript twin of
- * `crates/buzz-core/src/project_todo_fold.rs`, bound to
+ * `crates/beekeeper-core/src/project_todo_fold.rs`, bound to
  * `conformance/project-todo-fold/` (CONTRACT.md states the rules; the
  * vectors pin them byte for byte, key order included).
  *

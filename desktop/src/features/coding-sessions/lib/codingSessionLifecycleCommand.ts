@@ -75,7 +75,7 @@ export type CodingSessionCreateAction = {
 /**
  * Verbatim refusal when a create carries the hire's `requestedBy`.
  *
- * Frozen: `crates/buzz-core/testdata/coding_session_hire_requester/vectors.json`
+ * Frozen: `crates/beekeeper-core/testdata/coding_session_hire_requester/vectors.json`
  * quotes this sentence as the one a TypeScript decoder must also produce, and
  * a test in this feature asserts both sides still say it. "action has missing
  * or unsupported fields" is true, unactionable, and is what the Rust decoder

@@ -48,8 +48,8 @@ import { publishCodingSessionLaneMessage } from "./codingSessionLanePublish";
  * ledger 178: `bee sessions hire` reads this same event directly off the
  * relay to answer its own poll
  * (`find_hire_refusal`/`wait_for_hire`/`read_hire_answer`,
- * `crates/buzz-cli/src/commands/sessions/crew.rs`,
- * `crates/buzz-cli/src/commands/sessions/crew_cmds.rs`) — it is the CLI's
+ * `crates/beekeeper-cli/src/commands/sessions/crew.rs`,
+ * `crates/beekeeper-cli/src/commands/sessions/crew_cmds.rs`) — it is the CLI's
  * *answer channel*, not a redundant echo, and suppressing it (an earlier,
  * wrong version of this fix) would have made every fast refusal report
  * `unconfirmed` instead of `refused`. What must not happen is the *live
@@ -61,7 +61,7 @@ import { publishCodingSessionLaneMessage } from "./codingSessionLanePublish";
  * (`CODING_SESSION_HOST_ANSWER_TAG_NAME` in `codingSessionCommand.ts`), which
  * the provider's turn intake reads to record the answer in the transcript
  * without ever opening a turn from it
- * (`crates/buzz-session-provider/src/lib.rs`).
+ * (`crates/beekeeper-session-provider/src/lib.rs`).
  *
  * **A desktop must work against a relay one release behind (ledger 192).**
  * Lane 181 taught the relay's ingest allowlist to accept the

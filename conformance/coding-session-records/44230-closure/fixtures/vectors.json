@@ -3,7 +3,7 @@
   "kind": 44230,
   "record": "coding-session closure revision",
   "readers": {
-    "rust": "crates/buzz-core/src/coding_session_closure.rs :: decode_coding_session_closure",
+    "rust": "crates/beekeeper-core/src/coding_session_closure.rs :: decode_coding_session_closure",
     "desktopCoordination": "desktop/src/shared/coordination/sessionCoordinationStrictJson.ts :: hasStrictClosureJson",
     "dart": "mobile/lib/features/coding_sessions/domain/coding_session_session_decoders.dart :: decodeCodingSessionClosure"
   },

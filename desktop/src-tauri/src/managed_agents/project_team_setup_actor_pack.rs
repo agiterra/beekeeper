@@ -137,10 +137,11 @@ pub(super) fn copy(source: &Path, destination: &Path) -> Result<(), SetupError> 
 
 pub(super) fn validate(
     path: &Path,
-) -> Result<buzz_persona_pkg::resolve::ResolvedPersona, SetupError> {
+) -> Result<beekeeper_persona_pkg::resolve::ResolvedPersona, SetupError> {
     digest(path)?;
     tree::check_manifest_references(path)?;
-    let loaded = buzz_persona_pkg::pack::load_pack(path).map_err(|e| invalid(e.to_string()))?;
+    let loaded =
+        beekeeper_persona_pkg::pack::load_pack(path).map_err(|e| invalid(e.to_string()))?;
     if loaded.personas.len() != 1 {
         return Err(invalid(
             "The setup bootstrap must contain exactly one persona.",
@@ -149,13 +150,13 @@ pub(super) fn validate(
     for reference in &loaded.personas[0].skills {
         tree::check_relative_reference(reference)?;
     }
-    let report = buzz_persona_pkg::validate::validate_pack(path);
+    let report = beekeeper_persona_pkg::validate::validate_pack(path);
     if report.has_errors() {
         return Err(invalid(format!(
             "The shipped setup pack is invalid: {report}"
         )));
     }
-    let persona = buzz_persona_pkg::resolve::resolve_persona_by_name(path, ROLE)
+    let persona = beekeeper_persona_pkg::resolve::resolve_persona_by_name(path, ROLE)
         .map_err(|e| invalid(e.to_string()))?;
     if persona.name != ROLE
         || persona.role.as_deref() != Some(ROLE)
@@ -170,7 +171,7 @@ pub(super) fn validate(
         }
         let directory = path.join("skills").join(skill);
         tree::ensure_contained_directory(path, &directory)?;
-        buzz_persona_pkg::skill_meta::read_skill_meta(&directory)
+        beekeeper_persona_pkg::skill_meta::read_skill_meta(&directory)
             .map_err(|e| invalid(e.to_string()))?;
     }
     Ok(persona)

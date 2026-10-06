@@ -19,7 +19,7 @@ use tauri::{AppHandle, Manager};
 use super::project_agent_association::{normalize_project_ref, ASSOCIATION_MALFORMED_PROJECT};
 use super::ManagedAgentRecord;
 use crate::app_state::AppState;
-use buzz_core_pkg::kind::{
+use beekeeper_core_pkg::kind::{
     is_valid_project_role, KIND_PROJECT, KIND_PROJECT_MEMBERS, PROJECT_ACCESS_PRIVATE,
     PROJECT_ACCESS_TAG, PROJECT_ROLE_COLLABORATOR, PROJECT_ROLE_OWNER,
 };

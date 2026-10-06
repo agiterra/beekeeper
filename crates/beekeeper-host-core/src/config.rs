@@ -14,7 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
-use buzz_core::coding_session_runtime::RuntimeDescriptor;
+use beekeeper_core::coding_session_runtime::RuntimeDescriptor;
 use serde::{Deserialize, Serialize};
 
 use crate::layout::Instance;

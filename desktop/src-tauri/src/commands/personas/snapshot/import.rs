@@ -529,7 +529,7 @@ pub async fn confirm_agent_snapshot_import(
         let compat_agent = nostr::PublicKey::from_hex(&pubkey)
             .map_err(|e| format!("failed to bridge agent pubkey: {e}"))?;
         let auth_tag = Some(
-            buzz_sdk_pkg::nip_oa::compute_auth_tag(&compat_owner, &compat_agent, "")
+            beekeeper_sdk_pkg::nip_oa::compute_auth_tag(&compat_owner, &compat_agent, "")
                 .map_err(|e| format!("failed to compute NIP-OA auth tag: {e}"))?,
         );
         let owner_pubkey_hex = owner_keys.public_key().to_hex();
@@ -692,20 +692,24 @@ pub async fn confirm_agent_snapshot_import(
         let base_ts = nostr::Timestamp::now().as_secs();
 
         for (idx, entry) in snapshot.memory.entries.iter().enumerate() {
-            let body = if entry.slug == buzz_core_pkg::engram::CORE_SLUG {
-                buzz_core_pkg::engram::Body::Core {
+            let body = if entry.slug == beekeeper_core_pkg::engram::CORE_SLUG {
+                beekeeper_core_pkg::engram::Body::Core {
                     profile: entry.body.clone(),
                 }
             } else {
-                buzz_core_pkg::engram::Body::Memory {
+                beekeeper_core_pkg::engram::Body::Memory {
                     slug: entry.slug.clone(),
                     value: Some(entry.body.clone()),
                 }
             };
 
             let created_at = base_ts + idx as u64;
-            match buzz_core_pkg::engram::build_event(&agent_keys, &owner_pubkey, &body, created_at)
-            {
+            match beekeeper_core_pkg::engram::build_event(
+                &agent_keys,
+                &owner_pubkey,
+                &body,
+                created_at,
+            ) {
                 Ok(event) => {
                     let event_json = nostr::JsonUtil::as_json(&event).into_bytes();
                     let url = format!("{}/events", crate::relay::relay_http_base_url(&relay_url));
@@ -749,7 +753,7 @@ fn retain_agent_pending(app: &AppHandle, state: &AppState, record: &ManagedAgent
         persona_events::monotonic_created_at,
         retention::{get_retained_event, open_retention_db, retain_event, RetainedEvent},
     };
-    use buzz_core_pkg::kind::KIND_MANAGED_AGENT;
+    use beekeeper_core_pkg::kind::KIND_MANAGED_AGENT;
     use nostr::JsonUtil;
 
     let result = (|| -> Result<(), String> {

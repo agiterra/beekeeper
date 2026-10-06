@@ -102,7 +102,7 @@ def community_id(index: int) -> str:
 
 
 def scoped_global_channel(community: str) -> str:
-    # Mirrors crates/buzz-pubsub/src/topic.rs EventTopic::Global:
+    # Mirrors crates/beekeeper-pubsub/src/topic.rs EventTopic::Global:
     # format!("buzz:{}:global", self.community_id)
     return f"{BUZZ_PREFIX}:{community}:global"
 

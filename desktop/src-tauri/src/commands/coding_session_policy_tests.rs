@@ -211,7 +211,7 @@ fn every_refusal_is_the_core_decoders_own_sentence_naming_the_key() {
 /// does, and its author was told nothing at all.
 ///
 /// Both sites now keep serde's message
-/// (`crates/buzz-core/src/coding_session_policy.rs:554`, `:596`), so the
+/// (`crates/beekeeper-core/src/coding_session_policy.rs:554`, `:596`), so the
 /// refusal reads:
 ///
 /// ```text
@@ -454,7 +454,9 @@ fn signed_grant(
     })
     .to_string();
     let event = nostr::EventBuilder::new(
-        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
+        nostr::Kind::Custom(
+            beekeeper_core_pkg::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16,
+        ),
         content,
     )
     .sign_with_keys(signer)
@@ -850,7 +852,9 @@ fn a_transition_from_another_umbrella_supports_no_grant_here() {
     })
     .to_string();
     let foreign = nostr::EventBuilder::new(
-        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
+        nostr::Kind::Custom(
+            beekeeper_core_pkg::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16,
+        ),
         content,
     )
     .sign_with_keys(&founder)

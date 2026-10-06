@@ -5,7 +5,7 @@
 //! its configuration names smudge/clean filters and an fsmonitor program, and
 //! a coding session of the project can write that configuration. So those
 //! operations run inside the host preparation the provider uses for its own
-//! host commands (`buzz_session_provider_pkg::execution_scope_host`): the
+//! host commands (`beekeeper_session_provider_pkg::execution_scope_host`): the
 //! workspace, its Git administration and the project's tools, nothing of
 //! another project's. Operations that run none of the repository's code —
 //! cutting a worktree with nothing checked out, reading refs — stay ordinary
@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use buzz_session_provider_pkg::execution_scope_host::{
+use beekeeper_session_provider_pkg::execution_scope_host::{
     prepare_host_command, HostCommandScope, HostLaunchPlan,
 };
 

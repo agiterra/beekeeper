@@ -55,11 +55,11 @@ Content is JSON, at most 4096 bytes, with `schema` = `buzz-project-todo/v1` and 
 
 `listId` and `itemId` are 32 lowercase hex characters minted by the client (a UUID without hyphens). `title` and `text` are non-blank, at most 1024 bytes, with no control characters other than newline and tab. `rank` is a fractional-indexing order key (see § Ranks).
 
-The single validator is `crates/buzz-core/src/project_todo.rs`; the relay, the SDK builder and `bee todos` call it and keep no copy.
+The single validator is `crates/beekeeper-core/src/project_todo.rs`; the relay, the SDK builder and `bee todos` call it and keep no copy.
 
 ## Relay behaviour
 
-Everything below is the Pulse rule applied through one predicate, `buzz_core::kind::is_project_a_scoped_kind` (44240, 44248). A relay chokepoint that gates on a project's hidden set keys on the predicate, so both kinds are admitted, withheld, fanned out, pushed down and shape-checked by the same code.
+Everything below is the Pulse rule applied through one predicate, `beekeeper_core::kind::is_project_a_scoped_kind` (44240, 44248). A relay chokepoint that gates on a project's hidden set keys on the predicate, so both kinds are admitted, withheld, fanned out, pushed down and shape-checked by the same code.
 
 **Ingest.** Scope `messages:write`. The envelope is validated, the coordinate must name a project that exists in this community, and the author must be admitted:
 
@@ -69,7 +69,7 @@ Everything below is the Pulse rule applied through one predicate, `buzz_core::ki
 
 A refusal is an authorization failure (`OK false "restricted: …"` on the wire, **403** over `POST /events`, CLI exit 3), so an agent script can tell it from a malformed event (400, exit 2).
 
-**Reads.** A stored op is withheld from a reader whose hidden-private-project set contains its coordinate unless the reader is its author, on every surface: WS `REQ`, `POST /query`, `POST /count`, FTS, and live fan-out. A **personal** op (`td-vis personal`) is withheld from every reader but its author on the same surfaces, whatever the project's visibility (`buzz_core::kind::is_personal_todo_op`). An inadmissible read is an empty `200`, never a `403`. The SQL pushdown excludes hidden coordinates — and, for a reader with any hidden project, other authors' personal ops — before `ORDER`/`LIMIT` so a private project cannot starve a page; the per-event gate (`project_a_scoped_event_hidden_from`) stays the authority and is what withholds personal ops for a reader with no hidden projects at all.
+**Reads.** A stored op is withheld from a reader whose hidden-private-project set contains its coordinate unless the reader is its author, on every surface: WS `REQ`, `POST /query`, `POST /count`, FTS, and live fan-out. A **personal** op (`td-vis personal`) is withheld from every reader but its author on the same surfaces, whatever the project's visibility (`beekeeper_core::kind::is_personal_todo_op`). An inadmissible read is an empty `200`, never a `403`. The SQL pushdown excludes hidden coordinates — and, for a reader with any hidden project, other authors' personal ops — before `ORDER`/`LIMIT` so a private project cannot starve a page; the per-event gate (`project_a_scoped_event_hidden_from`) stays the authority and is what withholds personal ops for a reader with no hidden projects at all.
 
 Visibility is relay-enforced, not encrypted: like everything in a private project, a personal list is readable by the relay operator.
 
@@ -85,7 +85,7 @@ Normative text is `conformance/project-todo-fold/CONTRACT.md`, pinned by `fixtur
 
 ## Ranks
 
-Open items are ordered by `rank`, a fractional-indexing order key over the base-62 alphabet `0-9A-Za-z` compared bytewise: an integer part whose first letter encodes its length, then an optional fraction never ending in `0` (`conformance/project-todo-fold/fixtures/rank-vectors.json`; `crates/buzz-core/src/fractional_rank.rs`). The first rank is `a0`; appending increments the integer (`a1`, `a2`, …), so a list of thousands keeps three-character ranks; a drag or `bee todos move --index N` mints one key between the new neighbours and publishes one `item.rank` op. Equal ranks are legal and order by item id.
+Open items are ordered by `rank`, a fractional-indexing order key over the base-62 alphabet `0-9A-Za-z` compared bytewise: an integer part whose first letter encodes its length, then an optional fraction never ending in `0` (`conformance/project-todo-fold/fixtures/rank-vectors.json`; `crates/beekeeper-core/src/fractional_rank.rs`). The first rank is `a0`; appending increments the integer (`a1`, `a2`, …), so a list of thousands keeps three-character ranks; a drag or `bee todos move --index N` mints one key between the new neighbours and publishes one `item.rank` op. Equal ranks are legal and order by item id.
 
 ## Timestamps
 
@@ -100,7 +100,7 @@ The relay refuses any event whose `created_at` is more than 900 s from its clock
 
 ## Reference
 
-- Kind and predicates: `crates/buzz-core/src/kind.rs` (`KIND_PROJECT_TODO_OP`, `is_project_a_scoped_kind`, `project_a_scoped_coordinate`, `project_a_scoped_event_hidden_from`).
-- Validator: `crates/buzz-core/src/project_todo.rs`. Fold: `crates/buzz-core/src/project_todo_fold.rs`. Ranks: `crates/buzz-core/src/fractional_rank.rs`.
-- Relay: `crates/buzz-relay/src/handlers/ingest.rs` (`admit_project_scoped_write`), `req.rs`, `event.rs`, `api/bridge.rs`; `crates/buzz-db/src/event.rs` pushdown.
-- End-to-end: `crates/buzz-test-client/tests/e2e_project_todos.rs`.
+- Kind and predicates: `crates/beekeeper-core/src/kind.rs` (`KIND_PROJECT_TODO_OP`, `is_project_a_scoped_kind`, `project_a_scoped_coordinate`, `project_a_scoped_event_hidden_from`).
+- Validator: `crates/beekeeper-core/src/project_todo.rs`. Fold: `crates/beekeeper-core/src/project_todo_fold.rs`. Ranks: `crates/beekeeper-core/src/fractional_rank.rs`.
+- Relay: `crates/beekeeper-relay/src/handlers/ingest.rs` (`admit_project_scoped_write`), `req.rs`, `event.rs`, `api/bridge.rs`; `crates/beekeeper-db/src/event.rs` pushdown.
+- End-to-end: `crates/beekeeper-test-client/tests/e2e_project_todos.rs`.

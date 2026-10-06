@@ -154,7 +154,7 @@ pub async fn decrypt_observer_event(
             return Err("observer event has invalid signature".into());
         }
 
-        buzz_core_pkg::observer::decrypt_observer_payload(&keys, &event)
+        beekeeper_core_pkg::observer::decrypt_observer_payload(&keys, &event)
             .map_err(|error| format!("decrypt observer event failed: {error}"))
     })
     .await
@@ -172,12 +172,12 @@ pub fn build_observer_control_event(
         .map_err(|error| format!("invalid agent pubkey: {error}"))?;
     let agent_pubkey_hex = agent_pubkey.to_hex();
     let encrypted =
-        buzz_core_pkg::observer::encrypt_observer_payload(&keys, &agent_pubkey, &payload)
+        beekeeper_core_pkg::observer::encrypt_observer_payload(&keys, &agent_pubkey, &payload)
             .map_err(|error| format!("encrypt observer control failed: {error}"))?;
-    let builder = buzz_sdk_pkg::build_agent_observer_frame(
+    let builder = beekeeper_sdk_pkg::build_agent_observer_frame(
         &agent_pubkey_hex,
         &agent_pubkey_hex,
-        buzz_core_pkg::observer::OBSERVER_FRAME_CONTROL,
+        beekeeper_core_pkg::observer::OBSERVER_FRAME_CONTROL,
         &encrypted,
     )
     .map_err(|error| format!("build observer control failed: {error}"))?;

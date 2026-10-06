@@ -260,7 +260,7 @@ Implementations MUST NOT interpret this section as NIP-26 delegation. A future s
 
 ## Public APNs Gateway Profile (Buzz, normative)
 
-> **Beekeeper note.** This profile was registered for the gateway Block operates at `push.buzz.xyz`, for Block's Buzz iOS app. Beekeeper does not use that host: since 2026-10-06 `crates/buzz-push-gateway` builds in no host, and `<gateway-host>` below stands for the origin of the gateway's configured `BUZZ_PUSH_PUBLIC_DELIVERY_URL`. Beekeeper operates no gateway yet, and a Beekeeper relay leaves push off unless `BUZZ_PUSH_GATEWAY_DELIVERY_URL` names one (see [push-gateway-deployment.md](../push-gateway-deployment.md)).
+> **Beekeeper note.** This profile was registered for the gateway Block operates at `push.buzz.xyz`, for Block's Buzz iOS app. Beekeeper does not use that host: since 2026-10-06 `crates/beekeeper-push-gateway` builds in no host, and `<gateway-host>` below stands for the origin of the gateway's configured `BUZZ_PUSH_PUBLIC_DELIVERY_URL`. Beekeeper operates no gateway yet, and a Beekeeper relay leaves push off unless `BUZZ_PUSH_GATEWAY_DELIVERY_URL` names one (see [push-gateway-deployment.md](../push-gateway-deployment.md)).
 
 This section registers the public last-hop profile served at `https://<gateway-host>`. It is an optional profile of NIP-PL, but every requirement in this section is normative for implementations that use it. The gateway is stateful: it retains installation authority, encrypted APNs-token custody, relay delegations, replay reservations, and endpoint quotas. The relay remains the executor and retains lease acceptance, matching, tenant authorization, endpoint uniqueness, coalescing, durable jobs/retries, and lease-generation invalidation.
 

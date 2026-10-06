@@ -5,7 +5,7 @@
  * so a 25-channel desktop spent 50 admission units on cold start. A single
  * filter may instead list many channels in `#h`; the relay caps the aggregate
  * `#h` count per REQ at {@link MAX_CHANNEL_VALUES_PER_REQUEST}
- * (`MAX_EXPLICIT_CHANNEL_VALUES` in `crates/buzz-relay/src/handlers/req.rs`,
+ * (`MAX_EXPLICIT_CHANNEL_VALUES` in `crates/beekeeper-relay/src/handlers/req.rs`,
  * summed over every filter in the frame), so this module chunks the channel
  * list at that size and then packs the resulting filters into as few REQs as
  * the same cap and {@link MAX_FILTERS_PER_REQ} allow.

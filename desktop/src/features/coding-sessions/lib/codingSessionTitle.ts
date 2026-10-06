@@ -3,7 +3,7 @@
  * provider's generated 44252 title (NIP-CSG § Generated title, SV-31).
  *
  * The parse and the ranking rule are the pure mirror of
- * `crates/buzz-core/src/coding_session_title.rs`, which lives in
+ * `crates/beekeeper-core/src/coding_session_title.rs`, which lives in
  * `shared/coordination/sessionCoordinationNames.ts` so the coordination fold
  * (Pulse, Agent Progress) can share it without importing from a feature; this
  * module re-exports it and adds what only the desktop hook needs:

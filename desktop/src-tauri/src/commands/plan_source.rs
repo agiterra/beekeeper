@@ -4,7 +4,7 @@
 //! The same `buzz-core` reader every other surface uses, so a plan the
 //! desktop lets through is one `bee plans` and the relay would also read.
 
-use buzz_core_pkg::project_plan::parse_plan;
+use beekeeper_core_pkg::project_plan::parse_plan;
 use serde::Serialize;
 
 /// The refusal, in the reader's own words; `None` when the plan reads.

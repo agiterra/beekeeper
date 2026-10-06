@@ -760,7 +760,7 @@ export const CODING_SESSION_CONTINUITY_STATUSES: ReadonlyMap<string, string> =
 /**
  * Reader-facing clauses for the closed set of slugs a create or resume may
  * publish when continuity was lost (`CONTEXT_UNAVAILABLE_REASONS` in
- * `crates/buzz-core/src/coding_session_payload.rs`).
+ * `crates/beekeeper-core/src/coding_session_payload.rs`).
  *
  * Only `session_fresh` and `session_restarted_without_context` ever carry a
  * `reason` — see `REASON_CARRYING_CONTINUITY_STATUSES`. A clause is appended
@@ -813,7 +813,7 @@ export const CODING_SESSION_CONTINUITY_REASONS: ReadonlyMap<string, string> =
 
 /**
  * The only two continuity statuses a lost verified package can attach a
- * `reason` to (`crates/buzz-session-provider/src/lib.rs`'s create and resume
+ * `reason` to (`crates/beekeeper-session-provider/src/lib.rs`'s create and resume
  * disclosure sites). A `reason` on any other status is ignored rather than
  * rendered, since none of those statuses represent a continuity loss.
  */

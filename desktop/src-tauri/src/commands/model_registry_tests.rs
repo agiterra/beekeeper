@@ -191,8 +191,8 @@ fn a_symlinked_registry_is_skipped_and_the_next_rung_answers() {
 #[test]
 fn the_seeded_file_name_is_the_name_readers_look_for() {
     assert_eq!(
-        buzz_persona_pkg::seed::MODEL_REGISTRY_YML,
-        buzz_core_pkg::model_registry_source::AGENTS_REPO_REGISTRY_FILE
+        beekeeper_persona_pkg::seed::MODEL_REGISTRY_YML,
+        beekeeper_core_pkg::model_registry_source::AGENTS_REPO_REGISTRY_FILE
     );
 }
 

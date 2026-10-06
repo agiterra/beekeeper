@@ -5,7 +5,7 @@ import 'coding_session_target.dart';
 /// Wire constants and strict checks for kind 44252, the provider-signed
 /// generated title (NIP-CSG § Generated title).
 ///
-/// Mirror of `crates/buzz-core/src/coding_session_title.rs`; the shared
+/// Mirror of `crates/beekeeper-core/src/coding_session_title.rs`; the shared
 /// `conformance/session-display-name/` vectors are what keep the two honest.
 
 /// Exact version carried by the `cstl-v` tag.

@@ -128,7 +128,7 @@ kind uses. It checks no signer standing, the division 44229 and 44245 draw.
 
 **Readers judge standing, in one resolver.** Every reader resolves an
 umbrella's display name with the same three ranked tiers
-(`buzz_core::coding_session_title::resolve_session_display_name`, mirrored in
+(`beekeeper_core::coding_session_title::resolve_session_display_name`, mirrored in
 TypeScript and Dart and pinned by `conformance/session-display-name/`):
 
 1. **person** — the latest valid founder-signed 44229, as above;

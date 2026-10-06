@@ -2,7 +2,7 @@
  * The `buzz-protect` rules that govern a repository — the announcement's own
  * rows, and every founder's signed rule record.
  *
- * Tag grammar (`crates/buzz-core/src/git_perms.rs`):
+ * Tag grammar (`crates/beekeeper-core/src/git_perms.rs`):
  * `["buzz-protect", "<ref-pattern>", "<rule1>", "<rule2>", ...]`.
  *
  * **Who may set a rule.** Until lane L26, only the announcement's signer:
@@ -12,7 +12,7 @@
  * signer, a NIP-34 `maintainers` entry, or an Owner on the roster of the
  * project the repository back-references — may set or remove a rule by
  * signing a rule record (kind 30625,
- * `crates/buzz-core/src/repository_protection.rs`). The relay admits one only
+ * `crates/beekeeper-core/src/repository_protection.rs`). The relay admits one only
  * from a founder, and its push gate resolves records against the
  * announcement's rows with last write wins per exact ref pattern.
  *
@@ -54,7 +54,7 @@ const RULE_RECORD_SCHEMA = "buzz-repo-protection/v1";
  * Removal has to be a row rather than an absence: a record only takes a
  * pattern over by naming it, so dropping the row would fall back to the
  * announcement's rule — the opposite of removing it. Mirrors
- * `PROTECTION_RULE_CLEAR` in `crates/buzz-core/src/git_perms.rs`.
+ * `PROTECTION_RULE_CLEAR` in `crates/beekeeper-core/src/git_perms.rs`.
  */
 export const PROTECTION_RULE_CLEAR = "none";
 
@@ -128,7 +128,7 @@ export function requireVerdictFromDecisions(
  * Every founder of a repository: its announcement's signer, its NIP-34
  * `maintainers`, and the project-roster Owners the caller resolved.
  *
- * Mirrors `RepositoryFounders` (`crates/buzz-core/src/repository_founders.rs`)
+ * Mirrors `RepositoryFounders` (`crates/beekeeper-core/src/repository_founders.rs`)
  * for the one question this panel asks — may this viewer set a rule.
  */
 export function repositoryFounders(
@@ -187,7 +187,7 @@ export function ruleRecordLayer(
  * two founders acting in the same second resolve the same way here as at the
  * relay) contributes all of its rows and the rest are dropped. Mirrors
  * `resolve_protection_layers` in
- * `crates/buzz-core/src/repository_protection.rs`.
+ * `crates/beekeeper-core/src/repository_protection.rs`.
  *
  * With no records this returns exactly the announcement's own rules, every
  * decision labelled `announcement` — the "signed before the kind existed"

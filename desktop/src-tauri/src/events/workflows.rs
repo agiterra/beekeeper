@@ -75,7 +75,7 @@ pub fn build_workflow_trigger(
 ///
 /// The relay resolves a kind:46030/46031 by its `d` tag (or an `e` tag naming
 /// the kind:46010 request), never by a `t` tag: see
-/// `crates/buzz-relay/src/handlers/command_executor.rs` `handle_approval_grant`.
+/// `crates/beekeeper-relay/src/handlers/command_executor.rs` `handle_approval_grant`.
 fn approval_ref_tag(approval_ref: &str) -> Result<nostr::Tag, String> {
     let approval_ref = approval_ref.trim();
     if approval_ref.len() != 64 || !approval_ref.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -91,10 +91,10 @@ fn approval_ref_tag(approval_ref: &str) -> Result<nostr::Tag, String> {
 pub fn build_approval_grant(
     approval_ref: &str,
     note: Option<&str>,
-    scope: buzz_core_pkg::workflow_autorun::ApprovalScope,
+    scope: beekeeper_core_pkg::workflow_autorun::ApprovalScope,
 ) -> Result<EventBuilder, String> {
     let tags = vec![approval_ref_tag(approval_ref)?];
-    let content = buzz_core_pkg::workflow_autorun::encode_approval_grant_content(note, scope);
+    let content = beekeeper_core_pkg::workflow_autorun::encode_approval_grant_content(note, scope);
     Ok(EventBuilder::new(Kind::Custom(46030), content).tags(tags))
 }
 
@@ -111,33 +111,35 @@ pub fn build_standing_approval_grant(
     definition_hash: &str,
     note: Option<&str>,
 ) -> Result<EventBuilder, String> {
-    let raw_tags =
-        buzz_core_pkg::workflow_autorun::build_standing_grant_tags(workflow_id, definition_hash)?;
+    let raw_tags = beekeeper_core_pkg::workflow_autorun::build_standing_grant_tags(
+        workflow_id,
+        definition_hash,
+    )?;
     let tags = raw_tags
         .into_iter()
         .map(|parts| tag(parts.iter().map(String::as_str).collect()))
         .collect::<Result<Vec<_>, _>>()?;
-    let content = buzz_core_pkg::workflow_autorun::encode_approval_grant_content(
+    let content = beekeeper_core_pkg::workflow_autorun::encode_approval_grant_content(
         note,
-        buzz_core_pkg::workflow_autorun::ApprovalScope::Action,
+        beekeeper_core_pkg::workflow_autorun::ApprovalScope::Action,
     );
     Ok(EventBuilder::new(Kind::Custom(46030), content).tags(tags))
 }
 
 /// Kind 46032 — revoke every autorun grant of a workflow.
 pub fn build_autorun_revoke(workflow_id: &str, channel_id: &str) -> Result<EventBuilder, String> {
-    let revoke = buzz_core_pkg::workflow_autorun::AutorunRevoke {
-        schema: buzz_core_pkg::workflow_autorun::AUTORUN_SCHEMA.into(),
+    let revoke = beekeeper_core_pkg::workflow_autorun::AutorunRevoke {
+        schema: beekeeper_core_pkg::workflow_autorun::AUTORUN_SCHEMA.into(),
         workflow_id: workflow_id.trim().to_ascii_lowercase(),
         channel_id: channel_id.trim().to_ascii_lowercase(),
     };
-    let (tags, content) = buzz_core_pkg::workflow_autorun::build_autorun_revoke(&revoke)?;
+    let (tags, content) = beekeeper_core_pkg::workflow_autorun::build_autorun_revoke(&revoke)?;
     let tags = tags
         .into_iter()
         .map(|parts| tag(parts.iter().map(String::as_str).collect()))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(EventBuilder::new(
-        Kind::Custom(buzz_core_pkg::kind::KIND_WORKFLOW_AUTORUN_REVOKE as u16),
+        Kind::Custom(beekeeper_core_pkg::kind::KIND_WORKFLOW_AUTORUN_REVOKE as u16),
         content,
     )
     .tags(tags))

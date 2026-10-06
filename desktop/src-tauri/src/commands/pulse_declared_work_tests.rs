@@ -1,11 +1,11 @@
 //! What the native declared-work adapter accepts, refuses, and discloses.
 
-use buzz_core_pkg::coding_session_team_transaction::{
+use beekeeper_core_pkg::coding_session_team_transaction::{
     CodingSessionTeamAssignment, CodingSessionTeamTransactionBody,
     CodingSessionTeamTransactionPayload, CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
 };
-use buzz_core_pkg::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
-use buzz_core_pkg::pulse_declared_work::PulseDeclaredAssignmentStatus;
+use beekeeper_core_pkg::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
+use beekeeper_core_pkg::pulse_declared_work::PulseDeclaredAssignmentStatus;
 use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
 
 use super::*;
@@ -53,8 +53,8 @@ fn assignment_event(founder: &Keys, actor: &Keys, created_at: u64) -> Event {
         brief: "Implement the bounded assigned slice.".to_owned(),
         branch: None,
         base_sha: None,
-        file_ownership: vec!["crates/buzz-core/src".to_owned()],
-        acceptance_steps: vec!["cargo test -p buzz-core".to_owned()],
+        file_ownership: vec!["crates/beekeeper-core/src".to_owned()],
+        acceptance_steps: vec!["cargo test -p beekeeper-core".to_owned()],
     });
     let payload = CodingSessionTeamTransactionPayload {
         schema: CODING_SESSION_TEAM_TRANSACTION_SCHEMA.to_owned(),

@@ -6,7 +6,7 @@ import { KIND_AGENT_OBSERVER_FRAME } from "../constants/kinds";
  * The relay admits at most `RELAY_BURST_CAPACITY` EVENT/REQ/COUNT frames per
  * `BUDGET_WINDOW_MS` for one (community, pubkey) — shared by every device
  * signing with that key — and at most `RELAY_EVENTS_PER_MINUTE` EVENTs per
- * minute (`crates/buzz-relay/src/admission.rs`, `rejection.rs`). The reactive
+ * minute (`crates/beekeeper-relay/src/admission.rs`, `rejection.rs`). The reactive
  * gate (`relayRateLimitGate.ts`) only reacts *after* a refusal; this bucket
  * paces sends so the refusal does not happen in the first place, and keeps a
  * write reserve so a read storm (reconnect replay, catch-up fetches) can never

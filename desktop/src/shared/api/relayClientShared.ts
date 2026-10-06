@@ -44,7 +44,7 @@ export const MAX_FILTERS_PER_REQ = 10;
 /**
  * Aggregate `#h` values the relay accepts per request (WebSocket REQ and
  * `POST /query` alike): `MAX_EXPLICIT_CHANNEL_VALUES` in
- * `crates/buzz-relay/src/handlers/req.rs`, summed across every filter in the
+ * `crates/beekeeper-relay/src/handlers/req.rs`, summed across every filter in the
  * request.
  */
 export const MAX_CHANNEL_VALUES_PER_REQUEST = 128;

@@ -172,7 +172,7 @@ test("both new statuses are turn statuses, so their keys name the stage", () => 
 
 /**
  * The 44223 decoder has a twin in Rust (`decode_coding_session_metadata`,
- * `crates/buzz-core/src/coding_session_payload.rs`), and the two must accept
+ * `crates/beekeeper-core/src/coding_session_payload.rs`), and the two must accept
  * exactly the same signed events. Where they disagree, one half of the system
  * acts on a metadata the other half silently drops — the execution appears
  * seated in the desktop and unseated in the pulse fold, or the reverse — with

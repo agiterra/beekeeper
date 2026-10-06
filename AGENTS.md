@@ -342,7 +342,7 @@ Three things that will mislead you:
   distance only when your commit is an ancestor of the relay's. On a topic
   branch, or after a rebase or squash-merge, it understates or changes
   meaning. If you report a number, report how you got it — see
-  `EnforcementCheckMethod` in `crates/buzz-cli/src/commands/git_setup.rs`.
+  `EnforcementCheckMethod` in `crates/beekeeper-cli/src/commands/git_setup.rs`.
 - **A shallow clone will lie to you.** `git rev-list --count` in a
   `fetch-depth: 1` checkout returns the graft's size, and `merge-base` /
   `rev-list --max-parents=0` will report "no common ancestor" and a false
@@ -369,7 +369,7 @@ by the ACP harness into managed agent subprocesses. In development, set
 ### Building the CLI
 
 ```bash
-cargo build --release -p buzz-cli
+cargo build --release -p beekeeper-cli
 ```
 
 Binary location: `./target/release/bee`. Add `./target/release` to `PATH`
@@ -395,7 +395,7 @@ All reads return sig-stripped JSON arrays; all writes return
 `--format compact` is a **global** flag — it goes before the subcommand:
 `bee --format compact channels list`, NOT `bee channels list --format compact`.
 
-See `crates/buzz-cli/TESTING.md` for the full live-testing runbook.
+See `crates/beekeeper-cli/TESTING.md` for the full live-testing runbook.
 
 ---
 
@@ -406,7 +406,7 @@ just test-unit    # unit tests, no infrastructure needed
 just test         # full integration suite (requires Postgres + Redis)
 ```
 
-E2E tests live in `crates/buzz-test-client/tests/`:
+E2E tests live in `crates/beekeeper-test-client/tests/`:
 - `e2e_relay.rs` — WebSocket relay protocol
 - `e2e_media.rs` — media upload/download (Blossom)
 - `e2e_media_extended.rs` — extended media scenarios

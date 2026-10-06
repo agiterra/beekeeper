@@ -9,7 +9,7 @@ import 'coding_session_title_wire.dart';
 /// The one display-name rule every reader of an umbrella session shares.
 ///
 /// Mirror of `resolve_session_display_name` in
-/// `crates/buzz-core/src/coding_session_title.rs`, bound to it by
+/// `crates/beekeeper-core/src/coding_session_title.rs`, bound to it by
 /// `conformance/session-display-name/` (CONTRACT.md and its vectors). Three
 /// tiers, ranked and never compared by time:
 ///

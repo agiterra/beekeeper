@@ -27,7 +27,7 @@ The eleven coding-session kinds, plus kind 44240, land in the relay's Postgres
 | 44228 | Authority transition (draft) | [NIP-CSAT](nips/NIP-CSAT.md) |
 | 44229 | Name revision | [NIP-CSG](nips/NIP-CSG.md) |
 | 44230 | Closure revision | [NIP-CSG](nips/NIP-CSG.md) |
-| 44240 | Project Pulse entry — **pending the Slice 1 branch split** | `crates/buzz-core/src/pulse.rs` (no published NIP yet) |
+| 44240 | Project Pulse entry — **pending the Slice 1 branch split** | `crates/beekeeper-core/src/pulse.rs` (no published NIP yet) |
 | 44244 | Team transaction | [NIP-CSTX](nips/NIP-CSTX.md) |
 | 44245 | Session policy — **a record, not an enforcement** | [NIP-CSP](nips/NIP-CSP.md) |
 
@@ -39,7 +39,7 @@ what it's called, and whether it's closed — and are channel-scoped like the
 rest. 44240 is different in kind, not degree: it is not a coding-session event
 at all, but a Project Pulse coordination claim scoped to a project by an `a` tag
 rather than to a channel by `h` — though an optional `h` may still be present
-(`crates/buzz-core/src/kind.rs:712-713`) — optionally cross-referencing an
+(`crates/beekeeper-core/src/kind.rs:712-713`) — optionally cross-referencing an
 umbrella session via `pu-session`. It is included here because it lives in the same `events` table
 and answers the same kind of question ("what is this project's work actually
 doing right now?"). As of this writing kind 44240 exists in `buzz-core` and
@@ -48,7 +48,7 @@ doing right now?"). As of this writing kind 44240 exists in `buzz-core` and
 not as proof the kind is live on any deployed relay.
 
 There is no separate kinds table: `kind` is an `INT` column, and the registry of
-what each integer means is `crates/buzz-core/src/kind.rs`. The columns that
+what each integer means is `crates/beekeeper-core/src/kind.rs`. The columns that
 matter for analysis:
 
 - `kind` — the integer above.
@@ -67,7 +67,7 @@ channel from a user in the app is applied at query time by the relay, not baked
 into these rows, so **direct SQL sees everything in the community** — treat a
 psql session against the relay as a privileged operation. This applies doubly to
 kind 44240: its project-ACL gate (`pulse_entry_hidden_from` in
-`crates/buzz-core/src/kind.rs`) is enforced by the relay per reader at query
+`crates/beekeeper-core/src/kind.rs`) is enforced by the relay per reader at query
 time, not by anything in the row itself, so a raw SQL scan returns entries for
 projects the querying human may not be a member of.
 
@@ -475,12 +475,12 @@ Semantics: one explicit coordination claim (`plan`, `milestone`, `note`,
 `handoff`, or `blocker`) an author makes about their own work on a project —
 never an observed fact about a worktree, which is what the coding-session
 kinds above are for. Content is strict JSON:
-[`PulseEntry`](../crates/buzz-core/src/pulse.rs) — `schema`, `type`, `text`,
+[`PulseEntry`](../crates/beekeeper-core/src/pulse.rs) — `schema`, `type`, `text`,
 `codeAreas[]`, `branch`, `supersedes`. Tags are position-independent with a
-closed key set (`crates/buzz-core/src/kind.rs:716-718`): exactly one `a` (the
+closed key set (`crates/beekeeper-core/src/kind.rs:716-718`): exactly one `a` (the
 canonical `30621:<owner>:<dtag>` project coordinate), `pu-v`, and `pu-type` —
 which must equal the content's `type`
-(`crates/buzz-core/src/pulse.rs:130`) — plus at most one each of `h` (transport
+(`crates/beekeeper-core/src/pulse.rs:130`) — plus at most one each of `h` (transport
 channel), `branch`, and `pu-session` (a cross-referenced umbrella session's
 `sessionRef`).
 
@@ -540,9 +540,9 @@ cursor for the rest, which is what `bee sessions` does internally.
 - [NIP-CST](nips/NIP-CST.md) — the transcript-item contract these queries read.
 - [NIP-CSG](nips/NIP-CSG.md) — genesis, goal, name, and closure revisions.
 - [NIP-CSAT](nips/NIP-CSAT.md) — the authority transition chain (draft).
-- `crates/buzz-core/src/pulse.rs` — Project Pulse entry validation (kind
+- `crates/beekeeper-core/src/pulse.rs` — Project Pulse entry validation (kind
   44240, pending the Slice 1 branch split).
 - `conformance/project-pulse-fold/CONTRACT.md` — the Pulse supersession
   fold's single source of truth.
-- `crates/buzz-cli/src/commands/sessions.rs` — the CLI implementation, including
+- `crates/beekeeper-cli/src/commands/sessions.rs` — the CLI implementation, including
   the generation-resolution rules it shares with the desktop consumer.

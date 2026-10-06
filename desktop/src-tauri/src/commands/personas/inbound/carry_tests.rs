@@ -32,7 +32,7 @@ fn record() -> ManagedAgentRecord {
 }
 
 fn digest() -> String {
-    buzz_core_pkg::project_agent_association::project_agent_digest(PROJECT).expect("digest")
+    beekeeper_core_pkg::project_agent_association::project_agent_digest(PROJECT).expect("digest")
 }
 
 /// Parse inbound content through the real parser, as the apply path does.
@@ -148,7 +148,7 @@ fn an_inbound_digest_for_an_agent_not_held_here_changes_nothing() {
 
 fn withdrawal() -> serde_json::Value {
     let mut value = without_digest();
-    value[buzz_core_pkg::project_agent_association::PROJECT_AGENT_WITHDRAWN_CONTENT_KEY] =
+    value[beekeeper_core_pkg::project_agent_association::PROJECT_AGENT_WITHDRAWN_CONTENT_KEY] =
         serde_json::json!(true);
     value
 }

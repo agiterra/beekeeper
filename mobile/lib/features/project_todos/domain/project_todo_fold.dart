@@ -6,7 +6,7 @@ import 'project_todo_op.dart';
 /// The project to-do fold: from a bag of kind 44248 ops to the lists and
 /// items a reader sees.
 ///
-/// A port of `crates/buzz-core/src/project_todo_fold.rs`, bound to
+/// A port of `crates/beekeeper-core/src/project_todo_fold.rs`, bound to
 /// `conformance/project-todo-fold/CONTRACT.md` and pinned by
 /// `fixtures/fold-vectors.json`. The fold is pure and total: any set of
 /// events in, one digest out, the same digest from every client. See the

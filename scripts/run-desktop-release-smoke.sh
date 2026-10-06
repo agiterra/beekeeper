@@ -99,7 +99,7 @@ if [[ -n "${BUZZ_E2E_RELAY_BIN:-}" ]]; then
   RELAY_BIN="${BUZZ_E2E_RELAY_BIN}"
 else
   log "building relay"
-  cargo build --profile ci -p buzz-relay
+  cargo build --profile ci -p beekeeper-relay
   RELAY_BIN="${ROOT}/target/ci/buzz-relay"
 fi
 log "starting relay at ${RELAY_HTTP_URL}"

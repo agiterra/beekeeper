@@ -12,11 +12,11 @@ reading the actual Rust types and the actual TypeScript and Dart decoders.
 
 | Record | Rust | Desktop | Mobile (Dart) |
 | --- | --- | --- | --- |
-| 44221 lifecycle command | `crates/buzz-core/src/coding_session_lifecycle_command.rs` `decode_coding_session_lifecycle_command` | `desktop/src/shared/coordination/sessionCoordinationStrictJson.ts` `hasStrictLifecycleCommandJson` + `…Values` | `mobile/lib/features/coding_sessions/domain/coding_session_session_decoders.dart` `decodeCodingSessionCreate` (create only; `decodeCodingSessionResume` is its sibling) |
-| 44223 metadata | `crates/buzz-core/src/coding_session_payload.rs` `decode_coding_session_metadata` | **two**: `sessionCoordinationStrictJson.ts` `hasStrictMetadataJson` (the Pulse gate) and `desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts` `parseBuzzCodingSessionMetadata` | `coding_session_decoders.dart` `decodeCodingSessionMetadata` |
+| 44221 lifecycle command | `crates/beekeeper-core/src/coding_session_lifecycle_command.rs` `decode_coding_session_lifecycle_command` | `desktop/src/shared/coordination/sessionCoordinationStrictJson.ts` `hasStrictLifecycleCommandJson` + `…Values` | `mobile/lib/features/coding_sessions/domain/coding_session_session_decoders.dart` `decodeCodingSessionCreate` (create only; `decodeCodingSessionResume` is its sibling) |
+| 44223 metadata | `crates/beekeeper-core/src/coding_session_payload.rs` `decode_coding_session_metadata` | **two**: `sessionCoordinationStrictJson.ts` `hasStrictMetadataJson` (the Pulse gate) and `desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts` `parseBuzzCodingSessionMetadata` | `coding_session_decoders.dart` `decodeCodingSessionMetadata` |
 | 44224 lifecycle receipt | `coding_session_payload.rs` `decode_coding_session_lifecycle_receipt` | **two**: `sessionCoordinationStrictJson.ts` `hasStrictLifecycleReceiptJson` + `…Values` (lifecycle vocabulary only, by design) and `codingSessionIngressPayloads.ts` `parseCodingSessionLifecycleReceipt` | `coding_session_decoders.dart` `decodeCodingSessionReceipt` |
-| 44226 genesis | `crates/buzz-core/src/coding_session_genesis.rs` `decode_coding_session_genesis` | `desktop/src/features/coding-sessions/lib/codingSessionCreateObservations.ts` `classifyCodingSessionGenesisEvent` | `coding_session_session_decoders.dart` `decodeCodingSessionGenesis` |
-| 44230 closure | `crates/buzz-core/src/coding_session_closure.rs` `decode_coding_session_closure` | `sessionCoordinationStrictJson.ts` `hasStrictClosureJson` | `coding_session_session_decoders.dart` `decodeCodingSessionClosure` |
+| 44226 genesis | `crates/beekeeper-core/src/coding_session_genesis.rs` `decode_coding_session_genesis` | `desktop/src/features/coding-sessions/lib/codingSessionCreateObservations.ts` `classifyCodingSessionGenesisEvent` | `coding_session_session_decoders.dart` `decodeCodingSessionGenesis` |
+| 44230 closure | `crates/beekeeper-core/src/coding_session_closure.rs` `decode_coding_session_closure` | `sessionCoordinationStrictJson.ts` `hasStrictClosureJson` | `coding_session_session_decoders.dart` `decodeCodingSessionClosure` |
 
 **There is exactly one strict Rust reader per record.** `buzz-cli`,
 `buzz-db`, `buzz-relay`, `buzz-sdk` and `buzz-session-provider` all call
@@ -35,7 +35,7 @@ fixtures it reads is what keeps it that way.
 
 | Test | Loads |
 | --- | --- |
-| `crates/buzz-core/tests/coding_session_record_conformance.rs` | all five |
+| `crates/beekeeper-core/tests/coding_session_record_conformance.rs` | all five |
 | `desktop/src/shared/coordination/codingSessionRecordConformance.test.mjs` | 44221, 44223, 44224, 44230 (both desktop readers where there are two) |
 | `desktop/src/features/coding-sessions/lib/codingSessionGenesisConformance.test.mjs` | 44226 |
 | `mobile/test/features/coding_sessions/domain/coding_session_record_conformance_test.dart` | all five |

@@ -52,7 +52,7 @@ steps:
     commands:
       - export PATH="$CI_WORKSPACE/bin:$PATH"
       # DB-backed suites deadlock in parallel (DROP SCHEMA) — single-threaded.
-      - cargo test -p buzz-db -- --ignored --test-threads=1
+      - cargo test -p beekeeper-db -- --ignored --test-threads=1
 
   desktop-e2e:
     image: mcr.microsoft.com/playwright:v1.49.0-noble

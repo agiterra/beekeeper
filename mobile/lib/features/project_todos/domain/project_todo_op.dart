@@ -9,7 +9,7 @@ import 'package:buzz/shared/utils/fractional_rank.dart';
 /// Project to-do operations (kind 44248, NIP-TD): one field-level edit to a
 /// shared, project-scoped to-do list.
 ///
-/// A port of `crates/buzz-core/src/project_todo.rs`, the single wire
+/// A port of `crates/beekeeper-core/src/project_todo.rs`, the single wire
 /// validator: the op vocabulary, the closed content key set, the tag
 /// grammar. The fold that turns a bag of ops into lists lives in
 /// `project_todo_fold.dart`. Every op sets exactly one thing, so two people

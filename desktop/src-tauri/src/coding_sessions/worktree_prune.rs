@@ -1,7 +1,7 @@
 //! Gather the facts one seat worktree's disposition needs, and act on it.
 //!
 //! The decision itself is not here — it is
-//! [`buzz_core::worktree_lifecycle::classify_seat_worktree`], pure and
+//! [`beekeeper_core::worktree_lifecycle::classify_seat_worktree`], pure and
 //! testable. This module does the two things that cannot be pure: it reads the
 //! disk (does the directory still exist, how many lines does `git status
 //! --porcelain` print, how large is `target/`), and it removes things.
@@ -23,12 +23,12 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
-use buzz_core_pkg::sandbox_manifest::reclaim_plan_for;
-use buzz_core_pkg::sandbox_seed::{
+use beekeeper_core_pkg::sandbox_manifest::reclaim_plan_for;
+use beekeeper_core_pkg::sandbox_seed::{
     estimate_reclaimable, reclaim, render_reclaim_estimate, ReclaimDisposition,
 };
-use buzz_core_pkg::sandbox_seed_fs::{NoGitAnswers, StdSeedOps};
-use buzz_core_pkg::worktree_lifecycle::{
+use beekeeper_core_pkg::sandbox_seed_fs::{NoGitAnswers, StdSeedOps};
+use beekeeper_core_pkg::worktree_lifecycle::{
     build_output_reclaimable, classify_seat_worktree, render_reclaimable_bytes,
     SeatWorktreeDisposition, SeatWorktreeFacts,
 };

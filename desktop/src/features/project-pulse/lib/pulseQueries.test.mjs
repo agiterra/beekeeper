@@ -855,7 +855,7 @@ test("an empty declared-work state hands back frozen empties, by identity", asyn
  *
  * `composeRef` is the ninth additive key on this payload, and the provider
  * emits it for **every** seat staged from a composed pack
- * (`seat_compose_ref`, `crates/buzz-session-provider/src/lib.rs`). The gate's
+ * (`seat_compose_ref`, `crates/beekeeper-session-provider/src/lib.rs`). The gate's
  * amendment list did not carry it, so each such 44223 was excluded here as
  * "carried undecodable coding-session metadata": the session was missing from
  * `digest.sessions`, and the project Overview card — which has no

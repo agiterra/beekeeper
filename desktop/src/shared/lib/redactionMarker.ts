@@ -10,7 +10,7 @@
  * ```
  *
  * Produced by `context_elision_marker` in
- * `crates/buzz-core/src/coding_session_context.rs`. The marker is load-bearing
+ * `crates/beekeeper-core/src/coding_session_context.rs`. The marker is load-bearing
  * — it is how a reader tells "the provider had this and chose not to publish
  * it" apart from "nothing was there" — and it is already signed into events in
  * the field, so it is never rewritten on the wire. It is read here instead, so

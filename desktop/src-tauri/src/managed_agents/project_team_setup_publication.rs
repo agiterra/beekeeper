@@ -5,7 +5,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use buzz_core_pkg::project_pack_source::{
+use beekeeper_core_pkg::project_pack_source::{
     build_conditional_project_pack_source, PackPin, DEFAULT_PACK_PATH,
 };
 use nostr::{Event, EventBuilder, Kind, Tag};
@@ -25,16 +25,16 @@ use crate::managed_agents::{
     save_teams,
 };
 use crate::session_provider::{commands as provider_commands, store as provider_store};
-use buzz_core_pkg::coding_session_genesis::CodingSessionGenesisPayload;
-use buzz_core_pkg::coding_session_identity::ProviderInstanceAlias;
-use buzz_core_pkg::coding_session_lifecycle_command::{
+use beekeeper_core_pkg::coding_session_genesis::CodingSessionGenesisPayload;
+use beekeeper_core_pkg::coding_session_identity::ProviderInstanceAlias;
+use beekeeper_core_pkg::coding_session_lifecycle_command::{
     CodingSessionLifecycleAction, CodingSessionLifecycleCommandPayload,
     CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
 };
-use buzz_core_pkg::coding_session_payload::{
+use beekeeper_core_pkg::coding_session_payload::{
     decode_coding_session_lifecycle_receipt, ReceiptStatus,
 };
-use buzz_core_pkg::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT;
+use beekeeper_core_pkg::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT;
 use serde_json::json;
 
 #[path = "project_team_setup_activation.rs"]
@@ -449,7 +449,7 @@ async fn current_source(
     let events = crate::relay::query_relay(
         state,
         &[serde_json::json!({
-            "kinds": [buzz_core_pkg::kind::KIND_PROJECT_PACK_SOURCE],
+            "kinds": [beekeeper_core_pkg::kind::KIND_PROJECT_PACK_SOURCE],
             "#d": [project_ref], "limit": 8,
         })],
     )
@@ -461,7 +461,8 @@ async fn current_source(
     })?;
     let mut newest: Option<((u64, String), CurrentSource)> = None;
     for event in events {
-        let Ok(decoded) = buzz_core_pkg::project_pack_source::decode_project_pack_source(&event)
+        let Ok(decoded) =
+            beekeeper_core_pkg::project_pack_source::decode_project_pack_source(&event)
         else {
             continue;
         };
@@ -623,7 +624,7 @@ fn source_event(journal: &PublicationJournal, owner: &nostr::Keys) -> Result<Eve
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| invalid(error.to_string()))?;
     EventBuilder::new(
-        Kind::Custom(buzz_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16),
+        Kind::Custom(beekeeper_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16),
         draft.content,
     )
     .tags(tags)

@@ -6,7 +6,7 @@
 //! names, in that seat's own worktree — used to live here in full: the git
 //! ladder, the refusal codes, the durable record, and (after lane 185) the
 //! queue that drained them. All of it now lives in
-//! [`buzz_session_provider_pkg::assignment_inputs`], because the party that must
+//! [`beekeeper_session_provider_pkg::assignment_inputs`], because the party that must
 //! own the order `accept → establish → verify → start` is the one holding both
 //! the governed kind-44244 subscription and the turn gate, and that party is
 //! the provider, not this app (ledger 185's "owed, live" paragraph, and 202).
@@ -34,12 +34,12 @@ use crate::coding_sessions::workdir_store::{
     seat_worktree_key, CodingSessionWorkdirStore, WORKDIR_STORE_VERSION,
 };
 
-use buzz_session_provider_pkg::assignment_inputs::{refuse, SeatCheckout};
-pub(crate) use buzz_session_provider_pkg::assignment_inputs::{
+use beekeeper_session_provider_pkg::assignment_inputs::{refuse, SeatCheckout};
+pub(crate) use beekeeper_session_provider_pkg::assignment_inputs::{
     AssignmentInputRecord as CodingSessionAssignmentInputRecord, EstablishAssignmentInputRequest,
     MAX_ASSIGNMENT_INPUT_RECORDS,
 };
-pub use buzz_session_provider_pkg::assignment_inputs::{
+pub use beekeeper_session_provider_pkg::assignment_inputs::{
     EstablishAssignmentInputCode, EstablishAssignmentInputError, EstablishedAssignmentInput,
 };
 
@@ -68,7 +68,7 @@ impl CodingSessionWorkdirStore {
         &self,
         assignment_id: &str,
     ) -> Option<&CodingSessionAssignmentInputRecord> {
-        buzz_session_provider_pkg::assignment_inputs::assignment_input(
+        beekeeper_session_provider_pkg::assignment_inputs::assignment_input(
             &self.assignment_inputs,
             assignment_id,
         )
@@ -151,14 +151,14 @@ pub(crate) fn establish(
     state_dir: &std::path::Path,
 ) -> Result<EstablishedAssignmentInput, EstablishAssignmentInputError> {
     let session_ref = request.session_ref.clone().or_else(|| {
-        buzz_session_provider_pkg::assignment_inputs::assignment_input(
+        beekeeper_session_provider_pkg::assignment_inputs::assignment_input(
             &store.assignment_inputs,
             &request.assignment_id,
         )
         .and_then(|record| record.session_ref.clone())
     });
     let seat_label = request.seat_label.clone().or_else(|| {
-        buzz_session_provider_pkg::assignment_inputs::assignment_input(
+        beekeeper_session_provider_pkg::assignment_inputs::assignment_input(
             &store.assignment_inputs,
             &request.assignment_id,
         )
@@ -168,7 +168,7 @@ pub(crate) fn establish(
         (Some(session_ref), Some(seat_label)) => seat_checkout(store, session_ref, seat_label),
         _ => None,
     };
-    buzz_session_provider_pkg::assignment_inputs::establish(
+    beekeeper_session_provider_pkg::assignment_inputs::establish(
         &mut store.assignment_inputs,
         request,
         checkout.as_ref(),
@@ -252,7 +252,7 @@ pub async fn coding_session_assignment_input_record(
 ) -> Result<Option<CodingSessionAssignmentInputRecord>, String> {
     let store = load_workdir_store_readonly(&app)?;
     Ok(
-        buzz_session_provider_pkg::assignment_inputs::assignment_input(
+        beekeeper_session_provider_pkg::assignment_inputs::assignment_input(
             &store.assignment_inputs,
             &assignment_id,
         )

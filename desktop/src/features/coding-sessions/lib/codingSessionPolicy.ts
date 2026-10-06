@@ -489,7 +489,7 @@ export async function readCodingSessionPolicyEvent(
  * field is named, and every other field is *"read and shown, never counted"*.
  * {@link CODING_SESSION_POLICY_ENFORCED_FIELDS} marks those rows. Kept as one
  * constant so no surface can drift into softer wording — and held to the
- * others by `crates/buzz-cli/tests/policy_enforcement_sentence.rs`, after
+ * others by `crates/beekeeper-cli/tests/policy_enforcement_sentence.rs`, after
  * REVIEW-L7 F1 found six copies claiming one enforced field when there were
  * two.
  */
@@ -504,7 +504,7 @@ export const CODING_SESSION_POLICY_STATED_NOT_ENFORCED =
  *
  * The *only* place that claim is made. `budget.turns` is here because lane
  * B2.4 shipped its consumer: `exhausted_umbrella_budget`
- * (`crates/buzz-session-provider/src/commands.rs`), reached from the 44220
+ * (`crates/beekeeper-session-provider/src/commands.rs`), reached from the 44220
  * turn gate and from a create's first turn, which override
  * `BUZZ_CSP_TURN_BUDGET` for that umbrella. The umbrella's founder is still
  * never refused, and a policy published while a seat is already running does
@@ -512,7 +512,7 @@ export const CODING_SESSION_POLICY_STATED_NOT_ENFORCED =
  *
  * `gates.verifierRequired` joined it on 2026-09-02 (batch 3, item G): its
  * consumer is the 44244 fold's completion check
- * (`crates/buzz-core/src/coding_session_completion_verification.rs`), which
+ * (`crates/beekeeper-core/src/coding_session_completion_verification.rs`), which
  * excludes a `mission.completed` whose settled assignments carry no active
  * verifier's ruling, and which `bee sessions complete` refuses to sign past.
  * Desktop's own fold passes `verifierRequired: false` until the policy hook
@@ -522,7 +522,7 @@ export const CODING_SESSION_POLICY_STATED_NOT_ENFORCED =
  * `gates.requiredGates` joined it on 2026-09-03 (lane L22), and
  * `gates.verifierRequired` gained a second consumer the same day: the relay's
  * verdict-gated push rule
- * (`crates/buzz-core/src/coding_session_verdict_admission_observed.rs`). When
+ * (`crates/beekeeper-core/src/coding_session_verdict_admission_observed.rs`). When
  * a mission does not require a verifier, a seat's push on a
  * `require-verdict` ref lands only if every gate on this list was observed
  * green on that exact commit — so the list a founder writes here is the list

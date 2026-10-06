@@ -98,7 +98,7 @@ test("isConversationalUnreadKind_unknownKind_countsAsConversational", () => {
 });
 
 test("codingSessionKinds_matchBuzzCoreValues", () => {
-  // Mirror of crates/buzz-core/src/kind.rs. A drift here is a wire break that
+  // Mirror of crates/beekeeper-core/src/kind.rs. A drift here is a wire break that
   // no type checker catches — the events simply stop matching.
   assert.deepEqual(
     {
@@ -179,7 +179,7 @@ test("the kinds Project Pulse missions read match buzz-core", () => {
   // is a wire break no type checker catches: the events simply stop matching
   // and the surface renders a project as quieter than it is.
   //
-  // `crates/buzz-core/src/kind.rs` calls 30618 `KIND_GIT_REPO_STATE`; this
+  // `crates/beekeeper-core/src/kind.rs` calls 30618 `KIND_GIT_REPO_STATE`; this
   // file has carried the same integer as `KIND_REPO_STATE` since NIP-34
   // landed. One integer, two names — asserted here so the pair cannot drift
   // apart unnoticed, and so nobody adds a third constant for it.
@@ -255,7 +255,7 @@ test("the generated-title kind is read off the wire and served by the mock relay
 });
 
 test("projectScopedKinds_matchBuzzCoreValues", () => {
-  // Mirror of crates/buzz-core/src/kind.rs `PROJECT_A_SCOPED_KINDS`: the
+  // Mirror of crates/beekeeper-core/src/kind.rs `PROJECT_A_SCOPED_KINDS`: the
   // Pulse entry and the to-do op share one relay gate and one `#a` filter
   // shape, and a drift here is a wire break no type checker catches.
   assert.deepEqual(

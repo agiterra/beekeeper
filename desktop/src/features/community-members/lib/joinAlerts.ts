@@ -5,7 +5,7 @@
  *
  * The relay emits a kind:8000 "member-added" delta on the invite-claim and
  * relay-admin paths, but `buzz-admin add-member` deliberately emits none
- * (`crates/buzz-admin/src/main.rs:6-13`), and kind:8000 fan-out is pod-local
+ * (`crates/beekeeper-admin/src/main.rs:6-13`), and kind:8000 fan-out is pod-local
  * (`fan_out_event_to_local_subscribers` never calls `publish_event`, unlike
  * `dispatch_persistent_event_inner`). The kind:13534 membership snapshot is the
  * only signal that covers every join path *and* propagates across pods, so it

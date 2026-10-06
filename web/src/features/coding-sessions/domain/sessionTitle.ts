@@ -5,7 +5,7 @@
  * name is a founder-signed 44229; a generated title is a 44252 signed by the
  * provider that ran the founder's first turn — a model's words, so it is never
  * published or shown as a person's name. This file ranks them exactly as
- * `resolve_session_display_name` in `crates/buzz-core/src/coding_session_title.rs`
+ * `resolve_session_display_name` in `crates/beekeeper-core/src/coding_session_title.rs`
  * does, and `sessionTitle.test.mjs` binds it to the shared vectors in
  * `conformance/session-display-name/` (CONTRACT.md is the rule in prose):
  *

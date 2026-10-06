@@ -920,7 +920,7 @@ test("a redaction marker in the path slot is an unreported edit, not a file", ()
     object: null,
   };
   named.toolKind = "edit";
-  named.args = { file_path: "crates/buzz-core/src/kind.rs" };
+  named.args = { file_path: "crates/beekeeper-core/src/kind.rs" };
   named.result = "";
 
   const elided = tool({ id: "edit-elided", renderClass: "generic" });
@@ -938,7 +938,7 @@ test("a redaction marker in the path slot is an unreported edit, not a file", ()
 
   const observed = deriveCodingSessionObservedChanges([named, elided]);
   assert.equal(observed.files.length, 1);
-  assert.equal(observed.files[0].path, "crates/buzz-core/src/kind.rs");
+  assert.equal(observed.files[0].path, "crates/beekeeper-core/src/kind.rs");
   assert.equal(observed.unreportedEditCount, 1);
   // The bytes and the digest are not re-surfaced: a redaction disclosed as a
   // redaction is the whole point.

@@ -7,13 +7,13 @@ use super::{
 use crate::agent_host::AgentHost;
 use crate::app_state::AppState;
 use crate::session_provider::{commands, store};
-use buzz_core_pkg::coding_session_command::CodingSessionTarget;
-use buzz_core_pkg::coding_session_identity::ProviderInstanceAlias;
-use buzz_core_pkg::coding_session_lifecycle_command::{
+use beekeeper_core_pkg::coding_session_command::CodingSessionTarget;
+use beekeeper_core_pkg::coding_session_identity::ProviderInstanceAlias;
+use beekeeper_core_pkg::coding_session_lifecycle_command::{
     CodingSessionLifecycleAction, CodingSessionLifecycleCommandPayload,
     CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
 };
-use buzz_core_pkg::coding_session_payload::PackRef;
+use beekeeper_core_pkg::coding_session_payload::PackRef;
 use nostr::{Event, Keys};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -177,7 +177,7 @@ fn create_event(
     let payload = create_payload(draft, reservation, choice, actor)?;
     let channel =
         uuid::Uuid::parse_str(&reservation.channel_id).map_err(|e| invalid(e.to_string()))?;
-    buzz_sdk_pkg::builders::build_coding_session_lifecycle_command(channel, &payload)
+    beekeeper_sdk_pkg::builders::build_coding_session_lifecycle_command(channel, &payload)
         .map_err(|e| invalid(e.to_string()))?
         .sign_with_keys(keys)
         .map_err(|e| invalid(e.to_string()))

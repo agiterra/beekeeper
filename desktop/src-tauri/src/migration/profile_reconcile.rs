@@ -143,7 +143,7 @@ pub(crate) fn write_profile_reconcile_queue(
 }
 
 pub(crate) fn profile_reconcile_relay_key(relay_url: &str) -> Result<String, String> {
-    buzz_core_pkg::relay::normalize_relay_url(relay_url)
+    beekeeper_core_pkg::relay::normalize_relay_url(relay_url)
         .map_err(|error| format!("invalid profile reconcile relay: {error}"))
 }
 

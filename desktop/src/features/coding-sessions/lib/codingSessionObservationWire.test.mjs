@@ -47,8 +47,8 @@ test("the adapter's own output decodes, field for field", () => {
   const declared = fold.gates.find((row) => row.source === "declared");
   assert.equal(observed.outcome, "failed");
   assert.equal(declared.outcome, "passed");
-  assert.equal(observed.command, "cargo test -p buzz-cli");
-  assert.equal(declared.command, "cargo test -p buzz-cli");
+  assert.equal(observed.command, "cargo test -p beekeeper-cli");
+  assert.equal(declared.command, "cargo test -p beekeeper-cli");
   assert.notEqual(observed.authorPubkey, declared.authorPubkey);
 
   // Every truncation count is present, including the zeroes: "nothing dropped"

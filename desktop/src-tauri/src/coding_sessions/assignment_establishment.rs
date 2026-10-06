@@ -16,8 +16,8 @@
 //! the turn gate. That is the provider. It now records the intent from its own
 //! verified complete-discovery pass, drains it, and defers a wake that arrives
 //! while an establishment is pending
-//! ([`buzz_session_provider_pkg::assignment_inputs`], and the fence in
-//! `crates/buzz-session-provider/src/verification_input.rs`).
+//! ([`beekeeper_session_provider_pkg::assignment_inputs`], and the fence in
+//! `crates/beekeeper-session-provider/src/verification_input.rs`).
 //!
 //! # What this module is for
 //!
@@ -33,7 +33,7 @@
 //! the two could disagree about whether an attempt was in flight. The records,
 //! the file and the lock are shared; the *order* has one owner.
 
-use buzz_core_pkg::coding_session_team_transaction::role_requires_verification_input;
+use beekeeper_core_pkg::coding_session_team_transaction::role_requires_verification_input;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
@@ -44,7 +44,7 @@ use crate::coding_sessions::workdir_store::{
     WORKDIR_STORE_VERSION,
 };
 
-use buzz_session_provider_pkg::assignment_inputs::{
+use beekeeper_session_provider_pkg::assignment_inputs::{
     queue_intent, requeue_assignment_input as requeue_assignment_input_core,
     AssignmentInputDisposition, AssignmentIntent,
 };
@@ -53,7 +53,7 @@ use buzz_session_provider_pkg::assignment_inputs::{
 ///
 /// The shared disposition, re-exported: the words a surface reads are the
 /// words the provider writes.
-pub use buzz_session_provider_pkg::assignment_inputs::AssignmentInputDisposition as CodingSessionAssignmentInputDisposition;
+pub use beekeeper_session_provider_pkg::assignment_inputs::AssignmentInputDisposition as CodingSessionAssignmentInputDisposition;
 
 /// One folded assignment, as a surface observed it.
 ///
@@ -166,7 +166,7 @@ fn queue_one(
 /// Every assignment this host still owes an input for, in key order.
 #[must_use]
 pub(crate) fn pending_assignment_inputs(store: &CodingSessionWorkdirStore) -> Vec<String> {
-    buzz_session_provider_pkg::assignment_inputs::pending_assignment_inputs(
+    beekeeper_session_provider_pkg::assignment_inputs::pending_assignment_inputs(
         &store.assignment_inputs,
     )
 }

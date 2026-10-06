@@ -3,7 +3,7 @@
 
 Spawns the adapter command, sends the same `initialize` the harness sends
 (protocolVersion 2, newline-framed JSON-RPC — see build_initialize_params in
-crates/buzz-acp/src/acp.rs:131 and the capability parse at acp.rs:773-779),
+crates/beekeeper-acp/src/acp.rs:131 and the capability parse at acp.rs:773-779),
 and prints:
 
   loadSession        agentCapabilities.loadSession == true        -> session/load path

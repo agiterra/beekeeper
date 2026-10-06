@@ -110,8 +110,8 @@ otherwise.
   "brief": "<complete bounded brief>",
   "branch": "team-transactions",
   "baseSha": "<40- or 64-hex git object id>",
-  "fileOwnership": ["crates/buzz-core/src/coding_session_team_transaction.rs"],
-  "acceptanceSteps": ["cargo test -p buzz-core"]
+  "fileOwnership": ["crates/beekeeper-core/src/coding_session_team_transaction.rs"],
+  "acceptanceSteps": ["cargo test -p beekeeper-core"]
 }
 ```
 
@@ -185,11 +185,11 @@ The terminal diagnostic pointer is bounded public JSON:
   "branch": "team-transactions",
   "baseSha": "<git object id or null>",
   "headSha": "<git object id or null>",
-  "files": ["crates/buzz-core/src/coding_session_team_transaction.rs"],
+  "files": ["crates/beekeeper-core/src/coding_session_team_transaction.rs"],
   "tests": [
     {
       "name": "buzz-core",
-      "command": "cargo test -p buzz-core",
+      "command": "cargo test -p beekeeper-core",
       "outcome": "passed",
       "evidence": "42 passed; exit 0"
     }

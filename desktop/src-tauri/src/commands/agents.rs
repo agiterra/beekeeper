@@ -105,7 +105,7 @@ pub(super) fn tombstone_managed_agent_pending(
             RetainedEvent,
         },
     };
-    use buzz_core_pkg::kind::KIND_MANAGED_AGENT;
+    use beekeeper_core_pkg::kind::KIND_MANAGED_AGENT;
     use nostr::JsonUtil;
 
     const KIND_DELETE: u32 = 5;
@@ -156,7 +156,7 @@ pub(super) fn build_agent_archive_request(
     } else {
         let agent = nostr::PublicKey::from_hex(agent_pubkey)
             .map_err(|e| format!("invalid agent pubkey: {e}"))?;
-        let tag_json = buzz_sdk_pkg::nip_oa::compute_auth_tag(keys, &agent, "")
+        let tag_json = beekeeper_sdk_pkg::nip_oa::compute_auth_tag(keys, &agent, "")
             .map_err(|e| format!("failed to build owner auth tag: {e}"))?;
         let parts: Vec<String> = serde_json::from_str(&tag_json)
             .map_err(|e| format!("failed to parse owner auth tag: {e}"))?;
@@ -190,7 +190,7 @@ pub(super) fn archive_managed_agent_pending(
     persona_id: Option<&str>,
 ) {
     use crate::managed_agents::retention::{open_retention_db, retain_event, RetainedEvent};
-    use buzz_core_pkg::kind::KIND_IA_ARCHIVE_REQUEST;
+    use beekeeper_core_pkg::kind::KIND_IA_ARCHIVE_REQUEST;
     use nostr::JsonUtil;
 
     let result = (|| -> Result<(), String> {

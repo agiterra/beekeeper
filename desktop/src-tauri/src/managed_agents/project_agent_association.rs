@@ -48,8 +48,8 @@ pub(crate) const SEAT_ROLE_NOT_PRIMARY: &str = "SEAT_ROLE_NOT_PRIMARY";
 /// coordinate this computer records and the digest other readers match can
 /// never disagree about surrounding U+0085 or U+FEFF.
 pub(crate) fn normalize_project_ref(value: &str) -> Option<String> {
-    buzz_core_pkg::kind::normalize_project_coordinate(
-        buzz_core_pkg::project_agent_association::trim_ascii_whitespace(value),
+    beekeeper_core_pkg::kind::normalize_project_coordinate(
+        beekeeper_core_pkg::project_agent_association::trim_ascii_whitespace(value),
     )
 }
 
@@ -114,7 +114,7 @@ pub(crate) fn new_seat_refusal(
 }
 
 fn trim_ascii(value: &str) -> &str {
-    buzz_core_pkg::project_agent_association::trim_ascii_whitespace(value)
+    beekeeper_core_pkg::project_agent_association::trim_ascii_whitespace(value)
 }
 
 /// Whether `record` may take a **new** seat in the project `require_project_ref`

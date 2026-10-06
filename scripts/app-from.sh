@@ -193,7 +193,7 @@ export PATH="$BUILD_ROOT/bin:$PATH"
 # The commit is known here and the build scripts should not have to re-derive
 # it. `BUZZ_SOURCE_SHA`/`BUZZ_SOURCE_COMMIT_COUNT` are the pair every build
 # script in this repo already reads together or not at all
-# (`crates/buzz-relay/build.rs`, `crates/buzz-core/build.rs`).
+# (`crates/beekeeper-relay/build.rs`, `crates/beekeeper-core/build.rs`).
 export BUZZ_SOURCE_SHA="$SHA"
 export BUZZ_SOURCE_COMMIT_COUNT="$COMMIT_COUNT"
 

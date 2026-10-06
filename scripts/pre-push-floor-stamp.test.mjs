@@ -32,8 +32,8 @@ function withTempGitDir(fn) {
 }
 
 test("scopeHash is order-independent and stable", () => {
-  const a = scopeHash(["scripts/foo.mjs", "crates/buzz-core/src/lib.rs"]);
-  const b = scopeHash(["crates/buzz-core/src/lib.rs", "scripts/foo.mjs"]);
+  const a = scopeHash(["scripts/foo.mjs", "crates/beekeeper-core/src/lib.rs"]);
+  const b = scopeHash(["crates/beekeeper-core/src/lib.rs", "scripts/foo.mjs"]);
   assert.equal(a, b);
 });
 
@@ -45,7 +45,7 @@ test("scopeHash differs for a different file set", () => {
 
 test("a fresh, matching stamp is valid", () => {
   withTempGitDir((gitDir) => {
-    const hash = scopeHash(["crates/buzz-core/src/lib.rs"]);
+    const hash = scopeHash(["crates/beekeeper-core/src/lib.rs"]);
     const now = 1_000_000;
     writeStamp({ gitDir, sha: "abc123", scopeHash: hash, now, ttlSeconds: 600 });
     const result = readValidStamp({ gitDir, sha: "abc123", scopeHash: hash, now: now + 5_000 });
@@ -98,7 +98,7 @@ test("a stamp for a different sha is never honoured, fresh or not", () => {
 test("a stamp for a different scope is never honoured, even for the same sha", () => {
   withTempGitDir((gitDir) => {
     const hashA = scopeHash(["scripts/foo.mjs"]);
-    const hashB = scopeHash(["scripts/foo.mjs", "crates/buzz-core/src/lib.rs"]);
+    const hashB = scopeHash(["scripts/foo.mjs", "crates/beekeeper-core/src/lib.rs"]);
     const now = 1_000_000;
     writeStamp({ gitDir, sha: "abc123", scopeHash: hashA, now, ttlSeconds: 600 });
     const result = readValidStamp({ gitDir, sha: "abc123", scopeHash: hashB, now: now + 1_000 });

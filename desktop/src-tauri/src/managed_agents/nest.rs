@@ -763,7 +763,7 @@ fn is_shared_agent_workdir(workdir: &Path, shared_roots: &[PathBuf]) -> bool {
 pub(crate) fn materialize_persona_skills(
     record: &ManagedAgentRecord,
     workdir: &std::path::Path,
-) -> Result<Vec<buzz_persona_pkg::skills::MaterializedSkill>, String> {
+) -> Result<Vec<beekeeper_persona_pkg::skills::MaterializedSkill>, String> {
     materialize_persona_skills_outside(record, workdir, &shared_agent_workdir_roots())
 }
 
@@ -776,7 +776,7 @@ pub(crate) fn materialize_persona_skills_outside(
     record: &ManagedAgentRecord,
     workdir: &std::path::Path,
     shared_roots: &[PathBuf],
-) -> Result<Vec<buzz_persona_pkg::skills::MaterializedSkill>, String> {
+) -> Result<Vec<beekeeper_persona_pkg::skills::MaterializedSkill>, String> {
     let (Some(pack_dir), Some(persona_name)) = (
         record.persona_team_dir.as_deref(),
         record.persona_name_in_team.as_deref(),
@@ -791,14 +791,14 @@ pub(crate) fn materialize_persona_skills_outside(
             workdir.display()
         ));
     }
-    let persona = buzz_persona_pkg::resolve::resolve_persona_by_name(pack_dir, persona_name)
+    let persona = beekeeper_persona_pkg::resolve::resolve_persona_by_name(pack_dir, persona_name)
         .map_err(|error| {
-            format!(
-                "cannot read persona {persona_name:?} in pack {}: {error}",
-                pack_dir.display()
-            )
-        })?;
-    buzz_persona_pkg::skills::materialize_skills(&persona, workdir).map_err(|error| {
+        format!(
+            "cannot read persona {persona_name:?} in pack {}: {error}",
+            pack_dir.display()
+        )
+    })?;
+    beekeeper_persona_pkg::skills::materialize_skills(&persona, workdir).map_err(|error| {
         format!(
             "cannot materialize skills for persona {persona_name:?} into {}: {error}",
             workdir.display()

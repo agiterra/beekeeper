@@ -251,7 +251,7 @@ pub fn build_shell_watch_event(
     let keys = state.signing_keys()?;
     let content = serde_json::json!({ "action": action }).to_string();
     let event = nostr::EventBuilder::new(
-        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_SHELL_WATCH as u16),
+        nostr::Kind::Custom(beekeeper_core_pkg::kind::KIND_SHELL_WATCH as u16),
         content,
     )
     .tags([
@@ -283,7 +283,7 @@ pub fn build_shell_input_event(
         .map_err(|e| format!("invalid owner pubkey: {e}"))?;
     let keys = state.signing_keys()?;
     let event = nostr::EventBuilder::new(
-        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_SHELL_INPUT as u16),
+        nostr::Kind::Custom(beekeeper_core_pkg::kind::KIND_SHELL_INPUT as u16),
         content_b64,
     )
     // The owner typing into their own session from another device p-tags

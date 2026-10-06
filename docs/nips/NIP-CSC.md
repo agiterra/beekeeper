@@ -148,7 +148,7 @@ the words are delivered and their output is lost. Whether an adapter honours
 the request `_meta.steering.idleBehavior: "promptRequired"` — answering
 `{outcome: "promptRequired"}` and leaving the content with the caller — is
 not advertised on the wire. It is therefore a **declared runtime fact**:
-`RuntimeDescriptor.steerIdleGuard` (`crates/buzz-core/src/coding_session_runtime.rs`),
+`RuntimeDescriptor.steerIdleGuard` (`crates/beekeeper-core/src/coding_session_runtime.rs`),
 set by the component that installs and pins the adapter, never inferred from
 the driver slug. Native injection is offered only when the descriptor declares
 `promptRequired` **and** the process advertised steering at `initialize`; a
@@ -194,7 +194,7 @@ adapters on 2026-09-11:
 
 `turn_degraded` remains reachable from any client for any execution that does
 not qualify, exactly as before: the envelope validates every delivery class
-(`crates/buzz-relay/src/handlers/ingest.rs`) and the provider answers with the
+(`crates/beekeeper-relay/src/handlers/ingest.rs`) and the provider answers with the
 downgrade beside the `turn_queued`. The desktop composer selects `steer` only
 when `isWorking && canSteer`
 (`desktop/src/features/coding-sessions/ui/CodingSessionComposer.tsx`), and
@@ -254,19 +254,19 @@ inherit the channel ACL (including private-project access) on the read path.
 
 | Concern | Location |
 | --- | --- |
-| Kind constant | `crates/buzz-core/src/kind.rs` |
-| Payload + target key | `crates/buzz-core/src/coding_session_command.rs` |
+| Kind constant | `crates/beekeeper-core/src/kind.rs` |
+| Payload + target key | `crates/beekeeper-core/src/coding_session_command.rs` |
 | Desktop builder | `desktop/src/features/coding-sessions/lib/codingSessionCommand.ts` |
-| Envelope validation | `crates/buzz-relay/src/handlers/ingest.rs` |
-| Builder | `crates/buzz-sdk/src/builders.rs` |
-| Semantic keys | `crates/buzz-sdk/src/coding_session.rs` |
+| Envelope validation | `crates/beekeeper-relay/src/handlers/ingest.rs` |
+| Builder | `crates/beekeeper-sdk/src/builders.rs` |
+| Semantic keys | `crates/beekeeper-sdk/src/coding_session.rs` |
 
 ## Deploying the `deliver` key
 
 **Relay before desktop, for the escalated classes only.** The relay validates
 `kind:44220` content with `deny_unknown_fields`
-(`crates/buzz-relay/src/handlers/ingest.rs`,
-`crates/buzz-core/src/coding_session_command.rs`), so any payload carrying a
+(`crates/beekeeper-relay/src/handlers/ingest.rs`,
+`crates/beekeeper-core/src/coding_session_command.rs`), so any payload carrying a
 key it does not know is rejected — not degraded, rejected — and the kind-9
 fallback that would have hidden it does not exist here by design (see the fork
 amendment above). Because the desktop builder omits `deliver` at its default,

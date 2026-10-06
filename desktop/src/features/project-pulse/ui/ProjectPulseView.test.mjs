@@ -748,7 +748,7 @@ test("claimed areas are labelled as claims and 'no branch' is a real group", asy
   const { getByTestId, getAllByTestId } = await renderView({
     kind: "ready",
     digest: digest({
-      entries: [entry({ claimedAreas: ["crates/buzz-acp/src/pool.rs"] })],
+      entries: [entry({ claimedAreas: ["crates/beekeeper-acp/src/pool.rs"] })],
       sessions: [session({ branch: null })],
     }),
   });

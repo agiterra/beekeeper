@@ -10,7 +10,7 @@ _agents="$3"
 _heartbeat="$4"
 _prompt="${5:-}"
 
-cargo build --release -p buzz-acp -p buzz-cli
+cargo build --release -p beekeeper-acp -p beekeeper-cli
 
 env_args=(
     BUZZ_RELAY_URL="$_relay"

@@ -23,7 +23,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use buzz_shell_host::proto::{Frame, Hello};
+use beekeeper_shell_host::proto::{Frame, Hello};
 
 /// A connection to a running shell host. Cheap to clone-share via the inner Arc.
 #[derive(Clone)]

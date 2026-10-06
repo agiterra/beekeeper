@@ -10,7 +10,7 @@
 //!   the card's "nothing is sent" is true whatever the webview does.
 //! - **This computer's agent host.** Every provider identity in the local
 //!   store gets the mode as `session-title-mode.json` in its state directory
-//!   (the format is the provider's: `buzz_session_provider::session_title_mode`),
+//!   (the format is the provider's: `beekeeper_session_provider::session_title_mode`),
 //!   written on every save and again at provisioning, before the host
 //!   starts. The provider reads it live before titling, so a save is in
 //!   force for the next session without a restart.
@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-use buzz_session_provider_pkg::session_title_mode;
+use beekeeper_session_provider_pkg::session_title_mode;
 use tauri::AppHandle;
 
 use super::naming::CodingSessionNamingProvider;
@@ -28,7 +28,7 @@ use crate::session_provider::store::load_provider_readiness_store;
 
 /// The mode type is the provider's own, so the desktop cannot write a
 /// spelling the provider does not read.
-pub use buzz_session_provider_pkg::session_title_mode::SessionTitleMode as CodingSessionTitleMode;
+pub use beekeeper_session_provider_pkg::session_title_mode::SessionTitleMode as CodingSessionTitleMode;
 
 /// The mode in force for a record.
 ///

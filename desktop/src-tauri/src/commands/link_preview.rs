@@ -191,7 +191,10 @@ async fn resolve_public_addresses(host: &str) -> Result<Vec<IpAddr>, String> {
     if addresses.is_empty() {
         return Err("link preview DNS resolution returned no addresses".to_string());
     }
-    if addresses.iter().any(buzz_core_pkg::network::is_private_ip) {
+    if addresses
+        .iter()
+        .any(beekeeper_core_pkg::network::is_private_ip)
+    {
         return Err("link preview host resolved to a private or reserved address".to_string());
     }
 

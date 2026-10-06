@@ -16,7 +16,7 @@ import type { ProjectContainer } from "../hooks";
  *
  * One tier, two ways in. Server-side the project *creator* — the pubkey the
  * kind:30621 head is addressed to — is an implicit `owner`
- * (`ProjectGate::role_of`, `crates/buzz-db/src/project_acl.rs`), and so is
+ * (`ProjectGate::role_of`, `crates/beekeeper-db/src/project_acl.rs`), and so is
  * anybody seated `owner` on the roster by a kind:9010 op. This module is the
  * client's single statement of that fact; before it, three screens compared
  * `project.owner === self` inline and a roster Owner saw no Delete at all.

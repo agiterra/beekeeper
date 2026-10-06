@@ -91,7 +91,7 @@ pub struct CodingSessionProviderStore {
     /// Machine-wide rather than per relay: the ceiling is about this
     /// computer's capacity, and a person running two communities has one set
     /// of CPUs. `Some(0)` is unlimited, matching
-    /// `buzz_session_provider::config::UNLIMITED_MAX_SESSIONS`.
+    /// `beekeeper_session_provider::config::UNLIMITED_MAX_SESSIONS`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_sessions: Option<usize>,
     /// How long one turn may go with no word from the agent, in seconds.

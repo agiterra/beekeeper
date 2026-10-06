@@ -3,7 +3,7 @@
  * wire fact W12).
  *
  * Read off the wire, never estimated — the same rule and the same rendering
- * `bee sessions status` uses (`crates/buzz-cli/src/commands/sessions/
+ * `bee sessions status` uses (`crates/beekeeper-cli/src/commands/sessions/
  * crew_cmds.rs:884-933`). The source is the driver's own
  * `context_window_updated` item: it measured the prompt it was about to send,
  * so its number can never exceed the window.
@@ -41,7 +41,7 @@ export type CodingSessionContextLoad = {
  * never as zero. Both spellings drivers use for each number are accepted
  * (`used`/`usedTokens`, `size`/`contextWindow`/`contextLimit`/`maxTokens`),
  * because the ACP schema pins neither; this mirrors `context_window_usage`
- * in `crates/buzz-core/src/coding_session_payload.rs:1268`.
+ * in `crates/beekeeper-core/src/coding_session_payload.rs:1268`.
  */
 export function readCodingSessionContextLoad(
   transcript: readonly TranscriptItem[],

@@ -3,7 +3,7 @@
   "kind": 44221,
   "record": "coding-session lifecycle command",
   "readers": {
-    "rust": "crates/buzz-core/src/coding_session_lifecycle_command.rs :: decode_coding_session_lifecycle_command",
+    "rust": "crates/beekeeper-core/src/coding_session_lifecycle_command.rs :: decode_coding_session_lifecycle_command",
     "desktopCoordination": "desktop/src/shared/coordination/sessionCoordinationStrictJson.ts :: hasStrictLifecycleCommandJson + hasStrictLifecycleCommandValues (create/resume/restart/stop; a session.hire names no providerAuthorityPubkey and belongs to the sibling reader readLifecycleHire in sessionCoordinationCommissioning.ts)",
     "dart": "mobile/lib/features/coding_sessions/domain/coding_session_session_decoders.dart :: decodeCodingSessionCreate"
   },

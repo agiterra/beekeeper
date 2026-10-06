@@ -61,7 +61,7 @@ export type CodingSessionGrantFailure = {
  *
  * The relay emits exactly three of these — `rate-limited: quota exceeded;
  * retry in Ns`, `rate-limited: too many concurrent requests`, `rate-limited:
- * shared admission unavailable` (`crates/buzz-relay/src/connection.rs`) — and
+ * shared admission unavailable` (`crates/beekeeper-relay/src/connection.rs`) — and
  * the HTTP bridge's `relay rate-limited: retry in Ns`. All four carry the
  * `rate-limited:` token, so that token is what is matched.
  *

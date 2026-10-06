@@ -187,7 +187,7 @@ jobs:
 
       - name: Build sidecars
         run: |
-          cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli -p buzz-shell-host -p beekeeper-host
+          cargo build --release -p beekeeper-acp -p beekeeper-agent -p beekeeper-backend-kubernetes -p beekeeper-dev-mcp -p git-credential-nostr -p beekeeper-cli -p beekeeper-shell-host -p beekeeper-host
           ./scripts/bundle-sidecars.sh
 
       - name: Build Linux Tauri app

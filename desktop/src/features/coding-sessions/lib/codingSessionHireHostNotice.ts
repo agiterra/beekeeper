@@ -22,7 +22,7 @@
  * The fix is not to stop publishing that turn — `bee sessions hire` reads the
  * very same event directly off the relay to answer its own poll
  * (`find_hire_refusal`/`wait_for_hire`,
- * `crates/buzz-cli/src/commands/sessions/crew.rs`), so it is the CLI's
+ * `crates/beekeeper-cli/src/commands/sessions/crew.rs`), so it is the CLI's
  * *answer channel*, and suppressing it would turn every fast refusal into an
  * `unconfirmed` one (ledger 169). Two other things fix it instead: the text
  * here, and the `hostAnswer` wire tag
@@ -55,8 +55,8 @@ export function markCodingSessionHostNoticeText(text: string): string {
  * `bee sessions hire` recognizes a refusal *structurally*, by the text
  * starting with the exact `hire refused: ` prefix
  * (`HIRE_REFUSAL_PREFIX`/`parse_hire_refusal`,
- * `crates/buzz-core/src/coding_session_lifecycle_command.rs`,
- * `crates/buzz-cli/src/commands/sessions/crew.rs`) — its own test fixes this
+ * `crates/beekeeper-core/src/coding_session_lifecycle_command.rs`,
+ * `crates/beekeeper-cli/src/commands/sessions/crew.rs`) — its own test fixes this
  * ("`please hire refused: HIRE_OFF — x`, // prefix must start the text").
  * Putting anything ahead of that prefix would make the CLI unable to parse
  * any refusal ever again, turning every refused hire back into the

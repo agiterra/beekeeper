@@ -229,7 +229,7 @@ const _routingTiers = {'fast', 'standard', 'deep'};
 /// The canonical router renders the two numeric §6 triggers with the value
 /// that fired them — `risk 80 >= 40`, `irreversibility 4 >= 4` — so a reader
 /// is told the fact rather than the rule
-/// (`crates/buzz-core/src/coding_session_routing.rs:1555`). A closed
+/// (`crates/beekeeper-core/src/coding_session_routing.rs:1555`). A closed
 /// vocabulary here would make this decoder reject the router's own record as
 /// malformed.
 const _maxRoutingReviewReasons = 16;

@@ -199,13 +199,13 @@ mod tests {
         let sanitized = sanitize_image_for_upload(exported, "image/png").unwrap();
 
         // Relay ingest path.
-        let relay_config = buzz_media_pkg::MediaConfig {
+        let relay_config = beekeeper_media_pkg::MediaConfig {
             s3_endpoint: String::new(),
             s3_access_key: String::new(),
             s3_secret_key: String::new(),
             s3_bucket: String::new(),
             s3_region: "us-east-1".to_string(),
-            s3_addressing_style: buzz_media_pkg::S3AddressingStyle::Path,
+            s3_addressing_style: beekeeper_media_pkg::S3AddressingStyle::Path,
             max_image_bytes: 50 * 1024 * 1024,
             max_gif_bytes: 10 * 1024 * 1024,
             max_video_bytes: 524_288_000,
@@ -216,7 +216,7 @@ mod tests {
             upload_port_header: None,
         };
         assert_eq!(
-            buzz_media_pkg::validation::validate_content(&sanitized, &relay_config)
+            beekeeper_media_pkg::validation::validate_content(&sanitized, &relay_config)
                 .expect("relay rejected a sanitized agent snapshot PNG"),
             "image/png"
         );

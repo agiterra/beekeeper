@@ -468,7 +468,7 @@ test("the host's candidate list carries the host's effective runtime to the deci
 test("the desktop's refusal codes are exactly buzz-core's HIRE_REFUSAL_CODES", () => {
   const source = readFileSync(
     new URL(
-      "../../../../../crates/buzz-core/src/coding_session_lifecycle_command.rs",
+      "../../../../../crates/beekeeper-core/src/coding_session_lifecycle_command.rs",
       import.meta.url,
     ),
     "utf8",

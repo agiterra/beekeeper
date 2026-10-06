@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 
 use super::*;
 
-use buzz_core_pkg::coding_session_observation::CODING_SESSION_OBSERVATION_SCHEMA;
-use buzz_core_pkg::kind::KIND_CODING_SESSION_OBSERVATION;
+use beekeeper_core_pkg::coding_session_observation::CODING_SESSION_OBSERVATION_SCHEMA;
+use beekeeper_core_pkg::kind::KIND_CODING_SESSION_OBSERVATION;
 
 const SESSION: &str = "dc580cfb-6c80-4fc2-8f4e-dfc328acf222";
 const CHANNEL: &str = "d3e440ea-89f8-4aee-8a02-17edc3e7272e";
@@ -111,7 +111,7 @@ fn checkpoint_body(phase: &str) -> Value {
         "testsWritten": 6,
         "testsRed": 6,
         "testsGreen": 4,
-        "lastCommand": "cargo test -p buzz-core coding_session_observation",
+        "lastCommand": "cargo test -p beekeeper-core coding_session_observation",
         "lastSummary": "26 passed; 0 failed",
         "note": Value::Null,
     })
@@ -186,7 +186,7 @@ fn an_observed_row_and_a_declared_row_reach_the_screen_as_two_rows() {
             gate_body(
                 "cargo test",
                 "passed",
-                "cargo test -p buzz-cli",
+                "cargo test -p beekeeper-cli",
                 Some("13 passed"),
                 // A declared row may still name a commit; it is never evidence
                 // for a landing, and the surface says which word it carries.
@@ -201,7 +201,7 @@ fn an_observed_row_and_a_declared_row_reach_the_screen_as_two_rows() {
             gate_body(
                 "cargo test",
                 "failed",
-                "cargo test -p buzz-cli",
+                "cargo test -p beekeeper-cli",
                 Some("test result: FAILED. 0 passed; 2 failed"),
                 None,
             ),
@@ -312,7 +312,7 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
             gate_body(
                 "cargo test",
                 "passed",
-                "cargo test -p buzz-cli",
+                "cargo test -p beekeeper-cli",
                 Some("13 passed"),
                 // A declared row may still name a commit; it is never evidence
                 // for a landing, and the surface says which word it carries.
@@ -327,7 +327,7 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
             gate_body(
                 "cargo test",
                 "failed",
-                "cargo test -p buzz-cli",
+                "cargo test -p beekeeper-cli",
                 Some("test result: FAILED. 0 passed; 2 failed; 0 ignored"),
                 Some(("3a".repeat(20).as_str(), true)),
             ),
@@ -483,7 +483,13 @@ fn a_seat_claiming_observed_is_folded_as_declared_and_listed() {
         "gate",
         "observed",
         None,
-        gate_body("cargo test", "passed", "cargo test -p buzz-cli", None, None),
+        gate_body(
+            "cargo test",
+            "passed",
+            "cargo test -p beekeeper-cli",
+            None,
+            None,
+        ),
     )];
     let response = fold_adapter(request(&events, Vec::new())).expect("fold");
     assert_eq!(response.gates.len(), 1);
@@ -505,7 +511,13 @@ fn an_unresolved_provider_set_checks_nothing_and_says_so() {
         "gate",
         "observed",
         None,
-        gate_body("cargo test", "passed", "cargo test -p buzz-cli", None, None),
+        gate_body(
+            "cargo test",
+            "passed",
+            "cargo test -p beekeeper-cli",
+            None,
+            None,
+        ),
     )];
     let mut unchecked = request(&events, Vec::new());
     unchecked.provider_pubkeys = None;
@@ -527,14 +539,26 @@ fn a_replaced_gate_row_is_counted_in_the_adapters_truncation() {
             "gate",
             "observed",
             None,
-            gate_body("cargo test", "passed", "cargo test -p buzz-cli", None, None),
+            gate_body(
+                "cargo test",
+                "passed",
+                "cargo test -p beekeeper-cli",
+                None,
+                None,
+            ),
         ),
         observation(
             &provider,
             "gate",
             "observed",
             None,
-            gate_body("cargo test", "failed", "cargo test -p buzz-cli", None, None),
+            gate_body(
+                "cargo test",
+                "failed",
+                "cargo test -p beekeeper-cli",
+                None,
+                None,
+            ),
         ),
     ];
     let response = fold_adapter(request(&events, Vec::new())).expect("fold");

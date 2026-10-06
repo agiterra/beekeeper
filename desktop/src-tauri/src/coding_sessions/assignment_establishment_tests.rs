@@ -5,14 +5,14 @@
 //! and the fact that nothing here establishes anything. The establishment
 //! itself, with real repositories, real interruptions and the two-process
 //! lock, is proven where it now lives
-//! (`crates/buzz-session-provider/src/assignment_inputs_tests.rs`).
+//! (`crates/beekeeper-session-provider/src/assignment_inputs_tests.rs`).
 
 use std::path::PathBuf;
 
 use super::*;
 use crate::coding_sessions::workdir_store::CodingSessionSeatWorktree;
 use crate::util::now_iso;
-use buzz_session_provider_pkg::assignment_inputs::{
+use beekeeper_session_provider_pkg::assignment_inputs::{
     outcome_is_pending as assignment_input_is_pending, record_assignment_input,
     ASSIGNMENT_INPUT_ABANDONED, ASSIGNMENT_INPUT_ESTABLISHED, ASSIGNMENT_INPUT_ESTABLISHING,
     ASSIGNMENT_INPUT_INTENDED, MAX_ESTABLISH_ATTEMPTS,

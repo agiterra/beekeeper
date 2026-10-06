@@ -649,7 +649,7 @@ test("isCodingSessionTextAttachmentUnsupportedRejection: only a relay whose allo
 // ── A CI-continuation registration is a known action, strictly shaped ───────
 //
 // `thread.turn.continue_on_ci` (`CodingSessionAction::ThreadTurnContinueOnCi`,
-// crates/buzz-core/src/coding_session_command.rs) is a third closed action on
+// crates/beekeeper-core/src/coding_session_command.rs) is a third closed action on
 // the same 44220. It is neither a turn start nor an interrupt: nothing is
 // queued and no turn exists until the named CI result is recorded. The relay
 // and the provider both decode it with `deny_unknown_fields`, so this reader

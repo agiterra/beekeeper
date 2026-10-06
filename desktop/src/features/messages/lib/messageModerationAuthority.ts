@@ -15,7 +15,7 @@ import { isModeratableChannelType } from "./moderatableChannel";
  * role can never inherit moderation by default.
  *
  * Mirrors the relay's `ChannelRole` arm in `decide_authority`
- * (`crates/buzz-relay/src/handlers/moderation_authz.rs`), which grants
+ * (`crates/beekeeper-relay/src/handlers/moderation_authz.rs`), which grants
  * DeleteMessage/Kick to `Some("owner") | Some("admin")` and nothing else.
  */
 const CHANNEL_ROLE_MODERATES: Record<ChannelRole, boolean> = {
@@ -85,7 +85,7 @@ export type MessageModerationInput = {
  * authorities the relay grants for `DeleteMessage`.
  *
  * The relay's `decide_authority`
- * (`crates/buzz-relay/src/handlers/moderation_authz.rs`) accepts either a
+ * (`crates/beekeeper-relay/src/handlers/moderation_authz.rs`) accepts either a
  * community `owner`/`admin` from `relay_members` (community-wide) or a channel
  * `owner`/`admin` from `channel_members` (within that channel only). The
  * desktop used to implement the first alone, which is why a channel owner with

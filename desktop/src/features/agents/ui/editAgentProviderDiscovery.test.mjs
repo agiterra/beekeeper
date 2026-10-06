@@ -1137,7 +1137,7 @@ test("editAgent_findingE_capableBuzzAgentLoadedCatalog_preservedOnNoOpSave", () 
 //              correctly via id-fallback when catalog command is the resolved path
 //
 // Problem: buzz-agent stores agentCommand="buzz-agent" (short name) while the
-// catalog entry has command="/Applications/Beekeeper.app/.../buzz-agent" (resolved path).
+// catalog entry has command="/Applications/Beekeeper.app/.../beekeeper-agent" (resolved path).
 // Command-based matching fails (short name ≠ full path), so selectedRuntimeId
 // stayed "custom" → selectedRuntime=undefined → canDiscoverModelOptions=false →
 // discovery never fired for inherited agents.

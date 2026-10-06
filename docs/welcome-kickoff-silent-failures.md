@@ -168,7 +168,7 @@ were complying exactly. The loop was *correct* behavior given the prompt.
 
 ### Root cause
 
-Two rules in `crates/buzz-acp/src/base_prompt.md` composed into a perpetual
+Two rules in `crates/beekeeper-acp/src/base_prompt.md` composed into a perpetual
 motion machine:
 
 1. *"**Every turn that processes a user message MUST publish a reply.** […] A

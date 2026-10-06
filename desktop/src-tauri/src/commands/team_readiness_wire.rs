@@ -7,8 +7,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use buzz_core_pkg::coding_session_catalog::{parse_catalog, Catalog, CatalogProvider};
-use buzz_core_pkg::kind::KIND_CODING_SESSION_PROVIDER_CATALOG;
+use beekeeper_core_pkg::coding_session_catalog::{parse_catalog, Catalog, CatalogProvider};
+use beekeeper_core_pkg::kind::KIND_CODING_SESSION_PROVIDER_CATALOG;
 use nostr::Event;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -399,11 +399,12 @@ fn parse_catalog_event(
     if tags[2] != ["cspc-revision", &catalog.revision.to_string()] {
         return None;
     }
-    let expected_key = buzz_sdk_pkg::coding_session::coding_session_provider_catalog_semantic_key(
-        &tags[0][1],
-        catalog.revision,
-        &event.content,
-    );
+    let expected_key =
+        beekeeper_sdk_pkg::coding_session::coding_session_provider_catalog_semantic_key(
+            &tags[0][1],
+            catalog.revision,
+            &event.content,
+        );
     if tags[3] != ["cspc-key", expected_key.as_str()] {
         return None;
     }

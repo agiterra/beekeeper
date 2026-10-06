@@ -73,7 +73,7 @@ function subagentCall(id, turnId, description, overrides = {}) {
   });
 }
 
-function backgroundStart(id, turnId, command = "cargo test -p buzz-core") {
+function backgroundStart(id, turnId, command = "cargo test -p beekeeper-core") {
   return tool(id, turnId, {
     args: { command, run_in_background: true },
     result: `Command running in background with ID: ${TASK}. You will be notified when it completes.`,
@@ -212,7 +212,7 @@ test("a background task nothing says ended reads 'Waiting on a background task' 
   });
   assert.ok(waiting);
   assert.equal(waiting.headline, "Waiting on a background task");
-  assert.equal(waiting.brief, "cargo test -p buzz-core");
+  assert.equal(waiting.brief, "cargo test -p beekeeper-core");
 });
 
 test("a background task that was reported, or whose session ended, is not waited on", () => {

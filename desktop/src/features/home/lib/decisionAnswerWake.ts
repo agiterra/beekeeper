@@ -12,7 +12,7 @@ import type { CodingSessionCatalogRecord } from "@/features/coding-sessions/lib/
  * This is the same wake — a kind:44220 `thread.turn.start` at a boundary,
  * whose text names the stored operation and nothing else, so the seat
  * fetches and verifies the signed 44244 rather than trusting prose
- * (`crates/buzz-cli/src/commands/sessions/crew_cmds.rs`
+ * (`crates/beekeeper-cli/src/commands/sessions/crew_cmds.rs`
  * `send_team_operation_wake`).
  */
 

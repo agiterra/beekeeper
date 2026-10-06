@@ -218,7 +218,7 @@ pub(super) async fn observed_activation(
         if decoded.command_id != command_id {
             continue;
         }
-        let Ok(expected) = buzz_sdk_pkg::builders::build_coding_session_lifecycle_receipt(
+        let Ok(expected) = beekeeper_sdk_pkg::builders::build_coding_session_lifecycle_receipt(
             channel,
             command_id,
             &event.content,

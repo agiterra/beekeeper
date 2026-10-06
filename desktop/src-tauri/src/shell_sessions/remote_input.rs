@@ -98,7 +98,7 @@ fn validate_input_event(
         .map_err(|e| format!("invalid event signature: {e}"))?;
 
     // 2. Exactly the shell-input kind.
-    if event.kind.as_u16() as u32 != buzz_core_pkg::kind::KIND_SHELL_INPUT {
+    if event.kind.as_u16() as u32 != beekeeper_core_pkg::kind::KIND_SHELL_INPUT {
         return Err(format!("unexpected kind {}", event.kind.as_u16()));
     }
 
@@ -136,7 +136,8 @@ fn validate_input_event(
     let sender_hex = event.pubkey.to_hex();
     let authorized = sender_hex == my_hex
         || info.roster.iter().any(|entry| {
-            entry.pubkey == sender_hex && entry.role == buzz_core_pkg::kind::SHELL_ROLE_COLLABORATOR
+            entry.pubkey == sender_hex
+                && entry.role == beekeeper_core_pkg::kind::SHELL_ROLE_COLLABORATOR
         });
     if !authorized {
         return Err("sender is not a collaborator on this session".to_string());
@@ -249,7 +250,7 @@ mod tests {
         let info = info_with_roster(vec![(sender.public_key().to_hex(), "collaborator")]);
         let event = build_event(
             &sender,
-            buzz_core_pkg::kind::KIND_SHELL_INPUT,
+            beekeeper_core_pkg::kind::KIND_SHELL_INPUT,
             &owner.public_key().to_hex(),
             SESSION_ID,
             &b64(b"ls -la\r"),
@@ -270,7 +271,7 @@ mod tests {
         )]);
         let event = build_event(
             &owner,
-            buzz_core_pkg::kind::KIND_SHELL_INPUT,
+            beekeeper_core_pkg::kind::KIND_SHELL_INPUT,
             &owner.public_key().to_hex(),
             SESSION_ID,
             &b64(b"pwd\r"),
@@ -286,7 +287,7 @@ mod tests {
         let info = info_with_roster(vec![(sender.public_key().to_hex(), "collaborator")]);
         let event = build_event(
             &sender,
-            buzz_core_pkg::kind::KIND_SHELL_INPUT,
+            beekeeper_core_pkg::kind::KIND_SHELL_INPUT,
             &owner.public_key().to_hex(),
             SESSION_ID,
             &b64(b"ls\r"),
@@ -309,7 +310,7 @@ mod tests {
         let info = info_with_roster(vec![(sender.public_key().to_hex(), "collaborator")]);
         let event = build_event(
             &sender,
-            buzz_core_pkg::kind::KIND_SHELL_WATCH,
+            beekeeper_core_pkg::kind::KIND_SHELL_WATCH,
             &owner.public_key().to_hex(),
             SESSION_ID,
             &b64(b"ls\r"),
@@ -327,7 +328,7 @@ mod tests {
         // Addressed to some third identity, not this owner.
         let event = build_event(
             &sender,
-            buzz_core_pkg::kind::KIND_SHELL_INPUT,
+            beekeeper_core_pkg::kind::KIND_SHELL_INPUT,
             &nostr::Keys::generate().public_key().to_hex(),
             SESSION_ID,
             &b64(b"ls\r"),
@@ -344,7 +345,7 @@ mod tests {
         let info = info_with_roster(vec![(sender.public_key().to_hex(), "collaborator")]);
         let event = build_event(
             &sender,
-            buzz_core_pkg::kind::KIND_SHELL_INPUT,
+            beekeeper_core_pkg::kind::KIND_SHELL_INPUT,
             &owner.public_key().to_hex(),
             SESSION_ID,
             &b64(b"ls\r"),
@@ -370,7 +371,7 @@ mod tests {
         )]);
         let event = build_event(
             &stranger,
-            buzz_core_pkg::kind::KIND_SHELL_INPUT,
+            beekeeper_core_pkg::kind::KIND_SHELL_INPUT,
             &owner.public_key().to_hex(),
             SESSION_ID,
             &b64(b"ls\r"),
@@ -390,7 +391,7 @@ mod tests {
         let info = info_with_roster(vec![(viewer.public_key().to_hex(), "viewer")]);
         let event = build_event(
             &viewer,
-            buzz_core_pkg::kind::KIND_SHELL_INPUT,
+            beekeeper_core_pkg::kind::KIND_SHELL_INPUT,
             &owner.public_key().to_hex(),
             SESSION_ID,
             &b64(b"ls\r"),
@@ -411,7 +412,7 @@ mod tests {
         // > 8 KiB of base64 (raw 7 KiB encodes to ~9.3 KiB).
         let event = build_event(
             &sender,
-            buzz_core_pkg::kind::KIND_SHELL_INPUT,
+            beekeeper_core_pkg::kind::KIND_SHELL_INPUT,
             &owner.public_key().to_hex(),
             SESSION_ID,
             &b64(&vec![b'x'; 7 * 1024]),
@@ -427,7 +428,7 @@ mod tests {
         let sender = nostr::Keys::generate();
         let event = build_event(
             &sender,
-            buzz_core_pkg::kind::KIND_SHELL_INPUT,
+            beekeeper_core_pkg::kind::KIND_SHELL_INPUT,
             &owner.public_key().to_hex(),
             SESSION_ID,
             &b64(b"ls\r"),

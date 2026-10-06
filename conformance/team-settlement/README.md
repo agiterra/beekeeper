@@ -41,7 +41,7 @@ ruling asked for nothing. It does not say the assignee received it, agreed
 with it, stopped working, or that its worktree may be removed. No surface may
 render it as "acknowledged", "delivered" or "idle", and no resource or
 lifecycle gate keys off it: worktree disposal reads the session's own kind
-44230 closure (`crates/buzz-core/src/worktree_lifecycle.rs`), never an
+44230 closure (`crates/beekeeper-core/src/worktree_lifecycle.rs`), never an
 assignment's settlement.
 
 ## Shape
@@ -66,9 +66,9 @@ resolves the symbols.
 
 | Reader | Test |
 | --- | --- |
-| `buzz-core`'s fold — the rule itself | `crates/buzz-core/src/coding_session_team_transaction_fold_settlement_conformance_tests.rs` |
-| `buzz-cli`'s `fold` object (`bee sessions operation list\|get`, `sessions complete`) | `crates/buzz-cli/src/commands/sessions/operations_completion_tests.rs` |
-| `buzz-session-provider`'s settlement-fact classifier | `crates/buzz-session-provider/src/pending_completion_tests.rs` |
+| `buzz-core`'s fold — the rule itself | `crates/beekeeper-core/src/coding_session_team_transaction_fold_settlement_conformance_tests.rs` |
+| `buzz-cli`'s `fold` object (`bee sessions operation list\|get`, `sessions complete`) | `crates/beekeeper-cli/src/commands/sessions/operations_completion_tests.rs` |
+| `buzz-session-provider`'s settlement-fact classifier | `crates/beekeeper-session-provider/src/pending_completion_tests.rs` |
 | The desktop's strict native-fold decoder and the Mission panel's Settlement section | `desktop/src/features/coding-sessions/lib/codingSessionTeamSettlementConformance.test.mjs` |
 
 The desktop reader also asserts the two failures ledger 204 is about: an

@@ -1,6 +1,6 @@
 /**
  * The kind 44248 project to-do op — TypeScript twin of
- * `crates/buzz-core/src/project_todo.rs` and `docs/nips/NIP-TD.md`.
+ * `crates/beekeeper-core/src/project_todo.rs` and `docs/nips/NIP-TD.md`.
  *
  * Every op sets exactly one field. That is the whole concurrency story: two
  * people editing different fields of one item never race, and the same field

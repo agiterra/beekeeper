@@ -152,7 +152,7 @@ test("a failed row renders the command verbatim and its tail", async () => {
       fold({
         gates: [
           gate(SEAT, "declared", "buzz-cli", "failed", {
-            command: "cargo test -p buzz-cli -- subcommand_",
+            command: "cargo test -p beekeeper-cli -- subcommand_",
             summary:
               "running 2 tests\ntest result: FAILED. 0 passed; 2 failed; 0 ignored",
             durationMs: 41_000,
@@ -164,7 +164,7 @@ test("a failed row renders the command verbatim and its tail", async () => {
   try {
     const row = screen.getByTestId("coding-session-gate-row");
     assert.equal(row.getAttribute("data-outcome"), "failed");
-    assert.match(row.textContent, /cargo test -p buzz-cli -- subcommand_/);
+    assert.match(row.textContent, /cargo test -p beekeeper-cli -- subcommand_/);
     assert.match(
       screen.getByTestId("coding-session-gate-row-summary").textContent,
       /test result: FAILED\. 0 passed; 2 failed/,

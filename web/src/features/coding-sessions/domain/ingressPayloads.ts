@@ -224,7 +224,7 @@ export function isCodingSessionTurnReceipt(
  * and old clients lose enrichment only for umbrella-claiming sessions.
  *
  * The four code-coordinate facts (`observedCommit`, `dirty`, `relayReachable`,
- * `verifiedAt`) are the B1 amendment (`crates/buzz-core`
+ * `verifiedAt`) are the B1 amendment (`crates/beekeeper-core`
  * `coding_session_payload.rs`, `METADATA_FACT_FIELDS`): a provider that
  * observes the worktree serializes all four unconditionally (nulls included),
  * a pre-amendment provider serializes none — a partial subset is malformed,

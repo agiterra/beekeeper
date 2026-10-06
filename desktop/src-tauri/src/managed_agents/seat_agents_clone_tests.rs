@@ -739,7 +739,7 @@ fn the_providers_snapshot_yields_the_cwd_and_the_create_command() {
 /// The coupling, pinned: this module reads two keys out of a file another
 /// crate writes, so the keys are asserted against that crate's own type.
 ///
-/// A rename in `buzz_session_provider::state::SessionRecord` fails here —
+/// A rename in `beekeeper_session_provider::state::SessionRecord` fails here —
 /// at the deserialize, or at the key assertion — instead of silently
 /// turning rungs 3 and 4 into a permanent "nothing recorded".
 #[test]
@@ -758,7 +758,7 @@ fn the_provider_session_keys_match_the_providers_own_type() {
         "nextSeq": 291,
         "closed": false
     });
-    let record: buzz_session_provider_pkg::state::SessionRecord =
+    let record: beekeeper_session_provider_pkg::state::SessionRecord =
         serde_json::from_value(fixture.clone())
             .expect("the provider's own type must accept this shape");
     let round_tripped = serde_json::to_value(&record).expect("serialize");

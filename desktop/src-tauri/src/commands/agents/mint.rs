@@ -37,7 +37,7 @@ pub(crate) fn mint_agent_identity(
         .map_err(|e| format!("failed to bridge owner keys: {e}"))?;
     let compat_agent = nostr::PublicKey::from_hex(&pubkey)
         .map_err(|e| format!("failed to bridge agent pubkey: {e}"))?;
-    let auth_tag = buzz_sdk_pkg::nip_oa::compute_auth_tag(&compat_owner, &compat_agent, "")
+    let auth_tag = beekeeper_sdk_pkg::nip_oa::compute_auth_tag(&compat_owner, &compat_agent, "")
         .map_err(|e| format!("failed to compute NIP-OA auth tag: {e}"))?;
     Ok((
         agent_keys,

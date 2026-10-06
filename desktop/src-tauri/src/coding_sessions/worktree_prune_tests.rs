@@ -95,7 +95,9 @@ fn settled(session_ref: &str) -> CodingSessionWorktreeSessionFacts {
         session_deleted: false,
         execution_live: false,
         tip_on_relay: Some(true),
-        settled_for_secs: Some(buzz_core_pkg::worktree_lifecycle::SEAT_WORKTREE_GRACE_SECS + 1),
+        settled_for_secs: Some(
+            beekeeper_core_pkg::worktree_lifecycle::SEAT_WORKTREE_GRACE_SECS + 1,
+        ),
     }
 }
 

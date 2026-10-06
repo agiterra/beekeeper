@@ -4,7 +4,7 @@
  * The error classification seam flows like this:
  *   buzz-agent — classifies LLM failures into `AgentError` variants with
  *                  JSON-RPC codes (`-32001` auth, `-32002` model-not-found,
- *                  `-32000` generic), defined in `crates/buzz-agent/src/types.rs`.
+ *                  `-32000` generic), defined in `crates/beekeeper-agent/src/types.rs`.
  *   buzz-acp   — preserves the code structurally in
  *                  `AcpError::AgentError { code, message }`, whose Display is
  *                  `"Agent reported error (code N): message"`, and includes

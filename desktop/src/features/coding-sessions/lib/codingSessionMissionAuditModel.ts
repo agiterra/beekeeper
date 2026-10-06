@@ -29,7 +29,7 @@ import { tokenizeShellCommand } from "@/features/agents/ui/agentSessionToolClass
 /**
  * Why the token columns can read `—` for every turn on a live session.
  *
- * Per-turn `usage` is on the wire (`crates/buzz-core/src/
+ * Per-turn `usage` is on the wire (`crates/beekeeper-core/src/
  * coding_session_payload.rs` `TurnUsageReport`, typed at
  * `codingSessionTranscriptItemContract.ts:120-140`) and, since batch 2, the
  * desktop transcript projection carries it through
@@ -77,7 +77,7 @@ export type CodingSessionMissionAuditTurn = {
   /**
    * The driver's own `usage.toolCalls` when the turn's `result` carried one,
    * otherwise the count of `tool_call` items this turn published. Frozen with
-   * `bee sessions audit` (`crates/buzz-cli/src/commands/sessions/audit.rs`
+   * `bee sessions audit` (`crates/beekeeper-cli/src/commands/sessions/audit.rs`
    * `turn_row`): both are measurements of the same turn, neither is a guess,
    * so this one is never absent.
    */
@@ -121,7 +121,7 @@ export type CodingSessionMissionAuditHandedTwice = {
    * True when at least one of those results carried the provider's elision
    * marker, so `bytes` is a floor rather than the size of what the tool
    * produced. The provider clips a tool result at 8 KiB
-   * (`buzz_session_provider::transcript::bound_text`); saying so out loud is
+   * (`beekeeper_session_provider::transcript::bound_text`); saying so out loud is
    * cheaper than letting a reader total up clipped numbers.
    */
   bytesClipped: boolean;
@@ -229,7 +229,7 @@ const HANDED_TWICE_MIN = 2;
 const RETRY_LOOP_MIN = 3;
 
 /**
- * The marker `buzz_session_provider::transcript::bound_text` leaves behind
+ * The marker `beekeeper_session_provider::transcript::bound_text` leaves behind
  * when it clips a tool result at its 8 KiB ceiling.
  */
 const ELISION_MARKER = "…[elided ";
@@ -378,9 +378,9 @@ function buildTurn(
     // Reported when the turn carries one, and `null` otherwise. This used to
     // be gated on a `usage.pricingIdentity` — but no such field exists on the
     // wire: `TurnUsageReport`
-    // (`crates/buzz-core/src/coding_session_payload.rs`) is
+    // (`crates/beekeeper-core/src/coding_session_payload.rs`) is
     // `deny_unknown_fields` over six token fields, while the provider *does*
-    // publish `cost_usd` (`crates/buzz-session-provider/src/lib.rs`). The gate
+    // publish `cost_usd` (`crates/beekeeper-session-provider/src/lib.rs`). The gate
     // made the column dead by construction and printed `not reported` over a
     // cost the driver had reported — the one thing that was not true about it.
     // A1 dropped the same gate in the CLI. REVIEW-A3 F4.

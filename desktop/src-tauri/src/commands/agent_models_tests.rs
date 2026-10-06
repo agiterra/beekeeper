@@ -504,7 +504,7 @@ fn model_discovery_falls_back_to_definition_when_record_is_blank() {
 // Databricks provider detection
 // ---------------------------------------------------------------------------
 //
-// Parse/filter/pagination tests live in crates/buzz-agent/src/catalog.rs
+// Parse/filter/pagination tests live in crates/beekeeper-agent/src/catalog.rs
 // (they moved there with the Option C refactor).
 
 // ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@ function event(overrides = {}) {
   };
 }
 
-// Mirrors crates/buzz-core/src/filter.rs: fields AND, values OR, since/until
+// Mirrors crates/beekeeper-core/src/filter.rs: fields AND, values OR, since/until
 // inclusive, ids by prefix, `#x` any-of over tags whose first element is x.
 const cases = [
   ["kind listed", { kinds: [9, 40002], limit: 1 }, event(), true],

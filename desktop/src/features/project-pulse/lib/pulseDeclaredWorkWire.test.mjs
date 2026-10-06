@@ -12,7 +12,7 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 
 /**
- * The frozen contract, written by `crates/buzz-core/src/pulse_declared_work_tests.rs`
+ * The frozen contract, written by `crates/beekeeper-core/src/pulse_declared_work_tests.rs`
  * from the real projection over real signed events. Read from disk rather than
  * hand-built: a decoder proved only against a fixture the test also wrote
  * proves the test agrees with itself, not that TypeScript agrees with Rust.

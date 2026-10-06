@@ -46,7 +46,7 @@ const session = {
 /** The lit copy that sweeps across live action text (SV-104). */
 const OVERLAY = '[data-testid="coding-session-live-shimmer-overlay"]';
 const SUBAGENT = "Review the backoff bounds";
-const COMMAND = "cargo test -p buzz-core retry";
+const COMMAND = "cargo test -p beekeeper-core retry";
 
 function signed(
   kind: number,

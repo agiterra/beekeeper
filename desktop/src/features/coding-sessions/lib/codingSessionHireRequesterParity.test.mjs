@@ -35,7 +35,7 @@ const FIXTURE = JSON.parse(
   readFileSync(
     resolve(
       dirname(fileURLToPath(import.meta.url)),
-      "../../../../../crates/buzz-core/testdata/coding_session_hire_requester/vectors.json",
+      "../../../../../crates/beekeeper-core/testdata/coding_session_hire_requester/vectors.json",
     ),
     "utf8",
   ),

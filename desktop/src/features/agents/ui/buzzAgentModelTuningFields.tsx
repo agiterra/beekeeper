@@ -227,7 +227,7 @@ const NUMERIC_KIND_TEST_IDS: Record<NumericDescriptor["kind"], string> = {
  * Input `min` attribute per numeric kind.
  *
  * - `maxOutputTokens` / `contextLimit`: minimum 1 — the buzz-agent runtime
- *   rejects 0 for these fields (crates/buzz-agent/src/config.rs:921-928).
+ *   rejects 0 for these fields (crates/beekeeper-agent/src/config.rs:921-928).
  * - `maxRounds`: 0 is valid (means unlimited).
  */
 export const NUMERIC_KIND_MIN: Record<NumericDescriptor["kind"], number> = {

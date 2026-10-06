@@ -351,7 +351,10 @@ test("a missing branch, base or declared path is carried as missing", () => {
 });
 
 test("declared paths are carried verbatim and compared with nothing", () => {
-  const paths = ["desktop/src/features/project-pulse/lib/", "crates/buzz-core"];
+  const paths = [
+    "desktop/src/features/project-pulse/lib/",
+    "crates/beekeeper-core",
+  ];
   const model = project({
     pages: [
       page([
@@ -362,7 +365,7 @@ test("declared paths are carried verbatim and compared with nothing", () => {
           assignments: [
             assignment({
               sourceEventId: "6f".repeat(32),
-              fileOwnership: ["crates/buzz-core"],
+              fileOwnership: ["crates/beekeeper-core"],
             }),
           ],
         }),

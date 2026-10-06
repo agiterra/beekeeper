@@ -41,7 +41,7 @@ function sign(kind, content, tags, secret) {
  * this projection — the one Mission, Decisions and Settlement read — never
  * did, and so repeated ledger 204's bug key for key: it knew nothing of
  * `grant-project-actions`, refused the `projectRef` the relay adds on purpose
- * (`crates/buzz-relay/src/handlers/side_effects.rs`, ledger 186), and read
+ * (`crates/beekeeper-relay/src/handlers/side_effects.rs`, ledger 186), and read
  * "unknown" over every team session an owner founded (ledger 238). A strict
  * reader that does not load the shared fixtures is the defect; this test is
  * the fix.

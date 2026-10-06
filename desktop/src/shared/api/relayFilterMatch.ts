@@ -1,7 +1,7 @@
 /**
  * Client-side NIP-01 filter matching.
  *
- * Mirrors `crates/buzz-core/src/filter.rs` (`filter_match_one`): fields inside
+ * Mirrors `crates/beekeeper-core/src/filter.rs` (`filter_match_one`): fields inside
  * one filter are AND-ed, values inside a field are OR-ed, `since`/`until` are
  * inclusive, `ids` are prefix matches, tag clauses (`#x`) match any tag whose
  * first element is `x` and whose value is listed.

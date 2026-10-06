@@ -3,7 +3,7 @@
   "kind": 44223,
   "record": "coding-session per-generation metadata",
   "readers": {
-    "rust": "crates/buzz-core/src/coding_session_payload.rs :: decode_coding_session_metadata",
+    "rust": "crates/beekeeper-core/src/coding_session_payload.rs :: decode_coding_session_metadata",
     "desktopGate": "desktop/src/shared/coordination/sessionCoordinationStrictJson.ts :: hasStrictMetadataJson (the Pulse gate)",
     "desktopIngress": "desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts :: parseBuzzCodingSessionMetadata",
     "dart": "mobile/lib/features/coding_sessions/domain/coding_session_decoders.dart :: decodeCodingSessionMetadata",
@@ -1188,7 +1188,7 @@
     },
     {
       "name": "context-summary",
-      "why": "`contextSummary` is not a key of `SessionMetadata`, so no signed 44223 has ever carried one: the sole writer is serde over that struct (crates/buzz-session-provider/src/lib.rs:8351). The desktop ingress decoder and the mobile decoder both accepted it until lane 216; every reader now refuses it, as buzz-core's key set always did.",
+      "why": "`contextSummary` is not a key of `SessionMetadata`, so no signed 44223 has ever carried one: the sole writer is serde over that struct (crates/beekeeper-session-provider/src/lib.rs:8351). The desktop ingress decoder and the mobile decoder both accepted it until lane 216; every reader now refuses it, as buzz-core's key set always did.",
       "content": {
         "schema": "buzz-coding-session-metadata/v1",
         "session": {

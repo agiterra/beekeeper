@@ -1,7 +1,7 @@
 /**
  * Whether the viewer may write to a project's to-do lists — the client's
  * statement of the relay's `project_scoped_write_admitted` rule
- * (`crates/buzz-relay/src/handlers/ingest.rs`):
+ * (`crates/beekeeper-relay/src/handlers/ingest.rs`):
  *
  * - private project: the creator, a roster `owner` or a `collaborator`
  *   writes; a `viewer` reads only;

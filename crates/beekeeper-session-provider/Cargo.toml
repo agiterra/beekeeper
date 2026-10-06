@@ -1,0 +1,76 @@
+[package]
+name = "beekeeper-session-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Coding-session provider adapter: drives Claude Code over ACP from signed Buzz commands"
+
+[lib]
+name = "beekeeper_session_provider"
+path = "src/lib.rs"
+
+[[bin]]
+name = "buzz-session-provider"
+path = "src/main.rs"
+
+[dependencies]
+# Internal
+beekeeper-core = { workspace = true }
+beekeeper-sdk = { workspace = true }
+beekeeper-acp = { path = "../beekeeper-acp" }
+beekeeper-persona = { path = "../beekeeper-persona" }
+beekeeper-workflow = { workspace = true }
+
+# Nostr
+nostr = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+futures-util = { workspace = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "1.0"
+
+# IDs and time
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+# Digests
+beekeeper-ws-client = { path = "../beekeeper-ws-client" }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+# Turn attachments: HTTP to read the blob back from the relay's Blossom store,
+# base64 for the ACP image block, and `image` to bound what reaches a model
+# (decode + downscale to a 1568px longest edge).
+reqwest = { workspace = true }
+base64 = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+# Process-group kill and pid liveness for host-executed action steps; the
+# same version and features `buzz-dev-mcp` pins for its shell runner.
+nix = { version = "0.31", default-features = false, features = ["signal", "process", "hostname"] }
+# `O_NOFOLLOW` for the host store lock, so the same lock protocol the desktop
+# uses (`desktop/src-tauri/src/coding_sessions/workdir_store_lock.rs`) is one
+# implementation rather than two that can drift.
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+axum = { workspace = true }
+tempfile = "3"
+reqwest = { workspace = true }

@@ -3,7 +3,7 @@
   "kind": 44226,
   "record": "coding-session genesis",
   "readers": {
-    "rust": "crates/buzz-core/src/coding_session_genesis.rs :: decode_coding_session_genesis",
+    "rust": "crates/beekeeper-core/src/coding_session_genesis.rs :: decode_coding_session_genesis",
     "desktop": "desktop/src/features/coding-sessions/lib/codingSessionCreateObservations.ts :: classifyCodingSessionGenesisEvent",
     "dart": "mobile/lib/features/coding_sessions/domain/coding_session_session_decoders.dart :: decodeCodingSessionGenesis"
   },

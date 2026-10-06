@@ -73,7 +73,7 @@ MCP hook and exposes no hook tool: the reply guard
 about to end with nothing posted to Buzz. There is no `_ReplyGuard` tool to
 implement and no server to allowlist — the env var and the recognition contract
 are documented in
-[crates/buzz-agent/README.md](../crates/buzz-agent/README.md#reply-guard).
+[crates/beekeeper-agent/README.md](../crates/beekeeper-agent/README.md#reply-guard).
 
 It is mentioned here only because it shares this lifecycle point and this
 budget: its reminders count against `BUZZ_AGENT_STOP_MAX_REJECTIONS` like any

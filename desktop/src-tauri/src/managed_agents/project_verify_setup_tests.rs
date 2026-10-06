@@ -16,16 +16,17 @@ const PROJECT: &str =
 #[test]
 fn setup_publishes_the_seeded_verify_under_the_shared_id_and_relay_hash() {
     let command: Vec<String> = ["cargo", "test", "--workspace"].map(str::to_owned).to_vec();
-    let yml = buzz_persona_pkg::seed::seeded_actions_yml_with_verify(&command);
+    let yml = beekeeper_persona_pkg::seed::seeded_actions_yml_with_verify(&command);
     let plan = plan_verify_publication(PROJECT, &yml).expect("plan");
     assert_eq!(
         plan.workflow_id,
-        buzz_workflow_pkg::actions_file::action_workflow_id(PROJECT, "verify")
+        beekeeper_workflow_pkg::actions_file::action_workflow_id(PROJECT, "verify")
     );
     assert_eq!(plan.command, command);
-    let (def, _) = buzz_workflow_pkg::WorkflowEngine::parse_yaml(&plan.yaml).expect("relay parse");
+    let (def, _) =
+        beekeeper_workflow_pkg::WorkflowEngine::parse_yaml(&plan.yaml).expect("relay parse");
     assert_eq!(
-        buzz_workflow_pkg::hash::definition_hash_hex(&def).expect("hash"),
+        beekeeper_workflow_pkg::hash::definition_hash_hex(&def).expect("hash"),
         plan.definition_hash,
         "the relay hashes the published YAML to the hash setup shows"
     );
@@ -188,8 +189,8 @@ mod publishes_its_own_standing_grant {
             })
             .and_then(|event| {
                 let (def, _) =
-                    buzz_workflow_pkg::WorkflowEngine::parse_yaml(&event.content).ok()?;
-                buzz_workflow_pkg::hash::definition_hash_hex(&def).ok()
+                    beekeeper_workflow_pkg::WorkflowEngine::parse_yaml(&event.content).ok()?;
+                beekeeper_workflow_pkg::hash::definition_hash_hex(&def).ok()
             });
         let grants: Vec<serde_json::Value> = events
             .iter()
@@ -255,7 +256,7 @@ mod publishes_its_own_standing_grant {
         *state.relay_url_override.lock().expect("relay") = Some(url);
 
         let command: Vec<String> = ["true"].map(str::to_owned).to_vec();
-        let yml = buzz_persona_pkg::seed::seeded_actions_yml_with_verify(&command);
+        let yml = beekeeper_persona_pkg::seed::seeded_actions_yml_with_verify(&command);
         let result = project_verify_setup_with_state(
             &state,
             PROJECT.to_string(),
@@ -306,7 +307,7 @@ mod publishes_its_own_standing_grant {
         *state.relay_url_override.lock().expect("relay") = Some(url);
 
         let command: Vec<String> = ["true"].map(str::to_owned).to_vec();
-        let yml = buzz_persona_pkg::seed::seeded_actions_yml_with_verify(&command);
+        let yml = beekeeper_persona_pkg::seed::seeded_actions_yml_with_verify(&command);
 
         let first = project_verify_setup_with_state(
             &state,

@@ -347,7 +347,7 @@ pub(super) fn truncate_patch(patch: String) -> (String, bool) {
 /// stays hardened host Git.
 enum DiffGit<'a> {
     Scratch(&'a GitAuthConfig),
-    Workspace(&'a buzz_session_provider_pkg::execution_scope_host::HostLaunchPlan),
+    Workspace(&'a beekeeper_session_provider_pkg::execution_scope_host::HostLaunchPlan),
 }
 
 impl DiffGit<'_> {

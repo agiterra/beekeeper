@@ -8,7 +8,7 @@ Project Work Records
 
 **Depends on**: NIP-01 (basic event format), NIP-CSG (the session genesis every record roots at), NIP-CSAT (the authority chain the `may_lead` projection comes from), NIP-CSTX (kind:44244 — the assignments, reports, verdicts and completion this joins to), NIP-MP (the project coordinate), NIP-PK (the agents repository a plan lives in). Interacts with kind:30618 (relay-signed repository ref state) and kind:44227 (the session's current goal).
 
-This document is written from `conformance/project-work/README.md`, which is the frozen contract (ledger item 194, amended by A2 in `docs/UNIFIED_WORK_PLAN.md` § 8) and stays normative where the two could differ. The fixtures under `conformance/project-work/fixtures/` pin every rule stated here, and `crates/buzz-core/src/project_plan.rs`, `project_work.rs` and `project_work_fold.rs` implement them (ledger item 195).
+This document is written from `conformance/project-work/README.md`, which is the frozen contract (ledger item 194, amended by A2 in `docs/UNIFIED_WORK_PLAN.md` § 8) and stays normative where the two could differ. The fixtures under `conformance/project-work/fixtures/` pin every rule stated here, and `crates/beekeeper-core/src/project_plan.rs`, `project_work.rs` and `project_work_fold.rs` implement them (ledger item 195).
 
 ## Abstract
 
@@ -55,7 +55,7 @@ Tag-to-content parity is checked on every read, exactly as 44244 checks it. A ta
 
 `d` is the **sessionRef**, matching all four siblings (44244–44247), so one REQ `{"kinds":[44249],"#d":["<sessionRef>"]}` returns everything the fold needs using a query shape every reader already builds. `workId` lives in content, where the fold indexes it; it is stable across amendments and groups a declaration with its successors without needing its own tag.
 
-The `a` tag is a canonical, singleton **project selector** so a reader can pick one project's work. It does **not** put 44249 in `is_project_a_scoped_kind`: 44240 (Pulse) and 44248 (to-do op) are gated by project membership *alone, with no channel*, while 44249 is gated by channel membership through `h`, like its coding-session siblings. A const assert in `crates/buzz-core/src/kind.rs` pins this, and saying otherwise would claim a relay gate that does not exist.
+The `a` tag is a canonical, singleton **project selector** so a reader can pick one project's work. It does **not** put 44249 in `is_project_a_scoped_kind`: 44240 (Pulse) and 44248 (to-do op) are gated by project membership *alone, with no channel*, while 44249 is gated by channel membership through `h`, like its coding-session siblings. A const assert in `crates/beekeeper-core/src/kind.rs` pins this, and saying otherwise would claim a relay gate that does not exist.
 
 ### `work.declared`
 
@@ -308,7 +308,7 @@ The two disagreeing is a **disclosure**, not a reconciliation. Nothing here merg
 
 ## Compatibility
 
-1. **An old reader ignores kind 44249 entirely.** It never queries it, so it never sees it. Nothing about a session's 44244 history changes: the same events fold identically in a build that has never heard of 44249, and a mixed stream selected by kind produces the same projection. `crates/buzz-core/src/project_work_fold_tests.rs` proves both, and also that the 44244 reader refuses a 44249 envelope outright rather than misreading it.
+1. **An old reader ignores kind 44249 entirely.** It never queries it, so it never sees it. Nothing about a session's 44244 history changes: the same events fold identically in a build that has never heard of 44249, and a mixed stream selected by kind produces the same projection. `crates/beekeeper-core/src/project_work_fold_tests.rs` proves both, and also that the 44244 reader refuses a 44249 envelope outright rather than misreading it.
 2. **Nothing here adds a key to 44244, 44223 or 44228.** The `may_lead` projection this contract consumes is the one 44228 already produces.
 3. **Relay-first landing.** 44249 changes relay ingest, so a desktop that depends on it is installed only after the relay serving it has been deployed (NIP-11 `build_time` past the landing time).
 4. **Coverage is not a genesis bump.** An old client publishing a `mission.completed` with no coverage is a *discrepancy to disclose*, never a claim that the old client enforced this contract.
@@ -317,11 +317,11 @@ The two disagreeing is a **disclosure**, not a reconciliation. Nothing here merg
 
 | what | where |
 |---|---|
-| plan parser and refusal codes | `crates/buzz-core/src/project_plan.rs` |
-| closed envelope, records, validators | `crates/buzz-core/src/project_work.rs`, `project_work_decode.rs` |
-| the coverage fold | `crates/buzz-core/src/project_work_fold.rs`, `project_work_fold_project.rs`, `project_work_fold_coverage.rs` |
-| evidence facts, authority and reason codes | `crates/buzz-core/src/project_work_evidence.rs` |
-| typed builders | `crates/buzz-sdk/src/project_work.rs` |
-| relay ingest admission | `crates/buzz-relay/src/handlers/project_work.rs` |
-| kind constant and const asserts | `crates/buzz-core/src/kind.rs` |
+| plan parser and refusal codes | `crates/beekeeper-core/src/project_plan.rs` |
+| closed envelope, records, validators | `crates/beekeeper-core/src/project_work.rs`, `project_work_decode.rs` |
+| the coverage fold | `crates/beekeeper-core/src/project_work_fold.rs`, `project_work_fold_project.rs`, `project_work_fold_coverage.rs` |
+| evidence facts, authority and reason codes | `crates/beekeeper-core/src/project_work_evidence.rs` |
+| typed builders | `crates/beekeeper-sdk/src/project_work.rs` |
+| relay ingest admission | `crates/beekeeper-relay/src/handlers/project_work.rs` |
+| kind constant and const asserts | `crates/beekeeper-core/src/kind.rs` |
 | fixtures | `conformance/project-work/fixtures/` |

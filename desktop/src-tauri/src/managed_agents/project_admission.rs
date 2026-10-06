@@ -7,8 +7,8 @@
 //! project's roster must name that key, or the relay's read gate withholds
 //! the project's kind:30621 and every repository event — relay-signed
 //! kind:30618 ref state included — from the host
-//! (`crates/buzz-db/src/git_repo.rs::hidden_repos_for_reader`,
-//! `crates/buzz-core/src/kind.rs::project_container_hidden_from` and
+//! (`crates/beekeeper-db/src/git_repo.rs::hidden_repos_for_reader`,
+//! `crates/beekeeper-core/src/kind.rs::project_container_hidden_from` and
 //! `repo_event_hidden_from`). Three control runs in a row (2026-09-24/25)
 //! found the host off the roster: two earlier repairs hung off a provider
 //! *start*, and a provider already running since app launch never passed
@@ -43,7 +43,7 @@ use crate::managed_agents::project_roster::{
     lower_hex64, put_project_agents, read_project_head, read_project_roster, roster_write_refusal,
     split_coordinate,
 };
-use buzz_core_pkg::kind::{
+use beekeeper_core_pkg::kind::{
     is_private_project_event, KIND_PROJECT, KIND_PROJECT_PUT_MEMBER, KIND_PROJECT_REMOVE_MEMBER,
     PROJECT_ROLE_COLLABORATOR,
 };

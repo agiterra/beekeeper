@@ -58,7 +58,7 @@ type AuthorityReceipt = {
 
 /**
  * One accepted handover claim — the TypeScript twin of `CurrentClaim`
- * (`crates/buzz-core/src/coding_session_authority_claim.rs`), field for field.
+ * (`crates/beekeeper-core/src/coding_session_authority_claim.rs`), field for field.
  *
  * Deliberately carries no timestamp: the Rust twin does not, because a
  * consumer that folded the chain from receipts alone knows the claim without

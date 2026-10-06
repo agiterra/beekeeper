@@ -66,7 +66,7 @@ pub(crate) fn install_default_agents(
     let checkout = packs_cache::packs_checkout_dir(&packs_root, &owner, &id);
     let clone_url = packs_cache::packs_clone_url(&relay_http, &owner, &id);
     packs_cache::sync_packs_checkout(&checkout, &clone_url, source, &auth)?;
-    let root = if buzz_core_pkg::project_pack_source::is_root_pack_path(&path) {
+    let root = if beekeeper_core_pkg::project_pack_source::is_root_pack_path(&path) {
         checkout.clone()
     } else {
         checkout.join(&path)
@@ -75,7 +75,7 @@ pub(crate) fn install_default_agents(
     // The roles and names come from the repository's own manifest; a
     // manifest that is there and wrong refuses, a missing one means the
     // role files alone.
-    let team = buzz_persona_pkg::team::load_team(&root).map_err(|error| error.to_string())?;
+    let team = beekeeper_persona_pkg::team::load_team(&root).map_err(|error| error.to_string())?;
     let mut roles: Vec<String> = team
         .as_ref()
         .map(|team| team.roles.keys().cloned().collect())
@@ -246,7 +246,7 @@ pub(crate) fn project_agent_pubkeys(
 /// The role slugs named by `<root>/roles/<role>.md`, sorted; `roles/archive/`
 /// is a directory and is skipped by construction.
 fn role_files(root: &std::path::Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(root.join(buzz_persona_pkg::compose::FLAT_ROLES_DIR))
+    let Ok(entries) = std::fs::read_dir(root.join(beekeeper_persona_pkg::compose::FLAT_ROLES_DIR))
     else {
         return Vec::new();
     };

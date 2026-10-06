@@ -151,13 +151,13 @@ export type SeatSigningSource =
  *    it spawns the seat (same file, its module docs).
  * 3. The seat process's own environment: the provider injects
  *    `NOSTR_PRIVATE_KEY` into it
- *    (`crates/buzz-session-provider/src/actor_seats.rs:179`), and
+ *    (`crates/beekeeper-session-provider/src/actor_seats.rs:179`), and
  *    `buzz-dev-mcp`'s shim copies that into a 0600 file inside a tempdir that
  *    is destroyed when the process ends
- *    (`crates/buzz-dev-mcp/src/shim.rs:107`).
+ *    (`crates/beekeeper-dev-mcp/src/shim.rs:107`).
  *
  * The only stable key file on this computer is `~/.nostr/key`, which is the
- * *operator's* identity (`crates/buzz-cli/src/commands/git_setup.rs:157`), and
+ * *operator's* identity (`crates/beekeeper-cli/src/commands/git_setup.rs:157`), and
  * a seat signing its commits as the operator is a forged attribution.
  *
  * Nothing is lost by this: both `git-sign-nostr` and `git-credential-nostr`

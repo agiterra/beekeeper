@@ -98,7 +98,13 @@ function liveRunSeats() {
       executionKey: "execution:bob",
       seat: "Bob · Builder",
       transcript: [
-        tool("b-read", "b1", 300, { path: "crates/buzz-cli/src/lib.rs" }, "y"),
+        tool(
+          "b-read",
+          "b1",
+          300,
+          { path: "crates/beekeeper-cli/src/lib.rs" },
+          "y",
+        ),
         turnResult("b-result", "b1", 1_122, {
           durationMs: 822_000,
           usage: {
@@ -372,7 +378,7 @@ test("A3.5: roomDownloadCommand names the subcommand and ignores everything else
   );
   assert.equal(roomDownloadCommand("bee messages list"), null);
   assert.equal(roomDownloadCommand("bee sessions audit"), null);
-  assert.equal(roomDownloadCommand("cargo test -p buzz-cli"), null);
+  assert.equal(roomDownloadCommand("cargo test -p beekeeper-cli"), null);
 });
 
 test("A3.5/F4: a cost the driver reported is reported, with no price-list gate", () => {

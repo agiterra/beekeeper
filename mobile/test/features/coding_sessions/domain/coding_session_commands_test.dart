@@ -27,7 +27,7 @@ NostrEvent _signed(CodingSessionCommandEvent event) => NostrEvent(
 void main() {
   group('44220 thread.turn.start', () {
     test('a boundary turn is byte-identical to the buzz-core fixture', () {
-      // crates/buzz-core/src/coding_session_command.rs, test
+      // crates/beekeeper-core/src/coding_session_command.rs, test
       // `an_absent_deliver_class_means_boundary`.
       final event = buildCodingSessionTurnStartEvent(
         channelId: _channel,
@@ -408,7 +408,7 @@ void main() {
   group('44221 session.create', () {
     test('the unseated ten-key form is byte-identical to the buzz-core '
         'fixture', () {
-      // crates/buzz-core/src/coding_session_lifecycle_command.rs, the
+      // crates/beekeeper-core/src/coding_session_lifecycle_command.rs, the
       // `sessionRef` + `genesisRef` create form.
       final genesisRef = 'ab' * 32;
       final event = buildCodingSessionCreateEvent(

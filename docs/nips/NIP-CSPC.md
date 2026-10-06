@@ -166,10 +166,10 @@ conflict, not a merge: consumers surface it rather than picking a winner.
 
 | Concern | Location |
 | --- | --- |
-| Kind constant | `crates/buzz-core/src/kind.rs` |
-| Membership, size cap | `crates/buzz-relay/src/handlers/ingest.rs` |
-| Builder | `crates/buzz-sdk/src/builders.rs` |
-| Semantic key | `crates/buzz-sdk/src/coding_session.rs` |
+| Kind constant | `crates/beekeeper-core/src/kind.rs` |
+| Membership, size cap | `crates/beekeeper-relay/src/handlers/ingest.rs` |
+| Builder | `crates/beekeeper-sdk/src/builders.rs` |
+| Semantic key | `crates/beekeeper-sdk/src/coding_session.rs` |
 
 Donor reference for the content shape (pre-amendment):
 `desktop/src/features/coding-sessions/lib/codingSessionProviderCatalog.ts`.

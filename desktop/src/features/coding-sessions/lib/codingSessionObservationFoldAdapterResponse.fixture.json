@@ -23,7 +23,7 @@
       "testsWritten": 6,
       "testsRed": 6,
       "testsGreen": 4,
-      "lastCommand": "cargo test -p buzz-core coding_session_observation",
+      "lastCommand": "cargo test -p beekeeper-core coding_session_observation",
       "lastSummary": "26 passed; 0 failed",
       "note": null
     }
@@ -39,7 +39,7 @@
       "assignmentRef": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
       "gate": "cargo test",
       "outcome": "passed",
-      "command": "cargo test -p buzz-cli",
+      "command": "cargo test -p beekeeper-cli",
       "summary": "13 passed",
       "durationMs": 41000,
       "headSha": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
@@ -55,7 +55,7 @@
       "assignmentRef": null,
       "gate": "cargo test",
       "outcome": "failed",
-      "command": "cargo test -p buzz-cli",
+      "command": "cargo test -p beekeeper-cli",
       "summary": "test result: FAILED. 0 passed; 2 failed; 0 ignored",
       "durationMs": 41000,
       "headSha": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a",

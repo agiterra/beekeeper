@@ -271,7 +271,7 @@ function seededEvents(): RelayEvent[] {
         "| Check | Command | Duration | Exit | Notes |",
         "| --- | --- | --- | --- | --- |",
         "| Claude Code status | `pnpm exec claude-code status --verbose --json` | 12.4s | 0 | Use it to find files, then post them to GitHub |",
-        "| Reconnect unit | `cargo test -p buzz-relay reconnect -- --nocapture` | 41.9s | 0 | Bounded retry state verified end to end |",
+        "| Reconnect unit | `cargo test -p beekeeper-relay reconnect -- --nocapture` | 41.9s | 0 | Bounded retry state verified end to end |",
         "| Typecheck | `pnpm exec tsc --noEmit --pretty false` | 28.1s | 0 | No new diagnostics in the coding-session feature |",
         "",
         "That is everything the run produced.",

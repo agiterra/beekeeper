@@ -1,6 +1,6 @@
 // Project (kind:30621) coordinates as the relay spells them.
 //
-// A port of `buzz_core::kind::normalize_project_coordinate`, shared by
+// A port of `beekeeper_core::kind::normalize_project_coordinate`, shared by
 // every feature that folds project-scoped ops (to-dos, agents-repository
 // drafts) so no feature imports another for it.
 

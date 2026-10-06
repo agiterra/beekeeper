@@ -150,7 +150,7 @@ pub(crate) fn resolve_checkout(
 /// not a tree, or a Git that could not answer, is an error — neither is the
 /// ordinary "lives on another machine" state.
 fn tree_present(
-    plan: &buzz_session_provider_pkg::execution_scope_host::HostLaunchPlan,
+    plan: &beekeeper_session_provider_pkg::execution_scope_host::HostLaunchPlan,
     dir: &Path,
     oid: &str,
 ) -> Result<bool, String> {

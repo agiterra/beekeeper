@@ -65,7 +65,7 @@ pub(crate) fn plan_seat_pack(
                 // was staged from (spec § 4.11). Best-effort; the seat stages
                 // either way.
                 if let (true, Some(ref_name)) = (
-                    buzz_core_pkg::project_pack_source::is_root_pack_path(&source.path),
+                    beekeeper_core_pkg::project_pack_source::is_root_pack_path(&source.path),
                     source.git_ref.as_deref(),
                 ) {
                     if let Ok((owner, id)) = packs_cache::parse_repo_coordinate(&source.repo) {

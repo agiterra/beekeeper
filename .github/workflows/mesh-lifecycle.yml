@@ -12,11 +12,11 @@ on:
   push:
     branches: [main]
     paths:
-      - 'crates/buzz-relay/examples/mesh_*.rs'
-      - 'crates/buzz-relay/Cargo.toml'
-      - 'crates/buzz-admin/**'
-      - 'crates/buzz-test-client/**'
-      - 'crates/buzz-ws-client/**'
+      - 'crates/beekeeper-relay/examples/mesh_*.rs'
+      - 'crates/beekeeper-relay/Cargo.toml'
+      - 'crates/beekeeper-admin/**'
+      - 'crates/beekeeper-test-client/**'
+      - 'crates/beekeeper-ws-client/**'
       - 'Cargo.lock'
       - 'desktop/src-tauri/src/mesh_llm/**'
       - 'scripts/ci-mesh-lifecycle-smoke.sh'
@@ -24,11 +24,11 @@ on:
       - '.github/workflows/mesh-lifecycle.yml'
   pull_request:
     paths:
-      - 'crates/buzz-relay/examples/mesh_*.rs'
-      - 'crates/buzz-relay/Cargo.toml'
-      - 'crates/buzz-admin/**'
-      - 'crates/buzz-test-client/**'
-      - 'crates/buzz-ws-client/**'
+      - 'crates/beekeeper-relay/examples/mesh_*.rs'
+      - 'crates/beekeeper-relay/Cargo.toml'
+      - 'crates/beekeeper-admin/**'
+      - 'crates/beekeeper-test-client/**'
+      - 'crates/beekeeper-ws-client/**'
       - 'Cargo.lock'
       - 'desktop/src-tauri/src/mesh_llm/**'
       - 'scripts/ci-mesh-lifecycle-smoke.sh'

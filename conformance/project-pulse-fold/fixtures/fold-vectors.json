@@ -173,7 +173,7 @@
               ["pu-v", "pu1-1"],
               ["pu-type", "blocker"]
             ],
-            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"blocker\",\"text\":\"Do not touch pool.rs; the creation path is half-migrated.\",\"codeAreas\":[\"crates/buzz-acp/src/pool.rs\"],\"branch\":null,\"supersedes\":null}"
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"blocker\",\"text\":\"Do not touch pool.rs; the creation path is half-migrated.\",\"codeAreas\":[\"crates/beekeeper-acp/src/pool.rs\"],\"branch\":null,\"supersedes\":null}"
           },
           {
             "id": "0000000000000000000000000000000000000000000000000000000000000022",
@@ -230,7 +230,7 @@
             "createdAt": 1785511037,
             "type": "blocker",
             "text": "Do not touch pool.rs; the creation path is half-migrated.",
-            "claimedAreas": ["crates/buzz-acp/src/pool.rs"],
+            "claimedAreas": ["crates/beekeeper-acp/src/pool.rs"],
             "branch": null,
             "sessionRef": null,
             "supersedes": null,

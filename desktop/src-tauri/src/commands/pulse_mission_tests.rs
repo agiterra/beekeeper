@@ -130,12 +130,12 @@ fn no_checkpoint_files_means_no_overlap_row_rather_than_a_guessed_one() {
 fn two_umbrellas_sharing_a_path_produce_one_row_and_no_target_of_any_kind() {
     let mut request = request();
     let mut left = session("session-a", &"11".repeat(32));
-    left.overlap_files = vec!["crates/buzz-core/src/pulse.rs".to_owned()];
+    left.overlap_files = vec!["crates/beekeeper-core/src/pulse.rs".to_owned()];
     left.overlap_sha = Some("9a1c4e7b2d3f40516273849506172839405a6b7c".to_owned());
     left.overlap_author = Some("11".repeat(32));
     left.overlap_as_of = Some(1_756_800_600);
     let mut right = session("session-b", &"22".repeat(32));
-    right.overlap_files = vec!["crates/buzz-core/src/pulse.rs".to_owned()];
+    right.overlap_files = vec!["crates/beekeeper-core/src/pulse.rs".to_owned()];
     right.overlap_sha = Some("b7c8d9e0f1a2334455667788990011223344556f".to_owned());
     right.overlap_author = Some("22".repeat(32));
     right.overlap_as_of = Some(1_756_800_000);

@@ -407,7 +407,7 @@ function seededSessionFacts(): RelayEvent[] {
         tool: {
           toolName: "Bash",
           toolId: "tool-1",
-          input: { command: "cargo test -p buzz-core" },
+          input: { command: "cargo test -p beekeeper-core" },
         },
       },
     }),

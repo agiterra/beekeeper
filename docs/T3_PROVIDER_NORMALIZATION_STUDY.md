@@ -202,12 +202,12 @@ transitions") is mapped to the shared vocabulary at the adapter.
 
 Buzz's transcript surface, located: **there is no `coding_session_transcript.rs`.** Items
 are untyped `serde_json::Value` in a `"kind"`-discriminated open union, produced by
-`TranscriptTranslator` (`crates/buzz-session-provider/src/transcript.rs:60-66`,
+`TranscriptTranslator` (`crates/beekeeper-session-provider/src/transcript.rs:60-66`,
 `on_update` at `:98-146`) and wrapped in `TranscriptEnvelope`
-(`crates/buzz-core/src/coding_session_payload.rs:457-473`) as the **content** of a signed
-kind-44225 event (`crates/buzz-core/src/kind.rs:649`; built at
-`crates/buzz-sdk/src/builders.rs:2743-2771`; signed at
-`crates/buzz-session-provider/src/lib.rs:1848-1849`).
+(`crates/beekeeper-core/src/coding_session_payload.rs:457-473`) as the **content** of a signed
+kind-44225 event (`crates/beekeeper-core/src/kind.rs:649`; built at
+`crates/beekeeper-sdk/src/builders.rs:2743-2771`; signed at
+`crates/beekeeper-session-provider/src/lib.rs:1848-1849`).
 
 The SESSION_STATE §2 item 2 claim (`plans/SESSION_STATE.md:47-53`) is confirmed exactly:
 
@@ -221,7 +221,7 @@ The SESSION_STATE §2 item 2 claim (`plans/SESSION_STATE.md:47-53`) is confirmed
   `bound_text` `:432-440`, `fit_item` `:236-271`). The sole `toolName` sanitation is
   read-side and post-signing: `safe_brief_identifier` rejects non-`[A-Za-z0-9_.:-]` names and
   substitutes `redacted_tool` in the context brief
-  (`crates/buzz-core/src/coding_session_context.rs:393-397`, `:500-506`).
+  (`crates/beekeeper-core/src/coding_session_context.rs:393-397`, `:500-506`).
 - Host paths do reach signed content: nothing between `on_update` and `sign_with_keys`
   inspects `toolName`, and the content sanitizer elides only secret-ish *keys*
   (`coding_session_context.rs:821-841`) — not `toolName`, `title`, `input`, or paths.

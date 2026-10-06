@@ -36,7 +36,7 @@ lock.write_text(
 PY
 version_only=$("$key_script" "${args[@]}")
 [[ "$original" == "$version_only" ]] || { echo "desktop version changed cache key" >&2; exit 1; }
-printf '\n# dependency input\n' >> crates/buzz-acp/Cargo.toml
+printf '\n# dependency input\n' >> crates/beekeeper-acp/Cargo.toml
 dependency_changed=$("$key_script" "${args[@]}")
 [[ "$original" != "$dependency_changed" ]] || { echo "dependency manifest did not change cache key" >&2; exit 1; }
 [[ "$original" == desktop-rust-release-v1-Linux-x86_64-unknown-linux-gnu-* ]] || { echo "unexpected key: $original" >&2; exit 1; }

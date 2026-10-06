@@ -1,6 +1,6 @@
 /**
  * The project artifact pin fold — the TypeScript twin of
- * `crates/buzz-core/src/project_artifact_pin_fold.rs`, bound to the same
+ * `crates/beekeeper-core/src/project_artifact_pin_fold.rs`, bound to the same
  * vectors (`conformance/project-artifact-pin-fold/`).
  *
  * Rules, normatively, are that directory's `CONTRACT.md`. The same import

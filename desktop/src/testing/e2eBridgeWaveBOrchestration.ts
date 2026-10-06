@@ -26,7 +26,7 @@ export const WAVE_B_ORCHESTRATION_PROJECT_WORK_KEY =
  * Mission surface runs; a spec that seeds declared work answers it here.
  * Kind 44200 needs no mock: it is NIP-44 encrypted to the agent's owner,
  * carries no channel tag, and the coding-session provider never publishes it
- * (only the `buzz-acp` harness does, `crates/buzz-acp/src/pool.rs`), so this
+ * (only the `buzz-acp` harness does, `crates/beekeeper-acp/src/pool.rs`), so this
  * view reads tokens from the signed 44225 turn results instead.
  */
 export async function handleWaveBOrchestrationMockCommand(

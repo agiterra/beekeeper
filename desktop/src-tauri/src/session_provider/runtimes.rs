@@ -9,8 +9,8 @@
 
 use std::path::PathBuf;
 
-use buzz_core_pkg::coding_session_payload::Capabilities;
-use buzz_core_pkg::coding_session_runtime::{CliEnvVar, RuntimeDescriptor, SteerIdleGuard};
+use beekeeper_core_pkg::coding_session_payload::Capabilities;
+use beekeeper_core_pkg::coding_session_runtime::{CliEnvVar, RuntimeDescriptor, SteerIdleGuard};
 
 use crate::managed_agents::{
     known_acp_runtime_exact, probe_auth_status, resolve_command, AuthStatus,

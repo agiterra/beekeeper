@@ -2,7 +2,7 @@
 //!
 //! A mockup an agent wrote is worth reviewing as the thing it is, which means
 //! its JavaScript has to run. That is the same stored-XSS shape the media
-//! layer refuses (`buzz_media::validation::BLOCKED_FILE_MIME_TYPES` blocks
+//! layer refuses (`beekeeper_media::validation::BLOCKED_FILE_MIME_TYPES` blocks
 //! `image/svg+xml` and `application/javascript`, and serves `text/html` as a
 //! download), so the isolation here is three independent layers and none of
 //! them is decorative:
@@ -262,8 +262,8 @@ pub async fn artifact_preview_open(
     path: String,
     draft_text: Option<String>,
 ) -> Result<ArtifactPreviewHandle, String> {
-    let class = buzz_core_pkg::agents_repo_draft::validate_draft_path(&path)?;
-    if class != buzz_core_pkg::agents_repo_draft::DraftPathClass::Document
+    let class = beekeeper_core_pkg::agents_repo_draft::validate_draft_path(&path)?;
+    if class != beekeeper_core_pkg::agents_repo_draft::DraftPathClass::Document
         || !path.ends_with(".html")
     {
         return Err(format!(

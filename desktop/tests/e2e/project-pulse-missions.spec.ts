@@ -19,7 +19,7 @@ import {
  * landing carried a verdict.
  *
  * The native command is answered with `pulseMissionResponse.fixture.json` —
- * the same bytes `crates/buzz-core/src/pulse_mission_tests.rs` pins — so a
+ * the same bytes `crates/beekeeper-core/src/pulse_mission_tests.rs` pins — so a
  * sentence that changes in Rust changes here, and a reader who trusts this
  * screenshot is trusting the producer rather than this spec.
  */

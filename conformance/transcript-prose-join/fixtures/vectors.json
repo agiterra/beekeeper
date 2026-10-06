@@ -3,8 +3,8 @@
   "generator": {
     "coalesceFlushBytes": 24576,
     "minParagraphFlushBytes": 512,
-    "regenerate": "BUZZ_REGEN_PROSE_JOIN_VECTORS=1 cargo test -p buzz-session-provider transcript_prose_join",
-    "test": "crates/buzz-session-provider/src/transcript_prose_join_vectors_tests.rs",
+    "regenerate": "BUZZ_REGEN_PROSE_JOIN_VECTORS=1 cargo test -p beekeeper-session-provider transcript_prose_join",
+    "test": "crates/beekeeper-session-provider/src/transcript_prose_join_vectors_tests.rs",
     "translator": "TranscriptTranslator::new(true).with_paragraph_flush(true)"
   },
   "schema": "buzz.conformance/transcript-prose-join@1",

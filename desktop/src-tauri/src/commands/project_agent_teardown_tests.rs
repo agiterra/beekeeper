@@ -91,7 +91,7 @@ fn the_keys_this_reads_are_the_ones_the_provider_writes() {
         "nextSeq": 291,
         "closed": false
     });
-    let record: buzz_session_provider_pkg::state::SessionRecord =
+    let record: beekeeper_session_provider_pkg::state::SessionRecord =
         serde_json::from_value(fixture).expect("the provider's own type must accept this shape");
     let written = serde_json::to_value(&record).expect("serialize");
 

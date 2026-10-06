@@ -32,9 +32,9 @@
 //!    the sequence continues: the announcement stands.
 //! 3. **Announce** the agents repository.
 //! 4. **Seed** it in this host's packs cache — from this build's shipped role
-//!    templates by reference (`buzz_persona::seed`), or, when migrating a
+//!    templates by reference (`beekeeper_persona::seed`), or, when migrating a
 //!    pack-layout source, from that source's own roles converted into the
-//!    flat layout (`buzz_persona::migrate`) — one commit authored as this
+//!    flat layout (`beekeeper_persona::migrate`) — one commit authored as this
 //!    host's identity, and **push** `refs/heads/main`. Skipped when the
 //!    relay already holds a push record for it. A seed or push failure after
 //!    this run's own announcement withdraws that announcement, as the packs
@@ -73,11 +73,11 @@ use crate::managed_agents::packs_repo::{
     resolve_app_commit_identity, withdraw_announcement, KIND_REPO_ANNOUNCEMENT, SEED_BRANCH,
 };
 use crate::managed_agents::project_roster;
-use buzz_core_pkg::kind::KIND_PROJECT;
-use buzz_core_pkg::project_pack_source::{
+use beekeeper_core_pkg::kind::KIND_PROJECT;
+use beekeeper_core_pkg::project_pack_source::{
     decode_project_pack_source, PackPin, PACK_PATH_ROOT, PROJECT_PACK_SOURCE_SCHEMA,
 };
-use buzz_persona_pkg::template::TemplateCatalog;
+use beekeeper_persona_pkg::template::TemplateCatalog;
 
 pub(crate) use super::agents_repo_migrate::MigrateFromSource;
 pub use super::agents_repo_migrate::MigrateRequest;
@@ -91,7 +91,7 @@ pub const AGENTS_REPO_SUFFIX: &str = "-beekeeper-agents";
 
 /// Kind of a project's pack-source record.
 pub(crate) const KIND_PROJECT_PACK_SOURCE: u16 =
-    buzz_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16;
+    beekeeper_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16;
 
 /// Message on the one commit the agents seed writes.
 const SEED_COMMIT_MESSAGE: &str = "seed the team from Beekeeper's shipped role templates";
@@ -104,7 +104,7 @@ pub(crate) const MIGRATE_COMMIT_MESSAGE: &str =
     "convert the project's roles from its pack-layout source into this repository";
 
 /// The relay's refusal code when a conditional source's expectation did not
-/// match what it holds (`crates/buzz-relay/src/handlers/ingest_error.rs`).
+/// match what it holds (`crates/beekeeper-relay/src/handlers/ingest_error.rs`).
 const PACK_SOURCE_CONFLICT: &str = "PACK_SOURCE_CONFLICT";
 
 /// `<slug>-beekeeper-agents`, the suffix kept whole inside the 64-byte id.
@@ -145,7 +145,7 @@ pub(crate) struct ProjectAgentsInitOptions {
     /// another repository. Absent, such a project refuses.
     pub migrate: Option<MigrateFromSource>,
     /// The argv the seeded `verify` action runs (ledger 248); the creation
-    /// form's field, [`buzz_persona_pkg::seed::DEFAULT_VERIFY_COMMAND`] when
+    /// form's field, [`beekeeper_persona_pkg::seed::DEFAULT_VERIFY_COMMAND`] when
     /// the caller names none.
     pub verify_command: Vec<String>,
 }
@@ -160,7 +160,7 @@ pub(crate) fn resolve_verify_command(command: Option<Vec<String>>) -> Result<Vec
         .map(|arg| arg.trim().to_string())
         .collect();
     if command.is_empty() {
-        return Ok(buzz_persona_pkg::seed::default_verify_command());
+        return Ok(beekeeper_persona_pkg::seed::default_verify_command());
     }
     if command.iter().any(String::is_empty) {
         return Err("the verify command has an empty argument".to_string());
@@ -357,7 +357,7 @@ pub async fn record_project_agents_repo(
             .filter(|v| !v.is_empty()),
         path: packs_cache::validate_pack_path(path.as_deref().unwrap_or_default())?,
     };
-    if !buzz_core_pkg::project_pack_source::is_root_pack_path(&source.path) {
+    if !beekeeper_core_pkg::project_pack_source::is_root_pack_path(&source.path) {
         return Ok(false);
     }
     let Some(ref_name) = source.git_ref.clone() else {
@@ -710,7 +710,8 @@ pub(crate) async fn project_agents_init_with_paths(
                     .map(|(commit, roles)| (commit, roles, Vec::new())),
                 };
                 let actions_yml = written.as_ref().ok().and_then(|_| {
-                    std::fs::read_to_string(checkout.join(buzz_persona_pkg::seed::ACTIONS_YML)).ok()
+                    std::fs::read_to_string(checkout.join(beekeeper_persona_pkg::seed::ACTIONS_YML))
+                        .ok()
                 });
                 match written {
                     Err(seed_error) => Ok(SeedOutcome::SeedFailed { seed_error }),
@@ -883,7 +884,7 @@ pub(crate) fn seed_agents_checkout(
     }
     std::fs::create_dir_all(checkout)
         .map_err(|error| format!("create {}: {error}", checkout.display()))?;
-    let report = buzz_persona_pkg::seed::write_agents_repo_seed_with_verify(
+    let report = beekeeper_persona_pkg::seed::write_agents_repo_seed_with_verify(
         checkout,
         catalog,
         slug,

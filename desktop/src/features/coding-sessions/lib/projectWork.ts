@@ -6,7 +6,7 @@
  * ordering of rows, and the one rule the projection deliberately does not
  * take a position on: which single next step, if any, a reader should be
  * offered. Anything that decides whether a criterion is covered belongs in
- * `crates/buzz-core/src/project_work_fold.rs` and nowhere else.
+ * `crates/beekeeper-core/src/project_work_fold.rs` and nowhere else.
  */
 import type {
   ProjectWorkCoverage,

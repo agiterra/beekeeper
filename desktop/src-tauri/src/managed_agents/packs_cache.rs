@@ -42,9 +42,9 @@ use crate::commands::project_git_exec::{run_git, validate_clone_url, GitAuthConf
 
 /// The composer's source and provenance types, re-exported so the planner,
 /// the Roles view and this module name one vocabulary.
-pub use buzz_persona_pkg::compose::{RoleSource, SourceProvenance};
-pub use buzz_persona_pkg::team::AgentsRepoAccess;
-pub use buzz_persona_pkg::template::TemplateCatalog;
+pub use beekeeper_persona_pkg::compose::{RoleSource, SourceProvenance};
+pub use beekeeper_persona_pkg::team::AgentsRepoAccess;
+pub use beekeeper_persona_pkg::template::TemplateCatalog;
 
 /// Where this build ships its role templates, relative to the resource root
 /// and to a development checkout: `personas/templates`.
@@ -65,7 +65,7 @@ pub const SEAT_PACK_UNCOMPOSABLE: &str =
 /// Where in a packs repository the role directories live when a 30624 names
 /// no `path` tag — the wire's own default, re-exported so the host and the
 /// relay cannot disagree about it.
-pub use buzz_core_pkg::project_pack_source::DEFAULT_PACK_PATH;
+pub use beekeeper_core_pkg::project_pack_source::DEFAULT_PACK_PATH;
 
 /// The refusal a hire carries when a project's packs cannot be staged.
 ///
@@ -91,11 +91,11 @@ const MAX_SLUG_BYTES: usize = 64;
 /// `buzz-core` and re-exported here: the host writes it into the seat file and
 /// the provider publishes it, so one declaration is the only way the two can
 /// be guaranteed to be the same four keys.
-pub use buzz_core_pkg::coding_session_payload::PackRef;
+pub use beekeeper_core_pkg::coding_session_payload::PackRef;
 
 /// A project's kind:30624 pack source, in the shape the host stages from.
 ///
-/// `buzz_core::project_pack_source::ProjectPackSource` is the decoder's own
+/// `beekeeper_core::project_pack_source::ProjectPackSource` is the decoder's own
 /// type and keeps the pin as a `PackPin` enum; this one keeps the two halves
 /// apart because that is how the renderer hands them across the Tauri
 /// boundary (`ProjectPackSourceInput`, `actor_seats.rs`). [`Self::target`]
@@ -256,7 +256,7 @@ pub fn validate_pack_path(value: &str) -> Result<String, String> {
         return Ok(DEFAULT_PACK_PATH.to_string());
     }
     // The repository root: the agents repository's layout (spec § 4.11).
-    if path == buzz_core_pkg::project_pack_source::PACK_PATH_ROOT {
+    if path == beekeeper_core_pkg::project_pack_source::PACK_PATH_ROOT {
         return Ok(path.to_string());
     }
     let segments: Vec<&str> = path.split('/').collect();
@@ -300,7 +300,7 @@ pub fn packs_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// writing a repository that does not exist into the field a reader uses to go
 /// and look would be worse than saying plainly where they came from. The
 /// matching `sha` is the app's own version, which is exactly what pins them.
-pub use buzz_core_pkg::project_pack_source::PACK_REF_SHIPPED_REPO;
+pub use beekeeper_core_pkg::project_pack_source::PACK_REF_SHIPPED_REPO;
 
 /// The role packs this build ships, or `None` when this build has none.
 ///
@@ -445,7 +445,7 @@ pub fn packs_checkout_dir(packs_root: &Path, owner: &str, id: &str) -> PathBuf {
 
 /// The directory name one packs repository occupies: `<owner8>-<id>`.
 ///
-/// Named to match `buzz_core::project_pack_source::pack_cache_dir_name` so the
+/// Named to match `beekeeper_core::project_pack_source::pack_cache_dir_name` so the
 /// CLI's `bee packs status` and this host name the same directory; the CLI
 /// takes the whole coordinate and this takes it already split, because the
 /// caller here has always just validated both halves.
@@ -597,7 +597,7 @@ pub fn role_persona_in_pack(pack_dir: &Path, role: &str) -> Option<String> {
     if wanted.is_empty() || !pack_dir.join(".plugin").join("plugin.json").is_file() {
         return None;
     }
-    let resolved = match buzz_persona_pkg::resolve::resolve_pack(pack_dir) {
+    let resolved = match beekeeper_persona_pkg::resolve::resolve_pack(pack_dir) {
         Ok(resolved) => resolved,
         Err(error) => {
             tracing::debug!(
@@ -682,7 +682,7 @@ pub fn locate_role_source(checkout: &Path, path: &str, role: &str) -> Option<Rol
         });
     }
     let flat = root
-        .join(buzz_persona_pkg::compose::FLAT_ROLES_DIR)
+        .join(beekeeper_persona_pkg::compose::FLAT_ROLES_DIR)
         .join(format!("{role}.md"));
     if flat.is_file() {
         return Some(RoleSource::Flat {
@@ -699,7 +699,7 @@ pub fn locate_role_source(checkout: &Path, path: &str, role: &str) -> Option<Rol
 /// flat form's `.md` is implied (spec § 4.6).
 pub fn pack_ref_path(source: &RoleSource, path: &str) -> String {
     let path = path.trim_matches('/');
-    let path = if buzz_core_pkg::project_pack_source::is_root_pack_path(path) {
+    let path = if beekeeper_core_pkg::project_pack_source::is_root_pack_path(path) {
         ""
     } else {
         path
@@ -708,12 +708,12 @@ pub fn pack_ref_path(source: &RoleSource, path: &str) -> String {
         RoleSource::Pack { role, .. } if path.is_empty() => role.clone(),
         RoleSource::Pack { role, .. } => format!("{path}/{role}"),
         RoleSource::Flat { role, .. } if path.is_empty() => {
-            format!("{}/{role}", buzz_persona_pkg::compose::FLAT_ROLES_DIR)
+            format!("{}/{role}", beekeeper_persona_pkg::compose::FLAT_ROLES_DIR)
         }
         RoleSource::Flat { role, .. } => {
             format!(
                 "{path}/{}/{role}",
-                buzz_persona_pkg::compose::FLAT_ROLES_DIR
+                beekeeper_persona_pkg::compose::FLAT_ROLES_DIR
             )
         }
     }
@@ -754,7 +754,7 @@ pub fn stage_composed_pack(
     catalog: &TemplateCatalog,
     provenance: SourceProvenance,
 ) -> Result<StagedComposedPack, String> {
-    use buzz_persona_pkg::compose::{
+    use beekeeper_persona_pkg::compose::{
         compose_role, write_staged_pack, ComposeOptions, COMPOSE_JSON,
     };
     let options = ComposeOptions {

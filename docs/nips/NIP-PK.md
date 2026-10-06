@@ -200,7 +200,7 @@ source. Readers show `no pack staged`; none of them invents a default.
 This is finding 31's rule applied on the way in rather than after the fact:
 every reader accepts absence, and each implementation ships a "signed before
 the key existed" decode test
-(`crates/buzz-core/src/coding_session_payload.rs`,
+(`crates/beekeeper-core/src/coding_session_payload.rs`,
 `decode_metadata_reads_a_44223_signed_before_pack_ref_existed`).
 
 ## Shipped defaults — the third rung
@@ -234,7 +234,7 @@ prevent.
 
 Surfaces name the three with one vocabulary — `packs repository`,
 `session checkout`, `shipped defaults` — spelled once in
-`buzz_core::project_pack_source` so the CLI, the seat chip and Project settings
+`beekeeper_core::project_pack_source` so the CLI, the seat chip and Project settings
 cannot disagree.
 
 ## Staging

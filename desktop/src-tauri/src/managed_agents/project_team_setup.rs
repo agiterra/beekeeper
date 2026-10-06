@@ -112,7 +112,7 @@ struct SetupScope {
 
 impl SetupScope {
     fn new(project: &str, owner: &str, relay: &str) -> Result<Self, SetupError> {
-        let project = buzz_core_pkg::kind::normalize_project_coordinate(project.trim())
+        let project = beekeeper_core_pkg::kind::normalize_project_coordinate(project.trim())
             .ok_or_else(|| {
                 SetupError::new(
                     "invalid_input",

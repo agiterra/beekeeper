@@ -192,7 +192,7 @@ fn identities(roles: &Path) -> Result<Vec<SetupRoleIdentity>, SetupError> {
             .into_string()
             .map_err(|_| SetupError::new("invalid_draft", "Role folder names must be UTF-8."))?;
         check_manifest_references(&entry.path())?;
-        let pack = buzz_persona_pkg::pack::load_pack(&entry.path())
+        let pack = beekeeper_persona_pkg::pack::load_pack(&entry.path())
             .map_err(|error| SetupError::new("invalid_draft", format!("{role}: {error}")))?;
         if pack.personas.len() != 1
             || pack.personas[0].role.as_deref() != Some(&role)
@@ -206,13 +206,13 @@ fn identities(roles: &Path) -> Result<Vec<SetupRoleIdentity>, SetupError> {
         for skill in &pack.personas[0].skills {
             check_relative_reference(skill)?;
         }
-        for name in buzz_persona_pkg::pack::resolve_skills(&entry.path(), &pack.personas)
+        for name in beekeeper_persona_pkg::pack::resolve_skills(&entry.path(), &pack.personas)
             .values()
             .flatten()
         {
             let skill_dir = entry.path().join("skills").join(name);
             ensure_contained_directory(&entry.path(), &skill_dir)?;
-            buzz_persona_pkg::skill_meta::read_skill_meta(&skill_dir)
+            beekeeper_persona_pkg::skill_meta::read_skill_meta(&skill_dir)
                 .map_err(|error| SetupError::new("invalid_draft", format!("{role}: {error}")))?;
         }
         if pack.personas[0].hooks.is_some()
@@ -296,7 +296,7 @@ pub(super) fn seed_identities(seed: &Path) -> Result<Vec<SetupRoleIdentity>, Set
     tree_files(seed)?;
     let expected = identities(seed)?;
     for role in &expected {
-        let report = buzz_persona_pkg::validate::validate_pack(&seed.join(&role.role));
+        let report = beekeeper_persona_pkg::validate::validate_pack(&seed.join(&role.role));
         if report.has_errors() {
             return Err(SetupError::new(
                 "invalid_draft",
@@ -339,13 +339,13 @@ pub(super) fn validate(record: &ProjectTeamSetupDraft) -> ProjectTeamSetupValida
             actual_roles = found.into_iter().map(|identity| identity.role).collect();
             for role in &actual_roles {
                 for diagnostic in
-                    buzz_persona_pkg::validate::validate_pack(&roles.join(role)).diagnostics
+                    beekeeper_persona_pkg::validate::validate_pack(&roles.join(role)).diagnostics
                 {
                     let (level, message) = match diagnostic {
-                        buzz_persona_pkg::validate::ValidationDiagnostic::Error(message) => {
+                        beekeeper_persona_pkg::validate::ValidationDiagnostic::Error(message) => {
                             ("error", message)
                         }
-                        buzz_persona_pkg::validate::ValidationDiagnostic::Warning(message) => {
+                        beekeeper_persona_pkg::validate::ValidationDiagnostic::Warning(message) => {
                             ("warning", message)
                         }
                     };

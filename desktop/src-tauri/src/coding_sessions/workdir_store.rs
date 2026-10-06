@@ -216,7 +216,7 @@ pub(crate) enum CodingSessionWorkdirScope {
 
 /// What the provider reads: the minimum needed to resolve a cwd.
 ///
-/// Mirrors `buzz_session_provider_pkg::commands::ProjectsFile`. Deliberately a
+/// Mirrors `beekeeper_session_provider_pkg::commands::ProjectsFile`. Deliberately a
 /// separate type from the store above — the provider must not inherit the
 /// desktop's MRU or timestamps, which are UI memory, not resolution inputs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,7 +229,7 @@ pub(crate) struct CodingSessionProjectsView {
     /// Where each running session's tree is **right now**, by session id.
     ///
     /// The one addition the provider's gate probe reads
-    /// (`crates/buzz-session-provider/src/gate_cwd.rs`). Unlike the three maps
+    /// (`crates/beekeeper-session-provider/src/gate_cwd.rs`). Unlike the three maps
     /// above it is not a resolution input for a *create* — the provider never
     /// consults it to choose a directory — it is the host telling a session
     /// that already exists where its tree moved to. Rewritten on every
@@ -682,14 +682,14 @@ pub(crate) fn materialize_host_store_pointer(
     app: &AppHandle,
     state_dir: &Path,
 ) -> Result<(), String> {
-    let pointer = buzz_session_provider_pkg::assignment_inputs::HostStorePointer {
-        version: buzz_session_provider_pkg::assignment_inputs::HOST_STORE_POINTER_VERSION,
+    let pointer = beekeeper_session_provider_pkg::assignment_inputs::HostStorePointer {
+        version: beekeeper_session_provider_pkg::assignment_inputs::HOST_STORE_POINTER_VERSION,
         path: workdir_store_path_readonly(app)?,
     };
     let payload = serde_json::to_vec_pretty(&pointer)
         .map_err(|error| format!("failed to serialize the host store pointer: {error}"))?;
     atomic_write_json_restricted(
-        &state_dir.join(buzz_session_provider_pkg::assignment_inputs::HOST_STORE_POINTER_FILE),
+        &state_dir.join(beekeeper_session_provider_pkg::assignment_inputs::HOST_STORE_POINTER_FILE),
         &payload,
     )
 }

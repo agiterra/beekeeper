@@ -7,7 +7,7 @@
 //! folds them and writes every sentence a person reads. There is no
 //! TypeScript fold and there is no second assembler — the CLI
 //! (`bee sessions work status`), this command and the provider all go through
-//! `buzz_core::project_work_inputs::assemble_fold_inputs`, so the app and the
+//! `beekeeper_core::project_work_inputs::assemble_fold_inputs`, so the app and the
 //! CLI cannot disagree about a criterion while both sound confident.
 //!
 //! Two rules this file exists to hold:
@@ -27,10 +27,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use buzz_core_pkg::project_plan::{parse_plan, Plan, PlanProof};
-use buzz_core_pkg::project_work::{ProjectWorkDeclared, ProjectWorkEvent, ProjectWorkPlanRef};
-use buzz_core_pkg::project_work_fold::{fold_work, WorkActionDefinition, WorkProjection};
-use buzz_core_pkg::project_work_inputs::{
+use beekeeper_core_pkg::project_plan::{parse_plan, Plan, PlanProof};
+use beekeeper_core_pkg::project_work::{ProjectWorkDeclared, ProjectWorkEvent, ProjectWorkPlanRef};
+use beekeeper_core_pkg::project_work_fold::{fold_work, WorkActionDefinition, WorkProjection};
+use beekeeper_core_pkg::project_work_inputs::{
     assemble_fold_inputs, RawAuthorityContext, RawWorkInputs,
 };
 
@@ -204,7 +204,7 @@ fn compile_plan_actions(
             needed.len()
         ));
     };
-    let entries = buzz_workflow_pkg::parse_actions_yml(text, project_ref)
+    let entries = beekeeper_workflow_pkg::parse_actions_yml(text, project_ref)
         .map_err(|error| format!("actions.yml: {error}"))?;
     for (name, step) in needed {
         let Some(entry) = entries.iter().find(|entry| entry.name == name) else {
@@ -303,7 +303,7 @@ fn read_plans(
         };
         if let Ok(plan) = parse_plan(bytes.as_bytes()) {
             let actions_yml =
-                blob_at_commit(dir, &plan_ref.commit, buzz_workflow_pkg::ACTIONS_YML).ok();
+                blob_at_commit(dir, &plan_ref.commit, beekeeper_workflow_pkg::ACTIONS_YML).ok();
             match compile_plan_actions(&plan, project_ref, actions_yml.as_deref()) {
                 Ok(compiled) => {
                     for (name, definition) in compiled {
@@ -362,9 +362,9 @@ pub(crate) fn project_work_coverage_inner(
     let raw = RawWorkInputs {
         work_events: request.work_events.clone(),
         team_events: request.team_events,
-        host_results: split(buzz_core_pkg::kind::KIND_HOST_STEP_RESULT),
-        host_echoes: split(buzz_core_pkg::kind::KIND_WORKFLOW_HOST_STEP_EXITED),
-        host_requests: split(buzz_core_pkg::kind::KIND_WORKFLOW_HOST_STEP_REQUESTED),
+        host_results: split(beekeeper_core_pkg::kind::KIND_HOST_STEP_RESULT),
+        host_echoes: split(beekeeper_core_pkg::kind::KIND_WORKFLOW_HOST_STEP_EXITED),
+        host_requests: split(beekeeper_core_pkg::kind::KIND_WORKFLOW_HOST_STEP_REQUESTED),
         ref_states: request.ref_states,
         goal_events: request.goal_events,
         authority: RawAuthorityContext {
@@ -375,19 +375,23 @@ pub(crate) fn project_work_coverage_inner(
             active_seats: request
                 .active_seats
                 .into_iter()
-                .map(|seat| buzz_core_pkg::project_work_fold::WorkActiveSeat {
-                    actor_pubkey: seat.actor_pubkey,
-                    role: seat.role,
-                })
+                .map(
+                    |seat| beekeeper_core_pkg::project_work_fold::WorkActiveSeat {
+                        actor_pubkey: seat.actor_pubkey,
+                        role: seat.role,
+                    },
+                )
                 .collect(),
             active_grants: request
                 .active_grants
                 .into_iter()
-                .map(|grant| buzz_core_pkg::project_work_fold::WorkActiveGrant {
-                    actor_pubkey: grant.actor_pubkey,
-                    grant_event_ref: grant.grant_event_ref,
-                    may_steer: grant.may_steer,
-                })
+                .map(
+                    |grant| beekeeper_core_pkg::project_work_fold::WorkActiveGrant {
+                        actor_pubkey: grant.actor_pubkey,
+                        grant_event_ref: grant.grant_event_ref,
+                        may_steer: grant.may_steer,
+                    },
+                )
                 .collect(),
         },
         relay_self_key: request.relay_self_key,
