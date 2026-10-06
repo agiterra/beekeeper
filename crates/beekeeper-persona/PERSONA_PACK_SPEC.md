@@ -3,7 +3,7 @@
 ## 1. Overview & Goals
 
 A **Persona Pack** is a portable, self-contained bundle that defines one or more AI agent personas
-for deployment in Buzz. It is a **superset of the [Open Plugin Spec](https://open-plugin-spec.org)**
+for deployment in Beekeeper. It is a **superset of the [Open Plugin Spec](https://open-plugin-spec.org)**
 — every valid Persona Pack is also a valid OPS package, but not vice versa.
 
 A pack contains: personas (identity + system prompt), skills (on-demand instruction sets), MCP
@@ -11,7 +11,7 @@ server config, pack-level instructions, lifecycle hooks, and distribution metada
 
 ### Design Goals
 
-1. **Portable** — zip file or git repo; no Buzz tooling required to inspect
+1. **Portable** — zip file or git repo; no Beekeeper tooling required to inspect
 2. **Composable** — skills and MCP servers shared across agents; per-agent overrides additive
 3. **OPS-compatible** — discoverable by any OPS-compatible tool
 4. **Harness-honest** — explicit about what the agent runtime does vs. what buzz-acp does
@@ -21,7 +21,7 @@ server config, pack-level instructions, lifecycle hooks, and distribution metada
 ## 2. Open Plugin Spec Compatibility
 
 A Persona Pack is a valid OPS package. The `.plugin/plugin.json` manifest follows the OPS schema,
-and Buzz-specific extensions live alongside the OPS fields at the top level. Since the Open
+and Beekeeper-specific extensions live alongside the OPS fields at the top level. Since the Open
 Plugin Spec defines no model configuration fields, there are no collisions. OPS consumers safely
 ignore unknown fields.
 
@@ -33,7 +33,7 @@ ignore unknown fields.
   "id": "com.example.meadow-security-team",
   "name": "Meadow Security Team",
   "version": "1.2.0",
-  "description": "A four-agent security review team for Buzz.",
+  "description": "A four-agent security review team for Beekeeper.",
   "author": "Meadow Engineering",
   "license": "MIT",
   "homepage": "https://github.com/example/meadow-security-team",
@@ -88,10 +88,10 @@ none of them override it.
 
 - **OPS consumers**: see standard metadata; safely ignore unknown fields including `personas`,
   `defaults`, `pack_instructions`, `mcp_config`, and `hooks_config`.
-- **Buzz**: reads both OPS fields and the Buzz-specific fields; `personas` is authoritative.
-- **Version negotiation**: `engines.buzz` specifies minimum required Buzz version; buzz-acp
+- **Beekeeper**: reads both OPS fields and the Beekeeper-specific fields; `personas` is authoritative.
+- **Version negotiation**: `engines.buzz` specifies minimum required Beekeeper version; buzz-acp
   rejects packs requiring a newer version.
-- **Extension mechanism**: Buzz-specific fields sit at the top level of `plugin.json` alongside
+- **Extension mechanism**: Beekeeper-specific fields sit at the top level of `plugin.json` alongside
   OPS fields. No OPS core field is overloaded.
 - **`defaults`**: ignored entirely by OPS consumers. buzz-acp resolves it at deploy time before
   constructing per-persona configurations (see Section 10 and Section 12).
@@ -175,7 +175,7 @@ mcp_servers:
     env:
       SEMGREP_TOKEN: "${SEMGREP_TOKEN}"
 
-# === Behavioral Config (Buzz-specific) ===
+# === Behavioral Config (Beekeeper-specific) ===
 subscribe:
   - "#security-reviews"
   - "#code-reviews"
@@ -202,7 +202,7 @@ You are Lep, a security-focused code reviewer on the Meadow team.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | ✅ | Machine name / agent ID. Lowercase, no spaces, unique within pack. |
-| `display_name` | string | ✅ | Human-readable name shown in Buzz UI. |
+| `display_name` | string | ✅ | Human-readable name shown in Beekeeper UI. |
 | `avatar` | string | ❌ | Pack-relative path to avatar image. |
 | `description` | string | ✅ | One-line description. |
 | `version` | string | ❌ | Semver. Defaults to pack version if omitted. |
@@ -255,7 +255,7 @@ Each message delivered to the agent runtime includes these sections in order:
 [Thread/Conversation Context]
 <recent message history, if applicable>
 
-[Buzz event]
+[Beekeeper event]
 <the triggering message or event>
 ```
 
@@ -265,12 +265,12 @@ The `[Base]` layer is compiled into buzz-acp and is **identical for every agent*
 
 | Content | Purpose |
 |---------|---------|
-| Platform identity | Tells the agent it is running inside Buzz and what that means |
+| Platform identity | Tells the agent it is running inside Beekeeper and what that means |
 | MCP tool reference | Documents the tools available via the connected MCP servers |
 | Workspace layout | Describes `$AGENT_CWD`, skill discovery paths, and file conventions |
 | Message polling | Explains how to check for new messages proactively |
 
-Pack authors do not write or configure the `[Base]` layer — it is maintained by the Buzz team
+Pack authors do not write or configure the `[Base]` layer — it is maintained by the Beekeeper team
 and updated in buzz-acp releases.
 
 **Disabling or customizing the base layer**: Set `BUZZ_ACP_NO_BASE_PROMPT` to omit the `[Base]`
@@ -300,7 +300,7 @@ What belongs in `[System]`:
 - How to use MCP tools (covered by `[Base]`)
 - How to poll for new messages or use the `since` parameter (covered by `[Base]`)
 - Workspace layout or skill loading mechanics (covered by `[Base]`)
-- That the agent is running inside Buzz (covered by `[Base]`)
+- That the agent is running inside Beekeeper (covered by `[Base]`)
 
 Focus persona prompts on what makes this agent unique: its role, personality, domain expertise,
 and team-specific protocols.
@@ -574,7 +574,7 @@ buzz-acp means no hooks fire.
 ## 10. Behavioral Configuration
 
 The behavioral config fields in a persona's frontmatter control how the agent participates in
-Buzz conversations. These are all Buzz-specific — the agent runtime has no awareness of them. They sit
+Beekeeper conversations. These are all Beekeeper-specific — the agent runtime has no awareness of them. They sit
 at the top level of the frontmatter alongside identity fields like `name` and `description`.
 
 ### Pack Defaults
@@ -641,7 +641,7 @@ wins):
 ```
 1. Operator env vars           — e.g. GOOSE_MODEL, GOOSE_PROVIDER (agent-runtime-specific)
                                  already set in the parent process environment
-2. Desktop UI per-agent        — overrides set in the Buzz desktop app per-agent settings
+2. Desktop UI per-agent        — overrides set in the Beekeeper desktop app per-agent settings
 3. Per-persona frontmatter     — behavioral config fields set directly in the persona's frontmatter
 4. Pack-level defaults         — the `defaults` object in plugin.json
 5. Built-in defaults           — buzz-acp's hardcoded fallback values
@@ -805,7 +805,7 @@ broadcast_replies: false
 
 ### Channel Name `#` Convention
 
-The `#` prefix in `subscribe` entries is a **display convention only**. Channel names in the Buzz
+The `#` prefix in `subscribe` entries is a **display convention only**. Channel names in the Beekeeper
 relay are stored and queried **without** the `#` prefix. buzz-acp strips the leading `#` before
 making any relay API calls. `"#security-reviews"` and `"security-reviews"` are equivalent in this
 field.
@@ -851,8 +851,8 @@ A pack is distributed as a `.buzzpack` file (zip archive):
 ```bash
 bee pack validate ./my-pack
 bee pack ./my-pack --output my-pack-1.2.0.buzzpack
-buzz install ./my-pack-1.2.0.buzzpack
-buzz install https://example.com/releases/my-pack-1.2.0.buzzpack
+bee install ./my-pack-1.2.0.buzzpack
+bee install https://example.com/releases/my-pack-1.2.0.buzzpack
 ```
 
 #### Pack Integrity (Required)
@@ -879,9 +879,9 @@ Phase 1 installs record the installed pack in `pack.lock` alongside the pack dir
 ### Phase 2: Git Repository
 
 ```bash
-buzz install github:example/meadow-security-team
-buzz install github:example/meadow-security-team@v1.2.0
-buzz install git+https://gitlab.example.com/team/pack.git
+bee install github:example/meadow-security-team
+bee install github:example/meadow-security-team@v1.2.0
+bee install git+https://gitlab.example.com/team/pack.git
 ```
 
 `pack.lock` for git installs records the resolved commit SHA:
@@ -899,7 +899,7 @@ buzz install git+https://gitlab.example.com/team/pack.git
 
 ### Phase 3: App Store UI
 
-A Buzz-hosted registry and in-app browser for discovering and installing packs. API-compatible
+A Beekeeper-hosted registry and in-app browser for discovering and installing packs. API-compatible
 with OPS registries. Details TBD.
 
 ### Installed Pack Location
@@ -909,7 +909,7 @@ at agent startup.
 
 ### Desktop App Import
 
-The Buzz desktop app's **Agents** page does not import persona-pack `.zip` archives or
+The Beekeeper desktop app's **Agents** page does not import persona-pack `.zip` archives or
 `.persona.md` files directly. It imports personas and teams as **snapshots** — files exported
 from an agent or team that already exists inside the app:
 
@@ -1142,18 +1142,18 @@ Features required by this spec but not yet implemented.
 | ID | What | Where |
 |----|------|-------|
 | PF-1 | True system prompt injection via the ACP protocol's `on_new_session()`. Current `[System]` prefix re-sends persona prompt on every turn; true injection fires once at session creation. | ACP server `on_new_session()` |
-| PF-2 | `bee pack validate` CLI: **Implemented.** Schema-validates `plugin.json`; checks `.persona.md` required identity fields; validates behavioral config fields; warns on unknown keys and skill name mismatches. Remaining: verify `skills:` and `hooks:` paths exist; error on `SKILL.md` missing `name:` or `description:`. | `buzz-cli` / `buzz-admin` |
+| PF-2 | `bee pack validate` CLI: **Implemented.** Schema-validates `plugin.json`; checks `.persona.md` required identity fields; validates behavioral config fields; warns on unknown keys and skill name mismatches. Remaining: verify `skills:` and `hooks:` paths exist; error on `SKILL.md` missing `name:` or `description:`. | `beekeeper-cli` / `buzz-admin` |
 | PF-3 | Skill collision warning: emit `WARN` when a pack skill is skipped because a skill with the same load key already exists in `.agents/skills/`. | buzz-acp skill copy logic |
 | PF-4 | `$AGENT_CWD` resolution: determine `NewSessionRequest.cwd` from (1) `AGENT_CWD` env var, (2) `std::env::current_dir()`, (3) error and refuse to start. | buzz-acp startup / session init |
 | PF-5 | Skill parse failure warning: emit `WARN` when `parse_skill_content` returns `None` (missing `name:`, missing `description:`, or malformed frontmatter). Currently the agent runtime silently skips. buzz-acp should pre-validate during skill copy. | buzz-acp skill copy logic |
-| PF-6 | Per-subprocess env var injection: **Implemented.** `AcpClient::spawn` accepts `extra_env: &[(String, String)]` injected via `Command::env()`. buzz-acp checks `std::env::var(key)` before injecting — operator env vars take precedence (level 1). | `buzz-acp/src/acp.rs` `AcpClient::spawn()` |
+| PF-6 | Per-subprocess env var injection: **Implemented.** `AcpClient::spawn` accepts `extra_env: &[(String, String)]` injected via `Command::env()`. buzz-acp checks `std::env::var(key)` before injecting — operator env vars take precedence (level 1). | `beekeeper-acp/src/acp.rs` `AcpClient::spawn()` |
 
 ---
 
 ## 17. Templates and Composition
 
 Contract: `docs/PROJECT_TEAMS_AND_ACTIONS_SPEC.md` § 3–4. Implemented in
-`buzz-persona::template` and `buzz-persona::compose`; exercised by
+`beekeeper-persona::template` and `beekeeper-persona::compose`; exercised by
 `bee pack compose`.
 
 ### Shipped templates
@@ -1180,7 +1180,7 @@ warning.
 pack under `personas/roles/<role>/` is thin: a persona of two include lines,
 `![[beekeeper/<role>@^1.0.0]]` and `![[beekeeper/working-contract@^1.0.0]]`,
 with no skills of its own. `TemplateCatalog::role_templates` lists the newest
-current version of each; `buzz-persona::seed::write_agents_repo_seed` writes
+current version of each; `beekeeper-persona::seed::write_agents_repo_seed` writes
 a project's agents repository from them (one `roles/<role>.md` per role
 template, each an include of the template plus the three shared fragments,
 `team.yml`, `actions.yml`, `plans/`, both `archive/` directories). The
@@ -1230,7 +1230,7 @@ workspace.agents_repo: none | read | write}`, `agents[{name, role,
 lifetime}]`) names the synthesized pack and fills in advisory facts the role
 file leaves unsaid; a role file composes whether or not the manifest lists
 it, and a manifest that is present and invalid refuses every composition
-from that root (`buzz-persona::team`). `archive` is reserved: not a role
+from that root (`beekeeper-persona::team`). `archive` is reserved: not a role
 key, not a role file's parent (`team::is_archived_path`). `compose::
 archived_role_files` lists the retired roles so a reader can say "archived
 (not hireable)".

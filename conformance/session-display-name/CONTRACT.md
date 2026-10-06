@@ -106,10 +106,10 @@ exactly 256 bytes.
 
 | Reader | Binds to these vectors? | Owner |
 | --- | --- | --- |
-| `buzz-core` — `coding_session_title.rs` (the relay's ingest validator, and the resolver `bee` and Pulse call) | **yes** — `crates/beekeeper-core/src/coding_session_title_tests.rs` (`conformance_*`) | SV-31 S1 |
-| `buzz-relay` ingest — calls the `buzz-core` validator | through `buzz-core`; its own tests in `crates/beekeeper-relay/src/handlers/ingest_coding_session_title_tests.rs` | SV-31 S1 |
+| `beekeeper-core` — `coding_session_title.rs` (the relay's ingest validator, and the resolver `bee` and Pulse call) | **yes** — `crates/beekeeper-core/src/coding_session_title_tests.rs` (`conformance_*`) | SV-31 S1 |
+| `buzz-relay` ingest — calls the `beekeeper-core` validator | through `beekeeper-core`; its own tests in `crates/beekeeper-relay/src/handlers/ingest_coding_session_title_tests.rs` | SV-31 S1 |
 | `bee sessions list\|show` and `bee pulse` — `crates/beekeeper-cli/src/commands/{sessions.rs,pulse.rs}` | **yes** — `crates/beekeeper-cli/src/commands/sessions/display_name_tests.rs` (`shared_vectors_pass_through_the_cli_path`) | SV-31 S1 (CLI half) |
-| `buzz-core` Pulse fold — `pulse_fold.rs` via `pulse_fold_names.rs` (founder read from the 44226 genesis) | **yes** — `crates/beekeeper-core/src/pulse_fold_names_tests.rs` (`shared_vectors_pass_through_the_json_record_path`) | SV-31 S1 (Rust readers) |
+| `beekeeper-core` Pulse fold — `pulse_fold.rs` via `pulse_fold_names.rs` (founder read from the 44226 genesis) | **yes** — `crates/beekeeper-core/src/pulse_fold_names_tests.rs` (`shared_vectors_pass_through_the_json_record_path`) | SV-31 S1 (Rust readers) |
 | Desktop — `desktop/src/features/coding-sessions/lib/codingSessionTitle.ts` via `useCodingSessionNames.ts` | **yes** — `desktop/src/features/coding-sessions/lib/codingSessionTitle.test.mjs` (envelopes and vectors, forwards and reversed) | SV-31 S2 |
 | Mobile — `mobile/lib/features/coding_sessions/domain/coding_session_session_decoders.dart`, `coding_session_fold.dart` | **yes** — `mobile/test/features/coding_sessions/domain/coding_session_display_name_conformance_test.dart` (envelopes through `decodeCodingSessionGeneratedTitle`, vectors through `resolveCodingSessionDisplayNameFromEvents`, forwards and reversed) | SV-31 S3 |
 | Web — `web/src/features/coding-sessions/domain/sessionTitle.ts` via `umbrella.ts` | **yes** — `web/src/features/coding-sessions/domain/sessionTitle.test.mjs` (constants, envelopes and vectors, forwards and reversed) | SV-31 W2 |

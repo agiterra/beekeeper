@@ -1,4 +1,4 @@
-# Buzz
+# Beekeeper
 
 Desktop chat shell with:
 

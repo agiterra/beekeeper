@@ -1041,7 +1041,7 @@ Two records that look like they should admit never do:
 2. every pubkey in its NIP-34 `["maintainers", <hex>, <hex>, …]` tag;
 3. every pubkey whose effective git role on the repository resolves to Owner
    through the project roster its `["project", …]` back-reference names — the
-   git ACL Buzz already authorizes pushes against.
+   git ACL Beekeeper already authorizes pushes against.
 
 A malformed `maintainers` value is ignored **and counted**; nothing guesses at
 a mistyped key. Keying the rule to the signer alone was correct only for a

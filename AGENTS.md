@@ -143,36 +143,36 @@ the deployer.
 ```
 crates/
   # Relay + core
-  buzz-relay          # WebSocket relay server — main entry point; also hosts git + huddle audio
-  buzz-core           # Core types, event verification, filter matching, kind registry
-  buzz-db             # Postgres event store and data access layer
-  buzz-auth           # Authentication and authorization
-  buzz-pubsub         # Redis pub/sub fan-out, presence, typing indicators
-  buzz-search         # Postgres FTS full-text search
-  buzz-audit          # Hash-chain audit log
-  buzz-media          # Blossom/S3 media storage
+  beekeeper-relay        # WebSocket relay server — main entry point; also hosts git + huddle audio
+  beekeeper-core         # Core types, event verification, filter matching, kind registry
+  beekeeper-db           # Postgres event store and data access layer
+  beekeeper-auth         # Authentication and authorization
+  beekeeper-pubsub       # Redis pub/sub fan-out, presence, typing indicators
+  beekeeper-search       # Postgres FTS full-text search
+  beekeeper-audit        # Hash-chain audit log
+  beekeeper-media        # Blossom/S3 media storage
   # Agent surface
-  beekeeper-host      # Headless daemon owning this machine's agents; starts at
-                      # login, at boot on a headless Mac (`--system`), or as a
-                      # server's user unit (docs/agent-host.md)
-  beekeeper-host-core # The launcher contract the host and the desktop share
-  buzz-acp            # ACP harness bridging Buzz events to AI agents
-  buzz-agent          # Minimal ACP-compliant agent (non-streaming, tool-calls-as-output)
-  buzz-dev-mcp        # Developer MCP server — shell + file-edit tools
-  buzz-persona        # Agent persona packs
-  buzz-workflow       # YAML-as-code workflow engine (evalexpr conditions)
+  beekeeper-host         # Headless daemon owning this machine's agents; starts at
+                         # login, at boot on a headless Mac (`--system`), or as a
+                         # server's user unit (docs/agent-host.md)
+  beekeeper-host-core    # The launcher contract the host and the desktop share
+  beekeeper-acp          # ACP harness bridging Beekeeper events to AI agents
+  beekeeper-agent        # Minimal ACP-compliant agent (non-streaming, tool-calls-as-output)
+  beekeeper-dev-mcp      # Developer MCP server — shell + file-edit tools
+  beekeeper-persona      # Agent persona packs
+  beekeeper-workflow     # YAML-as-code workflow engine (evalexpr conditions)
   # Clients + interop
-  buzz-pair-relay     # Ephemeral sidecar relay for NIP-AB device pairing
-  buzz-pairing-cli    # CLI for NIP-AB device pairing interop testing
-  git-sign-nostr      # Sign git objects with a Nostr key
-  git-credential-nostr # Git credential helper for Nostr-authed push/fetch
+  beekeeper-pair-relay   # Ephemeral sidecar relay for NIP-AB device pairing
+  beekeeper-pairing-cli  # CLI for NIP-AB device pairing interop testing
+  git-sign-nostr         # Sign git objects with a Nostr key
+  git-credential-nostr   # Git credential helper for Nostr-authed push/fetch
   # Tooling + shared
-  buzz-cli            # Agent-first CLI
-  buzz-sdk            # Typed Nostr event builders
-  buzz-admin          # Operator CLI for relay administration
-  buzz-ws-client      # Shared NIP-42 WebSocket client (connect, auth, publish)
-  buzz-test-client    # Integration test client and E2E test suite
-  sprig               # All-in-one harness bundling ACP, agent, and dev MCP
+  beekeeper-cli          # Agent-first CLI
+  beekeeper-sdk          # Typed Nostr event builders
+  beekeeper-admin        # Operator CLI for relay administration
+  beekeeper-ws-client    # Shared NIP-42 WebSocket client (connect, auth, publish)
+  beekeeper-test-client  # Integration test client and E2E test suite
+  sprig                  # All-in-one harness bundling ACP, agent, and dev MCP
 
 desktop/              # Tauri 2 + React 19 desktop app
 web/                  # Browser web client (repo browser, served by the relay)
@@ -247,7 +247,7 @@ and static checks; Rust, Tauri, desktop, and mobile tests; and desktop and web
 builds. Clippy passing does not mean fmt passes; run both.
 
 Run `just test` for integration tests if you touched `buzz-relay`,
-`buzz-db`, or `buzz-auth` — these require a running Postgres and Redis.
+`beekeeper-db`, or `beekeeper-auth` — these require a running Postgres and Redis.
 
 **Pre-commit hooks** are installed automatically by `just setup` and auto-fix
 formatting via `stage_fixed`. Pre-commit runs fix variants in parallel (Rust
@@ -279,10 +279,10 @@ Additional rules:
 
 ## Key Patterns
 
-**Nostr-first HTTP surface**: Buzz's primary API is NIP-29 over WebSocket. The relay also exposes a narrow HTTP surface: NIP-11/NIP-05 metadata, `POST /events`, `POST /query`, `POST /count`, workflow webhooks at `/hooks/{id}`, Blossom media, git smart HTTP, git policy hooks, and health probes. These HTTP paths all preserve the same host-derived community boundary.
+**Nostr-first HTTP surface**: Beekeeper's primary API is NIP-29 over WebSocket. The relay also exposes a narrow HTTP surface: NIP-11/NIP-05 metadata, `POST /events`, `POST /query`, `POST /count`, workflow webhooks at `/hooks/{id}`, Blossom media, git smart HTTP, git policy hooks, and health probes. These HTTP paths all preserve the same host-derived community boundary.
 
 **Prefer Nostr events over new HTTP endpoints**: For new feature work, model
-the operation as a Nostr event (new kind in `buzz-core/src/kind.rs`, handler
+the operation as a Nostr event (new kind in `beekeeper-core/src/kind.rs`, handler
 in `buzz-relay`) rather than adding endpoint-specific JSON APIs. HTTP is
 reserved for things that genuinely need an HTTP-only surface: media upload/download
 (Blossom), webhooks, git smart HTTP, NIP-11/NIP-05 metadata, health checks,
@@ -290,7 +290,7 @@ and the generic Nostr bridge endpoints:
 
 - `POST /events` — submit any signed event (same path the WebSocket uses).
 - `POST /query` — Nostr REQ filters over HTTP. NIP-50 `search` filters
-  are routed to `buzz-search` (Postgres FTS) automatically.
+  are routed to `beekeeper-search` (Postgres FTS) automatically.
 - `POST /count` — Nostr COUNT filters over HTTP.
 
 If you find yourself reaching for a new HTTP endpoint, first check whether
@@ -300,7 +300,7 @@ fan-out, NIP-29 scoping, and the existing auth pipeline for free.
 Reference https://github.com/nostr-protocol/nips
 
 **Event kinds**: All event kind integers are defined in
-`buzz-core/src/kind.rs`. New features get new kind integers — add them here
+`beekeeper-core/src/kind.rs`. New features get new kind integers — add them here
 first, then implement handling in the relay.
 
 **Channel scoping**: Channels use `h` tags (NIP-29 group tag), not `e` tags.
@@ -310,9 +310,9 @@ channel carry its id in their `d` tag instead: kind:39000 (metadata),
 kind:39001, kind:39002 (membership). `get_channels` resolves a user's channels
 from the `d` tag of their kind:39002 events, not from `h`.
 
-**Agent-facing operations go in `buzz-cli`**: New agent-facing features belong in `buzz-cli` — add a subcommand there first, then wire the REST/WebSocket call in `client.rs`. `buzz-dev-mcp` (shell + file tools for `buzz-agent`) is separate.
+**Agent-facing operations go in `beekeeper-cli`**: New agent-facing features belong in `beekeeper-cli` — add a subcommand there first, then wire the REST/WebSocket call in `client.rs`. `buzz-dev-mcp` (shell + file tools for `buzz-agent`) is separate.
 
-**Workflow conditions**: `buzz-workflow` uses
+**Workflow conditions**: `beekeeper-workflow` uses
 [evalexpr](https://docs.rs/evalexpr) for condition evaluation. Keep expressions
 simple and testable.
 
@@ -359,7 +359,7 @@ consumed internally by `bee git check`. Full field reference:
 
 ---
 
-## Agent CLI (`buzz-cli`)
+## Agent CLI (`beekeeper-cli`)
 
 `bee` is the agent-first CLI. Auth env vars
 (`BUZZ_RELAY_URL`, `BUZZ_PRIVATE_KEY`, `BUZZ_AUTH_TAG`) are auto-injected
@@ -623,7 +623,7 @@ description.
 
 ## Common Gotchas
 
-1. **Kind `39000` for channel metadata, not `41`** — kind 41 is NIP-01 (unused). All kinds defined in `buzz-core/src/kind.rs`.
+1. **Kind `39000` for channel metadata, not `41`** — kind 41 is NIP-01 (unused). All kinds defined in `beekeeper-core/src/kind.rs`.
 2. **Relay queries must specify `kinds`** — omitting `kinds` triggers the p-gate (403). Always include explicit kind filters.
 3. **`messages search` chooses its own supported kinds** — do not add a `--kinds` option; the current command does not accept one. This differs from raw relay filters, which still need explicit kinds.
 4. **Worktrees: `cd` in the same command** — shell CWD doesn't persist between tool calls. Use `cd /path && cargo build` as one command.

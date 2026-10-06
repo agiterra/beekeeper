@@ -46,7 +46,7 @@ Before starting, search [open PRs](https://github.com/agiterra/beekeeper/pulls) 
 
 For anything beyond a small fix, opening an issue first is strongly recommended. Describe the problem and proposed solution so a maintainer can acknowledge the approach before you build — it avoids two people building the same thing in parallel.
 
-Buzz is an agent platform, so AI-assisted PRs are welcome. No need to disclose the tools you used, but you own and must have reviewed the final code. Submissions that are clearly unreviewed may be closed with a pointer here.
+Beekeeper is an agent platform, so AI-assisted PRs are welcome. No need to disclose the tools you used, but you own and must have reviewed the final code. Submissions that are clearly unreviewed may be closed with a pointer here.
 
 We squash-merge, so your PR title becomes the commit subject in `main`. Use [Conventional Commits](https://www.conventionalcommits.org/) format: `feat(mcp): add get_feed_actions tool`. The type prefix (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`) is required. See the [Commit Messages](#commit-messages) section for the full reference.
 
@@ -144,7 +144,7 @@ clippy`, `just test-unit`, and `just test` need no GTK.
 ```bash
 # 1. Clone the repo
 git clone https://github.com/agiterra/beekeeper.git
-cd buzz
+cd beekeeper
 
 # 2. Activate Hermit (optional but recommended)
 . ./bin/activate-hermit
@@ -188,7 +188,7 @@ just desktop-dev  # terminal 2 — Vite dev server only (no Tauri shell)
 
 ```bash
 just down    # Stop Docker services, keep data
-just reset   # Wipe all dev state and recreate it; installed Buzz is preserved
+just reset   # Wipe all dev state and recreate it; installed Beekeeper is preserved
 ```
 
 Development desktop state uses separate bundle identifiers
@@ -261,7 +261,7 @@ actually changed, measured against the merge base with `main`:
 - `clippy --all-targets -- -D warnings` for those crates **and their
   dependents** — an API break shows in the crates that depend on you, not in
   the one you edited. The dependent set comes from `cargo metadata`, across
-  both workspaces, so a `buzz-core` change reaches `beekeeper-desktop` too.
+  both workspaces, so a `beekeeper-core` change reaches `beekeeper-desktop` too.
 - `pnpm check`, `pnpm typecheck` and `pnpm test` when `desktop/` outside
   `src-tauri` moved; `just web-test` for `web/`; `just mobile-test` for
   `mobile/`.
@@ -286,7 +286,7 @@ Every push prints one line saying what ran, what it skipped and why, and what
 it cost against a 120-second budget:
 
 ```
-pre-push floor: buzz-cli (file-size, fmt, clippy, 847 tests) 71s / budget 120s · skipped: desktop — no desktop/ change, web — no web/ change, mobile — no mobile/ change, workspace tests — CI, e2e — CI — run in CI
+pre-push floor: beekeeper-cli (file-size, fmt, clippy, 847 tests) 71s / budget 120s · skipped: desktop — no desktop/ change, web — no web/ change, mobile — no mobile/ change, workspace tests — CI, e2e — CI — run in CI
 ```
 
 The budget is **disclosed, not enforced**: going over prints `over budget by
@@ -440,7 +440,7 @@ design principles:
 **The relay is the single source of truth.** All state flows through the
 event store. Crates communicate through the database and Redis pub/sub — not
 through direct function calls across crate boundaries (with the exception
-of `buzz-core` types, which are shared everywhere).
+of `beekeeper-core` types, which are shared everywhere).
 
 **Event kinds are the only switch.** Every action in the system — a message,
 a reaction, a workflow step, a canvas update — is a Nostr event with a kind
@@ -468,7 +468,7 @@ push, so a merged PR reaches GitHub by way of the relay.
 
 ## How to Add a New Event Kind
 
-1. **Define the kind constant** in `buzz-core/src/kind.rs`:
+1. **Define the kind constant** in `beekeeper-core/src/kind.rs`:
 
    ```rust
    /// My new event kind — description of what it represents.
@@ -479,7 +479,7 @@ push, so a merged PR reaches GitHub by way of the relay.
    Check the `ALL_KINDS` array for collisions. Each sub-range is documented
    with comments in the file.
 
-2. **Define the payload type** in the appropriate module in `buzz-core/src/`
+2. **Define the payload type** in the appropriate module in `beekeeper-core/src/`
    (e.g., alongside `event.rs`) if the content field is structured JSON:
 
    ```rust
@@ -515,7 +515,7 @@ push, so a merged PR reaches GitHub by way of the relay.
    `crates/beekeeper-relay/src/router.rs`.
 
 5. **Persist to the database** — if the event needs to be queryable, add a
-   handler in `buzz-db/src/` (e.g., `buzz-db/src/my_feature.rs`) with
+   handler in `beekeeper-db/src/` (e.g., `beekeeper-db/src/my_feature.rs`) with
    the appropriate `INSERT` and `SELECT` queries.
 
 6. **Index for search** (if applicable) — Postgres FTS indexes persisted
@@ -528,7 +528,7 @@ push, so a merged PR reaches GitHub by way of the relay.
    needed unless you need custom audit metadata.
 
 8. **Write tests** — add a unit test for payload serialization in
-   `buzz-core` and an integration test in `buzz-test-client` that sends
+   `beekeeper-core` and an integration test in `beekeeper-test-client` that sends
    the new event kind and verifies the expected behavior.
 
 9. **Document** — `kind.rs` is the authoritative registry of all kind numbers.
@@ -555,14 +555,14 @@ If an HTTP endpoint is still necessary:
    narrowest path possible. Do not add new `/api/*` compatibility routes unless
    the product decision explicitly calls for one.
 
-3. **Add database queries** in `buzz-db/src/` only when the endpoint cannot be
+3. **Add database queries** in `beekeeper-db/src/` only when the endpoint cannot be
    expressed through the existing event query paths.
 
 4. **Handle errors** using the `api_error()`, `internal_error()`, and
-   `not_found()` helpers in `buzz-relay/src/api/mod.rs`. Return
+   `not_found()` helpers in `beekeeper-relay/src/api/mod.rs`. Return
    `(StatusCode, Json<Value>)` tuples.
 
-5. **Write tests** with the `buzz-test-client` harness in
+5. **Write tests** with the `beekeeper-test-client` harness in
    `crates/beekeeper-test-client/tests/`, covering auth, community scoping, and the
    relevant success path.
 
@@ -572,7 +572,7 @@ If an HTTP endpoint is still necessary:
 
 ## License and CLA
 
-Buzz is licensed under the **Apache License, Version 2.0**. See
+Beekeeper is licensed under the **Apache License, Version 2.0**. See
 [LICENSE](LICENSE) for the full text.
 
 By submitting a pull request, you agree that your contribution is licensed
@@ -583,7 +583,7 @@ their sign-off. When in doubt, check with your legal team.
 
 ---
 
-*Thank you for contributing to Buzz. Every bug report, documentation fix,
+*Thank you for contributing to Beekeeper. Every bug report, documentation fix,
 and code contribution makes the project better for everyone. 🐝*
 
 ---

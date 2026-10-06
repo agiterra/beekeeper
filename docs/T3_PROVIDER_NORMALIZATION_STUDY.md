@@ -1,6 +1,6 @@
-# How t3code normalizes multiple agent providers — and what Buzz can take from it
+# How t3code normalizes multiple agent providers — and what Beekeeper can take from it
 
-Read-only study, 2026-08-20. t3code at `/Users/brian/Projects/t3code/t3code`, Buzz at
+Read-only study, 2026-08-20. t3code at `/Users/brian/Projects/t3code/t3code`, Beekeeper at
 `/Users/brian/Projects/buzz`. Every claim is `file:line`. Time-boxed: depth on the
 load-bearing seam, not exhaustive coverage.
 
@@ -25,7 +25,7 @@ load-bearing seam, not exhaustive coverage.
   detail?, data?, agentId?, parentToolUseId?}` — and `ThreadTokenUsageSnapshot` (`:309-326`),
   whose `used*`/`last*` pairs hold cumulative and per-turn figures without clobbering.
 
-**It is both a stream and derived state, in four layers**, which matters for the Buzz question:
+**It is both a stream and derived state, in four layers**, which matters for the Beekeeper question:
 
 1. `ProviderRuntimeEvent` — in-memory, one PubSub (`apps/server/src/provider/Layers/ProviderService.ts:233`, `:285-294`, `:1194-1195`).
 2. `OrchestrationEvent` — **durable, append-only** SQLite (`apps/server/src/persistence/Services/OrchestrationEventStore.ts:22-40`), written by `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts`.
@@ -38,7 +38,7 @@ only in rotating NDJSON logs — 14-day age cap, 512 MiB total
 (`apps/server/src/provider/Layers/EventNdjsonLogger.ts:30-31`), which deliberately keep
 `"native" | "canonical" | "orchestration"` as three separate views (`:49`). So t3code can
 re-derive projections cheaply, but re-deriving *the normalization itself* is bounded by a
-14-day raw window. Bear this in mind for §8 — the gap versus Buzz is smaller than it looks.
+14-day raw window. Bear this in mind for §8 — the gap versus Beekeeper is smaller than it looks.
 
 ---
 
@@ -61,7 +61,7 @@ lookup is by instance id (`Services/ProviderAdapterRegistry.ts:53-55`).
 
 **Cursor and Grok do not have hand-written mappers** — they share an ACP layer,
 `apps/server/src/provider/acp/AcpCoreRuntimeEvents.ts` and `AcpRuntimeModel.ts`.
-This is the part Buzz should read first (§7).
+This is the part Beekeeper should read first (§7).
 
 Fan-in enforces the seam at runtime: `correlateRuntimeEventWithInstance`
 (`ProviderService.ts:194-212`) **throws** if an adapter emits an event whose `provider`
@@ -198,9 +198,9 @@ transitions") is mapped to the shared vocabulary at the adapter.
 
 ---
 
-## 7. Mapping onto Buzz
+## 7. Mapping onto Beekeeper
 
-Buzz's transcript surface, located: **there is no `coding_session_transcript.rs`.** Items
+Beekeeper's transcript surface, located: **there is no `coding_session_transcript.rs`.** Items
 are untyped `serde_json::Value` in a `"kind"`-discriminated open union, produced by
 `TranscriptTranslator` (`crates/beekeeper-session-provider/src/transcript.rs:60-66`,
 `on_update` at `:98-146`) and wrapped in `TranscriptEnvelope`
@@ -231,17 +231,17 @@ The SESSION_STATE §2 item 2 claim (`plans/SESSION_STATE.md:47-53`) is confirmed
   produced the frame** — `TranscriptTranslator::new` takes only `include_thoughts`
   (`transcript.rs:70-78`).
 
-### What Buzz would have to add
+### What Beekeeper would have to add
 
-1. **A canonical tool vocabulary.** Buzz is ACP-native, so it gets this nearly free —
-   ACP's `toolCall.kind` is already on the wire and Buzz already logs it
+1. **A canonical tool vocabulary.** Beekeeper is ACP-native, so it gets this nearly free —
+   ACP's `toolCall.kind` is already on the wire and Beekeeper already logs it
    (`acp.rs:2022-2031`). Port `canonicalItemTypeFromAcpToolKind`
    (`AcpRuntimeModel.ts:292-306`) and stop letting `kind` fall into the name slot.
 2. **Command recovery.** t3code's `extractToolCallCommand`
    (`AcpRuntimeModel.ts:249-265`) tries `rawInput.command`, then
    `executable + args`, then **scrapes a backtick-quoted command out of the prose title**
    (`extractCommandFromTitle`, `:241-247`). That last fallback is written for exactly
-   Buzz's codex-acp case.
+   Beekeeper's codex-acp case.
 3. **A structured attempt key** — which t3code does *not* have and cannot lend. Its
    `toolInputFingerprint` (`ClaudeAdapter.ts:1445-1447`) dedupes streaming input deltas
    within one call (`:2516-2528`), nothing more.
@@ -250,12 +250,12 @@ The SESSION_STATE §2 item 2 claim (`plans/SESSION_STATE.md:47-53`) is confirmed
 ### Where the analogy breaks
 
 t3code's canonical layer is in-memory and its durable layer is a *local* SQLite projection
-it owns. Buzz's transcript items are signed, relay-stored, append-only, publicly readable
+it owns. Beekeeper's transcript items are signed, relay-stored, append-only, publicly readable
 (`kind.rs:645`), authored by the provider key. Three consequences:
 
 - **A mis-normalization at ingest is permanent.** t3code's fuzzy `includes("command")`
   classifier (`ClaudeAdapter.ts:710-717`) is fine because a bad guess is one redeploy from
-  fixed. The same heuristic in a signed Buzz event is wrong forever, for every reader.
+  fixed. The same heuristic in a signed Beekeeper event is wrong forever, for every reader.
 - **A leaked host path cannot be un-signed.** This is not symmetric with the other
   concerns and must not be traded off against them.
 - **But t3code is less renormalizable than assumed** (§1): raw frames live 14 days
@@ -277,17 +277,17 @@ it owns. Buzz's transcript items are signed, relay-stored, append-only, publicly
   the raw. Stop the `kind`-into-`toolName` collapse at `transcript.rs:382-391`; that one
   is pure loss with no upside. Cost: permanent bytes and a version to carry forever.
 - **Display vocabulary and cross-adapter reconciliation → the fold, after signing.**
-  Status labels, model chips, token max-merge. Cheap to change, and Buzz already does the
+  Status labels, model chips, token max-merge. Cheap to change, and Beekeeper already does the
   analogous thing read-side (`coding_session_context.rs:393-397`). t3code's field-wise
-  max-merge (`subagentRuntime.ts:182-226`) ports directly, and Buzz needs it: it already
+  max-merge (`subagentRuntime.ts:182-226`) ports directly, and Beekeeper needs it: it already
   trusts Codex's `total_tokens` and distrusts Claude's (`usage.rs:325-334`).
 - **The attempt key → a signed *tag*, not content.** "Has this exact thing already failed"
   should be a relay filter, not a transcript scan. A `cst-attempt` tag carrying
   `hash(canonical_kind ‖ canonicalized_input)` on the 44225 event makes it a `#cst-attempt`
   query — which is also what CLAUDE.md's "prefer events and tags over new endpoints" asks
-  for. This has no t3code counterpart; it is the piece Buzz must design itself, and it is
+  for. This has no t3code counterpart; it is the piece Beekeeper must design itself, and it is
   the piece the ledger item actually needs.
 
 **One caution carried over:** t3code's uniformity rests on presentation strings that
-nothing parses (§6). If Buzz normalizes only to a `detail`-style human string, it will
+nothing parses (§6). If Beekeeper normalizes only to a `detail`-style human string, it will
 have bought t3code's *look* without buying the ledger item's *fix*.

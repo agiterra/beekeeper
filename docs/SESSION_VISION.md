@@ -3,14 +3,14 @@
 ## Purpose of this document
 
 This is a product-vision brief for Fable and future contributors working on
-Buzz sessions. It describes the experience we want, why it matters, the
+Beekeeper sessions. It describes the experience we want, why it matters, the
 qualities that must survive design decisions, and the Git workflow Andy built
 for this fork.
 
 It is deliberately **not** an implementation plan. It does not choose event
 schemas, component boundaries, storage models, orchestration algorithms, or a
 sequence of code changes. Those decisions should follow from the vision and
-from careful study of what Buzz already provides.
+from careful study of what Beekeeper already provides.
 
 ## The proposition
 
@@ -107,7 +107,7 @@ A session is project knowledge, not private state trapped on the computer of
 the person who started it.
 
 At minimum, authorized project members should be able to open a session from
-their own Buzz client and observe it in real time. They should be able to see:
+their own Beekeeper client and observe it in real time. They should be able to see:
 
 - why the session exists;
 - who and what is participating;
@@ -141,7 +141,7 @@ regular channel that has forgotten it was a coding surface.
 
 Likewise:
 
-- restarting Buzz must not erase the session's identity;
+- restarting Beekeeper must not erase the session's identity;
 - an execution ending must not end the session by accident;
 - changing a model must not create a new user-facing universe;
 - bringing in another provider must not require transporting the work by hand;
@@ -171,9 +171,9 @@ preserving useful provider-specific capability.
 
 Provider selection is an execution choice. Session identity is not.
 
-## What Buzz already brings
+## What Beekeeper already brings
 
-This vision fits Buzz because Buzz is already more than a local chat client.
+This vision fits Beekeeper because Beekeeper is already more than a local chat client.
 The assembled product has native foundations that are relevant to the desired
 experience:
 

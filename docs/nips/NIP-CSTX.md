@@ -188,7 +188,7 @@ The terminal diagnostic pointer is bounded public JSON:
   "files": ["crates/beekeeper-core/src/coding_session_team_transaction.rs"],
   "tests": [
     {
-      "name": "buzz-core",
+      "name": "beekeeper-core",
       "command": "cargo test -p beekeeper-core",
       "outcome": "passed",
       "evidence": "42 passed; exit 0"
@@ -499,7 +499,7 @@ record, never an error over the set.
 
 Every word this fold puts in front of a reader — `unseated`, `dangling`,
 `waiting`, `superseded`, and each of the exclusion codes above — is defined as
-**data** in `buzz-core`'s compiled-in vocabulary, and read with:
+**data** in `beekeeper-core`'s compiled-in vocabulary, and read with:
 
 ```
 bee sessions explain <word>     # meaning, cause, and the one command that shows it

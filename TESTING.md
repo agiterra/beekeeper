@@ -9,7 +9,7 @@ just test               # unit + integration (starts Docker if needed)
 
 `just test` runs unit tests plus integration tests against Postgres and Redis
 (started automatically if not already running). Neither task runs the E2E suites in
-`buzz-test-client` — those are marked `#[ignore]` and require a running relay:
+`beekeeper-test-client` — those are marked `#[ignore]` and require a running relay:
 
 ```bash
 # Start a relay first (see below), then:
@@ -147,7 +147,7 @@ just setup                       # start Docker services, run migrations
 > dev stack on a different Compose project
 > (`COMPOSE_PROJECT_NAME=buzz-dev docker compose …`).
 
-`just reset` wipes all local data and starts over — **including Buzz
+`just reset` wipes all local data and starts over — **including Beekeeper
 Desktop's data** if its services are sharing your dev stack (see callout
 above).
 
@@ -202,7 +202,7 @@ relay identity generated in `.env`. See the env vars table at the bottom if
 you need to lock it down.
 
 > **Already running Beekeeper Desktop (or another relay) on `:3000` / `:8080` /
-> `:9102`?** Buzz binds three ports — main, health, metrics — and any of
+> `:9102`?** Beekeeper binds three ports — main, health, metrics — and any of
 > them can collide. Use a separate terminal per role and export the right
 > vars in each:
 >
@@ -311,7 +311,7 @@ For full coverage of every CLI command (54 subcommands across 12 groups),
 follow [`crates/beekeeper-cli/TESTING.md`](crates/beekeeper-cli/TESTING.md).
 
 The relay's HTTP bridge accepts three endpoints — useful if you're testing
-a client other than `buzz-cli`:
+a client other than `beekeeper-cli`:
 
 | Endpoint        | Purpose                            |
 |-----------------|------------------------------------|

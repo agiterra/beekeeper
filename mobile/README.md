@@ -1,6 +1,6 @@
-# Buzz Mobile
+# Beekeeper Mobile
 
-Flutter mobile client for Buzz.
+Flutter mobile client for Beekeeper.
 
 ## Setup
 
@@ -24,7 +24,8 @@ cd mobile && flutter run
 Debug builds produced from a git worktree get a unique app identifier keyed
 to the **worktree directory name** (`io.agiterra.beekeeper.mobile.<slug>` on
 both iOS and Android) plus a display-only branch label
-in the app name (`Buzz (my-branch)`, or a short SHA when the worktree is
+in the app name (`Beekeeper (my-branch)` for a branch `feature/my-branch`: the
+label is the branch name's last `/` segment, or a short SHA when the worktree is
 detached). Because the identifier follows the directory rather than the
 branch, one worktree keeps exactly one installed app — and its login state —
 across branch switches, and builds from multiple worktrees install side by
@@ -46,7 +47,7 @@ For direct Xcode / Android Studio / `flutter run` development, run
 switch to refresh the display label (the install identity never changes);
 the persisted files are then picked up by any subsequent build. In the main
 checkout the script is a no-op that removes stale override files, restoring
-the plain `Buzz` identity.
+the plain `Beekeeper` identity.
 
 To remove leftover worktree-suffixed installs from booted iOS simulators and
 connected Android emulators, run `just mobile-clean` (add `--dry-run` via

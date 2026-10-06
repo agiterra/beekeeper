@@ -387,7 +387,7 @@ Concretely, at ingest (`crates/beekeeper-relay/src/handlers/ingest.rs`): 44246 i
 coding-session kind, so it takes `Scope::MessagesWrite` and passes the strict
 channel-membership gate **before** its content is parsed — a non-member is
 refused for want of standing in the channel, not for anything its JSON says.
-An admitted event is then handed to `buzz-core`'s own
+An admitted event is then handed to `beekeeper-core`'s own
 `validate_coding_session_observation_envelope`, so the relay and every reader
 refuse exactly the same bytes for exactly the same reason; there is no second
 implementation to drift. It carries no separate storage cap, because the
@@ -464,7 +464,7 @@ agent's memory.
    user's global config. The hook pushes `HEAD` to
    `refs/heads/wip/<role>/<assignment-hex8>` under the seat's own key. The agent
    only runs `git commit`. Hook text and config lines are pure strings in
-   `buzz-core::seat_git_hooks`, so every installer writes the same bytes.
+   `beekeeper-core::seat_git_hooks`, so every installer writes the same bytes.
 
    **What it does not yet do.** The 44246 `checkpoint` body has no field for a
    commit SHA, a branch or a subject, and its `testsWritten`/`testsRed`/

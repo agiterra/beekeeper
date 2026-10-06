@@ -1,4 +1,4 @@
-# buzz-cli Live Testing Guide
+# beekeeper-cli Live Testing Guide
 
 Manual testing runbook for verifying every CLI command against a local relay.
 An agent or developer follows this step by step, running each command and
@@ -64,7 +64,7 @@ via direct DB access. Use this for testing admin operations (archive,
 delete-channel, add/remove-channel-member).
 
 ```bash
-DATABASE_URL="${DATABASE_URL:?set DATABASE_URL for the local Buzz database}" \
+DATABASE_URL="${DATABASE_URL:?set DATABASE_URL for the local Beekeeper database}" \
 cargo run -p beekeeper-admin -- mint-token \
   --name "cli-test" \
   --scopes "messages:read,messages:write,channels:read,channels:write,users:read,users:write,files:read,files:write,admin:channels"
@@ -323,7 +323,7 @@ bee users get --pubkey "$MY_PUBKEY" | jq .
 bee users get --pubkey "$MY_PUBKEY" --pubkey "$MY_PUBKEY" | jq .
 
 # users set-profile
-bee users set-profile --name "CLI Test Agent" --about "Testing buzz-cli" | jq .
+bee users set-profile --name "CLI Test Agent" --about "Testing beekeeper-cli" | jq .
 
 # users presence
 bee users presence --pubkeys "$MY_PUBKEY" | jq .
@@ -1710,7 +1710,7 @@ builder with no override; a standard builder with an override and its
 sample) plus the two shapes that must be refused. Its counterpart
 `testdata/routing/create-record-fixture.json` holds the three records that
 answer them, including one that discloses a `proposedDisagreement`. Three
-implementations read those two files: `buzz-core`'s validator
+implementations read those two files: `beekeeper-core`'s validator
 (`crates/beekeeper-core/src/coding_session_lifecycle_command.rs`), this CLI's
 emitter (`crates/beekeeper-cli/src/commands/sessions/crew_tests.rs`) and the
 desktop's parser. That is what makes them one contract rather than three that
@@ -2859,7 +2859,7 @@ passed.** Three facts about the current wire, each measured against
 1. **`.item.tool.input` is `{}` on every tool call the ACP adapter in use
    publishes.** 53 of 53 rows across two sessions carried `input` with zero
    keys. The serialiser can carry arguments — it reads `rawInput`, `input`,
-   `arguments` or `args` (`buzz-session-provider/src/transcript.rs`, `tool_input`)
+   `arguments` or `args` (`beekeeper-session-provider/src/transcript.rs`, `tool_input`)
    — but the adapter sends none for read-class calls. **There is no path on the
    wire at all.**
 2. **`toolName` is a display label, not a tool identifier**: `Terminal`,

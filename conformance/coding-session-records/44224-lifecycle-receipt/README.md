@@ -35,6 +35,6 @@ purpose: it is the lifecycle vocabulary the coordination fold cares about, and
 the turn stages are read by `parseCodingSessionLifecycleReceipt` instead. Those
 vectors are pinned as divergences so the scope stays a decision somebody made.
 
-The two byte-bound divergences are not scope: `buzz-core` bounds a turn-stage
+The two byte-bound divergences are not scope: `beekeeper-core` bounds a turn-stage
 error code at 64 bytes and a message at 1027, and the desktop ingress decoder
 and mobile bound them at 256 and 2048.

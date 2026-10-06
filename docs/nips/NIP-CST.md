@@ -2,7 +2,7 @@
 
 `kind:44225` is a provider-authored, immutable, provider-neutral transcript
 fact for one exact coding-session generation. It lets Claude Code and future
-runtime adapters feed the same Buzz coding workspace without exposing raw
+runtime adapters feed the same Beekeeper coding workspace without exposing raw
 provider protocol events.
 
 This contract complements [NIP-CSC](NIP-CSC.md) and [NIP-CSL](NIP-CSL.md):
@@ -47,7 +47,7 @@ Content has exactly this JSON shape:
 persisted **before** publish, which is what makes a producer crash lose a
 sequence number rather than reuse one: **gaps are permitted, duplicates are
 not.** `timestamp` is finite epoch milliseconds. `turnId` is a bounded nonempty
-string or `null`. `item` is an explicitly selected, deeply redacted Buzz
+string or `null`. `item` is an explicitly selected, deeply redacted Beekeeper
 transcript item; raw provider events, credentials, environment, and unbounded
 protocol objects are forbidden.
 

@@ -16,15 +16,15 @@ A project is metadata only. Its signer gains no authority over any member reposi
 
 ## Motivation
 
-Buzz renders one card per `kind:30617`, so "the platform" — a relay, a desktop app, and a mobile app — appears as three unrelated repositories. Real work spans repositories; the model does not.
+Beekeeper renders one card per `kind:30617`, so "the platform" — a relay, a desktop app, and a mobile app — appears as three unrelated repositories. Real work spans repositories; the model does not.
 
-[VISION_PROJECTS.md](../../VISION_PROJECTS.md) sets the bar as "standard kinds as substrate, custom kinds only where genuinely novel," and every other forge concept in Buzz clears it: repositories, patches, issues, statuses, and ref state are all standard NIP-34 kinds. Multi-repository grouping is the one semantic that cannot be:
+[VISION_PROJECTS.md](../../VISION_PROJECTS.md) sets the bar as "standard kinds as substrate, custom kinds only where genuinely novel," and every other forge concept in Beekeeper clears it: repositories, patches, issues, statuses, and ref state are all standard NIP-34 kinds. Multi-repository grouping is the one semantic that cannot be:
 
 - **Per-repository tags cannot express cross-owner grouping.** If membership lived in each `kind:30617`, a project spanning Alice's and Bob's repositories would require *both* Alice and Bob to publish a tag naming the group. Alice cannot enroll Bob's repository; she cannot sign for his key. Grouping would be possible only within a single owner's repositories, and would break the moment a repository changed hands or a fork joined.
 - **Project-level metadata has no owner.** A project name, description, and linked channel describe the *group*, not any one repository. Scattered across per-repository tags they have no single writer, no replacement semantics, and no deletion story: removing a repository from the group means editing an event you may not control.
 - **Existing list kinds do not fit.** NIP-51 sets (`kind:30004` curation sets and friends) are private-or-public user bookmarks over arbitrary content, not a shared, named, addressable container for a forge collection with its own channel binding and visibility. Overloading a curation set would make every project indistinguishable from a user's reading list.
 
-One custom kind, held by one signer, with all group state in one replaceable event, resolves all three. The cost is bounded and stated plainly: `kind:30621` is Buzz-specific, so a third-party NIP-34 client sees the member repositories individually and ignores the grouping. Nothing degrades — the repositories remain standard, portable `kind:30617` events, discoverable and renderable exactly as before.
+One custom kind, held by one signer, with all group state in one replaceable event, resolves all three. The cost is bounded and stated plainly: `kind:30621` is Beekeeper-specific, so a third-party NIP-34 client sees the member repositories individually and ignores the grouping. Nothing degrades — the repositories remain standard, portable `kind:30617` events, discoverable and renderable exactly as before.
 
 ## Non-Goals
 
@@ -50,9 +50,9 @@ This document uses MUST, MUST NOT, SHOULD, SHOULD NOT, MAY, and RECOMMENDED as d
 | Kind | Name | Signer | Class | Purpose |
 |------|------|--------|-------|---------|
 | `30621` | Project | user | addressable | A named grouping of `kind:30617` repository announcements |
-| `9010` | Put member | user | regular | Buzz roles extension: add project members or change their roles — see [Relay-managed membership](#relay-managed-membership-buzz-extension) |
-| `9011` | Remove member | user | regular | Buzz roles extension: remove project members |
-| `39010` | Roster projection | relay | addressable | Buzz roles extension: relay-signed authoritative roster, `d` = the project coordinate |
+| `9010` | Put member | user | regular | Beekeeper roles extension: add project members or change their roles — see [Relay-managed membership](#relay-managed-membership-buzz-extension) |
+| `9011` | Remove member | user | regular | Beekeeper roles extension: remove project members |
+| `39010` | Roster projection | relay | addressable | Beekeeper roles extension: relay-signed authoritative roster, `d` = the project coordinate |
 
 `kind:30621` is an addressable event per NIP-01 (`30000 <= n < 40000`), addressed by `(pubkey, 30621, d)`. Two signers may use the same `d` value; those are two distinct projects. Addressable events were formerly specified as "parameterized replaceable events" in NIP-33, which upstream has since folded into NIP-01; this document cites NIP-01 throughout.
 
@@ -66,7 +66,7 @@ This document uses MUST, MUST NOT, SHOULD, SHOULD NOT, MAY, and RECOMMENDED as d
 | nostrbook.dev kind registry (`https://nostrbook.dev/kinds/<n>`) | `30617`, `30618`, `30620`, `30621`, `30622` | `30617` and `30618` documented (HTTP 200). `30620`, `30621`, `30622` all HTTP 404 — no entry. |
 | This repository (`crates/beekeeper-core/src/kind.rs`) | full range | `30620` is `KIND_WORKFLOW_DEF`, `30622` is `KIND_DM_VISIBILITY` (NIP-DV). `30621` is the one free number between them. |
 
-Both external registries are advisory, not authoritative allocators: neither reserves numbers, and an unregistered kind may still be in use by an unpublished client. A future upstream assignment of `30621` would be a collision Buzz absorbs the same way it already does for its other custom kinds — the number is Buzz-specific, and interoperability rests on the member `kind:30617` events, which remain standard.
+Both external registries are advisory, not authoritative allocators: neither reserves numbers, and an unregistered kind may still be in use by an unpublished client. A future upstream assignment of `30621` would be a collision Beekeeper absorbs the same way it already does for its other custom kinds — the number is Beekeeper-specific, and interoperability rests on the member `kind:30617` events, which remain standard.
 
 ## Event Format
 
@@ -95,7 +95,7 @@ Both external registries are advisory, not authoritative allocators: neither res
 | `a` | 0 to 64 | One member repository coordinate each. Order is not significant. |
 | `buzz-channel` | 0 or 1 | UUID of the channel this project's discussion lives in. Metadata only — see [Authority](#authority). At most 256 bytes. |
 | `buzz-visibility` | 0 or 1 | `listed` (default) or `unlisted`. Feeds [listing eligibility](#listing-eligibility). At most 256 bytes. |
-| `buzz-access` | 0 or 1 | `public` (default) or `private`. Buzz access extension — see [Access levels](#access-levels-buzz-extension). |
+| `buzz-access` | 0 or 1 | `public` (default) or `private`. Beekeeper access extension — see [Access levels](#access-levels-buzz-extension). |
 | `icon` | 0 or 1 | Display emoji for the project (unicode or `:shortcode:`). Client-interpreted. At most 256 bytes. |
 | `color` | 0 or 1 | Display tint for the project as lowercase `#rrggbb`. Client-interpreted. At most 256 bytes. |
 | `p` | 0 to 256 | One invited-member pubkey each (lowercase 64-hex, optional NIP-01 relay hint, optional role in element 4 — see [Member roles](#member-roles)). Meaningful only with `buzz-access` `private`. |
@@ -113,9 +113,9 @@ Ingest bounds metadata cardinality and length; it interprets no metadata value. 
 - `buzz-channel` absent, or naming a channel the viewer cannot resolve or read → the project renders without a channel link. It MUST NOT be dropped from the collection, and the unresolvable value MUST NOT be surfaced as a broken link.
 - `icon` and `color` are display hints. A `color` value that is not `#rrggbb` (case-insensitive) MUST be treated as unset — never a rejection, never an error surfaced to the reader.
 
-### Access levels (Buzz extension)
+### Access levels (Beekeeper extension)
 
-`buzz-access` sets who may **read** the project container and, on the Buzz relay, its contained channels and forums. It is the one metadata tag the relay interprets rather than treats as opaque, because it is an access-control input, not a display hint.
+`buzz-access` sets who may **read** the project container and, on the Beekeeper relay, its contained channels and forums. It is the one metadata tag the relay interprets rather than treats as opaque, because it is an access-control input, not a display hint.
 
 - Absent or `public` — the container is community-readable. This is the default and describes every pre-extension event.
 - `private` — the relay withholds the container from every reader except the **author** and the project's current **roster** ([Relay-managed membership](#relay-managed-membership-buzz-extension)): head-sourced `p` tags until the first membership op is accepted, ops-sourced thereafter. Enforcement covers every read surface: REQ historical delivery, live fan-out, COUNT, `ids` lookup, the HTTP bridge, and FTS search. Channels bound to a private project (via `project_ref`) are additionally excluded from non-members' accessible-channel sets, hiding their messages and forums and refusing writes.
@@ -134,7 +134,7 @@ Because only the owner can replace the event, head-carried invitations are owner
 Two additional rules complete the access grammar:
 
 - **The `general` project is always public** (`access-general-forced-public`). The community's shared default project — `d` = `general` — can never carry `["buzz-access", "private"]`: it is the container everything falls back into, so a hand-built head must not be able to hide it. Ingest rejects the combination outright.
-- **Clients SHOULD default new projects to private.** An access decision is easy to loosen and painful to walk back: content published into a public project has already been delivered. Buzz's own clients (and `bee projects create`) default to `private` and require an explicit choice to create a public project.
+- **Clients SHOULD default new projects to private.** An access decision is easy to loosen and painful to walk back: content published into a public project has already been delivered. Beekeeper's own clients (and `bee projects create`) default to `private` and require an explicit choice to create a public project.
 
 Invites target **agents exactly like users**: an invited member is a pubkey, and whether that pubkey belongs to a person or an agent is invisible to this grammar. An agent invited into a project reads and writes under the same role rules as any member. Agent-side consent — an agent acknowledging or declining an invitation before acting inside a project — is future work; today an invite is effective the moment the roster carries it.
 
@@ -163,7 +163,7 @@ Head metadata stays **creator-only in v1** — a documented limitation, not an o
 
 The creator (the pubkey in the project's address) is always an **implicit owner** and never appears in `p` tags or the roster.
 
-### Relay-managed membership (Buzz extension)
+### Relay-managed membership (Beekeeper extension)
 
 Head-carried `p` tags require an owner republish per roster change and cannot express delegation. Two relay-processed op kinds move the roster out of the head, modeled on the NIP-29 `9000`-series: user-signed, validated, applied to the project ACL, then projected into a relay-signed roster event.
 
@@ -202,7 +202,7 @@ Clients MUST read the roster from the latest `39010`, falling back to the head's
 
 A repository joins a project by carrying `["project", "30621:<owner>:<project-d>"]` on its own `kind:30617` announcement — the repo owner's assertion, so gating on it never lets a stranger's project hide or expose someone else's repository.
 
-**Event surface (private projects only).** When that coordinate resolves to a **private** project, the Buzz relay:
+**Event surface (private projects only).** When that coordinate resolves to a **private** project, the Beekeeper relay:
 
 - **Hides the repository's event surface** from readers outside the project: the `kind:30617` announcement, the relay-signed `kind:30618` ref state, and every NIP-34 child event that `a`-tags the repository (`1617` patches, `1618`/`1619` PRs, `1621` issues, `1630`–`1633` status), across the same read surfaces as the container gate. An event's own author always sees it; the repository owner is always admitted.
 - **Gates writes**: `kind:30618` and the child kinds targeting the repository are rejected (`restricted:`) unless the author is the repository owner, the project owner, or an invited member. The relay's own key is exempt so relay-signed ref state can be emitted.
@@ -225,7 +225,7 @@ Two consequences are deliberate and stated rather than left to be discovered:
 - **Visibility never grants.** A *public* project's repositories are no more cloneable than a private one's — only a roster row (or the implicit creator row) admits anyone. Public visibility governs the event surface above, not git transport. A relay MUST NOT infer a transport grant from visibility.
 - **A repository with neither tag is unreachable.** It has no ACL, so the relay denies every clone/fetch/push (`no_channel_binding`) until its owner links a project or binds a channel. This is the vanilla-NIP-34-announcement case, and it is the *only* case that earns that remediation: a repository inside a project is legitimately unbound, and telling its pusher to bind a channel would be advice for a problem they do not have.
 
-This is where a Buzz client stops asking for an "access channel" when a repository is created inside a project. The roster is already the membership mechanism; collecting a channel on top of it created a second, parallel ACL a user had to keep in sync by hand, and a repository whose two ACLs disagreed had no honest thing to display.
+This is where a Beekeeper client stops asking for an "access channel" when a repository is created inside a project. The roster is already the membership mechanism; collecting a channel on top of it created a second, parallel ACL a user had to keep in sync by hand, and a repository whose two ACLs disagreed had no honest thing to display.
 
 The `project` tag on `kind:30617` is validated at ingest, fail-closed like `access-value`: singleton, exactly two elements, and a well-formed coordinate (`repo-project-ref`) — a malformed value is rejected rather than silently ignored, because silently ignoring would publish a repository its author believes is private. Linking a repository **into a private project** additionally requires the announcement author to be admitted to that project (`repo-project-membership`); public or unresolvable coordinates stay soft references, matching channel `project_ref` semantics.
 
@@ -245,7 +245,7 @@ A member `a` tag coordinate MUST be exactly `30617:<owner>:<repo-d>` where:
 
 Parsing splits on the first two colons only; everything after the second colon is `<repo-d>`. A repository whose `d` tag contains a colon is therefore addressable. Splitting on every colon would make such a repository permanently unaddressable by any project.
 
-Buzz-hosted repositories cannot currently produce such a coordinate: their `d` values are validated as `[a-zA-Z0-9._-]{1,64}` (`crates/beekeeper-relay/src/handlers/side_effects.rs`, `crates/beekeeper-sdk/src/builders.rs`). The tolerance is for the repositories this NIP does not control — NIP-34 announcements from other clients, and any future relaxation of Buzz's own rule — and it matches how Buzz already parses coordinates in NIP-09 deletion handling, so a project coordinate and a deletion coordinate can never disagree about where a repository's `d` value begins.
+Beekeeper-hosted repositories cannot currently produce such a coordinate: their `d` values are validated as `[a-zA-Z0-9._-]{1,64}` (`crates/beekeeper-relay/src/handlers/side_effects.rs`, `crates/beekeeper-sdk/src/builders.rs`). The tolerance is for the repositories this NIP does not control — NIP-34 announcements from other clients, and any future relaxation of Beekeeper's own rule — and it matches how Beekeeper already parses coordinates in NIP-09 deletion handling, so a project coordinate and a deletion coordinate can never disagree about where a repository's `d` value begins.
 
 Coordinate identity is the whole string. Two members sharing a `<repo-d>` under different owners — the NIP-34 fork case — are distinct members, not duplicates.
 
@@ -286,7 +286,7 @@ A repository may be a member of any number of projects. It renders inside each (
 
 Deleting a project (NIP-09 `kind:5` naming the project coordinate) deletes the `kind:30621` only. Member repositories are untouched — their `kind:30617` events, refs, channels, and protections all survive, and each falls back to an implicit card unless another listing-eligible project claims it.
 
-**Who may delete.** The project signer always may. On the Buzz relay, so may the signer's registered NIP-OA owner: `validate_standard_deletion_event` resolves the deletion's effective author and accepts it when that actor is the target pubkey's registered owner (`crates/beekeeper-relay/src/handlers/side_effects.rs`). This is a **Buzz relay extension to NIP-09**, applied uniformly to every kind rather than specially to projects — it is what lets a human clean up events published by an agent they own. Vanilla NIP-09 relays accept only the signer, so a project deleted through the owner path on Buzz will still be live on a relay that lacks the extension.
+**Who may delete.** The project signer always may. On the Beekeeper relay, so may the signer's registered NIP-OA owner: `validate_standard_deletion_event` resolves the deletion's effective author and accepts it when that actor is the target pubkey's registered owner (`crates/beekeeper-relay/src/handlers/side_effects.rs`). This is a **Beekeeper relay extension to NIP-09**, applied uniformly to every kind rather than specially to projects — it is what lets a human clean up events published by an agent they own. Vanilla NIP-09 relays accept only the signer, so a project deleted through the owner path on Beekeeper will still be live on a relay that lacks the extension.
 
 Replacement admits no such widening: it is signer-only on every relay, because NIP-01 keys the coordinate on the pubkey itself rather than on a permission check.
 
@@ -307,7 +307,7 @@ A relay accepting `kind:30621` MUST validate the envelope at ingest. The rule na
 7. **`metadata-cardinality`** — at most one each of `name`, `description`, `buzz-channel`, `buzz-visibility`. Duplicates would make the effective value reader-dependent.
 8. **`metadata-length`** — `name` at most 256 bytes; `description` at most 2048 bytes; `buzz-channel` at most 256 bytes; `buzz-visibility` at most 256 bytes. The two `buzz-` bounds are generous by design: neither value has a semantic length, and the bound exists only so an unbounded string cannot ride into storage on a tag ingest does not interpret.
 
-The Buzz access and roles extensions add seven rules over `buzz-access` and invited-member `p` tags:
+The Beekeeper access and roles extensions add seven rules over `buzz-access` and invited-member `p` tags:
 
 9. **`access-value`** — a `buzz-access` tag holds exactly `private` or `public`. Unknown values are rejected rather than defaulted; see [Access levels](#access-levels-buzz-extension). Duplicate `buzz-access` tags fall under `metadata-cardinality` (rule 7).
 10. **`access-general-forced-public`** — the community's shared default project (`d` = `general`) can never carry `buzz-access` `private`; see [Access levels](#access-levels-buzz-extension).
@@ -319,19 +319,19 @@ The Buzz access and roles extensions add seven rules over `buzz-access` and invi
 
 Rules 3 through 6 are evaluated in that order, so an oversized tag list is refused on count before any per-tag parse or set proportional to it is built; rules 11 through 15 follow the same count-before-parse discipline.
 
-The Buzz validator enforces all fifteen rules. The shared fixtures in [`NIP-MP.fixtures.json`](NIP-MP.fixtures.json) are wired as its test oracle: the relay's unit test suite runs every case against `validate_project_envelope` and asserts each `expect` outcome.
+The Beekeeper validator enforces all fifteen rules. The shared fixtures in [`NIP-MP.fixtures.json`](NIP-MP.fixtures.json) are wired as its test oracle: the relay's unit test suite runs every case against `validate_project_envelope` and asserts each `expect` outcome.
 
 **Duplicates are rejected, never normalized.** A relay cannot dedupe tags inside a signed event: rewriting the tag array changes the event id and invalidates the signature. The choices are reject, or accept and require every present and future consumer to apply a first-wins interpretation rule. Rejecting keeps every stored head canonical and spares all consumers a defensive parse.
 
 **No membership authorization.** The relay MUST NOT check whether the signer owns, maintains, or has any relationship to a member repository. Referencing another owner's repository is legal and is the point of the kind. Because membership grants nothing ([Authority](#authority)), there is nothing to authorize. (The inverse direction is different: a repository's own `kind:30617` back-reference **into a private project** is authorized at 30617 ingest — `repo-project-ref` / `repo-project-membership`, [Repository access](#repository-access) — because that link places the repository behind the project's ACL.)
 
-**Routing.** `kind:30621` is global-only, like every other NIP-34 kind in Buzz: it is addressed by `(pubkey, kind, d)` and is never channel-scoped. A stray `h` tag MUST NOT scope it to a channel — the `buzz-channel` tag is a metadata reference, not a routing directive.
+**Routing.** `kind:30621` is global-only, like every other NIP-34 kind in Beekeeper: it is addressed by `(pubkey, kind, d)` and is never channel-scoped. A stray `h` tag MUST NOT scope it to a channel — the `buzz-channel` tag is a metadata reference, not a routing directive.
 
 **Scope.** Writes require the `repos:write` scope, matching `kind:30617` and `kind:30618`. A project is repository metadata; a client authorized to announce repositories is authorized to group them.
 
 **Replacement** follows NIP-01 with no special cases: newest `created_at` wins per `(pubkey, 30621, d)`, and one pubkey can never overwrite another's coordinate.
 
-**Deletion** follows NIP-09 with two Buzz-wide behaviors that are not project-specific:
+**Deletion** follows NIP-09 with two Beekeeper-wide behaviors that are not project-specific:
 
 - A `kind:5` naming the coordinate deletes it when signed by the project signer **or** by that signer's registered NIP-OA owner ([Deletion](#deletion)).
 - The deletion applies only to versions whose `created_at` is at or before the deletion's own, per NIP-09. A delayed or replayed tombstone signed before the current head MUST NOT remove it; the relay MUST compare timestamps at the coordinate (`soft_delete_by_coordinate`, `crates/beekeeper-db/src/event.rs`, whose inclusive `created_at <= <deletion>` bound is introduced alongside this specification in [#3171](https://github.com/block/buzz/pull/3171)).
@@ -352,7 +352,7 @@ Only listing-eligible projects claim members. This keeps visibility deterministi
 
 A project **claims** a member — suppressing that repository's implicit card, per step 3 of the fold — only when the project is listing eligible *and* its signer is authorized by the member repository itself: the signer is the repository's owner (the pubkey in the member coordinate), or is listed in a `maintainers` tag on the repository's own live `kind:30617`.
 
-Authority is therefore read from the member repository's *content*, not merely its existence: a client that has resolved only a coordinate, and not the head it names, cannot yet decide whether a project claims it. `maintainers` is the standard NIP-34 multi-value tag; Buzz's own announcement builder does not emit it today, so in practice every current claim reduces to signer-is-owner, and the `maintainers` clause is what keeps a co-maintained repository working the day that changes.
+Authority is therefore read from the member repository's *content*, not merely its existence: a client that has resolved only a coordinate, and not the head it names, cannot yet decide whether a project claims it. `maintainers` is the standard NIP-34 multi-value tag; Beekeeper's own announcement builder does not emit it today, so in practice every current claim reduces to signer-is-owner, and the `maintainers` clause is what keeps a co-maintained repository working the day that changes.
 
 Without this rule, membership would carry exactly the authority [Authority](#authority) says it does not. Anyone may publish a project naming anyone's repository, so an unauthorized project that suppressed implicit cards would let a stranger pull someone else's repository out of the collection and into a container the owner never consented to — a signed assertion silently becoming control over another owner's discovery surface.
 
@@ -404,7 +404,7 @@ Step 1's "to exhaustion" describes the target result, not a single algorithm: wh
 
 A relay satisfying any proper subset of these conditions does not provide the guarantee. Absent the guarantee, a client MUST mark the collection possibly incomplete regardless of any response sizes; the modes below serve to reduce silent loss rather than eliminate it. `limit` below means the effective page limit.
 
-**Mode 1 — composite cursor (exhaustive under the relay contract).** On a relay that exposes a keyset cursor over `(created_at, event id)`, a client MUST page by it. As an example of the cursor mechanics, Buzz implements the keyset as `created_at < until OR (created_at = until AND id > before_id)` (`crates/beekeeper-db/src/event.rs:48-52`), resolving the sort to `(created_at DESC, id ASC)`. Buzz exposes this cursor on its authenticated HTTP bridge endpoint (`crates/beekeeper-relay/src/api/bridge.rs`); it is not available on the NIP-01 websocket REQ path, where `before_id` is silently discarded — `protocol.rs` deserializes each REQ filter into a standard `nostr::Filter`, whose deserializer drops unknown fields, so a client sending `before_id` on a REQ receives no error and falls back to `until`-only paging without knowing it. A NIP-01 websocket client reading `kind:30621` from Buzz is therefore in mode 2, not mode 1; mode selection requires evaluating the relay contract per transport. Within the relay contract, the uniqueness of the `(created_at, id)` pair means each page resumes exactly where the last ended with no skips or re-reads, and a short page is an unambiguous end signal. Cursor uniqueness adds tie-safety; it does not substitute for the relay contract — a relay that post-filters after limiting can return an empty page under this cursor while older matching events remain beyond the candidate window.
+**Mode 1 — composite cursor (exhaustive under the relay contract).** On a relay that exposes a keyset cursor over `(created_at, event id)`, a client MUST page by it. As an example of the cursor mechanics, Beekeeper implements the keyset as `created_at < until OR (created_at = until AND id > before_id)` (`crates/beekeeper-db/src/event.rs:48-52`), resolving the sort to `(created_at DESC, id ASC)`. Beekeeper exposes this cursor on its authenticated HTTP bridge endpoint (`crates/beekeeper-relay/src/api/bridge.rs`); it is not available on the NIP-01 websocket REQ path, where `before_id` is silently discarded — `protocol.rs` deserializes each REQ filter into a standard `nostr::Filter`, whose deserializer drops unknown fields, so a client sending `before_id` on a REQ receives no error and falls back to `until`-only paging without knowing it. A NIP-01 websocket client reading `kind:30621` from Beekeeper is therefore in mode 2, not mode 1; mode selection requires evaluating the relay contract per transport. Within the relay contract, the uniqueness of the `(created_at, id)` pair means each page resumes exactly where the last ended with no skips or re-reads, and a short page is an unambiguous end signal. Cursor uniqueness adds tie-safety; it does not substitute for the relay contract — a relay that post-filters after limiting can return an empty page under this cursor while older matching events remain beyond the candidate window.
 
 **Mode 2 — `until` only (boundary-bucket drain; exhaustive only under the relay contract).** A vanilla NIP-01 filter offers no id tiebreak, so the only cursor is `until`. Neither naive step is safe: `until = oldest_seen_created_at - 1` skips every unread event in that second, and `until = oldest_seen_created_at` re-requests the whole bucket, which never advances once one `created_at` bucket exceeds the relay's page size. A mode-2 client MUST therefore drain the boundary second explicitly before stepping past it.
 
@@ -425,7 +425,7 @@ Enumeration is therefore exhaustive when the relay satisfies the contract above 
 
 Step 1's exhaustive enumeration is a correctness floor, not a scaling strategy: it says a client MUST NOT silently truncate its collection, because a repository absent from the list is indistinguishable from one that does not exist. It is not a mandate to hold the relay's entire repository set in memory on every load.
 
-At Buzz's current scale (hundreds of repositories per community) exhaustive enumeration is the whole story. Past that, the way out is a narrower question — a server-side collection query, a scoped or searched subset, or resolving a project's members on demand — not a fixed client-side `limit`. Any such surface MUST report its own truncation so a client can say "showing N of M" rather than quietly presenting a partial collection as complete.
+At Beekeeper's current scale (hundreds of repositories per community) exhaustive enumeration is the whole story. Past that, the way out is a narrower question — a server-side collection query, a scoped or searched subset, or resolving a project's members on demand — not a fixed client-side `limit`. Any such surface MUST report its own truncation so a client can say "showing N of M" rather than quietly presenting a partial collection as complete.
 
 ### Route resolution
 
@@ -462,8 +462,8 @@ Its cases are **semantic, not signed envelopes**. A repository or project is nam
 ## Relation to Other NIPs
 
 - **NIP-34**: Supplies the member repositories. Members are `kind:30617` announcements referenced by coordinate; a NIP-34 client that does not know `kind:30621` still discovers and renders each repository normally.
-- **NIP-01**: Supplies the addressable-event class, the `a` tag grammar, addressing, replacement, and the owner-only editing model. Owner-only editing is not enforcement code in Buzz — it is what NIP-01 replacement already means.
-- **NIP-09**: Supplies container deletion, which deletes the container only. Buzz extends it in two ways that are not project-specific: an agent's registered NIP-OA owner may also delete, and a tombstone applies only at or before its own `created_at` ([Deletion](#deletion)).
+- **NIP-01**: Supplies the addressable-event class, the `a` tag grammar, addressing, replacement, and the owner-only editing model. Owner-only editing is not enforcement code in Beekeeper — it is what NIP-01 replacement already means.
+- **NIP-09**: Supplies container deletion, which deletes the container only. Beekeeper extends it in two ways that are not project-specific: an agent's registered NIP-OA owner may also delete, and a tombstone applies only at or before its own `created_at` ([Deletion](#deletion)).
 - **NIP-29**: Supplies the channel a project's `buzz-channel` names. The reference is metadata; project state is never channel-scoped.
 - **NIP-51**: The closest existing precedent — a signed, addressable list referencing content the author need not own. Not reused because a project is a shared named forge container with its own channel binding and visibility, not a user's private-or-public bookmark set.
 - **NIP-OA**: Consulted for container deletion only — an agent's registered owner may delete the agent's project ([Deletion](#deletion)). Push access is unaffected: agents inherit repository push access from their owner through the repository's own protections, and a project is never consulted.

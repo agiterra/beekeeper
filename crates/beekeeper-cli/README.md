@@ -1,6 +1,6 @@
-# Buzz CLI
+# Beekeeper CLI
 
-Agent-first command-line interface for Buzz relay. JSON in, JSON out.
+Agent-first command-line interface for Beekeeper relay. JSON in, JSON out.
 
 ## Install
 
@@ -176,9 +176,9 @@ stored rules in `validation_error` so an owner can remove and repair them.
 ## Architecture
 
 ```
-buzz <group> <subcommand> [flags]
+bee <group> <subcommand> [flags]
     │
-    ├─ main.rs ──▶ commands/*.rs ──▶ client.rs ──▶ Buzz Relay REST API
+    ├─ main.rs ──▶ commands/*.rs ──▶ client.rs ──▶ Beekeeper Relay REST API
     │  (clap)       (handlers)       (reqwest)
     │
     ├─ validate.rs   (UUID, hex, content size, percent-encode)

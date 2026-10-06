@@ -14,7 +14,7 @@ coordinate facts `observedCommit, dirty, relayReachable, verifiedAt` **taken
 together** — all four or none.
 
 That is 512 accepted shapes. Every one of the eight single keys is *omitted*
-when absent, never written as `null`: `buzz-core` refuses an explicit null
+when absent, never written as `null`: `beekeeper-core` refuses an explicit null
 naming the key, because a producer with nothing to say omits it.
 `composeRef` additionally requires `packRef` — a composition of nothing is not
 a fact.

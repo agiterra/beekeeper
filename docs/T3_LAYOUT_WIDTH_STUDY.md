@@ -1,12 +1,12 @@
-# t3code transcript width strategy vs. Buzz coding-session workspace
+# t3code transcript width strategy vs. Beekeeper coding-session workspace
 
-Read-only study. t3code paths relative to `/Users/brian/Projects/t3code/t3code`, Buzz to `/Users/brian/Projects/buzz`. Nothing modified.
+Read-only study. t3code paths relative to `/Users/brian/Projects/t3code/t3code`, Beekeeper to `/Users/brian/Projects/buzz`. Nothing modified.
 
 ## Headline finding (uncomfortable but true)
 
-**t3code pins its transcript to the exact same 48rem measure Buzz does.** `apps/web/src/components/chat/MessagesTimeline.tsx:554` — `mx-auto w-full min-w-0 max-w-3xl overflow-x-clip`. Composer `apps/web/src/components/ChatView.tsx:6413` — `mx-auto w-full max-w-3xl`. No clamp, no vw, no container query, no JS measurement, no wide mode, no breakpoint above `sm:`. On a 3456px display t3code has the same gutters.
+**t3code pins its transcript to the exact same 48rem measure Beekeeper does.** `apps/web/src/components/chat/MessagesTimeline.tsx:554` — `mx-auto w-full min-w-0 max-w-3xl overflow-x-clip`. Composer `apps/web/src/components/ChatView.tsx:6413` — `mx-auto w-full max-w-3xl`. No clamp, no vw, no container query, no JS measurement, no wide mode, no breakpoint above `sm:`. On a 3456px display t3code has the same gutters.
 
-The delta is not the column width. It is (a) what happens to content that does not fit inside 48rem, and (b) that 48rem is rem and rides the font-size control. Buzz's real bug is (a).
+The delta is not the column width. It is (a) what happens to content that does not fit inside 48rem, and (b) that 48rem is rem and rides the font-size control. Beekeeper's real bug is (a).
 
 ## Part A — t3code mechanisms
 
@@ -80,7 +80,7 @@ Only two breakpoints touch this layout: `sm:` (640px) steps list padding `px-3`�
 
 `overflow-x-clip` (not `hidden`) on the row root so sticky headers inside rows still work (`449e1aaa4`). The scroll viewport is `overflow-x-hidden` (`chat/MessagesTimeline.tsx:594`) — the page can never scroll sideways; only individual `pre`/table elements can. One `ScrollArea` primitive with `scrollFade`/`hideScrollbars`/`chainVerticalScroll` (`components/ui/scroll-area.tsx:26-56`) is reused for every inner scroller, so overflow always has a visible affordance. Every long-content widget has a visible control for its overflow behaviour; nothing silently truncates.
 
-## Part B — delta for Buzz
+## Part B — delta for Beekeeper
 
 **Already right:** `desktop/src/shared/ui/markdown/CodeBlock.tsx:110` has `max-h-[400px] overflow-x-auto overflow-y-auto`; `CodingSessionTranscriptParts.tsx:98,103` have `max-h-48 overflow-auto whitespace-pre-wrap`. The mechanics exist; the containment chain around them is missing.
 
@@ -94,15 +94,15 @@ Only two breakpoints touch this layout: `sm:` (640px) steps list padding `px-3`�
 4. `shared/ui/markdown/CodeBlock.tsx:110` — add `max-w-full`, mirroring t3code `index.css:1762` `max-width: 100%`.
 5. `CodingSessionTranscriptParts.tsx:348` — changed-file container is `overflow-hidden`; diff lines inside already wrap (`features/agents/ui/FileContentBlock.tsx:96` `block min-w-full whitespace-pre-wrap wrap-break-word px-3`), but add `min-w-0` so the border box tracks the column.
 
-Also style the code-block scrollbar (t3code `index.css:1770-1786`). Buzz's `overflow-x-auto` gives no visible affordance today, which reads as "clipped" even when it isn't.
+Also style the code-block scrollbar (t3code `index.css:1770-1786`). Beekeeper's `overflow-x-auto` gives no visible affordance today, which reads as "clipped" even when it isn't.
 
 ### B2. Adopt the wrap toggle
 
-Port `MarkdownCodeBlock` chrome from `ChatMarkdown.tsx:669-720` into `shared/ui/markdown/CodeBlock.tsx` (the copy button already lives at `CodeBlock.tsx:113-129`; add a `WrapText` sibling). `useState` + `data-wrap` on the wrapper, and two CSS lines in `shared/styles/globals/markdown.css` beside the existing `.code-block-lines` rules (`markdown.css:298-316`): `[data-code-block][data-wrap="true"] pre { white-space: pre-wrap; overflow-wrap: anywhere; }`. Note `CODE_BLOCK_CLASS` (`CodeBlock.tsx:31`) is `whitespace-pre`, so the rule must win on specificity or the class must become conditional in TSX. Buzz has no settings surface equivalent to t3code's `wordWrap`; ship the per-block toggle only, default off (scroll).
+Port `MarkdownCodeBlock` chrome from `ChatMarkdown.tsx:669-720` into `shared/ui/markdown/CodeBlock.tsx` (the copy button already lives at `CodeBlock.tsx:113-129`; add a `WrapText` sibling). `useState` + `data-wrap` on the wrapper, and two CSS lines in `shared/styles/globals/markdown.css` beside the existing `.code-block-lines` rules (`markdown.css:298-316`): `[data-code-block][data-wrap="true"] pre { white-space: pre-wrap; overflow-wrap: anywhere; }`. Note `CODE_BLOCK_CLASS` (`CodeBlock.tsx:31`) is `whitespace-pre`, so the rule must win on specificity or the class must become conditional in TSX. Beekeeper has no settings surface equivalent to t3code's `wordWrap`; ship the per-block toggle only, default off (scroll).
 
 ### B3. Column width — the unit question, answered
 
-**Keep `max-w-3xl` (rem). Do not switch to px, vw, or a vw-based clamp().** Buzz scales root font size for Cmd +/− (`desktop/src/app/useWebviewZoomShortcuts.ts:85`, `BASE_FONT_SIZE_PX = 16` at :10) — mechanically identical to t3code `appearanceFonts.ts:118`. Therefore:
+**Keep `max-w-3xl` (rem). Do not switch to px, vw, or a vw-based clamp().** Beekeeper scales root font size for Cmd +/− (`desktop/src/app/useWebviewZoomShortcuts.ts:85`, `BASE_FONT_SIZE_PX = 16` at :10) — mechanically identical to t3code `appearanceFonts.ts:118`. Therefore:
 
 - **rem is correct.** The measure is a typographic quantity that should hold a roughly constant character count; when the user zooms in, glyphs widen and the column must widen with them. `max-w-3xl` does that for free — and it means Brian already has a lever on his 3456px display: Cmd + widens the column proportionally.
 - **px would freeze the measure against zoom** (at 150% zoom, 768px holds ~2/3 the characters) — the same class of bug as the `text-[15px]` regression in PR #891.
@@ -112,11 +112,11 @@ Port `MarkdownCodeBlock` chrome from `ChatMarkdown.tsx:669-720` into `shared/ui/
 
 ### B4. Fill the gutter instead of widening the column
 
-t3code's answer to a wide display is the docked panel. Buzz has the same primitive: `CodingSessionSurfaceHost` with `layout={isNarrow ? "sheet" : "inline"}` (`CodingSessionUmbrellaWorkspace.tsx:274-283`, mirrored in `CodingSessionWorkspace.tsx`), sized by `useCodingSessionRailWidth.ts`. Compare its bounds to t3code's `w-[42vw] min-w-[360px] max-w-[560px]`; auto-opening Changes/Agents above ~1800px would consume the gutter the way t3code does. Product decision — flag it, do not unilaterally change default open state.
+t3code's answer to a wide display is the docked panel. Beekeeper has the same primitive: `CodingSessionSurfaceHost` with `layout={isNarrow ? "sheet" : "inline"}` (`CodingSessionUmbrellaWorkspace.tsx:274-283`, mirrored in `CodingSessionWorkspace.tsx`), sized by `useCodingSessionRailWidth.ts`. Compare its bounds to t3code's `w-[42vw] min-w-[360px] max-w-[560px]`; auto-opening Changes/Agents above ~1800px would consume the gutter the way t3code does. Product decision — flag it, do not unilaterally change default open state.
 
-### B5. Shared layout primitive — yes, Buzz should exceed t3code here
+### B5. Shared layout primitive — yes, Beekeeper should exceed t3code here
 
-t3code repeats the literal 7 times and it has already drifted (`max-w-3xl` vs `max-w-[calc(48rem-2.75rem)]` vs `max-w-[min(48rem,…)]`). Buzz has the same disease across 5 files. Add `desktop/src/features/coding-sessions/ui/CodingSessionColumn.tsx`:
+t3code repeats the literal 7 times and it has already drifted (`max-w-3xl` vs `max-w-[calc(48rem-2.75rem)]` vs `max-w-[min(48rem,…)]`). Beekeeper has the same disease across 5 files. Add `desktop/src/features/coding-sessions/ui/CodingSessionColumn.tsx`:
 
 ```tsx
 export function CodingSessionColumn({ className, children }: { className?: string; children: React.ReactNode }) {
@@ -134,14 +134,14 @@ Consumers: `CodingSessionUmbrellaWorkspace.tsx:244` and `:257`, `CodingSessionWo
 ### B7. Porting risks
 
 - **Framework: none.** Both are Tailwind v4 (`apps/web/package.json:68`, `desktop/package.json:105`), both mix utilities with a global stylesheet (`apps/web/src/index.css` ↔ `desktop/src/shared/styles/globals/markdown.css`). No CSS modules on either side.
-- **Dependency Buzz lacks:** t3code's `ScrollArea` is Base-UI (`components/ui/scroll-area.tsx`); its `scrollFade` uses Tailwind v4 `mask-*-from-[…]`, which Buzz can use directly without the dependency. The table-expand column-measuring JS (`ChatMarkdown.tsx:405-426`) is optional — skip in slice 1.
-- **Architecture:** t3code virtualizes with LegendList so `max-w-3xl` sits on *every row* (`chat/MessagesTimeline.tsx:554`). Buzz uses a plain scroll container with one wrapper (`CodingSessionUmbrellaWorkspace.tsx:244`). Buzz's shape is simpler and fine — do not adopt per-row wrappers.
-- **Buzz has surfaces t3code doesn't** — `CodingSessionGoalPill`, `CodingSessionFounderLine`, `CodingSessionExecutionRail`. No t3code precedent for aligning a goal bar to the column; `CodingSessionGoalPill.tsx:74` is already `max-w-3xl` and just needs to join the primitive.
-- **`text-[length:var(--font-size-code,…)]`** (t3code `chat/MessagesTimeline.tsx:2067`) would trip `pnpm check:px-text`. Use `text-xs`/`text-2xs` instead — Buzz's tool-output `pre` (`CodingSessionTranscriptParts.tsx:98,103`) already does.
+- **Dependency Beekeeper lacks:** t3code's `ScrollArea` is Base-UI (`components/ui/scroll-area.tsx`); its `scrollFade` uses Tailwind v4 `mask-*-from-[…]`, which Beekeeper can use directly without the dependency. The table-expand column-measuring JS (`ChatMarkdown.tsx:405-426`) is optional — skip in slice 1.
+- **Architecture:** t3code virtualizes with LegendList so `max-w-3xl` sits on *every row* (`chat/MessagesTimeline.tsx:554`). Beekeeper uses a plain scroll container with one wrapper (`CodingSessionUmbrellaWorkspace.tsx:244`). Beekeeper's shape is simpler and fine — do not adopt per-row wrappers.
+- **Beekeeper has surfaces t3code doesn't** — `CodingSessionGoalPill`, `CodingSessionFounderLine`, `CodingSessionExecutionRail`. No t3code precedent for aligning a goal bar to the column; `CodingSessionGoalPill.tsx:74` is already `max-w-3xl` and just needs to join the primitive.
+- **`text-[length:var(--font-size-code,…)]`** (t3code `chat/MessagesTimeline.tsx:2067`) would trip `pnpm check:px-text`. Use `text-xs`/`text-2xs` instead — Beekeeper's tool-output `pre` (`CodingSessionTranscriptParts.tsx:98,103`) already does.
 
 ### B8. Recommended slice order
 
 1. Containment chain + scrollbar styling (B1). Zero visual change when content fits; fixes clipping when it doesn't.
 2. `CodingSessionColumn` primitive + 5 call sites, plus the transcript/composer padding reconciliation (B5).
 3. Per-code-block wrap toggle (B2).
-4. Report to Brian that the tunnels are by design in t3code, that Cmd + already widens Buzz's column, and that the gutter is meant for the Changes/Agents rail (B4) — then let him decide whether he still wants a wider measure.
+4. Report to Brian that the tunnels are by design in t3code, that Cmd + already widens Beekeeper's column, and that the gutter is meant for the Changes/Agents rail (B4) — then let him decide whether he still wants a wider measure.

@@ -1,12 +1,12 @@
-# Buzz Architecture
+# Beekeeper Architecture
 
 ## 1. Executive Summary
 
-Buzz is a self-hosted team communication platform built on the Nostr protocol (NIP-01 wire format), where AI agents and humans are first-class equals. Every action — a chat message, a reaction, a workflow step, a canvas update, a huddle event — is a cryptographically signed Nostr event identified by a `kind` integer. Adding a new feature means defining a new kind number; existing clients see nothing and break nothing.
+Beekeeper is a self-hosted team communication platform built on the Nostr protocol (NIP-01 wire format), where AI agents and humans are first-class equals. Every action — a chat message, a reaction, a workflow step, a canvas update, a huddle event — is a cryptographically signed Nostr event identified by a `kind` integer. Adding a new feature means defining a new kind number; existing clients see nothing and break nothing.
 
 The relay is the single source of truth. All reads and writes flow through it. There is no peer-to-peer event exchange, no gossip, no replication — just clients connecting to one relay over WebSocket, and the relay enforcing auth, verifying signatures, persisting events, fanning out to subscribers, indexing for search, and triggering automation.
 
-A Buzz **community** is the tenant-visible workspace selected by the request host.
+A Beekeeper **community** is the tenant-visible workspace selected by the request host.
 The self-hosted default remains one host, one relay process, one implicit
 community. Multi-community deployments move that semantic boundary one level up:
 `req.community = resolve_host(connection.host)` is established before AUTH,
@@ -14,7 +14,7 @@ EVENT, REQ, REST, media, git, search, workflow, or pub/sub handling. Unknown
 hosts fail closed, and NIP-98/API-token stamps must agree with the host-derived
 community rather than overriding it.
 
-Buzz is a Rust monorepo, licensed Apache 2.0 under Block, Inc.
+Beekeeper is a Rust monorepo, licensed Apache 2.0 under Block, Inc.
 
 ---
 
@@ -24,7 +24,7 @@ Buzz is a Rust monorepo, licensed Apache 2.0 under Block, Inc.
 ┌─────────────────────────────────────────────────────────────────────┐
 │                           CLIENTS                                    │
 │                                                                      │
-│  Human (Nostr app, web, mobile)    Agent (CLI tools via buzz-cli)    │
+│  Human (Nostr app, web, mobile)  Agent (CLI tools via beekeeper-cli) │
 │           │                                    │                     │
 │           └──────────── WebSocket ─────────────┘                    │
 └─────────────────────────────────────────────────────────────────────┘
@@ -64,7 +64,7 @@ Buzz is a Rust monorepo, licensed Apache 2.0 under Block, Inc.
      (multi-node fan-out wired; local-echo dedup via AppState.local_event_ids).
 
      ┌──────────────┐
-     │  Postgres    │  ← buzz-search (FTS over the search_tsv
+     │  Postgres    │  ← beekeeper-search (FTS over the search_tsv
      │ (full-text   │     generated column + GIN index)
      │   search)    │
      └──────────────┘
@@ -75,32 +75,32 @@ Buzz is a Rust monorepo, licensed Apache 2.0 under Block, Inc.
 ### Crate Dependency Hierarchy
 
 ```
-buzz-core    (zero I/O — types, verification, filter matching, kind registry)
+beekeeper-core        (zero I/O — types, verification, filter matching, kind registry)
     │
-    ├── buzz-db          (Postgres: events, channels, tokens, workflows, audit)
-    ├── buzz-auth        (NIP-42, NIP-98, API tokens, scopes, rate limiting)
-    ├── buzz-pubsub      (Redis pub/sub, presence, typing indicators)
-    ├── buzz-search      (Postgres FTS: query, delete)
-    ├── buzz-audit       (hash-chain tamper-evident log)
-    └── buzz-workflow    (YAML-as-code automation engine)
+    ├── beekeeper-db          (Postgres: events, channels, tokens, workflows, audit)
+    ├── beekeeper-auth        (NIP-42, NIP-98, API tokens, scopes, rate limiting)
+    ├── beekeeper-pubsub      (Redis pub/sub, presence, typing indicators)
+    ├── beekeeper-search      (Postgres FTS: query, delete)
+    ├── beekeeper-audit       (hash-chain tamper-evident log)
+    └── beekeeper-workflow    (YAML-as-code automation engine)
          │
-         └── buzz-relay       (ties everything together — the server)
+         └── beekeeper-relay       (ties everything together — the server)
 
-buzz-acp            (agent harness — bridges relay @mentions → AI agents via ACP/JSON-RPC)
-buzz-sdk            (typed Nostr event builders — used by buzz-acp and buzz-cli)
-buzz-media          (Blossom/S3 media storage)
-buzz-cli            (agent-first CLI)
-buzz-admin          (operator CLI: relay membership + key generation)
-buzz-test-client    (integration test harness + manual CLI)
+beekeeper-acp         (agent harness — bridges relay @mentions → AI agents via ACP/JSON-RPC)
+beekeeper-sdk         (typed Nostr event builders — used by beekeeper-acp and beekeeper-cli)
+beekeeper-media       (Blossom/S3 media storage)
+beekeeper-cli         (agent-first CLI)
+beekeeper-admin       (operator CLI: relay membership + key generation)
+beekeeper-test-client (integration test harness + manual CLI)
 ```
 
-**Key architectural principle:** The relay is the single source of truth. `buzz-relay` orchestrates all subsystems by calling them directly — it imports `buzz-db`, `buzz-auth`, `buzz-pubsub`, `buzz-search`, `buzz-audit`, and `buzz-workflow`. However, those subsystems are isolated from each other: `buzz-workflow` never calls `buzz-pubsub`, `buzz-search` never calls `buzz-db`, etc. Cross-subsystem coordination happens only through the relay. In multi-community mode, the relay also owns propagation of `TenantContext`; service crates should receive community-scoped inputs rather than independently deriving tenancy from client-controlled event tags.
+**Key architectural principle:** The relay is the single source of truth. `buzz-relay` orchestrates all subsystems by calling them directly — it imports `beekeeper-db`, `beekeeper-auth`, `beekeeper-pubsub`, `beekeeper-search`, `beekeeper-audit`, and `beekeeper-workflow`. However, those subsystems are isolated from each other: `beekeeper-workflow` never calls `beekeeper-pubsub`, `beekeeper-search` never calls `beekeeper-db`, etc. Cross-subsystem coordination happens only through the relay. In multi-community mode, the relay also owns propagation of `TenantContext`; service crates should receive community-scoped inputs rather than independently deriving tenancy from client-controlled event tags.
 
 ---
 
 ## 2. The Protocol
 
-Buzz uses Nostr NIP-01 on the wire. Every action is a JSON event with six fields:
+Beekeeper uses Nostr NIP-01 on the wire. Every action is a JSON event with six fields:
 
 ```json
 {
@@ -123,9 +123,9 @@ The `kind` integer is the only dispatch switch. The relay routes, stores, and fa
 | 10000–19999 | Replaceable events (NIP-16) |
 | 20000–29999 | Ephemeral events — not stored, not audited |
 | 30000–39999 | Parameterized replaceable events |
-| 40000–49999 | Buzz custom kinds |
+| 40000–49999 | Beekeeper custom kinds |
 
-### Buzz Custom Kinds (selected)
+### Beekeeper Custom Kinds (selected)
 
 | Kind | Name | Description |
 |------|------|-------------|
@@ -139,9 +139,9 @@ The `kind` integer is the only dispatch switch. The relay routes, stores, and fa
 | 46001–46012 | KIND_WORKFLOW_* | Workflow execution events |
 | 20001 | KIND_PRESENCE_UPDATE | Ephemeral presence heartbeat |
 
-`buzz-core` defines each event kind as a `pub const u32` and exports the full registry as `ALL_KINDS: &[u32]` (127 kinds at the time of writing); `crates/beekeeper-core/src/kind.rs` is the source of truth for the current list. Kinds are `u32` (NIP-01 specifies unsigned integer; `u32` covers the full range). Buzz uses both standard Nostr kinds (e.g., kind 7 for reactions) and custom ranges (40000+).
+`beekeeper-core` defines each event kind as a `pub const u32` and exports the full registry as `ALL_KINDS: &[u32]` (127 kinds at the time of writing); `crates/beekeeper-core/src/kind.rs` is the source of truth for the current list. Kinds are `u32` (NIP-01 specifies unsigned integer; `u32` covers the full range). Beekeeper uses both standard Nostr kinds (e.g., kind 7 for reactions) and custom ranges (40000+).
 
-Note: `KIND_AUTH` (22242) is `pub const KIND_AUTH: u32` in `buzz-core/src/kind.rs` and imported by `buzz-relay/src/handlers/event.rs`. `KIND_CANVAS` (40100) is likewise `pub const KIND_CANVAS: u32` in `buzz-core/src/kind.rs`.
+Note: `KIND_AUTH` (22242) is `pub const KIND_AUTH: u32` in `beekeeper-core/src/kind.rs` and imported by `beekeeper-relay/src/handlers/event.rs`. `KIND_CANVAS` (40100) is likewise `pub const KIND_CANVAS: u32` in `beekeeper-core/src/kind.rs`.
 
 ### Wire Protocol (NIP-01 messages)
 
@@ -329,7 +329,7 @@ After registering, the REQ handler queries Postgres for stored events matching t
 
 ## 6. Crate Reference
 
-### buzz-core — Shared Types and Verification
+### beekeeper-core — Shared Types and Verification
 
 **Zero I/O.** The foundation every other crate builds on. Explicitly prohibits tokio, sqlx, redis, and axum in its `Cargo.toml`.
 
@@ -358,7 +358,7 @@ pub const ALL_KINDS: &[u32]  // 80 entries (KIND_AUTH excluded — never stored)
 
 ---
 
-### buzz-auth — Authentication and Authorization
+### beekeeper-auth — Authentication and Authorization
 
 Handles authentication paths, scope enforcement, and token operations.
 
@@ -391,7 +391,7 @@ pub trait RateLimiter: Send + Sync { ... }
 
 ---
 
-### buzz-db — Postgres Event Store
+### beekeeper-db — Postgres Event Store
 
 All database access. Uses `sqlx::query()` (runtime, not compile-time macros) — no `.sqlx/` offline cache required.
 
@@ -429,7 +429,7 @@ All database access. Uses `sqlx::query()` (runtime, not compile-time macros) —
 
 ---
 
-### buzz-pubsub — Redis Pub/Sub, Presence, Typing
+### beekeeper-pubsub — Redis Pub/Sub, Presence, Typing
 
 Manages Redis pub/sub fan-out, presence tracking, and typing indicators. In multi-community mode all tenant-visible keys are prefixed or otherwise partitioned by community (`buzz:{community}:...`) so channel fan-out, presence, typing, and cache invalidation cannot cross hosts.
 
@@ -443,7 +443,7 @@ Subscriber → dedicated PubSub  → PSUBSCRIBE buzz:channel:*
 
 The subscriber uses a **dedicated** `redis::aio::PubSub` connection — not from the pool. This is intentional: pool connections cannot hold `PSUBSCRIBE` state.
 
-**Current state:** The subscriber loop is spawned in `buzz-relay/src/main.rs` and populates the broadcast channel. A consumer task subscribes via `pubsub.subscribe_local()`, calls `sub_registry.fan_out()` on each received event, and delivers matches to local WebSocket connections via `conn_manager.send_to()`. Multi-node fan-out is now wired end-to-end. Local-echo deduplication is implemented via `AppState.local_event_ids` — events published by the local relay instance are tracked and skipped when received via the Redis round-trip.
+**Current state:** The subscriber loop is spawned in `beekeeper-relay/src/main.rs` and populates the broadcast channel. A consumer task subscribes via `pubsub.subscribe_local()`, calls `sub_registry.fan_out()` on each received event, and delivers matches to local WebSocket connections via `conn_manager.send_to()`. Multi-node fan-out is now wired end-to-end. Local-echo deduplication is implemented via `AppState.local_event_ids` — events published by the local relay instance are tracked and skipped when received via the Redis round-trip.
 
 **Reconnection:** exponential backoff 1s → 30s (`backoff_secs * 2`). Backoff resets to 1s only after a clean stream end, not on each reconnect attempt.
 
@@ -461,7 +461,7 @@ EXPIRE buzz:typing:{channel_id} 60
 
 ---
 
-### buzz-search — Postgres FTS Integration
+### beekeeper-search — Postgres FTS Integration
 
 Full-text search via Postgres FTS. Events are searchable through the
 `events.search_tsv` generated `tsvector` column (populated on insert, indexed
@@ -481,7 +481,7 @@ re-authorizes every candidate hit before returning it.
   ambiguity the old `Option<Vec<Uuid>> + bool` matrix could not express.
 - Every query carries `community_id`; the FTS predicate is BitmapAnd-ed with
   the community-leading btree filters so a query never crosses tenants.
-- Permission filtering is **caller's responsibility** — `buzz-search` returns
+- Permission filtering is **caller's responsibility** — `beekeeper-search` returns
   candidate hits; the relay re-authorizes each one (channel membership, `#p`,
   owner gates) before delivering it.
 
@@ -490,7 +490,7 @@ events (indexing is the `search_tsv` generated column on the `events` insert).
 
 ---
 
-### buzz-audit — Hash-Chain Audit Log
+### beekeeper-audit — Hash-Chain Audit Log
 
 Tamper-evident append-only log with SHA-256 hash chaining.
 
@@ -506,7 +506,7 @@ Tamper-evident append-only log with SHA-256 hash chaining.
 
 ---
 
-### buzz-workflow — YAML-as-Code Automation Engine
+### beekeeper-workflow — YAML-as-Code Automation Engine
 
 Parses, validates, and executes channel-scoped workflow definitions. In multi-community mode workflow definitions, runs, approvals, webhook routes, and schedules inherit the host-derived community and evaluate triggers only against events in that community.
 
@@ -643,12 +643,12 @@ pub enum AuthState { Pending { challenge: String }, Authenticated(AuthContext), 
 
 ### buzz-acp — Agent Communication Protocol Harness
 
-Standalone binary that bridges Buzz relay events to AI agents via the [Agent Communication Protocol](https://agentclientprotocol.com/) (ACP).
+Standalone binary that bridges Beekeeper relay events to AI agents via the [Agent Communication Protocol](https://agentclientprotocol.com/) (ACP).
 
 **Architecture:**
 
 ```
-Buzz Relay ──WS──→ buzz-acp ──stdio (ACP/JSON-RPC)──→ Agent (goose/codex/claude)
+Beekeeper Relay ──WS──→ buzz-acp ──stdio (ACP/JSON-RPC)──→ Agent (goose/codex/claude)
 ```
 
 `buzz-acp` spawns AI agent subprocesses (1–32, default 1), connects to the relay via WebSocket with NIP-42 auth, discovers channels via REST API, and queues `@mention` events per channel. At most one prompt is in-flight per channel. Queued events are batched into a single prompt sent via `session/prompt` over ACP.
@@ -669,7 +669,7 @@ Buzz Relay ──WS──→ buzz-acp ──stdio (ACP/JSON-RPC)──→ Agent 
 - Pool of 1–32 agent subprocesses with claim/return lifecycle.
 - Per-channel queuing: at most one prompt in-flight per channel; subsequent @mentions queue until the agent responds.
 - Crash recovery: agent subprocess crashes are detected and the agent is respawned.
-- Depends on `buzz-core` (kind constants) and `buzz-sdk` (relay/REST utilities).
+- Depends on `beekeeper-core` (kind constants) and `beekeeper-sdk` (relay/REST utilities).
 
 **Does NOT:** persist state.
 
@@ -691,7 +691,7 @@ The `buzz-admin` binary is shipped in the relay Docker image (`/usr/local/bin/bu
 
 ---
 
-### buzz-test-client — Integration Test Harness
+### beekeeper-test-client — Integration Test Harness
 
 **`BeekeeperTestClient`** wraps a WebSocket connection with a `VecDeque<RelayMessage>` buffer for message interleaving. Methods: `connect`, `connect_unauthenticated`, `authenticate`, `send_event`, `send_text_message`, `subscribe`, `close_subscription`, `recv_event`, `collect_until_eose`, `disconnect`.
 
@@ -728,7 +728,7 @@ Every security-sensitive operation uses an explicit, verified pattern. No implic
 
 | Concern | Mechanism |
 |---------|-----------|
-| Schnorr signatures | `verify_event()` in `buzz-core` — every event verified before storage |
+| Schnorr signatures | `verify_event()` in `beekeeper-core` — every event verified before storage |
 | Event ID | SHA-256 of canonical serialization verified independently of signature |
 | Frame size | `MAX_FRAME_BYTES = 65,536` — oversized frames rejected, connection closed |
 | Search event IDs | 64-char hex validation before URL construction — prevents path injection |
@@ -737,12 +737,12 @@ Every security-sensitive operation uses an explicit, verified pattern. No implic
 
 ### SSRF Protection
 
-`is_private_ip()` in `buzz-core` covers:
+`is_private_ip()` in `beekeeper-core` covers:
 - IPv4: unspecified (0.0.0.0/8), loopback (127.0.0.0/8), private (10/8, 172.16/12, 192.168/16), link-local (169.254/16), CGNAT (100.64/10), benchmarking (198.18/15), broadcast (255.255.255.255)
 - IPv6: loopback (::1), ULA (fc00::/7), link-local (fe80::/10), multicast (ff00::/8), documentation (2001:db8::/32)
 - IPv4-mapped IPv6 (::ffff:0:0/96) — recursively checks the embedded IPv4 address
 
-Applied in: `buzz-workflow` (CallWebhook action), `buzz-core` (shared utility).
+Applied in: `beekeeper-workflow` (CallWebhook action), `beekeeper-core` (shared utility).
 
 ### Audit Integrity
 
@@ -820,7 +820,7 @@ These are verified gaps in the current implementation — not design aspirations
 | # | Limitation | Detail |
 |---|-----------|--------|
 | 1 | **No sqlx offline query cache** | Uses `sqlx::query()` (runtime) not `sqlx::query!()` (compile-time). No `.sqlx/` directory. Queries are not validated at compile time. |
-| 2 | **No rate limiting implementation** | `RateLimiter` trait exists in `buzz-auth`. Only implementation is `AlwaysAllowRateLimiter` (test stub, gated behind `#[cfg(any(test, feature = "test-utils"))]`). `RateLimitConfig` defines 4 tiers (human, agent-standard, agent-elevated, agent-platform) but none are enforced. |
+| 2 | **No rate limiting implementation** | `RateLimiter` trait exists in `beekeeper-auth`. Only implementation is `AlwaysAllowRateLimiter` (test stub, gated behind `#[cfg(any(test, feature = "test-utils"))]`). `RateLimitConfig` defines 4 tiers (human, agent-standard, agent-elevated, agent-platform) but none are enforced. |
 | 3 | **No dedicated typing REST endpoint** | Typing indicators (kind 20002) are delivered via both local fan-out and Redis pub/sub (cross-node). There is no REST endpoint to query current typers — `/api/presence` returns online/away status only, not typing state. |
 | 4 | **Huddle recording/tracks not built** | Voice, room lifecycle, and join/leave/end events are wired (see Huddle Audio above). Recording and per-track publishing have reserved kinds but no producer yet. |
 | 5 | **Approval gates not wired end-to-end** | The executor returns `StepResult::Suspended` and the relay has grant/deny API endpoints with DB CRUD, but the engine intercepts before creating `WaitingApproval` rows — runs that hit an approval gate are marked as Failed (🚧 WF-08). |

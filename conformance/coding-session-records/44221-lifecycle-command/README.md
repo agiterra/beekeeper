@@ -23,7 +23,7 @@ Three rules make the bracketed keys exact rather than approximate:
   *present* to a key-set check and would mean a different thing to a strict
   reader than to a lenient one — that pun is refused.
 - **Three historical create forms** (8, 9 and 10 keys) × seated × attributed ×
-  routed = the twenty-four accepted create shapes `buzz-core` builds rather
+  routed = the twenty-four accepted create shapes `beekeeper-core` builds rather
   than lists.
 
 `genesisRef` never appears without `sessionRef`. `actor` and `role` travel

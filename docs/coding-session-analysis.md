@@ -42,8 +42,8 @@ rather than to a channel by `h` — though an optional `h` may still be present
 (`crates/beekeeper-core/src/kind.rs:712-713`) — optionally cross-referencing an
 umbrella session via `pu-session`. It is included here because it lives in the same `events` table
 and answers the same kind of question ("what is this project's work actually
-doing right now?"). As of this writing kind 44240 exists in `buzz-core` and
-`buzz-cli` on a `wip/*` branch and has not yet been split into its owning
+doing right now?"). As of this writing kind 44240 exists in `beekeeper-core` and
+`beekeeper-cli` on a `wip/*` branch and has not yet been split into its owning
 `feature/*` branch — treat the examples below as correct against the schema,
 not as proof the kind is live on any deployed relay.
 
@@ -494,7 +494,7 @@ identity is settled by the event signature, never by a claimed field, so a
 different signer naming your entry in `supersedes` never revises it — it is
 recorded but not honored. The reference implementation of this fold is pinned
 by `conformance/project-pulse-fold/` — three implementations across two
-languages (Rust in `buzz-cli`, TypeScript in Desktop, Rust in `buzz-relay` for
+languages (Rust in `beekeeper-cli`, TypeScript in Desktop, Rust in `buzz-relay` for
 Slice 2; `conformance/project-pulse-fold/CONTRACT.md:8-10`);
 prefer it (or, once shipped, `bee pulse digest`) over reimplementing the fold
 in SQL:
