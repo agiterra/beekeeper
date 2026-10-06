@@ -4440,10 +4440,17 @@ done
     /// The path is baked into the script because the only other way to hand it
     /// to the child would be an environment variable — the very channel under
     /// test.
+    /// Dumps the agent's environment to `dump_path`, and its variable names
+    /// alone to `<dump_path>.names` — one per line, from awk's `ENVIRON`.
+    /// Assert on names through [`dumped_env_names`], never by scanning the
+    /// `env` dump's lines: a multi-line value (CI's `CI_COMMIT_MESSAGE` is the
+    /// commit message) can put any text at the start of a dump line, and did —
+    /// a commit message line beginning `BUZZ_PUSH_…` read as a leaked variable.
     pub(crate) fn env_dumping_agent(dump_path: &str) -> String {
         format!(
             r#"
 env > "{dump_path}"
+awk 'BEGIN {{ for (k in ENVIRON) print k }}' > "{dump_path}.names"
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   case "$line" in
@@ -4455,6 +4462,17 @@ while IFS= read -r line; do
 done
 "#
         )
+    }
+
+    /// The variable names [`env_dumping_agent`] recorded beside `dump`.
+    pub(crate) fn dumped_env_names(dump: &std::path::Path) -> Vec<String> {
+        let mut names = dump.as_os_str().to_owned();
+        names.push(".names");
+        std::fs::read_to_string(&names)
+            .expect("the agent dumped its environment names")
+            .lines()
+            .map(str::to_owned)
+            .collect()
     }
 
     /// A cooperative agent: answers `initialize` and `session/new`, streams a
@@ -5102,13 +5120,17 @@ done
         manager.create(create).await.expect("create");
 
         let dumped = std::fs::read_to_string(&dump).expect("the agent dumped its environment");
+        let names = dumped_env_names(&dump);
         for key in [
             "BUZZ_PRIVATE_KEY",
             "BUZZ_AUTH_TAG",
             "BUZZ_S3_SECRET_KEY",
             "TYPESENSE_API_KEY",
         ] {
-            assert!(!dumped.contains(key), "{key} reached the agent:\n{dumped}");
+            assert!(
+                !names.iter().any(|name| name == key),
+                "{key} reached the agent:\n{dumped}"
+            );
         }
         assert!(
             dumped.contains("CLAUDE_CODE_EXECUTABLE"),
@@ -5918,10 +5940,9 @@ done
 
         // And nothing else in the fenced namespace came back with it: exactly
         // three `BUZZ_*` variables, the seat's own.
-        let buzz_keys: Vec<&str> = dumped
-            .lines()
-            .filter(|line| line.starts_with("BUZZ_"))
-            .map(|line| line.split('=').next().unwrap_or_default())
+        let buzz_keys: Vec<String> = dumped_env_names(&dump)
+            .into_iter()
+            .filter(|name| name.starts_with("BUZZ_"))
             .collect();
         let mut sorted = buzz_keys.clone();
         sorted.sort_unstable();
@@ -5979,7 +6000,9 @@ done
 
         let dumped = std::fs::read_to_string(&dump).expect("the agent dumped its environment");
         assert!(
-            !dumped.lines().any(|line| line.starts_with("BUZZ_")),
+            !dumped_env_names(&dump)
+                .iter()
+                .any(|name| name.starts_with("BUZZ_")),
             "an unseated execution received a BUZZ_ variable:\n{dumped}"
         );
         assert!(!dumped.contains("nsec1provider"), "{dumped}");
