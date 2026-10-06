@@ -89,39 +89,46 @@ void main() {
     expect(tool.result, 'posted #activity-test-channel');
   });
 
-  test('parses buzz prompt text into user message and metadata', () {
-    final items = buildTranscript([
-      ObserverFrame(
-        seq: 1,
-        timestamp: _timestamp(1),
-        kind: 'acp_write',
-        turnId: 'turn-1',
-        payload: {
-          'method': 'session/prompt',
-          'params': {
-            'prompt': [
-              {
-                'content':
-                    '[Buzz event: stream message]\n'
-                    'Content: @claude can you do that again?\n\n'
-                    '[Channel]\n'
-                    '#activity-test-channel',
+  // The harness header is `[Beekeeper event: …]`; transcripts persisted
+  // before the rename carry `[Buzz event: …]`. Both must parse the same way.
+  for (final header in const ['Beekeeper event', 'Buzz event']) {
+    test(
+      'parses "[$header: …]" prompt text into user message and metadata',
+      () {
+        final items = buildTranscript([
+          ObserverFrame(
+            seq: 1,
+            timestamp: _timestamp(1),
+            kind: 'acp_write',
+            turnId: 'turn-1',
+            payload: {
+              'method': 'session/prompt',
+              'params': {
+                'prompt': [
+                  {
+                    'content':
+                        '[$header: stream message]\n'
+                        'Content: @claude can you do that again?\n\n'
+                        '[Channel]\n'
+                        '#activity-test-channel',
+                  },
+                ],
               },
-            ],
-          },
-        },
-      ),
-    ]);
+            },
+          ),
+        ]);
 
-    expect(items, hasLength(2));
-    expect(items[0], isA<MessageItem>());
-    final message = items[0] as MessageItem;
-    expect(message.role, 'user');
-    expect(message.title, 'Stream Message');
-    expect(message.text, '@claude can you do that again?');
-    expect(items[1], isA<MetadataItem>());
-    expect((items[1] as MetadataItem).sections, hasLength(2));
-  });
+        expect(items, hasLength(2));
+        expect(items[0], isA<MessageItem>());
+        final message = items[0] as MessageItem;
+        expect(message.role, 'user');
+        expect(message.title, 'Stream Message');
+        expect(message.text, '@claude can you do that again?');
+        expect(items[1], isA<MetadataItem>());
+        expect((items[1] as MetadataItem).sections, hasLength(2));
+      },
+    );
+  }
 }
 
 ObserverFrame _updateFrame({

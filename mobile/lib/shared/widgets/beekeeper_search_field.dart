@@ -16,9 +16,9 @@ const double _searchIdleTextInset =
 const double _searchCompactTextInset =
     _searchIdleIconInset + _searchCompactIconSize + Grid.xxs;
 
-/// Buzz's global-search text field treatment, shared by search-like inputs.
+/// Beekeeper's global-search text field treatment, shared by search-like inputs.
 class BeekeeperSearchField extends StatelessWidget {
-  /// Creates a search field with Buzz's shared styling.
+  /// Creates a search field with Beekeeper's shared styling.
   const BeekeeperSearchField({
     required this.controller,
     required this.focusNode,

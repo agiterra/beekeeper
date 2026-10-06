@@ -3,7 +3,7 @@
  * probe filesystem facts (folder picker, taken names, viewer dist), build
  * the plan with the pure engine, execute it Rust-side.
  *
- * v1 ships metadata attachment mode with an empty workspace path — Buzz
+ * v1 ships metadata attachment mode with an empty workspace path — Beekeeper
  * transcript items carry no attachments or workspace path today, so the
  * engine's attachment matrix and share rewrite run law-complete over empty
  * inputs (both banked vectors).

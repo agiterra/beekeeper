@@ -18,7 +18,7 @@ export type FuzzyLogoProps = {
 };
 
 /**
- * The fuzzy Buzz mark. v8 ships a built-in animated texture (looping fractal-noise
+ * The fuzzy Beekeeper mark. v8 ships a built-in animated texture (looping fractal-noise
  * turbulence + grain) applied via an SVG filter. Set `fuzz={false}` to render the
  * crisp geometry with a lightweight CSS pulse — recommended for long-lived mounts.
  */

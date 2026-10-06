@@ -105,7 +105,14 @@ test("Profile sections keep visible cards and aligned actions", async ({
   ).toBeVisible();
   await expect(signOut.getByText("Sign out", { exact: true })).toHaveCount(1);
   await expect(
-    signOut.getByText("Sign out of Buzz", { exact: true }),
+    signOut.getByText(
+      "Removes your identity key and all local app data from this device.",
+      { exact: false },
+    ),
+  ).toBeVisible();
+  // The section title is the bare "Sign out"; the old product-named title is gone.
+  await expect(
+    signOut.getByText("Sign out of Beekeeper", { exact: true }),
   ).toHaveCount(0);
 
   const profileInfo = page.getByTestId("profile-metadata-card");

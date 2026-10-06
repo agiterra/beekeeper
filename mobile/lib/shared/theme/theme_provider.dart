@@ -13,7 +13,7 @@ const _themeModeKey = 'buzz_theme_mode';
 const _accentKey = 'buzz_accent_color';
 const _schemeKey = 'buzz_color_scheme';
 
-/// Buzz ships as the default: the first-party pair, so a fresh install gets the
+/// Beekeeper ships as the default: the first-party pair, so a fresh install gets the
 /// branded top-section gradient without picking a theme first.
 const defaultSchemeName = buzzThemeName;
 const defaultSchemeDisplayName = 'Beekeeper';

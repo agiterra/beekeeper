@@ -2,7 +2,7 @@ import { BookMarked, GitBranch } from "lucide-react";
 import { toast } from "sonner";
 import { useEffect, useMemo, useState } from "react";
 
-import buzzAppIcon from "@/assets/app-icon@3x.png";
+import appIcon from "@/assets/app-icon@3x.png";
 import { Input } from "@/shared/ui/input";
 import { mockRepos } from "../mock-repos";
 import { useRepos } from "../use-repos";
@@ -53,7 +53,7 @@ function CommunityEmptyState() {
           className="h-16 w-16 overflow-hidden bg-black"
           style={{ borderRadius: "22.37%" }}
         >
-          <img alt="Buzz" className="h-full w-full" src={buzzAppIcon} />
+          <img alt="Beekeeper" className="h-full w-full" src={appIcon} />
         </div>
         <h1 className="mt-6 text-2xl font-semibold tracking-tight text-black dark:text-white">
           This community is empty

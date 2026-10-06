@@ -1,5 +1,5 @@
 /**
- * "Discussed in" channel discovery for Buzz git entities.
+ * "Discussed in" channel discovery for Beekeeper git entities.
  *
  * Chat messages that reference a PR, issue, or repository do so only through
  * `beekeeper://` links in their *content* — they carry no entity tags (see

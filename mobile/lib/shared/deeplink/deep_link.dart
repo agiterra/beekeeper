@@ -283,13 +283,13 @@ InviteDeepLink? parseInviteDeepLink(Uri uri) {
   return null;
 }
 
-/// Parse any supported Buzz deep link.
+/// Parse any supported Beekeeper deep link.
 BeekeeperDeepLink? parseBeekeeperDeepLink(Uri uri) =>
     parseInviteDeepLink(uri) ??
     parseChannelDeepLink(uri) ??
     parseMessageDeepLink(uri);
 
-/// A validated Buzz repository, pull request, or issue permalink.
+/// A validated Beekeeper repository, pull request, or issue permalink.
 class EntityDeepLink extends BeekeeperDeepLink {
   final String type;
   final String owner;

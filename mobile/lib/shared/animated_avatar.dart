@@ -18,7 +18,7 @@ class AnimatedAvatarDescriptor {
   final String animationUrl;
 }
 
-/// Parses the Buzz animated-avatar fragment scheme from [url].
+/// Parses the Beekeeper animated-avatar fragment scheme from [url].
 ///
 /// Returns `null` when the poster or animation URL is missing, malformed, or
 /// does not use HTTP(S).

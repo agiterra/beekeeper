@@ -510,7 +510,7 @@ async function openVariant(browser: Browser, variant: Variant): Promise<Page> {
           tags: [
             ["d", "buzz"],
             ["name", "buzz"],
-            ["description", "The complete Buzz community platform."],
+            ["description", "The complete Beekeeper community platform."],
             ["a", `30617:${owner}:buzz`],
             ["channel", channelId],
           ],

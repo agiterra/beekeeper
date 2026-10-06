@@ -8,7 +8,7 @@
 import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
 
 // Builtins that anchor the top of "Your runtimes" — mirrors the old
-// DoctorSettingsPanel RUNTIME_SORT_PRIORITY so the Buzz + Goose rows stay
+// DoctorSettingsPanel RUNTIME_SORT_PRIORITY so the Beekeeper + Goose rows stay
 // where users learned to find them.
 const ROW_SORT_PRIORITY: Record<string, number> = {
   "buzz-agent": 0,

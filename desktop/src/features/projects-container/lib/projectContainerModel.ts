@@ -44,7 +44,7 @@ export function normalizeProjectMemberEntries(value: unknown): ProjectMember[] {
 }
 
 /**
- * A Buzz project container (kind:30621, NIP-MP) — a shared, owner-authored grouping
+ * A Beekeeper project container (kind:30621, NIP-MP) — a shared, owner-authored grouping
  * of Agents, Channels, Code (NIP-34 repos), and Forums. Addressed by
  * `(owner, dtag)`; `address` is the NIP-33 coordinate `30621:<owner>:<dtag>`.
  *

@@ -206,6 +206,15 @@ String _extractPromptText(Map<String, dynamic> payload) {
   return (prompt).map(_extractBlockText).where((s) => s.isNotEmpty).join('\n');
 }
 
+/// True for the harness's event header section: `[Beekeeper event: …]` /
+/// `[Beekeeper events — N events]`. Transcripts recorded before the rename
+/// carry the same header spelled `[Buzz event: …]`, so both are accepted.
+bool _isAgentEventSectionTitle(String title) {
+  final normalized = title.toLowerCase();
+  return normalized.startsWith('beekeeper event') ||
+      normalized.startsWith('buzz event');
+}
+
 ({List<PromptSection> sections, String userText, String userTitle})
 _parsePromptText(String text) {
   final sections = _parsePromptSections(text);
@@ -219,7 +228,7 @@ _parsePromptText(String text) {
 
   PromptSection? eventSection;
   for (final section in sections) {
-    if (section.title.toLowerCase().startsWith('buzz event')) {
+    if (_isAgentEventSectionTitle(section.title)) {
       eventSection = section;
       break;
     }

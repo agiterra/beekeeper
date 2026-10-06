@@ -47,7 +47,7 @@ test("a fenced block owns its horizontal overflow instead of escaping the column
   assert.match(html, /<pre[^>]*class="[^"]*\bmax-w-full\b/);
   assert.match(html, /<pre[^>]*class="[^"]*\boverflow-x-auto\b/);
   // An invisible scroll reads as a clip, so the thumb is styled, not overlay.
-  assert.match(html, /<pre[^>]*class="[^"]*\bbuzz-code-scrollbar\b/);
+  assert.match(html, /<pre[^>]*class="[^"]*\bbeekeeper-code-scrollbar\b/);
 });
 
 test("SV-12: a session block is uncapped; a channel block is capped at 25rem with an expand control", () => {
@@ -89,7 +89,7 @@ test("the static (unfenced) block is contained the same way", () => {
     React.createElement(StaticCodeBlock, null, "echo hi"),
   );
   assert.match(html, /<pre[^>]*class="[^"]*\bmax-w-full\b/);
-  assert.match(html, /<pre[^>]*class="[^"]*\bbuzz-code-scrollbar\b/);
+  assert.match(html, /<pre[^>]*class="[^"]*\bbeekeeper-code-scrollbar\b/);
 });
 
 test("SV-12: lines wrap by default (T3's wordWrap default), and the block advertises its state", () => {

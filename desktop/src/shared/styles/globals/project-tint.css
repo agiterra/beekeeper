@@ -19,7 +19,7 @@
 }
 
 /*
- * The second selector outranks Buzz Dark's own content-surface repaint
+ * The second selector outranks Beekeeper Dark's own content-surface repaint
  * (`:root[data-beekeeper-sidebar].dark [data-beekeeper-content-surface]`, which also
  * re-points `--background` — the mix picks that up, so the tint sits over
  * the actual dark canvas).

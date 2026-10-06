@@ -3,7 +3,7 @@
  * `CodingSessionProjectedTranscriptItem[]` (the renderer's `TranscriptItem`
  * plus the coding-session `commandId` join key).
  *
- * This is the seam between the coding-session wire contract and Buzz's mature
+ * This is the seam between the coding-session wire contract and Beekeeper's mature
  * agent-transcript renderer. No React, no I/O, no side effects.
  *
  * TRUST BOUNDARY: these envelopes arrive off a relay, authored by a provider
@@ -66,7 +66,7 @@ export type CodingSessionTranscriptEnvelope = {
 };
 
 /**
- * Caller-supplied scope. `channelId` is a Buzz channel id and `generationId`
+ * Caller-supplied scope. `channelId` is a Beekeeper channel id and `generationId`
  * the catalog's stable identity for this (channel, signer, target) — both are
  * the caller's to know, never derived from event content. `bridgeSource` comes
  * from the resolved ingress authority: it says whose claim is on screen.

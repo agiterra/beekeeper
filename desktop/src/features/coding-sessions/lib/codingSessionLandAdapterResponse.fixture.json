@@ -6,7 +6,7 @@
     "evidence": {
       "arm": "verifier-verdict",
       "dispositionAuthorPubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
-      "dispositionEventId": "d07a7df61082958ff108e141ea766ee654c139abbcb09037690fff74502937b9",
+      "dispositionEventId": "25689663d614c65271f5ac56b4fb6bb9cc980b8afedaa5122063f71b160a7304",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
       "observedGates": [
         "cargo fmt",
@@ -16,8 +16,8 @@
       "policyEventId": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
       "policyNotEvaluated": null,
       "policyResolution": "present",
-      "refutationEventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
-      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9",
+      "refutationEventId": "2b6fe23bce32ce7c63affc8f3a91bbd656bea76673e8ab84b9c836ed24c3c0e1",
+      "reportEventId": "64f61439e48c97c040a4526dadcb2e4338d5b641fe5a2db235f4e67302b17771",
       "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
       "verifierPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1"
     },
@@ -30,9 +30,9 @@
     "newestVerdict": {
       "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
       "decision": "not-refuted",
-      "eventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
+      "eventId": "2b6fe23bce32ce7c63affc8f3a91bbd656bea76673e8ab84b9c836ed24c3c0e1",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9"
+      "reportEventId": "64f61439e48c97c040a4526dadcb2e4338d5b641fe5a2db235f4e67302b17771"
     },
     "refusalReason": null,
     "repositoryKnown": true,
@@ -57,9 +57,9 @@
     "newestVerdict": {
       "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
       "decision": "not-refuted",
-      "eventId": "3520ec5a4db3fcd079321a270374e31de36355ed7e39d528466341ace8072950",
+      "eventId": "84f476ca0cd3f8482adb14b98ac8f676d139897dee80116df7e7f8b020a896bf",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "3a575b0c8686e5d4e9fc6807f500cf5dd91209acddfaacc0b3721819c7eb690d"
+      "reportEventId": "1652f52a2076684e68411d5fb1050c9067b1904bd54d7804ae7fb54227eb8748"
     },
     "refusalReason": "commit 07c470be07c470be07c470be07c470be07c470be is approved for release, and this is a different ref. A verdict admits a commit to the branch its report named.",
     "repositoryKnown": true,
@@ -97,9 +97,9 @@
     "newestVerdict": {
       "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
       "decision": "not-refuted",
-      "eventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
+      "eventId": "2b6fe23bce32ce7c63affc8f3a91bbd656bea76673e8ab84b9c836ed24c3c0e1",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9"
+      "reportEventId": "64f61439e48c97c040a4526dadcb2e4338d5b641fe5a2db235f4e67302b17771"
     },
     "refusalReason": null,
     "repositoryKnown": true,
@@ -142,9 +142,9 @@
     "newestVerdict": {
       "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
       "decision": "not-refuted",
-      "eventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
+      "eventId": "2b6fe23bce32ce7c63affc8f3a91bbd656bea76673e8ab84b9c836ed24c3c0e1",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9"
+      "reportEventId": "64f61439e48c97c040a4526dadcb2e4338d5b641fe5a2db235f4e67302b17771"
     },
     "refusalReason": null,
     "repositoryKnown": true,
@@ -169,9 +169,9 @@
     "newestVerdict": {
       "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
       "decision": "not-refuted",
-      "eventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
+      "eventId": "2b6fe23bce32ce7c63affc8f3a91bbd656bea76673e8ab84b9c836ed24c3c0e1",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9"
+      "reportEventId": "64f61439e48c97c040a4526dadcb2e4338d5b641fe5a2db235f4e67302b17771"
     },
     "refusalReason": "require-verdict is set and no mission verdict names this commit: no approved report names 07c470be07c470be07c470be07c470be07c470be. Searched only mission 5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10, the one this screen is showing. An older ruling can fall outside both. No observed gate row names 07c470be07c470be07c470be07c470be07c470be either, so the gate-row route is not open for it: that route wants every required gate published green on this exact commit, by the mission's own provider, over a clean worktree. Run each gate as its own command so the host can record it.",
     "repositoryKnown": true,
@@ -196,9 +196,9 @@
     "newestVerdict": {
       "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
       "decision": "not-refuted",
-      "eventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
+      "eventId": "2b6fe23bce32ce7c63affc8f3a91bbd656bea76673e8ab84b9c836ed24c3c0e1",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9"
+      "reportEventId": "64f61439e48c97c040a4526dadcb2e4338d5b641fe5a2db235f4e67302b17771"
     },
     "refusalReason": null,
     "repositoryKnown": true,
@@ -221,9 +221,9 @@
     "newestVerdict": {
       "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
       "decision": "not-refuted",
-      "eventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
+      "eventId": "2b6fe23bce32ce7c63affc8f3a91bbd656bea76673e8ab84b9c836ed24c3c0e1",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9"
+      "reportEventId": "64f61439e48c97c040a4526dadcb2e4338d5b641fe5a2db235f4e67302b17771"
     },
     "refusalReason": null,
     "repositoryKnown": false,
@@ -248,9 +248,9 @@
     "newestVerdict": {
       "authorPubkey": "3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1",
       "decision": "not-refuted",
-      "eventId": "441a9733819836ae5a0ee09b0d9c889a644d9014f62c362c4e8bc80b9d7d3735",
+      "eventId": "2b6fe23bce32ce7c63affc8f3a91bbd656bea76673e8ab84b9c836ed24c3c0e1",
       "headSha": "07c470be07c470be07c470be07c470be07c470be",
-      "reportEventId": "54bf4a0df1ee33f7e6064f168080709ec40bcd9e8ef12009ee705ed2fec0b9b9"
+      "reportEventId": "64f61439e48c97c040a4526dadcb2e4338d5b641fe5a2db235f4e67302b17771"
     },
     "refusalReason": "verifier 3c72addb4fdf09af94f0c94d7fe92a386a7e70cf8a1d85916386bb2535c7b1b1 cleared 07c470be07c470be07c470be07c470be07c470be, and a landing also needs every required gate observed green on it: gate `cargo fmt` has no observed green row on 07c470be07c470be07c470be07c470be07c470be. This mission requires `cargo fmt`, `cargo clippy`, `cargo test`, each observed green on the commit being pushed and over a clean worktree. Both halves are required on a verifier-gated mission — the stricter policy asks for more proof than the gate-row route, never for different proof.",
     "repositoryKnown": true,

@@ -708,7 +708,7 @@ export function computeLocalModeGate({
    * row remains stable while the user types a value.
    */
   requiredEnvKeys: string[];
-  /** Env keys that are not set in Buzz but are satisfied in the runtime's
+  /** Env keys that are not set in Beekeeper but are satisfied in the runtime's
    *  config file (e.g. "Set in goose config"). */
   fileSatisfiedEnvKeys: string[];
   /** True when the create button may be enabled (from this gate's perspective). */

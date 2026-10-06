@@ -13,7 +13,7 @@
  * - `standard` — a signed fact worth its own card.
  * - `quiet` — chronology and scaffolding: lifecycle notices, truncation rows.
  *
- * Every class here is a Buzz theme token or a stock rem text token. There are
+ * Every class here is a Beekeeper theme token or a stock rem text token. There are
  * no hex colours and no arbitrary text sizes, so Cmd +/- zoom scales the whole
  * stream and both themes are covered by one definition.
  */

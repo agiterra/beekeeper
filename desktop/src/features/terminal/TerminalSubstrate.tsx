@@ -185,7 +185,7 @@ export function TerminalSubstrate({
   /**
    * Tab chords are handled at the window in capture phase, like the ⌘J
    * handoff, so they win over the focused textarea. Gated on terminal
-   * ownership: in Buzz mode these keys belong to the rest of the app.
+   * ownership: in Beekeeper mode these keys belong to the rest of the app.
    */
   const runTabChord = React.useEffectEvent((event: KeyboardEvent): boolean => {
     if (owner !== "terminal" || event.isComposing) return false;

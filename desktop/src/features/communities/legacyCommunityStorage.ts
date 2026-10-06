@@ -105,7 +105,7 @@ export function applyLegacyCommunityStorage(
 }
 
 /**
- * Seed Buzz localStorage from legacy Sprout WebKit localStorage before the app
+ * Seed Beekeeper localStorage from legacy Sprout WebKit localStorage before the app
  * renders providers that read community state. The native command reads the old
  * app identifier's WebKit SQLite database; this frontend step writes only when
  * Beekeeper does not already have community state, except for the known broken

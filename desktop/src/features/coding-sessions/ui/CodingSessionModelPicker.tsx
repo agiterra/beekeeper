@@ -39,7 +39,7 @@ import {
 /**
  * Runtime glyphs are lucide, not vendor marks.
  *
- * Buzz's brand marks live in the onboarding feature, and a feature may not
+ * Beekeeper's brand marks live in the onboarding feature, and a feature may not
  * import another feature's internals. The tooltip carries the provider's real
  * name, so the glyph only has to distinguish rails at a glance.
  */

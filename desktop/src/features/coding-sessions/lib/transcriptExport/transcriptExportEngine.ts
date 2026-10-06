@@ -1,5 +1,5 @@
 /**
- * H-08 — Buzz transcript-export engine: the pure serialization/planning half
+ * H-08 — Beekeeper transcript-export engine: the pure serialization/planning half
  * of the standalone export.
  *
  * The behavioral contract is banked in `conformance/transcript-export/`

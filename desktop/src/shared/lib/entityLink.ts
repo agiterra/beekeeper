@@ -1,5 +1,5 @@
 /**
- * `beekeeper://` deep links for Buzz-hosted git entities, mirroring
+ * `beekeeper://` deep links for Beekeeper-hosted git entities, mirroring
  * `features/messages/lib/messageLink.ts` for `beekeeper://message`.
  *
  * Formats:

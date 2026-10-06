@@ -83,7 +83,7 @@ function ComposerLinkPreviewCard({
   );
   const showImage = Boolean(imageSrc && failedImageSrc !== imageSrc);
   const hostname = previewHostname(preview.href);
-  // External cards are send-ready only once their snapshot tag exists. Buzz
+  // External cards are send-ready only once their snapshot tag exists. Beekeeper
   // entities never snapshot; recipients resolve them from the relay, so they
   // are complete as soon as the recognized entity card exists.
   const snapshotTagReady = Boolean(preview.snapshotReady && tagReady);

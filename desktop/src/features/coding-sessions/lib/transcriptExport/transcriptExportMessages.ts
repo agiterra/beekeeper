@@ -1,9 +1,9 @@
 /**
- * H-08 — maps Buzz `TranscriptItem`s to export-bundle messages.
+ * H-08 — maps Beekeeper `TranscriptItem`s to export-bundle messages.
  *
  * The banked bundle law (`conformance/transcript-export/`) constrains the
  * envelope and the user_prompt attachment participation rule; the per-kind
- * shapes below are Buzz-defined for the Buzz viewer. Buzz transcript items
+ * shapes below are Beekeeper-defined for the Beekeeper viewer. Beekeeper transcript items
  * carry no file attachments today, so user_prompt messages map with an empty
  * attachments list — the engine's attachment matrix stays law-complete but
  * production-dormant.

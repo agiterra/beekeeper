@@ -125,7 +125,7 @@ test("setup distinguishes a missing CLI from an installed desktop app", async ({
           "not_installed",
           { status: "unknown" },
           {
-            install_hint: "Buzz talks to Codex through the Codex CLI.",
+            install_hint: "Beekeeper talks to Codex through the Codex CLI.",
             install_instructions_url:
               "https://developers.openai.com/codex/cli/",
           },
