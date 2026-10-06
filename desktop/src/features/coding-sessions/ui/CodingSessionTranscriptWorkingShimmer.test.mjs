@@ -65,19 +65,28 @@ function renderTool(lastEventAt, settlement = "live", overrides = {}) {
 test("a running tool in a live turn with a fresh provider shimmers its label", () => {
   const html = renderTool(Date.now());
   assert.match(html, /data-live-shimmer="on"/);
-  assert.match(html, /buzz-shimmer-overlay/);
+  assert.match(html, /coding-session-live-shimmer-overlay/);
   assert.match(html, /Run rm -rf target\/tmp/);
 });
 
 test("a quiet provider, a settled turn, a queued call or an unknown time stop the shimmer", () => {
-  assert.doesNotMatch(renderTool(Date.now() - 5 * 60_000), /buzz-shimmer/);
-  assert.doesNotMatch(renderTool(Date.now(), "settled"), /buzz-shimmer/);
-  assert.doesNotMatch(renderTool(Date.now(), "unknown"), /buzz-shimmer/);
+  assert.doesNotMatch(
+    renderTool(Date.now() - 5 * 60_000),
+    /coding-session-live-shimmer-overlay/,
+  );
+  assert.doesNotMatch(
+    renderTool(Date.now(), "settled"),
+    /coding-session-live-shimmer-overlay/,
+  );
+  assert.doesNotMatch(
+    renderTool(Date.now(), "unknown"),
+    /coding-session-live-shimmer-overlay/,
+  );
   assert.doesNotMatch(
     renderTool(Date.now(), "live", { status: "pending" }),
-    /buzz-shimmer/,
+    /coding-session-live-shimmer-overlay/,
   );
-  assert.doesNotMatch(renderTool(null), /buzz-shimmer/);
+  assert.doesNotMatch(renderTool(null), /coding-session-live-shimmer-overlay/);
 });
 
 test("Thinking shimmers while fresh, and the working label stays still beside it", () => {
@@ -93,7 +102,7 @@ test("Thinking shimmers while fresh, and the working label stays still beside it
   const thinking = html.slice(html.indexOf("coding-session-thinking"));
   assert.match(thinking, /data-live-shimmer="on"/);
   // Exactly one shimmer on the line: Thinking's, not the timer's too.
-  assert.equal(html.match(/buzz-shimmer-overlay/g)?.length, 1);
+  assert.equal(html.match(/coding-session-live-shimmer-overlay/g)?.length, 1);
 });
 
 test("the working label shimmers when Thinking is not shown, and stops when quiet", () => {
@@ -116,7 +125,7 @@ test("the working label shimmers when Thinking is not shown, and stops when quie
       }),
     ),
   );
-  assert.doesNotMatch(quiet, /buzz-shimmer/);
+  assert.doesNotMatch(quiet, /coding-session-live-shimmer-overlay/);
   assert.match(quiet, /no update for 3m/);
 });
 

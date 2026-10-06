@@ -98,7 +98,12 @@ test("reduced motion: a fresh running tool's label is plain text", async () => {
   assert.match(container.textContent ?? "", /Run rm x/);
   // A boolean, not the element: asserting on a JSDOM node makes a failure
   // message walk the whole window.
-  assert.equal(container.querySelector(".buzz-shimmer") === null, true);
+  assert.equal(
+    container.querySelector(
+      '[data-testid="coding-session-live-shimmer-overlay"]',
+    ) === null,
+    true,
+  );
   await act(async () => root.unmount());
   container.remove();
 });

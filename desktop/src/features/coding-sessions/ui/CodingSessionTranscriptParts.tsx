@@ -35,6 +35,7 @@ import type {
   CodingSessionTask,
   CodingSessionTaskModel,
 } from "@/features/coding-sessions/lib/codingSessionTaskModel";
+import { describeCodingSessionStatusText } from "@/features/coding-sessions/lib/codingSessionTranscriptModelBackground";
 import { cn } from "@/shared/lib/cn";
 import { RedactedText } from "@/shared/ui/RedactedPill";
 import { parseRedactionMarkers } from "@/shared/lib/redactionMarker";
@@ -486,8 +487,22 @@ export function CodingSessionDiagnosticRows({
             <RedactedText text={item.title} />
           </p>
           {"text" in item && item.text ? (
-            <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap">
-              <RedactedText text={item.text} />
+            <p
+              className="mt-0.5 line-clamp-3 whitespace-pre-wrap"
+              // The provider's own code stays one hover away.
+              title={
+                item.type === "lifecycle" && item.title === "Status"
+                  ? item.text
+                  : undefined
+              }
+            >
+              <RedactedText
+                text={
+                  item.type === "lifecycle" && item.title === "Status"
+                    ? describeCodingSessionStatusText(item.text)
+                    : item.text
+                }
+              />
             </p>
           ) : null}
         </div>

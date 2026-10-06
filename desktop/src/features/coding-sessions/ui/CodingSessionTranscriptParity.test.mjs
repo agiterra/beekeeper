@@ -319,19 +319,46 @@ test("SV-05: a thought is a brain and the word Thought, dimmed and closed", asyn
   assert.match(row, /<summary class="[^"]*w-full[^"]*hover:bg-accent\/30/);
 });
 
+function thoughtRow(markup) {
+  return markup.match(
+    /<details[^>]*data-testid="transcript-thought-item"[\s\S]*?<\/details>/,
+  )?.[0];
+}
+
 test("SV-05: the live turn's last thought reads Thinking, with the shimmer", async () => {
   const markup = await renderTranscript({
     isWorking: true,
     items: [message("prompt", "user", "Think"), thought("t-1")],
+    lastTranscriptEventAt: Date.now(),
   });
-  const row = markup.match(
-    /<details[^>]*data-testid="transcript-thought-item"[\s\S]*?<\/details>/,
-  )?.[0];
+  const row = thoughtRow(markup);
   assert.ok(row, markup);
   assert.match(row, /data-active=""/);
-  assert.match(row, /data-testid="transcript-thought-label">Thinking</);
+  assert.match(
+    row,
+    /data-live-shimmer="on" data-testid="transcript-thought-label">Thinking</,
+  );
   assert.match(row, /data-testid="transcript-thought-shimmer"/);
   assert.match(row, /coding-session-live-activity-focus/);
+});
+
+test("SV-104: a live Thinking row over a quiet or unknown provider holds still", async () => {
+  for (const lastTranscriptEventAt of [Date.now() - 5 * 60_000, null]) {
+    const row = thoughtRow(
+      await renderTranscript({
+        isWorking: true,
+        items: [message("prompt", "user", "Think"), thought("t-1")],
+        lastTranscriptEventAt,
+      }),
+    );
+    assert.ok(row);
+    // Still "Thinking": the thought is live; only the motion is withheld.
+    assert.match(
+      row,
+      /data-live-shimmer="off" data-testid="transcript-thought-label">Thinking</,
+    );
+    assert.doesNotMatch(row, /transcript-thought-shimmer/);
+  }
 });
 
 test("SV-05: a thought reads Thought once anything follows it", async () => {

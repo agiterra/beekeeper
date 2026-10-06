@@ -404,7 +404,7 @@ test("a signed running turn animates Thinking only before visible work begins", 
   });
 
   assert.match(markup, /data-testid="coding-session-thinking"/);
-  assert.match(markup, /buzz-shimmer-overlay/);
+  assert.match(markup, /coding-session-live-shimmer-overlay/);
   assert.match(markup, />Thinking</);
 
   // No known last event time is no evidence the provider is still going.
@@ -414,7 +414,7 @@ test("a signed running turn animates Thinking only before visible work begins", 
     items: [message("prompt", "user", "Inspect the session")],
   });
   assert.match(unknown, />Thinking</);
-  assert.doesNotMatch(unknown, /buzz-shimmer/);
+  assert.doesNotMatch(unknown, /coding-session-live-shimmer-overlay/);
 });
 
 test("a live run of tools reads as one sentence row that opens in place", async () => {

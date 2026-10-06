@@ -38,6 +38,10 @@ export function ThoughtActivity(props: ActivityRenderClassItemProps) {
  * settles the caller drops the flag and it reads "Thought". Without the
  * flag a live reasoning step would read as finished.
  *
+ * `shimmer` (default: `active`) draws the sweep. A caller that knows more
+ * than "still being written" passes it: the coding-session transcript moves
+ * it only while the provider is fresh and motion is not reduced (SV-104).
+ *
  * The producer's own title ("Reasoning", "Thinking", …) stays reachable as
  * the row's accessible name and tooltip; the row reads the same whichever
  * provider wrote it.
@@ -51,11 +55,13 @@ export const ThoughtDisclosure = React.memo(function ThoughtDisclosure({
   item,
   onOpenChange,
   open,
+  shimmer = active,
 }: {
   active?: boolean;
   item: Extract<TranscriptItem, { type: "thought" }>;
   onOpenChange: (open: boolean) => void;
   open: boolean;
+  shimmer?: boolean;
 }) {
   const producerTitle = item.title.trim();
   const timestampTitle = formatTranscriptTimestampTitle(item.timestamp);
@@ -85,10 +91,11 @@ export const ThoughtDisclosure = React.memo(function ThoughtDisclosure({
             "transition-colors group-open:text-foreground/80",
             active && "relative overflow-hidden",
           )}
+          data-live-shimmer={active ? (shimmer ? "on" : "off") : undefined}
           data-testid="transcript-thought-label"
         >
           {active ? "Thinking" : "Thought"}
-          {active ? (
+          {active && shimmer ? (
             // The working line's shimmer (`coding-session.css`): a lit copy
             // of the word sweeps across it; reduced motion keeps it still.
             <span

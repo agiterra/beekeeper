@@ -62,6 +62,25 @@ export function isCodingSessionAutonomousWakeRow(
   );
 }
 
+/**
+ * Human wording for a provider status row's text in "Turn details" (SV-93),
+ * matching the turn's "Woke on its own · background task" marker. Only the
+ * codes this app knows are reworded; anything else stays verbatim, since a
+ * guessed gloss on an unknown code would be a claim we cannot back.
+ */
+export function describeCodingSessionStatusText(text: string): string {
+  const code = text.split(":", 1)[0]?.trim() ?? "";
+  if (code === "autonomous_turn_started") {
+    return "Woke on its own · began a turn nobody prompted";
+  }
+  if (code === "autonomous_turn") {
+    return text.includes("task-notification")
+      ? "Woke on its own · background task"
+      : "Woke on its own";
+  }
+  return text;
+}
+
 /** Every complete `<task-notification>` block in `text` that names a task. */
 export function parseCodingSessionTaskNotifications(
   text: string,

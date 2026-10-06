@@ -1,4 +1,3 @@
-import type { CSSProperties } from "react";
 import * as React from "react";
 
 import { formatCodingSessionDuration } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
@@ -7,6 +6,7 @@ import {
   codingSessionQuietMs,
 } from "@/features/coding-sessions/lib/codingSessionWaitingLiveness";
 import {
+  CodingSessionLiveShimmerOverlay,
   CodingSessionLiveShimmerText,
   useCodingSessionLiveShimmer,
 } from "./CodingSessionTranscriptWorkingShimmer";
@@ -33,7 +33,8 @@ export { CODING_SESSION_QUIET_AFTER_MS, codingSessionQuietMs };
  * transcript event's own time — never from when this view mounted. It
  * clears with the next event.
  *
- * SV-104: the live text shimmers (the shared `Shimmer`) only while the
+ * SV-104: the live text shimmers (a lit copy sweeping across it, as T3
+ * Code's working row does) only while the
  * provider is fresh — "Thinking" when it is shown, the working label when it
  * is not, never both — and stops at "no update for Nm", when the turn
  * settles (this line unmounts) and under reduced motion.
@@ -129,9 +130,9 @@ function CodingSessionWorkingTimer({
   startedAt,
 }: {
   /**
-   * Draw the shared `Shimmer` (its `buzz-shimmer` classes, so its
-   * reduced-motion guard applies) over the label. The label is rewritten
-   * once a second outside React, so the overlay's copy is rewritten with it.
+   * Sweep {@link CodingSessionLiveShimmerOverlay} across the label (its
+   * classes carry the reduced-motion guard too). The label is rewritten once
+   * a second outside React, so the overlay's copy is rewritten with it.
    */
   shimmer?: boolean;
   startedAt: string | null;
@@ -166,7 +167,7 @@ function CodingSessionWorkingTimer({
         element.textContent = text;
       }
       const overlay = element.querySelector<HTMLElement>(
-        ".buzz-shimmer-overlay",
+        ".coding-session-live-shimmer-copy",
       );
       // Same for the overlay: keep React's text node, rewrite its value.
       const overlayNode = overlay?.firstChild;
@@ -190,22 +191,13 @@ function CodingSessionWorkingTimer({
   }
   return (
     <span
-      className="buzz-shimmer"
+      className="relative inline-block overflow-hidden whitespace-nowrap align-bottom"
       data-live-shimmer="on"
       data-quiet={String(initialQuiet)}
       ref={ref}
-      style={
-        {
-          "--buzz-shimmer-spread": `${initial.length * 2}px`,
-        } as CSSProperties
-      }
     >
       {initial}
-      {/* Visual-only highlight copy, as `Shimmer` draws it; the text node
-          above is the sole accessible content. */}
-      <span aria-hidden="true" className="buzz-shimmer-overlay">
-        {initial}
-      </span>
+      <CodingSessionLiveShimmerOverlay text={initial} />
     </span>
   );
 }

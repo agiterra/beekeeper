@@ -37,6 +37,8 @@ import {
 } from "./CodingSessionTranscriptParts";
 import { formatCodingSessionBlockTime } from "./CodingSessionTranscriptRhythm";
 import { CodingSessionClampedUserMessage } from "./CodingSessionTranscriptUserMessage";
+import { CodingSessionLastTranscriptEventContext } from "./CodingSessionTranscriptWorking";
+import { useCodingSessionLiveShimmer } from "./CodingSessionTranscriptWorkingShimmer";
 
 /**
  * One transcript item — a prompt, the agent's prose, a tool call, a plan, a
@@ -326,12 +328,18 @@ function CodingSessionThoughtRow({
     codingSessionItemDisclosureId(item.id),
   );
   const activeThoughtId = React.useContext(CodingSessionActiveThoughtContext);
+  const active = activeThoughtId === item.id;
+  // SV-104: "Thinking" moves only while the provider is fresh and motion is
+  // not reduced; a quiet provider's live thought reads "Thinking", still.
+  const lastEventAt = React.useContext(CodingSessionLastTranscriptEventContext);
+  const shimmer = useCodingSessionLiveShimmer(active, lastEventAt);
   return (
     <ThoughtDisclosure
-      active={activeThoughtId === item.id}
+      active={active}
       item={item}
       onOpenChange={setOpen}
       open={open}
+      shimmer={shimmer}
     />
   );
 }

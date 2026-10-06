@@ -574,6 +574,9 @@ export function CodingSessionUmbrellaTurnBlock({
             hireDispatch={hireDispatch}
             isWorking={bundleWorking}
             items={executionItems}
+            // Its own provider of the last event time: omitted, the bundle's
+            // running tools read `null` and never shimmered (SV-104).
+            lastTranscriptEventAt={record?.lastTranscriptAt}
             operatorProfiles={operatorProfiles}
             resolveSeat={resolvePromptSeat}
             restingStatus={blockRestingStatus}

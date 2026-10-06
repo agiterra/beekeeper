@@ -43,7 +43,8 @@ const session = {
   sessionId: "eeeeeeee-ffff-0000-1111-444444444444",
   generation: 1,
 };
-const targetKey = buildCodingSessionTargetKey(session);
+/** The lit copy that sweeps across live action text (SV-104). */
+const OVERLAY = '[data-testid="coding-session-live-shimmer-overlay"]';
 const SUBAGENT = "Review the backoff bounds";
 const COMMAND = "cargo test -p buzz-core retry";
 
@@ -64,13 +65,19 @@ function signed(
   ) as unknown as RelayEvent;
 }
 
-function metadata(status: string, createdAt: number): RelayEvent {
+function metadata(
+  status: string,
+  createdAt: number,
+  target: typeof session = session,
+  sessionRef: string | null = null,
+): RelayEvent {
   return signed(
     KIND_CODING_SESSION_METADATA,
     createdAt,
     {
       schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
-      session,
+      session: target,
+      ...(sessionRef ? { sessionRef } : {}),
       projectRef: null,
       repoRef: null,
       title: "Liveness strip and shimmer",
@@ -92,14 +99,14 @@ function metadata(status: string, createdAt: number): RelayEvent {
     },
     [
       ["csm-v", CODING_SESSION_METADATA_TAG_VERSION],
-      ["cs-target", targetKey],
-      ["csm-key", codingSessionMetadataSemanticKey(session)],
+      ["cs-target", buildCodingSessionTargetKey(target)],
+      ["csm-key", codingSessionMetadataSemanticKey(target)],
     ],
   );
 }
 
 /** A live 24223 lease: the provider is reachable now, so "working" holds. */
-function liveLease(): RelayEvent {
+function liveLease(target: typeof session = session): RelayEvent {
   return finalizeEvent(
     {
       kind: KIND_CODING_SESSION_LEASE,
@@ -107,13 +114,13 @@ function liveLease(): RelayEvent {
       tags: [
         ["h", channelId],
         ["cslease-v", "cslease1-1"],
-        ["cs-target", targetKey],
+        ["cs-target", buildCodingSessionTargetKey(target)],
         ["csl-command", "csl-liveness-session"],
         ["cslease-seq", "1"],
       ],
       content: JSON.stringify({
         schema: "buzz-coding-session-lease/v1",
-        target: session,
+        target,
         state: "live",
         leaseSequence: 1,
       }),
@@ -127,13 +134,14 @@ function transcript(
   timestampMs: number,
   turnId: string,
   item: unknown,
+  target: typeof session = session,
 ): RelayEvent {
   return signed(
     KIND_CODING_SESSION_TRANSCRIPT,
     Math.floor(timestampMs / 1_000),
     {
       schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
-      session,
+      session: target,
       eventSeq: seq,
       timestamp: timestampMs,
       turnId,
@@ -141,9 +149,9 @@ function transcript(
     },
     [
       ["cst-v", CODING_SESSION_TRANSCRIPT_TAG_VERSION],
-      ["cs-target", targetKey],
+      ["cs-target", buildCodingSessionTargetKey(target)],
       ["cst-seq", String(seq)],
-      ["cst-key", codingSessionTranscriptSemanticKey(session, seq)],
+      ["cst-key", codingSessionTranscriptSemanticKey(target, seq)],
     ],
   );
 }
@@ -297,7 +305,7 @@ test("SV-99/SV-104: a fresh working turn shows the strip and shimmers its runnin
     .filter({ hasText: COMMAND });
   await expect(running).toHaveCount(1);
   await expect(running.locator('[data-live-shimmer="on"]')).toHaveCount(1);
-  await expect(running.locator(".buzz-shimmer-overlay")).toHaveCount(1);
+  await expect(running.locator(OVERLAY)).toHaveCount(1);
   await shoot(page, "SV104-tool-shimmer-fresh", running);
 });
 
@@ -321,12 +329,12 @@ test("SV-99/SV-104: a quiet provider holds still and says how long", async ({
   const running = page
     .getByTestId("coding-session-active-tool")
     .filter({ hasText: COMMAND });
-  await expect(running.locator(".buzz-shimmer")).toHaveCount(0);
+  await expect(running.locator(OVERLAY)).toHaveCount(0);
   await expect(page.getByTestId("coding-session-working")).toContainText(
     "no update for 5m",
   );
   await expect(
-    page.getByTestId("coding-session-working").locator(".buzz-shimmer"),
+    page.getByTestId("coding-session-working").locator(OVERLAY),
   ).toHaveCount(0);
 });
 
@@ -342,7 +350,7 @@ test("SV-104: reduced motion stops the shimmer and the pulse", async ({
     .getByTestId("coding-session-active-tool")
     .filter({ hasText: COMMAND });
   await expect(running).toHaveCount(1);
-  await expect(running.locator(".buzz-shimmer")).toHaveCount(0);
+  await expect(running.locator(OVERLAY)).toHaveCount(0);
 });
 
 test("SV-99: an idle session with nothing running shows no strip", async ({
@@ -352,7 +360,168 @@ test("SV-99: an idle session with nothing running shows no strip", async ({
   await openSession(page, idleEvents(), "nothing left running");
   await expect(page.getByTestId("coding-session-composer-dock")).toBeVisible();
   await expect(page.getByTestId("coding-session-waiting-strip")).toHaveCount(0);
-  await expect(page.locator(".buzz-shimmer")).toHaveCount(0);
+  await expect(page.locator(OVERLAY)).toHaveCount(0);
+});
+
+/**
+ * A team session: two executions under one session reference, the first
+ * finished, the second fresh and running a command. Two executions route to
+ * the umbrella surface, and its Mission lens bundles the running call.
+ */
+const SESSION_REF = "7d1c9a40-3b2e-4f5a-9c8d-1e2f3a4b5c6d";
+const lead = { ...session, sessionId: "eeeeeeee-ffff-0000-1111-555555555555" };
+const builder = {
+  ...session,
+  sessionId: "eeeeeeee-ffff-0000-1111-666666666666",
+};
+const TEAM_COMMAND = "python3 -c 'import time; time.sleep(90)'";
+
+function teamEvents(): RelayEvent[] {
+  const now = Date.now();
+  const sec = (ms: number) => Math.floor(ms / 1_000);
+  return [
+    metadata("idle", sec(now - 60_000), lead, SESSION_REF),
+    liveLease(lead),
+    transcript(
+      1,
+      now - 62_000,
+      "lead-turn",
+      {
+        kind: "user_prompt",
+        content: "Plan the backoff work",
+      },
+      lead,
+    ),
+    transcript(
+      2,
+      now - 61_000,
+      "lead-turn",
+      {
+        kind: "assistant_text",
+        text: "Handing the build to the builder.",
+      },
+      lead,
+    ),
+    transcript(
+      3,
+      now - 60_000,
+      "lead-turn",
+      {
+        kind: "result",
+        subtype: "success",
+        isError: false,
+        durationMs: 2_000,
+        result: "Done.",
+        costUsd: 0.01,
+      },
+      lead,
+    ),
+    metadata("running", sec(now - 3_000), builder, SESSION_REF),
+    liveLease(builder),
+    transcript(
+      1,
+      now - 3_000,
+      "builder-turn",
+      {
+        kind: "user_prompt",
+        content: "Build the backoff",
+      },
+      builder,
+    ),
+    transcript(
+      2,
+      now - 2_000,
+      "builder-turn",
+      {
+        kind: "assistant_text",
+        text: "Running the slow check.",
+      },
+      builder,
+    ),
+    transcript(
+      3,
+      now - 1_000,
+      "builder-turn",
+      {
+        kind: "tool_call",
+        tool: {
+          toolName: "Bash",
+          toolKind: "execute",
+          toolId: "bash-team",
+          input: { command: TEAM_COMMAND },
+        },
+      },
+      builder,
+    ),
+  ];
+}
+
+test("SV-104: a team session's running call shimmers in both lenses", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installMockBridge(page, {
+    globalAgentConfig: {
+      env_vars: {},
+      provider: null,
+      model: null,
+      "allowed-bridge-pubkeys": [{ pubkey, label: "Liveness provider" }],
+    },
+  });
+  await page.goto("/");
+  await page.getByTestId(`channel-${channelName}`).click();
+  await page.evaluate(
+    ({ channelName: name, events: signedEvents }) => {
+      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      if (!seed) throw new Error("signed-event seeding hook is missing");
+      for (const event of signedEvents) seed({ channelName: name, event });
+    },
+    { channelName, events: teamEvents() },
+  );
+  const trigger = page.getByTestId("channel-coding-sessions-trigger");
+  await expect(trigger).toHaveAttribute(
+    "aria-label",
+    /Coding sessions \(\d+\)/,
+    {
+      timeout: 15_000,
+    },
+  );
+  await trigger.click();
+  await page.getByTestId("channel-coding-session-open").first().click();
+  const timeline = page.getByTestId("coding-session-umbrella-timeline");
+  await expect(timeline).toContainText("Running the slow check.", {
+    timeout: 15_000,
+  });
+
+  // Conversation lens: the builder's turn, its running call, its working line.
+  const running = timeline
+    .getByTestId("coding-session-active-tool")
+    .filter({ hasText: "time.sleep(90)" });
+  await expect(running).toHaveCount(1);
+  await expect(running.locator('[data-live-shimmer="on"]')).toHaveCount(1);
+  await expect(running.locator(OVERLAY)).toHaveCount(1);
+  await expect(
+    timeline.getByTestId("coding-session-working").locator(OVERLAY),
+  ).toHaveCount(1);
+  await shoot(page, "SV104-team-tool-shimmer", running);
+
+  // Mission lens: the running call moves into the execution bundle, which
+  // is its own transcript and must be told the last event time too.
+  await page.getByRole("button", { name: "Mission lens" }).click();
+  const toggle = page
+    .getByTestId("coding-session-mission-execution-bundle-toggle")
+    .first();
+  await expect(toggle).toBeVisible({ timeout: 15_000 });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+    await toggle.click();
+  }
+  const bundled = page
+    .getByTestId("coding-session-mission-execution-bundle")
+    .getByTestId("coding-session-active-tool")
+    .filter({ hasText: "time.sleep(90)" });
+  await expect(bundled).toHaveCount(1);
+  await expect(bundled.locator('[data-live-shimmer="on"]')).toHaveCount(1);
 });
 
 test("liveness shots are hash-distinct", () => {
@@ -365,5 +534,5 @@ test("liveness shots are hash-distinct", () => {
     ).toBeUndefined();
     seen.set(hash, name);
   }
-  expect(hashes.size).toBe(4);
+  expect(hashes.size).toBe(5);
 });
