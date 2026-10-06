@@ -1230,9 +1230,9 @@ async fn run_periodic_until_cancelled<Tick, TickFuture>(
 /// (capped at [`buzz_relay::config::MAX_DRAIN_JITTER_MS`] = 20s) plus the
 /// per-connection close-frame ack wait (`RESTART_CLOSE_ACK_TIMEOUT` = 5s in
 /// `state.rs`) sum to 25s and stay inside the 30s hard drain. Total worst
-/// case from SIGTERM to forced exit is 5s + 30s = 35s. Both fit inside the
-/// chart's `terminationGracePeriodSeconds: 60` (`deploy/charts/buzz/values.yaml`),
-/// which leaves headroom but assumes no `preStop` hook adds further delay.
+/// case from SIGTERM to forced exit is 5s + 30s = 35s, so an orchestrator's
+/// grace period must exceed 35s (60s leaves headroom), assuming no `preStop`
+/// hook adds further delay.
 /// With jitter off (`BUZZ_DRAIN_JITTER_MS=0`, the default) sockets close
 /// all-at-once right after the grace, so the per-socket delay collapses to
 /// roughly the 5s grace plus the ack wait.

@@ -64,16 +64,3 @@ The relay health listener exposes intrinsic build identity at `/_status`:
 
 Non-CI builds report stable `unknown` or `local` fallback values instead of
 claiming provenance they do not have.
-
-## Helm digest pinning
-
-Buzz chart `0.1.8` and newer accept an immutable image digest:
-
-```yaml
-image:
-  repository: ghcr.io/block/buzz
-  digest: sha256:<64-lowercase-hex-characters>
-```
-
-When `image.digest` is set, the chart renders `repository@digest` and ignores
-`image.tag`. Existing tag-only values remain backwards compatible.

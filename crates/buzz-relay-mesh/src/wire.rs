@@ -51,8 +51,8 @@ pub const MAX_STREAM_FRAME: u32 = 16 * 1024 * 1024;
 /// registry and ownership leases — one value, boot-unique by construction.
 ///
 /// It is deliberately NOT the deployment's Nostr relay key: that key is
-/// secp256k1, and the helm chart shares one `BUZZ_RELAY_PRIVATE_KEY` Secret
-/// across all pods of a release — using it here would give every pod the
+/// secp256k1, and a multi-replica deployment shares one `BUZZ_RELAY_PRIVATE_KEY`
+/// across all its pods — using it here would give every pod the
 /// same runtime id and collapse the ownership plane (Wren's contract-review
 /// blocker). Binding to the deployment identity is done out-of-band: the
 /// ready-registry record carries a relay-key-signed attestation of the

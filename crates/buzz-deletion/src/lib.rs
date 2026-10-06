@@ -163,7 +163,7 @@ impl Drop for ServingWriteGuard {
 /// A separate short database lease per effect is intentional: it is the only
 /// durable proof that deletion can drain S3/Redis/push work across replicas.
 /// PostgreSQL lease-table churn is reaped and exported by the relay pool-metrics
-/// task; operators should watch the deletion lease gauges documented by Helm.
+/// task; operators should watch the deletion lease gauges it exports.
 pub async fn acquire_serving_write(
     db: &Db,
     community: buzz_core::CommunityId,

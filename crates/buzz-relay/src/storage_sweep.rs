@@ -158,7 +158,8 @@ pub struct StorageSweepState {
 /// costs a single cheap LIST call per retry, other failures (timeout, cap,
 /// malformed page) are bounded by the sweep's own timeout and object caps,
 /// and tick-cadence retry means the sweep self-heals as soon as the
-/// underlying cause is fixed. The tick cadence is documented in values.yaml.
+/// underlying cause is fixed. The tick cadence is the sweep interval
+/// (default 3600s; see `StorageSweepConfig::from_env`).
 fn should_spawn(
     cached: &Option<CachedSnapshot>,
     last_attempt: &Option<LastAttempt>,
