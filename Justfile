@@ -1,4 +1,4 @@
-# Buzz — development task runner
+# Beekeeper — development task runner
 
 set dotenv-load := true
 
@@ -108,8 +108,8 @@ wip-share-off:
     git config --local --unset buzz.wipShare || true
     echo "Local commits are no longer shared from this checkout."
 
-# Wipe development state and recreate a clean environment. Installed Buzz is preserved.
-[confirm("This will DELETE all development data and preserve installed Buzz. Continue? (y/N)")]
+# Wipe development state and recreate a clean environment. Installed Beekeeper is preserved.
+[confirm("This will DELETE all development data and preserve installed Beekeeper. Continue? (y/N)")]
 reset:
     ./scripts/dev-reset.sh --yes
 
@@ -635,7 +635,7 @@ test-git-push-gate: _ensure-services
 # list, not the DB name, the next time a Postgres-gated proof needs to join it.
 #
 # They cannot simply be pointed at the dev database. Each Postgres-backed
-# buzz-db test drops and rebuilds the schema from the *invoking worktree's*
+# beekeeper-db test drops and rebuilds the schema from the *invoking worktree's*
 # migrations, so running them from a feature branch silently downgrades a shared
 # dev database and deletes any schema newer than that branch. They also deadlock
 # against each other under the default parallel harness. Hence: a database
@@ -735,8 +735,8 @@ test-unit:
     # The whole workspace, not a hand-kept package list.
     #
     # This used to enumerate nine `-p` targets, and everything outside that
-    # list — buzz-relay (1032 tests), buzz-acp (836), buzz-session-provider
-    # (419), buzz-sdk (306), git-credential-nostr and a dozen more, ~3,375
+    # list — beekeeper-relay (1032 tests), beekeeper-acp (836), beekeeper-session-provider
+    # (419), beekeeper-sdk (306), git-credential-nostr and a dozen more, ~3,375
     # tests — ran in no local gate at all. Only `.woodpecker/gate.yml` ever
     # executed them, so the only way to find a failure there was to push and
     # watch CI go red. That is exactly how both flakes fixed in the commit that
@@ -748,13 +748,13 @@ test-unit:
     # REDIS_URL both pointed at a dead port. Keep it that way — if you add a
     # test that needs a service, mark it, do not re-narrow this command.
     #
-    # All targets rather than --lib: buzz-conformance's replay fixtures,
-    # buzz-cli, buzz-push-gateway and buzz-backend-kubernetes carry infra-free
+    # All targets rather than --lib: beekeeper-conformance's replay fixtures,
+    # beekeeper-cli, beekeeper-push-gateway and beekeeper-backend-kubernetes carry infra-free
     # coverage in tests/ that --lib would drop.
     ./scripts/test-ensure-local-relay-key.sh
     if command -v cargo-nextest &>/dev/null; then
         cargo nextest run --workspace
-        # buzz-auth NIP-FI verifier doctests. The sealed-authority
+        # beekeeper-auth NIP-FI verifier doctests. The sealed-authority
         # `compile_fail` doctests prove the default-feature public API alone
         # cannot forge the issuer→JWKS authority; nextest does not run
         # doctests, and the `--workspace` nextest run above therefore does not
@@ -777,7 +777,7 @@ test-integration:
 regen-model-corpus:
     cargo test -p beekeeper-agent --lib model_capabilities::tests::regen_corpus_file -- --ignored --exact
 
-# Buzz shared compute e2e: current desktop discovery/admission logic and
+# Beekeeper shared compute e2e: current desktop discovery/admission logic and
 # Playwright UI coverage.
 mesh-e2e:
     cargo test --manifest-path {{desktop_dir}}/src-tauri/Cargo.toml --features mesh-llm mesh_llm --lib
@@ -786,7 +786,7 @@ mesh-e2e:
 # Reset only development state, seed deterministic local channels, and launch
 # the mesh-enabled desktop with the repository's public Tyler test identity.
 # This is for local verification only; never point this identity at staging/prod.
-[confirm("This will reset development data, preserve installed Buzz, then launch a seeded mesh dev app. Continue? (y/N)")]
+[confirm("This will reset development data, preserve installed Beekeeper, then launch a seeded mesh dev app. Continue? (y/N)")]
 mesh-dev-fresh:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -808,7 +808,7 @@ mesh-e2e-hardware:
     cargo run -p beekeeper-relay --example mesh_serve_client_smoke
 
 # Three isolated node processes: trusted member joins and infers; stranger is rejected.
-# Uses temp homes and explicit mesh owner keystores. Never reads the Buzz Keychain.
+# Uses temp homes and explicit mesh owner keystores. Never reads the Beekeeper Keychain.
 mesh-e2e-admission:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1107,7 +1107,7 @@ mobile-dev:
     unset GIT_DIR GIT_WORK_TREE
     flutter run
 
-# Uninstall stale worktree-suffixed Buzz debug installs (production apps kept)
+# Uninstall stale worktree-suffixed Beekeeper debug installs (production apps kept)
 mobile-clean:
     ./scripts/mobile-worktree-clean.sh
 
@@ -1182,11 +1182,11 @@ bump-desktop-version version:
 bump-relay-version version:
     #!/usr/bin/env bash
     set -euo pipefail
-    # buzz-relay carries its own `version =` (not version.workspace), so the
+    # beekeeper-relay carries its own `version =` (not version.workspace), so the
     # replace targets the package version line only.
     perl -i -pe 's/^version = ".*"/version = "{{ version }}"/' crates/beekeeper-relay/Cargo.toml
     cargo update -p beekeeper-relay
-    echo "Bumped buzz-relay to {{ version }} and regenerated Cargo.lock"
+    echo "Bumped beekeeper-relay to {{ version }} and regenerated Cargo.lock"
 
 # Open or update the desktop release PR from an immutable origin/main snapshot
 release-desktop *ARGS:
@@ -1248,7 +1248,7 @@ _release-pr lane version:
             CHANGELOG="crates/beekeeper-relay/CHANGELOG.md"
             ADD_FILES=(crates/beekeeper-relay/Cargo.toml Cargo.lock crates/beekeeper-relay/CHANGELOG.md)
             LOG_PATHS=(crates/beekeeper-relay/ crates/beekeeper-core/ crates/beekeeper-db/ crates/beekeeper-auth/ crates/beekeeper-pubsub/ crates/beekeeper-search/ crates/beekeeper-audit/ crates/beekeeper-media/ crates/beekeeper-sdk/ crates/beekeeper-workflow/ crates/beekeeper-conformance/ migrations/)
-            ARTIFACT="Buzz Relay" ;;
+            ARTIFACT="Beekeeper Relay" ;;
         *)
             echo "Error: unknown release lane '{{ lane }}'"
             exit 1 ;;
@@ -1383,7 +1383,7 @@ _release-pr lane version:
 
 # ─── Agent Harness ────────────────────────────────────────────────────────────
 
-# Run a goose agent connected to a Buzz relay (foreground)
+# Run a goose agent connected to a Beekeeper relay (foreground)
 goose relay="ws://localhost:3000" agents="1" heartbeat="0" prompt="" key="$BUZZ_PRIVATE_KEY":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1402,13 +1402,13 @@ goose-bg relay="ws://localhost:3000" agents="1" heartbeat="0" prompt="" key="$BU
 
 # ─── Benchmarking ─────────────────────────────────────────────────────────────
 
-# Run the Buzz orchestra benchmark — leaderboard-eligible by default (TB 2.1, k=5, Sonnet+Haiku). Stands up its own Docker stack; --gui opens a live spectator desktop app; other flags pass to benchmark.py (--dataset/--path, --include-task, --attempts, --manifest, --dry-run, ...)
+# Run the Beekeeper orchestra benchmark — leaderboard-eligible by default (TB 2.1, k=5, Sonnet+Haiku). Stands up its own Docker stack; --gui opens a live spectator desktop app; other flags pass to benchmark.py (--dataset/--path, --include-task, --attempts, --manifest, --dry-run, ...)
 benchmark *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
-    uv run --project benchmarks/harbor-buzz-orchestra/testbed \
-        benchmarks/harbor-buzz-orchestra/scripts/benchmark.py {{ARGS}}
+    uv run --project benchmarks/harbor-beekeeper-orchestra/testbed \
+        benchmarks/harbor-beekeeper-orchestra/scripts/benchmark.py {{ARGS}}
 
 # Stop the benchmark Docker stack (state and channels are kept)
 benchmark-down:

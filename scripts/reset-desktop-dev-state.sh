@@ -66,4 +66,4 @@ remove_path "$HOME/.sprout-dev"
 mkdir -p "$HOME/.beekeeper-dev"
 : > "$HOME/.beekeeper-dev/.dev-nest-migrated"
 
-log "Development desktop state removed; production Buzz state was not touched"
+log "Development desktop state removed; production Beekeeper state was not touched"

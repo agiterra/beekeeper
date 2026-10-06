@@ -83,25 +83,25 @@ STUB
 done
 
 # ── the injected package graph ───────────────────────────────────────────────
-# Shaped like this repository's: buzz-cli is not the leaf it looks like
+# Shaped like this repository's: beekeeper-cli is not the leaf it looks like
 # (crates/beekeeper-dev-mcp/Cargo.toml:17 and crates/sprig both depend on it), and
 # beekeeper-desktop lives in the second workspace.
 cat >"$work/graph.json" <<'GRAPH'
 {
   "packages": {
-    "buzz-cli":          {"workspace": "root",  "dir": "crates/beekeeper-cli"},
-    "buzz-core":         {"workspace": "root",  "dir": "crates/beekeeper-core"},
-    "buzz-dev-mcp":      {"workspace": "root",  "dir": "crates/beekeeper-dev-mcp"},
+    "beekeeper-cli":          {"workspace": "root",  "dir": "crates/beekeeper-cli"},
+    "beekeeper-core":         {"workspace": "root",  "dir": "crates/beekeeper-core"},
+    "beekeeper-dev-mcp":      {"workspace": "root",  "dir": "crates/beekeeper-dev-mcp"},
     "sprig":             {"workspace": "root",  "dir": "crates/sprig"},
-    "buzz-persona":      {"workspace": "root",  "dir": "crates/beekeeper-persona"},
+    "beekeeper-persona":      {"workspace": "root",  "dir": "crates/beekeeper-persona"},
     "beekeeper-desktop": {"workspace": "tauri", "dir": "desktop/src-tauri"}
   },
   "dependents": {
-    "buzz-cli":          ["buzz-dev-mcp", "sprig"],
-    "buzz-core":         ["beekeeper-desktop", "buzz-cli", "buzz-dev-mcp", "buzz-persona", "sprig"],
-    "buzz-dev-mcp":      [],
+    "beekeeper-cli":          ["beekeeper-dev-mcp", "sprig"],
+    "beekeeper-core":         ["beekeeper-desktop", "beekeeper-cli", "beekeeper-dev-mcp", "beekeeper-persona", "sprig"],
+    "beekeeper-dev-mcp":      [],
     "sprig":             [],
-    "buzz-persona":      ["buzz-cli"],
+    "beekeeper-persona":      ["beekeeper-cli"],
     "beekeeper-desktop": []
   }
 }
@@ -188,7 +188,7 @@ check_equal "the file-size ratchet still runs, unfiltered" \
   "$(grep -c '^just file-size-check' "$work/stub.log" || true)" "1"
 
 echo "── 2. the summary line names the cost and every skip"
-check_contains "summary names the scope" "$summary" "pre-push floor: buzz-cli ("
+check_contains "summary names the scope" "$summary" "pre-push floor: beekeeper-cli ("
 check_contains "summary carries the measured test count" "$summary" "847 tests"
 check_contains "summary discloses the budget" "$summary" "/ budget 120s"
 check_contains "summary names the desktop skip" "$summary" "desktop — no desktop/ change"
@@ -276,7 +276,7 @@ check_contains "a deletion under crates/ still selects that crate" "$invocations
 echo "── 7. a failing step exits non-zero and still prints the summary"
 run_floor cli-only "clippy"
 check_equal "floor exits non-zero" "$floor_status" "1"
-check_contains "the summary is printed anyway" "$summary" "pre-push floor: buzz-cli ("
+check_contains "the summary is printed anyway" "$summary" "pre-push floor: beekeeper-cli ("
 check_contains "the failing step is named" "$summary" "clippy FAILED"
 check_contains "and the remedy names the rule, not a shortcut" \
   "$(cat "$work/stderr.txt")" "only on a SHA \`just ci\` already passed"
@@ -313,7 +313,7 @@ push_out=$(
     BUZZ_PRE_PUSH_FLOOR_GRAPH="$work/graph.json" \
     git push --quiet "$bare" cli-only 2>&1
 )
-check_contains "the push printed the floor's summary" "$push_out" "pre-push floor: buzz-cli ("
+check_contains "the push printed the floor's summary" "$push_out" "pre-push floor: beekeeper-cli ("
 check_equal "and ran cargo exactly three times" "$(count_of cargo)" "3"
 
 echo "── 9b. a push from a linked worktree does not leak its repository into tests"
@@ -332,7 +332,7 @@ push_out=$(
 )
 push_status=$?
 check_equal "the linked-worktree push exits 0" "$push_status" "0"
-check_contains "its hook printed the floor's summary" "$push_out" "pre-push floor: buzz-cli ("
+check_contains "its hook printed the floor's summary" "$push_out" "pre-push floor: beekeeper-cli ("
 check_equal "all three cargo steps received a neutral git environment" "$(count_of cargo)" "3"
 
 git -C "$scratch" config --unset core.hooksPath

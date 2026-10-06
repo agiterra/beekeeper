@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run-tests.sh — Run Buzz test suite
+# run-tests.sh — Run Beekeeper test suite
 # =============================================================================
 # Usage:
 #   ./scripts/run-tests.sh              # run all tests (default)
@@ -80,8 +80,8 @@ run_unit_tests() {
 
   # The whole workspace, not a hand-kept package list. This function used to
   # enumerate nine packages and had to be kept in step by hand with the nextest
-  # path in `just test-unit`; everything outside both lists (buzz-relay,
-  # buzz-acp, buzz-session-provider, buzz-sdk, git-credential-nostr and more —
+  # path in `just test-unit`; everything outside both lists (beekeeper-relay,
+  # beekeeper-acp, beekeeper-session-provider, beekeeper-sdk, git-credential-nostr and more —
   # ~3,375 tests) ran in no local gate at all, so a failure there could only be
   # found by pushing. Tests that need Postgres, Redis or MinIO are `#[ignore]`d
   # with a reason, which is what keeps this infra-free; mark new ones rather
@@ -97,14 +97,14 @@ run_integration_tests() {
 
   ensure_infra
 
-  run_test_step "buzz-db tests" \
+  run_test_step "beekeeper-db tests" \
     cargo test -p beekeeper-db -- --nocapture
 
   if find crates/beekeeper-auth/tests -maxdepth 1 -name '*.rs' -print -quit 2>/dev/null | grep -q .; then
-    run_test_step "buzz-auth integration tests" \
+    run_test_step "beekeeper-auth integration tests" \
       cargo test -p beekeeper-auth --test '*' -- --nocapture
   else
-    run_test_step "buzz-auth (no integration tests found)" true
+    run_test_step "beekeeper-auth (no integration tests found)" true
   fi
 
   run_test_step "workspace integration tests" \

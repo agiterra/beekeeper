@@ -3,7 +3,7 @@
  * `conformance/transcript-export/fixtures/release-manifest-vectors.json`
  * (donor: Hive `scripts/prepare-export-viewer-release-assets.ts` at pin
  * `e0b8198bd144`, which shipped with no donor test — the corpus is its first
- * gate and this script is its Buzz implementation). Vectors are restated
+ * gate and this script is its Beekeeper implementation). Vectors are restated
  * here; the conformance bridge additionally binds the same functions to the
  * fixture file itself. Local artifacts only — no upload, no release
  * authority (publication is H-05c's plane).

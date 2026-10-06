@@ -6,7 +6,7 @@
  * `conformance/transcript-export/fixtures/release-manifest-vectors.json`
  * (donor: Hive `scripts/prepare-export-viewer-release-assets.ts` at pin
  * `e0b8198bd144`, which shipped with no donor test — the corpus is its
- * first gate, and this script is its Buzz implementation, re-derived, never
+ * first gate, and this script is its Beekeeper implementation, re-derived, never
  * copied). Given a built viewer dist, it flattens every file into
  * `export-viewer__…` release assets beside `export-viewer-manifest.json`.
  *

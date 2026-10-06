@@ -13,7 +13,7 @@ cd "$REPO_ROOT"
 export BUZZ_RELAY_URL RELAY_URL BUZZ_RELAY_PRIVATE_KEY
 unset BUZZ_AUTH_TAG
 
-for binary in buzz buzz-admin; do
+for binary in bee buzz-admin; do
   resolved="$(command -v "$binary" || true)"
   [[ "$resolved" == "$REPO_ROOT/target/release/$binary" ]] || {
     echo "error: $binary must resolve to $REPO_ROOT/target/release/$binary (got ${resolved:-not found})" >&2

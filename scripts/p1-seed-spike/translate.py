@@ -150,7 +150,7 @@ def die(message):
 def decode(events):
     """Split raw signed events into (metadata_list, transcript_records, stats).
 
-    Mirrors buzz-cli's decode_transcripts: envelope decoded from content,
+    Mirrors beekeeper-cli's decode_transcripts: envelope decoded from content,
     cs-target / cst-seq tag agreement enforced, seq read from the envelope
     (numeric), not the tag (decimal string).
     """
@@ -206,7 +206,7 @@ def decode(events):
 
 
 def fold_by_seq(records):
-    """Total order (seq, created_at, id) — same as buzz-cli sort_transcripts —
+    """Total order (seq, created_at, id) — same as beekeeper-cli sort_transcripts —
     then fold: the first event per seq wins, replays/duplicates are dropped."""
     records.sort(key=lambda r: (r["seq"], r["created_at"], r["id"]))
     folded = []

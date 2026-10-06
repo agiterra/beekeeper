@@ -2,7 +2,7 @@
  * Agents-repository draft path binder — runs the REAL Desktop grammar against
  * every banked vector. `README.md` states the law in prose; the fixtures state
  * it in data; this file binds the production TypeScript to that data, so
- * `buzz-core` (behind `bee agents-repo` and the Files tab) and the Dart reader
+ * `beekeeper-core` (behind `bee agents-repo` and the Files tab) and the Dart reader
  * in Mobile have one shared, executable definition of "correct".
  *
  * Import constraint (load-bearing): the module must stay free of runtime
