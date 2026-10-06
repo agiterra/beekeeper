@@ -73,10 +73,14 @@ const SETTLED_STATES: ReadonlySet<CodingSessionAgentState> = new Set([
   "stopped",
 ]);
 
+/**
+ * States that are doing something now: working, or held waiting on a person.
+ * `idle` is not here (SV-96): an idle seat is alive and reachable but doing
+ * nothing, so it is counted in its own word and never lights a live dot.
+ */
 const ACTIVE_STATES: ReadonlySet<CodingSessionAgentState> = new Set([
   "running",
   "waiting",
-  "idle",
 ]);
 
 /** The words a state reads as, for a screen reader and a tooltip. */
@@ -150,6 +154,8 @@ export type CodingSessionAgentOutcome = {
 export type CodingSessionPhaseOrigin = "seat" | "assigned" | "declared";
 
 /**
+ * `idle` is no agent working or waiting, at least one idle, and the rest
+ * settled or unknown: the phase is still in play but nothing is happening.
  * `done` is every agent completed; `failed` is every agent settled with one
  * failed; `settled` is every agent settled with one stopped and none failed.
  * T3 calls all three "done" with a check; a failure under a green check would
@@ -158,6 +164,7 @@ export type CodingSessionPhaseOrigin = "seat" | "assigned" | "declared";
 export type CodingSessionPhaseState =
   | "pending"
   | "running"
+  | "idle"
   | "done"
   | "failed"
   | "settled"
@@ -169,7 +176,10 @@ export type CodingSessionOrchestrationPhase = {
   origin: CodingSessionPhaseOrigin;
   state: CodingSessionPhaseState;
   agents: CodingSessionOrchestrationAgent[];
+  /** Agents working or waiting on a person; never an idle one (SV-96). */
   activeCount: number;
+  /** Agents alive but doing nothing: counted apart from active. */
+  idleCount: number;
   /** Every agent whose newest state is terminal: done, failed or stopped. */
   settledCount: number;
   /** Of those, the ones that failed, and the ones that stopped. */
@@ -189,6 +199,7 @@ export type CodingSessionOrchestrationCard = {
   /** Agents whose newest state is failed. */
   failed: number;
   total: number;
+  /** Some agent is working or waiting on a person; an idle one is not live. */
   live: boolean;
 };
 
@@ -460,6 +471,7 @@ function phaseState(
   CodingSessionOrchestrationPhase,
   | "state"
   | "activeCount"
+  | "idleCount"
   | "settledCount"
   | "failedCount"
   | "stoppedCount"
@@ -468,25 +480,29 @@ function phaseState(
   const count = (test: (agent: CodingSessionOrchestrationAgent) => boolean) =>
     agents.filter(test).length;
   const activeCount = count((agent) => ACTIVE_STATES.has(agent.state));
+  const idleCount = count((agent) => agent.state === "idle");
   const settledCount = count((agent) => agent.settled);
   const failedCount = count((agent) => agent.state === "failed");
   const stoppedCount = count((agent) => agent.state === "stopped");
-  const unknownCount = agents.length - activeCount - settledCount;
+  const unknownCount = agents.length - activeCount - idleCount - settledCount;
   const state: CodingSessionPhaseState =
     agents.length === 0
       ? "pending"
       : activeCount > 0
         ? "running"
-        : settledCount < agents.length
-          ? "unknown"
-          : failedCount > 0
-            ? "failed"
-            : stoppedCount > 0
-              ? "settled"
-              : "done";
+        : idleCount > 0
+          ? "idle"
+          : settledCount < agents.length
+            ? "unknown"
+            : failedCount > 0
+              ? "failed"
+              : stoppedCount > 0
+                ? "settled"
+                : "done";
   return {
     state,
     activeCount,
+    idleCount,
     settledCount,
     failedCount,
     stoppedCount,
@@ -684,11 +700,11 @@ export function formatCodingSessionPhaseCounts(
   }
   // "done" is completed only; a failure or a stop is counted in its own word.
   const done = phase.settledCount - phase.failedCount - phase.stoppedCount;
-  const parts =
-    phase.activeCount > 0
-      ? [`${phase.activeCount} active`, `${done} done`]
-      : [];
-  if (phase.activeCount === 0 && done > 0) parts.push(`${done} done`);
+  // Idle is its own word, never folded into active (SV-96).
+  const parts: string[] = [];
+  if (phase.activeCount > 0) parts.push(`${phase.activeCount} active`);
+  if (phase.idleCount > 0) parts.push(`${phase.idleCount} idle`);
+  if (phase.activeCount > 0 || done > 0) parts.push(`${done} done`);
   if (phase.failedCount > 0) parts.push(`${phase.failedCount} failed`);
   if (phase.stoppedCount > 0) parts.push(`${phase.stoppedCount} stopped`);
   if (phase.unknownCount > 0) parts.push(`${phase.unknownCount} unknown`);

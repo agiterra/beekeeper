@@ -25,6 +25,10 @@ import {
 import type { RelayEvent } from "@/shared/api/types";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
+// The D12 shell-rail scenario (SV-92/95/96) registers its test from this
+// module: playwright.config.ts was owned by a concurrent batch when it landed,
+// so it rides on this registered spec until it gets an entry of its own.
+import "./coding-session-audit-shell-rail.scenario";
 
 // SV-78 (ledger 336): Brian's audit session backgrounded `sleep 150`, ended
 // its turn at 20:48:56Z, and Claude Code woke it on the task's notification at
@@ -293,4 +297,184 @@ test("SV-78: an ended turn with a running background task, then the turn it woke
     seen.set(hash, name);
   }
   expect(hashes.size).toBe(3);
+});
+
+// SV-91 / SV-93 (ledger 342): the installed-build audit BK-AUDIT-1006 on
+// claude-agent-acp 0.84.0, which never forwards the task-notification prompt.
+// The only wire evidence of the wake is the provider's status rows: seq 35
+// `autonomous_turn_started` opens the next turn, and seq 52 `autonomous_turn:
+// … task-notification` lands inside that turn's final answer. Shapes copied
+// from the published 44225 events (ids and wording kept, paths elided).
+
+const AUDIT_TASK = "bi9cros3k";
+const AUDIT_FIRST = "turn-audit-1006-a";
+const AUDIT_WOKEN = "turn-audit-1006-b";
+
+function auditEndedTurn(): RelayEvent[] {
+  return [
+    metadata("idle", 0),
+    transcript(1, AUDIT_FIRST, {
+      kind: "user_prompt",
+      content:
+        "Audit run BK-AUDIT-1006. 6. Run this in the background and end your turn.",
+    }),
+    transcript(2, AUDIT_FIRST, {
+      kind: "assistant_text",
+      text: "Still 12. Step 6: starting the 60-second job in the background and ending my turn.",
+    }),
+    transcript(3, AUDIT_FIRST, {
+      kind: "tool_call",
+      tool: {
+        input: {
+          command: `python3 -c "import time; time.sleep(60); print('bg-done')"`,
+        },
+        toolId: "toolu_01G1xbH6HoXzyH5kKAoJq9RS",
+        toolKind: "execute",
+        toolName: `python3 -c "import time; time.sleep(60); print('bg-done')"`,
+      },
+    }),
+    transcript(4, AUDIT_FIRST, {
+      kind: "tool_result",
+      toolId: "toolu_01G1xbH6HoXzyH5kKAoJq9RS",
+      toolKind: "execute",
+      toolName: `python3 -c "import time; time.sleep(60); print('bg-done')"`,
+      input: {
+        command: `python3 -c "import time; time.sleep(60); print('bg-done')"`,
+        run_in_background: true,
+      },
+      content: `\`\`\`console\nCommand running in background with ID: ${AUDIT_TASK}. Output is being written to: /private/tmp/claude-502/tasks/${AUDIT_TASK}.output. You will be notified when it completes. To check interim output, use Read on that file path.\n\`\`\``,
+      isError: false,
+    }),
+    transcript(5, AUDIT_FIRST, {
+      kind: "assistant_text",
+      text: "The 60-second job is running in the background. I'll pick up at step 7 when it finishes.",
+    }),
+    transcript(6, AUDIT_FIRST, {
+      kind: "result",
+      subtype: "success",
+      result: "completed",
+      isError: false,
+      durationMs: 32_961,
+      costUsd: 0.3958032,
+    }),
+  ];
+}
+
+function auditWokenStart(): RelayEvent[] {
+  return [
+    transcript(7, AUDIT_WOKEN, {
+      kind: "status",
+      status: "autonomous_turn_started: the agent began a turn nobody prompted",
+    }),
+    transcript(8, AUDIT_WOKEN, {
+      kind: "assistant_text",
+      text: "Background job finished. Step 7: running the 150-second quiet job.",
+    }),
+  ];
+}
+
+function auditWokenEnd(): RelayEvent[] {
+  return [
+    transcript(9, AUDIT_WOKEN, {
+      kind: "assistant_text",
+      text: "All nine steps of audit run BK-AUDIT-1006 are done.",
+    }),
+    transcript(10, AUDIT_WOKEN, {
+      kind: "status",
+      status: "autonomous_turn: the agent woke on task-notification",
+    }),
+    transcript(11, AUDIT_WOKEN, {
+      kind: "result",
+      subtype: "success",
+      result: "completed",
+      isError: false,
+      durationMs: 226_168,
+      costUsd: null,
+    }),
+    metadata("idle", 12),
+  ];
+}
+
+test("SV-91/SV-93: the audit's background task, the status-row wake, and its marker", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const shots = "test-results/sv91-sv93-autonomous-wake";
+  const hashes = new Map<string, string>();
+  const shoot = async (name: string, locator: Locator) => {
+    await expect(locator).toBeVisible();
+    await waitForAnimations(page);
+    const png = await locator.screenshot({ path: `${shots}/${name}.png` });
+    hashes.set(name, createHash("sha256").update(png).digest("hex"));
+  };
+  const rest = () => page.mouse.move(2, 2);
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installMockBridge(page, {
+    globalAgentConfig: {
+      env_vars: {},
+      provider: null,
+      model: null,
+      "allowed-bridge-pubkeys": [{ pubkey, label: "Audit provider" }],
+    },
+  });
+  await page.goto("/");
+  await page.getByTestId(`channel-${channelName}`).click();
+  await seed(page, auditEndedTurn());
+  const trigger = page.getByTestId("channel-coding-sessions-trigger");
+  await expect(trigger).toHaveAttribute("aria-label", "Coding sessions (1)", {
+    timeout: 15_000,
+  });
+  await trigger.click();
+  await page.getByTestId("channel-coding-session-open").click();
+  const workspace = page.getByTestId("coding-session-workspace");
+  await expect(workspace).toContainText("The 60-second job is running");
+
+  const turns = workspace.getByTestId("coding-session-turn");
+  const first = turns.first();
+  await expect(first.getByTestId("coding-session-turn-background")).toHaveText(
+    /1 background task running/,
+  );
+  await rest();
+  await shoot("SV-91-ended-turn-running", first);
+
+  // The provider's wake row arrives; no notification prompt ever does.
+  await seed(page, auditWokenStart());
+  await expect(turns).toHaveCount(2);
+  await expect(first.getByTestId("coding-session-turn-background")).toHaveText(
+    /1 background task, then the agent woke on its own/,
+  );
+  const woken = turns.nth(1);
+  const marker = woken.getByTestId("coding-session-autonomous-wake");
+  await expect(marker).toContainText("Woke on its own");
+  await expect(
+    marker.getByTestId("coding-session-autonomous-wake-cause"),
+  ).toHaveCount(0);
+  await expect(woken.getByTestId("coding-session-background-wake")).toHaveCount(
+    0,
+  );
+  await rest();
+  await shoot("SV-93-woken-turn-started", woken);
+
+  // Seq 52's row names the cause; the marker says it, once.
+  await seed(page, auditWokenEnd());
+  await expect(
+    marker.getByTestId("coding-session-autonomous-wake-cause"),
+  ).toHaveText("· background task");
+  await expect(
+    workspace.getByTestId("coding-session-autonomous-wake"),
+  ).toHaveCount(1);
+  await rest();
+  await shoot("SV-93-woken-turn-cause", woken);
+  await shoot("SV-91-ended-turn-woke", first);
+
+  const seen = new Map<string, string>();
+  for (const [name, hash] of hashes) {
+    expect(
+      seen.get(hash),
+      `${name} is byte-identical to ${seen.get(hash)}`,
+    ).toBeUndefined();
+    seen.set(hash, name);
+  }
+  expect(hashes.size).toBe(4);
 });

@@ -179,15 +179,14 @@ impl SessionActor {
                         emit_items(&self.events, &self.session_id, &turn_id, items).await;
                     }
                     Unsolicited::CycleEnded { origin } => {
-                        emit_items(
-                            &self.events,
-                            &self.session_id,
-                            &turn_id,
-                            vec![crate::payload::status_item(&format!(
-                                "autonomous_turn: the agent woke on {origin}"
-                            ))],
-                        )
-                        .await;
+                        // The agent's buffered prose goes first: emitted
+                        // ahead of it, this row split the final answer in two
+                        // (SV-93, audit seq 51/52/53).
+                        let mut items = self.translator.flush_all();
+                        items.push(crate::payload::status_item(&format!(
+                            "autonomous_turn: the agent woke on {origin}"
+                        )));
+                        emit_items(&self.events, &self.session_id, &turn_id, items).await;
                         break AutonomousEnd::Finished(TurnOutcome::Completed {
                             stop_reason: StopReason::EndTurn,
                         });
@@ -227,17 +226,13 @@ impl SessionActor {
                     }
                 }
                 Wake::Quiet if open_tools.is_empty() => {
-                    emit_items(
-                        &self.events,
-                        &self.session_id,
-                        &turn_id,
-                        vec![crate::payload::status_item(&format!(
-                            "autonomous_turn_quiet: no activity for {}s and no tool call open; \
-                             closed without the adapter's end-of-cycle signal",
-                            AUTONOMOUS_QUIET.as_secs()
-                        ))],
-                    )
-                    .await;
+                    let mut items = self.translator.flush_all();
+                    items.push(crate::payload::status_item(&format!(
+                        "autonomous_turn_quiet: no activity for {}s and no tool call open; \
+                         closed without the adapter's end-of-cycle signal",
+                        AUTONOMOUS_QUIET.as_secs()
+                    )));
+                    emit_items(&self.events, &self.session_id, &turn_id, items).await;
                     break AutonomousEnd::Finished(TurnOutcome::Completed {
                         stop_reason: StopReason::EndTurn,
                     });

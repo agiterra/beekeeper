@@ -248,6 +248,55 @@ test("the lead's phase leads the pipeline, as the lead leads the route", () => {
   );
 });
 
+test("an idle lead is idle, not active, and does not light the card (SV-96)", () => {
+  const lead = record({
+    actor: "e".repeat(64),
+    instanceId: "lead-1",
+    model: "claude-opus-5-5",
+    provider: "5".repeat(64),
+    role: "lead",
+    status: "idle",
+    items: [],
+  });
+  const [card] = deriveCodingSessionAgentsOrchestration(
+    relayOnlyInput([lead]),
+  ).cards;
+  const [phase] = card.phases;
+  assert.equal(phase.state, "idle");
+  assert.equal(phase.activeCount, 0);
+  assert.equal(phase.idleCount, 1);
+  assert.equal(phase.unknownCount, 0);
+  assert.equal(formatCodingSessionPhaseCounts(phase), "1 idle");
+  assert.equal(card.live, false, "an idle seat never lights the live dot");
+  assert.equal(card.settled, 0);
+  assert.equal(card.total, 1, "the header still reads 0/1 settled");
+});
+
+test("idle is counted beside active, never inside it (SV-96)", () => {
+  const records = missionRecords();
+  records.push(
+    record({
+      actor: "e".repeat(64),
+      instanceId: "build-idle",
+      model: "claude-opus-5-5",
+      provider: "5".repeat(64),
+      role: "builder",
+      status: "idle",
+      items: [],
+    }),
+  );
+  const [card] = deriveCodingSessionAgentsOrchestration(
+    relayOnlyInput(records),
+  ).cards;
+  const builder = card.phases.find((phase) => phase.title === "Builder");
+  assert.equal(builder.state, "running");
+  assert.equal(
+    formatCodingSessionPhaseCounts(builder),
+    "1 active · 1 idle · 1 done",
+  );
+  assert.equal(card.live, true, "the running builder is still live");
+});
+
 test("expanded agents carry current tool, model, tokens and tool count", () => {
   const [card] = deriveCodingSessionAgentsOrchestration(
     relayOnlyInput(missionRecords()),

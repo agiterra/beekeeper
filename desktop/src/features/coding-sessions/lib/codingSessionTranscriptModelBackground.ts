@@ -1,6 +1,9 @@
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import { isCodingSessionContinuityItem } from "@/features/coding-sessions/lib/codingSessionTranscriptModelPredicates";
-import type { CodingSessionTurnBackgroundTask } from "@/features/coding-sessions/lib/codingSessionTranscriptModelTypes";
+import type {
+  CodingSessionTurnAutonomousWake,
+  CodingSessionTurnBackgroundTask,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptModelTypes";
 
 /**
  * Background tasks a turn left behind, and the notifications that report
@@ -49,7 +52,9 @@ export function parseCodingSessionBackgroundTaskStarts(text: string): string[] {
 }
 
 /** The provider's status rows around a turn nobody prompted (SV-77). */
-function isAutonomousWakeRow(item: TranscriptItem): boolean {
+export function isCodingSessionAutonomousWakeRow(
+  item: TranscriptItem,
+): boolean {
   return (
     item.type === "lifecycle" &&
     item.title === "Status" &&
@@ -122,7 +127,7 @@ export function deriveCodingSessionBackgroundTasks(
 
   transcript.forEach((item, index) => {
     if (isCodingSessionContinuityItem(item)) lastContinuity = index;
-    if (isAutonomousWakeRow(item)) lastWake = index;
+    if (isCodingSessionAutonomousWakeRow(item)) lastWake = index;
     const text = searchableText(item);
     if (!text) return;
     if (item.type === "tool" && !item.parentToolId) {
@@ -159,6 +164,164 @@ export function deriveCodingSessionBackgroundTasks(
     );
   }
   return byItem;
+}
+
+const NO_TASKS: readonly CodingSessionTurnBackgroundTask[] = [];
+const EMPTY_BY_TURN: ReadonlyMap<
+  string,
+  readonly CodingSessionTurnBackgroundTask[]
+> = new Map();
+
+/**
+ * One derivation per transcript array, however many blocks read it — keyed by
+ * item id, not identity, so a block whose items were rebuilt from the same
+ * events still finds its tasks.
+ */
+const derivedByTranscript = new WeakMap<
+  readonly TranscriptItem[],
+  ReadonlyMap<string, readonly CodingSessionTurnBackgroundTask[]>
+>();
+
+function deriveCached(
+  transcript: readonly TranscriptItem[],
+): ReadonlyMap<string, readonly CodingSessionTurnBackgroundTask[]> {
+  let derived = derivedByTranscript.get(transcript);
+  if (!derived) {
+    const byId = new Map<string, readonly CodingSessionTurnBackgroundTask[]>();
+    for (const [item, tasks] of deriveCodingSessionBackgroundTasks(
+      transcript,
+    )) {
+      byId.set(item.id, tasks);
+    }
+    derived = byId;
+    derivedByTranscript.set(transcript, derived);
+  }
+  return derived;
+}
+
+/**
+ * The background tasks one umbrella turn block started, keyed by turn id, and
+ * resolved against its **whole** generation transcript (SV-91).
+ *
+ * A block is a window into one execution's stream. Derived over the block
+ * alone, its task can never see the next block's `autonomous_turn…` row, so
+ * it would read "running" for ever; and Mission Live moves the block's tool
+ * items into the execution bundle, so the narrative's own model never sees
+ * the Bash result that announced the task at all. The caller hands the result
+ * to the narrative's model, which then says it whatever items it holds.
+ *
+ * Only the tasks whose starting item is in `blockItems` count, so a turn split
+ * across two blocks says it once, on the block that started the work.
+ *
+ * `generationSuperseded`: a later generation of this execution exists. The
+ * process that would have reported a task this one left running is gone, so
+ * `running` reads `unreported` — exactly what a continuity row says inside
+ * one transcript, which is never in this generation's own.
+ *
+ * Returns one shared empty map when the block started nothing.
+ */
+export function deriveCodingSessionBlockBackgroundTasks(input: {
+  transcript: readonly TranscriptItem[];
+  blockItems: readonly TranscriptItem[];
+  generationSuperseded: boolean;
+}): ReadonlyMap<string, readonly CodingSessionTurnBackgroundTask[]> {
+  const derived = deriveCached(input.transcript);
+  if (derived.size === 0) return EMPTY_BY_TURN;
+  const byTurn = new Map<string, CodingSessionTurnBackgroundTask[]>();
+  for (const item of input.blockItems) {
+    const tasks = derived.get(item.id);
+    if (!tasks || !item.turnId) continue;
+    const list = byTurn.get(item.turnId) ?? [];
+    for (const task of tasks) {
+      list.push(
+        input.generationSuperseded && task.state === "running"
+          ? { ...task, state: "unreported" }
+          : task,
+      );
+    }
+    byTurn.set(item.turnId, list);
+  }
+  return byTurn.size === 0 ? EMPTY_BY_TURN : byTurn;
+}
+
+/** Same turns, same tasks, same states — so a caller can keep its old map. */
+export function codingSessionBackgroundTasksByTurnEqual(
+  left: ReadonlyMap<string, readonly CodingSessionTurnBackgroundTask[]>,
+  right: ReadonlyMap<string, readonly CodingSessionTurnBackgroundTask[]>,
+): boolean {
+  if (left === right) return true;
+  if (left.size !== right.size) return false;
+  for (const [turnId, tasks] of left) {
+    const other = right.get(turnId);
+    if (!other || !codingSessionBackgroundTasksEqual(tasks, other)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function codingSessionBackgroundTasksEqual(
+  left: readonly CodingSessionTurnBackgroundTask[],
+  right: readonly CodingSessionTurnBackgroundTask[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((task, index) => {
+      const other = right[index];
+      return (
+        other !== undefined &&
+        task.id === other.id &&
+        task.state === other.state &&
+        task.status === other.status
+      );
+    })
+  );
+}
+
+/** Does any turn in `byTurn` hold a task nothing says has ended? */
+export function hasRunningCodingSessionBackgroundTask(
+  byTurn: ReadonlyMap<string, readonly CodingSessionTurnBackgroundTask[]>,
+): boolean {
+  for (const tasks of byTurn.values()) {
+    if (tasks.some((task) => task.state === "running")) return true;
+  }
+  return false;
+}
+
+/** A turn's tasks from a caller-derived map; the shared empty list if none. */
+export function codingSessionTurnBackgroundTasksFrom(
+  byTurn: ReadonlyMap<string, readonly CodingSessionTurnBackgroundTask[]>,
+  turnId: string,
+): readonly CodingSessionTurnBackgroundTask[] {
+  return byTurn.get(turnId) ?? NO_TASKS;
+}
+
+/**
+ * What the provider's status rows say about how a turn began (SV-93), or
+ * `null` when none says nobody prompted it.
+ *
+ * claude-agent-acp 0.84.0 never forwards the `<task-notification>` prompt to
+ * us (ledger 336), so these rows are the only evidence on the wire: an
+ * `autonomous_turn_started` row opens the turn, and a later `autonomous_turn:
+ * the agent woke on task-notification` row names the cause — it can arrive
+ * mid-answer, so the cause may fill in after the marker first shows. A turn
+ * that carries a task-notification message is left alone: that message's
+ * own row already says what woke it.
+ */
+export function deriveCodingSessionTurnAutonomousWake(
+  items: readonly TranscriptItem[],
+): CodingSessionTurnAutonomousWake | null {
+  let timestamp: string | null = null;
+  let cause: CodingSessionTurnAutonomousWake["cause"] = null;
+  for (const item of items) {
+    if (isCodingSessionTaskNotificationItem(item)) return null;
+    if (!isCodingSessionAutonomousWakeRow(item) || item.type !== "lifecycle") {
+      continue;
+    }
+    timestamp ??= item.timestamp;
+    if (item.text.includes("task-notification")) cause = "background-task";
+  }
+  return timestamp === null ? null : { cause, timestamp };
 }
 
 /**

@@ -55,7 +55,52 @@ test("shellBlockOutput_failure_fallsBackToRawWhenUnstructured", () => {
   // parser puts it in `raw`, and a failed call must still show it.
   const output = parseShellToolOutput("command not found");
   assert.equal(shellBlockOutput(output, true), "command not found");
+  // SV-92: a successful call's plain-text output is its output too.
+  assert.equal(shellBlockOutput(output, false), "command not found");
+});
+
+// claude-agent-acp 0.84.0's published Bash result (audit session becbd0cb,
+// eventSeq 58): plain text in a `console` fence, no stdout/stderr envelope.
+const FENCED_BASH_RESULT = "```console\nquiet-done\n```";
+
+test("shellBlockOutput_success_showsFencedPlainTextUnfenced (SV-92)", () => {
+  const output = parseShellToolOutput(FENCED_BASH_RESULT);
+  assert.equal(output.stdout, "");
+  assert.equal(shellBlockOutput(output, false), "quiet-done");
+});
+
+test("shellBlockOutput_success_keepsMultilineFencedOutput (SV-92)", () => {
+  const output = parseShellToolOutput("```\n/Users/brian/repo\ntotal 16\n```");
+  assert.equal(shellBlockOutput(output, false), "/Users/brian/repo\ntotal 16");
+});
+
+test("shellBlockOutput_success_envelopeStdoutStillWinsOverRaw (SV-92)", () => {
+  const output = parseShellToolOutput(
+    shellResult({ stdout: "", stderr: "noise\n", exit_code: 0 }),
+  );
   assert.equal(shellBlockOutput(output, false), "");
+});
+
+test("shellBlockOutput_failure_keepsFencedRawAsReceived (SV-92)", () => {
+  const output = parseShellToolOutput(
+    "```console\nExit code 2\nno such file\n```",
+  );
+  assert.equal(
+    shellBlockOutput(output, true),
+    "```console\nExit code 2\nno such file\n```",
+  );
+});
+
+test("ShellCommandBlock_success_rendersFencedOutput (SV-92)", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(ShellCommandBlock, {
+      command: "python3 -c \"print('quiet-done')\"",
+      isError: false,
+      result: FENCED_BASH_RESULT,
+    }),
+  );
+  assert.match(html, /<pre[^>]*>quiet-done<\/pre>/);
+  assert.doesNotMatch(html, /```/);
 });
 
 test("shellCommandBlock_failure_rendersStderrInDestructiveTone", () => {

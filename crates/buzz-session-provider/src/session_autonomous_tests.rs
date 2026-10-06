@@ -241,3 +241,94 @@ async fn a_prompt_during_an_unprompted_turn_runs_after_it() {
     assert!(seen.text_by_turn[&prompted].contains("answer 2"));
     manager.shutdown("s1");
 }
+
+/// An adapter whose unprompted cycle is the audit's (BK-AUDIT-1006) final
+/// answer: two prose chunks with a paragraph break between them, then the
+/// autonomous `result` at once — no tool call or permission to flush the
+/// prose first.
+const ANSWERING_AGENT: &str = r#"n=0
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      n=$((n+1))
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"
+      if [ "$n" = 1 ]; then
+        (
+          sleep 0.3
+          printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"All nine steps are done.\n\n"}}}}'
+          printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"**Failed commands:** only the one that failed on purpose."}}}}'
+          printf '%s\n' '{"jsonrpc":"2.0","method":"_claude/sdkMessage","params":{"sessionId":"acp-session-1","message":{"type":"result","num_turns":1,"origin":{"kind":"task-notification"}}}}'
+        ) &
+      fi ;;
+  esac
+done
+"#;
+
+/// SV-93 (wire half): the row naming what woke the agent is published after
+/// the prose the agent had already said, never between two parts of its
+/// answer. The audit's seq 52 landed between seq 51 and 53, splitting it.
+#[tokio::test]
+async fn the_wake_row_never_splits_the_final_answer() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let agent = fake_agent(dir.path(), "answering-agent", ANSWERING_AGENT);
+    let (tx, mut rx) = mpsc::channel(64);
+    let mut manager = SessionManager::new(tx);
+    manager
+        .create(legacy_request(&agent, dir.path(), "s1"))
+        .await
+        .expect("create");
+    let handle = manager.handle("s1").expect("handle");
+    handle.deliver(turn("turn-1")).expect("deliver");
+
+    // Collect the autonomous turn's items in publication order.
+    let mut autonomous: Option<String> = None;
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    loop {
+        match next_event(&mut rx).await {
+            SessionEvent::AutonomousTurnStarted { turn_id, .. } => autonomous = Some(turn_id),
+            SessionEvent::TranscriptItems {
+                turn_id,
+                items: batch,
+                ..
+            } if autonomous.as_deref() == Some(turn_id.as_str()) => items.extend(batch),
+            SessionEvent::TurnFinished { turn_id, .. }
+                if autonomous.as_deref() == Some(turn_id.as_str()) =>
+            {
+                break
+            }
+            _ => {}
+        }
+    }
+    let wake_row = items
+        .iter()
+        .position(|item| {
+            item["status"]
+                .as_str()
+                .is_some_and(|status| status.starts_with("autonomous_turn: "))
+        })
+        .expect("the wake row is published");
+    let prose: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item["kind"] == "assistant_text")
+        .map(|(at, _)| at)
+        .collect();
+    let text: String = prose
+        .iter()
+        .filter_map(|at| items[*at]["text"].as_str())
+        .collect();
+    assert!(
+        text.contains("All nine steps") && text.contains("Failed commands"),
+        "{items:?}"
+    );
+    assert!(
+        prose.iter().all(|at| *at < wake_row),
+        "the wake row interrupted the answer: {items:?}"
+    );
+    manager.shutdown("s1");
+}

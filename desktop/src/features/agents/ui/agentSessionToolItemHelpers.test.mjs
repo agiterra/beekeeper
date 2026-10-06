@@ -9,6 +9,7 @@ import {
   parseShellToolOutput,
   parseToolResultDisplayValue,
   parseToolResultValue,
+  stripWholeMarkdownFence,
 } from "./agentSessionUtils.ts";
 
 // ---- isInlineImageData (dual-layer image-scheme security guard) ----
@@ -148,6 +149,22 @@ test("parseShellToolOutput preserves non-envelope output as raw text", () => {
     stdout: "",
     timedOut: false,
   });
+});
+
+test("stripWholeMarkdownFence removes only a fence that wraps the whole text", () => {
+  assert.equal(stripWholeMarkdownFence("```console\nok\n```"), "ok");
+  assert.equal(stripWholeMarkdownFence("```\na\nb\n```\n"), "a\nb");
+  // claude-agent-acp lengthens the fence when the output holds backticks.
+  assert.equal(
+    stripWholeMarkdownFence("````\n```js\nx\n```\n````"),
+    "```js\nx\n```",
+  );
+  assert.equal(stripWholeMarkdownFence("```\n\n```"), "");
+  assert.equal(stripWholeMarkdownFence("plain output"), "plain output");
+  assert.equal(
+    stripWholeMarkdownFence("before\n```\nx\n```"),
+    "before\n```\nx\n```",
+  );
 });
 
 // ---- getToolDurationDisplay (fallback chain) ----

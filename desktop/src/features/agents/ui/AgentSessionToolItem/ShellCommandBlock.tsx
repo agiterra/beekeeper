@@ -6,6 +6,7 @@ import type { TranscriptToolOutputGap } from "../agentSessionTypes";
 import {
   parseShellToolOutput,
   type ShellToolOutput,
+  stripWholeMarkdownFence,
 } from "../agentSessionUtils";
 import { ToolOutputGapNotice } from "./ToolOutputGapNotice";
 
@@ -13,7 +14,9 @@ import { ToolOutputGapNotice } from "./ToolOutputGapNotice";
  * The text shown under a shell command.
  *
  * On success only stdout matters — stderr is routinely noisy on a command that
- * worked. On a failure the opposite is true: the reason a call failed is almost
+ * worked. A runtime that returns plain text instead of a shell envelope
+ * (claude-agent-acp wraps it in a code fence) leaves stdout empty and the
+ * output in `raw`; on success that text, unfenced, is the output (SV-92). On a failure the opposite is true: the reason a call failed is almost
  * always in stderr or the exit code, and showing stdout alone renders an empty
  * panel under a red "failed" row. So a failed call shows everything the parser
  * recovered, exit code first.
@@ -25,7 +28,8 @@ export function shellBlockOutput(
   isError: boolean,
 ): string {
   if (!isError) {
-    return output.stdout.trimEnd();
+    const stdout = output.stdout.trimEnd();
+    return stdout || stripWholeMarkdownFence(output.raw).trimEnd();
   }
   return [
     output.exitCode !== null ? `Exit code ${output.exitCode}` : "",

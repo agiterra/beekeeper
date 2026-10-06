@@ -169,6 +169,10 @@ pub struct TranscriptTranslator {
     /// Stream-assembled results produced since the last
     /// [`take_stream_checks`](Self::take_stream_checks).
     stream_checks: Vec<StreamCheck>,
+    /// A Task/Agent call's `tool_result`, held for the PostToolUse update
+    /// that carries its run totals. See
+    /// [`hold_spawn_result`](Self::hold_spawn_result).
+    spawn_result: Option<(String, Value)>,
 }
 
 /// A call held back until its arguments stream in.
@@ -388,9 +392,17 @@ struct SpawnFacts {
     subagent_type: Option<String>,
     /// The `model` the call's input asked for. The Agent tool's `model`
     /// argument overrides the subagent definition's own, so when present it
-    /// is the model the subagent ran on; when absent nothing on the wire says
-    /// which model that was, and none is published.
+    /// is the model the subagent ran on.
     model: Option<String>,
+    /// The model the SDK says the subagent actually resolved to
+    /// (`toolResponse.resolvedModel`). Preferred over [`model`](Self::model):
+    /// it is the full id the run used, not the alias the call asked for.
+    resolved_model: Option<String>,
+    /// The run totals, published under these keys, as the adapter reported
+    /// them. Absent ones stay absent rather than being estimated.
+    total_tokens: Option<u64>,
+    duration_ms: Option<u64>,
+    tool_use_count: Option<u64>,
 }
 
 impl SpawnFacts {
@@ -412,24 +424,67 @@ impl SpawnFacts {
         if subagent_type.is_some() {
             self.subagent_type = subagent_type;
         }
-        if self.is_spawn {
-            if let Some(model) = string_field(&input, "model") {
-                self.model = Some(model);
+        if !self.is_spawn {
+            return;
+        }
+        if let Some(model) = string_field(&input, "model") {
+            self.model = Some(model);
+        }
+        // Where the run's totals travel. claude-agent-acp 0.84.0 sends a
+        // non-AIR client the SDK's whole `tool_response` on the call's
+        // PostToolUse update, as `_meta.claudeCode.toolResponse`
+        // (`tool-calls/renderer.js:311-319`) — for an Agent call the
+        // structured AgentOutput, with `totalTokens`, `totalDurationMs`,
+        // `totalToolUseCount` and `resolvedModel`. Its terminal frame carries
+        // no `rawOutput` (`renderer.js:244-252` sends one only for
+        // ExitPlanMode); `rawOutput` is still read for an adapter that puts
+        // the structured output there.
+        for output in [
+            update.pointer("/_meta/claudeCode/toolResponse"),
+            update.get("rawOutput"),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|value| value.is_object())
+        {
+            let read = |aliases: &[&str]| {
+                aliases
+                    .iter()
+                    .find_map(|alias| output.get(*alias).and_then(Value::as_u64))
+            };
+            if let Some(value) = read(&["totalTokens", "total_tokens"]) {
+                self.total_tokens = Some(value);
+            }
+            if let Some(value) = read(&["totalDurationMs", "durationMs", "duration_ms"]) {
+                self.duration_ms = Some(value);
+            }
+            if let Some(value) = read(&["totalToolUseCount", "toolUseCount", "tool_uses"]) {
+                self.tool_use_count = Some(value);
+            }
+            if let Some(model) = string_field(output, "resolvedModel") {
+                self.resolved_model = Some(model);
             }
         }
+    }
+
+    /// Whether this is a spawn whose run totals have not been seen yet: its
+    /// terminal result is worth holding for the PostToolUse update that
+    /// normally follows it.
+    fn awaits_totals(&self) -> bool {
+        self.is_spawn
+            && self.total_tokens.is_none()
+            && self.duration_ms.is_none()
+            && self.tool_use_count.is_none()
     }
 
     /// The `subagent` object for the owning call's `tool_result`, from what
     /// was observed and nothing else; `None` when nothing was.
     ///
-    /// The run totals are read off the terminal frame's `rawOutput` when the
-    /// adapter puts the structured Agent output there. claude-agent-acp
-    /// 0.84.0 does not for a non-AIR client (`tool-calls/renderer.js:244-252`
-    /// sends `rawOutput` only for ExitPlanMode, and the Agent reporter
-    /// renders the report text without its `<usage>` trailer,
-    /// `tool-calls/reporters/agent.js:12-31`), so today these are absent and
-    /// stay absent rather than being estimated.
-    fn object(&self, terminal: &Value) -> Option<Value> {
+    /// The totals and the resolved model come from the call's PostToolUse
+    /// update (`_meta.claudeCode.toolResponse`) or a structured `rawOutput`,
+    /// whichever the adapter sent; see [`absorb`](Self::absorb). An adapter
+    /// that sends neither leaves them absent.
+    fn object(&self) -> Option<Value> {
         if !self.is_spawn {
             return None;
         }
@@ -437,27 +492,16 @@ impl SpawnFacts {
         if let Some(kind) = &self.subagent_type {
             object.insert("type".into(), json!(kind));
         }
-        if let Some(model) = &self.model {
+        if let Some(model) = self.resolved_model.as_ref().or(self.model.as_ref()) {
             object.insert("model".into(), json!(model));
         }
-        if let Some(output) = terminal.get("rawOutput").filter(|v| v.is_object()) {
-            for (key, aliases) in [
-                ("totalTokens", &["totalTokens", "total_tokens"][..]),
-                (
-                    "durationMs",
-                    &["totalDurationMs", "durationMs", "duration_ms"][..],
-                ),
-                (
-                    "toolUseCount",
-                    &["totalToolUseCount", "toolUseCount", "tool_uses"][..],
-                ),
-            ] {
-                if let Some(value) = aliases
-                    .iter()
-                    .find_map(|alias| output.get(*alias).and_then(Value::as_u64))
-                {
-                    object.insert(key.into(), json!(value));
-                }
+        for (key, value) in [
+            ("totalTokens", self.total_tokens),
+            ("durationMs", self.duration_ms),
+            ("toolUseCount", self.tool_use_count),
+        ] {
+            if let Some(value) = value {
+                object.insert(key.into(), json!(value));
             }
         }
         (!object.is_empty()).then_some(Value::Object(object))
@@ -739,6 +783,7 @@ impl TranscriptTranslator {
             held: Vec::new(),
             subagents: Vec::new(),
             stream_checks: Vec::new(),
+            spawn_result: None,
         }
     }
 
@@ -803,6 +848,70 @@ impl TranscriptTranslator {
 
     /// Translate one `params.update` object.
     pub fn on_update(&mut self, update: &Value) -> Vec<Value> {
+        let Some((held_id, _)) = &self.spawn_result else {
+            return self.translate_update(update);
+        };
+        if update.get("sessionUpdate").and_then(Value::as_str) == Some("tool_call_update")
+            && terminal_status(update).is_none()
+            && string_field(update, "toolCallId").as_deref() == Some(held_id.as_str())
+        {
+            // The held spawn's PostToolUse update: its totals complete the
+            // result, which publishes now.
+            return self.complete_spawn_result(update);
+        }
+        let items = self.translate_update(update);
+        let kind = update.get("sessionUpdate").and_then(Value::as_str);
+        let agent_prose = subagent_parent(update).is_none()
+            && matches!(kind, Some("agent_message_chunk" | "agent_thought_chunk"));
+        if items.is_empty() && !agent_prose {
+            // Nothing published and the agent has not moved on to speak: a
+            // usage counter, a sibling subagent's buffered prose, another
+            // call's arguments. The hold costs no ordering yet.
+            return items;
+        }
+        // The agent moved on without the update, so the result goes out as
+        // it is, ahead of everything after it.
+        let mut released = self.release_spawn_result();
+        released.extend(items);
+        released
+    }
+
+    /// Hold a spawn's `tool_result` whose run totals have not arrived.
+    ///
+    /// claude-agent-acp sends an Agent call's totals on its PostToolUse
+    /// update, which normally follows the terminal frame by milliseconds
+    /// (`tools.js:278-279`: "PostToolUse normally follows tool_result").
+    /// Published at the terminal frame, the subagent's report would never
+    /// carry them. The hold ends at that update, at the agent's next
+    /// published item or prose, or at [`flush_all`](Self::flush_all) —
+    /// whichever comes first — so it reorders nothing; when the update never
+    /// comes the result goes out without totals, never with guessed ones.
+    fn hold_spawn_result(&mut self, tool_id: String, item: Value) -> Vec<Value> {
+        let earlier = self.release_spawn_result();
+        self.spawn_result = Some((tool_id, item));
+        earlier
+    }
+
+    fn release_spawn_result(&mut self) -> Vec<Value> {
+        self.spawn_result
+            .take()
+            .map(|(_, item)| item)
+            .into_iter()
+            .collect()
+    }
+
+    fn complete_spawn_result(&mut self, update: &Value) -> Vec<Value> {
+        let subagent = self.absorb(update).spawn.object();
+        let Some((_, mut item)) = self.spawn_result.take() else {
+            return Vec::new();
+        };
+        if let (Some(subagent), Some(object)) = (subagent, item.as_object_mut()) {
+            object.insert("subagent".into(), subagent);
+        }
+        vec![item]
+    }
+
+    fn translate_update(&mut self, update: &Value) -> Vec<Value> {
         let Some(kind) = update.get("sessionUpdate").and_then(Value::as_str) else {
             return Vec::new();
         };
@@ -889,7 +998,18 @@ impl TranscriptTranslator {
                 Some(status) => {
                     let mut items = self.flush_all();
                     items.extend(self.close_owned_subagent(update));
-                    items.push(self.tool_result_item(update, status));
+                    let item = self.tool_result_item(update, status);
+                    let tool_id = string_field(update, "toolCallId").unwrap_or_default();
+                    let awaits_totals = !tool_id.is_empty()
+                        && self
+                            .tools
+                            .get(&tool_id)
+                            .is_some_and(|memo| memo.spawn.awaits_totals());
+                    if awaits_totals {
+                        items.extend(self.hold_spawn_result(tool_id, item));
+                    } else {
+                        items.push(item);
+                    }
                     items
                 }
             },
@@ -1032,7 +1152,8 @@ impl TranscriptTranslator {
     /// it is. They flush on their own boundaries ([`on_update`](Self::on_update))
     /// and at [`close_turn`](Self::close_turn).
     pub fn flush_all(&mut self) -> Vec<Value> {
-        let mut items = self.release_held_in(None);
+        let mut items = self.release_spawn_result();
+        items.extend(self.release_held_in(None));
         items.extend(self.flush_text());
         items.extend(self.flush_thoughts());
         items
@@ -1276,7 +1397,7 @@ impl TranscriptTranslator {
         let tool_kind = memo.kind.clone();
         let input = memo.input.clone();
         let edit = tool_edit_payload(&memo.paths, &memo.changes);
-        let subagent = memo.spawn.object(update);
+        let subagent = memo.spawn.object();
         let streamed = memo.terminal_output.take().map(TerminalOutput::finish);
         let exit_code = memo.exit_code;
         memo.shed_payload();
@@ -2264,11 +2385,15 @@ mod tests {
         assert!(lead_call[0].get("parentToolId").is_none());
 
         let done = translator.on_update(&agent_done("spawn-1", "completed", "report"));
-        assert_eq!(kinds(&done), vec!["assistant_text", "tool_result"]);
+        // The spawn's result itself waits for its PostToolUse totals (SV-94);
+        // the subagent's prose still goes out ahead of it.
+        assert_eq!(kinds(&done), vec!["assistant_text"]);
         assert_eq!(done[0]["text"], "Found it.");
         assert_eq!(done[0]["parentToolId"], "spawn-1");
+        let tail = translator.close_turn();
+        assert_eq!(kinds(&tail), vec!["tool_result"]);
         assert!(
-            done[1].get("parentToolId").is_none(),
+            tail[0].get("parentToolId").is_none(),
             "the spawn is the agent's own call"
         );
         assert!(translator.close_turn().is_empty());
@@ -2419,13 +2544,17 @@ mod tests {
             })
         );
 
-        // What claude-agent-acp 0.84.0 actually sends a non-AIR client: no
-        // rawOutput, no model argument. Only the type survives.
+        // No rawOutput, no model argument, and the PostToolUse update never
+        // comes: the result is held for it, then goes out at the next
+        // boundary with only the type.
         translator.on_update(&agent_spawn(
             "spawn-2",
             json!({ "description": "Again", "prompt": "p", "subagent_type": "general-purpose" }),
         ));
-        let result = translator.on_update(&agent_done("spawn-2", "failed", "boom"));
+        assert!(translator
+            .on_update(&agent_done("spawn-2", "failed", "boom"))
+            .is_empty());
+        let result = translator.flush_all();
         let result = result_of(&result);
         assert_eq!(result["subagent"], json!({ "type": "general-purpose" }));
         assert_eq!(result["isError"], true);
@@ -2436,11 +2565,138 @@ mod tests {
             "spawn-3",
             json!({ "description": "Bare", "prompt": "p" }),
         ));
-        let bare = translator.on_update(&agent_done("spawn-3", "completed", "ok"));
+        assert!(translator
+            .on_update(&agent_done("spawn-3", "completed", "ok"))
+            .is_empty());
+        let bare = translator.flush_all();
         assert!(result_of(&bare).get("subagent").is_none());
         translator.on_update(&tool_call("t9", "Read", json!({ "file_path": "a" })));
         let plain = translator.on_update(&tool_done("t9", "completed", "ok"));
         assert!(result_of(&plain).get("subagent").is_none());
+    }
+
+    /// The PostToolUse update claude-agent-acp 0.84.0 sends a non-AIR client
+    /// for an Agent call (`tool-calls/renderer.js:311-319`), with the
+    /// `tool_response` the SDK recorded in the audit run BK-AUDIT-1006
+    /// (session becbd0cb, `toolUseResult` of the Agent call; content and
+    /// prompt trimmed).
+    fn agent_hook(id: &str) -> Value {
+        update(json!({
+            "_meta": { "claudeCode": {
+                "toolName": "Agent",
+                "toolResponse": {
+                    "status": "completed",
+                    "prompt": "Read src/counter.py and suggest exactly one improvement.",
+                    "agentId": "a554115864eb0e482",
+                    "agentType": "general-purpose",
+                    "content": [{ "type": "text", "text": "Read the file line by line." }],
+                    "resolvedModel": "claude-opus-5-5",
+                    "totalDurationMs": 6405,
+                    "totalTokens": 13794,
+                    "totalToolUseCount": 1,
+                    "usage": { "input_tokens": 3, "output_tokens": 40 },
+                },
+            } },
+            "toolCallId": id,
+            "sessionUpdate": "tool_call_update",
+        }))
+    }
+
+    fn audit_subagent() -> Value {
+        json!({
+            "type": "general-purpose",
+            "model": "claude-opus-5-5",
+            "totalTokens": 13794,
+            "durationMs": 6405,
+            "toolUseCount": 1,
+        })
+    }
+
+    /// SV-94: the hook normally follows the terminal frame. The result waits
+    /// for it and is published once, carrying the run's model and totals.
+    #[test]
+    fn a_spawns_result_carries_the_totals_of_the_hook_that_follows_it() {
+        let mut translator = TranscriptTranslator::new(false);
+        translator.on_update(&agent_spawn(
+            "toolu_spawn",
+            json!({ "description": "Suggest", "prompt": "p", "subagent_type": "general-purpose" }),
+        ));
+        assert!(
+            translator
+                .on_update(&agent_done(
+                    "toolu_spawn",
+                    "completed",
+                    "Read the file line by line."
+                ))
+                .is_empty(),
+            "the result waits for the PostToolUse update"
+        );
+        // A usage counter in between neither publishes nor releases it.
+        assert!(translator
+            .on_update(&json!({ "sessionUpdate": "usage_update", "used": 10, "size": 100 }))
+            .is_empty());
+        let items = translator.on_update(&agent_hook("toolu_spawn"));
+        assert_eq!(kinds(&items), vec!["tool_result"]);
+        assert_eq!(items[0]["subagent"], audit_subagent());
+        assert_eq!(items[0]["content"], "Read the file line by line.");
+        // Published once: nothing is left to flush.
+        assert!(translator
+            .close_turn()
+            .iter()
+            .all(|item| item["kind"] != "tool_result"));
+    }
+
+    /// The hook may also beat the terminal frame; then the result is not
+    /// held at all.
+    #[test]
+    fn a_hook_before_the_terminal_frame_publishes_the_result_at_once() {
+        let mut translator = TranscriptTranslator::new(false);
+        translator.on_update(&agent_spawn(
+            "toolu_spawn",
+            json!({ "description": "Suggest", "prompt": "p", "subagent_type": "general-purpose", "model": "opus" }),
+        ));
+        assert!(translator.on_update(&agent_hook("toolu_spawn")).is_empty());
+        let items = translator.on_update(&agent_done("toolu_spawn", "completed", "report"));
+        // The resolved model wins over the alias the call asked for.
+        assert_eq!(result_of(&items)["subagent"], audit_subagent());
+    }
+
+    /// The hold reorders nothing: when the agent speaks or calls a tool
+    /// before the hook, the result goes out first, as it is.
+    #[test]
+    fn a_held_spawn_result_goes_out_ahead_of_what_follows_it() {
+        let mut translator = TranscriptTranslator::new(false);
+        translator.on_update(&agent_spawn(
+            "spawn-1",
+            json!({ "description": "d", "prompt": "p", "subagent_type": "Explore" }),
+        ));
+        assert!(translator
+            .on_update(&agent_done("spawn-1", "completed", "r1"))
+            .is_empty());
+        let items = translator.on_update(&tool_call("t1", "Read", json!({ "file_path": "a" })));
+        assert_eq!(kinds(&items), vec!["tool_result", "tool_call"]);
+        assert_eq!(items[0]["toolId"], "spawn-1");
+        assert_eq!(items[0]["subagent"], json!({ "type": "Explore" }));
+        // A late hook for a result already published adds nothing.
+        assert!(translator.on_update(&agent_hook("spawn-1")).is_empty());
+
+        // Agent prose releases it too, even though the prose itself is still
+        // buffered.
+        translator.on_update(&agent_spawn(
+            "spawn-2",
+            json!({ "description": "d", "prompt": "p", "subagent_type": "Explore" }),
+        ));
+        assert!(translator
+            .on_update(&agent_done("spawn-2", "completed", "r2"))
+            .is_empty());
+        let items = translator.on_update(&json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": "Done." },
+        }));
+        assert_eq!(kinds(&items), vec!["tool_result"]);
+        assert_eq!(items[0]["toolId"], "spawn-2");
+        let tail = translator.close_turn();
+        assert_eq!(kinds(&tail), vec!["assistant_text"]);
     }
 
     /// A subagent's calls and usage describe the subagent's context window,

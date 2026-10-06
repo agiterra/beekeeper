@@ -23,7 +23,10 @@ import {
 } from "@/features/agents/ui/AgentSessionToolItem/ToolItemRowClasses";
 import { cn } from "@/shared/lib/cn";
 import { CodingSessionSubagentEntry } from "./CodingSessionSubagentEntry";
-import { CodingSessionBackgroundWakeRow } from "./CodingSessionTranscriptBackgroundWake";
+import {
+  CodingSessionAutonomousWakeRow,
+  CodingSessionBackgroundWakeRow,
+} from "./CodingSessionTranscriptBackgroundWake";
 import { useCodingSessionOpenAgentsSurface } from "./CodingSessionTranscriptAgentsSurface";
 import {
   type CodingSessionTurnBackgroundClause,
@@ -151,6 +154,15 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
   const lead: React.ReactNode[] = [];
   const answerBlock: React.ReactNode[] = [];
   let previous: CodingSessionRowKind | null = null;
+  // SV-93: a turn nobody prompted opens on the provider's word for it.
+  if (turn.autonomousWake) {
+    lead.push(
+      <div data-row-kind="activity" key={`autonomous-wake:${turn.id}`}>
+        <CodingSessionAutonomousWakeRow wake={turn.autonomousWake} />
+      </div>,
+    );
+    previous = "activity";
+  }
   for (const [index, entry] of turn.entries.entries()) {
     const isAnchor = fold !== null && index === fold.anchorIndex;
     const isHidden = fold !== null && !foldOpen && hidden.has(index);

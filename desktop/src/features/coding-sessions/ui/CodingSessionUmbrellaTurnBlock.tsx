@@ -32,7 +32,15 @@ import { cn } from "@/shared/lib/cn";
 import { isCodingSessionMissionExecutionItem } from "@/features/coding-sessions/lib/codingSessionMissionExecutionBundle";
 import { codingSessionAgentAccent } from "./CodingSessionAgentFocus";
 import { CodingSessionMissionExecutionBundle } from "./CodingSessionMissionExecutionBundle";
-import type { CodingSessionTurnRestingStatus } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import {
+  codingSessionBackgroundTasksByTurnEqual,
+  deriveCodingSessionBlockBackgroundTasks,
+  deriveCodingSessionTurnAutonomousWake,
+  hasRunningCodingSessionBackgroundTask,
+  type CodingSessionTurnBackgroundTask,
+  type CodingSessionTurnRestingStatus,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import { useCodingSessionOpenAgentsSurface } from "./CodingSessionTranscriptAgentsSurface";
 import type { CodingSessionUmbrellaComposerPrefill } from "./CodingSessionUmbrellaComposer";
@@ -210,6 +218,18 @@ export function CodingSessionUmbrellaTurnBlock({
       }),
     [block.items, hasPriorGeneration, mission],
   );
+  // SV-91: the block's background tasks, read against its whole generation
+  // and handed to the narrative's model. Derived from the block's items alone
+  // they were lost twice over: Mission Live moves the announcing Bash call
+  // into the bundle below, and the `autonomous_turn…` row that answers it
+  // lives in the next block.
+  const backgroundTasksByTurn = useCodingSessionBlockBackgroundTasks({
+    blockItems: block.items,
+    generationSuperseded:
+      execution !== undefined &&
+      execution.activeGeneration.generationId !== block.generationId,
+    transcript: record?.transcript ?? null,
+  });
   const narrativeItems = bundleExecution
     ? missionItems.filter((item) => !isCodingSessionMissionExecutionItem(item))
     : missionItems;
@@ -245,7 +265,10 @@ export function CodingSessionUmbrellaTurnBlock({
     missionCollapseSettled &&
     completed &&
     !isWorking &&
-    !hasCodingSessionMissionAttentionItem(missionItems);
+    !hasCodingSessionMissionAttentionItem(missionItems) &&
+    // A turn that ended with work still going has not plainly finished: its
+    // clause is what a reader scrolling past must see (SV-91).
+    !hasRunningCodingSessionBackgroundTask(backgroundTasksByTurn);
   // F5: the promise is about the rows Mission Live actually renders. In Live
   // the execution bundle is on by the same density gate that turns collapse
   // on, so a turn's tool items arrive as **one** bundle row, not as many —
@@ -254,6 +277,11 @@ export function CodingSessionUmbrellaTurnBlock({
     narrativeItems.length + (executionItems.length > 0 ? 1 : 0);
   const collapsedLine = collapsible
     ? codingSessionCollapsedTurnBlockLine(missionItems)
+    : null;
+  // SV-93: a turn nobody prompted says so even folded to one line — its
+  // origin is the one thing the first sentence cannot tell a reader.
+  const collapsedWake = collapsedLine
+    ? deriveCodingSessionTurnAutonomousWake(missionItems)
     : null;
   // Signed evidence that this execution is a seat this computer hired: the
   // hire host records the actor it seated **and the umbrella it seated it
@@ -354,6 +382,16 @@ export function CodingSessionUmbrellaTurnBlock({
               {liveWord}
             </span>
           )}
+          {collapsedWake ? (
+            <span
+              className="shrink-0 text-2xs text-muted-foreground"
+              data-testid="coding-session-umbrella-collapsed-autonomous-wake"
+            >
+              {collapsedWake.cause === "background-task"
+                ? "Woke on its own · background task"
+                : "Woke on its own"}
+            </span>
+          ) : null}
           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
             {collapsedLine.sentence ?? "No message in this turn"}
           </span>
@@ -508,6 +546,7 @@ export function CodingSessionUmbrellaTurnBlock({
         </p>
       ) : null}
       <CodingSessionTranscript
+        backgroundTasksByTurn={backgroundTasksByTurn}
         currentUserPubkey={currentUserPubkey}
         generationId={block.generationId}
         hireDispatch={hireDispatch}
@@ -527,6 +566,9 @@ export function CodingSessionUmbrellaTurnBlock({
           onToggle={toggleBundle}
         >
           <CodingSessionTranscript
+            // The narrative above says the turn's background tasks; the
+            // bundle holds only its tool calls and says none (SV-91).
+            backgroundTasksByTurn={NO_BLOCK_BACKGROUND_TASKS}
             currentUserPubkey={currentUserPubkey}
             generationId={block.generationId}
             hireDispatch={hireDispatch}
@@ -596,6 +638,44 @@ export function hasCodingSessionMissionAttentionItem(
     }
     return item.type === "tool" && (item.isError || item.status === "failed");
   });
+}
+
+const NO_BLOCK_BACKGROUND_TASKS: ReadonlyMap<
+  string,
+  readonly CodingSessionTurnBackgroundTask[]
+> = new Map();
+
+/**
+ * {@link deriveCodingSessionBlockBackgroundTasks}, kept reference-stable while
+ * its content is unchanged: the map is a dependency of the narrative's model,
+ * and every streamed event replaces `transcript`, so a fresh map per event
+ * would re-derive every block's model for nothing. With no generation
+ * transcript to read (`record` unresolved) the block reads its own items.
+ */
+export function useCodingSessionBlockBackgroundTasks(input: {
+  blockItems: readonly TranscriptItem[];
+  generationSuperseded: boolean;
+  transcript: readonly TranscriptItem[] | null;
+}): ReadonlyMap<string, readonly CodingSessionTurnBackgroundTask[]> {
+  const { blockItems, generationSuperseded, transcript } = input;
+  const previousRef = React.useRef(NO_BLOCK_BACKGROUND_TASKS);
+  const next = React.useMemo(
+    () =>
+      deriveCodingSessionBlockBackgroundTasks({
+        blockItems,
+        generationSuperseded,
+        transcript: transcript ?? blockItems,
+      }),
+    [blockItems, generationSuperseded, transcript],
+  );
+  const stable = codingSessionBackgroundTasksByTurnEqual(
+    previousRef.current,
+    next,
+  )
+    ? previousRef.current
+    : next;
+  previousRef.current = stable;
+  return stable;
 }
 
 /** The maximum length of a collapsed block's summary sentence. */

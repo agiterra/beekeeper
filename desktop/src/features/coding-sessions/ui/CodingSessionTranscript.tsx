@@ -6,6 +6,8 @@ import {
   deriveCodingSessionTranscriptModel,
   stabilizeCodingSessionTranscriptModel,
   type CodingSessionTranscriptModel,
+  type CodingSessionTranscriptModelOptions,
+  type CodingSessionTurnBackgroundTask,
   type CodingSessionTurnRestingStatus,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { useTextSettledCodingSessionEchoes } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
@@ -144,6 +146,16 @@ type CodingSessionTranscriptProps = {
    * line, and no second live announcement. Defaults to `true`.
    */
   showWorkingIndicator?: boolean;
+  /**
+   * Each turn's background tasks, derived by a caller that holds more of the
+   * stream than `items` (SV-91): an umbrella turn block, whose task's answer
+   * lives in a later block. Keep the reference stable — it is a dependency
+   * of the model's derivation. Omitted, the model reads `items` alone.
+   */
+  backgroundTasksByTurn?: ReadonlyMap<
+    string,
+    readonly CodingSessionTurnBackgroundTask[]
+  >;
 };
 
 export const CODING_SESSION_VIRTUALIZATION_THRESHOLD = 40;
@@ -161,6 +173,7 @@ type CodingSessionTranscriptRow =
     };
 
 export function CodingSessionTranscript({
+  backgroundTasksByTurn,
   currentUserPubkey,
   disclosureStore,
   hireDispatch,
@@ -180,6 +193,7 @@ export function CodingSessionTranscript({
   const ownModel = useStableCodingSessionTranscriptModel(
     sharedModel ? null : items,
     isWorking,
+    backgroundTasksByTurn,
   );
   // One of the two is always set: `ownModel` is null only when shared.
   const model = (sharedModel ?? ownModel) as CodingSessionTranscriptModel;
@@ -564,22 +578,28 @@ function CodingSessionSessionDiagnostics({
 export function useStableCodingSessionTranscriptModel(
   items: TranscriptItem[],
   isWorking: boolean,
+  backgroundTasksByTurn?: CodingSessionTranscriptModelOptions["backgroundTasksByTurn"],
 ): CodingSessionTranscriptModel;
 export function useStableCodingSessionTranscriptModel(
   items: TranscriptItem[] | null,
   isWorking: boolean,
+  backgroundTasksByTurn?: CodingSessionTranscriptModelOptions["backgroundTasksByTurn"],
 ): CodingSessionTranscriptModel | null;
 export function useStableCodingSessionTranscriptModel(
   items: TranscriptItem[] | null,
   isWorking: boolean,
+  backgroundTasksByTurn?: CodingSessionTranscriptModelOptions["backgroundTasksByTurn"],
 ): CodingSessionTranscriptModel | null {
   const previousRef = React.useRef<CodingSessionTranscriptModel | null>(null);
   const next = React.useMemo(
     () =>
       items === null
         ? null
-        : deriveCodingSessionTranscriptModel(items, { isWorking }),
-    [isWorking, items],
+        : deriveCodingSessionTranscriptModel(items, {
+            isWorking,
+            backgroundTasksByTurn,
+          }),
+    [backgroundTasksByTurn, isWorking, items],
   );
   if (next === null) {
     previousRef.current = null;

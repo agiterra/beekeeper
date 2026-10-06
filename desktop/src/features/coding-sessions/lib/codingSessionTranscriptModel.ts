@@ -3,7 +3,11 @@ import {
   type CodingSessionSubagentPartition,
   partitionCodingSessionSubagentItems,
 } from "@/features/coding-sessions/lib/codingSessionSubagents";
-import { deriveCodingSessionBackgroundTasks } from "@/features/coding-sessions/lib/codingSessionTranscriptModelBackground";
+import {
+  codingSessionTurnBackgroundTasksFrom,
+  deriveCodingSessionBackgroundTasks,
+  deriveCodingSessionTurnAutonomousWake,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptModelBackground";
 import { deriveCodingSessionChangedFiles } from "@/features/coding-sessions/lib/codingSessionTranscriptModelChanges";
 import { deriveCodingSessionTurnFold } from "@/features/coding-sessions/lib/codingSessionTranscriptModelFold";
 import { parseCodingSessionTurnResult } from "@/features/coding-sessions/lib/codingSessionTranscriptModelFormat";
@@ -34,7 +38,11 @@ import type {
 // One import path for every consumer: the model's pieces live in siblings
 // (split for the 1000-line ceiling) and are re-exported from here.
 export {
+  codingSessionBackgroundTasksByTurnEqual,
+  deriveCodingSessionBlockBackgroundTasks,
+  deriveCodingSessionTurnAutonomousWake,
   formatCodingSessionBackgroundTasks,
+  hasRunningCodingSessionBackgroundTask,
   isCodingSessionTaskNotificationItem,
   outstandingCodingSessionBackgroundTaskIds,
   parseCodingSessionTaskNotifications,
@@ -78,6 +86,7 @@ export {
   type CodingSessionTranscriptStandalone,
   type CodingSessionTranscriptToolItem,
   type CodingSessionTranscriptTurn,
+  type CodingSessionTurnAutonomousWake,
   type CodingSessionTurnBackgroundTask,
   type CodingSessionTurnCompletion,
   type CodingSessionTurnFold,
@@ -95,9 +104,26 @@ type MutableTurn = {
   items: TranscriptItem[];
 };
 
+/** Options for {@link deriveCodingSessionTranscriptModel}. */
+export type CodingSessionTranscriptModelOptions = {
+  isWorking: boolean;
+  /**
+   * Each turn's background tasks, derived by the caller over more than these
+   * items (SV-91). An umbrella turn block holds a window of its execution's
+   * stream — and in Mission Live not even the tool items — so a task derived
+   * over its items alone could never see the wake that answers it. Given,
+   * it is the whole truth: a turn it does not name started none. Omitted, the
+   * model derives tasks over `transcript` itself.
+   */
+  backgroundTasksByTurn?: ReadonlyMap<
+    string,
+    readonly CodingSessionTurnBackgroundTask[]
+  >;
+};
+
 export function deriveCodingSessionTranscriptModel(
   transcript: TranscriptItem[],
-  options: { isWorking: boolean },
+  options: CodingSessionTranscriptModelOptions,
 ): CodingSessionTranscriptModel {
   const rawOrdered: Array<MutableTurn | TranscriptItem> = [];
   const turnsById = new Map<string, MutableTurn>();
@@ -138,7 +164,12 @@ export function deriveCodingSessionTranscriptModel(
     if (isMutableTurn(candidate)) lastTurn = candidate;
   }
   const supersededTurns = findSupersededTurns(ordered, transcript);
-  const backgroundTasks = deriveCodingSessionBackgroundTasks(transcript);
+  const backgroundTasks: TurnBackgroundTasks = options.backgroundTasksByTurn
+    ? { kind: "by-turn", byTurn: options.backgroundTasksByTurn }
+    : {
+        kind: "by-item",
+        byItem: deriveCodingSessionBackgroundTasks(transcript),
+      };
   const blocks: CodingSessionTranscriptBlock[] = [];
   const diagnostics: TranscriptItem[] = [];
 
@@ -290,15 +321,26 @@ function coalesceStandaloneSettledTurns(
   return coalesced;
 }
 
+/** Where a turn's background tasks come from: its own items, or the caller. */
+type TurnBackgroundTasks =
+  | {
+      kind: "by-item";
+      byItem: ReadonlyMap<
+        TranscriptItem,
+        readonly CodingSessionTurnBackgroundTask[]
+      >;
+    }
+  | {
+      kind: "by-turn";
+      byTurn: ReadonlyMap<string, readonly CodingSessionTurnBackgroundTask[]>;
+    };
+
 function deriveTurn(
   turn: MutableTurn,
   canBeWorking: boolean,
   superseded: boolean,
   subagents: CodingSessionSubagentPartition,
-  backgroundTasksByItem: ReadonlyMap<
-    TranscriptItem,
-    readonly CodingSessionTurnBackgroundTask[]
-  >,
+  backgroundTaskSource: TurnBackgroundTasks,
 ): CodingSessionTranscriptTurn {
   const visible: TranscriptItem[] = [];
   const diagnostics: TranscriptItem[] = [];
@@ -394,9 +436,15 @@ function deriveTurn(
     foldsSettledWork: !isWorking && completion?.state === "completed",
   });
   const startedAt = deriveTurnStartedAt(turn.items);
-  const backgroundTasks = turn.items.flatMap(
-    (item) => backgroundTasksByItem.get(item) ?? [],
-  );
+  const backgroundTasks =
+    backgroundTaskSource.kind === "by-turn"
+      ? codingSessionTurnBackgroundTasksFrom(
+          backgroundTaskSource.byTurn,
+          turn.id,
+        )
+      : turn.items.flatMap(
+          (item) => backgroundTaskSource.byItem.get(item) ?? [],
+        );
 
   return {
     kind: "turn",
@@ -412,6 +460,7 @@ function deriveTurn(
     superseded: superseded && completion === null,
     startedAt,
     backgroundTasks,
+    autonomousWake: deriveCodingSessionTurnAutonomousWake(turn.items),
     fold: deriveCodingSessionTurnFold({
       completion,
       entries,

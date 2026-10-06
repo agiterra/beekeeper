@@ -20,6 +20,7 @@ import type {
   CodingSessionWorkspaceStatus,
 } from "@/features/coding-sessions/lib/codingSessionTypes";
 import type { CodingSessionSubagentPanel } from "@/features/coding-sessions/lib/codingSessionSubagents";
+import { markdownToPlainText } from "@/features/projects/lib/projectsViewHelpers";
 import { cn } from "@/shared/lib/cn";
 import { CodingSessionSubagentsSection } from "./CodingSessionSubagentsPanel";
 
@@ -314,7 +315,10 @@ function ExecutionDetail({
         <p className="text-3xs font-semibold tracking-[0.12em] text-muted-foreground uppercase">
           Latest activity
         </p>
-        <p className="mt-2 text-xs leading-5 text-foreground/90">
+        <p
+          className="mt-2 text-xs leading-5 text-foreground/90"
+          data-testid="coding-session-execution-latest-activity"
+        >
           {latest ?? "No attributable activity yet."}
         </p>
       </div>
@@ -403,7 +407,10 @@ function ExecutionCard({
             {runsOn.label}
           </p>
           {record.transcript.length > 0 ? (
-            <p className="mt-2 truncate text-2xs text-muted-foreground">
+            <p
+              className="mt-2 truncate text-2xs text-muted-foreground"
+              data-testid="coding-session-execution-card-activity"
+            >
               {latestActivity(record.transcript)}
             </p>
           ) : null}
@@ -619,7 +626,15 @@ export function executionStatusTone(
   return "text-muted-foreground";
 }
 
-function latestActivity(
+/**
+ * The newest attributable thing a seat did, as one line of plain text.
+ * Exported for test.
+ *
+ * An assistant message is markdown; this line is not a markdown surface, so
+ * the syntax is stripped and runs of whitespace collapsed (SV-95), as the
+ * project activity feed does — "**Failed commands:**" reads as the words.
+ */
+export function latestActivity(
   transcript: CodingSessionExecution["activeGeneration"]["transcript"],
 ): string | null {
   const latest = [...transcript].reverse().find((item) => {
@@ -627,7 +642,9 @@ function latestActivity(
     return item.type === "tool" || item.type === "plan";
   });
   if (!latest) return null;
-  if (latest.type === "message") return latest.text.trim() || null;
+  if (latest.type === "message") {
+    return markdownToPlainText(latest.text).replace(/\s+/g, " ").trim() || null;
+  }
   if (latest.type === "tool") {
     return latest.descriptor.preview
       ? `${latest.descriptor.label} · ${latest.descriptor.preview}`

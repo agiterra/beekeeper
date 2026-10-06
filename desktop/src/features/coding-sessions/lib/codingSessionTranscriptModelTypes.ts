@@ -122,6 +122,18 @@ export type CodingSessionTurnBackgroundTask = {
   status: string | null;
 };
 
+/**
+ * A turn the agent began on its own, as the provider's status rows say
+ * (SV-93). `cause` is `"background-task"` only when a row names a task
+ * notification as what woke it (`autonomous_turn: the agent woke on
+ * task-notification`); otherwise `null` — the provider said the turn was
+ * unprompted and nothing more. `timestamp` is the first such row's.
+ */
+export type CodingSessionTurnAutonomousWake = {
+  cause: "background-task" | null;
+  timestamp: string;
+};
+
 export type CodingSessionTranscriptTurn = {
   kind: "turn";
   id: string;
@@ -144,6 +156,13 @@ export type CodingSessionTranscriptTurn = {
    * with one still `running` has not plainly finished: its row says so.
    */
   backgroundTasks: readonly CodingSessionTurnBackgroundTask[];
+  /**
+   * The provider said nobody prompted this turn (SV-93): its
+   * `autonomous_turn…` status rows, read as one fact. `null` on a prompted
+   * turn, and on one a `<task-notification>` message opens — that message's
+   * own row already says what woke it.
+   */
+  autonomousWake: CodingSessionTurnAutonomousWake | null;
   /** Always `null` while the turn is live: nothing folds while it is watched. */
   fold: CodingSessionTurnFold | null;
 };

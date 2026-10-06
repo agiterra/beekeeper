@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { codingSessionExecutionMachine } from "./CodingSessionExecutionRail.tsx";
+import {
+  codingSessionExecutionMachine,
+  latestActivity,
+} from "./CodingSessionExecutionRail.tsx";
 
 const PROVIDER = "ab".repeat(32);
 const execution = {
@@ -37,4 +40,26 @@ test("while this computer's key is unread, nothing claims to be here", () => {
   });
   assert.equal(unknown.local, false);
   assert.match(unknown.title, /was not read/);
+});
+
+test("latest activity reads an assistant's markdown as plain words (SV-95)", () => {
+  const transcript = [
+    { type: "message", role: "user", text: "go" },
+    {
+      type: "message",
+      role: "assistant",
+      text: "**Failed commands:** only `python3 check.py`\n\n- one\n- two",
+    },
+  ];
+  assert.equal(
+    latestActivity(transcript),
+    "Failed commands: only python3 check.py one two",
+  );
+});
+
+test("latest activity is null for an assistant message of only markup", () => {
+  assert.equal(
+    latestActivity([{ type: "message", role: "assistant", text: "  \n\n " }]),
+    null,
+  );
 });

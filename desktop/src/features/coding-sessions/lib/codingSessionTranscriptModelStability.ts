@@ -1,10 +1,10 @@
 import { codingSessionProseItemsEqual } from "@/features/coding-sessions/lib/codingSessionTranscriptModelText";
+import { codingSessionBackgroundTasksEqual } from "@/features/coding-sessions/lib/codingSessionTranscriptModelBackground";
 import type {
   CodingSessionChangedFile,
   CodingSessionTranscriptBlock,
   CodingSessionTranscriptEntry,
   CodingSessionTranscriptModel,
-  CodingSessionTurnBackgroundTask,
   CodingSessionTurnCompletion,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModelTypes";
 
@@ -70,7 +70,12 @@ function transcriptBlocksEqual(
     left.isWorking === right.isWorking &&
     left.superseded === right.superseded &&
     left.startedAt === right.startedAt &&
-    backgroundTasksEqual(left.backgroundTasks, right.backgroundTasks) &&
+    codingSessionBackgroundTasksEqual(
+      left.backgroundTasks,
+      right.backgroundTasks,
+    ) &&
+    left.autonomousWake?.cause === right.autonomousWake?.cause &&
+    left.autonomousWake?.timestamp === right.autonomousWake?.timestamp &&
     completionsEqual(left.completion, right.completion) &&
     changedFilesEqual(left.changedFiles, right.changedFiles) &&
     arraysReferenceEqual(left.diagnostics, right.diagnostics) &&
@@ -150,24 +155,6 @@ function transcriptEntriesEqual(
     left.id === right.id &&
     left.label === right.label &&
     arraysReferenceEqual(left.items, right.items)
-  );
-}
-
-function backgroundTasksEqual(
-  left: readonly CodingSessionTurnBackgroundTask[],
-  right: readonly CodingSessionTurnBackgroundTask[],
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every((task, index) => {
-      const other = right[index];
-      return (
-        other !== undefined &&
-        task.id === other.id &&
-        task.state === other.state &&
-        task.status === other.status
-      );
-    })
   );
 }
 

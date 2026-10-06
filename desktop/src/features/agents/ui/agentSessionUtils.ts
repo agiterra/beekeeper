@@ -82,6 +82,20 @@ export type ShellToolOutput = {
   timedOut: boolean;
 };
 
+/**
+ * The text inside one whole-string markdown code fence, or the input as given.
+ *
+ * claude-agent-acp returns a Bash call's output as plain text wrapped by its
+ * `markdownEscape` (a run of three or more backticks, a newline, the text, a
+ * newline, the same run), not as a `{stdout, stderr}` envelope (SV-92). Only a
+ * fence that wraps the entire string is removed; a fence in the middle of
+ * output is the output.
+ */
+export function stripWholeMarkdownFence(text: string): string {
+  const match = /^\s*(`{3,})[^\n`]*\r?\n([\s\S]*?)\r?\n?\1\s*$/.exec(text);
+  return match ? (match[2] ?? "") : text;
+}
+
 export function parseShellToolOutput(result: string): ShellToolOutput {
   const parsed = parseToolResultValue(result);
   const record = asRecord(parsed);
