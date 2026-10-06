@@ -260,9 +260,9 @@ Implementations MUST NOT interpret this section as NIP-26 delegation. A future s
 
 ## Public APNs Gateway Profile (Buzz, normative)
 
-> **Beekeeper note.** This profile was registered for the gateway Block operates at `push.buzz.xyz`, for Block's Buzz iOS app. Beekeeper does not operate that host, and Beekeeper's app (`io.agiterra.beekeeper.mobile`) cannot receive pushes through it. The values below are kept verbatim because `crates/buzz-push-gateway` enforces them as wire format; a Beekeeper relay leaves push off unless `BUZZ_PUSH_GATEWAY_DELIVERY_URL` names a gateway (see [push-gateway-deployment.md](../push-gateway-deployment.md)).
+> **Beekeeper note.** This profile was registered for the gateway Block operates at `push.buzz.xyz`, for Block's Buzz iOS app. Beekeeper does not use that host: since 2026-10-06 `crates/buzz-push-gateway` builds in no host, and `<gateway-host>` below stands for the origin of the gateway's configured `BUZZ_PUSH_PUBLIC_DELIVERY_URL`. Beekeeper operates no gateway yet, and a Beekeeper relay leaves push off unless `BUZZ_PUSH_GATEWAY_DELIVERY_URL` names one (see [push-gateway-deployment.md](../push-gateway-deployment.md)).
 
-This section registers the public last-hop profile served at `https://push.buzz.xyz`. It is an optional profile of NIP-PL, but every requirement in this section is normative for implementations that use it. The gateway is stateful: it retains installation authority, encrypted APNs-token custody, relay delegations, replay reservations, and endpoint quotas. The relay remains the executor and retains lease acceptance, matching, tenant authorization, endpoint uniqueness, coalescing, durable jobs/retries, and lease-generation invalidation.
+This section registers the public last-hop profile served at `https://<gateway-host>`. It is an optional profile of NIP-PL, but every requirement in this section is normative for implementations that use it. The gateway is stateful: it retains installation authority, encrypted APNs-token custody, relay delegations, replay reservations, and endpoint quotas. The relay remains the executor and retains lease acceptance, matching, tenant authorization, endpoint uniqueness, coalescing, durable jobs/retries, and lease-generation invalidation.
 
 ### Registered values and lease mapping
 
@@ -313,7 +313,7 @@ Request members, in any request order:
 `expires_at` MUST satisfy `now < expires_at <= now + configured_max_installation_lifetime`; the selected profile MUST be enabled. The exact transcript is domain `buzz.push.enroll.v1` followed by this ordered object:
 
 ```json
-{"v":1,"audience":"https://push.buzz.xyz/v1/installations","challenge_id":"<uuid>","challenge":"<challenge>","key_id":"<standard-base64>","app_profile":"<registered-profile>","endpoint":"<lowercase-hex>","endpoint_epoch":1,"expires_at":<unix-seconds>}
+{"v":1,"audience":"https://<gateway-host>/v1/installations","challenge_id":"<uuid>","challenge":"<challenge>","key_id":"<standard-base64>","app_profile":"<registered-profile>","endpoint":"<lowercase-hex>","endpoint_epoch":1,"expires_at":<unix-seconds>}
 ```
 
 The gateway verifies Apple's attestation chain, configured application identifier, production AAGUID, key identifier, and transcript. Apple documents no APNs-token-to-App-Attest-key binding; token provenance at enrollment is an explicit bootstrap assumption. It then stores only encrypted token custody plus its fingerprint. Success `201`:
@@ -335,7 +335,7 @@ Invalid attestation is `401 invalid_attestation`; a consumed/expired challenge o
 `not_before <= now + 300`, `not_before < expires_at`, and `expires_at <= min(now + configured_max_grant_lifetime, installation.expires_at)`. The endpoint epoch MUST equal the current installation epoch. For each `(installation_handle, relay_pubkey)`, generation MUST strictly increase. Transcript domain `buzz.push.delegate.v1`; ordered object:
 
 ```json
-{"v":1,"audience":"https://push.buzz.xyz/v1/delegations","challenge_id":"<uuid>","challenge":"<challenge>","installation_handle":"<uuid>","endpoint_epoch":<integer>,"generation":<integer>,"relay_pubkey":"<hex>","not_before":<integer>,"expires_at":<integer>}
+{"v":1,"audience":"https://<gateway-host>/v1/delegations","challenge_id":"<uuid>","challenge":"<challenge>","installation_handle":"<uuid>","endpoint_epoch":<integer>,"generation":<integer>,"relay_pubkey":"<hex>","not_before":<integer>,"expires_at":<integer>}
 ```
 
 Success `201`: `{"endpoint_grant":"<opaque-capability>"}`. The sealed grant contains no APNs token. Grant-key rotation MUST retain decrypt-only predecessor keys through the maximum lifetime of grants they issued.
@@ -351,7 +351,7 @@ Success `201`: `{"endpoint_grant":"<opaque-capability>"}`. The sealed grant cont
 `new_endpoint_epoch` MUST equal `endpoint_epoch + 1` without overflow. Transcript domain `buzz.push.rotate-endpoint.v1`; ordered object:
 
 ```json
-{"v":1,"audience":"https://push.buzz.xyz/v1/installations/endpoint","challenge_id":"<uuid>","challenge":"<challenge>","installation_handle":"<uuid>","endpoint_epoch":<integer>,"new_endpoint_epoch":<integer>,"endpoint":"<lowercase-hex>"}
+{"v":1,"audience":"https://<gateway-host>/v1/installations/endpoint","challenge_id":"<uuid>","challenge":"<challenge>","installation_handle":"<uuid>","endpoint_epoch":<integer>,"new_endpoint_epoch":<integer>,"endpoint":"<lowercase-hex>"}
 ```
 
 A successful atomic rotation invalidates every grant sealed to the old epoch and returns `200 {"status":"rotated"}`.
@@ -367,7 +367,7 @@ A successful atomic rotation invalidates every grant sealed to the old epoch and
 Transcript domain `buzz.push.revoke-delegation.v1`; ordered object:
 
 ```json
-{"v":1,"audience":"https://push.buzz.xyz/v1/delegations/revoke","challenge_id":"<uuid>","challenge":"<challenge>","installation_handle":"<uuid>","relay_pubkey":"<hex>","generation":<integer>}
+{"v":1,"audience":"https://<gateway-host>/v1/delegations/revoke","challenge_id":"<uuid>","challenge":"<challenge>","installation_handle":"<uuid>","relay_pubkey":"<hex>","generation":<integer>}
 ```
 
 The generation identifies the current delegation generation. Success is `200 {"status":"revoked"}`.
@@ -381,14 +381,14 @@ The generation identifies the current delegation generation. Success is `200 {"s
 `new_endpoint_epoch` MUST equal `endpoint_epoch + 1` without overflow. Transcript domain `buzz.push.revoke-installation.v1`; ordered object:
 
 ```json
-{"v":1,"audience":"https://push.buzz.xyz/v1/installations/revoke","challenge_id":"<uuid>","challenge":"<challenge>","installation_handle":"<uuid>","endpoint_epoch":<integer>,"new_endpoint_epoch":<integer>}
+{"v":1,"audience":"https://<gateway-host>/v1/installations/revoke","challenge_id":"<uuid>","challenge":"<challenge>","installation_handle":"<uuid>","endpoint_epoch":<integer>,"new_endpoint_epoch":<integer>}
 ```
 
 Success is `200 {"status":"revoked"}`. The revocation atomically invalidates the installation and every delegation.
 
 ### Relay delivery
 
-`POST /v1/deliveries/apns` has the exact externally configured URL `https://push.buzz.xyz/v1/deliveries/apns`. Request:
+`POST /v1/deliveries/apns` has the exact externally configured URL `https://<gateway-host>/v1/deliveries/apns`. Request:
 
 ```json
 {"v":1,"endpoint_grant":"<opaque-capability>","request_id":"<uuid>","expires_at":<unix-seconds>}
@@ -441,4 +441,4 @@ Zombie leases (e.g. `#h` after leaving a channel) are neutralized by match-time 
 - NIP-11 `supported_extensions`: contains `"nip-pl"` pre-numbering; descriptor object `push` as specified in Executor Discovery
 - Classes: `silent`, `default`, `time_sensitive`, `urgent`
 - `h_grammar` values: `"uuid-v4-lowercase"` (initial entry; origins may register additional grammars with this NIP)
-- Public APNs gateway profile: base URL `https://push.buzz.xyz`; app profiles `buzz-ios-production`, `buzz-ios-sandbox`; wire version `1`
+- Public APNs gateway profile: base URL `https://<gateway-host>`; app profiles `buzz-ios-production`, `buzz-ios-sandbox`; wire version `1`

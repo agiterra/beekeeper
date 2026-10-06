@@ -49,6 +49,12 @@ pub struct AppState {
     pub now: fn() -> i64,
     pub accepting: Arc<AtomicBool>,
 }
+/// The audience a client signs into a request transcript: the configured
+/// public origin plus the route path. Derived from `delivery_url` rather than
+/// built in, so a gateway answers only for the host it is deployed at.
+fn request_audience(s: &AppState, path: &str) -> String {
+    format!("{}{path}", s.delivery_url.origin().ascii_serialization())
+}
 fn error(status: StatusCode, code: &'static str) -> Response {
     (status, Json(ErrorBody { error: code })).into_response()
 }
@@ -144,7 +150,7 @@ async fn challenge(State(s): State<AppState>, body: Bytes) -> Response {
 #[derive(serde::Serialize)]
 struct EnrollTranscript<'a> {
     v: u8,
-    audience: &'static str,
+    audience: &'a str,
     challenge_id: uuid::Uuid,
     challenge: &'a str,
     key_id: &'a str,
@@ -177,7 +183,7 @@ async fn enroll(State(s): State<AppState>, body: Bytes) -> Response {
     };
     let t = EnrollTranscript {
         v: r.v,
-        audience: "https://push.buzz.xyz/v1/installations",
+        audience: &request_audience(&s, "/v1/installations"),
         challenge_id: r.challenge_id,
         challenge: &r.challenge,
         key_id: &r.key_id,
@@ -282,7 +288,7 @@ async fn verify_installation_assertion<T: serde::Serialize>(
 #[derive(serde::Serialize)]
 struct DelegateTranscript<'a> {
     v: u8,
-    audience: &'static str,
+    audience: &'a str,
     challenge_id: uuid::Uuid,
     challenge: &'a str,
     installation_handle: uuid::Uuid,
@@ -310,7 +316,7 @@ async fn delegate(State(s): State<AppState>, body: Bytes) -> Response {
     }
     let t = DelegateTranscript {
         v: r.v,
-        audience: "https://push.buzz.xyz/v1/delegations",
+        audience: &request_audience(&s, "/v1/delegations"),
         challenge_id: r.challenge_id,
         challenge: &r.challenge,
         installation_handle: r.installation_handle,
@@ -371,7 +377,7 @@ async fn delegate(State(s): State<AppState>, body: Bytes) -> Response {
 #[derive(serde::Serialize)]
 struct RotateTranscript<'a> {
     v: u8,
-    audience: &'static str,
+    audience: &'a str,
     challenge_id: uuid::Uuid,
     challenge: &'a str,
     installation_handle: uuid::Uuid,
@@ -404,7 +410,7 @@ async fn rotate_endpoint(State(s): State<AppState>, body: Bytes) -> Response {
     };
     let t = RotateTranscript {
         v: r.v,
-        audience: "https://push.buzz.xyz/v1/installations/endpoint",
+        audience: &request_audience(&s, "/v1/installations/endpoint"),
         challenge_id: r.challenge_id,
         challenge: &r.challenge,
         installation_handle: r.installation_handle,
@@ -447,7 +453,7 @@ async fn rotate_endpoint(State(s): State<AppState>, body: Bytes) -> Response {
 #[derive(serde::Serialize)]
 struct RevokeDelegationTranscript<'a> {
     v: u8,
-    audience: &'static str,
+    audience: &'a str,
     challenge_id: uuid::Uuid,
     challenge: &'a str,
     installation_handle: uuid::Uuid,
@@ -464,7 +470,7 @@ async fn revoke_delegation(State(s): State<AppState>, body: Bytes) -> Response {
     }
     let t = RevokeDelegationTranscript {
         v: r.v,
-        audience: "https://push.buzz.xyz/v1/delegations/revoke",
+        audience: &request_audience(&s, "/v1/delegations/revoke"),
         challenge_id: r.challenge_id,
         challenge: &r.challenge,
         installation_handle: r.installation_handle,
@@ -496,7 +502,7 @@ async fn revoke_delegation(State(s): State<AppState>, body: Bytes) -> Response {
 #[derive(serde::Serialize)]
 struct RevokeInstallationTranscript<'a> {
     v: u8,
-    audience: &'static str,
+    audience: &'a str,
     challenge_id: uuid::Uuid,
     challenge: &'a str,
     installation_handle: uuid::Uuid,
@@ -516,7 +522,7 @@ async fn revoke_installation(State(s): State<AppState>, body: Bytes) -> Response
     }
     let t = RevokeInstallationTranscript {
         v: r.v,
-        audience: "https://push.buzz.xyz/v1/installations/revoke",
+        audience: &request_audience(&s, "/v1/installations/revoke"),
         challenge_id: r.challenge_id,
         challenge: &r.challenge,
         installation_handle: r.installation_handle,

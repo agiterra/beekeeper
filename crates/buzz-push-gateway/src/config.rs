@@ -101,8 +101,11 @@ impl Config {
         let public_delivery_url = req(e, "BUZZ_PUSH_PUBLIC_DELIVERY_URL")?
             .parse::<url::Url>()
             .map_err(|_| ConfigError::Invalid("BUZZ_PUSH_PUBLIC_DELIVERY_URL"))?;
+        // No gateway host is built in: this was pinned to Block's `push.buzz.xyz`
+        // while Beekeeper ran no gateway of its own. The operator names the
+        // public URL; request audiences are derived from its origin (http.rs).
         if public_delivery_url.scheme() != "https"
-            || public_delivery_url.host_str() != Some("push.buzz.xyz")
+            || public_delivery_url.host_str().is_none_or(str::is_empty)
             || public_delivery_url.port().is_some()
             || public_delivery_url.path() != "/v1/deliveries/apns"
             || public_delivery_url.query().is_some()
@@ -208,7 +211,7 @@ mod tests {
             ),
             (
                 "BUZZ_PUSH_PUBLIC_DELIVERY_URL".into(),
-                "https://push.buzz.xyz/v1/deliveries/apns".into(),
+                "https://push.example.com/v1/deliveries/apns".into(),
             ),
             (
                 "BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS".into(),
@@ -253,7 +256,19 @@ mod tests {
             ),
             (
                 "BUZZ_PUSH_PUBLIC_DELIVERY_URL",
-                "https://push.example/v1/deliveries/apns",
+                "https://push.example:8443/v1/deliveries/apns",
+            ),
+            (
+                "BUZZ_PUSH_PUBLIC_DELIVERY_URL",
+                "https://push.example/v1/deliveries/other",
+            ),
+            (
+                "BUZZ_PUSH_PUBLIC_DELIVERY_URL",
+                "https://push.example/v1/deliveries/apns?x=1",
+            ),
+            (
+                "BUZZ_PUSH_PUBLIC_DELIVERY_URL",
+                "https://user@push.example/v1/deliveries/apns",
             ),
             ("BUZZ_PUSH_APP_ATTEST_APP_ID", ""),
             ("BUZZ_PUSH_ENABLED_PROFILES", "unknown-profile"),
@@ -265,6 +280,22 @@ mod tests {
             env.insert(key.into(), value.into());
             assert!(Config::from_map(&env).is_err(), "accepted {key}={value}");
         }
+    }
+
+    /// No gateway host is built in: whatever HTTPS host the operator names is
+    /// the one requests are addressed to.
+    #[test]
+    fn public_delivery_url_accepts_the_operator_host() {
+        let mut env = base();
+        env.insert(
+            "BUZZ_PUSH_PUBLIC_DELIVERY_URL".into(),
+            "https://push.agiterra.example/v1/deliveries/apns".into(),
+        );
+        let config = Config::from_map(&env).unwrap();
+        assert_eq!(
+            config.public_delivery_url.host_str(),
+            Some("push.agiterra.example")
+        );
     }
 
     #[test]

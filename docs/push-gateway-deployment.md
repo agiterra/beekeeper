@@ -4,11 +4,11 @@
 > 2026-10-06 with the relay chart: both were inherited from block/buzz and unmaintained here. The
 > runtime requirements below still hold for any deployment of the gateway.
 
-`buzz-push-gateway` is the standalone public APNs last hop. Its wire format still names `push.buzz.xyz` — Block's deployment, not one Beekeeper runs — in the signed audiences and the delivery URL below; Beekeeper operates no push gateway today. Build it with `Dockerfile.push-gateway`; do not run it in the relay image or give relays APNs credentials.
+`buzz-push-gateway` is the standalone public APNs last hop. No gateway host is built in: the operator sets `BUZZ_PUSH_PUBLIC_DELIVERY_URL`, and the audiences clients sign are derived from its origin. (Until 2026-10-06 the code accepted only Block's `push.buzz.xyz`.) Beekeeper operates no push gateway today, and the mobile app has no push enrollment yet. Build it with `Dockerfile.push-gateway`; do not run it in the relay image or give relays APNs credentials.
 
 ## Network and health
 
-- Public listener: `BUZZ_PUSH_BIND_ADDR` (default `0.0.0.0:8080`). Route `https://push.buzz.xyz` to this port.
+- Public listener: `BUZZ_PUSH_BIND_ADDR` (default `0.0.0.0:8080`). Route `https://<gateway-host>` to this port.
 - Private health listener: `BUZZ_PUSH_HEALTH_ADDR` (default `0.0.0.0:8081`). Probe `/_liveness` and `/_readiness`; do not expose this port publicly.
 - Readiness fails when PostgreSQL authority is unavailable. Graceful shutdown stops accepting new requests before draining in-flight APNs calls.
 
@@ -17,7 +17,7 @@
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | PostgreSQL authority/admission store. Runtime credentials need DML on the six gateway tables, not DDL. |
-| `BUZZ_PUSH_PUBLIC_DELIVERY_URL` | Exact externally signed URL, normally `https://push.buzz.xyz/v1/deliveries/apns`. |
+| `BUZZ_PUSH_PUBLIC_DELIVERY_URL` | Exact externally signed URL, `https://<gateway-host>/v1/deliveries/apns` (HTTPS, no port, query or credentials). Its origin is also the audience every client transcript signs. |
 | `BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS` | Maximum delegation capability lifetime (`1..=31536000`). |
 | `BUZZ_PUSH_MAX_INSTALLATION_LIFETIME_SECONDS` | Maximum encrypted-token installation lifetime (default 90 days, max one year). Clients must renew before expiry. |
 | `BUZZ_PUSH_ENABLED_PROFILES` | Comma-separated `buzz-ios-production` and/or `buzz-ios-sandbox`. |
