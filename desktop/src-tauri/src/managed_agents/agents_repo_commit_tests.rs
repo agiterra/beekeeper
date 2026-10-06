@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use super::*;
 use crate::commands::project_git_exec::build_test_git_auth_config;
 use crate::managed_agents::agents_repo_read::{list_tip, read_tip, AgentsRepoCheckout};
-use buzz_persona_pkg::template::TemplateCatalog;
+use beekeeper_persona_pkg::template::TemplateCatalog;
 
 const PROJECT: &str =
     "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:tank-loop";
@@ -57,7 +57,8 @@ impl Fixture {
             &["init", "--bare", "--quiet", "--initial-branch=main"],
         );
         let catalog = TemplateCatalog::load(&templates(), "test").expect("catalog");
-        buzz_persona_pkg::seed::write_agents_repo_seed(&seed, &catalog, "tank-loop").expect("seed");
+        beekeeper_persona_pkg::seed::write_agents_repo_seed(&seed, &catalog, "tank-loop")
+            .expect("seed");
         git(&auth, &seed, &["init", "--quiet", "--initial-branch=main"]);
         git(&auth, &seed, &["add", "--all"]);
         git(&auth, &seed, &["commit", "--quiet", "-m", "seed"]);

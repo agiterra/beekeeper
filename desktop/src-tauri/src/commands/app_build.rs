@@ -56,7 +56,7 @@ pub(crate) fn parse_app_build_identity(
         .map(str::to_ascii_lowercase);
     // A count without a commit describes nothing, so it is dropped rather
     // than carried: the pair is the unit of meaning, exactly as it is on the
-    // relay side (`resolve_stamp` in `crates/buzz-relay/build.rs`).
+    // relay side (`resolve_stamp` in `crates/beekeeper-relay/build.rs`).
     let commit_count = commit.as_ref().and_then(|_| {
         commit_count
             .map(str::trim)

@@ -293,7 +293,7 @@ function seededEntries(): RelayEvent[] {
     type: "plan",
     text: "Wire contract landed; starting relay ingest.",
     branch: "wip/project-pulse",
-    codeAreas: ["crates/buzz-relay/src/handlers/ingest.rs"],
+    codeAreas: ["crates/beekeeper-relay/src/handlers/ingest.rs"],
     supersedes: original.id,
   });
   const blocker = pulseEntry({
@@ -301,7 +301,7 @@ function seededEntries(): RelayEvent[] {
     createdAtOffset: 900,
     type: "blocker",
     text: "Do not touch pool.rs; the creation path is half-migrated.",
-    codeAreas: ["crates/buzz-acp/src/pool.rs"],
+    codeAreas: ["crates/beekeeper-acp/src/pool.rs"],
   });
   const peerClaim = pulseEntry({
     secret: PEER_SECRET,
@@ -1224,7 +1224,7 @@ test("the Pulse screen, its retired entries and its session cards survive dark m
             createdAtOffset: 900,
             type: "blocker",
             text: "Do not touch pool.rs; the creation path is half-migrated.",
-            codeAreas: ["crates/buzz-acp/src/pool.rs"],
+            codeAreas: ["crates/beekeeper-acp/src/pool.rs"],
             coordinate: SESSIONS_COORDINATE,
           }),
         ];

@@ -133,7 +133,7 @@ pub fn key_file_path(home: &Path, instance: Instance) -> PathBuf {
 }
 
 /// Parse one candidate secret, exactly as the provider's own config does
-/// (`buzz_session_provider::config`: `Keys::parse` on the trimmed value).
+/// (`beekeeper_session_provider::config`: `Keys::parse` on the trimmed value).
 ///
 /// Parsing it here as well is not duplication for its own sake: the host must
 /// refuse an unusable key *before* spawning, so the failure reads as "your key

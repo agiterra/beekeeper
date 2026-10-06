@@ -365,7 +365,7 @@ fn parse_join_deep_link(url: &Url) -> Option<serde_json::Value> {
 }
 
 /// Hosts of the `beekeeper://` git-entity links built by
-/// `desktop/src/shared/lib/entityLink.ts` and `crates/buzz-cli/src/links.rs`.
+/// `desktop/src/shared/lib/entityLink.ts` and `crates/beekeeper-cli/src/links.rs`.
 const ENTITY_LINK_HOSTS: [&str; 4] = ["repo", "project", "pr", "issue"];
 
 fn is_hex64(value: &str) -> bool {

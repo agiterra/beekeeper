@@ -119,7 +119,7 @@ export function foldProjectPulseDigest(
       // The content field is the claim; the `branch` tag exists so a relay
       // filter can see it, and the validator already proved the two agree
       // whenever both are present. Falling back to the tag keeps this fold
-      // byte-identical to the Rust one (`crates/buzz-cli/src/commands/pulse.rs`
+      // byte-identical to the Rust one (`crates/beekeeper-cli/src/commands/pulse.rs`
       // `branch: entry.branch.or_else(tag "branch")`) for an entry that
       // carries only the tag.
       branch: decoded.entry.branch ?? tagValue(event, "branch"),

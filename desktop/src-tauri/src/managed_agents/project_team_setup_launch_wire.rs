@@ -3,10 +3,10 @@ use super::*;
 use crate::relay::{
     query_relay_at_with_keys, relay_http_base_url, submit_signed_event_at_with_keys,
 };
-use buzz_core_pkg::coding_session_payload::{
+use beekeeper_core_pkg::coding_session_payload::{
     decode_coding_session_lifecycle_receipt, LifecycleReceipt, ReceiptStatus,
 };
-use buzz_core_pkg::kind::{KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_PROJECT};
+use beekeeper_core_pkg::kind::{KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_PROJECT};
 use serde_json::json;
 
 fn exact_tag(event: &Event, name: &str, value: &str) -> bool {
@@ -201,10 +201,10 @@ pub(crate) async fn ensure_membership(
         if current.iter().any(|member| member == pubkey) {
             continue;
         }
-        let event = buzz_sdk_pkg::builders::build_add_member(
+        let event = beekeeper_sdk_pkg::builders::build_add_member(
             channel_uuid,
             pubkey,
-            Some(buzz_core_pkg::channel::MemberRole::Bot),
+            Some(beekeeper_core_pkg::channel::MemberRole::Bot),
         )
         .map_err(|e| invalid(e.to_string()))?
         .sign_with_keys(keys)
@@ -266,7 +266,7 @@ pub(super) fn verified_receipt(
         return None;
     }
     let channel = uuid::Uuid::parse_str(&saved.reservation.channel_id).ok()?;
-    let expected = buzz_sdk_pkg::builders::build_coding_session_lifecycle_receipt(
+    let expected = beekeeper_sdk_pkg::builders::build_coding_session_lifecycle_receipt(
         channel,
         &receipt.command_id,
         &event.content,

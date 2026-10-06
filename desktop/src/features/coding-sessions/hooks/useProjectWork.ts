@@ -3,7 +3,7 @@
  *
  * The division of labour is the team-transaction fold's: **this hook owns the
  * subscription, `buzz-core` owns the fold.** The query list below is the same
- * set `bee sessions work status` reads (`crates/buzz-cli/src/commands/
+ * set `bee sessions work status` reads (`crates/beekeeper-cli/src/commands/
  * sessions/work.rs`), so the two surfaces establish coverage from the same
  * evidence.
  *

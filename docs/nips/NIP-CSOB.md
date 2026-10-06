@@ -132,7 +132,7 @@ different facts.
 the same `(author, source, gate)` is counted in `truncated.displacedGates` (and
 `displacedFindings`), so a `failed` row replaced by a `passed` one cannot read
 like a gate that had only ever passed. (Added 2026-09-02, after a seat's prose
-"`cargo test -p buzz-cli` green" was reproduced red on the same patch by a
+"`cargo test -p beekeeper-cli` green" was reproduced red on the same patch by a
 verifier — an agent's account of its own work is a claim, and only a record
 produced without its cooperation is evidence.)
 
@@ -383,7 +383,7 @@ then have to un-believe: an observation binds nothing in the first place.
 The relay validates **structure**: schema, tags, closed vocabularies, bounds,
 tag-to-content parity. It adjudicates nothing else.
 
-Concretely, at ingest (`crates/buzz-relay/src/handlers/ingest.rs`): 44246 is a
+Concretely, at ingest (`crates/beekeeper-relay/src/handlers/ingest.rs`): 44246 is a
 coding-session kind, so it takes `Scope::MessagesWrite` and passes the strict
 channel-membership gate **before** its content is parsed — a non-member is
 refused for want of standing in the channel, not for anything its JSON says.
@@ -435,12 +435,12 @@ gate and finding entries.
 
 | Layer | Path |
 |---|---|
-| Types, decoder, validator, envelope | `crates/buzz-core/src/coding_session_observation.rs` |
-| Bounded fold | `crates/buzz-core/src/coding_session_observation_fold.rs` |
-| Kind allocation and assertions | `crates/buzz-core/src/kind.rs` |
-| Signed builder | `crates/buzz-sdk/src/coding_session_observation.rs` |
-| Writer and reader (`bee sessions observe`, `bee sessions observations`) | `crates/buzz-cli/src/commands/sessions/observations.rs` |
-| Relay structural validation | `crates/buzz-relay/src/handlers/ingest.rs` (scope, membership, envelope arm) |
+| Types, decoder, validator, envelope | `crates/beekeeper-core/src/coding_session_observation.rs` |
+| Bounded fold | `crates/beekeeper-core/src/coding_session_observation_fold.rs` |
+| Kind allocation and assertions | `crates/beekeeper-core/src/kind.rs` |
+| Signed builder | `crates/beekeeper-sdk/src/coding_session_observation.rs` |
+| Writer and reader (`bee sessions observe`, `bee sessions observations`) | `crates/beekeeper-cli/src/commands/sessions/observations.rs` |
+| Relay structural validation | `crates/beekeeper-relay/src/handlers/ingest.rs` (scope, membership, envelope arm) |
 
 **Residual, stated plainly:** ingest registration for kind 44246 landed with
 this NIP, so the relay will store an observation — but **nothing here has been
@@ -490,7 +490,7 @@ agent's memory.
    for this harness *is* the command line, not a generic label). Before the
    fix the observer read the command only off the call, so this harness's
    gates — genuinely run, genuinely green — never became a row. The observer
-   (`crates/buzz-session-provider/src/gate_observer.rs`) now remembers every
+   (`crates/beekeeper-session-provider/src/gate_observer.rs`) now remembers every
    `execute` call regardless of where or whether it names a command, and
    resolves the command at the result — result's `input.command`, then the
    call's own, then the result's `toolName` — before matching it against the
@@ -511,7 +511,7 @@ Until they land:
   about.
 
 Consumers must read `source` through one adapter that tolerates its absence
-(`buzz_core::pulse_mission::PulseGateSource::from_wire_token`), and must not
+(`beekeeper_core::pulse_mission::PulseGateSource::from_wire_token`), and must not
 promote an unknown token to `observed`.
 
 ### What a checkpoint may not carry

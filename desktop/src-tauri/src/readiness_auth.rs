@@ -32,13 +32,13 @@ pub(crate) fn inspect_auth_tag(
     let Ok(subject) = PublicKey::from_hex(subject_hex) else {
         return invalid();
     };
-    let Ok(tag) = buzz_sdk_pkg::nip_oa::parse_auth_tag(raw) else {
+    let Ok(tag) = beekeeper_sdk_pkg::nip_oa::parse_auth_tag(raw) else {
         return invalid();
     };
     if tag.as_slice().get(2).map(String::as_str) != Some("") {
         return invalid();
     }
-    match buzz_sdk_pkg::nip_oa::verify_auth_tag(raw, &subject) {
+    match beekeeper_sdk_pkg::nip_oa::verify_auth_tag(raw, &subject) {
         Ok(owner) => {
             let owner = owner.to_hex();
             let owner_mismatch = expected_owner.is_some_and(|expected| expected != owner);

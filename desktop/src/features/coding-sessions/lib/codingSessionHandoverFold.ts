@@ -1,5 +1,5 @@
 /**
- * The TypeScript twin of `crates/buzz-core/src/coding_session_handover_fold.rs`.
+ * The TypeScript twin of `crates/beekeeper-core/src/coding_session_handover_fold.rs`.
  *
  * Pinned to that fold's own fixture
  * (`codingSessionHandover.fixture.json`, written by

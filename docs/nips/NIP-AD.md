@@ -65,17 +65,17 @@ Content is JSON, at most 65,536 bytes (the relay's advertised `max_content_len`)
 
 `plans/`, `roles/` and `skills/` stay flat: a plan's path is cited by every adopted `planRef` and a role's stem is a `team.yml` key, while a document is cited by nothing and so may be organised. Folders nest up to **eight components** under `docs/` (the last of them the file), inside the 512-byte path cap, and a folder name follows the document-stem rule — at most 96 bytes of `[A-Za-z0-9._-]`, never leading with `.` or `-`. Extensions are lowercase, so one path names one file. `archive` is an ordinary folder name here: the documents tree has no archive rule, and a document is moved or deleted. `.gitkeep` is admitted **only** under `docs/`, and it is *draftable* there — git has no empty directories, so a folder someone created and has not filled yet exists only as its keep; without that, creating or pinning an empty folder would be something a client claims and the next commit drops.
 
-The single validator is `crates/buzz-core/src/agents_repo_draft.rs`; the relay, the SDK builder and `bee agents-repo` call it and keep no copy. The path grammar has its own cross-language corpus, `conformance/agents-repo-draft-path/`.
+The single validator is `crates/beekeeper-core/src/agents_repo_draft.rs`; the relay, the SDK builder and `bee agents-repo` call it and keep no copy. The path grammar has its own cross-language corpus, `conformance/agents-repo-draft-path/`.
 
 ## Relay behaviour
 
-Admission, withholding, live fan-out, the SQL pushdown and the HTTP request-shape rule are the Pulse and to-do rules, inherited through `buzz_core::kind::is_project_a_scoped_kind` (44240, 44248, 44250, 44251): a private project's owner or collaborator may write, a viewer may not (`OK false "restricted: …"`, **403** over `POST /events`, CLI exit 3); a stored op is withheld from a reader whose hidden-private-project set contains its coordinate; `{"kinds":[44250],"#a":[c]}` is accepted, an unscoped or mixed filter is `400`.
+Admission, withholding, live fan-out, the SQL pushdown and the HTTP request-shape rule are the Pulse and to-do rules, inherited through `beekeeper_core::kind::is_project_a_scoped_kind` (44240, 44248, 44250, 44251): a private project's owner or collaborator may write, a viewer may not (`OK false "restricted: …"`, **403** over `POST /events`, CLI exit 3); a stored op is withheld from a reader whose hidden-private-project set contains its coordinate; `{"kinds":[44250],"#a":[c]}` is accepted, an unscoped or mixed filter is `400`.
 
 Three checks are this kind's own, made at ingest and answered as a rejection (**400**, CLI exit 2) because they are facts about the event against the world, not about the author's authority:
 
 1. **The draft names the project's agents repository.** `ad-repo` must equal the `repo` of the project's newest kind:30624. A project with no source is refused ("has no agents repository"); a draft for another repository is refused naming what the source pins. On a re-point, stored drafts for the old repository stay stored; the fold reports them as `otherRepo`, never drops them silently.
 2. **An `asset.put` names a blob this community holds.** The relay reads the community-scoped sidecar — the tenant read gate for otherwise shared content-addressed bytes — and requires the blob to be there with exactly the `mime` and `size` the op claims. Reading the raw object instead would let a draft in one community name a blob only another ever uploaded. Three client claims therefore become relay-checked facts, and a reader may show the image on the strength of the op alone.
-3. **A `commit.record` names a commit on `main`.** The relay loads the repository's manifest chain (no pack is hydrated) and requires `commit` to be `refs/heads/main` now, or to have been its tip within the last 32 published states (`crates/buzz-relay/src/api/git/hydrate.rs` `commit_was_main_tip`). A record is therefore a relay-checked fact every reader may close drafts on, not a client's claim; a store failure is an internal error, never a silent accept.
+3. **A `commit.record` names a commit on `main`.** The relay loads the repository's manifest chain (no pack is hydrated) and requires `commit` to be `refs/heads/main` now, or to have been its tip within the last 32 published states (`crates/beekeeper-relay/src/api/git/hydrate.rs` `commit_was_main_tip`). A record is therefore a relay-checked fact every reader may close drafts on, not a client's claim; a store failure is an internal error, never a silent accept.
 
 What the relay does **not** check, stated so nobody reads more into a record than it says: that the named drafts' text is what landed in that commit. A committer who names drafts it did not apply closes them wrongly; nothing is deleted, the fold lists them under `commits[].drafts`, and the author re-opens by putting again with `prev` = the closed id.
 
@@ -100,7 +100,7 @@ The digest is `buzz-agents-repo-draft-digest/v2` — **v2** added `sha256`, `mim
 
 ## Committing
 
-A committer (`bee agents-repo commit`, the desktop's Commit button) fetches `main`'s tip `T`; refuses any chosen head whose `base` is not `T`'s blob at its path (`stale-base`, naming path and author) and any move whose destination exists; builds the tree from `T`'s index plus the heads; materializes it and validates it with `buzz_persona::agents_repo::validate_root` (manifest, live roles composed against the shipped templates, skills, `actions.yml`) — any refusal names its path and nothing is pushed; commits as the committer with `Co-authored-by:` per draft author, `Signed-off-by:` and a `Beekeeper-Drafts:` trailer; pushes `--force-with-lease=refs/heads/main:T`; verifies with `ls-remote` — a push whose verify failed is reported **unknown**, never "failed"; then publishes a `commit.record` naming the commit, the paths, and every open op on each landed path (head and superseded). A record that could not be published after a push that landed is disclosed with the repair verb `bee agents-repo commit-record <sha> --draft <id>…`.
+A committer (`bee agents-repo commit`, the desktop's Commit button) fetches `main`'s tip `T`; refuses any chosen head whose `base` is not `T`'s blob at its path (`stale-base`, naming path and author) and any move whose destination exists; builds the tree from `T`'s index plus the heads; materializes it and validates it with `beekeeper_persona::agents_repo::validate_root` (manifest, live roles composed against the shipped templates, skills, `actions.yml`) — any refusal names its path and nothing is pushed; commits as the committer with `Co-authored-by:` per draft author, `Signed-off-by:` and a `Beekeeper-Drafts:` trailer; pushes `--force-with-lease=refs/heads/main:T`; verifies with `ls-remote` — a push whose verify failed is reported **unknown**, never "failed"; then publishes a `commit.record` naming the commit, the paths, and every open op on each landed path (head and superseded). A record that could not be published after a push that landed is disclosed with the repair verb `bee agents-repo commit-record <sha> --draft <id>…`.
 
 ## Timestamps
 
@@ -118,8 +118,8 @@ The relay refuses any event whose `created_at` is more than 900 s from its clock
 
 ## Reference
 
-- Kind and predicates: `crates/buzz-core/src/kind.rs` (`KIND_AGENTS_REPO_DRAFT_OP`, `is_project_a_scoped_kind`).
-- Validator: `crates/buzz-core/src/agents_repo_draft.rs`. Fold: `crates/buzz-core/src/agents_repo_draft_fold.rs`. Tree validation: `crates/buzz-persona/src/agents_repo.rs`.
-- Relay: `crates/buzz-relay/src/handlers/agents_repo_draft.rs`, `handlers/ingest.rs`, `api/git/hydrate.rs` (`commit_was_main_tip`), `api/git/read_routes.rs`.
-- SDK: `crates/buzz-sdk/src/builders.rs` (`build_agents_repo_draft_op`, `build_delete_event`). CLI: `crates/buzz-cli/src/commands/agents_repo.rs`, `agents_repo_git.rs`.
-- End-to-end: `crates/buzz-test-client/tests/e2e_agents_repo_drafts.rs`.
+- Kind and predicates: `crates/beekeeper-core/src/kind.rs` (`KIND_AGENTS_REPO_DRAFT_OP`, `is_project_a_scoped_kind`).
+- Validator: `crates/beekeeper-core/src/agents_repo_draft.rs`. Fold: `crates/beekeeper-core/src/agents_repo_draft_fold.rs`. Tree validation: `crates/beekeeper-persona/src/agents_repo.rs`.
+- Relay: `crates/beekeeper-relay/src/handlers/agents_repo_draft.rs`, `handlers/ingest.rs`, `api/git/hydrate.rs` (`commit_was_main_tip`), `api/git/read_routes.rs`.
+- SDK: `crates/beekeeper-sdk/src/builders.rs` (`build_agents_repo_draft_op`, `build_delete_event`). CLI: `crates/beekeeper-cli/src/commands/agents_repo.rs`, `agents_repo_git.rs`.
+- End-to-end: `crates/beekeeper-test-client/tests/e2e_agents_repo_drafts.rs`.

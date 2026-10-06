@@ -67,7 +67,7 @@ if [[ "${1:-}" == "--remote" ]]; then
         || [ ! -x /usr/local/bin/buzz-mirror-bridge ]; then
         rm -rf /tmp/bridge-build
         git -c safe.directory="$MIRROR_REPO" clone -q "$MIRROR_REPO" /tmp/bridge-build
-        if [ ! -d /tmp/bridge-build/crates/buzz-mirror-bridge ]; then
+        if [ ! -d /tmp/bridge-build/crates/beekeeper-mirror-bridge ]; then
             echo "mirror clone predates the bridge crate — land the bridge" >&2
             echo "commit on main and let the mirror update, then re-run" >&2
             exit 1
@@ -76,7 +76,7 @@ if [[ "${1:-}" == "--remote" ]]; then
             'apk add -q --no-progress musl-dev build-base perl git && \
              cargo build -q --release -p git-credential-nostr && \
              cargo build -q --release -p git-credential-nostr --example pubkey && \
-             cargo build -q --release -p buzz-mirror-bridge'
+             cargo build -q --release -p beekeeper-mirror-bridge'
         install -m755 /tmp/bridge-build/target/release/git-credential-nostr /usr/local/bin/
         install -m755 /tmp/bridge-build/target/release/examples/pubkey /usr/local/bin/nostr-keyfile-pubkey
         install -m755 /tmp/bridge-build/target/release/buzz-mirror-bridge /usr/local/bin/

@@ -1,40 +1,40 @@
 [workspace]
 members = [
-    "crates/buzz-relay",
-    "crates/buzz-core",
-    "crates/buzz-conformance",
-    "crates/buzz-push-gateway",
-    "crates/buzz-db",
-    "crates/buzz-pubsub",
-    "crates/buzz-auth",
-    "crates/buzz-search",
-    "crates/buzz-audit",
-    "crates/buzz-acp",
-    "crates/buzz-agent",
+    "crates/beekeeper-relay",
+    "crates/beekeeper-core",
+    "crates/beekeeper-conformance",
+    "crates/beekeeper-push-gateway",
+    "crates/beekeeper-db",
+    "crates/beekeeper-pubsub",
+    "crates/beekeeper-auth",
+    "crates/beekeeper-search",
+    "crates/beekeeper-audit",
+    "crates/beekeeper-acp",
+    "crates/beekeeper-agent",
     "crates/sprig",
-    "crates/buzz-test-client",
-    "crates/buzz-ws-client",
-    "crates/buzz-admin",
-    "crates/buzz-deletion",
-    "crates/buzz-workflow",
-    "crates/buzz-media",
-    "crates/buzz-cli",
-    "crates/buzz-pairing-cli",
-    "crates/buzz-sdk",
-    "crates/buzz-session-provider",
+    "crates/beekeeper-test-client",
+    "crates/beekeeper-ws-client",
+    "crates/beekeeper-admin",
+    "crates/beekeeper-deletion",
+    "crates/beekeeper-workflow",
+    "crates/beekeeper-media",
+    "crates/beekeeper-cli",
+    "crates/beekeeper-pairing-cli",
+    "crates/beekeeper-sdk",
+    "crates/beekeeper-session-provider",
     "crates/beekeeper-host-core",
     "crates/beekeeper-host",
-    "crates/buzz-persona",
-    "crates/buzz-mirror-bridge",
+    "crates/beekeeper-persona",
+    "crates/beekeeper-mirror-bridge",
     "crates/git-credential-nostr",
     "crates/git-sign-nostr",
-    "crates/buzz-pair-relay",
-    "crates/buzz-relay-mesh",
-    "crates/buzz-dev-mcp",
-    "crates/buzz-shell-host",
-    "crates/buzz-voice",
-    "crates/buzz-backend-kubernetes",
-    "crates/buzz-datastore-tracing",
+    "crates/beekeeper-pair-relay",
+    "crates/beekeeper-relay-mesh",
+    "crates/beekeeper-dev-mcp",
+    "crates/beekeeper-shell-host",
+    "crates/beekeeper-voice",
+    "crates/beekeeper-backend-kubernetes",
+    "crates/beekeeper-datastore-tracing",
     "examples/countdown-bot",
 ]
 exclude = ["desktop/src-tauri"]
@@ -148,20 +148,20 @@ rmcp = { version = "1.1.0", features = ["server", "transport-io", "macros"] }
 schemars = { version = "1", default-features = false }
 
 # Internal crates
-buzz-core = { path = "crates/buzz-core" }
-buzz-conformance = { path = "crates/buzz-conformance" }
-buzz-db = { path = "crates/buzz-db" }
-buzz-deletion = { path = "crates/buzz-deletion" }
-buzz-auth = { path = "crates/buzz-auth" }
-buzz-pubsub = { path = "crates/buzz-pubsub" }
-buzz-search = { path = "crates/buzz-search" }
-buzz-audit = { path = "crates/buzz-audit" }
-buzz-workflow = { path = "crates/buzz-workflow" }
-buzz-media = { path = "crates/buzz-media" }
-buzz-sdk = { path = "crates/buzz-sdk" }
-buzz-ws-client = { path = "crates/buzz-ws-client" }
-buzz-relay-mesh = { path = "crates/buzz-relay-mesh" }
-buzz-datastore-tracing = { path = "crates/buzz-datastore-tracing" }
+beekeeper-core = { path = "crates/beekeeper-core" }
+beekeeper-conformance = { path = "crates/beekeeper-conformance" }
+beekeeper-db = { path = "crates/beekeeper-db" }
+beekeeper-deletion = { path = "crates/beekeeper-deletion" }
+beekeeper-auth = { path = "crates/beekeeper-auth" }
+beekeeper-pubsub = { path = "crates/beekeeper-pubsub" }
+beekeeper-search = { path = "crates/beekeeper-search" }
+beekeeper-audit = { path = "crates/beekeeper-audit" }
+beekeeper-workflow = { path = "crates/beekeeper-workflow" }
+beekeeper-media = { path = "crates/beekeeper-media" }
+beekeeper-sdk = { path = "crates/beekeeper-sdk" }
+beekeeper-ws-client = { path = "crates/beekeeper-ws-client" }
+beekeeper-relay-mesh = { path = "crates/beekeeper-relay-mesh" }
+beekeeper-datastore-tracing = { path = "crates/beekeeper-datastore-tracing" }
 
 # CI profile — builds the relay for desktop e2e. Dependencies keep full
 # release optimization (warm from main's cache; they carry the runtime hot

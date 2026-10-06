@@ -11,7 +11,7 @@
  *
  * The desktop cannot resolve that: it has no clone. `bee git check` can, and
  * discloses which method it used (`EnforcementCheckMethod::{Ancestry,Date}`,
- * `crates/buzz-cli/src/commands/git_setup.rs`). This module mirrors that
+ * `crates/beekeeper-cli/src/commands/git_setup.rs`). This module mirrors that
  * discipline — every verdict names its method, and the copy carries the
  * method into the sentence the user reads, because a bare "12 commits behind"
  * would be a control that lies whenever the assumption fails.

@@ -84,16 +84,16 @@ done
 
 # ── the injected package graph ───────────────────────────────────────────────
 # Shaped like this repository's: buzz-cli is not the leaf it looks like
-# (crates/buzz-dev-mcp/Cargo.toml:17 and crates/sprig both depend on it), and
+# (crates/beekeeper-dev-mcp/Cargo.toml:17 and crates/sprig both depend on it), and
 # beekeeper-desktop lives in the second workspace.
 cat >"$work/graph.json" <<'GRAPH'
 {
   "packages": {
-    "buzz-cli":          {"workspace": "root",  "dir": "crates/buzz-cli"},
-    "buzz-core":         {"workspace": "root",  "dir": "crates/buzz-core"},
-    "buzz-dev-mcp":      {"workspace": "root",  "dir": "crates/buzz-dev-mcp"},
+    "buzz-cli":          {"workspace": "root",  "dir": "crates/beekeeper-cli"},
+    "buzz-core":         {"workspace": "root",  "dir": "crates/beekeeper-core"},
+    "buzz-dev-mcp":      {"workspace": "root",  "dir": "crates/beekeeper-dev-mcp"},
     "sprig":             {"workspace": "root",  "dir": "crates/sprig"},
-    "buzz-persona":      {"workspace": "root",  "dir": "crates/buzz-persona"},
+    "buzz-persona":      {"workspace": "root",  "dir": "crates/beekeeper-persona"},
     "beekeeper-desktop": {"workspace": "tauri", "dir": "desktop/src-tauri"}
   },
   "dependents": {
@@ -111,12 +111,12 @@ GRAPH
 scratch="$work/repo"
 mkdir -p "$scratch/scripts"
 cp "$repo_root/scripts/pre-push-floor.sh" "$repo_root/scripts/pre-push-floor-scope.mjs" "$scratch/scripts/"
-mkdir -p "$scratch/crates/buzz-cli/src" "$scratch/desktop/src/app" "$scratch/docs"
+mkdir -p "$scratch/crates/beekeeper-cli/src" "$scratch/desktop/src/app" "$scratch/docs"
 : >"$scratch/justfile"
-echo "seed" >"$scratch/crates/buzz-cli/src/lib.rs"
+echo "seed" >"$scratch/crates/beekeeper-cli/src/lib.rs"
 echo "seed" >"$scratch/desktop/src/app/App.tsx"
 echo "seed" >"$scratch/docs/notes.md"
-echo "seed" >"$scratch/crates/buzz-cli/src/doomed.rs"
+echo "seed" >"$scratch/crates/beekeeper-cli/src/doomed.rs"
 echo '{"name":"beekeeper-desktop"}' >"$scratch/desktop/package.json"
 # Real fixtures for the scoped desktop test step: `node` is the one real tool
 # this suite never stubs, so a case that exercises `run_desktop_tests_scoped`
@@ -171,16 +171,16 @@ run_floor() { # run_floor <branch> [STUB_FAIL_MATCH] [BUDGET]
 count_of() { grep -c "^$1 " "$work/stub.log" 2>/dev/null || true; }
 
 echo "── 1. a CLI-only push runs the CLI's fmt, clippy and tests, and nothing else"
-make_branch cli-only 'echo change >>crates/buzz-cli/src/lib.rs'
+make_branch cli-only 'echo change >>crates/beekeeper-cli/src/lib.rs'
 run_floor cli-only
 check_equal "floor exits 0" "$floor_status" "0"
 check_equal "cargo invoked exactly three times" "$(count_of cargo)" "3"
 check_equal "pnpm invoked zero times" "$(count_of pnpm)" "0"
 check_equal "flutter invoked zero times" "$(count_of flutter)" "0"
-check_contains "fmt is scoped to the changed crate" "$invocations" "cargo fmt -p buzz-cli -- --check"
+check_contains "fmt is scoped to the changed crate" "$invocations" "cargo fmt -p beekeeper-cli -- --check"
 check_contains "clippy widens to the dependents cargo metadata names" "$invocations" \
-  "cargo clippy -p buzz-cli -p buzz-dev-mcp -p sprig --all-targets -- -D warnings"
-check_contains "tests stay on the changed crate" "$invocations" "cargo test -p buzz-cli"
+  "cargo clippy -p beekeeper-cli -p beekeeper-dev-mcp -p sprig --all-targets -- -D warnings"
+check_contains "tests stay on the changed crate" "$invocations" "cargo test -p beekeeper-cli"
 check_absent "no workspace test run" "$invocations" "--workspace"
 check_absent "just test-unit is gone" "$invocations" "just test-unit"
 check_absent "just ci is not a hook" "$invocations" "just ci"
@@ -269,9 +269,9 @@ echo "── 6. a deleted file is still in the change set"
 # lefthook 2.1.x drops deleted paths from push-file discovery, which is why
 # lefthook.yml's header says deletion-only surface changes reach no local hook.
 # The floor reads git itself, so it does not have that hole.
-make_branch deletion 'git rm --quiet crates/buzz-cli/src/doomed.rs'
+make_branch deletion 'git rm --quiet crates/beekeeper-cli/src/doomed.rs'
 run_floor deletion
-check_contains "a deletion under crates/ still selects that crate" "$invocations" "cargo test -p buzz-cli"
+check_contains "a deletion under crates/ still selects that crate" "$invocations" "cargo test -p beekeeper-cli"
 
 echo "── 7. a failing step exits non-zero and still prints the summary"
 run_floor cli-only "clippy"

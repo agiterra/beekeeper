@@ -224,7 +224,7 @@ already running.
 
 ### End-to-End Tests
 
-End-to-end tests live in `crates/buzz-test-client/tests/`:
+End-to-end tests live in `crates/beekeeper-test-client/tests/`:
 
 - `e2e_relay.rs` — WebSocket relay tests
 - `e2e_mcp.rs` — MCP tool tests
@@ -235,7 +235,7 @@ End-to-end tests live in `crates/buzz-test-client/tests/`:
 Run them with (requires running infrastructure):
 
 ```bash
-cargo test -p buzz-test-client -- --ignored
+cargo test -p beekeeper-test-client -- --ignored
 ```
 
 See `TESTING.md` for the full multi-agent E2E testing guide.
@@ -491,7 +491,7 @@ push, so a merged PR reaches GitHub by way of the relay.
    ```
 
 3. **Register the kind's required scope** in
-   `crates/buzz-relay/src/handlers/ingest.rs` inside
+   `crates/beekeeper-relay/src/handlers/ingest.rs` inside
    `required_scope_for_kind()`. This controls which auth scope a caller
    needs to submit the event:
 
@@ -500,7 +500,7 @@ push, so a merged PR reaches GitHub by way of the relay.
    ```
 
 4. **Handle post-storage side effects** by adding a match arm in
-   `crates/buzz-relay/src/handlers/side_effects.rs` inside
+   `crates/beekeeper-relay/src/handlers/side_effects.rs` inside
    `handle_side_effects()`:
 
    ```rust
@@ -511,8 +511,8 @@ push, so a merged PR reaches GitHub by way of the relay.
    notifications, cache invalidation, or derived data. If the new kind
    also needs an HTTP bridge surface (for example, a protocol helper that
    cannot practically use WebSocket), add a handler in
-   `crates/buzz-relay/src/api/` and register it in
-   `crates/buzz-relay/src/router.rs`.
+   `crates/beekeeper-relay/src/api/` and register it in
+   `crates/beekeeper-relay/src/router.rs`.
 
 5. **Persist to the database** — if the event needs to be queryable, add a
    handler in `buzz-db/src/` (e.g., `buzz-db/src/my_feature.rs`) with
@@ -547,11 +547,11 @@ health probes.
 If an HTTP endpoint is still necessary:
 
 1. **Define the handler** in the appropriate module under
-   `crates/buzz-relay/src/api/`. Resolve the request tenant before any auth or
+   `crates/beekeeper-relay/src/api/`. Resolve the request tenant before any auth or
    data lookup, use NIP-98 when the endpoint accepts user credentials, and keep
    community scoping explicit.
 
-2. **Register the route** in `crates/buzz-relay/src/router.rs` using the
+2. **Register the route** in `crates/beekeeper-relay/src/router.rs` using the
    narrowest path possible. Do not add new `/api/*` compatibility routes unless
    the product decision explicitly calls for one.
 
@@ -563,7 +563,7 @@ If an HTTP endpoint is still necessary:
    `(StatusCode, Json<Value>)` tuples.
 
 5. **Write tests** with the `buzz-test-client` harness in
-   `crates/buzz-test-client/tests/`, covering auth, community scoping, and the
+   `crates/beekeeper-test-client/tests/`, covering auth, community scoping, and the
    relevant success path.
 
 6. **Document** any public endpoint in `ARCHITECTURE.md` and user-facing docs.

@@ -1,13 +1,13 @@
 use super::*;
 
-use buzz_core_pkg::coding_session_team_transaction::{
+use beekeeper_core_pkg::coding_session_team_transaction::{
     CodingSessionTeamAcknowledgement, CodingSessionTeamAcknowledgementStatus,
     CodingSessionTeamAssignment, CodingSessionTeamDecisionRequest,
     CodingSessionTeamDispositionDecision, CodingSessionTeamMissionCompleted, CodingSessionTeamNote,
     CodingSessionTeamReport, CodingSessionTeamTransactionBody, CodingSessionTeamTransactionPayload,
     CodingSessionTeamVerdict, CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
 };
-use buzz_core_pkg::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
+use beekeeper_core_pkg::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
 use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
 use serde_json::json;
 

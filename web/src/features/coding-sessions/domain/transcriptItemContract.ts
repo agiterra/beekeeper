@@ -2,7 +2,7 @@
  * The 44225 transcript-item contract, as the consumer reads it.
  *
  * The canonical producer-side shape lives in
- * `crates/buzz-session-provider/src/transcript.rs`; this is the consumer's
+ * `crates/beekeeper-session-provider/src/transcript.rs`; this is the consumer's
  * mirror of the item union carried in a CST envelope's `item` field. The union
  * stays deliberately permissive — the wire contract fixes the recognized
  * kinds, not the exact per-kind field list — so every reader below is

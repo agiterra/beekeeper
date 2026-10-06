@@ -1573,7 +1573,7 @@ function gateRow(overrides = {}) {
     source: "declared",
     gate: "cargo test",
     outcome: "passed",
-    command: "cargo test -p buzz-cli",
+    command: "cargo test -p beekeeper-cli",
     summaryLines: ["test result: ok. 847 passed; 0 failed"],
     hiddenSummaryLines: 0,
     duration: "41s",
@@ -1593,7 +1593,7 @@ test("with one gate row the card names neither Nothing nor will not count", asyn
   });
   try {
     const card = view.getByTestId("coding-session-inspector-gates");
-    assert.match(card.textContent, /cargo test -p buzz-cli/);
+    assert.match(card.textContent, /cargo test -p beekeeper-cli/);
     assert.doesNotMatch(view.container.textContent, /Nothing/);
     assert.doesNotMatch(view.container.textContent, /will not count/);
     assert.equal(view.queryByText("No gate row yet"), null);

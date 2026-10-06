@@ -3,7 +3,7 @@
  *
  * TypeScript checks transport shape, echo and provenance only. Semantic
  * correctness — what supersedes what, what is bounded, what is disclosed —
- * belongs exclusively to `buzz_core::fold_coding_session_observations`, which
+ * belongs exclusively to `beekeeper_core::fold_coding_session_observations`, which
  * the native adapter calls and returns unchanged (§0.5, I6).
  */
 import { invokeTauri } from "@/shared/api/tauri";

@@ -1,0 +1,215 @@
+# The team-fold vocabulary, as data.
+#
+# Every word this repository's typed team fold puts in front of a seat is
+# defined here, and `include_str!`-ed into `buzz-core` at compile time
+# (`crates/beekeeper-core/src/team_vocabulary.rs`). The binary therefore carries the
+# words with or without a checkout: `bee sessions explain <word>` answers from
+# this file, not from a source tree the reader may not have.
+#
+# Why it exists: on 2026-09-01 a lead (Keystone) spent its own context grepping
+# the fold's Rust source for the string "unseated", because that was the only
+# place the word its own tool had just printed was defined. A seat that must
+# read `crates/` to use `bee` is spending turns on our filing system.
+#
+# SHAPE. A strict subset of TOML — an array of `[[entry]]` tables whose values
+# are basic strings or arrays of basic strings. `team_vocabulary.rs` parses
+# exactly that subset and refuses anything else, so a file that drifts outside
+# it fails `cargo test -p beekeeper-core` rather than half-loading.
+#
+# FIELDS.
+#   word           the canonical word, as a reader meets it
+#   aliases        other spellings that resolve to this entry (wire codes,
+#                  the Rust Debug spelling, the camelCase JSON key)
+#   meaning        one sentence: what the word means
+#   cause          what makes it appear
+#   command        the one command that shows it
+#   frozen_source  where a frozen sentence about this word is written, or ""
+#   frozen         that sentence, byte-for-byte, or ""
+#
+# THE FROZEN FIELDS ARE NOT PROSE. Every non-empty `frozen` value is copied
+# from the batch specification's frozen vocabulary and is compared, byte for
+# byte, against `team-fold.quotes.txt` beside this file. Editing one without
+# the other fails the snapshot test. Where the specification freezes no
+# sentence about a word, `frozen` is empty and `explain` says so: this file
+# never invents a rule to fill the gap.
+
+[[entry]]
+word = "unseated"
+aliases = ["unseated_reports", "unseatedReports", "unseated_report"]
+meaning = "A report the fold counted is signed by someone holding no active seat for the role its assignment names."
+cause = "The host seated the agent and the accepted kind:44228 authority chain never learned about it — usually a create whose provider receipt landed after the hire's window closed. The report is canonical either way; only the seat is missing."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.unseatedReports"
+frozen_source = "batch vocabulary, fold disclosure"
+frozen = "reports **included** by assignee-equality whose author holds no active seat for the assignment's `assignee_role`."
+
+[[entry]]
+word = "waiting"
+aliases = ["waiting_on_decision", "waitingOnDecision", "waiting-on-decision"]
+meaning = "The mission has asked a named party for a ruling and nobody has answered it."
+cause = "The oldest canonical decision.request with no answer on the wire, whatever its blocks names. Which assignments the question holds up is a separate fact, carried on the decision's own blocks."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.waitingOnDecision"
+frozen_source = "batch vocabulary, waiting and decisions"
+frozen = "Rail: `Waiting on the founder`, or `Waiting on {Who}` for an actor-held request."
+
+[[entry]]
+word = "dangling"
+aliases = ["dangling_reference", "DanglingReference"]
+meaning = "One record points at an event that is not in the set the fold was given, so that record alone cannot be placed."
+cause = "A causal or supersedes reference naming an absent event — a report citing an assignment nobody published, most often. It excludes that one record and nothing else: before this code existed, one malformed pointer denied every seat in the session its governance state."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.excluded[].code"
+frozen_source = ""
+frozen = ""
+
+[[entry]]
+word = "superseded"
+aliases = ["Superseded"]
+meaning = "A valid same-author correction replaces this record, so the fold reads the correction instead."
+cause = "The author published a later record naming this one in supersedes, with the same subject, author, type and verdict subtype. A correction that changes any of those is refused as invalid_correction and this record stands."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.excluded[].code"
+frozen_source = ""
+frozen = ""
+
+[[entry]]
+word = "unauthorized"
+aliases = ["Unauthorized"]
+meaning = "The signer did not hold the standing this operation requires."
+cause = "A verdict from someone with no verifier seat, an assignment from someone holding no lead seat, and so on. The seat, not the work, is what failed: grant it and republish."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.excluded[].code"
+frozen_source = ""
+frozen = ""
+
+[[entry]]
+word = "wrong_type_reference"
+aliases = ["WrongTypeReference", "wrong-type-reference"]
+meaning = "A reference resolves to a record that cannot stand where this one puts it."
+cause = "A report whose assignmentRef names a verdict, a disposition whose refutationRef names another disposition, or a verdict whose assignmentRef is not the one its report answers. The precise diagnostic is in the exclusion's own reason."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.excluded[].reason"
+frozen_source = ""
+frozen = ""
+
+[[entry]]
+word = "invalid_correction"
+aliases = ["InvalidCorrection", "invalid-correction"]
+meaning = "This record claims to correct another and the correction is not allowed."
+cause = "It changes the logical subject, the signed author, the operation type or the verdict subtype, or its envelope disagrees with the record it names. The record it names is left exactly as the fold already found it — a rejected correction never revives or alters its target."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.excluded[].reason"
+frozen_source = ""
+frozen = ""
+
+[[entry]]
+word = "dependent_on_unauthorized"
+aliases = ["DependentOnUnauthorized"]
+meaning = "A record this one needs was itself excluded as unauthorized."
+cause = "The parent's signer lacked standing, so nothing built on it can be read either. Fix the parent — grant the seat and republish it — and this record folds."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.excluded[].code"
+frozen_source = ""
+frozen = ""
+
+[[entry]]
+word = "dependent_on_superseded"
+aliases = ["DependentOnSuperseded"]
+meaning = "A record this one needs was corrected or displaced, so this one now points at a record the fold no longer reads."
+cause = "The parent was superseded by its own author, or lost a correction fork. Republish this record against the surviving parent."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.excluded[].code"
+frozen_source = ""
+frozen = ""
+
+[[entry]]
+word = "dependent_on_excluded"
+aliases = ["DependentOnExcluded"]
+meaning = "A record this one needs was excluded for some other stable reason."
+cause = "Whatever excluded the parent excludes this one too. Read the parent's own exclusion first: this code is never the root cause."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.excluded[].reason"
+frozen_source = ""
+frozen = ""
+
+[[entry]]
+word = "correction_conflict"
+aliases = ["CorrectionConflict", "correction-conflict"]
+meaning = "Two corrections of the same record competed and this one lost a deterministic ordering."
+cause = "The same author published more than one head correcting the same subject. The winner is chosen by created_at then event id, so every reader picks the same one; both heads are still on the wire."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.conflicts[]"
+frozen_source = ""
+frozen = ""
+
+[[entry]]
+word = "completion_not_approved"
+aliases = ["CompletionNotApproved"]
+meaning = "A mission.completed did not prove every assignment it named had run its approval chain."
+cause = "An assignment with no accepted report, no disposition over that report, or no acknowledgement. Completion is proven, never asserted: close the chain and republish the completion."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.excluded[].reason"
+frozen_source = ""
+frozen = ""
+
+[[entry]]
+word = "completion_blocked_by_open_decision"
+aliases = ["CompletionBlockedByOpenDecision"]
+meaning = "A mission.completed named an assignment that a still-unanswered decision.request declares itself blocking."
+cause = "The mission asked a named party for a ruling and then declared itself finished without it. Answer the request, or publish one that blocks nothing, and the completion folds."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.waitingOnDecision"
+frozen_source = ""
+frozen = ""
+
+[[entry]]
+word = "terminal_conflict"
+aliases = ["TerminalConflict", "terminal-conflict"]
+meaning = "Another authorized terminal record for this mission is newer, so this one is not the mission's ending."
+cause = "Two terminals — a mission.blocked and a mission.completed, most often — signed by parties with standing. The newer one wins and the older is disclosed here rather than hidden; a terminal can never clear itself."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.canonicalTerminal"
+frozen_source = ""
+frozen = ""
+
+# Seeded ahead of the enum variant it names, so that the lane adding
+# `CompletionNotVerified` to the fold finds the word already written and the
+# guard already green. `explain completion_not_verified` answers today; the
+# code only reaches a fold once that lane lands.
+[[entry]]
+word = "completion_not_verified"
+aliases = ["CompletionNotVerified"]
+meaning = "A mission.completed was excluded because the session's policy requires a verifier's ruling and no active verifier has ruled on the approved report."
+cause = "The policy sets gates.verifierRequired, the assignment settled on a report, and no seat holding an active verifier seat has ruled on that report. It is a different fact from completion_not_approved: the chain is closed, the independent ruling is missing."
+command = "bee --format json sessions operation list --channel <uuid> --session-ref <uuid> --genesis <hex64>   # read .fold.excluded[].reason"
+frozen_source = "batch vocabulary, verified completion"
+frozen = "mission.completed requires a verifier's ruling while the policy sets gates.verifierRequired: assignment <assignmentId> settled on report <reportId>, and no active verifier seat has ruled on that report"
+
+# Lane L21 (2026-09-03). `bee git check --ref` prints "admitted by arm (A)"
+# and "admitted by arm (C)", and the relay's refusals name what an arm fell
+# short of, so the word needs a definition a seat can read from the binary.
+[[entry]]
+word = "arm"
+aliases = ["arms", "arm_a", "arm_b", "arm_c", "gate-row route", "gate_row_route", "require-verdict", "require_verdict"]
+meaning = "One of the three ways a require-verdict ref admits a push. (A) The pusher is a founder of the repository, needing no verdict at all. (B) Every required gate — the policy's gates.requiredGates, by default cargo fmt, cargo clippy and cargo test — has a provider-observed green kind-44246 row that names the pushed commit in headSha over a clean worktree (dirty false), published by the mission's own provider while the pusher holds an active seat of that mission, and the policy does not set gates.verifierRequired. (C) A lead's approving disposition names the pushed commit through the governed report's typed headSha and branch, and an active verifier seat that is not the report's own author published a not-refuted refutation of that report; since 2026-09-03 arm C also needs arm B's rows on the commit."
+cause = "Humans never gate a landing (Brian, 2026-09-03 and 2026-09-04): the rule replaces review with proof, so a founder pushes freely and everybody else needs machine-checkable evidence. Proof scales to risk: arm B lands small missions with no second seat, because kind 44246 gate rows have carried headSha and dirty since 2026-09-03 and the relay reads them (coding_session_verdict_admission_observed.rs); arm C is demanded only when the policy asks for a verifier, and then it needs the rows too. Before 2026-09-03 the row named no commit and arm B could not be built; this entry kept saying so until finding 74 (live run 6, 2026-09-04) caught a lead believing it over the relay's own refusal, whose text names exactly which gate, commit or worktree state is missing."
+command = "bee git check --ref refs/heads/main   # read .prediction.arm"
+frozen_source = ""
+frozen = ""
+
+# Finding 33 (2026-09-03). The word appears in the relay's own refusal copy
+# ("reserves a gated ref to a founder of this repository"), in `bee repos get`,
+# and on the desktop's Land control, and until this entry nothing defined it.
+# The batch specification freezes no sentence about the word itself, so
+# `frozen` is empty rather than invented.
+[[entry]]
+word = "founder"
+aliases = ["founders", "founder_pubkey", "founderPubkey", "repo_founders", "maintainers"]
+meaning = "A key that speaks for a repository: the kind:30617 announcement's signer, every pubkey in its NIP-34 maintainers tag, and every Owner on the project roster its project back-reference names."
+cause = "The require-verdict gate admits a founder's push outright, with no verdict read at all (arm A), and searches only missions whose founder is one of these keys when judging anybody else's (arm C). Rules are narrower: only the announcement's signer can rewrite a buzz-protect tag in v1, so a co-founder who edits rules creates their own repository instead of editing yours."
+command = "bee repos get --id <repo-id> --owner <hex64>   # read .founders and .founders_note"
+frozen_source = ""
+frozen = ""
+
+# Lane L23 (2026-09-03). Brian's direction: "I should be able to log into
+# beekeeper from any machine and have my agents and their packs. If a role
+# evolves it should change on Andy's machine and any other team member's."
+# The word now appears on a seat's own 44223 (`packRef`), in `bee packs
+# status`, and on the seat chip, so it needs a definition a seat can read from
+# the binary. The batch specification freezes no sentence about it, so `frozen`
+# is empty rather than invented.
+[[entry]]
+word = "pack"
+aliases = ["packs", "packRef", "pack_ref", "packSource", "pack_source", "30624"]
+meaning = "The persona files a seat was actually staged from: a directory of role text inside a git repository, named on the wire by a kind:30624 project pack source and, once staged, by the seat's own packRef (repo, resolved sha, role, path)."
+cause = "The seat's role picks the pack, never the actor's home role. Three rungs, in order: the packs repository the project's kind:30624 names, the session checkout's own personas/roles/<role>/ overlaid on it, and the app's shipped defaults (packRef repo 'app:shipped', sha = the app version). No packRef at all means no pack staged — read that absence as absence, never as a default. A pack that cannot be fetched refuses the hire; it never becomes a silent bare persona."
+command = "bee packs status --project 30621:<owner-hex>:<slug> --role <slug>   # read .source_kind and .would_stage"
+frozen_source = ""
+frozen = ""

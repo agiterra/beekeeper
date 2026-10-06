@@ -1,6 +1,6 @@
 /**
  * Project Pulse entries (kind 44240) — the TypeScript twin of
- * `crates/buzz-core/src/pulse.rs`.
+ * `crates/beekeeper-core/src/pulse.rs`.
  *
  * A Pulse entry says what its author *intends*: a plan, a milestone, a note, a
  * handoff, or a blocker. It never asserts an observed fact about a worktree —
@@ -19,7 +19,7 @@
  * plain `node --test` with Node's native type stripping, so an aliased (`@/…`)
  * or non-erasable construct breaks the conformance gate. That is why the
  * coordinate normalizer below is a local mirror of
- * `buzz_core::kind::normalize_project_coordinate` rather than an import of
+ * `beekeeper_core::kind::normalize_project_coordinate` rather than an import of
  * `projectContainerModel.normalizeProjectRef`; `pulseEntry.test.mjs` pins the
  * two against each other.
  */
@@ -205,7 +205,7 @@ function hasDrivePrefix(path: string): boolean {
 
 /**
  * Canonicalize a project coordinate to `30621:<lowercase-hex>:<dtag>`, or
- * `null` when it is not one. Mirrors `buzz_core::kind::normalize_project_coordinate`
+ * `null` when it is not one. Mirrors `beekeeper_core::kind::normalize_project_coordinate`
  * byte for byte, including the 64-character dtag ceiling.
  */
 export function normalizePulseProjectCoordinate(value: string): string | null {
@@ -305,7 +305,7 @@ function isCount(value: unknown): value is number {
 
 /**
  * Strictly decode and validate an entry's `cost`. The TypeScript twin of
- * `buzz_core::pulse::validate_cost`, rejection for rejection.
+ * `beekeeper_core::pulse::validate_cost`, rejection for rejection.
  *
  * Four honesty rules: a cost that reports nothing is a rejection (a costless
  * entry omits the key), so is a seat that reports nothing, a seat is named
@@ -555,7 +555,7 @@ export function decodePulseEntry(content: string): PulseEntryDecodeResult {
 /**
  * Validate a signed Pulse entry end to end: kind, tag grammar, canonical
  * project coordinate, and content envelope. The TypeScript twin of
- * `buzz_core::pulse::validate_pulse_entry_envelope`.
+ * `beekeeper_core::pulse::validate_pulse_entry_envelope`.
  *
  * **Tag grammar** — position-independent, multiplicity-constrained, closed key
  * set: exactly one `a`, one `pu-v`, and one `pu-type`; at most one each of

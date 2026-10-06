@@ -14,7 +14,7 @@
  *
  * A running generation never changes packs; the next launch or resume adopts
  * the current project revision (provider behaviour, unchanged by this module,
- * cited as `crates/buzz-session-provider/src/lib.rs:3325-3332`).
+ * cited as `crates/beekeeper-session-provider/src/lib.rs:3325-3332`).
  */
 import type {
   CodingSessionStatus,

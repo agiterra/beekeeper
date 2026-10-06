@@ -207,7 +207,7 @@ the sequence, in order, so nobody re-derives it.
    pushes skip both the gate and the deploy.
 6. **Then land the checkout you run from.** With the dev app stopped,
    `git merge --ff-only origin/main` in the main checkout, rebuild
-   `bee` (`cargo build -p buzz-cli`), and relaunch with the keyring enabled
+   `bee` (`cargo build -p beekeeper-cli`), and relaunch with the keyring enabled
    (`env -u BUZZ_DESKTOP_NOKEYRING just desktop-standalone`). Never merge,
    rebase, or switch in that checkout while the app runs.
 
@@ -226,7 +226,7 @@ What carries it is the **NIP-OA owner attestation** the harness also injects as
 over the agent key. Git's credential protocol can return an `Authorization`
 value but cannot add a separate header, so the helper attaches the tag to the
 **signed NIP-98 event itself**, where the relay reads it
-(`crates/buzz-relay/src/api/git/transport.rs`, the `GitAuth` extractor). The
+(`crates/beekeeper-relay/src/api/git/transport.rs`, the `GitAuth` extractor). The
 relay then admits the seat exactly as the rest of its HTTP surface does:
 
 - the read gate resolves a grant for the signing key **and** for the verified
@@ -346,8 +346,8 @@ Two things make this safe, and both were verified rather than assumed:
   spanning all six commits of a push whose tip was documentation only.
 - **Only markdown is inert, and only outside `crates/`.** `docs/**` is *not*
   excluded, because `docs/nips/NIP-MP.fixtures.json` is `include_str!`'d by
-  `crates/buzz-sdk/src/builders.rs`; `**/*.md` is *not* excluded, because
-  `crates/buzz-acp/src/base_prompt.md` is `include_str!`'d into `BASE_PROMPT`.
+  `crates/beekeeper-sdk/src/builders.rs`; `**/*.md` is *not* excluded, because
+  `crates/beekeeper-acp/src/base_prompt.md` is `include_str!`'d into `BASE_PROMPT`.
   Either would skip a rebuild for a change to compiled output.
 
 `scripts/test-woodpecker-path-filter.sh` enforces this: it expands the
@@ -391,7 +391,7 @@ after, 0/65 across both conditions.
 Postgres/Redis/RustFS as services, and migrates a **fresh** database — so a
 local run can go green and still land red. Run the two extra steps by hand
 before a push you intend to deploy, and remember that a fresh-database
-`cargo run -p buzz-admin -- migrate` exercises migration ordering that an
+`cargo run -p beekeeper-admin -- migrate` exercises migration ordering that an
 already-migrated local database cannot.
 
 Without a Woodpecker login you can still read pipeline state: the badge and
@@ -411,7 +411,7 @@ relay and pushes to GitHub, which exists as CI trigger and backup. The moving
 parts, all deployed by `scripts/forge/setup-hive-mirror.sh` (idempotent,
 re-run it after changing any of them):
 
-- **`buzz-mirror-bridge`** (`crates/buzz-mirror-bridge`, installed to
+- **`buzz-mirror-bridge`** (`crates/beekeeper-mirror-bridge`, installed to
   `/usr/local/bin`, run as `hive-mirror-bridge.service`) subscribes to the
   relay's relay-signed **kind:30618** NIP-34 ref-state events — published on
   every ref-changing push, replaceable, so the bridge simply resyncs per event
@@ -507,7 +507,7 @@ seeded any of it, so every sandbox re-downloaded the registry and rebuilt from
 cold, and fourteen worktrees accumulated 331 GB of duplicates.
 
 `sandbox.yml` at the repository root is how the project says what to seed and
-how. One declaration, one parser (`buzz_core::sandbox_manifest`), three
+how. One declaration, one parser (`beekeeper_core::sandbox_manifest`), three
 consumers: the desktop's worktree creation, the session provider's action steps,
 and `just sandbox-seed`. The same declaration also tells
 `bee sessions worktree reclaim` what counts as build state, so the set cannot
@@ -554,7 +554,7 @@ Five things that will mislead you:
   does not match `/target/` for a path that is not there, because git evaluates
   the query as a non-directory. The question has to be asked as `target/`. The
   one implementation of this rule is
-  `buzz_core::sandbox_seed_fs::ignored_from_patterns`.
+  `beekeeper_core::sandbox_seed_fs::ignored_from_patterns`.
 - **`CARGO_HOME` cannot be redirected by an environment variable here.**
   Hermit's rustup package pins `CARGO_HOME="${HERMIT_ENV}/.hermit/rust"` in its
   own package environment and `hermit exec` applies that over the ambient value,
@@ -664,7 +664,7 @@ of anything). Two additive NIP-11 fields fix that:
   counts are comparable only when they come from the same linear history, and
   a consumer that renders a difference must disclose which method it used —
   see `bee git check`'s `EnforcementCheckMethod`
-  (`crates/buzz-cli/src/commands/git_setup.rs`) for the shape that answer
+  (`crates/beekeeper-cli/src/commands/git_setup.rs`) for the shape that answer
   should take.
 
   **Shallow checkouts disclose `null`, never a number.** In a
@@ -673,12 +673,12 @@ of anything). Two additive NIP-11 fields fix that:
   of the entire history. `build.rs` refuses to count a shallow checkout.
 
   The commit and its count are resolved **together** (`resolve_stamp` in
-  `crates/buzz-relay/build.rs`), never independently: a count read from a
+  `crates/beekeeper-relay/build.rs`), never independently: a count read from a
   local checkout while the SHA came from `BUZZ_SOURCE_SHA` would advertise a
   commit from one history and an ordinal from another, which no consumer
   could detect.
 
-Resolution (`crates/buzz-relay/build.rs` / `src/build_provenance.rs`, and see
+Resolution (`crates/beekeeper-relay/build.rs` / `src/build_provenance.rs`, and see
 `src/build_info.rs` for the two compile-time env vars it produces):
 
 1. `git rev-parse HEAD` in the crate's own checkout, when `.git` is present —
@@ -723,7 +723,7 @@ the host's unless a cgroup limit applies (then a `memory.container` block
 names the limit), the load average is always the host's, and `disks` are
 `statvfs` of the git data path and `/` — a database volume in another
 container is not measured. The desktop's Dashboard "Relay machine" card is
-the consumer (`crates/buzz-relay/src/system_health.rs`,
+the consumer (`crates/beekeeper-relay/src/system_health.rs`,
 `desktop/src/features/dashboard/lib/relaySystemHealth.ts`).
 
 **Reading it from the CLI:**
@@ -767,7 +767,7 @@ The document also advertises the admission limits the relay enforces, so a
 client can pace itself instead of learning the numbers from `rate-limited:`
 refusals. The object is built from the live configuration and the relay's
 per-kind constants (`RelayRateLimits::from_config`,
-`crates/buzz-relay/src/nip11.rs`) — never retyped — so it cannot drift from
+`crates/beekeeper-relay/src/nip11.rs`) — never retyped — so it cannot drift from
 enforcement. Absent only from relays that predate the field.
 
 ```bash

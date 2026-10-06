@@ -89,7 +89,7 @@ export const KIND_DM_VISIBILITY = 30622;
 // the ephemeral collaborator→owner input stream (base64 keystrokes),
 // relay-gated to the 30623 roster's collaborators and re-verified by the
 // owner host before any byte reaches the PTY.
-// Keep in sync: crates/buzz-core/src/kind.rs and mobile
+// Keep in sync: crates/beekeeper-core/src/kind.rs and mobile
 // lib/shared/relay/nostr_models.dart.
 export const KIND_SHELL_SESSION = 30623;
 export const KIND_SHELL_WATCH = 24310;
@@ -103,7 +103,7 @@ export const KIND_SHELL_INPUT = 24312;
 // `["sha", "<40-hex>"]`, optional `["path", "personas/roles"]` (default
 // `personas/roles`). Content: `{"schema":"buzz-project-pack-source/v1",
 // "note":"<=512 bytes, optional>"}`.
-// Keep in sync: crates/buzz-core/src/kind.rs (Lane A — not yet landed as of
+// Keep in sync: crates/beekeeper-core/src/kind.rs (Lane A — not yet landed as of
 // this lane's cut; 30624 is confirmed free, immediately after 30623).
 export const KIND_PROJECT_PACK_SOURCE = 30624;
 
@@ -118,7 +118,7 @@ export const KIND_PROJECT_PACK_SOURCE = 30624;
  * of the one they co-founded. The relay admits one only from a founder of the
  * repository the `d` names, and the push gate resolves these against the
  * announcement's own rows, last write wins per exact ref pattern.
- * See `crates/buzz-core/src/repository_protection.rs`.
+ * See `crates/beekeeper-core/src/repository_protection.rs`.
  */
 export const KIND_REPO_PROTECTION = 30625;
 
@@ -138,7 +138,7 @@ export const KIND_PROJECT_MEMBERS = 39010;
 // channel-scoped (`h` tag) and never enter
 // CHANNEL_TIMELINE_CONTENT_KINDS: a session's turns and transcript belong to
 // its own workspace surface, not to the chat timeline. Names mirror
-// crates/buzz-core/src/kind.rs — keep them in sync.
+// crates/beekeeper-core/src/kind.rs — keep them in sync.
 
 // NIP-CSC: operator-authored durable turn command (`csc1-1`).
 export const KIND_CODING_SESSION_COMMAND = 44220;
@@ -252,7 +252,7 @@ export const KIND_PULSE_ENTRY = 44240;
 // field and the fold (features/project-todos/lib/todoFold.ts, pinned by
 // conformance/project-todo-fold/) takes the latest write per field, so two
 // people editing different fields of one item both survive. Mirrored in
-// `crates/buzz-core/src/kind.rs` and `mobile/lib/shared/relay/nostr_models.dart`.
+// `crates/beekeeper-core/src/kind.rs` and `mobile/lib/shared/relay/nostr_models.dart`.
 export const KIND_PROJECT_TODO_OP = 44248;
 
 // NIP-AD: an agents-repository draft op — one proposed change to one file of
@@ -260,7 +260,7 @@ export const KIND_PROJECT_TODO_OP = 44248;
 // committer's record that named drafts landed on `main`. Same project-scoped
 // gate as 44240/44248. Folded by features/agents-repo/lib/agentsRepoDraftFold.ts,
 // pinned by conformance/agents-repo-draft-fold/. Mirrored in
-// `crates/buzz-core/src/kind.rs` and `mobile/lib/shared/relay/nostr_models.dart`.
+// `crates/beekeeper-core/src/kind.rs` and `mobile/lib/shared/relay/nostr_models.dart`.
 export const KIND_AGENTS_REPO_DRAFT_OP = 44250;
 
 // NIP-AR: a project artifact pin op — which documents, plans and folders of
@@ -270,7 +270,7 @@ export const KIND_AGENTS_REPO_DRAFT_OP = 44250;
 // by a commit. Same project-scoped gate as 44240/44248/44250. Folded by
 // features/agents-repo/lib/artifactPinFold.ts, pinned by
 // conformance/project-artifact-pin-fold/. Mirrored in
-// `crates/buzz-core/src/kind.rs` and `mobile/lib/shared/relay/nostr_models.dart`.
+// `crates/beekeeper-core/src/kind.rs` and `mobile/lib/shared/relay/nostr_models.dart`.
 export const KIND_PROJECT_ARTIFACT_PIN_OP = 44251;
 
 // The coding-session kinds Desktop's own consumer reads, in one place, so the

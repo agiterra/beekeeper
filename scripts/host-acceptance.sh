@@ -116,7 +116,7 @@ export PATH="$REPO/bin:$PATH"
 # the assertions do not depend on that behaviour either.)
 export RUST_LOG="info,beekeeper_host=info"
 PYTHON=$(command -v python3)
-cargo build --quiet -p beekeeper-host -p buzz-cli -p buzz-session-provider
+cargo build --quiet -p beekeeper-host -p beekeeper-cli -p beekeeper-session-provider
 HOST="$REPO/target/debug/beekeeper-host"
 BEE="$REPO/target/debug/bee"
 PROVIDER="$REPO/target/debug/buzz-session-provider"

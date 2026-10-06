@@ -35,7 +35,7 @@ use crate::coding_sessions::workdir_store::load_workdir_store;
 /// This host locates a bundle by **recomputing** its name, so these must be
 /// the same definitions the creating side used. They are the same ones now,
 /// rather than a copy kept in step by comment.
-pub(crate) use buzz_core_pkg::coding_session_seat_bundle::{
+pub(crate) use beekeeper_core_pkg::coding_session_seat_bundle::{
     bundle_directory_name, seat_bundle_dir_in as seat_bundle_dir,
     seat_bundles_root_in as seat_bundles_root, SEAT_BUNDLE_SKILLS_DIR,
 };
@@ -43,7 +43,7 @@ pub(crate) use buzz_core_pkg::coding_session_seat_bundle::{
 ///
 /// Owned by the crate that writes it. Used here only to recognise a directory
 /// as a bundle, never to read one.
-pub(crate) use buzz_persona_pkg::skills::SKILL_BUNDLE_MANIFEST_FILE as SEAT_BUNDLE_MANIFEST;
+pub(crate) use beekeeper_persona_pkg::skills::SKILL_BUNDLE_MANIFEST_FILE as SEAT_BUNDLE_MANIFEST;
 
 /// What happened to one seat's bundle, and the sentence that says so.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

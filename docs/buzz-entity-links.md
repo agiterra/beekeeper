@@ -13,7 +13,7 @@ Status: **partially implemented**. Done on this branch:
   `desktop/src-tauri/src/deep_link.rs` emit `deep-link-entity`, and
   `useEntityDeepLinks` routes them through the same handler as in-timeline
   clicks.
-- Slice 3 (create-command part) — `crates/buzz-cli/src/links.rs`, `link`
+- Slice 3 (create-command part) — `crates/beekeeper-cli/src/links.rs`, `link`
   output field on `pr open` / `issues create` / `repos create` /
   `projects create`, base prompt guidance, cross-language golden-format tests.
 - Sharing from the UI — `lib/projectShareLinks.ts` maps the Projects read
@@ -42,7 +42,7 @@ for a Buzz repository, project, pull request, or issue:
   `add-community`, `message`, and `nostr-bind` — no git entities.
 - `bee pr open` / `bee issues create` return raw event ids; there is no URL
   in their output and no guidance in the agent base prompt
-  (`crates/buzz-acp/src/base_prompt.md`) for referencing Buzz work items in
+  (`crates/beekeeper-acp/src/base_prompt.md`) for referencing Buzz work items in
   chat. Agents can only say "PR up" with a hex id.
 - The relay-served web client only has `/repos/$repoId`; no PR/issue pages.
 
@@ -221,7 +221,7 @@ linkable entities:
 - `bee repos create` → link built from owner pubkey + `d`-tag
 - `bee projects create` → same
 
-The builder lives in one Rust helper (e.g. `crates/buzz-cli/src/links.rs`)
+The builder lives in one Rust helper (e.g. `crates/beekeeper-cli/src/links.rs`)
 so the format has exactly one definition on the Rust side; the TypeScript
 `entityLink.ts` is its mirror and both are covered by shared-format tests
 (golden strings asserted on both sides, like the NIP-MP fixture pattern).
@@ -232,7 +232,7 @@ just created.
 
 ## Agent guidance
 
-One addition to `crates/buzz-acp/src/base_prompt.md`, next to the existing
+One addition to `crates/beekeeper-acp/src/base_prompt.md`, next to the existing
 `--channel` rule for PR opens:
 
 > When you announce a pull request, issue, repository, or project in a

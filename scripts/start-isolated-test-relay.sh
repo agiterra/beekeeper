@@ -123,7 +123,7 @@ if [[ -x "${HOME}/.cargo/bin/cargo" ]]; then
   export PATH="${HOME}/.cargo/bin:${PATH}"
 fi
 log "Building relay (profile=${CARGO_BUILD_PROFILE}, cargo=$(command -v cargo), $(cargo --version))..."
-cargo build --profile "${CARGO_BUILD_PROFILE}" -p buzz-relay
+cargo build --profile "${CARGO_BUILD_PROFILE}" -p beekeeper-relay
 ok "Relay built"
 
 # ── Run relay (detached tmux session) ────────────────────────────────────────

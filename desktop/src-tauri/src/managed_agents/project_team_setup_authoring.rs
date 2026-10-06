@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use buzz_core_pkg::coding_session_genesis::{
+use beekeeper_core_pkg::coding_session_genesis::{
     decode_coding_session_genesis, CodingSessionGenesisPayload, CODING_SESSION_GENESIS_TAG_VERSION,
 };
 use nostr::secp256k1::{schnorr::Signature, Message};
@@ -143,7 +143,7 @@ fn validate_journal(
     event
         .verify()
         .map_err(|error| invalid(format!("The saved genesis signature is invalid: {error}")))?;
-    if event.kind.as_u16() as u32 != buzz_core_pkg::kind::KIND_CODING_SESSION_GENESIS
+    if event.kind.as_u16() as u32 != beekeeper_core_pkg::kind::KIND_CODING_SESSION_GENESIS
         || event.pubkey.to_hex() != draft.owner_pubkey
         || event.id.to_hex() != reservation.genesis_event_id
     {
@@ -276,7 +276,7 @@ fn reserve(
         return Ok(existing);
     }
     let session_ref = Uuid::new_v4().to_string();
-    let genesis = buzz_sdk_pkg::build_coding_session_genesis(
+    let genesis = beekeeper_sdk_pkg::build_coding_session_genesis(
         channel,
         &CodingSessionGenesisPayload::new(&session_ref),
     )

@@ -13,7 +13,7 @@ path = "src/lib.rs"
 
 [dependencies]
 atomic-write-file = "0.3"
-buzz-core = { path = "../buzz-core" }
+beekeeper-core = { path = "../beekeeper-core" }
 chrono = { workspace = true }
 dirs = "6"
 serde = { workspace = true }

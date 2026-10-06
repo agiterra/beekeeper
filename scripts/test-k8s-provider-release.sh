@@ -12,12 +12,12 @@ PROVIDER_BINARY="$TARGET_DIR/release/buzz-backend-kubernetes"
 
 CARGO="${CARGO:-cargo}"
 "$CARGO" build --release \
-  -p buzz-acp \
-  -p buzz-agent \
-  -p buzz-dev-mcp \
+  -p beekeeper-acp \
+  -p beekeeper-agent \
+  -p beekeeper-dev-mcp \
   -p git-credential-nostr \
-  -p buzz-cli \
-  -p buzz-backend-kubernetes
+  -p beekeeper-cli \
+  -p beekeeper-backend-kubernetes
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

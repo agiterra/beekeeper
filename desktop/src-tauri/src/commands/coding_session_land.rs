@@ -22,32 +22,32 @@
 //! # The rule is `buzz-core`'s, not this file's
 //!
 //! The predicate is
-//! [`buzz_core_pkg::coding_session_verdict_admission::evaluate_verdict_admission`]
+//! [`beekeeper_core_pkg::coding_session_verdict_admission::evaluate_verdict_admission`]
 //! and the `require-verdict` flag is read through `buzz-core`'s own
 //! `parse_protection_tags` + `EffectiveRules::for_ref`. This file held verbatim
 //! copies of both while lane L6 was unlanded; the finalizer deleted them. There
 //! is one rule, in one place, and the screen, `bee git check --ref` and the
 //! pre-receive hook read it from there.
 
-use buzz_core_pkg::coding_session_team_transaction::{
+use beekeeper_core_pkg::coding_session_team_transaction::{
     validate_coding_session_team_transaction_envelope, CodingSessionTeamActiveSeat,
     CodingSessionTeamTransactionBody,
 };
 use nostr::Event;
 use serde::{Deserialize, Serialize};
 
-use buzz_core_pkg::coding_session_observation::{
+use beekeeper_core_pkg::coding_session_observation::{
     CodingSessionObservationGateEntry, CodingSessionObservationGateOutcome,
     CodingSessionObservationGateRow, CodingSessionObservationSource,
 };
-use buzz_core_pkg::coding_session_verdict_admission::{
+use beekeeper_core_pkg::coding_session_verdict_admission::{
     evaluate_verdict_admission, GatePolicyResolution, VerdictAdmission, VerdictAdmissionCandidate,
     VerdictAdmissionCandidateSource, VerdictAdmissionEvidence, VerdictAdmissionGatePolicy,
     VerdictAdmissionQuery, VerdictAdmissionRecord, VerdictAdmissionRefusal,
 };
-use buzz_core_pkg::git_perms::EffectiveRules;
-use buzz_core_pkg::repository_founders::RepositoryFounders;
-use buzz_core_pkg::repository_protection::{
+use beekeeper_core_pkg::git_perms::EffectiveRules;
+use beekeeper_core_pkg::repository_founders::RepositoryFounders;
+use beekeeper_core_pkg::repository_protection::{
     decode_repository_protection, resolve_protection_layers, ProtectionLayer,
 };
 
@@ -451,12 +451,12 @@ fn newest_verdict(records: &[VerdictAdmissionRecord]) -> Option<CodingSessionLan
             return None;
         };
         let (report_ref, decision) = match verdict {
-            buzz_core_pkg::coding_session_team_transaction::CodingSessionTeamVerdict::Disposition {
+            beekeeper_core_pkg::coding_session_team_transaction::CodingSessionTeamVerdict::Disposition {
                 report_ref,
                 decision,
                 ..
             } => (report_ref.clone(), serde_json::to_value(decision).ok()?),
-            buzz_core_pkg::coding_session_team_transaction::CodingSessionTeamVerdict::Refutation {
+            beekeeper_core_pkg::coding_session_team_transaction::CodingSessionTeamVerdict::Refutation {
                 report_ref,
                 decision,
                 ..
@@ -708,7 +708,7 @@ fn land_adapter(request: CodingSessionLandRequest) -> Result<CodingSessionLandRe
 /// The `30617:<owner-hex>:<d>` coordinate the announcement addresses.
 ///
 /// Built from the signer and the announcement's own `d` tag, exactly as
-/// `buzz_relay::api::git::verdict_admission::repository_coordinate` builds it,
+/// `beekeeper_relay::api::git::verdict_admission::repository_coordinate` builds it,
 /// so this screen and the gate name one repository the same way. A view with
 /// no tags, or an announcement with no `d`, addresses nothing and yields the
 /// empty string — which no mission is bound to.

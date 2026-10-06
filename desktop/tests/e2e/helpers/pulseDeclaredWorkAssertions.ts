@@ -43,7 +43,7 @@ import { TEST_IDENTITIES } from "../../helpers/bridge";
  *
  * The declared-work payload is **derived from the Rust-pinned fixture**
  * (`pulseDeclaredWork.fixture.json`, written by
- * `crates/buzz-core/src/pulse_declared_work_tests.rs`) rather than hand-typed:
+ * `crates/beekeeper-core/src/pulse_declared_work_tests.rs`) rather than hand-typed:
  * every field name, vocabulary and nesting below is the producer's. Only two
  * things are rebound here — the session identity, so the response names the
  * sessions this spec actually seeded, and the settlement state of one

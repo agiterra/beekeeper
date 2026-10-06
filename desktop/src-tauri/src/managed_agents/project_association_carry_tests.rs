@@ -595,7 +595,7 @@ fn content(digest: Option<&str>) -> serde_json::Value {
 
 fn marker() -> serde_json::Value {
     let mut value = content(None);
-    value[buzz_core_pkg::project_agent_association::PROJECT_AGENT_WITHDRAWN_CONTENT_KEY] =
+    value[beekeeper_core_pkg::project_agent_association::PROJECT_AGENT_WITHDRAWN_CONTENT_KEY] =
         serde_json::json!(true);
     value
 }

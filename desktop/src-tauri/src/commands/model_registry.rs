@@ -42,7 +42,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use tauri::AppHandle;
 
-use buzz_core_pkg::model_registry_source::{
+use beekeeper_core_pkg::model_registry_source::{
     MissingModelRegistry, ModelRegistryCandidate, AGENTS_REPO_REGISTRY_FILE,
 };
 
@@ -294,7 +294,7 @@ pub fn read_team_role_hints(
         } else {
             format!(
                 "no team manifest: looked in {}",
-                buzz_core_pkg::model_registry_source::join_and(&looked_in)
+                beekeeper_core_pkg::model_registry_source::join_and(&looked_in)
             )
         },
     })
@@ -311,7 +311,7 @@ pub const NO_TEAM_MANIFEST_CODE: &str = "no-team-manifest";
 /// never mentioned — it turns into "no hint", which is exactly what the
 /// project had before it wrote the line.
 fn team_role_hints(text: &str, path: &Path) -> std::collections::BTreeMap<String, TeamRoleHint> {
-    let Ok(manifest) = buzz_persona_pkg::team::parse_team_yml(text, path) else {
+    let Ok(manifest) = beekeeper_persona_pkg::team::parse_team_yml(text, path) else {
         return std::collections::BTreeMap::new();
     };
     manifest

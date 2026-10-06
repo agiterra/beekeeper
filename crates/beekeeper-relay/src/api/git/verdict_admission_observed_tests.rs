@@ -1,0 +1,841 @@
+//! Arm **(B)** against Postgres: gate rows a provider watched, green on the
+//! pushed commit, land a seat's push with no second seat.
+//!
+//! A sibling of [`super::tests`] because that file was already 980 lines and
+//! the repository ceiling is 1,000. Every case here goes through the real
+//! `git-receive-pack` policy handler, so it exercises the three storage reads
+//! arm (B) added — the observation page, the founder-signed policy page, and
+//! the provider-metadata page — rather than the pure rule, which
+//! `beekeeper_core::coding_session_verdict_admission::observed_tests` covers.
+
+use super::*;
+
+use beekeeper_core::coding_session_genesis::CodingSessionGenesisPayload;
+use beekeeper_core::coding_session_observation::{
+    CodingSessionObservationBody, CodingSessionObservationGate,
+    CodingSessionObservationGateOutcome, CodingSessionObservationGateRow,
+    CodingSessionObservationPayload, CodingSessionObservationSource, CodingSessionObservationType,
+    CODING_SESSION_OBSERVATION_SCHEMA,
+};
+use beekeeper_core::coding_session_policy::{
+    CodingSessionPolicyGates, CodingSessionPolicyPayload, CODING_SESSION_POLICY_SCHEMA,
+};
+use beekeeper_core::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES;
+use beekeeper_core::kind::{
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
+    KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
+};
+use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
+use std::sync::Arc;
+use uuid::Uuid;
+
+use crate::api::git::policy::tests::{body_string, policy_test_state, push_response, seat_of};
+use crate::api::git::policy::HookRefUpdate;
+use crate::state::AppState;
+
+pub(super) const HEAD_SHA: &str = "07c470be007c470be007c470be007c470be007c4";
+const OTHER_SHA: &str = "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b";
+
+/// A mission with a genesis, a seated builder, and a provider identity — and
+/// deliberately **no** assignment, report or verdict of any kind. Arm (B) is
+/// the arm that needs none of them.
+pub(super) struct Watched {
+    pub(super) state: Arc<AppState>,
+    pub(super) community: beekeeper_core::CommunityId,
+    pub(super) channel_id: Uuid,
+    pub(super) session_ref: String,
+    pub(super) genesis_ref: String,
+    pub(super) founder: Keys,
+    pub(super) provider: Keys,
+    pub(super) seat: Keys,
+}
+
+pub(super) async fn watched() -> Watched {
+    let state = policy_test_state().await;
+    let host = format!("observed-{}.example", Uuid::new_v4().simple());
+    let community = state
+        .db
+        .ensure_configured_community(&host)
+        .await
+        .expect("community")
+        .id;
+    let founder = Keys::generate();
+    let provider = Keys::generate();
+    let seat = Keys::generate();
+    state
+        .db
+        .ensure_user(community, &founder.public_key().to_bytes())
+        .await
+        .expect("user");
+    let channel_id = Uuid::new_v4();
+    state
+        .db
+        .create_channel_with_id(
+            community,
+            channel_id,
+            &format!("watched-{}", channel_id.simple()),
+            beekeeper_core::channel::ChannelType::Stream,
+            beekeeper_core::channel::ChannelVisibility::Open,
+            None,
+            &founder.public_key().to_bytes(),
+            None,
+            None,
+        )
+        .await
+        .expect("channel");
+
+    let session_ref = Uuid::new_v4().to_string();
+    let genesis = EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_GENESIS as u16),
+        serde_json::to_string(&CodingSessionGenesisPayload::new(session_ref.clone()))
+            .expect("genesis json"),
+    )
+    .tags([
+        Tag::parse(["h", &channel_id.to_string()]).expect("h"),
+        Tag::parse(["csg-v", "1"]).expect("v"),
+        Tag::parse(["csg-session", &session_ref]).expect("session"),
+    ])
+    .sign_with_keys(&founder)
+    .expect("sign genesis");
+    state
+        .db
+        .insert_event(community, &genesis, Some(channel_id))
+        .await
+        .expect("insert genesis");
+    let genesis_ref = genesis.id.to_hex();
+
+    let watched = Watched {
+        state,
+        community,
+        channel_id,
+        session_ref,
+        genesis_ref,
+        founder,
+        provider,
+        seat,
+    };
+    // Finding 90: what makes this key a provider of this mission is the
+    // **accepted lifecycle** — a 44221 create naming it, answered by a 44224
+    // receipt it signed — not a 44223 it published about itself. Without the
+    // pair every `observed` claim it signs folds down to `declared` and
+    // arm (B) consumes none of them.
+    watched.commission_the_provider().await;
+    watched.publish_provider_metadata().await;
+    watched.grant_the_seat().await;
+    watched
+}
+
+impl Watched {
+    /// The accepted lifecycle that names `self.provider` this mission's
+    /// provider: a kind 44221 `session.create` for this genesis, and the kind
+    /// 44224 receipt the named key signed for it (finding 90).
+    ///
+    /// This is the pair `mission_provider_pubkeys_from_lifecycle` reads.
+    /// Publishing metadata is not this, and since finding 90 it never was:
+    /// any channel member could publish a 44223 naming a mission and thereby
+    /// vouch for its own `observed` rows.
+    pub(super) async fn commission_the_provider(&self) {
+        self.commission(&self.provider).await;
+    }
+
+    /// The same accepted lifecycle, for a chosen key.
+    pub(super) async fn commission(&self, provider: &Keys) {
+        commission_provider(
+            &self.state,
+            self.community,
+            self.channel_id,
+            &self.session_ref,
+            &self.genesis_ref,
+            &self.founder,
+            provider,
+        )
+        .await;
+    }
+
+    /// A create carrying the public hire attribution, signed by a chosen key.
+    /// Admission tests use this to prove that `hireRef` grants that signer no
+    /// authority beyond whatever the mission already gave it.
+    pub(super) async fn commission_answering_hire_signed_by(
+        &self,
+        hire_ref: &str,
+        commissioner: &Keys,
+        provider: &Keys,
+    ) {
+        commission_provider_with_hire(
+            &self.state,
+            self.community,
+            self.channel_id,
+            &self.session_ref,
+            &self.genesis_ref,
+            commissioner,
+            CommissionedProvider {
+                provider,
+                hire_ref: Some(hire_ref),
+            },
+        )
+        .await;
+    }
+
+    /// One kind 44223 metadata event, signed by the provider, naming this
+    /// umbrella. Read for its `repoRef` and for nothing else since finding 90.
+    pub(super) async fn publish_provider_metadata(&self) {
+        self.publish_provider_metadata_for(None).await;
+    }
+
+    /// The same, naming a repository the mission works on — the authorized
+    /// half of finding 91's binding.
+    pub(super) async fn publish_provider_metadata_for(&self, repo_ref: Option<&str>) {
+        // Built through the real struct rather than by hand: the decoder is an
+        // exact-key contract, and a hand-written body that silently failed to
+        // decode would leave this fixture's provider unrecognised — which is
+        // exactly how these cases first went red (every `observed` row folded
+        // down to `declared`).
+        let metadata = beekeeper_core::coding_session_payload::SessionMetadata {
+            schema: beekeeper_core::coding_session_payload::METADATA_SCHEMA.to_owned(),
+            session: beekeeper_core::coding_session_command::CodingSessionTarget {
+                driver: "claude-agent-acp".to_owned(),
+                instance_id: "instance-1".to_owned(),
+                session_id: format!("s-{}", Uuid::new_v4().simple()),
+                generation: 1,
+            },
+            project_ref: None,
+            repo_ref: repo_ref.map(str::to_owned),
+            title: None,
+            agent_ref: None,
+            role: None,
+            provider: None,
+            runtime: None,
+            model: None,
+            status: beekeeper_core::coding_session_payload::SessionStatus::Idle,
+            branch: None,
+            capabilities: beekeeper_core::coding_session_payload::Capabilities::v1_baseline(),
+            session_ref: Some(self.session_ref.clone()),
+            observed_commit: None,
+            dirty: None,
+            relay_reachable: None,
+            verified_at: None,
+            turn_budget: None,
+            routing: None,
+            bee_stamp: None,
+            pack_ref: None,
+            handover: None,
+            compose_ref: None,
+        };
+        let content = serde_json::to_string(&metadata).expect("metadata json");
+        beekeeper_core::coding_session_payload::decode_coding_session_metadata(&content)
+            .expect("the fixture's metadata must decode, or no provider is recognised");
+        let event = EventBuilder::new(Kind::Custom(KIND_CODING_SESSION_METADATA as u16), content)
+            .tags([Tag::parse(["h", &self.channel_id.to_string()]).expect("h")])
+            .sign_with_keys(&self.provider)
+            .expect("sign metadata");
+        self.state
+            .db
+            .insert_event(self.community, &event, Some(self.channel_id))
+            .await
+            .expect("insert metadata");
+    }
+
+    /// Seat the pusher as a builder of this mission, and make it a channel
+    /// member so the ordinary role check lets it reach the gate at all.
+    pub(super) async fn grant_the_seat(&self) {
+        seat_of(&self.state, self.community, &self.seat, &self.founder).await;
+        let payload =
+            beekeeper_core::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload::new_grant_seat(
+                self.genesis_ref.clone(),
+                None,
+                1,
+                self.seat.public_key().to_hex(),
+                "builder",
+            );
+        let event = beekeeper_sdk::builders::build_coding_session_authority_transition(
+            self.channel_id,
+            &payload,
+        )
+        .expect("transition builder")
+        .sign_with_keys(&self.founder)
+        .expect("sign transition");
+        self.state
+            .db
+            .insert_event(self.community, &event, Some(self.channel_id))
+            .await
+            .expect("insert transition");
+    }
+
+    /// Publish one kind 44246 gate observation, signed now.
+    pub(super) async fn observe(
+        &self,
+        signer: &Keys,
+        source: CodingSessionObservationSource,
+        rows: Vec<CodingSessionObservationGateRow>,
+    ) {
+        self.observe_at(signer, source, rows, Timestamp::now())
+            .await;
+    }
+
+    /// Publish one kind 44246 gate observation with a chosen `created_at`.
+    ///
+    /// The relay pages `created_at DESC, id ASC`, so two rows signed in the
+    /// same second come back in id order — which is random. A case about
+    /// which row is *newer* (finding 79) has to pin the seconds, or it would
+    /// pass or fail on a coin toss.
+    pub(super) async fn observe_at(
+        &self,
+        signer: &Keys,
+        source: CodingSessionObservationSource,
+        rows: Vec<CodingSessionObservationGateRow>,
+        created_at: Timestamp,
+    ) {
+        let payload = CodingSessionObservationPayload {
+            schema: CODING_SESSION_OBSERVATION_SCHEMA.into(),
+            session_ref: self.session_ref.clone(),
+            genesis_ref: self.genesis_ref.clone(),
+            observation_type: CodingSessionObservationType::Gate,
+            source,
+            assignment_ref: None,
+            body: CodingSessionObservationBody::Gate(CodingSessionObservationGate { rows }),
+        };
+        let event = EventBuilder::new(
+            Kind::Custom(KIND_CODING_SESSION_OBSERVATION as u16),
+            serde_json::to_string(&payload).expect("observation json"),
+        )
+        .tags([
+            Tag::parse(["h", &self.channel_id.to_string()]).expect("h"),
+            Tag::parse(["d", &self.session_ref]).expect("d"),
+            Tag::parse(["csob-v", CODING_SESSION_OBSERVATION_SCHEMA]).expect("v"),
+            Tag::parse(["csob-genesis", &self.genesis_ref]).expect("genesis"),
+            Tag::parse(["csob-type", "gate"]).expect("type"),
+        ])
+        .custom_created_at(created_at)
+        .sign_with_keys(signer)
+        .expect("sign observation");
+        self.state
+            .db
+            .insert_event(self.community, &event, Some(self.channel_id))
+            .await
+            .expect("insert observation");
+    }
+
+    /// Publish a founder-signed kind 44245 policy carrying only `gates`.
+    pub(super) async fn set_gate_policy(&self, gates: CodingSessionPolicyGates) {
+        let payload = CodingSessionPolicyPayload {
+            gates: Some(gates),
+            ..CodingSessionPolicyPayload::empty(self.session_ref.clone(), self.genesis_ref.clone())
+        };
+        let event = EventBuilder::new(
+            Kind::Custom(KIND_CODING_SESSION_POLICY as u16),
+            serde_json::to_string(&payload).expect("policy json"),
+        )
+        .tags([
+            Tag::parse(["h", &self.channel_id.to_string()]).expect("h"),
+            Tag::parse(["d", &self.session_ref]).expect("d"),
+            Tag::parse(["csp-v", CODING_SESSION_POLICY_SCHEMA]).expect("v"),
+            Tag::parse(["csp-genesis", &self.genesis_ref]).expect("genesis"),
+        ])
+        .sign_with_keys(&self.founder)
+        .expect("sign policy");
+        self.state
+            .db
+            .insert_event(self.community, &event, Some(self.channel_id))
+            .await
+            .expect("insert policy");
+    }
+
+    /// The seat's own fast-forward of a `require-verdict` `main`.
+    pub(super) async fn seat_push(&self, new_oid: &str) -> (StatusCode, String) {
+        self.seat_push_announced_as(
+            new_oid,
+            vec![
+                Tag::parse(["buzz-channel", &self.channel_id.to_string()]).expect("binding"),
+                Tag::parse(["buzz-protect", "refs/heads/main", "require-verdict"])
+                    .expect("protect"),
+            ],
+        )
+        .await
+    }
+
+    /// The same push against an announcement the caller composes, so a sibling
+    /// module can bind the repository somewhere other than this mission's own
+    /// channel — the live shape finding 56 caught.
+    pub(super) async fn seat_push_announced_as(
+        &self,
+        new_oid: &str,
+        tags: Vec<Tag>,
+    ) -> (StatusCode, String) {
+        let response = push_response(
+            &self.state,
+            self.community,
+            &self.founder,
+            &format!("repo-{}", Uuid::new_v4().simple()),
+            tags,
+            &self.seat.public_key().to_hex(),
+            HookRefUpdate {
+                old_oid: "1".repeat(40),
+                new_oid: new_oid.to_string(),
+                ref_name: "refs/heads/main".to_string(),
+                is_ancestor: true,
+            },
+        )
+        .await;
+        body_string(response).await
+    }
+}
+
+/// Publish the accepted lifecycle that names `provider` this mission's
+/// provider (finding 90): a kind 44221 `session.create` for `genesis_ref`,
+/// and the kind 44224 receipt that key signed for it.
+///
+/// A free function rather than a method because two fixture structs need it
+/// — [`Watched`] here and `Verified` next door — and a second copy of this
+/// shape is a second chance to write one that does not decode.
+pub(super) async fn commission_provider(
+    state: &Arc<AppState>,
+    community: beekeeper_core::CommunityId,
+    channel_id: Uuid,
+    session_ref: &str,
+    genesis_ref: &str,
+    founder: &Keys,
+    provider: &Keys,
+) {
+    commission_provider_with_hire(
+        state,
+        community,
+        channel_id,
+        session_ref,
+        genesis_ref,
+        founder,
+        CommissionedProvider {
+            provider,
+            hire_ref: None,
+        },
+    )
+    .await;
+}
+
+struct CommissionedProvider<'a> {
+    provider: &'a Keys,
+    hire_ref: Option<&'a str>,
+}
+
+async fn commission_provider_with_hire(
+    state: &Arc<AppState>,
+    community: beekeeper_core::CommunityId,
+    channel_id: Uuid,
+    session_ref: &str,
+    genesis_ref: &str,
+    founder: &Keys,
+    commissioned: CommissionedProvider<'_>,
+) {
+    let CommissionedProvider { provider, hire_ref } = commissioned;
+    let command_id = format!("cmd-{}", Uuid::new_v4().simple());
+    let session_id = format!("s-{}", Uuid::new_v4().simple());
+    let target = serde_json::json!({
+        "driver": "claude-agent-acp",
+        "instanceId": "instance-1",
+        "sessionId": session_id,
+        "generation": 1,
+    });
+    let mut action = serde_json::json!({
+        "type": "session.create",
+        "projectRef": serde_json::Value::Null,
+        "repoRef": serde_json::Value::Null,
+        "sessionRef": session_ref,
+        "genesisRef": genesis_ref,
+        "providerInstanceRef": "claude-primary",
+        "providerAuthorityPubkey": provider.public_key().to_hex(),
+        "model": serde_json::Value::Null,
+        "title": serde_json::Value::Null,
+        "initialTurn": serde_json::Value::Null,
+    });
+    if let Some(hire_ref) = hire_ref {
+        action["hireRef"] = serde_json::Value::String(hire_ref.to_owned());
+    }
+    let command = serde_json::json!({
+        "schema": beekeeper_core::coding_session_lifecycle_command::CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
+        "commandId": command_id,
+        "action": action,
+    })
+    .to_string();
+    beekeeper_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+        &command,
+    )
+    .expect("the fixture's create must decode, or no provider is proven");
+    let event = EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_LIFECYCLE_COMMAND as u16),
+        command,
+    )
+    .tags([
+        Tag::parse(["h", &channel_id.to_string()]).expect("h"),
+        Tag::parse(["csl-v", "csl1-1"]).expect("v"),
+        Tag::parse(["csl-command", &command_id]).expect("command"),
+    ])
+    .sign_with_keys(founder)
+    .expect("sign create");
+    state
+        .db
+        .insert_event(community, &event, Some(channel_id))
+        .await
+        .expect("insert create");
+
+    let receipt = serde_json::json!({
+        "schema": beekeeper_core::coding_session_payload::LIFECYCLE_RECEIPT_SCHEMA,
+        "commandId": command_id,
+        "status": "created",
+        "session": target,
+        "error": serde_json::Value::Null,
+    })
+    .to_string();
+    beekeeper_core::coding_session_payload::decode_coding_session_lifecycle_receipt(&receipt)
+        .expect("the fixture's receipt must decode, or no provider is proven");
+    let key = format!(
+        "coding-session-lifecycle-receipt/v1|{}:{command_id}",
+        command_id.len()
+    );
+    let event = EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_LIFECYCLE_RECEIPT as u16),
+        receipt,
+    )
+    .tags([
+        Tag::parse(["h", &channel_id.to_string()]).expect("h"),
+        Tag::parse(["cslr-v", "cslr1-1"]).expect("v"),
+        Tag::parse(["csl-command", &command_id]).expect("command"),
+        Tag::parse(["csl-key", &key]).expect("key"),
+    ])
+    .sign_with_keys(provider)
+    .expect("sign receipt");
+    state
+        .db
+        .insert_event(community, &event, Some(channel_id))
+        .await
+        .expect("insert receipt");
+}
+
+/// One row, green on `head_sha` over a clean tree.
+fn green(gate: &str, head_sha: &str) -> CodingSessionObservationGateRow {
+    CodingSessionObservationGateRow {
+        gate: gate.to_owned(),
+        outcome: CodingSessionObservationGateOutcome::Passed,
+        command: format!("{gate} --locked"),
+        summary: None,
+        duration_ms: Some(1_000),
+        head_sha: Some(head_sha.to_owned()),
+        dirty: Some(false),
+    }
+}
+
+pub(super) fn default_green(head_sha: &str) -> Vec<CodingSessionObservationGateRow> {
+    DEFAULT_REQUIRED_GATES
+        .iter()
+        .map(|gate| green(gate, head_sha))
+        .collect()
+}
+
+/// The headline: a seat lands its own work on a gated `main`, with no
+/// verifier, on the strength of rows its provider signed about this commit.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn b_observed_green_gates_on_the_pushed_sha_admit_a_seats_push() {
+    let w = watched().await;
+    w.observe(
+        &w.provider,
+        CodingSessionObservationSource::Observed,
+        default_green(HEAD_SHA),
+    )
+    .await;
+
+    let (status, body) = w.seat_push(HEAD_SHA).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "green observed gates on this commit are the landing (body: {body})"
+    );
+}
+
+/// The same rows, a different commit. Without `headSha` this push would land
+/// on somebody else's green — finding 27's shape.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn b_green_rows_for_another_commit_do_not_land_this_one() {
+    let w = watched().await;
+    w.observe(
+        &w.provider,
+        CodingSessionObservationSource::Observed,
+        default_green(OTHER_SHA),
+    )
+    .await;
+
+    let (status, body) = w.seat_push(HEAD_SHA).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+    assert!(
+        body.contains(&format!("No observed gate row names {HEAD_SHA}")),
+        "the refusal says the rows name another commit: {body}"
+    );
+}
+
+/// A red gate is named, on the commit it was red on.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn b_a_red_gate_is_named_in_the_refusal() {
+    let w = watched().await;
+    let mut rows = default_green(HEAD_SHA);
+    rows[1].outcome = CodingSessionObservationGateOutcome::Failed;
+    w.observe(&w.provider, CodingSessionObservationSource::Observed, rows)
+        .await;
+
+    let (status, body) = w.seat_push(HEAD_SHA).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+    assert_eq!(
+        body,
+        format!(
+            "refs/heads/main: gate `{}` was observed red on {HEAD_SHA}. Fix it and run it \
+             again; the next observed row names the commit it ran at.",
+            DEFAULT_REQUIRED_GATES[1]
+        )
+    );
+}
+
+/// Green over a worktree the commit does not name is not evidence about that
+/// commit.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn b_a_dirty_worktree_refuses_however_green_the_rows() {
+    let w = watched().await;
+    let rows = default_green(HEAD_SHA)
+        .into_iter()
+        .map(|mut row| {
+            row.dirty = Some(true);
+            row
+        })
+        .collect();
+    w.observe(&w.provider, CodingSessionObservationSource::Observed, rows)
+        .await;
+
+    let (status, body) = w.seat_push(HEAD_SHA).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+    assert!(
+        body.contains(&format!("{HEAD_SHA} was observed dirty")),
+        "{body}"
+    );
+}
+
+/// The seat signing its own rows — `observed` and all — is a claim. The fold
+/// downgrades it because the signer is no provider of this mission, and the
+/// refusal says so.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn b_rows_the_seat_signed_are_declared_and_refuse() {
+    let w = watched().await;
+    w.observe(
+        &w.seat,
+        CodingSessionObservationSource::Observed,
+        default_green(HEAD_SHA),
+    )
+    .await;
+
+    let (status, body) = w.seat_push(HEAD_SHA).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+    assert!(
+        body.contains("its own subject saying so about itself"),
+        "{body}"
+    );
+}
+
+/// `gates.verifierRequired: true` turns arm (B) off, and the refusal is arm
+/// (C)'s — the founder asked for a second seat and does not get told about
+/// gate rows instead.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn b_is_off_when_the_founders_policy_requires_a_verifier() {
+    let w = watched().await;
+    w.set_gate_policy(CodingSessionPolicyGates {
+        red_first: None,
+        review_every_lane: None,
+        required_gates: None,
+        verifier_required: Some(true),
+    })
+    .await;
+    w.observe(
+        &w.provider,
+        CodingSessionObservationSource::Observed,
+        default_green(HEAD_SHA),
+    )
+    .await;
+
+    let (status, body) = w.seat_push(HEAD_SHA).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a founder who asked for a verifier gets one (body: {body})"
+    );
+    assert!(
+        body.contains("no mission verdict names this commit"),
+        "{body}"
+    );
+}
+
+/// The founder's own gate list replaces the default, and one green row under
+/// it is the whole requirement.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn b_the_founders_own_gate_list_is_the_one_enforced() {
+    let w = watched().await;
+    w.set_gate_policy(CodingSessionPolicyGates {
+        red_first: None,
+        review_every_lane: None,
+        required_gates: Some(vec!["just ci".into()]),
+        verifier_required: Some(false),
+    })
+    .await;
+    w.observe(
+        &w.provider,
+        CodingSessionObservationSource::Observed,
+        vec![green("just ci", HEAD_SHA)],
+    )
+    .await;
+
+    let (status, body) = w.seat_push(HEAD_SHA).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+}
+
+/// A required gate nobody ran refuses, and names the whole list.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn b_a_required_gate_never_observed_refuses_and_names_the_list() {
+    let w = watched().await;
+    w.observe(
+        &w.provider,
+        CodingSessionObservationSource::Observed,
+        vec![green(DEFAULT_REQUIRED_GATES[0], HEAD_SHA)],
+    )
+    .await;
+
+    let (status, body) = w.seat_push(HEAD_SHA).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+    for gate in DEFAULT_REQUIRED_GATES {
+        assert!(body.contains(gate), "the required list is named: {body}");
+    }
+}
+
+/// A row signed before `headSha` existed decodes, renders, and admits
+/// nothing: absent is not "the commit being pushed".
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn b_rows_from_before_the_key_existed_still_refuse() {
+    let w = watched().await;
+    let rows = DEFAULT_REQUIRED_GATES
+        .iter()
+        .map(|gate| CodingSessionObservationGateRow {
+            gate: (*gate).to_owned(),
+            outcome: CodingSessionObservationGateOutcome::Passed,
+            command: format!("{gate} --locked"),
+            summary: None,
+            duration_ms: Some(1_000),
+            head_sha: None,
+            dirty: None,
+        })
+        .collect();
+    w.observe(&w.provider, CodingSessionObservationSource::Observed, rows)
+        .await;
+
+    let (status, body) = w.seat_push(HEAD_SHA).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a row naming no commit lands nothing (body: {body})"
+    );
+}
+
+/// A founder still lands with no gate row at all: arm (A) is answered first
+/// and reads no mission.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn b_does_not_disturb_a_founder_push() {
+    let w = watched().await;
+    let response = push_response(
+        &w.state,
+        w.community,
+        &w.founder,
+        &format!("repo-{}", Uuid::new_v4().simple()),
+        vec![
+            Tag::parse(["buzz-channel", &w.channel_id.to_string()]).expect("binding"),
+            Tag::parse(["buzz-protect", "refs/heads/main", "require-verdict"]).expect("protect"),
+        ],
+        &w.founder.public_key().to_hex(),
+        HookRefUpdate {
+            old_oid: "1".repeat(40),
+            new_oid: HEAD_SHA.to_string(),
+            ref_name: "refs/heads/main".to_string(),
+            is_ancestor: true,
+        },
+    )
+    .await;
+    let (status, body) = body_string(response).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+}
+
+// ── finding 79: storage pages newest-first, and the gate must reverse ───
+
+/// **Finding 79**, end to end against Postgres — Andy's run, 2026-09-04.
+///
+/// The seat's first `cargo fmt` row closed red and dirty at the base commit
+/// (exit 127: hermit not on `PATH` yet). Its later rows closed green on the
+/// pushed commit for every required gate, over a clean tree. The pusher
+/// holds a seat; no founder policy asks for a verifier. `query_events` pages
+/// `created_at DESC, id ASC`, so the page reaches the gate newest-first, and
+/// the gate folded it as read: the red row won `(provider, cargo fmt)` and
+/// every push was refused with "gate `cargo fmt` has no observed green row
+/// on …". The page fold reverses first; arm (B) admits.
+///
+/// The seconds are pinned (`observe_at`) so storage's order is the one the
+/// live relay produced and not an id-order coin toss.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn b_a_seats_first_red_row_does_not_outrank_its_later_green_rows() {
+    let w = watched().await;
+    w.observe_at(
+        &w.provider,
+        CodingSessionObservationSource::Observed,
+        vec![CodingSessionObservationGateRow {
+            gate: "cargo fmt".to_owned(),
+            outcome: CodingSessionObservationGateOutcome::Failed,
+            command: "cargo fmt --all --check".to_owned(),
+            summary: Some("exit 127: cargo: command not found".to_owned()),
+            duration_ms: Some(12),
+            head_sha: Some(OTHER_SHA.to_owned()),
+            dirty: Some(true),
+        }],
+        Timestamp::from_secs(1_757_000_000),
+    )
+    .await;
+    // Four later rows, each its own event as the provider records them.
+    for (offset, gate) in DEFAULT_REQUIRED_GATES.iter().enumerate() {
+        w.observe_at(
+            &w.provider,
+            CodingSessionObservationSource::Observed,
+            vec![green(gate, HEAD_SHA)],
+            Timestamp::from_secs(1_757_000_060 + offset as u64 * 60),
+        )
+        .await;
+    }
+    w.observe_at(
+        &w.provider,
+        CodingSessionObservationSource::Observed,
+        vec![green("cargo fmt", HEAD_SHA)],
+        Timestamp::from_secs(1_757_000_600),
+    )
+    .await;
+
+    let (status, body) = w.seat_push(HEAD_SHA).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the later green rows are the current ones; the first red row at the base commit \
+         must not outrank them (body: {body})"
+    );
+}
+
+/// SV-41 — a provider-signed gate start is never an outcome — through the real
+/// `git-receive-pack` policy handler, reusing this module's fixture. Attached
+/// here rather than in `verdict_admission.rs`, which sits at the file ceiling.
+#[path = "verdict_admission_gate_start_tests.rs"]
+mod gate_start_tests;

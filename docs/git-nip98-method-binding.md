@@ -6,14 +6,14 @@ constrained behaviour, document, do not redesign this phase.
 
 ## The finding
 
-`buzz-auth`'s NIP-98 verifier is strict. `crates/buzz-auth/src/nip98.rs`
+`buzz-auth`'s NIP-98 verifier is strict. `crates/beekeeper-auth/src/nip98.rs`
 verifies, in order: event kind and signature, `created_at` within ±60 s, the
 `u` tag against the expected URL, the `method` tag against the expected method,
 and — when a `payload` tag is present and a body is supplied — the SHA-256 of
 the body.
 
 The git transport deliberately defeats two of those. At
-`crates/buzz-relay/src/api/git/transport.rs:167` the expected method is taken
+`crates/beekeeper-relay/src/api/git/transport.rs:167` the expected method is taken
 **from the event itself**, with the comment:
 
 > We pass the method from the event itself so `verify_nip98_event` always accepts.
@@ -96,6 +96,6 @@ validity window below 60 s for write endpoints; or require a second,
 write-specific token for `git-receive-pack` that the credential helper mints on
 demand. Any of these changes the credential-helper contract and needs
 `git-credential-nostr` changed in lockstep, so it is a coordinated change across
-`crates/git-credential-nostr` and `crates/buzz-relay/src/api/git/`.
+`crates/git-credential-nostr` and `crates/beekeeper-relay/src/api/git/`.
 
 Owner: whoever owns the git transport (Andy), not the sessions phase.

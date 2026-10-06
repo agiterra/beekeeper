@@ -28,7 +28,7 @@ const IDENTITY = {
 };
 
 test("the reason slug matches the provider's FULL_ACCESS_REASON", () => {
-  // crates/buzz-session-provider/src/full_access.rs
+  // crates/beekeeper-session-provider/src/full_access.rs
   assert.equal(CODING_SESSION_FULL_ACCESS_REASON, "full-access");
 });
 
@@ -82,7 +82,7 @@ test("other reasons are unchanged by the full-access case", () => {
 });
 
 test("the provider's isolation statuses render as session isolation rows", () => {
-  // crates/buzz-session-provider/src/session_isolation.rs
+  // crates/beekeeper-session-provider/src/session_isolation.rs
   const expected = [
     [
       "operator_git_withheld",

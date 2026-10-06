@@ -23,7 +23,7 @@ enum RelaySendLane {
 /// against one burst window of [relayBurstCapacity] per [window] keyed by
 /// (community, pubkey) — not per connection — and durable-or-ephemeral
 /// `EVENT`s against [eventsPerMinute] per minute on the same key
-/// (`crates/buzz-relay/src/admission.rs`). A phone and a desktop paired on
+/// (`crates/beekeeper-relay/src/admission.rs`). A phone and a desktop paired on
 /// one key therefore share both counters, which is why this bucket only
 /// claims `1 / deviceShare` of the burst.
 ///

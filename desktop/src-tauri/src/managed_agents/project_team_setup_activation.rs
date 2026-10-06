@@ -177,7 +177,7 @@ fn recover_role_identity(
             "The planned project role identity does not match its preserved key.",
         ));
     }
-    let attested = buzz_sdk_pkg::nip_oa::verify_auth_tag(&secret.auth_tag, &keys.public_key())
+    let attested = beekeeper_sdk_pkg::nip_oa::verify_auth_tag(&secret.auth_tag, &keys.public_key())
         .map_err(|_| invalid("The planned project role owner attestation is invalid."))?;
     if attested != owner.public_key() {
         return Err(invalid("The planned project role has a different owner."));
@@ -748,7 +748,7 @@ pub async fn project_team_setup_start_lead(
         let create_command_id = format!("csl-{}", uuid::Uuid::new_v4());
         let channel =
             uuid::Uuid::parse_str(&channel_id).map_err(|error| invalid(error.to_string()))?;
-        let genesis_event = buzz_sdk_pkg::build_coding_session_genesis(
+        let genesis_event = beekeeper_sdk_pkg::build_coding_session_genesis(
             channel,
             &CodingSessionGenesisPayload::new(&session_ref),
         )
@@ -785,7 +785,7 @@ pub async fn project_team_setup_start_lead(
             },
         };
         let create_event =
-            buzz_sdk_pkg::builders::build_coding_session_lifecycle_command(channel, &payload)
+            beekeeper_sdk_pkg::builders::build_coding_session_lifecycle_command(channel, &payload)
                 .map_err(|error| invalid(error.to_string()))?
                 .sign_with_keys(&keys)
                 .map_err(|error| invalid(error.to_string()))?;

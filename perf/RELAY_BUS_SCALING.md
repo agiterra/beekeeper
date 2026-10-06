@@ -58,7 +58,7 @@ The unit tests pin the default 1/2/4-pod 64× contract and include a mutant row 
 
 ## Code provenance
 
-The scoped Redis channel format corresponds to `buzz_pubsub::EventTopicKey::redis_channel()` in `crates/buzz-pubsub/src/topic.rs`:
+The scoped Redis channel format corresponds to `beekeeper_pubsub::EventTopicKey::redis_channel()` in `crates/beekeeper-pubsub/src/topic.rs`:
 
 - global: `buzz:{community_id}:global`
 - channel: `buzz:{community_id}:channel:{channel_id}`

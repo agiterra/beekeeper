@@ -2,7 +2,7 @@
  * One umbrella session's display name: a person's 44229 or a provider's
  * generated 44252 title, ranked by one rule every reader shares.
  *
- * This is the TypeScript mirror of `crates/buzz-core/src/coding_session_title.rs`
+ * This is the TypeScript mirror of `crates/beekeeper-core/src/coding_session_title.rs`
  * (`validate_coding_session_title_parts`, `resolve_session_display_name`),
  * pinned by `conformance/session-display-name/` — the vectors are loaded
  * byte-for-byte by `features/coding-sessions/lib/codingSessionTitle.test.mjs`.

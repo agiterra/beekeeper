@@ -49,7 +49,7 @@ fn catalog(root: &Path) -> TemplateCatalog {
             &format!("---\nname: {role}-skill\ndescription: s\n---\ns\n"),
         );
     }
-    for fragment in buzz_persona_pkg::seed::SHARED_FRAGMENTS {
+    for fragment in beekeeper_persona_pkg::seed::SHARED_FRAGMENTS {
         write(
             &dir.join(fragment).join("1.0.0/TEMPLATE.md"),
             &format!("---\nname: {fragment}\nversion: 1.0.0\ndescription: {fragment}\n---\n{fragment}.\n"),
@@ -81,7 +81,7 @@ fn the_seed_commit_holds_the_layout_by_reference() {
         &checkout,
         &catalog,
         "demo",
-        &buzz_persona_pkg::seed::default_verify_command(),
+        &beekeeper_persona_pkg::seed::default_verify_command(),
         &auth,
     )
     .expect("seed commits");
@@ -103,7 +103,7 @@ fn the_seed_commit_holds_the_layout_by_reference() {
     }
     assert_eq!(
         std::fs::read_to_string(checkout.join("model-registry.yaml")).expect("registry"),
-        buzz_persona_pkg::seed::SEEDED_MODEL_REGISTRY
+        beekeeper_persona_pkg::seed::SEEDED_MODEL_REGISTRY
     );
     let lead = std::fs::read_to_string(checkout.join("roles/lead.md")).expect("lead");
     assert!(lead.contains("![[beekeeper/lead@^1.0.0]]"));
@@ -113,7 +113,7 @@ fn the_seed_commit_holds_the_layout_by_reference() {
         &checkout,
         &catalog,
         "demo",
-        &buzz_persona_pkg::seed::default_verify_command(),
+        &beekeeper_persona_pkg::seed::default_verify_command(),
         &auth,
     )
     .expect("reseed");
@@ -303,7 +303,7 @@ mod against_a_stub_relay {
         // an active verify that setup publishes next.
         assert_eq!(
             result.seeded_actions_yml.as_deref(),
-            Some(buzz_persona_pkg::seed::seeded_actions_yml().as_str())
+            Some(beekeeper_persona_pkg::seed::seeded_actions_yml().as_str())
         );
         let expected = root.join("repos").join("demo");
         assert_eq!(
@@ -588,7 +588,7 @@ mod against_a_stub_relay {
             catalog,
             root.join("cache"),
             ProjectAgentsInitOptions {
-                verify_command: buzz_persona_pkg::seed::default_verify_command(),
+                verify_command: beekeeper_persona_pkg::seed::default_verify_command(),
                 checkout_parent: root.join("repos"),
                 recorded_checkout: None,
                 git_auth: |_: &Keys| build_test_git_auth_config(),
@@ -862,7 +862,7 @@ mod against_a_stub_relay {
             catalog,
             root.join("cache"),
             ProjectAgentsInitOptions {
-                verify_command: buzz_persona_pkg::seed::default_verify_command(),
+                verify_command: beekeeper_persona_pkg::seed::default_verify_command(),
                 checkout_parent: root.join("repos"),
                 recorded_checkout: None,
                 git_auth: |_: &Keys| build_test_git_auth_config(),

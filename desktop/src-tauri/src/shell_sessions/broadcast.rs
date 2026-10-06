@@ -284,7 +284,7 @@ fn announce_with_coordinate(
     status: &str,
 ) {
     let builder = nostr::EventBuilder::new(
-        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_SHELL_SESSION as u16),
+        nostr::Kind::Custom(beekeeper_core_pkg::kind::KIND_SHELL_SESSION as u16),
         "",
     )
     .tags(announce_tags(info, coordinate, status));
@@ -322,7 +322,7 @@ pub(crate) fn announce_tags(
     for entry in &info.roster {
         let pubkey = entry.pubkey.trim().to_ascii_lowercase();
         let pubkey_ok = pubkey.len() == 64 && pubkey.bytes().all(|b| b.is_ascii_hexdigit());
-        if !pubkey_ok || !buzz_core_pkg::kind::is_valid_shell_role(&entry.role) {
+        if !pubkey_ok || !beekeeper_core_pkg::kind::is_valid_shell_role(&entry.role) {
             continue;
         }
         tags.push(tag(&["p", &pubkey, "", &entry.role]));
@@ -662,7 +662,7 @@ fn build_frame(
     }
     let content = base64::engine::general_purpose::STANDARD.encode(raw);
     let event = nostr::EventBuilder::new(
-        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_SHELL_FRAME as u16),
+        nostr::Kind::Custom(beekeeper_core_pkg::kind::KIND_SHELL_FRAME as u16),
         content,
     )
     .tags(tags)

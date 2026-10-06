@@ -3,7 +3,7 @@
 //! Desktop and `bee pulse digest` read **one** model. This boundary supplies
 //! signed events and the verified authority projection, and delegates every
 //! fold rule and every sentence to `buzz-core`'s
-//! [`pulse_mission`](buzz_core_pkg::pulse_mission): the frontend receives
+//! [`pulse_mission`](beekeeper_core_pkg::pulse_mission): the frontend receives
 //! rendered strings and re-words nothing, so the two consumers cannot drift.
 //!
 //! Nothing here asks anyone to report. The rows are composed from the relay's
@@ -12,18 +12,18 @@
 
 use std::collections::BTreeMap;
 
-use buzz_core_pkg::coding_session_policy::CodingSessionPolicyGrant;
-use buzz_core_pkg::coding_session_team_transaction::{
+use beekeeper_core_pkg::coding_session_policy::CodingSessionPolicyGrant;
+use beekeeper_core_pkg::coding_session_team_transaction::{
     CodingSessionTeamActiveGrant, CodingSessionTeamActiveSeat, CodingSessionTeamFoldContext,
 };
-use buzz_core_pkg::coding_session_verdict_admission::mission_provider_pubkeys_from_lifecycle;
-use buzz_core_pkg::pulse_mission::{
+use beekeeper_core_pkg::coding_session_verdict_admission::mission_provider_pubkeys_from_lifecycle;
+use beekeeper_core_pkg::pulse_mission::{
     fold_pulse_mission_row, open_rulings, pulse_mission_cap_disclosure, render_pulse_mission_lines,
     rulings_waiting_on_viewer, PulseMissionError, PulseMissionFacts, PulseMissionNames,
     PulseMissionRows, PulseMissionSources, PulseRefState, MAX_PULSE_MISSION_ROWS,
     PULSE_MISSION_ROWS_SCHEMA, PULSE_MISSION_SCOPE,
 };
-use buzz_core_pkg::pulse_overlap::{
+use beekeeper_core_pkg::pulse_overlap::{
     fold_pulse_overlaps, render_pulse_overlap_rows, PulseOverlapSide,
 };
 use nostr::Event;
@@ -262,7 +262,7 @@ fn steering_signers(session: &PulseMissionSessionInput) -> Vec<String> {
 }
 
 fn policy_grants(session: &PulseMissionSessionInput) -> Vec<CodingSessionPolicyGrant> {
-    use buzz_core_pkg::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
+    use beekeeper_core_pkg::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
     session
         .active_grants
         .iter()

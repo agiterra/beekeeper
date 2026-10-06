@@ -11,7 +11,7 @@
 /// machine, none of them may claim one.
 #[test]
 fn the_host_runtime_table_declares_the_idle_guard_for_claude_only() {
-    use buzz_core_pkg::coding_session_runtime::SteerIdleGuard;
+    use beekeeper_core_pkg::coding_session_runtime::SteerIdleGuard;
     let descriptors = crate::session_provider::runtimes::build_runtime_descriptors();
     let claude = descriptors
         .iter()

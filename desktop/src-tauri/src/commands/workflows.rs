@@ -231,7 +231,7 @@ pub async fn get_workflow_runs(
 ///
 /// So the definition and its hash leave this command **together**, and the
 /// hash is computed here from the same parse the `definition` field carries,
-/// with the relay's own canonical function (`buzz_workflow::hash`) rather
+/// with the relay's own canonical function (`beekeeper_workflow::hash`) rather
 /// than a reimplementation. `definition` is the canonical JSON value that was
 /// hashed, so what a surface displays is what was hashed, by construction.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -308,26 +308,29 @@ fn workflow_definition_wire(ev: &nostr::Event) -> WorkflowDefinitionWire {
 /// Parse a definition's YAML and hash the canonical value it produces.
 ///
 /// One parse, one value, one hash: the returned `Value` **is** the thing that
-/// was hashed. `buzz_workflow::hash::definition_hash_hex` is the function the
+/// was hashed. `beekeeper_workflow::hash::definition_hash_hex` is the function the
 /// relay stores `workflows.definition_hash` with, so a match here is a match
 /// there.
 fn hashed_definition(yaml: &str) -> Result<(Value, String), String> {
-    let (def, _canonical) = buzz_workflow_pkg::schema::parse_yaml(yaml)
+    let (def, _canonical) = beekeeper_workflow_pkg::schema::parse_yaml(yaml)
         .map_err(|error| format!("this definition does not parse: {error}"))?;
     // The relay injects a webhook secret into the value before hashing a
     // webhook-triggered definition, and that secret never leaves it. Such a
     // definition's stored hash is therefore not reproducible from the public
     // event, and saying so is the only honest answer — a host step never
     // combines with a webhook trigger, so no approval depends on it.
-    if matches!(def.trigger, buzz_workflow_pkg::schema::TriggerDef::Webhook) {
+    if matches!(
+        def.trigger,
+        beekeeper_workflow_pkg::schema::TriggerDef::Webhook
+    ) {
         return Err(
             "a webhook-triggered definition's stored hash includes a secret this event does not              carry, so it cannot be reproduced here"
                 .to_string(),
         );
     }
-    let value = buzz_workflow_pkg::hash::definition_value(&def)
+    let value = beekeeper_workflow_pkg::hash::definition_value(&def)
         .map_err(|error| format!("this definition does not canonicalize: {error}"))?;
-    let hash = buzz_workflow_pkg::hash::definition_hash_hex(&def)
+    let hash = beekeeper_workflow_pkg::hash::definition_hash_hex(&def)
         .map_err(|error| format!("this definition could not be hashed: {error}"))?;
     Ok((value, hash))
 }
@@ -520,8 +523,8 @@ pub async fn grant_approval(
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
     let scope = match scope.as_deref().map(str::trim) {
-        None | Some("") | Some("run") => buzz_core_pkg::workflow_autorun::ApprovalScope::Run,
-        Some("action") => buzz_core_pkg::workflow_autorun::ApprovalScope::Action,
+        None | Some("") | Some("run") => beekeeper_core_pkg::workflow_autorun::ApprovalScope::Run,
+        Some("action") => beekeeper_core_pkg::workflow_autorun::ApprovalScope::Action,
         Some(other) => return Err(format!("unknown approval scope {other:?}")),
     };
     let builder = events::build_approval_grant(&approval_ref, note.as_deref(), scope)?;

@@ -19,8 +19,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
-use buzz_shell_host::proto::Frame;
-use buzz_shell_host::receipt::Receipt;
+use beekeeper_shell_host::proto::Frame;
+use beekeeper_shell_host::receipt::Receipt;
 use tauri::{AppHandle, Emitter};
 
 use super::coding_session::{self, ShellCodingSessionRef};

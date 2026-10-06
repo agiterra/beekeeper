@@ -2,7 +2,7 @@
  * Coding-session event kinds, as the browser observer reads them.
  *
  * Copied from `desktop/src/shared/constants/kinds.ts` — keep in sync. The
- * integers are the wire contract shared with `crates/buzz-core/src/kind.rs`;
+ * integers are the wire contract shared with `crates/beekeeper-core/src/kind.rs`;
  * a divergence here is a silently empty session list, not a type error.
  */
 

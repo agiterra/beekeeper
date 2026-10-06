@@ -340,7 +340,7 @@ Design (LOCKED):
  1. `ManagedAgentRecord.home_role: Option<String>` and the two mirrors on `ManagedAgentSummary`
     (`home_role`, `has_role_pack`) exactly as the contract section spells them. `home_role` is only
     ever written from a pack persona's `role:` frontmatter
-    (`buzz_persona_pkg::resolve::resolve_persona_by_name(...).role`) — never inferred from a name,
+    (`beekeeper_persona_pkg::resolve::resolve_persona_by_name(...).role`) — never inferred from a name,
     a slug, or a team.
  2. New command `install_crew_role_packs(directory)`:
     a. Refuse a path that is not a readable directory, with the "unreadable folder" copy.
@@ -597,17 +597,17 @@ Tier: 0/1 — read-only decoders and one new query command; no durable state, no
 Branch: crew/lane-c, worktree from crew/front-door @ b750941a.
 
 Owns (exclusive):
-  crates/buzz-cli/**
-  crates/buzz-sdk/**  — only if a builder is genuinely missing. It should not be: this lane reads.
+  crates/beekeeper-cli/**
+  crates/beekeeper-sdk/**  — only if a builder is genuinely missing. It should not be: this lane reads.
                         If you touch it, say exactly which builder was missing and why.
-  crates/buzz-cli/TESTING.md
+  crates/beekeeper-cli/TESTING.md
 Must not touch anything else; if a correct change needs a file outside this list, STOP and report.
 
 Problem, with evidence:
-  - There is no `Cmd::Events` (crates/buzz-cli/src/lib.rs:194-278). The lead hand-wrote an
+  - There is no `Cmd::Events` (crates/beekeeper-cli/src/lib.rs:194-278). The lead hand-wrote an
     authenticated REQ three times in /tmp on 2026-08-27 because the CLI cannot run one, even though
     `BuzzClient::query_all` / `query_paginated` already page the relay's `/query` bridge
-    (crates/buzz-cli/src/client.rs:683-729).
+    (crates/beekeeper-cli/src/client.rs:683-729).
   - `bee sessions status` prints target, seat, liveness, open turn and budget
     (commands/sessions/crew_cmds.rs:493-580) and never names the founder — which is how a probe
     aimed at "a 3-day-quiet session" landed in Andy's (SESSION_STATE item 73, closing paragraph).
@@ -628,7 +628,7 @@ Design (LOCKED):
     `{id, kind, pubkey, createdAt, h, summary}` where `summary` is the first 120 characters of
     `content` with newlines collapsed — never a parsed payload, so a malformed event still prints.
     Validate `--channel` as a UUID and every author/id as 64-char lowercase hex before any request.
- 2. Founder, defined once in `crates/buzz-cli/src/commands/sessions/crew.rs` and used by both
+ 2. Founder, defined once in `crates/beekeeper-cli/src/commands/sessions/crew.rs` and used by both
     commands:
       - `create_signer`: the pubkey that signed the 44221 `session.create` whose `commandId` a 44224
         receipt joined to this generation's target. Fold creates from the events
@@ -653,11 +653,11 @@ Design (LOCKED):
     either would be a second, differently-derived answer to the same question.
 
 Contract changes: none on the wire. Document `bee events query` and the two new columns in
-  crates/buzz-cli/TESTING.md.
+  crates/beekeeper-cli/TESTING.md.
 
 Surfaces:
-  CLI: crates/buzz-cli/src/lib.rs (`Cmd::Events`, `EventsCmd`), dispatched from
-    crates/buzz-cli/src/commands/events.rs (new).
+  CLI: crates/beekeeper-cli/src/lib.rs (`Cmd::Events`, `EventsCmd`), dispatched from
+    crates/beekeeper-cli/src/commands/events.rs (new).
     entry point: `bee events query --kinds …`; `bee --format compact events query …`.
     fields/states: the flags above; empty result prints `[]` and exits 0; a relay error exits 2; a
       bad flag exits 1 (the CLI's existing exit-code contract, AGENTS.md § Agent CLI).
@@ -672,7 +672,7 @@ Surfaces:
     the mobile lines above.)
   web: no surface, by decision — same. (needs Brian's sign-off)
 
-Tests you must add (red first, then green) — `cargo test -p buzz-cli --lib`:
+Tests you must add (red first, then green) — `cargo test -p beekeeper-cli --lib`:
   - `events_query_requires_kinds` — a filter with no kinds is refused locally, exit 1, with the
     verbatim message.
   - `events_query_builds_the_filter_it_was_asked_for` — kinds/authors/#h/since/until/limit map onto
@@ -686,8 +686,8 @@ Tests you must add (red first, then green) — `cargo test -p buzz-cli --lib`:
   - `two_umbrellas_in_one_channel_keep_their_own_founders`
 
 Acceptance:
-  cargo test -p buzz-cli --lib → report passed/failed counts
-  cargo clippy -p buzz-cli --all-targets -- -D warnings → clean
+  cargo test -p beekeeper-cli --lib → report passed/failed counts
+  cargo clippy -p beekeeper-cli --all-targets -- -D warnings → clean
   Live, against the dev relay: `bee --format compact events query --kinds 44223 --channel <uuid>
   --limit 20` returns rows, and `bee sessions status --channel <uuid>` names a founder for a session
   whose founder you can independently confirm. Paste both outputs (redacting nothing but content).

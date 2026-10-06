@@ -3,7 +3,7 @@
   "kind": 44224,
   "record": "coding-session lifecycle/turn receipt",
   "readers": {
-    "rust": "crates/buzz-core/src/coding_session_payload.rs :: decode_coding_session_lifecycle_receipt",
+    "rust": "crates/beekeeper-core/src/coding_session_payload.rs :: decode_coding_session_lifecycle_receipt",
     "desktopCoordination": "desktop/src/shared/coordination/sessionCoordinationStrictJson.ts :: hasStrictLifecycleReceiptJson + hasStrictLifecycleReceiptValues (lifecycle vocabulary only, by design)",
     "desktopIngress": "desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts :: parseCodingSessionLifecycleReceipt",
     "dart": "mobile/lib/features/coding_sessions/domain/coding_session_decoders.dart :: decodeCodingSessionReceipt",

@@ -81,7 +81,7 @@ export const CODING_SESSION_HIRE_POLICY_STORAGE_KEY =
  * The refusal codes the contract defines. Nothing else is published.
  *
  * Must equal buzz-core's `HIRE_REFUSAL_CODES`
- * (`crates/buzz-core/src/coding_session_lifecycle_command.rs`); a parity test
+ * (`crates/beekeeper-core/src/coding_session_lifecycle_command.rs`); a parity test
  * reads that file.
  */
 export const CODING_SESSION_HIRE_REFUSAL_CODES = [

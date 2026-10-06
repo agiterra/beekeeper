@@ -182,7 +182,7 @@ export type RoutingExclusion = {
  * ordered bands. Lower is preferred, and the band is consulted **before**
  * cost — spec §8: a challenger does not earn a route by being cheap.
  *
- * Mirrors `Standing` in `crates/buzz-core/src/coding_session_routing.rs:635`.
+ * Mirrors `Standing` in `crates/beekeeper-core/src/coding_session_routing.rs:635`.
  * `unranked` and `challenger` are different facts: a row that says nothing
  * about a class has not been ruled a challenger for it, and only a row the
  * registry actually calls `challenger` is what a sample samples.
@@ -698,7 +698,7 @@ const DEFAULT_RETRY_PRIOR = 1;
  * expected_cost = retry_prior × (cost_prior + latency_prior)
  * ```
  *
- * This is `expected_cost` in `crates/buzz-core/src/coding_session_routing.rs`
+ * This is `expected_cost` in `crates/beekeeper-core/src/coding_session_routing.rs`
  * (:1048), character for character in its arithmetic, because the two routers
  * have to reach the same answer on the same registry or one of them is lying.
  * The two priors add because they are two costs paid on the same attempt; the

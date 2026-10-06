@@ -1741,12 +1741,12 @@ Desktop- and harness-side, discovered during this design:
 | Mesh rewrite (why relay-mesh is non-deployable) | `desktop/src-tauri/src/managed_agents/relay_mesh.rs`; create-time rejection in `commands/agents.rs` (`normalize_relay_mesh`) |
 | Reserved-key strip | `desktop/src-tauri/src/managed_agents/env_vars.rs` (`RESERVED_ENV_KEYS`) |
 | Unconditional deploy on Start | `desktop/src-tauri/src/commands/agents.rs` (`start_managed_agent`) |
-| Presence publish / offline-on-exit | `crates/buzz-acp/src/lib.rs` (`publish_presence`, shutdown path) |
-| `!shutdown` owner check | `crates/buzz-acp/src/lib.rs` (main loop) |
-| Graceful shutdown path (budget enforcement *to be added* — Known Defect 7) | `crates/buzz-acp/src/lib.rs` (pool shutdown, then drain / reap / presence / relay close) |
-| Clean-exit exit-code contract | *to be added*: `crates/buzz-acp` distinguished exit codes + pinning test (Known Defect 6; gates `OnFailure`) |
-| Auto-stop flag | *to be added*: `crates/buzz-acp/src/config.rs` + a pool-independent timer (NOT the `pool_ready`-gated maintenance tick — Known Defect 4) + `RESERVED_ENV_KEYS` entry |
-| Kubernetes binding | *to be added*: `crates/buzz-backend-kubernetes` |
+| Presence publish / offline-on-exit | `crates/beekeeper-acp/src/lib.rs` (`publish_presence`, shutdown path) |
+| `!shutdown` owner check | `crates/beekeeper-acp/src/lib.rs` (main loop) |
+| Graceful shutdown path (budget enforcement *to be added* — Known Defect 7) | `crates/beekeeper-acp/src/lib.rs` (pool shutdown, then drain / reap / presence / relay close) |
+| Clean-exit exit-code contract | *to be added*: `crates/beekeeper-acp` distinguished exit codes + pinning test (Known Defect 6; gates `OnFailure`) |
+| Auto-stop flag | *to be added*: `crates/beekeeper-acp/src/config.rs` + a pool-independent timer (NOT the `pool_ready`-gated maintenance tick — Known Defect 4) + `RESERVED_ENV_KEYS` entry |
+| Kubernetes binding | *to be added*: `crates/beekeeper-backend-kubernetes` |
 | Sprig image | *to be added*: `Dockerfile.sprig` + workflow |
 
 ## Open Decisions

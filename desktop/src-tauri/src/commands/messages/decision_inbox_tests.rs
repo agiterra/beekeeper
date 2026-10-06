@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use buzz_core_pkg::coding_session_team_transaction::{
+use beekeeper_core_pkg::coding_session_team_transaction::{
     CodingSessionTeamDecisionAnswer, CodingSessionTeamDecisionChoice,
     CodingSessionTeamDecisionRequest, CodingSessionTeamTransactionBody,
     CodingSessionTeamTransactionPayload, CODING_SESSION_TEAM_DECISION_FOUNDER,
     CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
 };
-use buzz_core_pkg::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
+use beekeeper_core_pkg::kind::KIND_CODING_SESSION_TEAM_TRANSACTION;
 use nostr::{Event, EventBuilder, Keys, Kind, Tag, Timestamp};
 
 use super::*;

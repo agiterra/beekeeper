@@ -541,7 +541,7 @@ test("reviewRequired must agree with the triggers it lists", () => {
           ...ROUTING,
           reviewRequired: true,
           // Exactly what the canonical router emits, value and all
-          // (crates/buzz-core/src/coding_session_routing.rs:1555-1564).
+          // (crates/beekeeper-core/src/coding_session_routing.rs:1555-1564).
           reviewReasons: ["risk 80 >= 40", "irreversibility 4 >= 4"],
         },
       }),

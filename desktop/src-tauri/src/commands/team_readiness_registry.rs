@@ -15,7 +15,7 @@
 //! registry lives (ledger 180).
 //!
 //! So readiness now asks the *same* resolver the hire host asks
-//! ([`crate::commands::model_registry`], over [`buzz_core_pkg::model_registry_source`]):
+//! ([`crate::commands::model_registry`], over [`beekeeper_core_pkg::model_registry_source`]):
 //! the agents repository first, then the code checkout. The answer names
 //! which copy it came from, and a project with none is told both places that
 //! were looked in and the remedy that matches the layout it actually has.

@@ -439,7 +439,7 @@ export function umbrellaFixture() {
           {
             gate: "cargo test",
             outcome: "passed",
-            command: "cargo test -p buzz-core",
+            command: "cargo test -p beekeeper-core",
             summary: "test result: ok. 40 passed; 0 failed",
             durationMs: 30_000,
             headSha: "b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5",
@@ -559,7 +559,7 @@ export function umbrellaFixture() {
         assignmentRef: null,
         gate: "cargo test",
         outcome: "passed",
-        command: "cargo test -p buzz-core",
+        command: "cargo test -p beekeeper-core",
         summary: "test result: ok. 40 passed; 0 failed",
         durationMs: 30_000,
         headSha: "b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5",

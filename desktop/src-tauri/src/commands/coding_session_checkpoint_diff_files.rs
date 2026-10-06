@@ -22,7 +22,7 @@
 
 use std::path::Path;
 
-use buzz_session_provider_pkg::execution_scope_host::HostLaunchPlan;
+use beekeeper_session_provider_pkg::execution_scope_host::HostLaunchPlan;
 
 use super::super::project_git_diff::{
     truncate_patch, ProjectRepoDiffFileInfo, ProjectRepoDiffInfo,

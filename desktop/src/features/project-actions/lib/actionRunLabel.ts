@@ -53,7 +53,7 @@ function shortCommandId(commandId: string): string {
 function traceRefusalCode(run: WorkflowRun, stepId: string): string | null {
   for (const entry of run.executionTrace) {
     if (entry.stepId !== stepId) continue;
-    // `host_step_output` (crates/buzz-workflow/src/suspend.rs) writes the
+    // `host_step_output` (crates/beekeeper-workflow/src/suspend.rs) writes the
     // refusal code flat as `refusal_code`.
     const code = entry.output.refusal_code;
     if (typeof code === "string" && code.length > 0) return code;

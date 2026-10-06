@@ -248,7 +248,7 @@ export type RubricComparison = {
  *
  * The two directions are deliberately not symmetric, and this must stay
  * identical to `check_rubric` in
- * `crates/buzz-cli/src/commands/sessions/rubric.rs`:
+ * `crates/beekeeper-cli/src/commands/sessions/rubric.rs`:
  *
  * - **Not offered is exact.** A create names one id and the relay refuses
  *   anything else, so a row naming an id nothing serves is stale even when a

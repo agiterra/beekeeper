@@ -86,7 +86,7 @@ export function PulseStaleBeeCard({
  *    the one-line addition it looks like: that type is the Project Pulse
  *    digest's own generation member, frozen byte-for-byte by
  *    `conformance/project-pulse-fold` and bound by the Rust fold
- *    (`crates/buzz-core/src/pulse_fold.rs`) and a relay-side kind 39011
+ *    (`crates/beekeeper-core/src/pulse_fold.rs`) and a relay-side kind 39011
  *    projection as well. Adding the key means both folds, the CONTRACT's key
  *    order, and the banked vectors — measured here: adding it to TypeScript
  *    alone turned `every banked conformance vector folds byte-identically`

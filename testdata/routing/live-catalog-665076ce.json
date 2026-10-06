@@ -1,5 +1,5 @@
 {
-  "note": "The real kind:44222 catalog this repository's relay served, saved so the Rust router (crates/buzz-core/src/coding_session_routing.rs) and the desktop mirror can be asserted to agree on one input. Regenerate by re-reading the live catalog; do not hand-edit the `offered` list. `expectedDecisions` is recorded once from the Rust router and then asserted, so a change in routing behaviour has to be a deliberate edit to this file.",
+  "note": "The real kind:44222 catalog this repository's relay served, saved so the Rust router (crates/beekeeper-core/src/coding_session_routing.rs) and the desktop mirror can be asserted to agree on one input. Regenerate by re-reading the live catalog; do not hand-edit the `offered` list. `expectedDecisions` is recorded once from the Rust router and then asserted, so a change in routing behaviour has to be a deliberate edit to this file.",
   "relay": "wss://hive.agiterra.org",
   "channel": "665076ce-c71f-4544-a5d0-0bff1115260a",
   "readAt": "2026-08-30",

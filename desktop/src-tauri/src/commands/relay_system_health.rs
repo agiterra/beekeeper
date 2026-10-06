@@ -16,7 +16,7 @@ use crate::app_state::AppState;
 use crate::relay::get_relay_json;
 
 /// The path on the relay; kept beside the relay's own constant of the same
-/// name (`buzz_relay::api::system_health::SYSTEM_HEALTH_PATH`).
+/// name (`beekeeper_relay::api::system_health::SYSTEM_HEALTH_PATH`).
 pub const RELAY_SYSTEM_HEALTH_PATH: &str = "/health/system";
 
 /// Read the active relay's machine health as the signed-in identity.

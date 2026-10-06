@@ -1,4 +1,4 @@
-use buzz_core_pkg::coding_session_title::MAX_GENERATED_NAME_CHARS;
+use beekeeper_core_pkg::coding_session_title::MAX_GENERATED_NAME_CHARS;
 
 use super::*;
 
@@ -304,7 +304,7 @@ fn the_suggestion_is_cleaned_by_the_hosts_rule() {
     assert_eq!(clean_generated_name("\"New thread.\""), None);
     assert_eq!(
         NamingTask::Name.system_prompt(),
-        buzz_core_pkg::coding_session_title::NAMING_SYSTEM_PROMPT
+        beekeeper_core_pkg::coding_session_title::NAMING_SYSTEM_PROMPT
     );
 }
 

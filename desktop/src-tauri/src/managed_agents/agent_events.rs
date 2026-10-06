@@ -22,7 +22,7 @@
 //! - any runtime field (`runtime_pid`, `last_*`, `backend_agent_id`, …) — these
 //!   mutate on every start/stop and describe transient process state.
 
-use buzz_core_pkg::kind::KIND_MANAGED_AGENT;
+use beekeeper_core_pkg::kind::KIND_MANAGED_AGENT;
 use nostr::{EventBuilder, Kind, Tag};
 use serde::{Deserialize, Serialize};
 
@@ -194,7 +194,7 @@ pub fn build_agent_delete(d_tag: &str, owner_pubkey_hex: &str) -> Result<EventBu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use buzz_core_pkg::project_agent_association::project_agent_digest;
+    use beekeeper_core_pkg::project_agent_association::project_agent_digest;
     use std::collections::BTreeMap;
 
     fn sample_agent() -> ManagedAgentRecord {
@@ -505,7 +505,7 @@ mod tests {
     /// added here deliberately, next to the exclusion test above.
     #[test]
     fn projection_keys_are_exactly_the_allowlist() {
-        use buzz_core_pkg::project_agent_association::{
+        use beekeeper_core_pkg::project_agent_association::{
             PROJECT_AGENT_DIGEST_CONTENT_KEY, PROJECT_AGENT_ROLE_CONTENT_KEY,
         };
         let mut agent = sample_agent();
@@ -541,7 +541,7 @@ mod tests {
     /// the coordinate — owner and slug — never appears anywhere in content.
     #[test]
     fn project_association_publishes_digest_never_the_coordinate() {
-        use buzz_core_pkg::project_agent_association::{
+        use beekeeper_core_pkg::project_agent_association::{
             PROJECT_AGENT_DIGEST_CONTENT_KEY, PROJECT_AGENT_ROLE_CONTENT_KEY,
         };
         let mut agent = sample_agent();
@@ -614,7 +614,7 @@ mod tests {
     /// which the private verdict withdraws on purpose, under the marker key.
     #[test]
     fn private_project_publishes_no_digest_and_no_coordinate() {
-        use buzz_core_pkg::project_agent_association::{
+        use beekeeper_core_pkg::project_agent_association::{
             PROJECT_AGENT_DIGEST_CONTENT_KEY, PROJECT_AGENT_WITHDRAWN_CONTENT_KEY,
         };
         let mut agent = sample_agent();
@@ -678,7 +678,7 @@ mod tests {
         assert!(!legacy.project_withdrawn);
         let withdrawn = parse(serde_json::json!({
             "name": "Agent", "parallelism": 1, "respond_to": "owner-only",
-            (buzz_core_pkg::project_agent_association::PROJECT_AGENT_WITHDRAWN_CONTENT_KEY): true,
+            (beekeeper_core_pkg::project_agent_association::PROJECT_AGENT_WITHDRAWN_CONTENT_KEY): true,
         }));
         assert!(withdrawn.project_withdrawn, "the marker key parses");
         assert_eq!(withdrawn.project_digest, None);

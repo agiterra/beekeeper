@@ -172,7 +172,8 @@ fn resolve_repo(folder: &Path) -> Result<Option<ResolvedRepo>, String> {
     if common_dir.is_empty() {
         return Ok(None);
     }
-    let root = buzz_core_pkg::worktree_placement::repo_root_from_common_dir(Path::new(common_dir));
+    let root =
+        beekeeper_core_pkg::worktree_placement::repo_root_from_common_dir(Path::new(common_dir));
     // Bareness is a property of the *repository*, and `--is-bare-repository`
     // answers for the current worktree — from a linked worktree of a bare repo
     // it says `false`. `worktree list --porcelain`'s first record is always
@@ -258,7 +259,7 @@ fn head_branch(repo_root: &Path) -> Option<String> {
 /// `requested` and falling back to a random suffix.
 fn free_slug(
     repo_root: &Path,
-    placement: &buzz_core_pkg::worktree_placement::WorktreeParent,
+    placement: &beekeeper_core_pkg::worktree_placement::WorktreeParent,
     requested: &str,
 ) -> Result<(String, bool), String> {
     if !placement.path_for(requested).exists() && !branch_exists(repo_root, requested)? {
@@ -331,7 +332,7 @@ fn plan(
                 .is_ok()
             })
         });
-        if let Some(why) = buzz_core_pkg::worktree_placement::chosen_parent_refusal(
+        if let Some(why) = beekeeper_core_pkg::worktree_placement::chosen_parent_refusal(
             &repo_root,
             chosen,
             inside,
@@ -349,10 +350,13 @@ fn plan(
     let holder_ready = holder_exists_and_is_ignored(&repo_root);
     let Some(placement) = chosen
         .map(|chosen| {
-            buzz_core_pkg::worktree_placement::WorktreeParent::Chosen(chosen.to_path_buf())
+            beekeeper_core_pkg::worktree_placement::WorktreeParent::Chosen(chosen.to_path_buf())
         })
         .or_else(|| {
-            buzz_core_pkg::worktree_placement::default_worktree_parent(&repo_root, holder_ready)
+            beekeeper_core_pkg::worktree_placement::default_worktree_parent(
+                &repo_root,
+                holder_ready,
+            )
         })
     else {
         return Ok(CodingSessionWorktreePlan {
@@ -876,7 +880,7 @@ pub async fn record_coding_session_worktree(
         .map(|store| store.worktree_parents.values().cloned().collect())
         .unwrap_or_default();
     let directory = canonical_enough(&directory);
-    if !buzz_core_pkg::worktree_placement::is_managed_worktree_path(
+    if !beekeeper_core_pkg::worktree_placement::is_managed_worktree_path(
         &resolved.root,
         &directory,
         &chosen,

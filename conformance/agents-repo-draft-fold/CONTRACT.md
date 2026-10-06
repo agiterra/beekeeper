@@ -55,7 +55,7 @@ agents repository layout (`README.md`, `team.yml`, `actions.yml`,
 `a`, `ad-v` (`ad1-1`), `ad-op`, `ad-repo`, and one `ad-path` per path the op
 names. An `h` tag is a rejection.
 
-Wire validation is `crates/buzz-core/src/agents_repo_draft.rs`; the fold's
+Wire validation is `crates/beekeeper-core/src/agents_repo_draft.rs`; the fold's
 decode is the same rule, and an event that fails it is counted in `ignored`,
 not folded.
 

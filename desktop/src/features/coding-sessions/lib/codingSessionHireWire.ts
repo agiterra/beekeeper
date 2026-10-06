@@ -81,7 +81,7 @@ export const CODING_SESSION_HIRE_ACTION_TYPE = "session.hire" as const;
  * fills the wider ceiling produces an initial turn 16 bytes over it. Derived
  * from both constants rather than written down, and mirrored in Rust by
  * `MAX_LIFECYCLE_HIRE_BRIEF_BYTES`
- * (`crates/buzz-core/src/coding_session_lifecycle_command.rs:80`), which is
+ * (`crates/beekeeper-core/src/coding_session_lifecycle_command.rs:80`), which is
  * what the decoder — and therefore the relay — actually refuses against. A
  * hire this host would have to truncate to seat is refused before it is signed
  * rather than seated against a brief nobody wrote.

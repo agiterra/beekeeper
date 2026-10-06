@@ -5,7 +5,7 @@ import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
  *
  * The provider publishes an answer in pieces: at a size cap, at a tool
  * boundary, and (since the paragraph-flush change in
- * `crates/buzz-session-provider/src/transcript.rs`) at each paragraph. Each
+ * `crates/beekeeper-session-provider/src/transcript.rs`) at each paragraph. Each
  * piece is a separate signed item, but the reader wrote — and should read —
  * one message. Rendering the pieces as separate Markdown blocks breaks any
  * list or code fence that straddles a cut, and spaces paragraphs as if they

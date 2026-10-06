@@ -4,7 +4,7 @@
 Produces fixtures/export/{manifest.json, <session>-g1.jsonl} matching what
 `bee sessions export` writes: raw signed-event JSON (sig-stripped, as the
 CLI's /query returns), kinds 44223/44224/44225, envelopes per
-crates/buzz-core/src/coding_session_payload.rs (TranscriptEnvelope: schema,
+crates/beekeeper-core/src/coding_session_payload.rs (TranscriptEnvelope: schema,
 session, eventSeq, timestamp, turnId, item) with cs-target/cst-seq tags.
 
 The session is a realistic multi-turn refactor: 3 turns, plan, reasoning,
@@ -145,7 +145,7 @@ def build_events():
     ev.append(transcript_event(nxt(), 10, t1, {
         "kind": "user_prompt",
         "content": (
-            "The relay WebSocket client in crates/buzz-ws-client duplicates retry/backoff "
+            "The relay WebSocket client in crates/beekeeper-ws-client duplicates retry/backoff "
             "logic in three places (connect, auth, publish). Extract a single RetryPolicy "
             "struct with jittered exponential backoff, use it in all three paths, and add "
             "unit tests. Do not change the public API."
@@ -175,32 +175,32 @@ def build_events():
     ev.append(transcript_event(nxt(), 16, t1, {
         "kind": "tool_call",
         "tool": {"toolName": "bash", "toolId": "tool-001",
-                 "input": {"command": "grep -rn 'retry\\|backoff' crates/buzz-ws-client/src/"}},
+                 "input": {"command": "grep -rn 'retry\\|backoff' crates/beekeeper-ws-client/src/"}},
     }))
     ev.append(transcript_event(nxt(), 18, t1, {
         "kind": "tool_result", "toolId": "tool-001", "toolName": "bash",
         "content": (
-            "crates/buzz-ws-client/src/connect.rs:88: // retry with fixed sleep\n"
-            "crates/buzz-ws-client/src/connect.rs:97: tokio::time::sleep(Duration::from_millis(500)).await;\n"
-            "crates/buzz-ws-client/src/auth.rs:41: for attempt in 0..2 {\n"
-            "crates/buzz-ws-client/src/publish.rs:130: // single retry on Disconnected\n"
+            "crates/beekeeper-ws-client/src/connect.rs:88: // retry with fixed sleep\n"
+            "crates/beekeeper-ws-client/src/connect.rs:97: tokio::time::sleep(Duration::from_millis(500)).await;\n"
+            "crates/beekeeper-ws-client/src/auth.rs:41: for attempt in 0..2 {\n"
+            "crates/beekeeper-ws-client/src/publish.rs:130: // single retry on Disconnected\n"
         ),
         "isError": False,
     }))
     ev.append(transcript_event(nxt(), 30, t1, {
         "kind": "tool_call",
         "tool": {"toolName": "write", "toolId": "tool-002",
-                 "input": {"file_path": "crates/buzz-ws-client/src/retry.rs",
+                 "input": {"file_path": "crates/beekeeper-ws-client/src/retry.rs",
                             "content": "pub struct RetryPolicy { pub base: Duration, pub cap: Duration, pub max_attempts: u32, seed: u64 }\n// ... full implementation elided in fixture ..."}},
     }))
     ev.append(transcript_event(nxt(), 32, t1, {
         "kind": "tool_result", "toolId": "tool-002", "toolName": "write",
-        "content": "Created crates/buzz-ws-client/src/retry.rs (148 lines)", "isError": False,
+        "content": "Created crates/beekeeper-ws-client/src/retry.rs (148 lines)", "isError": False,
     }))
     ev.append(transcript_event(nxt(), 40, t1, {
         "kind": "assistant_text",
         "text": (
-            "Created `RetryPolicy` in `crates/buzz-ws-client/src/retry.rs` with jittered "
+            "Created `RetryPolicy` in `crates/beekeeper-ws-client/src/retry.rs` with jittered "
             "exponential backoff (seeded SmallRng for deterministic tests) and wired it "
             "into the connect path. Next I will replace the auth loop."
         ),
@@ -223,17 +223,17 @@ def build_events():
     ev.append(transcript_event(nxt(), 104, t2, {
         "kind": "tool_call",
         "tool": {"toolName": "edit", "toolId": "tool-003",
-                 "input": {"file_path": "crates/buzz-ws-client/src/auth.rs",
+                 "input": {"file_path": "crates/beekeeper-ws-client/src/auth.rs",
                             "old_string": "for attempt in 0..2 {", "new_string": "self.retry_policy.run(|| {"}},
     }))
     ev.append(transcript_event(nxt(), 106, t2, {
         "kind": "tool_result", "toolId": "tool-003", "toolName": "edit",
-        "content": "Edited crates/buzz-ws-client/src/auth.rs", "isError": False,
+        "content": "Edited crates/beekeeper-ws-client/src/auth.rs", "isError": False,
     }))
     ev.append(transcript_event(nxt(), 110, t2, {
         "kind": "tool_call",
         "tool": {"toolName": "bash", "toolId": "tool-004",
-                 "input": {"command": "cargo test -p buzz-ws-client"}},
+                 "input": {"command": "cargo test -p beekeeper-ws-client"}},
     }))
     # ~20 KiB tool result — the realistic near-cap case, with an injection trap.
     trap = (
@@ -243,7 +243,7 @@ def build_events():
     big_result_seq = nxt()
     ev.append(transcript_event(big_result_seq, 140, t2, {
         "kind": "tool_result", "toolId": "tool-004", "toolName": "bash",
-        "content": trap + big_text("cargo test -p buzz-ws-client", 10) + big_text("continued", 9)
+        "content": trap + big_text("cargo test -p beekeeper-ws-client", 10) + big_text("continued", 9)
         + "\ntest result: FAILED. 61 passed; 1 failed (auth::tests::reauth_after_disconnect)\n",
         "isError": True,
     }))
@@ -295,13 +295,13 @@ def build_events():
     ev.append(transcript_event(nxt(), 204, t3, {
         "kind": "tool_call",
         "tool": {"toolName": "edit", "toolId": "tool-005",
-                 "input": {"file_path": "crates/buzz-ws-client/src/retry.rs",
+                 "input": {"file_path": "crates/beekeeper-ws-client/src/retry.rs",
                             "old_string": "pub max_attempts: u32,",
                             "new_string": "pub max_attempts: u32,\n    pub first_attempt_immediate: bool,"}},
     }))
     ev.append(transcript_event(nxt(), 206, t3, {
         "kind": "tool_result", "toolId": "tool-005", "toolName": "edit",
-        "content": "Edited crates/buzz-ws-client/src/retry.rs", "isError": False,
+        "content": "Edited crates/beekeeper-ws-client/src/retry.rs", "isError": False,
     }))
     ev.append(transcript_event(nxt(), 210, t3, {"kind": "interrupted"}))
 

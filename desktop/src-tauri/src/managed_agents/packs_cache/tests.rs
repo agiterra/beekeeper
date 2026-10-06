@@ -390,7 +390,7 @@ fn staging_a_composed_pack_is_digest_keyed_and_idempotent() {
     assert!(first.digest.starts_with("sha256:"));
     assert!(first.warnings.is_empty());
     assert_ne!(first.dir, checkout.join(DEFAULT_PACK_PATH).join("builder"));
-    let resolved = buzz_persona_pkg::resolve::resolve_persona_by_name(&first.dir, "builder")
+    let resolved = beekeeper_persona_pkg::resolve::resolve_persona_by_name(&first.dir, "builder")
         .expect("the staged pack is a pack");
     assert_eq!(resolved.system_prompt, "You build.\n");
     assert_eq!(resolved.role.as_deref(), Some("builder"));
@@ -492,7 +492,7 @@ fn a_project_source_with_a_flat_role_stages_it_and_names_its_path() {
         },
     )
     .expect("staged");
-    let resolved = buzz_persona_pkg::resolve::resolve_persona_by_name(&staged.dir, "verifier")
+    let resolved = beekeeper_persona_pkg::resolve::resolve_persona_by_name(&staged.dir, "verifier")
         .expect("staged pack resolves");
     assert_eq!(resolved.system_prompt, "You verify, flat.\n");
     assert_eq!(resolved.description, "Verifies.");
@@ -585,7 +585,7 @@ fn a_pack_path_may_only_name_a_place_inside_the_checkout() {
 #[test]
 fn the_host_and_the_cli_name_the_same_cache_directory() {
     // `bee packs status` derives the directory with
-    // `buzz_core::project_pack_source::pack_cache_dir_name` from the whole
+    // `beekeeper_core::project_pack_source::pack_cache_dir_name` from the whole
     // coordinate; this host derives it from the two halves. If they ever
     // disagreed the CLI would report `cache_present: false` over a cache
     // the host had just filled — a wrong answer that looks like a fact.
@@ -594,7 +594,7 @@ fn the_host_and_the_cli_name_the_same_cache_directory() {
         let coordinate = format!("30617:{owner}:{id}");
         assert_eq!(
             Some(pack_cache_dir_name(&owner, id)),
-            buzz_core_pkg::project_pack_source::pack_cache_dir_name(&coordinate),
+            beekeeper_core_pkg::project_pack_source::pack_cache_dir_name(&coordinate),
             "{coordinate}"
         );
     }

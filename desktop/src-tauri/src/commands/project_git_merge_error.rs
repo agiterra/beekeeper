@@ -52,9 +52,9 @@ impl From<String> for ProjectPullRequestMergeError {
         // misdirecting a pusher who is merely off a project's roster. Push
         // failures reach this conversion as raw stderr/`remote:` text, so
         // match the token anywhere in the message.
-        if message.contains(buzz_core_pkg::git_perms::GIT_NO_CHANNEL_BINDING_TOKEN) {
+        if message.contains(beekeeper_core_pkg::git_perms::GIT_NO_CHANNEL_BINDING_TOKEN) {
             return Self::new(
-                buzz_core_pkg::git_perms::GIT_NO_CHANNEL_BINDING_TOKEN,
+                beekeeper_core_pkg::git_perms::GIT_NO_CHANNEL_BINDING_TOKEN,
                 "This repository is not in a project and has no channel \
                  binding, so the relay cannot authorize pushes. Fix it with: \
                  bee repos bind --id <repo> --project <30621:owner:project> \
@@ -137,13 +137,13 @@ mod tests {
         // sits in the message.
         let remote_stderr = format!(
             "remote: {}\nerror: failed to push some refs",
-            buzz_core_pkg::git_perms::GIT_NO_CHANNEL_BINDING_BODY
+            beekeeper_core_pkg::git_perms::GIT_NO_CHANNEL_BINDING_BODY
         );
         let error = ProjectPullRequestMergeError::from(remote_stderr);
 
         assert_eq!(
             error.code,
-            buzz_core_pkg::git_perms::GIT_NO_CHANNEL_BINDING_TOKEN
+            beekeeper_core_pkg::git_perms::GIT_NO_CHANNEL_BINDING_TOKEN
         );
         assert!(error.message.contains("bee repos bind"));
         assert!(error.recovery.is_none());

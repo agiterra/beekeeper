@@ -249,7 +249,7 @@ export function observationFixture(genesisRef: string) {
         {
           gate: "cargo test",
           outcome: "passed",
-          command: "cargo test -p buzz-cli",
+          command: "cargo test -p beekeeper-cli",
           summary: "test result: ok. 13 passed; 0 failed",
           durationMs: 12_000,
           // The shape every gate row on the wire carried before 2026-09-03:
@@ -274,7 +274,7 @@ export function observationFixture(genesisRef: string) {
         {
           gate: "cargo test",
           outcome: "failed",
-          command: "cargo test -p buzz-cli",
+          command: "cargo test -p beekeeper-cli",
           summary:
             "running 2 tests\nfailures:\n  subcommand_names_are_stable\ntest result: FAILED. 0 passed; 2 failed; 0 ignored",
           durationMs: 41_000,
@@ -297,7 +297,7 @@ export function observationFixture(genesisRef: string) {
       testsWritten: 6,
       testsRed: 6,
       testsGreen: 4,
-      lastCommand: "cargo test -p buzz-cli",
+      lastCommand: "cargo test -p beekeeper-cli",
       lastSummary: "test result: ok. 13 passed; 0 failed",
       note: null,
     },
@@ -355,7 +355,7 @@ export function observationFixture(genesisRef: string) {
         testsWritten: 6,
         testsRed: 6,
         testsGreen: 4,
-        lastCommand: "cargo test -p buzz-cli",
+        lastCommand: "cargo test -p beekeeper-cli",
         lastSummary: "test result: ok. 13 passed; 0 failed",
         note: null,
       },
@@ -369,7 +369,7 @@ export function observationFixture(genesisRef: string) {
         assignmentRef: null,
         gate: "cargo test",
         outcome: "passed",
-        command: "cargo test -p buzz-cli",
+        command: "cargo test -p beekeeper-cli",
         summary: "test result: ok. 13 passed; 0 failed",
         durationMs: 12_000,
         // The seat's own claim names no commit — the shape every gate row on
@@ -386,7 +386,7 @@ export function observationFixture(genesisRef: string) {
         assignmentRef: null,
         gate: "cargo test",
         outcome: "failed",
-        command: "cargo test -p buzz-cli",
+        command: "cargo test -p beekeeper-cli",
         summary:
           "running 2 tests\nfailures:\n  subcommand_names_are_stable\ntest result: FAILED. 0 passed; 2 failed; 0 ignored",
         durationMs: 41_000,

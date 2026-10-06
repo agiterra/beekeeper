@@ -69,7 +69,7 @@ const ROUTING_EFFORTS = new Set(["low", "medium", "high"]);
  *
  * The canonical router renders the two numeric §6 triggers with the value that
  * fired them — `risk 80 >= 40`, `irreversibility 4 >= 4` — so a reader is told
- * the fact rather than the rule (`crates/buzz-core/src/coding_session_routing.rs:1555`).
+ * the fact rather than the rule (`crates/beekeeper-core/src/coding_session_routing.rs:1555`).
  * A closed vocabulary here would make this observer reject the router's own
  * record as malformed, which is exactly the kind of lie that shows up as
  * "the seat says nothing about why it is that model".
@@ -227,7 +227,7 @@ function isRoutingOverride(value: unknown): boolean {
   if (!boundedString(value.because, MAX_REFERENCE_BYTES)) return false;
   // `null` is the canonical "take the tier's effort": buzz-core writes
   // `RoutingOverride.effort` unconditionally
-  // (crates/buzz-core/src/coding_session_routing.rs:1005), so an override on
+  // (crates/beekeeper-core/src/coding_session_routing.rs:1005), so an override on
   // the wire always carries the key, explicitly null when unstated. A
   // non-null value is a `bounded_token`, not the router's closed
   // `low`/`medium`/`high` set (`validate_override`, :1276-1283) — `xhigh`,

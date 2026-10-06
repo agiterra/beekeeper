@@ -7,7 +7,7 @@
 //! desktop no longer publishes a model's words as the founder's 44229. What
 //! stays here runs before Start, so a person sees it in the field and chooses
 //! it; the instruction and the cleaner are buzz-core's
-//! (`buzz_core_pkg::coding_session_title`), the same text the host uses.
+//! (`beekeeper_core_pkg::coding_session_title`), the same text the host uses.
 //!
 //! This is the one place in the create flow that can send what someone typed
 //! to a machine that is not theirs, so three things are non-negotiable:
@@ -34,7 +34,7 @@
 
 use std::time::Duration;
 
-use buzz_core_pkg::coding_session_title::{clean_generated_name, NAMING_SYSTEM_PROMPT};
+use beekeeper_core_pkg::coding_session_title::{clean_generated_name, NAMING_SYSTEM_PROMPT};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 

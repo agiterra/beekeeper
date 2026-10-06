@@ -1,6 +1,6 @@
 /**
  * The agents-repository draft fold — TypeScript twin of
- * `crates/buzz-core/src/agents_repo_draft_fold.rs`, bound to
+ * `crates/beekeeper-core/src/agents_repo_draft_fold.rs`, bound to
  * `conformance/agents-repo-draft-fold/` (CONTRACT.md states the rules; the
  * vectors pin them byte for byte, key order included).
  *

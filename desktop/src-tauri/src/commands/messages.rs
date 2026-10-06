@@ -41,7 +41,7 @@ const TIMELINE_KINDS: [u32; 11] = [
     43004,
     43005,
     43006,
-    buzz_core_pkg::kind::KIND_HUDDLE_STARTED,
+    beekeeper_core_pkg::kind::KIND_HUDDLE_STARTED,
 ];
 
 #[tauri::command]
@@ -77,13 +77,13 @@ pub async fn get_feed(
             1,
             45001,
             45003,
-            buzz_core_pkg::kind::KIND_GIT_PULL_REQUEST,
-            buzz_core_pkg::kind::KIND_GIT_PR_UPDATE,
-            buzz_core_pkg::kind::KIND_GIT_ISSUE,
-            buzz_core_pkg::kind::KIND_GIT_STATUS_OPEN,
-            buzz_core_pkg::kind::KIND_GIT_STATUS_MERGED,
-            buzz_core_pkg::kind::KIND_GIT_STATUS_CLOSED,
-            buzz_core_pkg::kind::KIND_GIT_STATUS_DRAFT,
+            beekeeper_core_pkg::kind::KIND_GIT_PULL_REQUEST,
+            beekeeper_core_pkg::kind::KIND_GIT_PR_UPDATE,
+            beekeeper_core_pkg::kind::KIND_GIT_ISSUE,
+            beekeeper_core_pkg::kind::KIND_GIT_STATUS_OPEN,
+            beekeeper_core_pkg::kind::KIND_GIT_STATUS_MERGED,
+            beekeeper_core_pkg::kind::KIND_GIT_STATUS_CLOSED,
+            beekeeper_core_pkg::kind::KIND_GIT_STATUS_DRAFT,
         ],
         "#p": [my_pubkey],
         "limit": cap,
@@ -416,7 +416,7 @@ pub async fn get_event(event_id: String, state: State<'_, AppState>) -> Result<S
         &state,
         &[serde_json::json!({
             "ids": [event_id],
-            "kinds": [0, 1, 3, 5, 7, 9, 30078, 40002, 40003, 40008, 40099, 40100, 45001, 45003, buzz_core_pkg::kind::KIND_HUDDLE_STARTED],
+            "kinds": [0, 1, 3, 5, 7, 9, 30078, 40002, 40003, 40008, 40099, 40100, 45001, 45003, beekeeper_core_pkg::kind::KIND_HUDDLE_STARTED],
             "limit": 1
         })],
     )
@@ -442,7 +442,7 @@ async fn resolve_thread_ref(
         state,
         &[serde_json::json!({
             "ids": [parent_event_id],
-            "kinds": [9, 40002, 45001, 45003, buzz_core_pkg::kind::KIND_HUDDLE_STARTED],
+            "kinds": [9, 40002, 45001, 45003, beekeeper_core_pkg::kind::KIND_HUDDLE_STARTED],
             "limit": 1
         })],
     )
@@ -503,22 +503,22 @@ pub async fn send_channel_message(
     let mention_refs_only = mention_tags.unwrap_or_default();
     let link_previews = link_preview_tags.unwrap_or_default();
     let relay_base = crate::relay::relay_api_base_url_with_override(&state);
-    let kind_num = kind.unwrap_or(buzz_core_pkg::kind::KIND_STREAM_MESSAGE);
-    if sent_from_thread_tag.is_some() && kind_num != buzz_core_pkg::kind::KIND_STREAM_MESSAGE {
+    let kind_num = kind.unwrap_or(beekeeper_core_pkg::kind::KIND_STREAM_MESSAGE);
+    if sent_from_thread_tag.is_some() && kind_num != beekeeper_core_pkg::kind::KIND_STREAM_MESSAGE {
         return Err("sent-from-thread provenance requires a stream message".into());
     }
 
     let mut resolved_root: Option<String> = None;
 
     let builder = match kind_num {
-        buzz_core_pkg::kind::KIND_FORUM_POST => events::build_forum_post(
+        beekeeper_core_pkg::kind::KIND_FORUM_POST => events::build_forum_post(
             channel_uuid,
             content.trim(),
             &mention_refs,
             &media,
             &mention_refs_only,
         )?,
-        buzz_core_pkg::kind::KIND_FORUM_COMMENT => {
+        beekeeper_core_pkg::kind::KIND_FORUM_COMMENT => {
             let parent_id = parent_event_id
                 .as_deref()
                 .ok_or("forum comment requires parent_event_id")?;
@@ -597,7 +597,7 @@ async fn find_managed_agent_channel_message_by_marker(
 
     for _ in 0..10 {
         let mut filter = serde_json::json!({
-            "kinds": [buzz_core_pkg::kind::KIND_STREAM_MESSAGE],
+            "kinds": [beekeeper_core_pkg::kind::KIND_STREAM_MESSAGE],
             "#h": [channel_id],
             "limit": 500,
         });
@@ -685,7 +685,7 @@ fn legacy_managed_agent_auth_tag(
         return Ok(None);
     }
 
-    buzz_sdk_pkg::nip_oa::compute_auth_tag(owner_keys, agent_pubkey, "")
+    beekeeper_sdk_pkg::nip_oa::compute_auth_tag(owner_keys, agent_pubkey, "")
         .map(Some)
         .map_err(|error| format!("failed to compute managed agent auth tag: {error}"))
 }
@@ -843,7 +843,7 @@ pub async fn add_reaction(
         // Custom-emoji reaction (NIP-30): kind:7 with `:shortcode:` content and
         // an `["emoji", shortcode, url]` tag. Delegates to the SDK builder so
         // shortcode normalization + validation match the relay exactly.
-        Some(url) => buzz_sdk_pkg::build_custom_emoji_reaction(target_eid, emoji.trim(), &url)
+        Some(url) => beekeeper_sdk_pkg::build_custom_emoji_reaction(target_eid, emoji.trim(), &url)
             .map_err(|e| format!("invalid custom emoji reaction: {e}"))?,
         None => events::build_reaction(target_eid, emoji.trim())?,
     };

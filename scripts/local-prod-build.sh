@@ -114,9 +114,9 @@ cd "$PROD_ROOT"
 export PATH="$PROD_ROOT/bin:$PATH"
 
 # ── release sidecars + coding-session provider ───────────────────────────────
-cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes \
-  -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-session-provider \
-  -p buzz-shell-host -p beekeeper-host
+cargo build --release -p beekeeper-acp -p beekeeper-agent -p beekeeper-backend-kubernetes \
+  -p beekeeper-dev-mcp -p beekeeper-cli -p git-credential-nostr -p beekeeper-session-provider \
+  -p beekeeper-shell-host -p beekeeper-host
 ./scripts/bundle-sidecars.sh
 cp target/release/buzz-session-provider "desktop/src-tauri/binaries/buzz-session-provider-$TARGET"
 chmod 755 "desktop/src-tauri/binaries/buzz-session-provider-$TARGET"

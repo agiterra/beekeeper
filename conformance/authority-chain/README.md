@@ -43,15 +43,15 @@ it with the transition's own id.
 
 | Reader | Test |
 | --- | --- |
-| `buzz-core`'s transition decoder (shared by the relay's ingest and `buzz-db`) | `crates/buzz-core/src/coding_session_authority_transition_project_action_tests.rs` |
-| `buzz-cli`'s receipt-backed chain projection (`bee sessions report`/`hire`/`operation get`) | `crates/buzz-cli/src/commands/sessions/operations_receipt_tests.rs` |
-| `buzz-session-provider`'s acceptance-receipt fence | `crates/buzz-session-provider/src/authority.rs` |
+| `buzz-core`'s transition decoder (shared by the relay's ingest and `buzz-db`) | `crates/beekeeper-core/src/coding_session_authority_transition_project_action_tests.rs` |
+| `buzz-cli`'s receipt-backed chain projection (`bee sessions report`/`hire`/`operation get`) | `crates/beekeeper-cli/src/commands/sessions/operations_receipt_tests.rs` |
+| `buzz-session-provider`'s acceptance-receipt fence | `crates/beekeeper-session-provider/src/authority.rs` |
 | The desktop TypeScript timeline decoder | `desktop/src/features/coding-sessions/lib/codingSessionAuthorityConformance.test.mjs` |
 
 The provider deliberately tolerates *unknown* receipt keys (see
 `ReceiptContent`), so the vectors vary only keys the wire defines; what they
 pin everywhere is the per-type presence rule and the receipt↔link binding.
 
-The relay's emission (`crates/buzz-relay/src/handlers/side_effects.rs`) is the
+The relay's emission (`crates/beekeeper-relay/src/handlers/side_effects.rs`) is the
 writer these vectors describe. It is not a reader and does not load them; the
 CLI and provider fixtures mirror it field for field instead.

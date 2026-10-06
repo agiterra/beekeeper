@@ -2,7 +2,7 @@
 //!
 //! Desktop never folds 44246 itself. This boundary verifies the signatures,
 //! hands the events — the relay's page, newest first — to
-//! `buzz_core::fold_coding_session_observation_page` (finding 79), and
+//! `beekeeper_core::fold_coding_session_observation_page` (finding 79), and
 //! flattens **its** answer — every collection, every disclosure, every
 //! truncation count — for a TypeScript decoder that only checks shape. There
 //! is no second implementation of newest-wins, of the `(author, source, gate)`
@@ -14,7 +14,7 @@
 //! shipped the field" and "this observation does not set it" look identical,
 //! and unknown ≠ empty is the distinction the whole kind exists to keep.
 
-use buzz_core_pkg::coding_session_observation::{
+use beekeeper_core_pkg::coding_session_observation::{
     fold_coding_session_observation_page, CodingSessionObservationDisposition,
     CodingSessionObservationFold, CodingSessionObservationFoldContext,
     CodingSessionObservationGateOutcome, CodingSessionObservationPhase,
@@ -33,7 +33,7 @@ pub const CODING_SESSION_OBSERVATION_FOLD_ADAPTER_SCHEMA: &str =
 /// The one sentence every surface rendering an observation owes its reader.
 ///
 /// Byte-identical to `bee sessions observations`' own `disclosure` field
-/// (`crates/buzz-cli/src/commands/sessions/observations.rs`). Repeated here
+/// (`crates/beekeeper-cli/src/commands/sessions/observations.rs`). Repeated here
 /// rather than imported because Desktop does not depend on the CLI crate; the
 /// test `the_disclosure_sentence_is_the_clis_own` holds the two together.
 pub const OBSERVATION_DISCLOSURE: &str =

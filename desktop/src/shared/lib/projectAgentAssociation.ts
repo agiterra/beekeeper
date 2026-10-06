@@ -5,7 +5,7 @@
  * An agent is a durable, named project participant with a primary role. The
  * association is recorded on the owner's computer (`ManagedAgent.projectRef`)
  * and published on the agent's owner-signed kind:30177 as a digest
- * (`crates/buzz-core/src/project_agent_association.rs`), so a second computer
+ * (`crates/beekeeper-core/src/project_agent_association.rs`), so a second computer
  * and a lead's CLI can discover the roster without anybody's disk.
  *
  * What is **not** association, and must never be read as it: a matching role

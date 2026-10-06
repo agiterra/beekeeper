@@ -6,7 +6,7 @@
 # Builds the `buzz-relay` binary (Rust 1.95) and the `buzz-web` static bundle
 # (pnpm + vite), then assembles them into a small debian-slim runtime with
 # `git` available (the relay shells out to git for repo hydrate / receive-pack
-# / upload-pack — see crates/buzz-relay/src/api/git).
+# / upload-pack — see crates/beekeeper-relay/src/api/git).
 #
 # The Dockerfile is platform-agnostic: it builds natively for whatever host
 # runs it (amd64 or arm64). Do not add --platform pins.
@@ -64,7 +64,7 @@ RUN apt-get update \
 ENV CARGO_PROFILE_RELEASE_DEBUG=line-tables-only
 COPY --from=planner /build/recipe.json recipe.json
 # Cook the full workspace recipe — relay deps include workspace siblings, so
-# scoping to -p buzz-relay misses transitive deps and re-builds them later.
+# scoping to -p beekeeper-relay misses transitive deps and re-builds them later.
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 # Compile immutable artifact identity into the relay. Defaults preserve local
@@ -80,9 +80,9 @@ ENV BUZZ_SOURCE_SHA=${BUZZ_SOURCE_SHA} \
     BUZZ_SOURCE_COMMIT_COUNT=${BUZZ_SOURCE_COMMIT_COUNT} \
     BUZZ_BUILD_ID=${BUZZ_BUILD_ID} \
     BUZZ_BUILD_URL=${BUZZ_BUILD_URL}
-RUN cargo build --release --locked -p buzz-relay --bin buzz-relay \
-                                   -p buzz-admin --bin buzz-admin \
-                                   -p buzz-pair-relay --bin buzz-pair-relay
+RUN cargo build --release --locked -p beekeeper-relay --bin buzz-relay \
+                                   -p beekeeper-admin --bin buzz-admin \
+                                   -p beekeeper-pair-relay --bin buzz-pair-relay
 
 # Derive the normal release binaries from the same optimized ELF files as the
 # debug image so the two variants cannot drift at code-generation time.

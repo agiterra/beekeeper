@@ -89,7 +89,7 @@ same-named keys and lose the fact that there were two, so a fixture stored as an
 object can never round-trip to `{"status":"failed","status":"running"}`.
 `buzz-core` refuses those bytes — it decodes the content a second time into its
 typed payload precisely so serde's duplicate-field detection applies
-(`crates/buzz-core/src/coding_session_payload.rs:775`, `:1813`) — and the
+(`crates/beekeeper-core/src/coding_session_payload.rs:775`, `:1813`) — and the
 desktop's coordination gate has always refused them too, while the desktop
 ingress decoder, the mobile decoder and the web decoder accepted them. Three
 readers saying yes and two saying no about the same signed event, invisible to

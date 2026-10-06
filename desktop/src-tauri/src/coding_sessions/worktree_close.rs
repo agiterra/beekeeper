@@ -64,7 +64,7 @@ use std::path::Path;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
-use buzz_core_pkg::worktree_lifecycle::{
+use beekeeper_core_pkg::worktree_lifecycle::{
     build_output_reclaimable, classify_seat_worktree, SeatWorktreeDisposition, SeatWorktreeFacts,
 };
 

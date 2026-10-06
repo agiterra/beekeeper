@@ -17,7 +17,7 @@ RUN apt-get update \
 COPY --from=planner /build/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --locked -p buzz-push-gateway --bin buzz-push-gateway \
+RUN cargo build --release --locked -p beekeeper-push-gateway --bin buzz-push-gateway \
     && strip target/release/buzz-push-gateway
 
 FROM debian:${DEBIAN_VERSION}-slim AS runtime

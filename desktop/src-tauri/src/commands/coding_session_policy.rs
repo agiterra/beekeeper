@@ -5,7 +5,7 @@
 //! `buzz-sdk` would sign plus a flattened record for rendering; the Inspector
 //! hands a signed event here and gets back the same record. Every bound,
 //! closed vocabulary, exact-key rule and refusal sentence belongs to
-//! `buzz_core::coding_session_policy` — a TypeScript copy of any of them would
+//! `beekeeper_core::coding_session_policy` — a TypeScript copy of any of them would
 //! be a second implementation of a wire contract, which is the one thing the
 //! batch rules forbid outright.
 //!
@@ -25,15 +25,15 @@
 //! "unknown ≠ empty" is exactly the distinction the 44245 record exists to
 //! keep.
 
-use buzz_core_pkg::coding_session_authority_transition::{
+use beekeeper_core_pkg::coding_session_authority_transition::{
     decode_coding_session_authority_transition, CodingSessionAuthorityTransitionType,
 };
-use buzz_core_pkg::coding_session_policy::{
+use beekeeper_core_pkg::coding_session_policy::{
     decode_coding_session_policy, fold_coding_session_policies, signer_may_steer_at,
     validate_coding_session_policy_envelope, CodingSessionPolicyGrant, CodingSessionPolicyPayload,
 };
-use buzz_core_pkg::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION;
-use buzz_sdk_pkg::coding_session_policy::build_coding_session_policy;
+use beekeeper_core_pkg::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION;
+use beekeeper_sdk_pkg::coding_session_policy::build_coding_session_policy;
 use nostr::Event;
 use serde::{Deserialize, Serialize};
 
@@ -55,7 +55,7 @@ pub const CODING_SESSION_POLICY_FOLD_ADAPTER_SCHEMA: &str =
 /// The one sentence every surface rendering a policy owes its reader.
 ///
 /// Byte-identical to `bee sessions policy get`'s own `enforcement` field
-/// (`crates/buzz-cli/src/commands/sessions/policy.rs`). Repeated here rather
+/// (`crates/beekeeper-cli/src/commands/sessions/policy.rs`). Repeated here rather
 /// than imported because Desktop does not depend on the CLI crate; the test
 /// `the_enforcement_sentence_is_the_clis_own` holds the two together.
 pub const POLICY_ENFORCEMENT_DISCLOSURE: &str =
@@ -148,7 +148,7 @@ pub struct CodingSessionPolicyFoldRequest {
     /// missing link might have been a revoke. `accepted_at` remains the
     /// caller's unverified word — acceptance is a fact about a relay receipt
     /// this boundary is not given. **Lifting
-    /// `crates/buzz-session-provider/src/authority.rs` into `buzz-core`, so
+    /// `crates/beekeeper-session-provider/src/authority.rs` into `buzz-core`, so
     /// provider, CLI and Desktop share one chain, is the real fix**; this is a
     /// narrowing, not a closure.
     pub transitions: Vec<serde_json::Value>,

@@ -85,7 +85,7 @@ export function aboutBuildState(input: RelayBuildDriftInput): {
  *
  * There is no app build time here because the app does not have one to give:
  * `desktop/src-tauri/build.rs` embeds a commit, a count and a dirty
- * observation, and no clock read. `bee --version` (`buzz_core::build_info`)
+ * observation, and no clock read. `bee --version` (`beekeeper_core::build_info`)
  * does carry one. Rendering "unknown" for a field this build never populates
  * would read as a failed measurement rather than an absent feature, so the row
  * omits it instead.

@@ -18,11 +18,11 @@
 # The patterns are narrow on purpose, in two directions that both look like
 # needless caution until you check:
 #
-#   - NOT `**/*.md`. `crates/buzz-acp/src/base_prompt.md` is `include_str!`'d
-#     into `BASE_PROMPT` (crates/buzz-acp/src/lib.rs) — compiled source that
+#   - NOT `**/*.md`. `crates/beekeeper-acp/src/base_prompt.md` is `include_str!`'d
+#     into `BASE_PROMPT` (crates/beekeeper-acp/src/lib.rs) — compiled source that
 #     happens to end in `.md`, and 16 such files live under `crates/`.
 #   - NOT `docs/**`. `docs/nips/NIP-MP.fixtures.json` is `include_str!`'d by
-#     crates/buzz-sdk/src/builders.rs:5419, and `docs/` holds 29 other
+#     crates/beekeeper-sdk/src/builders.rs:5419, and `docs/` holds 29 other
 #     non-markdown files. Only markdown under `docs/` is inert.
 #
 # Either mistake skips the gate — and therefore the relay rebuild — for a real
@@ -135,7 +135,7 @@ steps:
       - cargo metadata --locked --format-version 1 > /dev/null
       # The DB-backed relay/db unit tests need the migrated schema, not just a
       # reachable postgres (upstream CI has the same apply-schema step).
-      - cargo run -p buzz-admin -- migrate
+      - cargo run -p beekeeper-admin -- migrate
       # mesh_demo runs for real here (redis is a declared service, and
       # BUZZ_TEST_REQUIRE_REDIS above makes a skip fatal rather than silent),
       # but its loopback-QUIC echo cannot complete inside this docker-in-incus
@@ -149,7 +149,7 @@ steps:
       # drain-tick frame loss, and `just test-unit` runs it wherever loopback
       # QUIC works.
       - cargo test --workspace --exclude buzz-agent -- --skip api::mesh_demo
-      - cargo test -p buzz-relay --lib api::mesh_demo -- --skip demo_join_forwarded_arm_round_trips_echo
+      - cargo test -p beekeeper-relay --lib api::mesh_demo -- --skip demo_join_forwarded_arm_round_trips_echo
       # Twelve buzz-relay tests build AppState from a real pool and so need
       # Postgres. They are `#[ignore]`d, which is what lets `just test-unit`
       # run the whole workspace on a machine with no Docker — but this runner
@@ -158,12 +158,12 @@ steps:
       # a local count look tidy. Three module filters, OR'd by libtest (the
       # same shape `just test-genesis` uses). Extend the filters when you mark
       # another Postgres-gated buzz-relay test.
-      - cargo test -p buzz-relay --lib -- --ignored api::media::tests api::admin::tests handlers::event::tests::fanout_access
+      - cargo test -p beekeeper-relay --lib -- --ignored api::media::tests api::admin::tests handlers::event::tests::fanout_access
       # CI completion proves atomic storage and the real bee subscriber against
       # a local relay. These are ignored in the infrastructure-free unit run.
-      - cargo test -p buzz-db --lib ci_result -- --ignored --test-threads=1
-      - cargo build -p buzz-cli --bin bee
-      - BUZZ_TEST_BEE_BIN="$CARGO_TARGET_DIR/debug/bee" cargo test -p buzz-relay --lib ci_result -- --ignored --test-threads=1
+      - cargo test -p beekeeper-db --lib ci_result -- --ignored --test-threads=1
+      - cargo build -p beekeeper-cli --bin bee
+      - BUZZ_TEST_BEE_BIN="$CARGO_TARGET_DIR/debug/bee" cargo test -p beekeeper-relay --lib ci_result -- --ignored --test-threads=1
 
   desktop:
     image: buzz-ci:1
@@ -238,7 +238,7 @@ steps:
       # Runs the whole suite: the fake_llm steer/cancel timing races were
       # test-design, not runner-environment, and are fixed (the fake provider
       # now holds the round under test until the client has acted — see
-      # LlmGate in crates/buzz-agent/tests/fake_llm.rs). Retry once anyway —
+      # LlmGate in crates/beekeeper-agent/tests/fake_llm.rs). Retry once anyway —
       # a real regression still fails twice. The build phase is a freshness
       # no-op against the warm shared target dir.
-      - cargo test -p buzz-agent || cargo test -p buzz-agent
+      - cargo test -p beekeeper-agent || cargo test -p beekeeper-agent

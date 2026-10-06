@@ -82,7 +82,7 @@ commit-msg:
 # show what a person has committed locally without ever asking them to report
 # it. Deliberately unfiltered: a post-commit hook has no staged file list to
 # filter on, and the script is the same one the hire host installs for seats
-# (`buzz_core::seat_git_hooks::WIP_POST_COMMIT_HOOK`).
+# (`beekeeper_core::seat_git_hooks::WIP_POST_COMMIT_HOOK`).
 #
 # **Off by default.** The script exits immediately unless this checkout has
 # `buzz.wipShare=true`, which only `just wip-share-on` sets — `just setup` and

@@ -4,7 +4,7 @@
 //! signed events. This boundary re-verifies every event and delegates all
 //! graph, authority, settlement, and terminal semantics to `buzz-core`.
 
-use buzz_core_pkg::coding_session_team_transaction::{
+use beekeeper_core_pkg::coding_session_team_transaction::{
     fold_coding_session_team_transactions as fold_core_coding_session_team_transactions,
     CodingSessionTeamActiveGrant, CodingSessionTeamActiveSeat, CodingSessionTeamFoldConflict,
     CodingSessionTeamFoldContext, CodingSessionTeamFoldExclusion,

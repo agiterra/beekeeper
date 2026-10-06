@@ -88,7 +88,7 @@ pub(crate) struct CodingSessionSeatWorktree {
 ///
 /// A record of what the host did, never an input to anything: the values are
 /// derived from the seat's own key by
-/// [`buzz_core_pkg::seat_commit_identity`], so reading a stale one back and
+/// [`beekeeper_core_pkg::seat_commit_identity`], so reading a stale one back and
 /// re-applying it could never be more correct than deriving it again.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,17 +137,17 @@ pub(crate) fn seat_worktree_key(session_ref: &str, seat_label: &str) -> String {
 /// outside it would give the prune path a licence over somewhere it has no
 /// business, so the write is refused rather than trusted.
 pub(crate) fn is_inside_worktree_parent(repo_root: &Path, path: &Path) -> bool {
-    // The rule itself lives in `buzz_core::worktree_placement`, shared with
+    // The rule itself lives in `beekeeper_core::worktree_placement`, shared with
     // the prune guard and with `bee`. Three guards that disagree with where
     // placement actually cuts is a silent, total failure: the tree lands
     // somewhere no guard admits, so it can never be recorded or removed.
-    buzz_core_pkg::worktree_placement::is_managed_worktree_path(repo_root, path, &[])
+    beekeeper_core_pkg::worktree_placement::is_managed_worktree_path(repo_root, path, &[])
 }
 
 /// Repository root implied by a worktree path, from the path alone.
 ///
 /// The inverse of the two *holder* shapes in
-/// `buzz_core::worktree_placement`: `<repo>/.worktrees/<slug>` and the legacy
+/// `beekeeper_core::worktree_placement`: `<repo>/.worktrees/<slug>` and the legacy
 /// sibling container `<repo>.worktrees/<slug>`. Both name their repository
 /// unambiguously, so no `git` invocation and no `stat` is needed.
 ///

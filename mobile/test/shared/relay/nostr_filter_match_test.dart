@@ -2,7 +2,7 @@ import 'package:buzz/shared/relay/nostr_filter_match.dart';
 import 'package:buzz/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Mirrors `crates/buzz-core/src/filter.rs` tests row for row so the two
+/// Mirrors `crates/beekeeper-core/src/filter.rs` tests row for row so the two
 /// matchers cannot drift apart silently: kind, author, since/until
 /// inclusivity, id prefixes, `#x` any-of, multi-`#h`, and the empty clause.
 void main() {

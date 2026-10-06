@@ -16,7 +16,7 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
  * surface that gets a test — there was none before this lane.
  *
  * The relay half — the second `p` tag — is fenced in
- * `crates/buzz-relay/src/workflow_sink.rs`.
+ * `crates/beekeeper-relay/src/workflow_sink.rs`.
  */
 
 const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";

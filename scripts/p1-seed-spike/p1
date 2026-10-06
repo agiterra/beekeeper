@@ -19,7 +19,7 @@ export BUZZ_RELAY_URL="${BUZZ_RELAY_URL:-https://hive.agiterra.org}"
 BUZZ_BIN="${BUZZ_BIN:-$ROOT/target/release/buzz}"
 
 [ -x "$BUZZ_BIN" ] || {
-  echo "error: buzz CLI not found at $BUZZ_BIN — run: cargo build --release -p buzz-cli" >&2
+  echo "error: buzz CLI not found at $BUZZ_BIN — run: cargo build --release -p beekeeper-cli" >&2
   exit 1
 }
 

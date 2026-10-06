@@ -4,7 +4,7 @@ One document, and it is here for a reason.
 
 [`POLICY.md`](POLICY.md) is a **contract**, not a plan: it states what a
 kind-44245 session policy enforces, ten places in `crates/` cite it by path,
-and `crates/buzz-cli/tests/policy_enforcement_sentence.rs` reads it off disk to
+and `crates/beekeeper-cli/tests/policy_enforcement_sentence.rs` reads it off disk to
 assert that the sentence a founder is shown is byte-identical to the one the
 code implements. A test cannot bind a file in another repository, so this one
 stays with the code — the same rule that kept `docs/nips/` and `conformance/`

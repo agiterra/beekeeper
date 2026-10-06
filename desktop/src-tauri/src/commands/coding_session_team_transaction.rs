@@ -21,11 +21,11 @@
 //!   (batch 3 §1k, lane L7) reaches the wire the day core carries it and is
 //!   omitted before that, with no edit here and no edit in TypeScript.
 
-use buzz_core_pkg::coding_session_team_transaction::{
+use beekeeper_core_pkg::coding_session_team_transaction::{
     decode_coding_session_team_transaction, CodingSessionTeamTransactionPayload,
     CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
 };
-use buzz_sdk_pkg::coding_session_team_transaction::build_coding_session_team_transaction;
+use beekeeper_sdk_pkg::coding_session_team_transaction::build_coding_session_team_transaction;
 use serde::{Deserialize, Serialize};
 
 /// Closed wire-schema identifier accepted by the build boundary.
@@ -113,10 +113,10 @@ pub struct CodingSessionTeamTransactionCapabilities {
 /// Read from the crate's own constant rather than repeated: a bound this side
 /// spells for itself is a second implementation of the rule that refuses it.
 pub const CODING_SESSION_DECISION_CHOICE_MAX_BYTES: usize =
-    buzz_core_pkg::coding_session_team_transaction::MAX_TEAM_TRANSACTION_SHORT_TEXT_BYTES;
+    beekeeper_core_pkg::coding_session_team_transaction::MAX_TEAM_TRANSACTION_SHORT_TEXT_BYTES;
 /// Longest `note` `buzz-core` accepts on a `decision.answer`.
 pub const CODING_SESSION_DECISION_NOTE_MAX_BYTES: usize =
-    buzz_core_pkg::coding_session_team_transaction::MAX_TEAM_TRANSACTION_TEXT_BYTES;
+    beekeeper_core_pkg::coding_session_team_transaction::MAX_TEAM_TRANSACTION_TEXT_BYTES;
 /// Longest `condition` §1k allows on a `decision.answer`.
 ///
 /// JOIN(L7): when `buzz-core` gains

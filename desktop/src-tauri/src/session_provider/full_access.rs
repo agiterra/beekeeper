@@ -2,7 +2,7 @@
 //!
 //! The provider reads `full-access.json` in its own state directory at every
 //! session preparation and starts a listed session's agent without the project
-//! boundary (`buzz_session_provider::full_access`, ledger 303). These commands
+//! boundary (`beekeeper_session_provider::full_access`, ledger 303). These commands
 //! are the only writer: the person flips the switch here, and the session's
 //! next start — a create, or the restart the UI sends after a change — runs
 //! under the new answer.
@@ -11,7 +11,7 @@
 //! so a session whose provider is not this desktop's is never read or written
 //! (`None` from the read, an error from the write).
 
-use buzz_session_provider_pkg::full_access::FULL_ACCESS_FILE;
+use beekeeper_session_provider_pkg::full_access::FULL_ACCESS_FILE;
 use tauri::{AppHandle, State};
 
 use crate::app_state::AppState;
@@ -138,14 +138,14 @@ mod tests {
         write(state, &["s-1".into(), "s-2".into()]).expect("write");
         assert_eq!(read(state), vec!["s-1".to_string(), "s-2".to_string()]);
         // The file this writes is the file the provider grants from.
-        assert!(buzz_session_provider_pkg::full_access::granted(
+        assert!(beekeeper_session_provider_pkg::full_access::granted(
             state, "s-1"
         ));
-        assert!(!buzz_session_provider_pkg::full_access::granted(
+        assert!(!beekeeper_session_provider_pkg::full_access::granted(
             state, "s-3"
         ));
         write(state, &["s-2".into()]).expect("withdraw");
-        assert!(!buzz_session_provider_pkg::full_access::granted(
+        assert!(!beekeeper_session_provider_pkg::full_access::granted(
             state, "s-1"
         ));
     }

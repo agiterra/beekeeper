@@ -19,7 +19,7 @@
 # There is no `eval` and no unquoted expansion anywhere in this file.
 #
 # These exact bytes are also compiled into
-# `buzz_core::seat_git_hooks::WIP_POST_COMMIT_HOOK`, so the seat installer and
+# `beekeeper_core::seat_git_hooks::WIP_POST_COMMIT_HOOK`, so the seat installer and
 # lefthook write the same script; a test holds the two together.
 set -uo pipefail
 
@@ -36,7 +36,7 @@ log() {
 [ "$(git config --get buzz.wipShare 2>/dev/null || true)" = "true" ] || exit 0
 
 # Lowercase, `[a-z0-9-]` only, collapsed, trimmed, bounded to 40 bytes — the
-# same shape `buzz_core::seat_git_hooks::wip_ref_name` derives.
+# same shape `beekeeper_core::seat_git_hooks::wip_ref_name` derives.
 sanitize() {
   printf '%s' "$1" \
     | tr '[:upper:]' '[:lower:]' \

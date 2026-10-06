@@ -1,6 +1,6 @@
 /// Fractional ranks for ordered, concurrently edited lists.
 ///
-/// A faithful port of `crates/buzz-core/src/fractional_rank.rs`, pinned to
+/// A faithful port of `crates/beekeeper-core/src/fractional_rank.rs`, pinned to
 /// `conformance/project-todo-fold/fixtures/rank-vectors.json`. A rank is a
 /// base-62 string that compares as plain code units (the alphabet is in
 /// ASCII order), made of an integer part whose head letter encodes its

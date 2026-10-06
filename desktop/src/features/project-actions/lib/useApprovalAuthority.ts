@@ -10,7 +10,7 @@
  * still excluded legitimate co-owners.
  *
  * The relay's actual rule is `approver_admitted`
- * (`crates/buzz-relay/src/handlers/command_executor.rs`): for
+ * (`crates/beekeeper-relay/src/handlers/command_executor.rs`): for
  * `project-owner:<coordinate>`, the coordinate's creator **or** a current
  * roster `Owner` of that project. This mirrors it over the reads the desktop
  * already has, and never looks at the publisher.

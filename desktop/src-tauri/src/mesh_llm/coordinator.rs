@@ -17,7 +17,7 @@ use crate::app_state::AppState;
 /// NIP-51 bookmark-set kind with a reserved d-tag so existing Buzz relays accept
 /// and store it through their generic user-state path. The relay needs no mesh
 /// handler or kind-registry change.
-pub const KIND_BUZZ_MESH_MEMBER_STATUS: u16 = buzz_core_pkg::kind::KIND_BOOKMARK_SET as u16;
+pub const KIND_BUZZ_MESH_MEMBER_STATUS: u16 = beekeeper_core_pkg::kind::KIND_BOOKMARK_SET as u16;
 const STATUS_D_TAG_PREFIX: &str = "buzz-mesh-member-status";
 const ROSTER_POLL_INTERVAL: Duration = Duration::from_secs(60);
 const STATUS_PUBLISH_INTERVAL: Duration = Duration::from_secs(45);

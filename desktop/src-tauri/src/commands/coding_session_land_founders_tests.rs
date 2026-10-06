@@ -36,7 +36,7 @@ fn rules_signed_before_the_rule_record_kind_existed_still_govern() {
 /// and a stranger's record, or an unverified one, governs nothing.
 #[test]
 fn only_a_founders_rule_record_governs() {
-    use buzz_core_pkg::repository_protection::build_repository_protection;
+    use beekeeper_core_pkg::repository_protection::build_repository_protection;
     use nostr::{EventBuilder, Keys, Kind, Tag};
 
     let signer = Keys::generate();
@@ -47,7 +47,7 @@ fn only_a_founders_rule_record_governs() {
         vec!["d".to_owned(), "beekeeper".to_owned()],
         vec!["maintainers".to_owned(), co_founder.public_key().to_hex()],
     ];
-    let founders = buzz_core_pkg::repository_founders::RepositoryFounders::from_parts(
+    let founders = beekeeper_core_pkg::repository_founders::RepositoryFounders::from_parts(
         &owner_hex,
         &announcement_tags,
     )
@@ -70,7 +70,7 @@ fn only_a_founders_rule_record_governs() {
             .collect();
         serde_json::to_value(
             EventBuilder::new(
-                Kind::Custom(buzz_core_pkg::kind::KIND_GIT_REPO_PROTECTION as u16),
+                Kind::Custom(beekeeper_core_pkg::kind::KIND_GIT_REPO_PROTECTION as u16),
                 draft.content.clone(),
             )
             .tags(tags)

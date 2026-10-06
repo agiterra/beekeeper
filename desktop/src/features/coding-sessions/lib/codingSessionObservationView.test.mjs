@@ -232,7 +232,7 @@ test("a failed row keeps its command verbatim and its tail in lines", () => {
     fold: fold({
       gates: [
         gate(SEAT, "declared", "cargo test", "failed", {
-          command: "cargo test -p buzz-cli -- --nocapture subcommand_",
+          command: "cargo test -p beekeeper-cli -- --nocapture subcommand_",
           summary:
             "running 2 tests\n\nfailures:\n  subcommand_names_are_stable",
           durationMs: 41_000,
@@ -243,7 +243,7 @@ test("a failed row keeps its command verbatim and its tail in lines", () => {
   const row = projected.gates[0];
   assert.equal(
     row.command,
-    "cargo test -p buzz-cli -- --nocapture subcommand_",
+    "cargo test -p beekeeper-cli -- --nocapture subcommand_",
   );
   assert.deepEqual(row.summaryLines, [
     "running 2 tests",

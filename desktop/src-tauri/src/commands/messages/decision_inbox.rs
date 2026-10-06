@@ -17,11 +17,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use buzz_core_pkg::coding_session_team_transaction::{
+use beekeeper_core_pkg::coding_session_team_transaction::{
     validate_coding_session_team_transaction_envelope, CodingSessionTeamTransactionBody,
     CODING_SESSION_TEAM_DECISION_FOUNDER,
 };
-use buzz_core_pkg::kind::{KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_TEAM_TRANSACTION};
+use beekeeper_core_pkg::kind::{KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_TEAM_TRANSACTION};
 
 use crate::app_state::AppState;
 

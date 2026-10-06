@@ -4,7 +4,7 @@
 //! `list-probe`, `input-resize`. Deliberately excludes spawn, kill/signal
 //! delivery, credential handling, new durable state, a new listener/socket, and
 //! receipt mutation — those verbs stay exactly where they already live, directly
-//! in `manager.rs` / `host_client.rs` / `buzz_shell_host::receipt`, never behind
+//! in `manager.rs` / `host_client.rs` / `beekeeper_shell_host::receipt`, never behind
 //! this trait. See the absorption report's NAMED HONEST BOUNDARIES for why.
 //!
 //! `manager.rs` is the one real caller: `spawn_host_and_attach` calls
@@ -16,8 +16,8 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use buzz_shell_host::proto::Hello;
-use buzz_shell_host::receipt::{pid_alive, Receipt};
+use beekeeper_shell_host::proto::Hello;
+use beekeeper_shell_host::receipt::{pid_alive, Receipt};
 
 use super::host_client::{self, AttachedClient};
 
@@ -173,7 +173,7 @@ pub fn resolve_driver(backend: &str) -> Result<BuzzShellHostDriver, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use buzz_shell_host::proto::Frame;
+    use beekeeper_shell_host::proto::Frame;
     use std::io::Read;
 
     /// A pid guaranteed to be dead: spawn a trivial child and wait for its

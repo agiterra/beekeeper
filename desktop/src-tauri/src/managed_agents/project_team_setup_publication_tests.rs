@@ -152,12 +152,12 @@ fn candidate_uses_owned_snapshot_bytes_and_conditional_source_pins_its_commit() 
         message: None,
     };
     let event = source_event(&journal, &keys).expect("source event");
-    let decoded =
-        buzz_core_pkg::project_pack_source::decode_project_pack_source(&event).expect("decode");
+    let decoded = beekeeper_core_pkg::project_pack_source::decode_project_pack_source(&event)
+        .expect("decode");
     assert_eq!(decoded.pin().as_sha(), Some(sha.as_str()));
     assert!(matches!(
         decoded.expectation(),
-        buzz_core_pkg::project_pack_source::PackSourceExpectation::Expected(None)
+        beekeeper_core_pkg::project_pack_source::PackSourceExpectation::Expected(None)
     ));
 }
 

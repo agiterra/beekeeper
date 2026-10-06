@@ -6,7 +6,7 @@ import type { EntityRole } from "@/shared/lib/entityRoles";
  * session lane's messages) into the channel a session lives in.
  *
  * The relay's rule, mirrored — it decides, this only predicts
- * (`crates/buzz-relay/src/handlers/ingest.rs`, `check_coding_session_membership`
+ * (`crates/beekeeper-relay/src/handlers/ingest.rs`, `check_coding_session_membership`
  * and the ordinary channel write gate):
  *
  * 1. A `channel_members` row admits.

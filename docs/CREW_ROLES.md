@@ -8,7 +8,7 @@ the difference matters:
   project's agents repository is seeded from.
 - **`personas/roles/<role>/`** — a valid persona pack
   (`.plugin/plugin.json` + `personas/<role>.persona.md`), used where the pack
-  format is required; see `crates/buzz-persona/PERSONA_PACK_SPEC.md`. Since
+  format is required; see `crates/beekeeper-persona/PERSONA_PACK_SPEC.md`. Since
   2026-09-18 these carry **no `skills/`**: skills ship with the templates, and
   a project's own skills live in its agents repository.
 
@@ -24,7 +24,7 @@ Any model may fill any role. None of these seven packs names a vendor or a
 model — the seat does, at launch time. Each pack's `plugin.json` `description`
 carries only a `model_min` capability note (the kind of model the role needs,
 not a specific one). The *schema* does allow one: `PersonaConfig.model` is a
-`provider:model-id` string (`crates/buzz-persona/src/persona.rs`) split into
+`provider:model-id` string (`crates/beekeeper-persona/src/persona.rs`) split into
 `llm_provider` + `model` at resolve time. A team seat's model comes from the
 seat regardless, which is why these packs leave the field unset.
 Verify a pack with `bee pack validate personas/roles/<role>` before relying
@@ -129,7 +129,7 @@ add its own: Beekeeper's `lead` also holds `beekeeper-project`, which lives in
 
 A seated persona's resolved skills are written where only that seat can reach
 them, never to a shared directory — see contract D8-A and
-`crates/buzz-persona/src/pack.rs`'s `resolve_skills` for the packs' half of
+`crates/beekeeper-persona/src/pack.rs`'s `resolve_skills` for the packs' half of
 that contract (which skill goes to which persona).
 
 Where that happens today, precisely:
@@ -140,7 +140,7 @@ Where that happens today, precisely:
   included — into that execution's **skill bundle** before the adapter is
   spawned: `<app data dir>/agents/seats/<session id>/skills/<name>/`, with a
   `manifest.json` beside it naming the persona, the pack directory and the
-  `packRef` (`crates/buzz-session-provider/src/session.rs`,
+  `packRef` (`crates/beekeeper-session-provider/src/session.rs`,
   `seat_bundle_dir`). Nothing is written into the seat's checkout, so a seated
   worktree is clean by `git status` and carries no stale craft; the briefing
   names each `SKILL.md` by absolute path and says the bundle is read-only to
@@ -175,7 +175,7 @@ Where that happens today, precisely:
 
 Contract D8-A gives `PersonaConfig` an optional `role` (slug) field so a
 team seat's role can be read off the persona itself
-(`crates/buzz-persona/src/persona.rs`). All seven packs declare it explicitly in
+(`crates/beekeeper-persona/src/persona.rs`). All seven packs declare it explicitly in
 their `.persona.md` frontmatter, matching each persona's `name:` (`lead`,
 `architect`, `builder`, `verifier`, `runner`, `poker`, `designer`). The field is optional,
 so a persona without one is an ordinary persona rather than a team seat.

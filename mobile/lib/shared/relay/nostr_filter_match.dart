@@ -1,7 +1,7 @@
 import 'nostr_models.dart';
 
 /// Client-side NIP-01 filter matching, mirroring the relay's
-/// `crates/buzz-core/src/filter.rs`: fields within a filter are AND-ed,
+/// `crates/beekeeper-core/src/filter.rs`: fields within a filter are AND-ed,
 /// filters in a list are OR-ed.
 ///
 /// Semantics pinned to the relay:

@@ -138,7 +138,7 @@ fn forged_and_wrongly_bound_genesis_events_are_refused_on_load() {
         } else {
             owner.clone()
         };
-        let valid = buzz_sdk_pkg::build_coding_session_genesis(
+        let valid = beekeeper_sdk_pkg::build_coding_session_genesis(
             event_channel,
             &CodingSessionGenesisPayload::new(session),
         )

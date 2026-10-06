@@ -9,9 +9,9 @@ if [[ "$TARGET" != *windows* ]]; then
     # (crates/*/src/main.rs) and tauri.windows.conf.json declares neither, so
     # they are Unix-only here too.
     SIDECARS+=(buzz-backend-kubernetes buzz-shell-host beekeeper-host)
-    BUILD_HINT="cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli -p buzz-shell-host -p beekeeper-host"
+    BUILD_HINT="cargo build --release -p beekeeper-acp -p beekeeper-agent -p beekeeper-backend-kubernetes -p beekeeper-dev-mcp -p git-credential-nostr -p beekeeper-cli -p beekeeper-shell-host -p beekeeper-host"
 else
-    BUILD_HINT="cargo build --release -p buzz-acp -p buzz-agent -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli"
+    BUILD_HINT="cargo build --release -p beekeeper-acp -p beekeeper-agent -p beekeeper-dev-mcp -p git-credential-nostr -p beekeeper-cli"
 fi
 BINARIES_DIR="desktop/src-tauri/binaries"
 

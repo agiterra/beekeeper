@@ -17,7 +17,7 @@
 | Lane | Entry point | What it produces today |
 |------|-------------|------------------------|
 | Relay | none needed | hive runs the newest green `main` (`beekeeper-autodeploy.timer`); no image is pushed to a registry |
-| Relay version | `just release-relay [X.Y.Z]` | A PR bumping `crates/buzz-relay` and its changelog. Nothing tags or builds from it |
+| Relay version | `just release-relay [X.Y.Z]` | A PR bumping `crates/beekeeper-relay` and its changelog. Nothing tags or builds from it |
 | Desktop | `just release-desktop [X.Y.Z]` | A deterministic release-candidate PR on `agiterra/beekeeper`. Nothing tags, builds or publishes from it |
 | Mobile | none | No release lane exists |
 
@@ -89,8 +89,8 @@ which commit is running (`software_commit`; see [AGENTS.md](AGENTS.md)).
 
 `just release-relay [X.Y.Z]` remains for recording a version: on a clean,
 up-to-date `main` it creates `relay-release/<version>`, bumps
-`crates/buzz-relay/Cargo.toml`, regenerates `Cargo.lock`, prepends
-`crates/buzz-relay/CHANGELOG.md`, pushes, and opens or updates the PR on
+`crates/beekeeper-relay/Cargo.toml`, regenerates `Cargo.lock`, prepends
+`crates/beekeeper-relay/CHANGELOG.md`, pushes, and opens or updates the PR on
 `agiterra/beekeeper` for review — land it on hive the same way, never by merging
 on GitHub. Landing it tags nothing and publishes no image.
 
@@ -111,7 +111,7 @@ GitHub App and built by Block's private Buildkite pipeline; both are gone, and
 | Lane | Release version authority |
 |------|---------------------------|
 | Desktop | `desktop/package.json` and the synchronized desktop manifests (`just bump-desktop-version`) |
-| Relay | `crates/buzz-relay/Cargo.toml` (`just bump-relay-version`) |
+| Relay | `crates/beekeeper-relay/Cargo.toml` (`just bump-relay-version`) |
 | Mobile | none |
 
 ---

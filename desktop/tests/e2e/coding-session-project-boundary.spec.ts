@@ -25,7 +25,7 @@ import { installMockBridge } from "../helpers/bridge";
 
 // The provider discloses what each generation runs inside with one transcript
 // item, enqueued on every open with no turn
-// (`execution_scope::boundary_status_item` in `crates/buzz-session-provider`):
+// (`execution_scope::boundary_status_item` in `crates/beekeeper-session-provider`):
 // `{ kind: "status", status, reason }`, where `reason` is the backend when
 // enforced and a stable slug when not. These tests sign exactly that shape
 // and check what a reader sees; nothing here infers protection from any other

@@ -1,7 +1,7 @@
 //! The child environment, assembled as data.
 //!
 //! The provider takes its entire configuration from the environment (see
-//! `crates/buzz-session-provider/src/config.rs`), which makes the env map the
+//! `crates/beekeeper-session-provider/src/config.rs`), which makes the env map the
 //! real interface between host and provider. Building it as a plain
 //! `BTreeMap` rather than mutating a `Command` in place is what lets the tests
 //! assert the two properties that matter and cannot be checked by reading the
@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use buzz_core::coding_session_runtime::RuntimeDescriptor;
+use beekeeper_core::coding_session_runtime::RuntimeDescriptor;
 
 use crate::layout::{KEY_FILE_VAR, PRIVATE_KEY_VAR};
 use crate::record::CodingSessionProviderRecord;
@@ -33,7 +33,7 @@ pub const PROJECTS_FILE_NAME: &str = "projects.json";
 /// lifecycle lines are what matter in the log file, not relay chatter.
 ///
 /// A **default**, not an override — see `rust_log` on [`ProviderEnvInputs`].
-pub const DEFAULT_RUST_LOG: &str = "info,buzz_session_provider=info";
+pub const DEFAULT_RUST_LOG: &str = "info,beekeeper_session_provider=info";
 
 /// Debug switch asking the adapter to forward every raw SDK message.
 ///
@@ -106,7 +106,7 @@ pub struct ProviderEnvInputs<'a> {
 /// The variable naming the `bee` a seat runs.
 ///
 /// Kept byte-for-byte in step with `BEE_ENV` in
-/// `crates/buzz-session-provider/src/seat_bee.rs`. The desktop never sets it —
+/// `crates/beekeeper-session-provider/src/seat_bee.rs`. The desktop never sets it —
 /// the provider chooses the binary, because only the provider knows which
 /// directory its own executable sits in — but the desktop does have to stop
 /// an ambient one reaching the child.
@@ -115,7 +115,7 @@ pub const BEE_VAR: &str = "BEE";
 /// The variable the provider reads its host-named shared directories from.
 ///
 /// Kept byte-for-byte in step with `SHARED_WORKDIRS_VAR` in
-/// `crates/buzz-session-provider/src/session.rs`; a drift here is a refusal
+/// `crates/beekeeper-session-provider/src/session.rs`; a drift here is a refusal
 /// that silently stops happening.
 pub const SHARED_WORKDIRS_VAR: &str = "BUZZ_CSP_SHARED_WORKDIRS";
 
@@ -270,7 +270,7 @@ pub fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, St
 /// exported in their shell.
 ///
 /// `BEE` is the second: it names the `bee` a seat runs
-/// (`buzz_session_provider::seat_bee`), it sits outside the `BUZZ_` prefix so
+/// (`beekeeper_session_provider::seat_bee`), it sits outside the `BUZZ_` prefix so
 /// the provider's own agent fence does not cover it, and a developer who
 /// exported one in the shell that launched the desktop would otherwise have
 /// the provider inherit it and hand it on. The provider resolves its own —

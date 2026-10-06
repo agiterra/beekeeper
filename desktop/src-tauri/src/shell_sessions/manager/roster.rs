@@ -26,7 +26,7 @@ fn normalize_roster(roster: Vec<RosterEntry>) -> Result<Vec<RosterEntry>, String
         if pubkey.len() != 64 || !pubkey.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(format!("invalid roster pubkey: {}", entry.pubkey));
         }
-        if !buzz_core_pkg::kind::is_valid_shell_role(&entry.role) {
+        if !beekeeper_core_pkg::kind::is_valid_shell_role(&entry.role) {
             return Err(format!("invalid roster role: {}", entry.role));
         }
         if !seen.insert(pubkey.clone()) {

@@ -9,7 +9,7 @@
 #
 # So the exclusion list may only ever name files that cannot reach the relay
 # image. The trap this exists to prevent is `**/*.md`: sixteen `.md` files live
-# under crates/, and `crates/buzz-acp/src/base_prompt.md` is `include_str!`'d
+# under crates/, and `crates/beekeeper-acp/src/base_prompt.md` is `include_str!`'d
 # into a `const` — compiled source that happens to end in `.md`.
 #
 # Pure bash: no toolchain, no python, no GNU-only flags (this runs on the
@@ -41,7 +41,7 @@ patterns=$(awk '
 
 # ── 1. the specific regression: never a global markdown glob ─────────────────
 while IFS= read -r pat; do
-  [[ "$pat" != '**/*.md' ]] || fail "'**/*.md' in the exclusion list. crates/buzz-acp/src/base_prompt.md is include_str!'d into BASE_PROMPT — excluding it skips the rebuild for a real code change. Exclude documentation locations, not an extension."
+  [[ "$pat" != '**/*.md' ]] || fail "'**/*.md' in the exclusion list. crates/beekeeper-acp/src/base_prompt.md is include_str!'d into BASE_PROMPT — excluding it skips the rebuild for a real code change. Exclude documentation locations, not an extension."
 done <<<"$patterns"
 
 # ── 2. expand the patterns over the tracked tree ─────────────────────────────
@@ -77,7 +77,7 @@ sort -u -o "$excluded" "$excluded"
 # ── 3. nothing excluded may be compiled into a binary ────────────────────────
 # Resolve every include_str!/include_bytes! argument relative to its own source
 # file, then intersect with the excluded set. Paths really do climb out of the
-# crate — crates/buzz-db/src/migration.rs embeds ../../../schema/schema.sql —
+# crate — crates/beekeeper-db/src/migration.rs embeds ../../../schema/schema.sql —
 # so `..` is resolved rather than rejected. No `realpath --relative-to`: that
 # flag is GNU-only and this runs on macOS too.
 normpath() {  # normpath <path-with-dot-segments>

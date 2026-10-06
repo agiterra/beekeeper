@@ -14,7 +14,7 @@ import {
 const vectors = JSON.parse(
   readFileSync(
     new URL(
-      "../../../../crates/buzz-core/testdata/project_agent_association/vectors.json",
+      "../../../../crates/beekeeper-core/testdata/project_agent_association/vectors.json",
       import.meta.url,
     ),
     "utf8",

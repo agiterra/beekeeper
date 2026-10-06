@@ -109,13 +109,13 @@ the unknown copy, never a number.**
 | W14 | **Tests** | **none today** | `No test report yet` |
 | W15 | **Accepted plan** (the lead's acceptance steps) | **none today** — the brief's `Acceptance:` line is prose | `No accepted plan published` |
 | W16 | Mission brief | the 44220 turn command the seat was opened with, echoed as its first 44225 item | `no brief on the wire` |
-| W17 | **Pack** — which persona files this seat was staged from | 44223 `packRef` (`repo`, resolved `sha`, `role`, `path`), pointing at the project's kind:30624 pack source (`docs/nips/NIP-PK.md`), or `repo: "app:shipped"` with the app version as `sha` for the build's bundled packs. The **seat's** role picks the pack; the actor's home role is never consulted | key absent → **`no pack staged`** — the seat ran the session checkout's own `personas/roles/<role>/`. Never a default pack name, and never blank. The three sources are named `packs repository` · `session checkout` · `shipped defaults`, spelled once in `buzz_core::project_pack_source` |
+| W17 | **Pack** — which persona files this seat was staged from | 44223 `packRef` (`repo`, resolved `sha`, `role`, `path`), pointing at the project's kind:30624 pack source (`docs/nips/NIP-PK.md`), or `repo: "app:shipped"` with the app version as `sha` for the build's bundled packs. The **seat's** role picks the pack; the actor's home role is never consulted | key absent → **`no pack staged`** — the seat ran the session checkout's own `personas/roles/<role>/`. Never a default pack name, and never blank. The three sources are named `packs repository` · `session checkout` · `shipped defaults`, spelled once in `beekeeper_core::project_pack_source` |
 
 **W12 corrects my brief.** The brief lists tokens and tool calls under "requires
 new wire artifact". They landed in ledger item 89(b) and are on `main` at
 `19ad1b97`: the `usage` block rides the 44225 `result` item, and
 `bee sessions status` already prints a context column from it
-(`crates/buzz-cli/src/commands/sessions/crew_cmds.rs:884-933`). The T3
+(`crates/beekeeper-cli/src/commands/sessions/crew_cmds.rs:884-933`). The T3
 reference's `opus-5[1m] · 193k tok · 99 tools` is **sourceable today**. Nothing
 in this spec fakes it from transcript length. See §15(a).
 
@@ -1563,7 +1563,7 @@ publishes it. `contextWindow` is real today: it falls back to the turn's own
 
 The Audit tab and the CLI table derive the same rows from the same items, so
 the ledger, a seat and the screen say one thing. Three derivations were
-frozen against `crates/buzz-cli/src/commands/sessions/audit.rs`:
+frozen against `crates/beekeeper-cli/src/commands/sessions/audit.rs`:
 
 1. **`toolCalls`** — the driver's own `usage.toolCalls` when the turn's
    `result` carried one, otherwise the count of `tool_call` items that turn
@@ -2097,7 +2097,7 @@ Bounded at 50 rows with the omission disclosed. An absent `decisions` is
 ### 22.3 The Inspector's Context tab renders the policy
 
 **Wire source.** Kind 44245 records for the umbrella, folded by
-`buzz_core::coding_session_policy::fold_coding_session_policies` through a new
+`beekeeper_core::coding_session_policy::fold_coding_session_policies` through a new
 Tauri command (`fold_coding_session_policies_command`), with the accepted
 NIP-CSAT chain — receipt stamps included — supplying the same standing rule
 (`signer_may_steer_at`) the session provider and `bee sessions policy get` use.
@@ -2422,7 +2422,7 @@ still governs a map taller than the rail.
 > **L5 — the Inspector reads kind 44246.** A `fold_coding_session_observations`
 > Tauri command beside the existing team-fold wrapper, a TypeScript decoder,
 > and four Inspector sections (Tests, Gates, Findings, Phase timing) over
-> `crates/buzz-core/src/coding_session_observation_fold.rs`. It answers
+> `crates/beekeeper-core/src/coding_session_observation_fold.rs`. It answers
 > observer wants 2, 3, 4 and 7, and it is the only thing that makes 23i.3's
 > sentence obsolete. Kept out of L4 because it is the one item that adds a wire
 > consumer, and a lane that ships half of one ships a surface that reads some
@@ -2435,7 +2435,7 @@ still governs a map taller than the rail.
 Kind 44246 landed in L1 with no Desktop consumer, by design. This is that
 consumer, plus the ruling that changed what the kind carries: **no observability
 path may depend on asking an agent to report** (Brian, 2026-09-02). Live-run
-finding 26 is the case — a seat reported `cargo test -p buzz-cli` green after
+finding 26 is the case — a seat reported `cargo test -p beekeeper-cli` green after
 running one test *file*, a verifier reproduced red on the same patch, and
 nothing on any screen could say which was right.
 
@@ -2443,7 +2443,7 @@ nothing on any screen could say which was right.
 
 TypeScript never folds 44246. `fold_coding_session_observations_command`
 (`desktop/src-tauri/src/commands/coding_session_observation_fold.rs`) calls
-`buzz_core::fold_coding_session_observations` and flattens its answer
+`beekeeper_core::fold_coding_session_observations` and flattens its answer
 unchanged; `codingSessionObservationWire.ts` checks shape only, refusing one
 extra key, one missing key and one `null`-where-a-value-is-required **by name**.
 Its test reads `codingSessionObservationFoldAdapterResponse.fixture.json`, which
@@ -2466,7 +2466,7 @@ it — `(author, source, gate)` and `(author, source, findingId)` — so a claim
 never take the place of a measurement.
 
 The session provider publishes `observed` gate rows from the seat's own tool
-calls (`crates/buzz-session-provider/src/gate_observer.rs`): it pairs a
+calls (`crates/beekeeper-session-provider/src/gate_observer.rs`): it pairs a
 recognised gate command with its own result, signs the row with the **provider
 instance's** key, and publishes it. The seat is not consulted.
 `bee sessions observe gate` stays `declared`, and has deliberately no flag to
@@ -2579,7 +2579,7 @@ founder, who needs no grant. `acceptedAt` remains the caller's unverified word,
 because acceptance is a fact about a relay receipt this boundary is not given.
 
 It does **not** re-derive the chain: a second implementation beside
-`crates/buzz-session-provider/src/authority.rs` would be the same drift with
+`crates/beekeeper-session-provider/src/authority.rs` would be the same drift with
 more code. **The real fix — lifting that file into `buzz-core` so provider,
 CLI and Desktop share one chain — is a named follow-on. This is a narrowing,
 not a closure.**
@@ -2748,11 +2748,11 @@ It arms sharing and nothing else: it does **not** configure commit signing, so a
 person's wip commits are signed only if their checkout was already set up for
 `git-sign-nostr`. The push is theirs either way (NIP-98).
 
-**One model, two consumers.** `crates/buzz-core/src/pulse_mission.rs` folds and
+**One model, two consumers.** `crates/beekeeper-core/src/pulse_mission.rs` folds and
 `render_pulse_mission_lines` composes **every sentence in Rust**. `bee pulse
 missions --format compact` prints exactly those strings and Desktop renders the
 same strings into elements with testids, re-wording nothing. A golden test
-(`crates/buzz-cli/src/commands/pulse_mission_tests.rs`) asserts the CLI adds no
+(`crates/beekeeper-cli/src/commands/pulse_mission_tests.rs`) asserts the CLI adds no
 prose of its own; a second test asserts no sentence is composed outside
 `buzz-core`.
 
@@ -2811,7 +2811,7 @@ usage events`) rather than guessed.
 **Owed, and not yet on the wire.** Four things this section describes are
 built and are not yet producing anything, named here rather than left for a
 reader to discover: (a) the provider's own seated-workdir path
-(`crates/buzz-session-provider/src/session.rs`) is the second site that creates
+(`crates/beekeeper-session-provider/src/session.rs`) is the second site that creates
 a seat worktree and does not yet install these hooks — Lane L5's row; (b) the
 44246 `checkpoint` body has no field for a commit SHA, so the hook pushes the
 ref and publishes no checkpoint, and no overlap row can be computed until L5

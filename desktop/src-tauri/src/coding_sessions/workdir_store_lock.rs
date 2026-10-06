@@ -2,7 +2,7 @@
 //! A per-session launch lock cannot protect hints belonging to other sessions.
 //!
 //! The protocol itself lives in
-//! [`buzz_session_provider_pkg::assignment_inputs::lock_store_file`], because the
+//! [`beekeeper_session_provider_pkg::assignment_inputs::lock_store_file`], because the
 //! sidecar provider writes the same file: two implementations of one advisory
 //! lock is two chances to disagree about which file it is and what may be
 //! followed to get there.
@@ -13,12 +13,14 @@ use tauri::AppHandle;
 /// The OS lock also covers a second desktop process using the same app-data dir,
 /// and the sidecar provider, which takes the same lock on the same path.
 pub(crate) fn lock_workdir_store(app: &AppHandle) -> Result<std::fs::File, String> {
-    buzz_session_provider_pkg::assignment_inputs::lock_store_file(&super::workdir_store_path(app)?)
+    beekeeper_session_provider_pkg::assignment_inputs::lock_store_file(&super::workdir_store_path(
+        app,
+    )?)
 }
 
 #[cfg(test)]
 mod tests {
-    use buzz_session_provider_pkg::assignment_inputs::lock_store_file;
+    use beekeeper_session_provider_pkg::assignment_inputs::lock_store_file;
 
     /// The lock is taken on the store path's `.lock` sibling, and holding it
     /// serializes writers that each opened it for themselves — which is what

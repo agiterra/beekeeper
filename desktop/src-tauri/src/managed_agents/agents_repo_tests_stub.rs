@@ -665,7 +665,7 @@ pub(super) async fn run_init_migrating(
         catalog,
         packs_root,
         ProjectAgentsInitOptions {
-            verify_command: buzz_persona_pkg::seed::default_verify_command(),
+            verify_command: beekeeper_persona_pkg::seed::default_verify_command(),
             checkout_parent,
             recorded_checkout,
             git_auth: |_: &Keys| build_test_git_auth_config(),

@@ -7,7 +7,7 @@
  * opinion, this module only has a shape. Keeping them apart also keeps the
  * router readable — the shape is mirrored by three other implementations
  * (`sessionCoordinationStrictJson.ts`, the web decoder, the mobile decoder)
- * and by `Routing` in `crates/buzz-core/src/coding_session_routing.rs`, which
+ * and by `Routing` in `crates/beekeeper-core/src/coding_session_routing.rs`, which
  * is the canonical one. Where they disagree, buzz-core is right.
  */
 import {
@@ -43,7 +43,7 @@ export type CodingSessionRoutingRecord = {
    *
    * `null` — not absent — is what buzz-core and the CLI emit when the lead
    * asked for none (`RoutingRecord::profile` is an `Option` with no
-   * `skip_serializing_if`, `crates/buzz-core/src/coding_session_routing.rs:937`).
+   * `skip_serializing_if`, `crates/beekeeper-core/src/coding_session_routing.rs:937`).
    * The desktop producer writes the same shape so its create and the
    * provider-signed 44223 carry byte-identical records. Absent remains accepted
    * for backward compatibility with records written before item 99.
@@ -76,7 +76,7 @@ export type CodingSessionRoutingRecord = {
 
 /**
  * Spec §6's six *flag* triggers, spelled the way the canonical router spells
- * them (`crates/buzz-core/src/coding_session_routing.rs:1565-1577`).
+ * them (`crates/beekeeper-core/src/coding_session_routing.rs:1565-1577`).
  *
  * The other two triggers are **not** in this list on purpose. Risk and
  * irreversibility are numeric, and the record carries the number that fired
@@ -255,7 +255,7 @@ function isStrictOverride(value: unknown): boolean {
   }
   // `null` is the canonical "take the tier's effort" answer: buzz-core's
   // `RoutingOverride.effort` is an `Option<String>` written unconditionally
-  // (crates/buzz-core/src/coding_session_routing.rs:1005), so every override
+  // (crates/beekeeper-core/src/coding_session_routing.rs:1005), so every override
   // the CLI emits carries the key with an explicit null.
   return (
     !Object.hasOwn(value, "effort") ||

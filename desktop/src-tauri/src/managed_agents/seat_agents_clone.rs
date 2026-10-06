@@ -62,10 +62,10 @@ use crate::managed_agents::packs_cache;
 ///
 /// Composed in `buzz-core` and re-exported here, because `bee` — running
 /// *inside* a seat — composes the same sibling to find the project's model
-/// registry (`buzz_core::model_registry_source`, ledger 178(a)). A host that
+/// registry (`beekeeper_core::model_registry_source`, ledger 178(a)). A host that
 /// cut `-agents` while the CLI looked for another name would leave a seat
 /// unable to find the repository it was given.
-pub use buzz_core_pkg::model_registry_source::seat_agents_clone_path;
+pub use beekeeper_core_pkg::model_registry_source::seat_agents_clone_path;
 
 /// Who the clone is for, so it can be given a commit identity of its own.
 ///
@@ -96,7 +96,7 @@ pub(crate) fn cut_seat_agents_clone(
     sha: &str,
     seat: SeatCloneIdentity<'_>,
 ) -> Result<PathBuf, String> {
-    if !buzz_core_pkg::project_pack_source::is_root_pack_path(&source.path) {
+    if !beekeeper_core_pkg::project_pack_source::is_root_pack_path(&source.path) {
         return Err(format!(
             "the project's role source ({}, path {}) is not an agents repository, so this seat \
              cannot be given one",
@@ -364,7 +364,7 @@ const MAX_PROVIDER_STATE_BYTES: u64 = 8 * 1024 * 1024;
 /// (the redaction vault) and writes into it (the seat custody file and the
 /// projects view), so this is the same seam, not a new one.
 ///
-/// Read as JSON rather than through [`buzz_session_provider_pkg::state`]'s
+/// Read as JSON rather than through [`beekeeper_session_provider_pkg::state`]'s
 /// own store, which creates the directory, re-restricts every file in it and
 /// replays the command ledger — all of it write-shaped work this lookup has
 /// no business doing behind a running provider's back. The two keys it reads

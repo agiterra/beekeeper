@@ -48,10 +48,10 @@ use crate::coding_sessions::workdir_store::load_workdir_store;
 /// The shared model registry's path inside a project **code** checkout.
 ///
 /// One spelling for every reader:
-/// `buzz_core::coding_session_routing::DEFAULT_REGISTRY_RELATIVE_PATH`, which
+/// `beekeeper_core::coding_session_routing::DEFAULT_REGISTRY_RELATIVE_PATH`, which
 /// is also what `bee sessions route` walks up looking for.
 pub const MODEL_REGISTRY_RELATIVE_PATH: &str =
-    buzz_core_pkg::coding_session_routing::DEFAULT_REGISTRY_RELATIVE_PATH;
+    beekeeper_core_pkg::coding_session_routing::DEFAULT_REGISTRY_RELATIVE_PATH;
 
 /// The shared model registry's path inside a project's **agents repository**
 /// (spec § 4.11) — at the root, beside `team.yml`.
@@ -61,7 +61,7 @@ pub const MODEL_REGISTRY_RELATIVE_PATH: &str =
 /// for Beekeeper's own repository. See [`super::model_registry`] for the
 /// order the two are read in and why (ledger 178(a)).
 pub const AGENTS_REPO_MODEL_REGISTRY_RELATIVE_PATH: &str =
-    buzz_core_pkg::model_registry_source::AGENTS_REPO_REGISTRY_FILE;
+    beekeeper_core_pkg::model_registry_source::AGENTS_REPO_REGISTRY_FILE;
 
 /// The team manifest at an agents repository's root (spec § 4.2).
 ///
@@ -69,7 +69,7 @@ pub const AGENTS_REPO_MODEL_REGISTRY_RELATIVE_PATH: &str =
 /// them an **unrouted** hire has nothing but the identity's own pin to run,
 /// which is how seven seats ran the most expensive target on Andy's run
 /// (ledger 179(b), 180). Same name the composer reads.
-pub const TEAM_MANIFEST_RELATIVE_PATH: &str = buzz_persona_pkg::team::TEAM_YML;
+pub const TEAM_MANIFEST_RELATIVE_PATH: &str = beekeeper_persona_pkg::team::TEAM_YML;
 
 /// Every relative path this command will ever read.
 ///

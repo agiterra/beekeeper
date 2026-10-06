@@ -2,7 +2,7 @@ part of '../channels_provider.dart';
 
 /// The relay accepts at most this many explicit `#h` values in one REQ,
 /// summed over every filter the REQ carries
-/// (`crates/buzz-relay/src/handlers/req.rs`, `MAX_EXPLICIT_CHANNEL_VALUES`),
+/// (`crates/beekeeper-relay/src/handlers/req.rs`, `MAX_EXPLICIT_CHANNEL_VALUES`),
 /// so one live subscription can cover at most this many channels.
 const liveChannelsPerSubscription = 128;
 

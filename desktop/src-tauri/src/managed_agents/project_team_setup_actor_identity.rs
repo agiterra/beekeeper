@@ -34,7 +34,7 @@ pub(super) fn mint(
     directory_id: String,
     pack_ref: PackRef,
     pack_digest: String,
-    persona: buzz_persona_pkg::resolve::ResolvedPersona,
+    persona: beekeeper_persona_pkg::resolve::ResolvedPersona,
 ) -> Result<Receipt, SetupError> {
     let (_, identity) = crate::commands::mint_agent_identity(owner).map_err(invalid)?;
     let now = crate::util::now_iso();
@@ -142,8 +142,9 @@ impl Receipt {
                 "The preserved setup identity does not match its key.",
             ));
         }
-        let attested = buzz_sdk_pkg::nip_oa::verify_auth_tag(&self.auth_tag, &agent.public_key())
-            .map_err(|_| invalid("The setup identity owner attestation is invalid."))?;
+        let attested =
+            beekeeper_sdk_pkg::nip_oa::verify_auth_tag(&self.auth_tag, &agent.public_key())
+                .map_err(|_| invalid("The setup identity owner attestation is invalid."))?;
         if attested != owner.public_key() {
             return Err(invalid("The setup identity has a different owner."));
         }

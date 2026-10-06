@@ -14,7 +14,7 @@ and were hit in one afternoon.
 
 ## 1. The `#[ignore]`d buzz-db tests rebuild the schema from the invoking worktree
 
-`crates/buzz-db` has ~120 Postgres-backed tests marked
+`crates/beekeeper-db` has ~120 Postgres-backed tests marked
 `#[ignore = "requires Postgres"]`. Many are destructive: they `DROP SCHEMA
 public CASCADE` and re-migrate **using the migrations of whichever worktree
 invoked them**.
@@ -35,9 +35,9 @@ Create a throwaway one:
 docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -d postgres \
   -c "DROP DATABASE IF EXISTS buzz_scratch; CREATE DATABASE buzz_scratch;"
 scratch="postgres://buzz:buzz_dev@localhost:5432/buzz_scratch"
-DATABASE_URL="$scratch" cargo run -q -p buzz-admin -- migrate
+DATABASE_URL="$scratch" cargo run -q -p beekeeper-admin -- migrate
 DATABASE_URL="$scratch" BUZZ_TEST_DATABASE_URL="$scratch" \
-  cargo test -p buzz-db --lib <filter> -- --ignored --test-threads=1
+  cargo test -p beekeeper-db --lib <filter> -- --ignored --test-threads=1
 ```
 
 `just test-genesis` is a worked example of this pattern.
@@ -66,7 +66,7 @@ other cargo/just process is running.**
 
 ## 3. Nothing in the sanctioned gates runs these tests
 
-`scripts/run-tests.sh` runs `cargo test -p buzz-db` **without** `--ignored`, and
+`scripts/run-tests.sh` runs `cargo test -p beekeeper-db` **without** `--ignored`, and
 says so in its own comment. `just test-unit` runs `--lib` only. So the ignored
 set is executed by nothing, and drifts: 6 of its tests already failed at
 baseline before this phase touched anything.

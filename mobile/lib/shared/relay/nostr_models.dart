@@ -59,7 +59,7 @@ abstract final class EventKind {
   static const projectRoster = 39010;
 
   // --- Project to-dos (NIP-TD) ------------------------------------------------
-  // Keep in sync with `crates/buzz-core/src/kind.rs` and
+  // Keep in sync with `crates/beekeeper-core/src/kind.rs` and
   // `desktop/src/shared/constants/kinds.ts`. See `docs/nips/NIP-TD.md`.
 
   /// Kind:44248 project to-do op: one field-level edit to a shared,
@@ -68,7 +68,7 @@ abstract final class EventKind {
   static const projectTodoOp = 44248;
 
   // --- Agents-repository drafts (NIP-AD) ------------------------------------
-  // Keep in sync with `crates/buzz-core/src/kind.rs` and
+  // Keep in sync with `crates/beekeeper-core/src/kind.rs` and
   // `desktop/src/shared/constants/kinds.ts`. See `docs/nips/NIP-AD.md`.
 
   /// Kind:44250 agents-repository draft op: one proposed change to one file
@@ -93,7 +93,7 @@ abstract final class EventKind {
   static const repoState = 30618;
 
   // --- Shared terminals (NIP-ST) ---------------------------------------------
-  // Keep in sync with `crates/buzz-core/src/kind.rs` and
+  // Keep in sync with `crates/beekeeper-core/src/kind.rs` and
   // `desktop/src/shared/constants/kinds.ts`. See `docs/nips/NIP-ST.md`.
 
   /// Kind:30623 shared-terminal announce (addressable, `d` = session id).
@@ -481,7 +481,7 @@ class ChannelData {
   /// The project this channel belongs to, as a `30621:<owner>:<d>` address.
   ///
   /// Read from the `["project", …]` tag the relay stamps onto the metadata it
-  /// signs (`crates/buzz-relay/src/handlers/side_effects.rs`); `null` for a
+  /// signs (`crates/beekeeper-relay/src/handlers/side_effects.rs`); `null` for a
   /// channel no project claims. Only the relay's own back-reference — a
   /// project head's forward `channel` tags are unioned in by the reader.
   final String? projectRef;

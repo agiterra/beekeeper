@@ -22,7 +22,7 @@
 //!
 //! `bee git setup` already implements the config contract, with unit tests for
 //! the URL scoping, the 0600 enforcement, and the refusal to overwrite a
-//! different identity (`crates/buzz-cli/src/commands/git_setup.rs`). `bee` is
+//! different identity (`crates/beekeeper-cli/src/commands/git_setup.rs`). `bee` is
 //! already a bundled sidecar (`tauri.conf.json`). Reimplementing the same rules
 //! here would be a second copy to keep in step — and the failure mode of drift
 //! between them is a config that looks right and does not authenticate.

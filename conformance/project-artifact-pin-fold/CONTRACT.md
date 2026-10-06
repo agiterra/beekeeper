@@ -58,7 +58,7 @@ The event's tags are `a`, `ar-v` (`ar1-1`), `ar-op`, `ar-repo` and `ar-target`,
 each exactly once. An `h` tag is a rejection: a pin belongs to a project, never
 to a room.
 
-Wire validation is `crates/buzz-core/src/project_artifact_pin.rs`; each fold's
+Wire validation is `crates/beekeeper-core/src/project_artifact_pin.rs`; each fold's
 decode is the same rule, and an event that fails it is counted in `ignored`,
 not folded.
 

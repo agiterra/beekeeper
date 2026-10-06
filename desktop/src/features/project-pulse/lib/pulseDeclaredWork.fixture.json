@@ -11,7 +11,7 @@
       "assignments": [
         {
           "acceptanceSteps": [
-            "cargo test -p buzz-core pulse_declared_work",
+            "cargo test -p beekeeper-core pulse_declared_work",
             "pnpm biome check"
           ],
           "assigneeActor": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
@@ -31,7 +31,7 @@
             }
           ],
           "fileOwnership": [
-            "crates/buzz-core/src/pulse_declared_work.rs",
+            "crates/beekeeper-core/src/pulse_declared_work.rs",
             "desktop/src/features/project-pulse/lib/"
           ],
           "objective": "Build the declared-work wire",
@@ -44,7 +44,7 @@
               "createdAt": 1756798440,
               "deviations": ["Left the surface to Lane U."],
               "eventId": "96e21f48819b54779e637cb98492039038d99711cf8977364a6afb5fde0a4c5d",
-              "files": ["crates/buzz-core/src/pulse_declared_work.rs"],
+              "files": ["crates/beekeeper-core/src/pulse_declared_work.rs"],
               "headSha": "c1d2e3f4a5b60718293a4b5c6d7e8f9001122334",
               "residuals": ["Pagination is Lane Q's."],
               "summary": "Projection, decoder and fixture are green.",
@@ -79,7 +79,7 @@
       "assignments": [
         {
           "acceptanceSteps": [
-            "cargo test -p buzz-core pulse_declared_work",
+            "cargo test -p beekeeper-core pulse_declared_work",
             "pnpm biome check"
           ],
           "assigneeActor": "2c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991",
@@ -99,7 +99,7 @@
             }
           ],
           "fileOwnership": [
-            "crates/buzz-core/src/pulse_declared_work.rs",
+            "crates/beekeeper-core/src/pulse_declared_work.rs",
             "desktop/src/features/project-pulse/lib/"
           ],
           "objective": "Land the session read",
@@ -112,7 +112,7 @@
               "createdAt": 1756710000,
               "deviations": ["Left the surface to Lane U."],
               "eventId": "b1ba8e02089b486b83da74c62a4b8042dfdb1d396a26ad6a779336ac445a8e4e",
-              "files": ["crates/buzz-core/src/pulse_declared_work.rs"],
+              "files": ["crates/beekeeper-core/src/pulse_declared_work.rs"],
               "headSha": "c1d2e3f4a5b60718293a4b5c6d7e8f9001122334",
               "residuals": ["Pagination is Lane Q's."],
               "summary": "Projection, decoder and fixture are green.",

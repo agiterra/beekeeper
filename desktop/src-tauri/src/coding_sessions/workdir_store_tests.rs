@@ -214,7 +214,7 @@ fn the_provider_view_carries_paths_and_nothing_else() {
     );
 
     // The agents repository record reaches the provider as path and ref,
-    // under the key names `buzz_session_provider::agents_checkout` parses.
+    // under the key names `beekeeper_session_provider::agents_checkout` parses.
     let mut store = store_with_choices();
     store.set_agents_repo(
         PROJECT_REF,
@@ -252,7 +252,7 @@ fn the_provider_view_matches_the_key_names_the_provider_parses() {
     let parsed: serde_json::Value = serde_json::from_str(&encoded).expect("json");
     let object = parsed.as_object().expect("object");
 
-    // The four fields of `buzz_session_provider::commands::ProjectsFile` — it
+    // The four fields of `beekeeper_session_provider::commands::ProjectsFile` — it
     // ignores anything else it is handed — plus `sessions`, read by that
     // crate's `gate_cwd` module and by nothing else. Both sides are additive:
     // a provider that predates the key ignores it, and a host that predates it

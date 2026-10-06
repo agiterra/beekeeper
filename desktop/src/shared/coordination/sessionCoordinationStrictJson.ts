@@ -29,7 +29,7 @@ const MAX_IDENTIFIER_BYTES = 256;
  * sets on a receipt error message (`coding_session_payload.rs:829`). */
 const MAX_RECEIPT_ERROR_MESSAGE_BYTES = 1024 + 3;
 // Closed and kept closed: this is `SessionStatus`, a `#[serde(rename_all =
-// "snake_case")]` Rust enum (crates/buzz-core/src/coding_session_payload.rs),
+// "snake_case")]` Rust enum (crates/beekeeper-core/src/coding_session_payload.rs),
 // not a config-driven string — the ten variants here are exactly its ten, and
 // a wire value can only widen this set by a Rust change on the other side,
 // which moves this list too. It is also the state machine every consumer
@@ -77,7 +77,7 @@ export function hasStrictSessionTargetValues(
 }
 
 // Closed and kept closed: mirrors `CodingSessionTarget`
-// (crates/buzz-core/src/coding_session_command.rs), which is itself
+// (crates/beekeeper-core/src/coding_session_command.rs), which is itself
 // `#[serde(deny_unknown_fields)]` — the four fields are the exact identity of
 // one live provider execution a signed command addresses, so a fifth field
 // here would be routing surface the relay does not itself recognize either.
@@ -249,7 +249,7 @@ export function hasStrictLifecycleReceiptValues(
   }
   // A create that never reached a session names none: `failed` is the one
   // lifecycle status whose `session` is `None`
-  // (`LifecycleReceipt::failed`, crates/buzz-core/src/coding_session_payload.rs:338).
+  // (`LifecycleReceipt::failed`, crates/beekeeper-core/src/coding_session_payload.rs:338).
   // Every other status this reader accepts always carries a target
   // (`validate_lifecycle_receipt`, coding_session_payload.rs:629-636), so the
   // session-target check runs only past this branch. `code` here is a bounded
@@ -320,7 +320,7 @@ export function hasStrictLeaseValues(
   content: Record<string, unknown>,
 ): boolean {
   // `state` closed and kept closed: `CodingSessionLeaseState`
-  // (crates/buzz-core/src/coding_session_lease.rs) is a two-variant Rust enum,
+  // (crates/beekeeper-core/src/coding_session_lease.rs) is a two-variant Rust enum,
   // and the value is the authority fact this lease exists to assert — whether
   // a provider currently owns a reachable live actor for this generation.
   return (
@@ -338,7 +338,7 @@ export function hasStrictLeaseValues(
  * Seven independent additive amendments have landed on the metadata payload —
  * the `sessionRef` echo, the agent seat's `role`, D9's `turnBudget`, B1's four
  * coordinate facts (which travel all-four-or-none), the 2026-08-30 `routing`
- * record, `beeStamp` (`crates/buzz-core/src/coding_session_payload.rs:989`,
+ * record, `beeStamp` (`crates/beekeeper-core/src/coding_session_payload.rs:989`,
  * documented there in Rust's own words as "the sixth independent additive
  * key"), and `packRef` (LANE-L23, the seventh) — and each is present or
  * absent on its own, so the base key set has **128** valid shapes, not sixty-
@@ -353,7 +353,7 @@ export function hasStrictLeaseValues(
  * shapes — though `validate_session_metadata` refuses it without `packRef`, so
  * this reader refuses it alone too. It was missing here until lane 216, and
  * the provider emits it for every seat staged from a composed pack
- * (`seat_compose_ref`, `crates/buzz-session-provider/src/lib.rs`), so this
+ * (`seat_compose_ref`, `crates/beekeeper-session-provider/src/lib.rs`), so this
  * gate refused live sessions the session decoder beside it accepted — the
  * one direction the parity rule forbids (ledger 216).
  * Enumerating fewer silently drops every event carrying an amendment this
@@ -440,7 +440,7 @@ const SHORT_SHA = /^[0-9a-f]{7,40}$/;
 
 /**
  * A `beeStamp` object: exactly the five keys `BeeStamp`
- * (`crates/buzz-core/src/coding_session_payload.rs:1030`, `deny_unknown_fields`)
+ * (`crates/beekeeper-core/src/coding_session_payload.rs:1030`, `deny_unknown_fields`)
  * carries, each on its own terms. `source` is a genuine two-variant Rust enum
  * (`BeeStampSource`) — closed and kept closed, unlike `capabilities` or
  * `routing`'s open tokens, because a third resolution outcome is a Rust change
@@ -474,7 +474,7 @@ const PACK_REF_APP_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/;
 
 /**
  * A `packRef` object: exactly the four keys `PackRef`
- * (LANE-L23, `crates/buzz-core/src/coding_session_payload.rs`) carries, each
+ * (LANE-L23, `crates/beekeeper-core/src/coding_session_payload.rs`) carries, each
  * on its own terms. `sha` is exact 40-hex (never the 7-40 shorthand
  * `beeStamp` allows — a pack is pinned to one commit, never a prefix), `role`
  * is the wire's own role-slug shape, and `repo` is a `30617:<owner>:<id>`
@@ -486,7 +486,7 @@ const PACK_REF_APP_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/;
  */
 /**
  * A `handover` object: exactly the four keys `SessionMetadataHandover`
- * (`crates/buzz-core/src/coding_session_payload.rs`, `deny_unknown_fields`)
+ * (`crates/beekeeper-core/src/coding_session_payload.rs`, `deny_unknown_fields`)
  * carries, each a lowercase 64-hex id.
  *
  * Same omit-when-absent contract as `beeStamp` and `packRef`, and for the
@@ -526,7 +526,7 @@ const COMPOSE_REF_DIGEST = /^sha256:[0-9a-f]{64}$/;
 
 /**
  * A `composeRef` object: exactly the two keys `ComposeRef`
- * (`crates/buzz-core/src/coding_session_payload.rs`, `deny_unknown_fields`)
+ * (`crates/beekeeper-core/src/coding_session_payload.rs`, `deny_unknown_fields`)
  * carries. `packRef` names the source bytes; this names the app version whose
  * template catalog resolved the includes and the digest of what actually ran,
  * so "which prompt ran" stays answerable after the app updates its templates.
@@ -668,7 +668,7 @@ export function hasStrictMetadataJson(
   // `capabilities` is an open map of booleans, not a closed set. It carries
   // no authority and decides no protocol enum the relay enforces — it is a
   // provider's self-report of what its own execution can do, read straight
-  // off `Capabilities` (`crates/buzz-core/src/coding_session_payload.rs`),
+  // off `Capabilities` (`crates/beekeeper-core/src/coding_session_payload.rs`),
   // whose fields grow by plain Rust struct addition (`prompt_image` in
   // 15bbe6158, `#[serde(default)]`, no `deny_unknown_fields`). A closed key
   // set here silently drops every event from a host newer than this build —
@@ -717,7 +717,7 @@ export function isStrictMetadataContent(source: string): boolean {
 }
 
 // `action` closed and kept closed: `CodingSessionClosureAction`
-// (crates/buzz-core/src/coding_session_closure.rs) is a three-variant Rust
+// (crates/beekeeper-core/src/coding_session_closure.rs) is a three-variant Rust
 // enum, and the value decides the umbrella's shared ownership/settled state —
 // the exact authority fact `CodingSessionClosurePayload` exists to carry.
 /** Strict closure content check matching buzz-core's decoder. */

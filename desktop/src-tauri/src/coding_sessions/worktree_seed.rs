@@ -5,7 +5,7 @@
 //! is seeded. It lives in its own module because `worktree.rs` is within a few
 //! lines of the file-size ceiling, and because the launcher's job here is small:
 //! the declaration is parsed and carried out by `buzz-core`, and the sequence by
-//! `buzz_session_provider::sandbox_seed_host`, which the action-step path shares.
+//! `beekeeper_session_provider::sandbox_seed_host`, which the action-step path shares.
 //!
 //! What is genuinely this layer's to decide is three things:
 //!
@@ -28,8 +28,8 @@ use std::path::{Path, PathBuf};
 
 use tauri::AppHandle;
 
-use buzz_session_provider_pkg::execution_scope::project_scope_pool_dir;
-use buzz_session_provider_pkg::sandbox_seed_host::{seed_tree, summarize};
+use beekeeper_session_provider_pkg::execution_scope::project_scope_pool_dir;
+use beekeeper_session_provider_pkg::sandbox_seed_host::{seed_tree, summarize};
 
 use crate::coding_sessions::host_git;
 

@@ -187,7 +187,7 @@ pub(crate) fn resolve_seat_pack(
     }
     // The only question that matters: can the provider read this persona out
     // of this pack? Ask the same resolver the provider will.
-    if let Err(error) = buzz_persona_pkg::resolve::resolve_persona_by_name(&dir, &persona) {
+    if let Err(error) = beekeeper_persona_pkg::resolve::resolve_persona_by_name(&dir, &persona) {
         tracing::debug!(
             pack = %dir.display(),
             persona = %persona,
@@ -204,7 +204,7 @@ pub(crate) fn resolve_seat_pack(
 /// Read from the persona's own frontmatter through the resolver the provider
 /// will use, never from a directory name or an agent's record.
 fn persona_declared_role(dir: &Path, persona: &str) -> Option<String> {
-    buzz_persona_pkg::resolve::resolve_persona_by_name(dir, persona)
+    beekeeper_persona_pkg::resolve::resolve_persona_by_name(dir, persona)
         .ok()?
         .role
         .map(|role| role.trim().to_owned())

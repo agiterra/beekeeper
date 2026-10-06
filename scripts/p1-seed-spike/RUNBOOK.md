@@ -8,7 +8,7 @@ the seed; nothing here writes to the relay.
 
 Everything below assumes your authenticated environment: `BUZZ_RELAY_URL`,
 `BUZZ_PRIVATE_KEY` set, `buzz` CLI at `target/release/buzz`
-(`cargo build --release -p buzz-cli`), adapter CLIs (`claude-agent-acp`,
+(`cargo build --release -p beekeeper-cli`), adapter CLIs (`claude-agent-acp`,
 `codex-acp` or the plain `claude` / `codex` CLIs) logged in.
 
 Harness location: `scripts/p1-seed-spike/`
@@ -38,7 +38,7 @@ python3 acp_probe.py codex-acp
 
 This sends the harness's real `initialize` (protocolVersion 2) and prints
 `loadSession` / `resume` exactly as the harness would read them
-(`crates/buzz-acp/src/acp.rs:773-779`; accessors `acp.rs:1101-1108`). Save both
+(`crates/beekeeper-acp/src/acp.rs:773-779`; accessors `acp.rs:1101-1108`). Save both
 outputs — G1 is per-adapter and these are its evidence. Sanity check first with
 `python3 acp_probe.py fixtures/mock-adapter.sh` if either hangs.
 
@@ -51,9 +51,9 @@ outputs — G1 is per-adapter and these are its evidence. Sanity check first wit
 - **(b) `session/load` / `session/resume`** — replays the *adapter's own
   local* session store by opaque cursor (`session_load_full`,
   `acp.rs:876-902`). The provider's cursor is machine-bound and never
-  published (`resume_cursor`, `crates/buzz-session-provider/src/state.rs:86-90`;
+  published (`resume_cursor`, `crates/beekeeper-session-provider/src/state.rs:86-90`;
   fallback order resume → load → new in
-  `crates/buzz-session-provider/src/session.rs:451-499`). **It cannot ingest
+  `crates/beekeeper-session-provider/src/session.rs:451-499`). **It cannot ingest
   our package.** For P1 it serves as the *quality ceiling*: what perfect
   continuation looks like when the adapter still has native history.
 
@@ -92,7 +92,7 @@ Knobs:
 - `--budget-bytes` (default 96 KiB of package items) — direct-adapter runs.
 - `--max-prompt-bytes 12288` — if you deliver the prompt **through the Buzz
   session machinery**, the operator turn text is capped at 12 KiB
-  (`MAX_TURN_TEXT_BYTES`, `crates/buzz-core/src/coding_session_command.rs:16`);
+  (`MAX_TURN_TEXT_BYTES`, `crates/beekeeper-core/src/coding_session_command.rs:16`);
   this flag shrinks the budget until the rendering fits.
 - `--tail-turns N` — how many most-recent turns are protected from drops.
 

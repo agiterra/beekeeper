@@ -220,7 +220,7 @@ export function defaultPacksRepoId(projectSlug: string): string {
  * explaining why, for the field's own error text.
  *
  * Mirrors the CLI's `validate_repo_id`
- * (`crates/buzz-cli/src/commands/repos.rs` via `crates/buzz-cli/src/validate.rs`)
+ * (`crates/beekeeper-cli/src/commands/repos.rs` via `crates/beekeeper-cli/src/validate.rs`)
  * restricted to the lowercase subset this screen's own default always
  * produces: lowercase ASCII letters, digits, `.`, `_`, `-`; 1–64 characters;
  * no leading `.` or `-`; no `..`. A stricter subset of the wire rule can

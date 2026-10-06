@@ -52,7 +52,7 @@ export const FULL_FLOOR_PREFIXES = [
  * Paths that select nothing at all. Only locations that cannot reach a build.
  *
  * `**\/*.md` is deliberately NOT here: sixteen `.md` files live under
- * `crates/`, and `crates/buzz-acp/src/base_prompt.md` is `include_str!`'d into
+ * `crates/`, and `crates/beekeeper-acp/src/base_prompt.md` is `include_str!`'d into
  * a `const` — compiled source that happens to end in `.md`. This is the same
  * trap `scripts/test-woodpecker-path-filter.sh` exists to prevent, and the
  * package-prefix rule below runs first so those files map to their crate.
@@ -75,7 +75,7 @@ export const JS_WORKSPACE_PATHS = new Set([
 ]);
 
 /**
- * `personas/**` is data that a Rust test asserts over: `crates/buzz-persona/
+ * `personas/**` is data that a Rust test asserts over: `crates/beekeeper-persona/
  * tests/pack_rules.rs` reads the pack files byte-for-byte, so a persona edit
  * can turn that crate red. Named here rather than left unmapped so the floor
  * runs the one crate that covers it instead of everything.
@@ -158,7 +158,7 @@ export function deriveScope(paths, graph) {
   const packages = graph?.packages ?? {};
   const dependents = graph?.dependents ?? {};
 
-  // Longest manifest directory first, so `desktop/src-tauri/crates/buzz-terminal`
+  // Longest manifest directory first, so `desktop/src-tauri/crates/beekeeper-terminal`
   // wins over `desktop/src-tauri` for a file inside it.
   const packageDirs = Object.entries(packages)
     .filter(([, meta]) => meta.dir)

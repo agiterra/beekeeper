@@ -291,9 +291,9 @@ data without copying machine-private material into another model's context.
 
 | Concern | Location |
 | --- | --- |
-| Kind constant | `crates/buzz-core/src/kind.rs` |
-| Payload structs | `crates/buzz-core/src/coding_session_payload.rs` |
-| Membership, size cap | `crates/buzz-relay/src/handlers/ingest.rs` |
-| Builder | `crates/buzz-sdk/src/builders.rs` |
-| Semantic keys | `crates/buzz-sdk/src/coding_session.rs` |
-| Analysis CLI | `crates/buzz-cli/src/commands/sessions.rs` |
+| Kind constant | `crates/beekeeper-core/src/kind.rs` |
+| Payload structs | `crates/beekeeper-core/src/coding_session_payload.rs` |
+| Membership, size cap | `crates/beekeeper-relay/src/handlers/ingest.rs` |
+| Builder | `crates/beekeeper-sdk/src/builders.rs` |
+| Semantic keys | `crates/beekeeper-sdk/src/coding_session.rs` |
+| Analysis CLI | `crates/beekeeper-cli/src/commands/sessions.rs` |

@@ -8,7 +8,7 @@ import { openObservedSession } from "./helpers/codingSessionObservationAssertion
  * gate rows (L5.3).
  *
  * Live-run finding 26 is the reason both exist: a seat reported
- * `cargo test -p buzz-cli` green after running one test *file*, a verifier
+ * `cargo test -p beekeeper-cli` green after running one test *file*, a verifier
  * reproduced red on the same patch, and nothing on any screen could say which
  * was right. The fixture puts both statements on the wire — the seat's
  * `declared` pass and the provider's `observed` fail — and this spec proves the
@@ -63,7 +63,7 @@ test("the Audit tab renders this session's signed observations, per seat", async
   await expect(row("passed")).toHaveCount(1);
   await expect(row("failed")).toHaveAttribute("data-source", "observed");
   await expect(row("passed")).toHaveAttribute("data-source", "declared");
-  await expect(sections).toContainText("cargo test -p buzz-cli");
+  await expect(sections).toContainText("cargo test -p beekeeper-cli");
 
   // L22: the observed row names the commit it ran at, in eight hex, and says
   // the tree was clean. The seat's own row names none and says so in words —
@@ -119,7 +119,7 @@ test("Structured tests reads gate rows, and stops describing the wire", async ({
 
   const card = page.getByTestId("coding-session-inspector-gates");
   await expect(card).toBeVisible();
-  await expect(card).toContainText("cargo test -p buzz-cli");
+  await expect(card).toContainText("cargo test -p beekeeper-cli");
   // The sentence that was true when written and false the day 44246 landed.
   await expect(card).not.toContainText("Nothing on the wire reports tests");
   await expect(card).not.toContainText("will not count");

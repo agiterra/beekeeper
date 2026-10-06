@@ -1,13 +1,13 @@
 # Session Policy — kind 44245, `buzz-coding-session-policy/v1`
 
 Status: CONTRACT — frozen for batch 2 lane B1. Implemented in
-`crates/buzz-core/src/coding_session_policy.rs`, built by
-`crates/buzz-sdk/src/coding_session_policy.rs`, structurally validated at
-`crates/buzz-relay/src/handlers/ingest.rs`. The first consumer landed in batch 2 lane B2: the session
+`crates/beekeeper-core/src/coding_session_policy.rs`, built by
+`crates/beekeeper-sdk/src/coding_session_policy.rs`, structurally validated at
+`crates/beekeeper-relay/src/handlers/ingest.rs`. The first consumer landed in batch 2 lane B2: the session
 provider reads the newest accepted record for an umbrella into its context
 package and enforces exactly one field from it (see §4), and
 `bee sessions policy set|get|clear`
-(`crates/buzz-cli/src/commands/sessions/policy.rs`) writes and reads it. **No UI
+(`crates/beekeeper-cli/src/commands/sessions/policy.rs`) writes and reads it. **No UI
 exists yet** — this document names each field's consumer so that the record and
 the thing that reads it cannot drift apart.
 
@@ -49,7 +49,7 @@ same way `44244` was: `44231` (checkpoint), `44232` (native snapshot),
 `44233`/`44234` (git transition/check) and `44235`–`44239` (headroom) are
 reserved by the continuity research; `44240` is the shipped Pulse entry with
 `44241`–`44243` reserved by the Pulse plan; `44244` is the team transaction.
-`crates/buzz-core/src/kind.rs` carries the allocation note and a compile-time
+`crates/beekeeper-core/src/kind.rs` carries the allocation note and a compile-time
 assertion that nothing sits between the two.
 
 ### Regular, not replaceable
@@ -98,7 +98,7 @@ Only `schema`, `sessionRef` and `genesisRef` are required. Everything else is
 
 `bench.providers` names provider **aliases** (`claude-primary`), never instance
 ids (`1958c6c448e05eed`). The two are different names for different things and
-`crates/buzz-core/src/coding_session_identity.rs` now makes confusing them a
+`crates/beekeeper-core/src/coding_session_identity.rs` now makes confusing them a
 compile error; ledger item 102 is what happens when nothing does.
 
 ---
@@ -222,7 +222,7 @@ the sentence in §4.2, in the same landing.** REVIEW-L7 F1 is what happens
 otherwise: item G shipped the enforcement and left six places saying only
 `budget.turns` counted, so a founder setting `--verifier-required true` was
 told nothing counted it and then refused by `bee sessions complete`.
-`crates/buzz-cli/tests/policy_enforcement_sentence.rs` now fails if they drift.
+`crates/beekeeper-cli/tests/policy_enforcement_sentence.rs` now fails if they drift.
 
 ### 4.1 Enforced: `budget.turns`, at the provider's turn gate
 
@@ -234,7 +234,7 @@ different questions (*how much will this machine spend on anything* versus *how
 much was this mission authorized to spend*), and the session's own signed
 answer is the more specific one.
 
-- Where: `crates/buzz-session-provider/src/commands.rs`
+- Where: `crates/beekeeper-session-provider/src/commands.rs`
   `exhausted_umbrella_budget`, reached from `decide_turn`'s D9 gate and from
   the create path's first-turn check, which share the predicate so the two can
   never disagree about who is exempt.
@@ -267,7 +267,7 @@ kind-44245 sets `gates.verifierRequired: true`, the 44244 fold excludes a
 **that the fold settled** carries a verifier's ruling on the report that
 settlement governs — a canonical `not-refuted` refutation by an active
 `verifier` seat, or that report's own author holding one
-(`crates/buzz-core/src/coding_session_completion_verification.rs`).
+(`crates/beekeeper-core/src/coding_session_completion_verification.rs`).
 `bee sessions complete` re-folds the signed candidate and refuses to publish
 one the fold would exclude.
 
@@ -326,7 +326,7 @@ chose. Before L21 the launch form disclosed this field as enforced while
 offering no way to set it (finding 39).
 
 The one true sentence, byte-identical in `POLICY_ENFORCEMENT_DISCLOSURE` (CLI
-and Tauri) and asserted by `crates/buzz-cli/tests/policy_enforcement_sentence.rs`:
+and Tauri) and asserted by `crates/beekeeper-cli/tests/policy_enforcement_sentence.rs`:
 
 > Enforced: budget.turns at the provider's turn gate, gates.verifierRequired at the fold's completion check and at the relay's verdict-gated push, and gates.requiredGates at that push. Every other field is read and shown, never counted.
 
@@ -347,7 +347,7 @@ gate is holding a lane to. The context package's `session_overview` carries
 that sentence beside the record (`policySemantics.notEnforced`); a CLI or UI
 that renders a policy owes its reader the same one. `bee sessions policy`
 prints it as `enforcement` on `set`, `get` and `clear`
-(`crates/buzz-cli/src/commands/sessions/policy.rs`
+(`crates/beekeeper-cli/src/commands/sessions/policy.rs`
 `POLICY_ENFORCEMENT_DISCLOSURE`), and Desktop renders
 `CODING_SESSION_POLICY_STATED_NOT_ENFORCED`
 (`desktop/src/features/coding-sessions/lib/codingSessionPolicy.ts`), whose
@@ -357,17 +357,17 @@ nothing else — the one list on that side that may claim a field is enforced.
 ### 4.4 The CLI writes it and reads it, through the same rule
 
 `bee sessions policy set|get|clear`
-(`crates/buzz-cli/src/commands/sessions/policy.rs`) is the writer and the
+(`crates/beekeeper-cli/src/commands/sessions/policy.rs`) is the writer and the
 reader, and it applies **the rule in §4.1 and no other**: the founder, or a seat
 holding an operator grant the relay had accepted at the relevant time.
 
 - `set` and `clear` refuse before signing when this key does not hold it
   (`policy.rs` `require_policy_standing`), evaluated at *now* through
-  `buzz_core::coding_session_policy::signer_may_steer_at` — the same function
+  `beekeeper_core::coding_session_policy::signer_may_steer_at` — the same function
   the provider's fold calls.
 - `get` **folds authority** rather than printing whatever the relay returned
   (`policy.rs` `fold_policies` →
-  `buzz_core::coding_session_policy::fold_coding_session_policies`). It prints
+  `beekeeper_core::coding_session_policy::fold_coding_session_policies`). It prints
   the newest record with standing, `null` when there is none, and lists every
   refused record under `excluded` with its author and a reason.
 
@@ -393,7 +393,7 @@ accepted policy", while the provider correctly ignored it (REVIEW-B2 F1, F2).
 
 Carrying the policy into the context package bumped
 `CODING_SESSION_CONTEXT_PACKAGE_VERSION` to **4**
-(`crates/buzz-core/src/coding_session_context.rs`). The field itself is properly
+(`crates/beekeeper-core/src/coding_session_context.rs`). The field itself is properly
 additive — a package with no policy is byte-identical to what it was — but the
 projector stamps the version **unconditionally**, and a reader compiled at v3
 refuses anything outside its `MIN..=CURRENT` window. So a v3 reader rejects
@@ -435,5 +435,5 @@ surface that renders it (a Mission byline, a seat row, an audit table) must say
 so rather than printing a lead's name as fact. **B2 owns closing this** at the
 CLI and at the founder's host, and disclosing a mismatch rather than dropping
 it. The same sentence is carried in
-`crates/buzz-core/testdata/coding_session_hire_requester/vectors.json`, which
+`crates/beekeeper-core/testdata/coding_session_hire_requester/vectors.json`, which
 is the file B3's TypeScript decoder is pinned to.

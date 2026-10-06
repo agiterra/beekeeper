@@ -13,7 +13,7 @@
  * (`30621:<owner>:<d>`); `id` is the kind 1618 / 1621 event id. The
  * optional `tab` on the coordinate links selects a workspace tab (the
  * pull-request list, issue list, …) instead of the default readme
- * overview. The CLI builder in `crates/buzz-cli/src/links.rs` emits the
+ * overview. The CLI builder in `crates/beekeeper-cli/src/links.rs` emits the
  * same format — the two must stay compatible (see the golden-format tests
  * on both sides).
  */

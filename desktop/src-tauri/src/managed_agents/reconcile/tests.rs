@@ -443,7 +443,8 @@ fn project_association_re_retains_identity_record() {
         row.pending_sync,
         "an association change must queue a republish"
     );
-    let digest = buzz_core_pkg::project_agent_association::project_agent_digest(&project).unwrap();
+    let digest =
+        beekeeper_core_pkg::project_agent_association::project_agent_digest(&project).unwrap();
     assert!(row.content.contains(&digest));
     assert!(!row.content.contains("tank-loop"));
     assert!(

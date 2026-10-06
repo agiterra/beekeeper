@@ -2,7 +2,7 @@
 //!
 //! The git ladder, the refusal codes and the durable queue moved to
 //! `buzz-session-provider`, and their cases moved with them
-//! (`crates/buzz-session-provider/src/assignment_inputs_tests.rs`: remote
+//! (`crates/beekeeper-session-provider/src/assignment_inputs_tests.rs`: remote
 //! ladder, fetch, dirty tree, interruption bound, two-process lock). What is
 //! left to prove here is what only this crate can get wrong — that the seat's
 //! tree is resolved from the record this host wrote when it cut it, that a

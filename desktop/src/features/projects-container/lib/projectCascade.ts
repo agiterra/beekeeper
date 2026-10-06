@@ -184,7 +184,7 @@ export function projectCascadeWorkflows(
  * A kind:5 normally tombstones only the signer's own addressable events,
  * which is why foreign workflows are survivors. Repositories are different:
  * the relay's `project_owner_admits_deletion`
- * (`crates/buzz-relay/src/handlers/side_effects.rs`) lets a project **Owner**
+ * (`crates/beekeeper-relay/src/handlers/side_effects.rs`) lets a project **Owner**
  * delete an event they did not sign, for exactly three kinds — 30621, 30617
  * and 30623. Repositories are in that set.
  *

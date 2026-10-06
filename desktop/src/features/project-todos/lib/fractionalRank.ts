@@ -1,6 +1,6 @@
 /**
  * Fractional ranks for ordered, concurrently edited lists — the TypeScript
- * twin of `crates/buzz-core/src/fractional_rank.rs`, pinned to the same
+ * twin of `crates/beekeeper-core/src/fractional_rank.rs`, pinned to the same
  * vectors in `conformance/project-todo-fold/fixtures/rank-vectors.json`.
  *
  * A rank is a base-62 string compared bytewise: an integer part whose first

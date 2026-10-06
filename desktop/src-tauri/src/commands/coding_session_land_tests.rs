@@ -9,7 +9,7 @@
 //! whole boundary produces a verdict and a string to copy.
 
 use super::*;
-use buzz_sdk_pkg::coding_session_team_transaction::build_coding_session_team_transaction;
+use beekeeper_sdk_pkg::coding_session_team_transaction::build_coding_session_team_transaction;
 use nostr::{Keys, Timestamp};
 use serde_json::json;
 
@@ -31,7 +31,7 @@ fn genesis() -> String {
 
 fn sign(keys: &Keys, transaction_type: &str, body: serde_json::Value) -> serde_json::Value {
     let content = json!({
-        "schema": buzz_core_pkg::coding_session_team_transaction::CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
+        "schema": beekeeper_core_pkg::coding_session_team_transaction::CODING_SESSION_TEAM_TRANSACTION_SCHEMA,
         "sessionRef": SESSION,
         "genesisRef": genesis(),
         "type": transaction_type,
@@ -59,8 +59,8 @@ fn assignment(keys: &Keys, assignee: &str) -> serde_json::Value {
             "brief": "Implement and test the admission rule.",
             "branch": serde_json::Value::Null,
             "baseSha": serde_json::Value::Null,
-            "fileOwnership": ["crates/buzz-core"],
-            "acceptanceSteps": ["cargo test -p buzz-core"],
+            "fileOwnership": ["crates/beekeeper-core"],
+            "acceptanceSteps": ["cargo test -p beekeeper-core"],
         }),
     )
 }
@@ -80,7 +80,7 @@ fn report(
             "branch": branch,
             "baseSha": serde_json::Value::Null,
             "headSha": head_sha,
-            "files": ["crates/buzz-core/src/git_perms.rs"],
+            "files": ["crates/beekeeper-core/src/git_perms.rs"],
             "tests": [],
             "redBeforeGreen": serde_json::Value::Null,
             "deviations": [],
@@ -241,7 +241,7 @@ fn mission(decision: &str, head_sha: Option<&str>, branch: Option<&str>) -> Miss
 /// neither the pusher nor any seat — the shape both arm (B) and, since the
 /// 2026-09-03 follow-up ruling, arm (C) require.
 fn green_rows() -> Vec<crate::commands::coding_session_land::CodingSessionLandObservedGate> {
-    buzz_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES
+    beekeeper_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES
         .iter()
         .map(
             |gate| crate::commands::coding_session_land::CodingSessionLandObservedGate {
@@ -394,7 +394,7 @@ fn an_arm_c_admission_names_the_gates_it_also_stood_on() {
     assert_eq!(evidence.arm, "verifier-verdict");
     assert_eq!(
         evidence.observed_gates,
-        buzz_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES.to_vec()
+        beekeeper_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES.to_vec()
     );
 }
 
@@ -414,7 +414,7 @@ fn a_clearance_with_no_gate_rows_is_refused_and_names_both_halves() {
         reason.contains(&mission.verifier.public_key().to_hex()),
         "{reason}"
     );
-    for gate in buzz_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES {
+    for gate in beekeeper_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES {
         assert!(reason.contains(gate), "{reason}");
     }
 }
@@ -675,7 +675,7 @@ fn the_require_verdict_flag_is_parsed_as_a_flag_not_read_off_the_unknown_list() 
     // it would then tell a founder the repository has no rule when it has one.
     // Both halves are asserted: core parses the token into the flag and NOT
     // into `unknown_rules`, and this boundary reads the flag.
-    let (rule, unknown) = buzz_core_pkg::git_perms::parse_protection_tag_with_warnings(&[
+    let (rule, unknown) = beekeeper_core_pkg::git_perms::parse_protection_tag_with_warnings(&[
         "refs/heads/main",
         "require-verdict",
     ])
@@ -739,8 +739,8 @@ fn the_require_verdict_token_is_read_through_cores_own_pattern_matcher() {
 /// The founder set for a case that reads no rule record: with no records to
 /// filter, the set is never consulted, and passing an empty one makes that
 /// explicit rather than borrowing a mission's.
-fn no_founders() -> buzz_core_pkg::repository_founders::RepositoryFounders {
-    buzz_core_pkg::repository_founders::RepositoryFounders::from_parts("", &[])
+fn no_founders() -> beekeeper_core_pkg::repository_founders::RepositoryFounders {
+    beekeeper_core_pkg::repository_founders::RepositoryFounders::from_parts("", &[])
 }
 
 /// Path of the fixture the Desktop decoder test reads, relative to this crate.
@@ -850,7 +850,7 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
         .as_str()
         .unwrap_or_default();
     assert!(refusal.starts_with("verifier "), "{refusal}");
-    for gate in buzz_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES {
+    for gate in beekeeper_core_pkg::coding_session_verdict_admission::DEFAULT_REQUIRED_GATES {
         assert!(refusal.contains(gate), "{refusal}");
     }
     assert_eq!(generated_value["ungoverned"]["ruleGoverns"], json!(false));

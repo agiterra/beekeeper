@@ -8,14 +8,14 @@
 //! This boundary supplies signed events and the verified authority projection,
 //! and delegates every inclusion, settlement and terminal decision to
 //! `buzz-core`'s
-//! [`project_declared_work`](buzz_core_pkg::pulse_declared_work::project_declared_work),
+//! [`project_declared_work`](beekeeper_core_pkg::pulse_declared_work::project_declared_work),
 //! which in turn re-implements no rule of the 44244 fold. Nothing here folds,
 //! compares a path, or infers a repository.
 
-use buzz_core_pkg::coding_session_team_transaction::{
+use beekeeper_core_pkg::coding_session_team_transaction::{
     CodingSessionTeamActiveGrant, CodingSessionTeamActiveSeat, CodingSessionTeamFoldContext,
 };
-use buzz_core_pkg::pulse_declared_work::{
+use beekeeper_core_pkg::pulse_declared_work::{
     project_declared_work, PulseDeclaredWork, PulseDeclaredWorkError, PulseDeclaredWorkLifecycle,
     PulseDeclaredWorkSources, MAX_PULSE_DECLARED_WORK_SESSIONS, PULSE_DECLARED_WORK_SCHEMA,
 };

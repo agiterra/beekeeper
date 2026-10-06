@@ -9,7 +9,7 @@ import 'agents_repo_draft_op.dart';
 /// The agents-repository draft fold: from a bag of kind 44250 ops to the
 /// open draft per path a reader sees.
 ///
-/// A port of `crates/buzz-core/src/agents_repo_draft_fold.rs`, bound to
+/// A port of `crates/beekeeper-core/src/agents_repo_draft_fold.rs`, bound to
 /// `conformance/agents-repo-draft-fold/CONTRACT.md` and pinned by
 /// `fixtures/fold-vectors.json`. Pure and total: any set of events in, one
 /// digest out, the same digest from every client.

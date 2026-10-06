@@ -2,12 +2,12 @@
 //! ruling; Brian's 2026-09-25 ruling: **creation is consent**).
 //!
 //! A new project's agents repository seeds an **active** manual `verify`
-//! action (`buzz_persona::seed::seeded_actions_yml_with_verify`). Before any
+//! action (`beekeeper_persona::seed::seeded_actions_yml_with_verify`). Before any
 //! team starts, setup publishes that definition (kind 30620) so its
 //! `definition_hash` exists, and — right after — publishes the standing
 //! grant for it directly (kind:46030, `scope: action`,
 //! `handle_standing_approval_grant` in
-//! `crates/buzz-relay/src/handlers/command_executor.rs`) bound to
+//! `crates/beekeeper-relay/src/handlers/command_executor.rs`) bound to
 //! `(workflow id, definition_hash)`, with this same owner key. Creating a
 //! project on this computer, with the owner's key, already says "this
 //! computer may run this project's actions"; there is no separate click to
@@ -71,7 +71,7 @@ pub(crate) fn plan_verify_publication(
     project: &str,
     actions_yml: &str,
 ) -> Result<VerifyPublication, String> {
-    let entries = buzz_workflow_pkg::actions_file::parse_actions_yml(actions_yml, project)
+    let entries = beekeeper_workflow_pkg::actions_file::parse_actions_yml(actions_yml, project)
         .map_err(|error| format!("the seeded actions.yml does not parse: {error}"))?;
     let entry = entries
         .iter()
@@ -82,14 +82,17 @@ pub(crate) fn plan_verify_publication(
         .steps
         .iter()
         .find_map(|step| match &step.action {
-            buzz_workflow_pkg::ActionDef::RunOnHost { command, .. } => Some(command.clone()),
+            beekeeper_workflow_pkg::ActionDef::RunOnHost { command, .. } => Some(command.clone()),
             _ => None,
         })
         .ok_or_else(|| "the seeded `verify` action runs nothing on a host".to_string())?;
-    let yaml = buzz_workflow_pkg::actions_file::bound_definition_yaml(entry)
+    let yaml = beekeeper_workflow_pkg::actions_file::bound_definition_yaml(entry)
         .map_err(|error| format!("the `verify` action could not be serialized: {error}"))?;
     Ok(VerifyPublication {
-        workflow_id: buzz_workflow_pkg::actions_file::action_workflow_id(project, VERIFY_ACTION),
+        workflow_id: beekeeper_workflow_pkg::actions_file::action_workflow_id(
+            project,
+            VERIFY_ACTION,
+        ),
         yaml,
         definition_hash: entry.hash.clone(),
         command,
@@ -298,7 +301,7 @@ pub(crate) async fn project_verify_setup_with_state(
         if attempt > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(400 * attempt)).await;
         }
-        let builder = buzz_sdk_pkg::build_project_workflow_def(
+        let builder = beekeeper_sdk_pkg::build_project_workflow_def(
             channel_uuid,
             plan.workflow_id,
             &project,

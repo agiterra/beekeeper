@@ -9,7 +9,7 @@
 //!
 //! Three pieces: the code repository a pre-pivot project already names
 //! ([`adopted_code_repo_id`]), the conversion of its roles into the flat
-//! layout ([`convert_agents_checkout`], over `buzz_persona::migrate`), and
+//! layout ([`convert_agents_checkout`], over `beekeeper_persona::migrate`), and
 //! the conditional kind:30624 that re-points it
 //! ([`build_migrated_pack_source`]) — conditional on the event the caller
 //! decided against, so a source someone moved meanwhile is the relay's
@@ -22,7 +22,7 @@ use nostr::{Event, EventBuilder, Keys, Kind, Tag};
 
 use crate::commands::project_git_exec::GitAuthConfig;
 use crate::managed_agents::packs_cache;
-use buzz_core_pkg::project_pack_source::{
+use beekeeper_core_pkg::project_pack_source::{
     build_conditional_project_pack_source, PackPin, PACK_PATH_ROOT,
 };
 
@@ -154,7 +154,7 @@ pub(crate) fn convert_agents_checkout(
             )
         },
     )?;
-    let roles_dir = if buzz_core_pkg::project_pack_source::is_root_pack_path(&legacy.path) {
+    let roles_dir = if beekeeper_core_pkg::project_pack_source::is_root_pack_path(&legacy.path) {
         legacy_checkout.clone()
     } else {
         legacy_checkout.join(&legacy.path)
@@ -166,7 +166,7 @@ pub(crate) fn convert_agents_checkout(
     }
     std::fs::create_dir_all(checkout)
         .map_err(|error| format!("create {}: {error}", checkout.display()))?;
-    let report = buzz_persona_pkg::migrate::convert_pack_tree(&roles_dir, checkout, slug)
+    let report = beekeeper_persona_pkg::migrate::convert_pack_tree(&roles_dir, checkout, slug)
         .map_err(|error| error.to_string())?;
     let notes = report
         .roles

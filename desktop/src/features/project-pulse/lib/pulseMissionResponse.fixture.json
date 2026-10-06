@@ -80,7 +80,7 @@
             },
             {
               "id": "gate",
-              "text": "Bob · cargo test: failed (observed, over a declared row) · cargo test -p buzz-core"
+              "text": "Bob · cargo test: failed (observed, over a declared row) · cargo test -p beekeeper-core"
             },
             {
               "id": "gate",
@@ -227,10 +227,10 @@
       "lines": [
         {
           "id": "overlap",
-          "text": "Overlap · crates/buzz-core/src/pulse.rs, justfile: Bob (0f1e2d3c) 9a1c4e7b 6m ago, and Ira (1a2b3c4d) b7c8d9e0"
+          "text": "Overlap · crates/beekeeper-core/src/pulse.rs, justfile: Bob (0f1e2d3c) 9a1c4e7b 6m ago, and Ira (1a2b3c4d) b7c8d9e0"
         }
       ],
-      "paths": ["crates/buzz-core/src/pulse.rs", "justfile"],
+      "paths": ["crates/beekeeper-core/src/pulse.rs", "justfile"],
       "pathsTruncated": 0,
       "seats": [
         {

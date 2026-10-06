@@ -20,7 +20,7 @@ import {
 // the specific failure the cross-implementation contract exists to prevent.
 // The expected decisions live *inside* the catalog fixture, and
 // `every_recorded_decision_in_the_fixture_still_holds`
-// (crates/buzz-core/src/coding_session_routing.rs:2872) asserts the same six
+// (crates/beekeeper-core/src/coding_session_routing.rs:2872) asserts the same six
 // against the Rust router, so the two cannot silently disagree.
 const registryText = readFileSync(
   new URL("../../../../../team/model-registry.yaml", import.meta.url),

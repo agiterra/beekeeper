@@ -10,7 +10,7 @@
 # `wip-post-commit.sh`: a hook that fails a commit is worse than no hook.
 #
 # These exact bytes are also compiled into
-# `buzz_core::seat_git_hooks::WIP_PREPARE_COMMIT_MSG_HOOK`.
+# `beekeeper_core::seat_git_hooks::WIP_PREPARE_COMMIT_MSG_HOOK`.
 set -uo pipefail
 
 msg_file="${1:-}"

@@ -178,7 +178,7 @@ pub async fn observe_project_action_ownership(
         Err(detail) => return ProjectActionOwnership::Unreadable { detail },
     };
     let filter = json!({
-        "kinds": [buzz_core_pkg::kind::KIND_PROJECT_MEMBERS],
+        "kinds": [beekeeper_core_pkg::kind::KIND_PROJECT_MEMBERS],
         "authors": [signer],
         "#d": [project_ref],
         "limit": 8,
@@ -206,7 +206,7 @@ pub async fn observe_project_action_ownership(
 /// `(creator-hex, d)` of a `30621:<owner>:<d>` coordinate.
 fn split_project_coordinate(coordinate: &str) -> Option<(String, String)> {
     let mut parts = coordinate.splitn(3, ':');
-    if parts.next()? != buzz_core_pkg::kind::KIND_PROJECT.to_string() {
+    if parts.next()? != beekeeper_core_pkg::kind::KIND_PROJECT.to_string() {
         return None;
     }
     let owner = parts.next()?.to_ascii_lowercase();
@@ -259,7 +259,7 @@ fn newest_verified_roster<'a>(
     events
         .iter()
         .filter(|event| {
-            event.kind.as_u16() as u32 == buzz_core_pkg::kind::KIND_PROJECT_MEMBERS
+            event.kind.as_u16() as u32 == beekeeper_core_pkg::kind::KIND_PROJECT_MEMBERS
                 && event.pubkey.to_hex() == signer
                 && event.verify().is_ok()
                 && event.tags.iter().any(|tag| {
@@ -281,7 +281,9 @@ fn roster_owner_keys(roster: &nostr::Event) -> Vec<String> {
             }
             // A `p` row with no role is a collaborator everywhere else this
             // roster is read, so an absent role is never an owner here.
-            if parts.get(3).map(String::as_str) != Some(buzz_core_pkg::kind::PROJECT_ROLE_OWNER) {
+            if parts.get(3).map(String::as_str)
+                != Some(beekeeper_core_pkg::kind::PROJECT_ROLE_OWNER)
+            {
                 return None;
             }
             Some(parts.get(1)?.to_ascii_lowercase())

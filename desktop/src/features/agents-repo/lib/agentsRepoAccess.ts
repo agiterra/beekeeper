@@ -5,7 +5,7 @@
  * - drafting is the project-scoped write rule (`admit_project_scoped_write`):
  *   a private project's creator, owner or collaborator; any member of a
  *   public one; a viewer reads only;
- * - committing is the git push gate (`crates/buzz-relay/src/api/git/policy.rs`):
+ * - committing is the git push gate (`crates/beekeeper-relay/src/api/git/policy.rs`):
  *   a roster owner or collaborator may push `main`; a viewer may not; a
  *   `buzz-protect` rule on the repository may still refuse.
  *

@@ -6,7 +6,7 @@ import 'agents_repo_draft_fold.dart' show canonicalRepositoryCoordinate;
 import 'artifact_pin_op.dart';
 
 /// The project artifact pin fold — the Dart twin of
-/// `crates/buzz-core/src/project_artifact_pin_fold.rs`, bound to the same
+/// `crates/beekeeper-core/src/project_artifact_pin_fold.rs`, bound to the same
 /// vectors (`conformance/project-artifact-pin-fold/`).
 ///
 /// Rules, normatively, are that directory's `CONTRACT.md`.

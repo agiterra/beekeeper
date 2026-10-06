@@ -34,7 +34,7 @@ the time of writing. The allocation scan checked both this fork and
 - `44244` is the team transaction (NIP-CSTX).
 - `44245` had no code or documentation match in either tree before this NIP.
 
-`crates/buzz-core/src/kind.rs` carries the allocation note and a compile-time
+`crates/beekeeper-core/src/kind.rs` carries the allocation note and a compile-time
 assertion that nothing sits between 44244 and 44245. This is a fork-local
 allocation, not a claim of global Nostr registry ownership.
 
@@ -140,7 +140,7 @@ most 16 unique provider **aliases** of at most 256 bytes each;
 
 `providers` names provider **aliases** (`claude-primary`), never instance ids
 (`1958c6c448e05eed`). They are different names for different things, and
-`crates/buzz-core/src/coding_session_identity.rs` makes confusing them a
+`crates/beekeeper-core/src/coding_session_identity.rs` makes confusing them a
 compile error.
 
 ### `irreversible`
@@ -202,7 +202,7 @@ otherwise relitigate:
 ## Validation boundary
 
 The relay validates **structure**: schema, tags, closed vocabularies, bounds,
-tag-to-content parity — `crates/buzz-relay/src/handlers/ingest.rs`. Whether the
+tag-to-content parity — `crates/beekeeper-relay/src/handlers/ingest.rs`. Whether the
 signer held the standing to set policy is the **consuming fold's** question,
 answered against the accepted NIP-CSAT chain, exactly the division kind 44244
 draws. A relay that adjudicated policy authority would be asserting standing it
@@ -214,11 +214,11 @@ not enough and is not an input — a consumer can prove an operator grant from t
 accepted NIP-CSAT chain and cannot prove a role slug it did not mint.
 
 Every consumer applies that one rule through the same function,
-`buzz_core::coding_session_policy::fold_coding_session_policies` with
+`beekeeper_core::coding_session_policy::fold_coding_session_policies` with
 `signer_may_steer_at`: the provider's context projection and turn gate
-(`crates/buzz-session-provider/src/context_projector.rs`,
+(`crates/beekeeper-session-provider/src/context_projector.rs`,
 `select_session_policy`), and `bee sessions policy set|get|clear`
-(`crates/buzz-cli/src/commands/sessions/policy.rs`). The grant is evaluated **at
+(`crates/beekeeper-cli/src/commands/sessions/policy.rs`). The grant is evaluated **at
 the record's own `created_at`**, so a later revoke does not retroactively
 invalidate a policy signed while the grant stood, and a later grant does not
 retroactively bless one signed before it existed.
@@ -235,12 +235,12 @@ be the defect this rule exists to prevent.
   ceiling for that umbrella and, when it is what refuses a turn, says
   "published session policy" in the `BUDGET_EXHAUSTED` message so a reader can
   tell which ceiling bound
-  (`crates/buzz-session-provider/src/commands.rs`, `exhausted_umbrella_budget`).
+  (`crates/beekeeper-session-provider/src/commands.rs`, `exhausted_umbrella_budget`).
   A policy published mid-session does not bind until that umbrella's next
   create or resume.
 
 - **`gates.verifierRequired` is enforced** at the 44244 fold's completion check
-  (`crates/buzz-core/src/coding_session_completion_verification.rs`): with it
+  (`crates/beekeeper-core/src/coding_session_completion_verification.rs`): with it
   set, a `mission.completed` whose settled assignments carry no active
   verifier's ruling is excluded `CompletionNotVerified`, and
   `bee sessions complete` refuses to sign one. A surface that has not read the
@@ -266,14 +266,14 @@ be the defect this rule exists to prevent.
 
 | Layer | Path |
 |---|---|
-| Types, decoder, validator, envelope | `crates/buzz-core/src/coding_session_policy.rs` |
-| Kind allocation and assertions | `crates/buzz-core/src/kind.rs` |
-| Signed builder | `crates/buzz-sdk/src/coding_session_policy.rs` |
-| Relay structural validation | `crates/buzz-relay/src/handlers/ingest.rs` |
-| Writer and reader (`bee sessions policy set\|get\|clear`) | `crates/buzz-cli/src/commands/sessions/policy.rs` |
-| Newest-accepted fold, in the context package | `crates/buzz-session-provider/src/context_projector.rs` |
-| `budget.turns`, enforced at the turn gate | `crates/buzz-session-provider/src/commands.rs` |
-| `gates.verifierRequired`, enforced at the fold's completion check | `crates/buzz-core/src/coding_session_completion_verification.rs` |
+| Types, decoder, validator, envelope | `crates/beekeeper-core/src/coding_session_policy.rs` |
+| Kind allocation and assertions | `crates/beekeeper-core/src/kind.rs` |
+| Signed builder | `crates/beekeeper-sdk/src/coding_session_policy.rs` |
+| Relay structural validation | `crates/beekeeper-relay/src/handlers/ingest.rs` |
+| Writer and reader (`bee sessions policy set\|get\|clear`) | `crates/beekeeper-cli/src/commands/sessions/policy.rs` |
+| Newest-accepted fold, in the context package | `crates/beekeeper-session-provider/src/context_projector.rs` |
+| `budget.turns`, enforced at the turn gate | `crates/beekeeper-session-provider/src/commands.rs` |
+| `gates.verifierRequired`, enforced at the fold's completion check | `crates/beekeeper-core/src/coding_session_completion_verification.rs` |
 | Field-by-field consumer map | `docs/design/portable-team-loop/POLICY.md` |
 
 `docs/design/portable-team-loop/POLICY.md` is the companion design note: it

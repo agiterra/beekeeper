@@ -6,7 +6,7 @@
 //! complete snapshot, and independently gates a resized viewport until the
 //! renderer confirms that it knows the applied [`Viewport`].
 
-use buzz_terminal::{damage::Frame, Viewport};
+use beekeeper_terminal::{damage::Frame, Viewport};
 use std::fmt;
 
 use uuid::Uuid;
@@ -226,7 +226,7 @@ impl FramePublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use buzz_terminal::damage::{CursorFrame, RowFrame};
+    use beekeeper_terminal::damage::{CursorFrame, RowFrame};
 
     fn viewport(generation: u64, columns: usize, screen_lines: usize) -> Viewport {
         Viewport {

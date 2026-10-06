@@ -337,7 +337,7 @@ fn approval_grant_and_deny_reference_the_approval_by_d_tag() {
             events::build_approval_grant(
                 APPROVAL_REF,
                 Some("ok"),
-                buzz_core_pkg::workflow_autorun::ApprovalScope::Run,
+                beekeeper_core_pkg::workflow_autorun::ApprovalScope::Run,
             ),
             46030,
         ),
@@ -356,24 +356,24 @@ fn approval_reference_is_lowercased_and_validated() {
     let ev = events::build_approval_grant(
         &upper,
         None,
-        buzz_core_pkg::workflow_autorun::ApprovalScope::Action,
+        beekeeper_core_pkg::workflow_autorun::ApprovalScope::Action,
     )
     .expect("build")
     .sign_with_keys(&Keys::generate())
     .expect("sign");
     assert_eq!(tag_values(&ev, "d"), vec![APPROVAL_REF.to_string()]);
     // C4: the content is the `{note, scope}` form even without a note.
-    let decoded = buzz_core_pkg::workflow_autorun::decode_approval_grant_content(&ev.content)
+    let decoded = beekeeper_core_pkg::workflow_autorun::decode_approval_grant_content(&ev.content)
         .expect("decode");
     assert_eq!(decoded.note, None);
     assert_eq!(
         decoded.scope,
-        buzz_core_pkg::workflow_autorun::ApprovalScope::Action
+        beekeeper_core_pkg::workflow_autorun::ApprovalScope::Action
     );
     assert!(events::build_approval_grant(
         "not-a-hash",
         None,
-        buzz_core_pkg::workflow_autorun::ApprovalScope::Run
+        beekeeper_core_pkg::workflow_autorun::ApprovalScope::Run
     )
     .is_err());
     assert!(events::build_approval_deny("", None).is_err());
@@ -394,17 +394,17 @@ fn approval_grant_content_carries_note_and_scope() {
     let ev = events::build_approval_grant(
         APPROVAL_REF,
         Some("ship it"),
-        buzz_core_pkg::workflow_autorun::ApprovalScope::Action,
+        beekeeper_core_pkg::workflow_autorun::ApprovalScope::Action,
     )
     .expect("builder")
     .sign_with_keys(&nostr::Keys::generate())
     .expect("sign");
-    let decoded = buzz_core_pkg::workflow_autorun::decode_approval_grant_content(&ev.content)
+    let decoded = beekeeper_core_pkg::workflow_autorun::decode_approval_grant_content(&ev.content)
         .expect("decode");
     assert_eq!(decoded.note.as_deref(), Some("ship it"));
     assert_eq!(
         decoded.scope,
-        buzz_core_pkg::workflow_autorun::ApprovalScope::Action
+        beekeeper_core_pkg::workflow_autorun::ApprovalScope::Action
     );
     let revoke = events::build_autorun_revoke(
         "00000000-0000-0000-0000-000000000007",
@@ -415,9 +415,9 @@ fn approval_grant_content_carries_note_and_scope() {
     .expect("sign");
     assert_eq!(
         revoke.kind.as_u16() as u32,
-        buzz_core_pkg::kind::KIND_WORKFLOW_AUTORUN_REVOKE
+        beekeeper_core_pkg::kind::KIND_WORKFLOW_AUTORUN_REVOKE
     );
-    assert!(buzz_core_pkg::workflow_autorun::decode_autorun_revoke(&revoke).is_ok());
+    assert!(beekeeper_core_pkg::workflow_autorun::decode_autorun_revoke(&revoke).is_ok());
 }
 
 // ── R1: one read, and the hash is of the bytes it returns ──────────────────
@@ -447,14 +447,15 @@ fn the_definition_hash_is_the_relays_own_hash_of_the_same_bytes() {
     // any route but the relay's own function over the bytes it displays.
     let yaml = action_yaml("[\"just\", \"ci\"]");
     let wire = workflow_definition_wire(&definition_event(&yaml));
-    let (def, canonical) = buzz_workflow_pkg::schema::parse_yaml(&yaml).expect("parse");
+    let (def, canonical) = beekeeper_workflow_pkg::schema::parse_yaml(&yaml).expect("parse");
 
     // 1. The relay's stored-hash chain: canonical JSON string → Value → hash.
     let stored: serde_json::Value = serde_json::from_str(&canonical).expect("value");
-    let relay_hash =
-        hex::encode(buzz_workflow_pkg::hash::hash_definition_value(&stored).expect("relay hash"));
+    let relay_hash = hex::encode(
+        beekeeper_workflow_pkg::hash::hash_definition_value(&stored).expect("relay hash"),
+    );
     // 2. The same function over the definition, as `handle_workflow_def` does.
-    let def_hash = buzz_workflow_pkg::hash::definition_hash_hex(&def).expect("def hash");
+    let def_hash = beekeeper_workflow_pkg::hash::definition_hash_hex(&def).expect("def hash");
 
     assert_eq!(relay_hash, def_hash, "the two relay routes agree");
     assert_eq!(
@@ -468,7 +469,7 @@ fn the_definition_hash_is_the_relays_own_hash_of_the_same_bytes() {
     assert_eq!(wire.definition, stored);
     assert_eq!(
         hex::encode(
-            buzz_workflow_pkg::hash::hash_definition_value(&wire.definition).expect("rehash")
+            beekeeper_workflow_pkg::hash::hash_definition_value(&wire.definition).expect("rehash")
         ),
         relay_hash,
         "re-hashing the displayed value reproduces the wire's hash"

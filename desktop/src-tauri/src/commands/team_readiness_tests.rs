@@ -17,8 +17,9 @@ pub(super) const PROJECT_REF: &str =
 pub(super) fn signed_auth_tag(conditions: &str) -> (String, String, String) {
     let owner = nostr::Keys::generate();
     let subject = nostr::Keys::generate();
-    let tag = buzz_sdk_pkg::nip_oa::compute_auth_tag(&owner, &subject.public_key(), conditions)
-        .expect("mint valid auth tag");
+    let tag =
+        beekeeper_sdk_pkg::nip_oa::compute_auth_tag(&owner, &subject.public_key(), conditions)
+            .expect("mint valid auth tag");
     (
         owner.public_key().to_hex(),
         subject.public_key().to_hex(),
@@ -382,16 +383,17 @@ fn signed_catalog_query_and_validation_bind_signer_channel_and_project() {
         uuid::Uuid::parse_str("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10").expect("channel uuid");
     let signer = keys.public_key().to_hex();
     let content = catalog_content(8, PROJECT_REF, "gpt-5.6-luna");
-    let event = buzz_sdk_pkg::builders::build_coding_session_provider_catalog(channel, 8, &content)
-        .expect("catalog builder")
-        .sign_with_keys(&keys)
-        .expect("signed catalog");
+    let event =
+        beekeeper_sdk_pkg::builders::build_coding_session_provider_catalog(channel, 8, &content)
+            .expect("catalog builder")
+            .sign_with_keys(&keys)
+            .expect("signed catalog");
     let filter =
         wire::provider_catalog_filter(std::slice::from_ref(&signer), &[channel.to_string()]);
     assert_eq!(
         filter,
         serde_json::json!({
-            "kinds": [buzz_core_pkg::kind::KIND_CODING_SESSION_PROVIDER_CATALOG],
+            "kinds": [beekeeper_core_pkg::kind::KIND_CODING_SESSION_PROVIDER_CATALOG],
             "authors": [signer],
             "#h": [channel.to_string()],
             "limit": 1001,
@@ -483,7 +485,7 @@ fn catalog_history_sentinel_and_cross_channel_catalog_fail_closed() {
     let keys = nostr::Keys::generate();
     let channel_a = uuid::Uuid::new_v4();
     let channel_b = uuid::Uuid::new_v4();
-    let event = buzz_sdk_pkg::builders::build_coding_session_provider_catalog(
+    let event = beekeeper_sdk_pkg::builders::build_coding_session_provider_catalog(
         channel_a,
         1,
         &catalog_content(1, PROJECT_REF, "gpt-5.6-luna"),
@@ -527,7 +529,7 @@ fn catalog_history_sentinel_and_cross_channel_catalog_fail_closed() {
 fn equal_catalog_revision_with_different_signed_content_is_a_conflict() {
     let keys = nostr::Keys::generate();
     let channel = uuid::Uuid::new_v4();
-    let first = buzz_sdk_pkg::builders::build_coding_session_provider_catalog(
+    let first = beekeeper_sdk_pkg::builders::build_coding_session_provider_catalog(
         channel,
         4,
         &catalog_content(4, PROJECT_REF, "gpt-5.6-luna"),
@@ -535,7 +537,7 @@ fn equal_catalog_revision_with_different_signed_content_is_a_conflict() {
     .expect("catalog builder")
     .sign_with_keys(&keys)
     .expect("signed catalog");
-    let second = buzz_sdk_pkg::builders::build_coding_session_provider_catalog(
+    let second = beekeeper_sdk_pkg::builders::build_coding_session_provider_catalog(
         channel,
         4,
         &catalog_content(4, PROJECT_REF, "gpt-5.6-sol"),
@@ -934,23 +936,27 @@ fn readonly_provider_inventory_rejects_malformed_metadata() {
 }
 
 fn catalog_content(revision: u64, project_ref: &str, model: &str) -> String {
-    let catalog = buzz_core_pkg::coding_session_catalog::Catalog {
-        schema: buzz_core_pkg::coding_session_catalog::CATALOG_SCHEMA.into(),
+    let catalog = beekeeper_core_pkg::coding_session_catalog::Catalog {
+        schema: beekeeper_core_pkg::coding_session_catalog::CATALOG_SCHEMA.into(),
         revision,
-        providers: vec![buzz_core_pkg::coding_session_catalog::CatalogProvider {
-            provider_instance_ref: "codex-primary".into(),
-            driver: "codex-agent-acp".into(),
-            runtime: "codex".into(),
-            default_model: model.into(),
-            allowed_models: vec![model.into()],
-            capabilities: buzz_core_pkg::coding_session_payload::Capabilities::v1_baseline(),
-            models: Vec::new(),
-        }],
-        projects: vec![buzz_core_pkg::coding_session_catalog::CatalogProject {
+        providers: vec![
+            beekeeper_core_pkg::coding_session_catalog::CatalogProvider {
+                provider_instance_ref: "codex-primary".into(),
+                driver: "codex-agent-acp".into(),
+                runtime: "codex".into(),
+                default_model: model.into(),
+                allowed_models: vec![model.into()],
+                capabilities: beekeeper_core_pkg::coding_session_payload::Capabilities::v1_baseline(
+                ),
+                models: Vec::new(),
+            },
+        ],
+        projects: vec![beekeeper_core_pkg::coding_session_catalog::CatalogProject {
             project_ref: project_ref.into(),
             repo_ref: None,
             providers: vec!["codex-primary".into()],
         }],
     };
-    buzz_core_pkg::coding_session_catalog::to_canonical_json(&catalog).expect("canonical catalog")
+    beekeeper_core_pkg::coding_session_catalog::to_canonical_json(&catalog)
+        .expect("canonical catalog")
 }

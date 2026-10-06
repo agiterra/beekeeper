@@ -50,7 +50,7 @@ fn slug_never_starts_with_a_hyphen() {
     }
 }
 
-/// Placement itself now lives in `buzz_core::worktree_placement` and is
+/// Placement itself now lives in `beekeeper_core::worktree_placement` and is
 /// tested there against every admissible shape. What belongs here is the one
 /// fact this side establishes: whether the in-repo holder is usable. Both
 /// halves matter, so both are pinned.
@@ -405,7 +405,7 @@ fn a_late_record_admits_a_cut_worktree_and_refuses_a_plain_checkout() {
 
     let repo_root = Path::new(&created.repo_root);
     assert!(
-        buzz_core_pkg::worktree_placement::is_managed_worktree_path(
+        beekeeper_core_pkg::worktree_placement::is_managed_worktree_path(
             repo_root,
             Path::new(&created.path),
             &[]
@@ -413,7 +413,11 @@ fn a_late_record_admits_a_cut_worktree_and_refuses_a_plain_checkout() {
         "a tree this host just cut must be recordable"
     );
     assert!(
-        !buzz_core_pkg::worktree_placement::is_managed_worktree_path(repo_root, repo_root, &[]),
+        !beekeeper_core_pkg::worktree_placement::is_managed_worktree_path(
+            repo_root,
+            repo_root,
+            &[]
+        ),
         "the checkout the worktree came from must never be"
     );
 }

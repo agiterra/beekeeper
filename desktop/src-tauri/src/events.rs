@@ -106,7 +106,7 @@ pub fn build_create_channel(
     ttl_seconds: Option<i32>,
     project_ref: Option<&str>,
 ) -> Result<EventBuilder, String> {
-    let name = buzz_sdk_pkg::canonical_channel_name(name);
+    let name = beekeeper_sdk_pkg::canonical_channel_name(name);
     if name.trim().is_empty() {
         return Err("channel name is required".into());
     }
@@ -170,7 +170,7 @@ pub fn build_update_channel(
             return Err("visibility must be \"open\" or \"private\"".into());
         }
     }
-    let name = name.map(buzz_sdk_pkg::canonical_channel_name);
+    let name = name.map(beekeeper_sdk_pkg::canonical_channel_name);
     if name.is_some_and(|name| name.trim().is_empty()) {
         return Err("channel name is required".into());
     }
@@ -464,10 +464,10 @@ pub fn build_delete_for_authority(
 ) -> Result<EventBuilder, String> {
     match authority {
         DeleteAuthority::Author => build_delete_compat(channel_id, target_event_id),
-        DeleteAuthority::Moderator => buzz_sdk_pkg::build_delete_message_with_options(
+        DeleteAuthority::Moderator => beekeeper_sdk_pkg::build_delete_message_with_options(
             channel_id,
             target_event_id,
-            buzz_sdk_pkg::DeleteMessageOptions::default(),
+            beekeeper_sdk_pkg::DeleteMessageOptions::default(),
         )
         .map_err(|e| format!("invalid moderator delete: {e}")),
     }

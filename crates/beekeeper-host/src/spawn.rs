@@ -38,7 +38,7 @@ pub fn resolve_provider_binary(config: &HostConfig) -> Result<PathBuf, String> {
     resolve_command(PROVIDER_BINARY).ok_or_else(|| {
         format!(
             "{PROVIDER_BINARY} was not found beside this host, in its workspace, or on PATH — \
-             build it with `cargo build -p buzz-session-provider`, or name it in host.json"
+             build it with `cargo build -p beekeeper-session-provider`, or name it in host.json"
         )
     })
 }

@@ -29,7 +29,7 @@ import {
 import { codingSessionNameKey } from "./codingSessionName.ts";
 
 // The shared rule, byte for byte: the same file the Rust resolver binds to in
-// `crates/buzz-core/src/coding_session_title_tests.rs`. Never edited to pass.
+// `crates/beekeeper-core/src/coding_session_title_tests.rs`. Never edited to pass.
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const VECTORS_PATH = path.join(
   HERE,

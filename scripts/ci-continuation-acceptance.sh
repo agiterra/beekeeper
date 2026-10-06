@@ -13,13 +13,13 @@
 #     continuation registration, and read-only verification queries;
 #   - the real `buzz-session-provider` binary, with a minimal ACP-speaking
 #     bash script standing in for the model adapter (`agentCommand: bash`),
-#     the same technique `crates/buzz-session-provider/src/session.rs`'s own
+#     the same technique `crates/beekeeper-session-provider/src/session.rs`'s own
 #     `testing::fake_agent`/`GOOD_AGENT` uses inside that crate's unit suite —
 #     a real subprocess boundary, no network model call.
 #
 # No step is hand-signed as the relay or faked: the CI result (kind 46008) is
 # produced by POSTing to the workflow's real `/hooks/<id>` webhook, the exact
-# production path `crates/buzz-relay/src/api/bridge_ci_result_tests.rs`
+# production path `crates/beekeeper-relay/src/api/bridge_ci_result_tests.rs`
 # exercises for the plain (non-continuation) CI-completion flow.
 #
 # What this proves, in order (each also printed as a numbered PASS line):
@@ -72,13 +72,13 @@
 #     `--access public` project, so admission never exercises
 #     CI_RESULT_UNAVAILABLE_OR_HIDDEN or a provider-admitted private read.
 #     That path is exercised by the provider's own unit suite
-#     (crates/buzz-session-provider/src/tests/ci_continuation_tests.rs).
+#     (crates/beekeeper-session-provider/src/tests/ci_continuation_tests.rs).
 #   - A real model. The ACP adapter is a bash stub; no network call to any
 #     LLM provider happens anywhere in this script.
 #   - Seated (agent-actor) restore. Every session this script creates is
 #     operator-created (unseated), so `native_restore`'s actor-seat lookup is
 #     never exercised here; that path is proven by the provider's own unit
-#     suite (`crates/buzz-session-provider/src/tests/ci_continuation_restore_tests.rs`).
+#     suite (`crates/beekeeper-session-provider/src/tests/ci_continuation_restore_tests.rs`).
 #
 # Set CI_CONTINUATION_SCENARIOS=basic to skip steps 6-8 (the restart
 # scenarios) and run only the original five steps; default is `all`.
@@ -148,7 +148,7 @@ free_port() {
 
 # Shared python helpers (target-key encoding, JSON file loading) used by both
 # the original steps and the restart scenarios, written once so the encoding
-# rule (`crates/buzz-sdk/src/builders.rs::coding_session_target_key`) lives in
+# rule (`crates/beekeeper-sdk/src/builders.rs::coding_session_target_key`) lives in
 # exactly one place in this script.
 cat > "${WORKDIR}/helpers.py" <<'PY'
 import json
@@ -257,7 +257,7 @@ print(inner['webhook_secret'])
 ok "fixtures ready: project=${PROJECT} repository=${REPO} channel=${CHANNEL} workflow=${WORKFLOW_ID}"
 
 # The provider must be a channel member (kind:39002, #p) before it starts —
-# channel discovery (crates/buzz-acp/src/relay.rs discover_channels) runs
+# channel discovery (crates/beekeeper-acp/src/relay.rs discover_channels) runs
 # once at startup, from membership, never from the projects file alone.
 BUZZ_PRIVATE_KEY="${PROVIDER_KEY}" bee channels join --channel "${CHANNEL}" >/dev/null
 
@@ -268,7 +268,7 @@ FAKE_AGENT="${WORKDIR}/fake-agent.sh"
 cat > "${FAKE_AGENT}" <<'AGENT'
 #!/bin/bash
 # Minimal ACP-speaking stub — the same technique
-# crates/buzz-session-provider/src/session.rs's testing::GOOD_AGENT (and, for
+# crates/beekeeper-session-provider/src/session.rs's testing::GOOD_AGENT (and, for
 # the restart shape, testing::restorable_agent) uses in that crate's own unit
 # suite. Answers initialize/session.new/session.load/session.prompt over
 # JSON-RPC on stdio; never calls a model. Logs each raw session/new and

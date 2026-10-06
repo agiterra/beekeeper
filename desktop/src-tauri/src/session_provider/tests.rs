@@ -141,7 +141,7 @@ fn minted_auth_tag_verifies_against_the_provider_pubkey() {
     let provider_pubkey =
         nostr::PublicKey::from_hex(&record.provider_pubkey).expect("provider pubkey");
 
-    let resolved = buzz_sdk_pkg::nip_oa::verify_auth_tag(&auth_tag, &provider_pubkey)
+    let resolved = beekeeper_sdk_pkg::nip_oa::verify_auth_tag(&auth_tag, &provider_pubkey)
         .expect("auth tag must verify");
     assert_eq!(resolved, owner.public_key());
 }

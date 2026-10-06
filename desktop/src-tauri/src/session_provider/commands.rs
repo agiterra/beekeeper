@@ -36,7 +36,7 @@ static PROVISION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Number of hex characters of the provider pubkey used as the instance id.
 ///
-/// Must match `buzz_session_provider::config::INSTANCE_ID_PUBKEY_PREFIX_LEN`:
+/// Must match `beekeeper_session_provider::config::INSTANCE_ID_PUBKEY_PREFIX_LEN`:
 /// the provider derives the same value when `BUZZ_CSP_INSTANCE_ID` is unset,
 /// and a mismatch would silently split one provider across two `cs-target`
 /// identities.
@@ -181,15 +181,15 @@ pub async fn coding_session_capacity_settings(
         .and_then(|status| status.provider_settings_in_force);
     Ok(CodingSessionCapacitySettings {
         max_sessions: store.max_sessions,
-        default_max_sessions: buzz_session_provider_pkg::config::DEFAULT_MAX_SESSIONS,
+        default_max_sessions: beekeeper_session_provider_pkg::config::DEFAULT_MAX_SESSIONS,
         running_max_sessions: in_force.and_then(|settings| settings.max_sessions),
         turn_idle_timeout_secs: store.turn_idle_timeout_secs,
         default_turn_idle_timeout_secs:
-            buzz_session_provider_pkg::config::DEFAULT_IDLE_TIMEOUT_SECS,
+            beekeeper_session_provider_pkg::config::DEFAULT_IDLE_TIMEOUT_SECS,
         running_turn_idle_timeout_secs: in_force
             .and_then(|settings| settings.turn_idle_timeout_secs),
         turn_budget: store.turn_budget,
-        default_turn_budget: buzz_session_provider_pkg::config::DEFAULT_TURN_BUDGET,
+        default_turn_budget: beekeeper_session_provider_pkg::config::DEFAULT_TURN_BUDGET,
         running_turn_budget: in_force.and_then(|settings| settings.turn_budget),
     })
 }
@@ -543,7 +543,7 @@ pub(crate) fn mint_provider_record(
     // proves ownership, and the relay's own scope rules decide what the key may
     // write. `compute_auth_tag` already returns the JSON array of strings that
     // `BUZZ_AUTH_TAG` carries, so it is stored verbatim.
-    let auth_tag = buzz_sdk_pkg::nip_oa::compute_auth_tag(owner_keys, &keys.public_key(), "")
+    let auth_tag = beekeeper_sdk_pkg::nip_oa::compute_auth_tag(owner_keys, &keys.public_key(), "")
         .map_err(|error| format!("failed to compute NIP-OA auth tag: {error}"))?;
 
     Ok(CodingSessionProviderRecord {
@@ -623,7 +623,7 @@ pub async fn coding_session_resolve_redactions(
 
     let state_dir = crate::session_provider::provider_state_dir(&app, &provider_pubkey)?;
     let found =
-        buzz_session_provider_pkg::redaction_vault::resolve(&state_dir, &session_id, &digests)
+        beekeeper_session_provider_pkg::redaction_vault::resolve(&state_dir, &session_id, &digests)
             .map_err(|error| format!("failed to read the redaction vault: {error}"))?;
 
     Ok(found

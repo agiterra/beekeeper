@@ -140,7 +140,7 @@ pub fn main() -> std::process::ExitCode {
 ///
 /// An unrelated `RUST_LOG` must not blind the service. This repo's own `.env`
 /// sets a relay-focused filter
-/// (`buzz_relay=debug,buzz_db=debug,…`), and `just` loads it — so anything
+/// (`beekeeper_relay=debug,beekeeper_db=debug,…`), and `just` loads it — so anything
 /// launched from a `just` recipe, or from a shell that sourced it, got a host
 /// whose own log was **completely empty**: no "provider started", no
 /// "restarting", no "stopped". The host's log is an operator's only window

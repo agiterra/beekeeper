@@ -13,10 +13,10 @@ export const CODING_SESSION_COMMAND_TAG_VERSION = "csc1-1";
  * a person's words.
  *
  * Mirrors `CODING_SESSION_HOST_ANSWER_TAG_NAME` in
- * `crates/buzz-core/src/coding_session_payload.rs`, which is also where the
+ * `crates/beekeeper-core/src/coding_session_payload.rs`, which is also where the
  * provider-side predicate that reads it lives. The relay's envelope
  * validator (`validate_coding_session_command_envelope`,
- * `crates/buzz-relay/src/handlers/ingest.rs`) allows exactly one of these,
+ * `crates/beekeeper-relay/src/handlers/ingest.rs`) allows exactly one of these,
  * with the value below; the command must still be published exactly as any
  * other turn — `bee sessions hire` reads this same event directly off the
  * relay to answer its own poll (ledger 178(b)), so it is the CLI's answer
@@ -32,13 +32,13 @@ export const CODING_SESSION_HOST_ANSWER_TAG_HIRE = "hire";
  * exact equality in ledger 200 after an adversarial review, finding 8).
  *
  * Lane 181 taught `validate_coding_session_command_envelope`
- * (`crates/buzz-relay/src/handlers/ingest.rs`) to accept exactly one
+ * (`crates/beekeeper-relay/src/handlers/ingest.rs`) to accept exactly one
  * `buzz-host-answer` tag with the value `hire`, but a relay built before that
  * lane still ends its match arm `_ => return Err("unsupported coding-session
  * command tag")`. Ingest wraps that into the publish rejection this client
  * sees, verbatim, as `invalid: unsupported coding-session command tag`
  * (`IngestError::Rejected(format!("invalid: {error}"))`,
- * `crates/buzz-relay/src/handlers/ingest.rs`, the
+ * `crates/beekeeper-relay/src/handlers/ingest.rs`, the
  * `KIND_CODING_SESSION_COMMAND` arm) — `relayClientSession.ts`'s `handleOk`
  * rejects the pending publish with that exact string as `Error.message`, no
  * further wrapping.
@@ -213,7 +213,7 @@ export function isCodingSessionTurnDelivery(
  * No URL, deliberately: the provider derives `{relay}/media/{sha256}.{ext}`
  * from the relay it is already connected to, so a signed command can never
  * point it at somewhere else. Mirrors `TurnAttachment` in
- * `crates/buzz-core/src/coding_session_command.rs`.
+ * `crates/beekeeper-core/src/coding_session_command.rs`.
  */
 export type CodingSessionTurnAttachment = {
   sha256: string;
@@ -242,7 +242,7 @@ export const MAX_CODING_SESSION_CONTINUATION_BYTES =
 
 /**
  * Exact identity of one external CI run attempt, mirroring `CiResultIdentity`
- * in `crates/buzz-core/src/ci_result.rs`.
+ * in `crates/beekeeper-core/src/ci_result.rs`.
  *
  * All eight keys are required and none may be added: the canonical JSON of
  * exactly these fields is the correlation digest a recorded result is filed

@@ -24,7 +24,7 @@ export const PROJECT_VERIFY_SETUP_COMMAND = "project_verify_setup";
 
 /**
  * The creation form's default verify command — the standard-library test
- * runner over `tests/`, `buzz_persona::seed::DEFAULT_VERIFY_COMMAND`.
+ * runner over `tests/`, `beekeeper_persona::seed::DEFAULT_VERIFY_COMMAND`.
  */
 export const DEFAULT_VERIFY_COMMAND_TEXT =
   "python3 -m unittest discover -s tests";

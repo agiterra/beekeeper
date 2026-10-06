@@ -574,7 +574,7 @@ test("metadata carrying a routing record is read, and a malformed one refused", 
 
 test("the router's own review reasons are read, value and all", () => {
   // The canonical router renders the two numeric §6 triggers with the number
-  // that fired them (crates/buzz-core/src/coding_session_routing.rs:1555), so
+  // that fired them (crates/beekeeper-core/src/coding_session_routing.rs:1555), so
   // the vocabulary is open. This decoder used to police it against a closed
   // set of slugs and refused the router's own record as malformed.
   const routed = {
@@ -647,7 +647,7 @@ test("a routed create is read, and a malformed routing record is not", () => {
  * The two shapes the canonical producer actually writes.
  *
  * `Routing` in buzz-core has no `skip_serializing_if` on `profile`
- * (`crates/buzz-core/src/coding_session_routing.rs:838`), so a record with no
+ * (`crates/beekeeper-core/src/coding_session_routing.rs:838`), so a record with no
  * extra trait minimums is emitted as `profile: null` — and an observer that
  * accepted only an object refused every record the CLI ever wrote.
  * `proposedDisagreement` is the host's one sentence when its own choice

@@ -46,7 +46,7 @@ const MAX_RECEIPT_COMMAND_ID_BYTES = 256;
 const MAX_RECEIPT_TURN_ID_BYTES = 256;
 /**
  * A lifecycle receipt's error code, bounded as `validate_lifecycle_receipt`'s
- * generic check bounds it (`crates/buzz-core/src/coding_session_payload.rs:826`,
+ * generic check bounds it (`crates/beekeeper-core/src/coding_session_payload.rs:826`,
  * `MAX_IDENTIFIER_BYTES`).
  */
 const MAX_ERROR_CODE_BYTES = 256;
@@ -284,7 +284,7 @@ export function isCodingSessionTurnReceipt(
  * and old clients lose enrichment only for umbrella-claiming sessions.
  *
  * The four code-coordinate facts (`observedCommit`, `dirty`, `relayReachable`,
- * `verifiedAt`) are the B1 amendment (`crates/buzz-core`
+ * `verifiedAt`) are the B1 amendment (`crates/beekeeper-core`
  * `coding_session_payload.rs`, `METADATA_FACT_FIELDS`): a provider that
  * observes the worktree serializes all four unconditionally (nulls included),
  * a pre-amendment provider serializes none — a partial subset is malformed,
@@ -605,7 +605,7 @@ function parseTurnReceipt(
  * A seat actor as the wire defines it: lowercase 64-hex, or an explicit null.
  *
  * The same bound `validate_actor_pubkey` applies in
- * `crates/buzz-core/src/coding_session_lifecycle_command.rs`, and the two
+ * `crates/beekeeper-core/src/coding_session_lifecycle_command.rs`, and the two
  * decoders must agree: a length-only check here would accept a display name
  * where the Rust half refuses one, so the desktop would resolve a seat no key
  * can hold while the pulse fold silently dropped the same signed event.
@@ -626,7 +626,7 @@ const HEX64 = /^[0-9a-f]{64}$/;
  *
  * Four keys, all required, each a lowercase 64-hex id, and a two-token
  * `state` — `SessionMetadataHandover` in
- * `crates/buzz-core/src/coding_session_payload.rs` is `deny_unknown_fields`
+ * `crates/beekeeper-core/src/coding_session_payload.rs` is `deny_unknown_fields`
  * and every field is required. There is no `none` token: absence of the whole
  * key is how a provider says no claim stands, so a partial object is refused
  * rather than read loosely.
@@ -694,7 +694,7 @@ export function parseBuzzCodingSessionMetadata(
   // `contextSummary`, `diffSummary` and `planSummary` were here until lane
   // 216 and are gone: `METADATA_BASE_FIELDS` never named them, the only
   // writer of a 44223 is `serde_json::to_string(&SessionMetadata)` in the
-  // provider (`crates/buzz-session-provider/src/lib.rs:8351`), and
+  // provider (`crates/beekeeper-session-provider/src/lib.rs:8351`), and
   // `SessionMetadata` has no such fields — so no signed event has ever
   // carried one, and a relay would refuse it if one did. Nothing in this app
   // read them either. A key only one reader knows is exactly ledger 204.

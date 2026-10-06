@@ -134,7 +134,7 @@ fn declaration_event(commit: &str, path: &str) -> ProjectWorkEvent {
     ProjectWorkEvent {
         id: "de".repeat(32),
         pubkey: owner_hex(),
-        kind: buzz_core_pkg::kind::KIND_PROJECT_WORK_RECORD,
+        kind: beekeeper_core_pkg::kind::KIND_PROJECT_WORK_RECORD,
         created_at: 10,
         tags: vec![
             vec!["h".into(), "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2".into()],

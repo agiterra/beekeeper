@@ -43,17 +43,19 @@ fn real_shipped_bytes_and_identity_survive_interrupted_store_save_and_app_update
     // own and composes with them against the shipped catalog — which is how
     // the host stages the setup seat from it.
     assert!(actual.skills.is_empty());
-    let catalog =
-        buzz_persona_pkg::template::TemplateCatalog::load(&shipped.join("../templates"), "test")
-            .expect("the shipped catalog loads");
-    let composed = buzz_persona_pkg::compose::compose_role(
-        &buzz_persona_pkg::compose::RoleSource::Pack {
+    let catalog = beekeeper_persona_pkg::template::TemplateCatalog::load(
+        &shipped.join("../templates"),
+        "test",
+    )
+    .expect("the shipped catalog loads");
+    let composed = beekeeper_persona_pkg::compose::compose_role(
+        &beekeeper_persona_pkg::compose::RoleSource::Pack {
             dir: path.clone(),
             role: pack::ROLE.to_owned(),
             persona: None,
         },
         &catalog,
-        &buzz_persona_pkg::compose::ComposeOptions::local("personas/roles/project-setup"),
+        &beekeeper_persona_pkg::compose::ComposeOptions::local("personas/roles/project-setup"),
     )
     .expect("the copied setup pack composes");
     assert!(!composed.skills.is_empty());
@@ -65,7 +67,7 @@ fn real_shipped_bytes_and_identity_survive_interrupted_store_save_and_app_update
     let setup_role = catalog
         .resolve(
             pack::ROLE,
-            &buzz_persona_pkg::template::TemplateRange::parse(pack::ROLE, "^1.0.0")
+            &beekeeper_persona_pkg::template::TemplateRange::parse(pack::ROLE, "^1.0.0")
                 .expect("caret range parses"),
         )
         .expect("the shipped setup role resolves")
@@ -184,7 +186,7 @@ fn changed_bootstrap_bytes_are_rejected_even_if_pack_remains_valid() {
     let mut bytes = std::fs::read(&persona).expect("persona");
     bytes.extend_from_slice(b"\nChanged instructions.\n");
     std::fs::write(persona, bytes).expect("edit");
-    assert!(!buzz_persona_pkg::validate::validate_pack(&path).has_errors());
+    assert!(!beekeeper_persona_pkg::validate::validate_pack(&path).has_errors());
     assert!(verified_pack(root.path(), &receipt).is_err());
     assert!(prepare_receipt(root.path(), &draft, &owner, Some(&shipped), "0.1.0", &[]).is_err());
 }
@@ -324,14 +326,14 @@ fn bootstrap_restage_uses_original_bytes_and_keeps_existing_fence_checks() {
     );
     assert_eq!(report.staged, 1);
     let entry = &custody.pending[&request.command_id];
-    let persona = buzz_persona_pkg::resolve::resolve_persona_by_name(
+    let persona = beekeeper_persona_pkg::resolve::resolve_persona_by_name(
         entry.pack_dir.as_deref().expect("pack directory"),
         entry.persona_id.as_deref().expect("persona"),
     )
     .expect("provider persona");
     let workdir = root.path().join("materialized");
     std::fs::create_dir(&workdir).expect("workdir");
-    buzz_persona_pkg::skills::materialize_skills(&persona, &workdir)
+    beekeeper_persona_pkg::skills::materialize_skills(&persona, &workdir)
         .expect("provider materialization");
     for skill in &persona.skills {
         assert_eq!(
@@ -384,7 +386,7 @@ fn real_draft_remains_valid_with_bootstrap_skills_and_local_authoring_brief() {
     ensure_brief(cwd, &draft).expect("brief");
     let persona =
         pack::validate(&verified_pack(root.path(), &receipt).expect("bootstrap")).expect("persona");
-    buzz_persona_pkg::skills::materialize_skills(&persona, cwd)
+    beekeeper_persona_pkg::skills::materialize_skills(&persona, cwd)
         .expect("provider skill materialization");
     let validation = tree::validate(&draft);
     assert!(validation.valid, "{:?}", validation.diagnostics);

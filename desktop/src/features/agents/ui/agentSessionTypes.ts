@@ -227,7 +227,7 @@ export type TranscriptItem =
        * Per-turn token accounting, when the driver reported any.
        *
        * Mirrors the wire's `TurnUsageReport`
-       * (`crates/buzz-core/src/coding_session_payload.rs`, `deny_unknown_fields`)
+       * (`crates/beekeeper-core/src/coding_session_payload.rs`, `deny_unknown_fields`)
        * field for field: six optional numbers and nothing else. There is no
        * pricing identity on the wire — cost travels in `costUsd` above — so
        * nothing here may be read as one. Every field is independently absent;

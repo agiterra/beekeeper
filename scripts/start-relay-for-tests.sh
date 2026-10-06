@@ -144,7 +144,7 @@ if [[ "${SKIP_BUILD}" == "true" ]]; then
   log "Skipping relay build (--no-build); using existing target/${CARGO_PROFILE}/ binaries"
 else
   log "Building relay (profile: ${CARGO_PROFILE})..."
-  cargo build --profile "${CARGO_PROFILE}" -p buzz-relay -p git-credential-nostr
+  cargo build --profile "${CARGO_PROFILE}" -p beekeeper-relay -p git-credential-nostr
   ok "Relay built"
 fi
 

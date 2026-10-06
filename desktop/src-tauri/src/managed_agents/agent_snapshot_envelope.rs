@@ -21,7 +21,7 @@
 //! - Decrypt/auth failures return only the locked-card refusal — never
 //!   partial plaintext or crypto details.
 
-use buzz_core_pkg::engram::NIP44_PLAINTEXT_MAX;
+use beekeeper_core_pkg::engram::NIP44_PLAINTEXT_MAX;
 use nostr::nips::nip44::{self, Version};
 use nostr::{Keys, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};

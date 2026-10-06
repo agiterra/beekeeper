@@ -384,7 +384,7 @@ export async function getChannelsWorkflows(
  *
  * Astra's Wave 2 re-check, R1: an approval must never join a body from one
  * read to a hash from another. `definition` is the canonical JSON value the
- * native side hashed, and `definitionHash` is `buzz_workflow::hash`'s answer
+ * native side hashed, and `definitionHash` is `beekeeper_workflow::hash`'s answer
  * over exactly that value — the function the relay stores
  * `workflows.definition_hash` with. `definitionHash` is `null` with a reason
  * when this host cannot reproduce the stored hash, and a surface with no hash
@@ -537,7 +537,7 @@ export async function getWorkflowRun(runId: string): Promise<{
   approvals: WorkflowApproval[];
 }> {
   // The relay merges `host_steps` and `approvals` into the run object itself
-  // (`run_status`, crates/buzz-relay/src/api/workflows.rs) rather than nesting
+  // (`run_status`, crates/beekeeper-relay/src/api/workflows.rs) rather than nesting
   // the run under a key, so the raw payload is a run with two extra arrays.
   const raw = await invokeTauri<
     RawWorkflowRun & {

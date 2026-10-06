@@ -785,6 +785,138 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
+name = "beekeeper-acp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "beekeeper-core",
+ "beekeeper-persona",
+ "beekeeper-sdk",
+ "chrono",
+ "clap",
+ "evalexpr",
+ "futures-util",
+ "hex",
+ "nix 0.31.3",
+ "nostr 0.44.7",
+ "reqwest 0.13.4",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+ "tokio-util",
+ "toml 1.1.2+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "beekeeper-agent"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "dirs",
+ "getrandom 0.4.3",
+ "hex",
+ "nix 0.31.3",
+ "reqwest 0.13.4",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.11.0",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "urlencoding",
+ "webbrowser",
+]
+
+[[package]]
+name = "beekeeper-core"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "hex",
+ "hmac 0.13.0",
+ "nostr 0.44.7",
+ "percent-encoding",
+ "rand 0.10.2",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.11.0",
+ "subtle",
+ "thiserror 2.0.18",
+ "url",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "beekeeper-datastore-tracing"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "beekeeper-db"
+version = "0.1.0"
+dependencies = [
+ "beekeeper-core",
+ "beekeeper-datastore-tracing",
+ "chrono",
+ "hex",
+ "metrics",
+ "nostr 0.44.7",
+ "rand 0.10.2",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "beekeeper-deletion"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "beekeeper-core",
+ "beekeeper-db",
+ "beekeeper-media",
+ "chrono",
+ "clap",
+ "deadpool-redis",
+ "hex",
+ "redis",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "beekeeper-desktop"
 version = "0.5.16"
 dependencies = [
@@ -794,20 +926,20 @@ dependencies = [
  "audioadapter-buffers",
  "axum",
  "base64 0.22.1",
+ "beekeeper-agent",
+ "beekeeper-core",
  "beekeeper-host",
  "beekeeper-host-core",
+ "beekeeper-media",
+ "beekeeper-persona",
+ "beekeeper-sdk",
+ "beekeeper-session-provider",
+ "beekeeper-shell-host",
+ "beekeeper-terminal",
  "beekeeper-tray",
+ "beekeeper-voice",
+ "beekeeper-workflow",
  "block2",
- "buzz-agent",
- "buzz-core",
- "buzz-media",
- "buzz-persona",
- "buzz-sdk",
- "buzz-session-provider",
- "buzz-shell-host",
- "buzz-terminal",
- "buzz-voice",
- "buzz-workflow",
  "bytes",
  "bzip2 0.6.1",
  "chrono",
@@ -891,8 +1023,8 @@ dependencies = [
 name = "beekeeper-host"
 version = "0.1.0"
 dependencies = [
+ "beekeeper-core",
  "beekeeper-host-core",
- "buzz-core",
  "chrono",
  "clap",
  "dirs",
@@ -910,12 +1042,43 @@ name = "beekeeper-host-core"
 version = "0.1.0"
 dependencies = [
  "atomic-write-file",
- "buzz-core",
+ "beekeeper-core",
  "chrono",
  "dirs",
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "beekeeper-media"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "beekeeper-core",
+ "blurhash",
+ "bytes",
+ "chrono",
+ "futures-core",
+ "futures-util",
+ "hex",
+ "image",
+ "imagesize",
+ "infer",
+ "mp4",
+ "nostr 0.44.7",
+ "quick-xml 0.38.4",
+ "rust-s3",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "ulid",
+ "uuid",
 ]
 
 [[package]]
@@ -933,6 +1096,88 @@ dependencies = [
 ]
 
 [[package]]
+name = "beekeeper-persona"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "hex",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "beekeeper-sdk"
+version = "0.1.0"
+dependencies = [
+ "beekeeper-core",
+ "hex",
+ "nostr 0.44.7",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
+name = "beekeeper-session-provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "beekeeper-acp",
+ "beekeeper-core",
+ "beekeeper-persona",
+ "beekeeper-sdk",
+ "beekeeper-workflow",
+ "beekeeper-ws-client",
+ "chrono",
+ "futures-util",
+ "hex",
+ "image",
+ "libc",
+ "nix 0.31.3",
+ "nostr 0.44.7",
+ "reqwest 0.13.4",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 1.1.2+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "beekeeper-shell-host"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "libc",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "beekeeper-terminal"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "libc",
+ "parking_lot",
+ "portable-pty",
+]
+
+[[package]]
 name = "beekeeper-tray"
 version = "0.1.0"
 dependencies = [
@@ -941,6 +1186,64 @@ dependencies = [
  "objc2-foundation",
  "serde",
  "tauri",
+]
+
+[[package]]
+name = "beekeeper-voice"
+version = "0.1.0"
+dependencies = [
+ "atomic-write-file",
+ "hex",
+ "ort",
+ "ort-sys",
+ "rand 0.10.2",
+ "sentencepiece-model",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sherpa-onnx",
+ "symphonia",
+ "tokenizers",
+]
+
+[[package]]
+name = "beekeeper-workflow"
+version = "0.1.0"
+dependencies = [
+ "beekeeper-core",
+ "beekeeper-db",
+ "beekeeper-deletion",
+ "chrono",
+ "chrono-tz",
+ "cron",
+ "dashmap",
+ "evalexpr",
+ "globset",
+ "hex",
+ "moka",
+ "nostr 0.44.7",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "beekeeper-ws-client"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "nostr 0.44.7",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -1205,309 +1508,6 @@ name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
-
-[[package]]
-name = "buzz-acp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "buzz-core",
- "buzz-persona",
- "buzz-sdk",
- "chrono",
- "clap",
- "evalexpr",
- "futures-util",
- "hex",
- "nix 0.31.3",
- "nostr 0.44.7",
- "reqwest 0.13.4",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite 0.29.0",
- "tokio-util",
- "toml 1.1.2+spec-1.1.0",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "buzz-agent"
-version = "0.1.0"
-dependencies = [
- "arc-swap",
- "async-trait",
- "axum",
- "base64 0.22.1",
- "dirs",
- "getrandom 0.4.3",
- "hex",
- "nix 0.31.3",
- "reqwest 0.13.4",
- "rmcp",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2 0.11.0",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
- "urlencoding",
- "webbrowser",
-]
-
-[[package]]
-name = "buzz-core"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "hex",
- "hmac 0.13.0",
- "nostr 0.44.7",
- "percent-encoding",
- "rand 0.10.2",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2 0.11.0",
- "subtle",
- "thiserror 2.0.18",
- "url",
- "uuid",
- "zeroize",
-]
-
-[[package]]
-name = "buzz-datastore-tracing"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
-]
-
-[[package]]
-name = "buzz-db"
-version = "0.1.0"
-dependencies = [
- "buzz-core",
- "buzz-datastore-tracing",
- "chrono",
- "hex",
- "metrics",
- "nostr 0.44.7",
- "rand 0.10.2",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "buzz-deletion"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "buzz-core",
- "buzz-db",
- "buzz-media",
- "chrono",
- "clap",
- "deadpool-redis",
- "hex",
- "redis",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
-name = "buzz-media"
-version = "0.1.0"
-dependencies = [
- "axum",
- "blurhash",
- "buzz-core",
- "bytes",
- "chrono",
- "futures-core",
- "futures-util",
- "hex",
- "image",
- "imagesize",
- "infer",
- "mp4",
- "nostr 0.44.7",
- "quick-xml 0.38.4",
- "rust-s3",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
- "ulid",
- "uuid",
-]
-
-[[package]]
-name = "buzz-persona"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "hex",
- "semver",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2 0.11.0",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "buzz-sdk"
-version = "0.1.0"
-dependencies = [
- "buzz-core",
- "hex",
- "nostr 0.44.7",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "buzz-session-provider"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "buzz-acp",
- "buzz-core",
- "buzz-persona",
- "buzz-sdk",
- "buzz-workflow",
- "buzz-ws-client",
- "chrono",
- "futures-util",
- "hex",
- "image",
- "libc",
- "nix 0.31.3",
- "nostr 0.44.7",
- "reqwest 0.13.4",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.18",
- "tokio",
- "toml 1.1.2+spec-1.1.0",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "buzz-shell-host"
-version = "0.1.0"
-dependencies = [
- "clap",
- "libc",
- "portable-pty",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "buzz-terminal"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "libc",
- "parking_lot",
- "portable-pty",
-]
-
-[[package]]
-name = "buzz-voice"
-version = "0.1.0"
-dependencies = [
- "atomic-write-file",
- "hex",
- "ort",
- "ort-sys",
- "rand 0.10.2",
- "sentencepiece-model",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sherpa-onnx",
- "symphonia",
- "tokenizers",
-]
-
-[[package]]
-name = "buzz-workflow"
-version = "0.1.0"
-dependencies = [
- "buzz-core",
- "buzz-db",
- "buzz-deletion",
- "chrono",
- "chrono-tz",
- "cron",
- "dashmap",
- "evalexpr",
- "globset",
- "hex",
- "moka",
- "nostr 0.44.7",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2 0.11.0",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "buzz-ws-client"
-version = "0.1.0"
-dependencies = [
- "futures-util",
- "nostr 0.44.7",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite 0.29.0",
- "tracing",
- "url",
-]
 
 [[package]]
 name = "by_address"

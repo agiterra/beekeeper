@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use buzz_core_pkg::worktree_lifecycle::{SeatWorktreeDisposition, SEAT_WORKTREE_GRACE_SECS};
+use beekeeper_core_pkg::worktree_lifecycle::{SeatWorktreeDisposition, SEAT_WORKTREE_GRACE_SECS};
 
 use super::{close_disposition, tip_on_remote, CloseDecision};
 use crate::commands::project_git_exec::{build_test_git_auth_config, GitAuthConfig};

@@ -15,7 +15,7 @@ const ROLE_SLUG_REGEX = /^[a-z0-9-]{1,64}$/;
 const MAX_U32 = 0xffff_ffff;
 /**
  * Mirrors `MAX_AUTHORITY_TRANSITION_CONTENT_BYTES` in
- * `crates/buzz-core/src/coding_session_authority_transition.rs`. Raised from
+ * `crates/beekeeper-core/src/coding_session_authority_transition.rs`. Raised from
  * 512 to 768 with the project-action delegation (ledger 186, finding 178(f)):
  * that link's `projectRef` is the chain's one variable-length field, and a
  * long project slug must not be able to make a grant unsignable. The exact

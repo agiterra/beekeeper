@@ -2,7 +2,7 @@
 # state, and what counts as build state when that sandbox is reclaimed.
 #
 # ONE declaration, read by three consumers and one parser
-# (`buzz_core::sandbox_manifest`):
+# (`beekeeper_core::sandbox_manifest`):
 #
 #   * the Beekeeper launcher, when it cuts a seat's worktree;
 #   * the session provider, when an action step cuts a detached tree;

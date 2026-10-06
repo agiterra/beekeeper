@@ -379,7 +379,7 @@ keys, and neither travels without the other.
 
 `bee sessions status` prints this as a `turnBudget` line per execution
 (`used/limit`, or absent when the key has never been seen) — see
-`crates/buzz-cli/TESTING.md` § Coding Sessions for the exact shape.
+`crates/beekeeper-cli/TESTING.md` § Coding Sessions for the exact shape.
 
 ### Fork amendment: `session.hire` — a fourth action, answered by a host
 
@@ -470,7 +470,7 @@ text is exactly `hire refused: <CODE> — <reason>`, where `<CODE>` is one of
 `HIRE_NO_ROUTE`, `HIRE_MALFORMED`, or
 `HIRE_STALE`, and shows the same line in the umbrella as a
 system row. The codes are the constants
-`HIRE_REFUSAL_CODES` in `crates/buzz-core/src/coding_session_lifecycle_command.rs`;
+`HIRE_REFUSAL_CODES` in `crates/beekeeper-core/src/coding_session_lifecycle_command.rs`;
 the prefix is `HIRE_REFUSAL_PREFIX` in the same file.
 
 `HIRE_ROLE_BUSY` and `HIRE_NO_IDENTITY` are two codes for what was one until
@@ -639,7 +639,7 @@ decides, so a local no-route is reported rather than used to refuse a hire the
 host might well have served.
 
 The schema, the gates and the selection order live in
-`crates/buzz-core/src/coding_session_routing.rs`; the rows and their provenance
+`crates/beekeeper-core/src/coding_session_routing.rs`; the rows and their provenance
 live in `team/model-registry.yaml`. The two shapes are pinned byte-for-byte by
 `testdata/routing/hire-request-fixture.json` and
 `testdata/routing/create-record-fixture.json`, which `buzz-core`'s validator,
@@ -848,7 +848,7 @@ published the exact generation is known.
 
 **The code set is open, and the bound is exactly 64 UTF-8 bytes.** A validator
 accepts any nonblank code of **at most 64 UTF-8 bytes**
-(`MAX_RECEIPT_ERROR_CODE_BYTES`, `crates/buzz-core/src/coding_session_payload.rs:103`,
+(`MAX_RECEIPT_ERROR_CODE_BYTES`, `crates/beekeeper-core/src/coding_session_payload.rs:103`,
 checked at `coding_session_payload.rs:520-524`) containing no control
 characters, and MUST NOT pin `turn_dropped`, `turn_degraded`,
 `turn_delivery_unknown`, or `turn_refused` to a closed list — a provider that grows a new reason must not be decoded as
@@ -858,11 +858,11 @@ same field at 256 (`MAX_ERROR_CODE_BYTES`,
 `desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts:35`),
 and `bee sessions` applies no bound at all — it decodes receipt content with a
 plain `serde_json::from_str::<LifecycleReceipt>`
-(`crates/buzz-cli/src/commands/sessions.rs:257`) and never calls the strict
+(`crates/beekeeper-cli/src/commands/sessions.rs:257`) and never calls the strict
 decoder — so a 65-byte code from a future provider renders in both clients.
 The only readers that enforce 64 are the strict decoder's two callers, the
-pulse fold (`crates/buzz-core/src/pulse_fold.rs:739`) and the generation mint
-check (`crates/buzz-db/src/coding_session_generation.rs:250`), and both drop
+pulse fold (`crates/beekeeper-core/src/pulse_fold.rs:739`) and the generation mint
+check (`crates/beekeeper-db/src/coding_session_generation.rs:250`), and both drop
 such a receipt *silently*: it surfaces nowhere as malformed, it simply never
 counts. Producers MUST stay within 64; the desktop and `bee` bounds are owed a
 narrowing, and the two silent drops are owed a diagnostic.
@@ -898,9 +898,9 @@ The codes in use today are documented, not enforced:
 **Accepted contract delta, 2026-08-26.** Three of the codes above did not exist
 before this fork's delivery-class work and are recorded here as a ratified
 extension, not as a pre-existing set: `NO_LIVE_EXECUTION`
-(`crates/buzz-core/src/coding_session_payload.rs:85`), `NO_TURN_IN_FLIGHT`
+(`crates/beekeeper-core/src/coding_session_payload.rs:85`), `NO_TURN_IN_FLIGHT`
 (`coding_session_payload.rs:94`) and `QUEUE_FULL_TURN_KEPT`
-(`crates/buzz-session-provider/src/lib.rs:159`). They are legal only because the
+(`crates/beekeeper-session-provider/src/lib.rs:159`). They are legal only because the
 same change opened the code list, above. They exist because the alternatives
 would have been false statements: `UNKNOWN_TARGET` and `SESSION_CLOSED` both
 claim something untrue about a live, open execution that simply has nothing
@@ -1120,9 +1120,9 @@ unexpired.
 
 | Concern | Location |
 | --- | --- |
-| Kind constants | `crates/buzz-core/src/kind.rs` |
-| Payload + `projectRef` / `sessionRef` validation | `crates/buzz-core/src/coding_session_lifecycle_command.rs` |
-| Lease payload + strict envelope / replay validation | `crates/buzz-core/src/coding_session_lease.rs` |
-| Envelope validation, membership, size caps | `crates/buzz-relay/src/handlers/ingest.rs` |
-| Builders | `crates/buzz-sdk/src/builders.rs` |
-| Semantic keys | `crates/buzz-sdk/src/coding_session.rs` |
+| Kind constants | `crates/beekeeper-core/src/kind.rs` |
+| Payload + `projectRef` / `sessionRef` validation | `crates/beekeeper-core/src/coding_session_lifecycle_command.rs` |
+| Lease payload + strict envelope / replay validation | `crates/beekeeper-core/src/coding_session_lease.rs` |
+| Envelope validation, membership, size caps | `crates/beekeeper-relay/src/handlers/ingest.rs` |
+| Builders | `crates/beekeeper-sdk/src/builders.rs` |
+| Semantic keys | `crates/beekeeper-sdk/src/coding_session.rs` |

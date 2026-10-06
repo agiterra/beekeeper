@@ -311,7 +311,7 @@ test("the badge label counts both lists and carries the version", () => {
  */
 test("the rule matches the CLI's, including its wildcard and pair semantics", () => {
   const { rows } = parseRubricBlock(DOCUMENT);
-  // The exact fixture asserted in crates/buzz-cli/src/commands/sessions/rubric.rs
+  // The exact fixture asserted in crates/beekeeper-cli/src/commands/sessions/rubric.rs
   // (`an_unoffered_row_and_an_unnamed_model_are_both_reported`).
   assert.deepEqual(
     compareRubricToCatalog(
@@ -333,7 +333,7 @@ test("the rule matches the CLI's, including its wildcard and pair semantics", ()
 /**
  * The cross-implementation contract. `testdata/routing/live-catalog-665076ce.json`
  * is the kind:44222 catalog this repository's relay really served; the Rust
- * check (`crates/buzz-cli/src/commands/sessions/rubric.rs`) asserts the same
+ * check (`crates/beekeeper-cli/src/commands/sessions/rubric.rs`) asserts the same
  * recorded lists against the same file, so the two cannot drift apart.
  */
 test("the live catalog fixture produces the recorded lists", () => {

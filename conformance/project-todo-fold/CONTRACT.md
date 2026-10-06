@@ -58,7 +58,7 @@ relay withholds a personal op from every reader but its author (WS `REQ`,
 `/query`, `/count`, live fan-out) without parsing content. A pin on a
 personal list is therefore only ever seen by its owner.
 
-Wire validation is `crates/buzz-core/src/project_todo.rs`;
+Wire validation is `crates/beekeeper-core/src/project_todo.rs`;
 the fold's decode is the same rule, and an event that fails it is counted in
 `ignored`, not folded.
 

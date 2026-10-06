@@ -31,8 +31,8 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 
-use buzz_core_pkg::kind::KIND_MANAGED_AGENT;
-use buzz_core_pkg::project_agent_association::project_agent_digest;
+use beekeeper_core_pkg::kind::KIND_MANAGED_AGENT;
+use beekeeper_core_pkg::project_agent_association::project_agent_digest;
 
 use super::retention::{get_retained_event, open_retention_db, RetainedEvent};
 use super::ManagedAgentRecord;
@@ -63,7 +63,7 @@ fn recorded_project(record: &ManagedAgentRecord) -> Option<&str> {
     record
         .project_ref
         .as_deref()
-        .map(buzz_core_pkg::project_agent_association::trim_ascii_whitespace)
+        .map(beekeeper_core_pkg::project_agent_association::trim_ascii_whitespace)
         .filter(|project| !project.is_empty())
 }
 

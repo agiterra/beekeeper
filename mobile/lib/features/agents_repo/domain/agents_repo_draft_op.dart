@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../../shared/relay/nostr_models.dart';
 
 /// The kind 44250 agents-repository draft op — Dart twin of
-/// `crates/buzz-core/src/agents_repo_draft.rs` and `docs/nips/NIP-AD.md`.
+/// `crates/beekeeper-core/src/agents_repo_draft.rs` and `docs/nips/NIP-AD.md`.
 ///
 /// A draft is one proposed change to one file of the project's agents
 /// repository: the whole new text (`file.put`), an archive move
@@ -21,7 +21,7 @@ const maxAgentsRepoDraftTextBytes = 60000;
 const maxAgentsRepoDraftMessageBytes = 512;
 const maxCommitRecordEntries = 256;
 
-/// The reserved directory; equal to `buzz_persona::team::ARCHIVE_DIR`.
+/// The reserved directory; equal to `beekeeper_persona::team::ARCHIVE_DIR`.
 const archiveSegment = 'archive';
 
 /// Root files a draft may put but never move or delete.

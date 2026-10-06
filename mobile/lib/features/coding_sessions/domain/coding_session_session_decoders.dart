@@ -373,7 +373,7 @@ CodingSessionDecoded<CodingSessionName> decodeCodingSessionName(
 /// Exactly `h`, `d`, `cstl-v=cstl1-1`, `cs-target`, in that order, each with
 /// two fields; strict v1 JSON content of at most 2048 bytes. Mirror of
 /// `validate_coding_session_title_parts` in
-/// `crates/buzz-core/src/coding_session_title.rs`, bound to it by
+/// `crates/beekeeper-core/src/coding_session_title.rs`, bound to it by
 /// `conformance/session-display-name/` — a shape buzz-core refuses is refused
 /// here, never repaired.
 CodingSessionDecoded<CodingSessionGeneratedTitle>

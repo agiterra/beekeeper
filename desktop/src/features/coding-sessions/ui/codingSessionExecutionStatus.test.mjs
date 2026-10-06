@@ -16,7 +16,7 @@ import { codingSessionDispositionWord } from "../lib/codingSessionUmbrellaModel.
 import { codingSessionWireWorkspaceStatus } from "../lib/codingSessionWorkspaceModel.ts";
 import { executionStatusTone } from "./CodingSessionExecutionRail.tsx";
 
-// Exactly the vocabulary in crates/buzz-core/src/coding_session_payload.rs.
+// Exactly the vocabulary in crates/beekeeper-core/src/coding_session_payload.rs.
 const SIGNED_STATUSES = [
   "starting",
   "idle",

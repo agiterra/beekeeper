@@ -32,7 +32,7 @@ export const MODEL_REGISTRY_PROJECT_PATH = "team/model-registry.yaml";
 /**
  * The registry's file name at an agents repository's root.
  *
- * Mirrors `buzz_core::model_registry_source::AGENTS_REPO_REGISTRY_FILE`, the
+ * Mirrors `beekeeper_core::model_registry_source::AGENTS_REPO_REGISTRY_FILE`, the
  * name the seed writes and every reader composes.
  */
 export const AGENTS_REPO_MODEL_REGISTRY_FILE = "model-registry.yaml";

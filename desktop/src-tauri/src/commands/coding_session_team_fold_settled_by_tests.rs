@@ -8,7 +8,7 @@
 //! acknowledgement id would otherwise have to guess.
 
 use super::settlement_tests::{assignment_payload, fold, payload, report_payload, signed};
-use buzz_core_pkg::coding_session_team_transaction::{
+use beekeeper_core_pkg::coding_session_team_transaction::{
     CodingSessionTeamDispositionDecision, CodingSessionTeamTransactionBody,
     CodingSessionTeamTransactionPayload, CodingSessionTeamVerdict,
 };

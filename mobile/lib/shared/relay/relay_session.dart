@@ -49,7 +49,7 @@ class SessionState {
 }
 
 /// The relay accepts at most this many filters in one `REQ`
-/// (`crates/buzz-relay/src/protocol.rs`).
+/// (`crates/beekeeper-relay/src/protocol.rs`).
 const relayMaxFiltersPerReq = 10;
 
 /// Manages websocket subscriptions, event batching, reconnection with replay,

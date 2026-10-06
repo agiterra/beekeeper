@@ -5,7 +5,7 @@
 // enforced by the relay (and, for terminals, the owner host) — client role
 // state is advisory, for UI affordances only.
 //
-// Wire values match the pinned vocabularies in crates/buzz-core/src/kind.rs
+// Wire values match the pinned vocabularies in crates/beekeeper-core/src/kind.rs
 // (PROJECT_ROLES / SHELL_ROLES). Coding sessions carry roles as kind:44228
 // transition types instead (grant-operator ⇒ collaborator, grant-viewer ⇒
 // viewer); use the mapping helpers where that surface needs them.

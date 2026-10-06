@@ -54,7 +54,7 @@
 #   - **Seated (agent-actor) restore and re-staging.** Every session here is
 #     operator-created, so `seat-requests.json` never lists one of them and the
 #     `fenced`/retired seat-request behaviour is proven only by the provider's
-#     own unit suite (`crates/buzz-session-provider/src/tests/handover_*`).
+#     own unit suite (`crates/beekeeper-session-provider/src/tests/handover_*`).
 #   - **Native Windows.** Deferred and labelled (§9).
 #   - **A host that disagrees with the projects file.** The binding is checked
 #     as written and as the adapter observed it; a desktop host rewriting the
@@ -198,7 +198,7 @@ free_port() {
 }
 
 # ── Shared python helpers ───────────────────────────────────────────────────
-# The target-key encoding rule (`crates/buzz-sdk/src/builders.rs::
+# The target-key encoding rule (`crates/beekeeper-sdk/src/builders.rs::
 # coding_session_target_key`) and the event readers live here once, so no step
 # re-implements them.
 cat > "${WORKDIR}/helpers.py" <<'PY'
@@ -240,7 +240,7 @@ PY
 # prepare_creator_owner_governance`) — the only path in the CLI that publishes
 # a kind:44226 genesis, and the thing every handover in this script is rooted
 # at. Nothing is trusted on this module's say-so: `bee` runs
-# `buzz_sdk::nip_oa::verify_auth_tag` over every tag before it signs anything,
+# `beekeeper_sdk::nip_oa::verify_auth_tag` over every tag before it signs anything,
 # so a wrong signature here stops the run at the first `bee` call rather than
 # silently weakening a step.
 cat > "${WORKDIR}/bip340.py" <<'PY'
@@ -479,7 +479,7 @@ seed_from_relay "${CHECKOUT_B10}" "owner-b"
 ok "B's checkouts fetched ${BASE_SHA:0:12} from the relay"
 
 # ── The ACP adapter both providers run (no model call) ──────────────────────
-# `crates/buzz-session-provider/src/session.rs`'s `testing::GOOD_AGENT`
+# `crates/beekeeper-session-provider/src/session.rs`'s `testing::GOOD_AGENT`
 # technique: a real subprocess speaking JSON-RPC on stdio. Every raw
 # session/new, session/load and session/prompt goes to $FABLE_ACP_REQUEST_LOG
 # (so a step can assert on the exact bytes an execution was handed) and every
@@ -802,7 +802,7 @@ handover_status() {
 # Wait until no execution of `session_ref` reads `live`.
 #
 # The relay serves kind 24223 from a Redis snapshot with a 180s TTL
-# (`buzz_pubsub::session_lease::SESSION_LEASE_TTL_SECS`), so a `kill -9`'d
+# (`beekeeper_pubsub::session_lease::SESSION_LEASE_TTL_SECS`), so a `kill -9`'d
 # provider's execution keeps reading `live` for up to three minutes. Step 3
 # asserts that the DEFAULT plan picks reconstruction *because* nothing is
 # reachable, so it has to wait that snapshot out rather than force the mode.
@@ -825,7 +825,7 @@ print(sum(1 for row in fold['executions'] if row['liveness'] == 'live'))
 #
 # `--native` requires a live kind-24223 lease on the candidate's current
 # generation, and a provider publishes leases on a 60s cadence
-# (`buzz_session_provider::lease::LEASE_RENEWAL_INTERVAL`) — so an execution
+# (`beekeeper_session_provider::lease::LEASE_RENEWAL_INTERVAL`) — so an execution
 # that was confirmed `created` seconds ago is not yet reachable by that rule.
 # Waiting is the harness's job; refusing is the CLI's, and it is right to.
 wait_execution_live() {

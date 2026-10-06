@@ -1115,7 +1115,7 @@ CREATE INDEX push_match_queue_recovery
 -- T1b push gate (keep in sync with migrations/0023). Enqueue only when the
 -- community has an active, endpoint-enabled, unexpired lease; the shared
 -- advisory lock pairs with the exclusive lock taken by lease activations
--- (crates/buzz-db/src/push.rs) to close the lost-wake race.
+-- (crates/beekeeper-db/src/push.rs) to close the lost-wake race.
 CREATE FUNCTION enqueue_push_match_job() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -1150,7 +1150,7 @@ FOR EACH ROW EXECUTE FUNCTION enqueue_push_match_job();
 -- transition committed while ingest was in flight is never missed. The
 -- per-channel advisory lock is SHARED here — permanent-channel commits admit
 -- each other — and taken EXCLUSIVE by TTL transitions (update_channel in
--- crates/buzz-db/src/channel.rs), which forces the same total order the
+-- crates/beekeeper-db/src/channel.rs), which forces the same total order the
 -- 0022 row lock provided without serializing the hot path.
 CREATE FUNCTION refresh_channel_ttl_after_event_insert() RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -1311,7 +1311,7 @@ INSERT INTO _operator_global_tables (table_name, reason) VALUES
 
 -- ── Replica heartbeat (read-replica freshness fence) ─────────────────────────
 -- Portable read-side freshness observation for the replica fence (see
--- crates/buzz-db/src/replica_fence.rs and migrations/0026). Exactly one row;
+-- crates/beekeeper-db/src/replica_fence.rs and migrations/0026). Exactly one row;
 -- the single-row token UPDATE is the serialization point that makes tokens
 -- globally commit-ordered across relay pods. `epoch` detects token resets
 -- (restore/re-seed) so a stale retained token can never masquerade as fresh

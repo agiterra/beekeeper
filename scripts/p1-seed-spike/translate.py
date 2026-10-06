@@ -62,7 +62,7 @@ KEPT_META_KINDS = {"system_init", "compact_boundary", "context_cleared", "interr
 
 # Per-item content caps, applied before any whole-item dropping. Tool results
 # dominate transcript bytes (they are capped at 32 KiB per event on the wire by
-# fit_item, crates/buzz-session-provider/src/transcript.rs:227) but a fresh
+# fit_item, crates/beekeeper-session-provider/src/transcript.rs:227) but a fresh
 # execution rarely needs full old tool output — it needs to know what was run
 # and roughly what came back. Head+tail keeps both edges of logs/diffs.
 CAP_TOOL_RESULT = 2048
@@ -487,7 +487,7 @@ def main():
         help=(
             "shrink the budget until the rendered prompt fits N bytes "
             "(e.g. 12288 for the in-band 44220 turn-text cap, "
-            "MAX_TURN_TEXT_BYTES in crates/buzz-core/src/coding_session_command.rs:16)"
+            "MAX_TURN_TEXT_BYTES in crates/beekeeper-core/src/coding_session_command.rs:16)"
         ),
     )
     parser.add_argument("--tail-turns", type=int, default=2, help="most-recent turns protected from budget drops (default 2)")

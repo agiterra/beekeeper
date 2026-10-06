@@ -8,7 +8,7 @@
 //! `refs/heads/wip/<role>/<slug>`.
 //!
 //! Every byte written and every config key comes from
-//! [`buzz_core_pkg::seat_git_hooks`], so this command and `lefthook.yml`'s
+//! [`beekeeper_core_pkg::seat_git_hooks`], so this command and `lefthook.yml`'s
 //! human path install the same script.
 //!
 //! ## Where the config goes, and why it is not always `--local`
@@ -47,8 +47,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use buzz_core_pkg::seat_commit_identity::{seat_commit_identity, SeatCommitIdentity};
-use buzz_core_pkg::seat_git_hooks::{plan_seat_git_hooks, SeatGitHookRequest};
+use beekeeper_core_pkg::seat_commit_identity::{seat_commit_identity, SeatCommitIdentity};
+use beekeeper_core_pkg::seat_git_hooks::{plan_seat_git_hooks, SeatGitHookRequest};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::project_git_exec::GIT_REPO_SELECTION_VARS;
@@ -295,7 +295,7 @@ fn resolve_config_scope(
 /// own checkout.
 ///
 /// Idempotent, and it never writes the operator's identity: the values come
-/// from [`buzz_core_pkg::seat_commit_identity`], which can only ever produce
+/// from [`beekeeper_core_pkg::seat_commit_identity`], which can only ever produce
 /// an address derived from the key it was handed.
 ///
 /// # Errors

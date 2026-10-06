@@ -121,20 +121,20 @@ fn validate(
     // Rebuild only the unsigned payload/tags. Replaying retains the original
     // event timestamp, id and signature verbatim.
     let payload =
-        buzz_core_pkg::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+        beekeeper_core_pkg::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
             &journal.create_event.content,
         )
         .map_err(invalid)?;
     let channel =
         uuid::Uuid::parse_str(&reservation.channel_id).map_err(|e| invalid(e.to_string()))?;
     let expected_tags =
-        buzz_sdk_pkg::builders::build_coding_session_lifecycle_command(channel, &payload)
+        beekeeper_sdk_pkg::builders::build_coding_session_lifecycle_command(channel, &payload)
             .map_err(|e| invalid(e.to_string()))?
             .build(owner)
             .tags;
     if journal.create_event.pubkey != owner
         || journal.create_event.kind.as_u16()
-            != buzz_core_pkg::kind::KIND_CODING_SESSION_LIFECYCLE_COMMAND as u16
+            != beekeeper_core_pkg::kind::KIND_CODING_SESSION_LIFECYCLE_COMMAND as u16
         || journal.create_event.tags != expected_tags
         || payload.command_id != reservation.create_command_id
     {

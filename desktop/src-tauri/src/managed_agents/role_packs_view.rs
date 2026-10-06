@@ -49,7 +49,7 @@ pub const SUMMARY_MAX_CHARS: usize = 400;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RolePackSkill {
-    /// The skill's name (`buzz_persona::skill_meta::SkillMeta::name`).
+    /// The skill's name (`beekeeper_persona::skill_meta::SkillMeta::name`).
     pub name: String,
     /// Its frontmatter description, or `""` when it declares none.
     pub description: String,
@@ -230,7 +230,7 @@ fn archived_rows(rung: &ProjectRung, live: &BTreeSet<&String>) -> Vec<RolePackSu
     {
         root.push(segment);
     }
-    buzz_persona_pkg::compose::archived_role_files(&root)
+    beekeeper_persona_pkg::compose::archived_role_files(&root)
         .into_iter()
         .filter(|role| !live.iter().any(|live| *live == role))
         .map(|role| RolePackSummary {
@@ -336,7 +336,8 @@ fn project_candidates(rung: &ProjectRung) -> BTreeMap<String, Candidate> {
 /// sorted. A name is a candidate only; [`packs_cache::locate_role_source`]
 /// still decides.
 fn flat_role_files(parent: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(parent.join(buzz_persona_pkg::compose::FLAT_ROLES_DIR))
+    let Ok(entries) =
+        std::fs::read_dir(parent.join(beekeeper_persona_pkg::compose::FLAT_ROLES_DIR))
     else {
         return Vec::new();
     };
@@ -543,28 +544,28 @@ fn summarize(
         }
     };
     let pack_dir = staged.dir.to_string_lossy().into_owned();
-    match buzz_persona_pkg::resolve::resolve_persona_by_name(&staged.dir, &staged.persona) {
+    match beekeeper_persona_pkg::resolve::resolve_persona_by_name(&staged.dir, &staged.persona) {
         Ok(persona) => {
-            let skills = match buzz_persona_pkg::skill_meta::list_skill_meta(&staged.dir, &persona)
-            {
-                Ok(skills) => skills
-                    .into_iter()
-                    .map(|skill| RolePackSkill {
-                        name: skill.name,
-                        description: skill.description,
-                        shared: skill.shared,
-                    })
-                    .collect(),
-                Err(error) => {
-                    tracing::warn!(
-                        pack = %pack_dir,
-                        %role,
-                        %error,
-                        "role pack skills could not be listed; showing none"
-                    );
-                    Vec::new()
-                }
-            };
+            let skills =
+                match beekeeper_persona_pkg::skill_meta::list_skill_meta(&staged.dir, &persona) {
+                    Ok(skills) => skills
+                        .into_iter()
+                        .map(|skill| RolePackSkill {
+                            name: skill.name,
+                            description: skill.description,
+                            shared: skill.shared,
+                        })
+                        .collect(),
+                    Err(error) => {
+                        tracing::warn!(
+                            pack = %pack_dir,
+                            %role,
+                            %error,
+                            "role pack skills could not be listed; showing none"
+                        );
+                        Vec::new()
+                    }
+                };
             let display_name = if persona.display_name.trim().is_empty() {
                 persona.name.clone()
             } else {
@@ -641,7 +642,7 @@ pub(crate) async fn fetch_project_pack_source(
     project_ref: &str,
 ) -> Result<Option<packs_cache::ProjectPackSource>, String> {
     let filter = serde_json::json!({
-        "kinds": [buzz_core_pkg::kind::KIND_PROJECT_PACK_SOURCE],
+        "kinds": [beekeeper_core_pkg::kind::KIND_PROJECT_PACK_SOURCE],
         "#d": [project_ref],
         "limit": 4,
     });
@@ -661,7 +662,7 @@ pub(crate) fn newest_project_pack_source(
 ) -> Option<packs_cache::ProjectPackSource> {
     let mut newest: Option<(u64, packs_cache::ProjectPackSource)> = None;
     for event in events {
-        let Ok(source) = buzz_core_pkg::project_pack_source::decode_project_pack_source(event)
+        let Ok(source) = beekeeper_core_pkg::project_pack_source::decode_project_pack_source(event)
         else {
             continue;
         };

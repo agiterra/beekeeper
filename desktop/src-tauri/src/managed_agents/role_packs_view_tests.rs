@@ -586,7 +586,7 @@ fn newest_project_pack_source_picks_the_latest_valid_record() {
     let repo_new = "30617:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:new";
     let build = |repo: &str, at: u64, pin: (&str, &str)| {
         EventBuilder::new(
-            Kind::Custom(buzz_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16),
+            Kind::Custom(beekeeper_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16),
             r#"{"schema":"buzz-project-pack-source/v1"}"#,
         )
         .tags(vec![
@@ -599,7 +599,7 @@ fn newest_project_pack_source_picks_the_latest_valid_record() {
         .expect("signed")
     };
     let malformed = EventBuilder::new(
-        Kind::Custom(buzz_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16),
+        Kind::Custom(beekeeper_core_pkg::kind::KIND_PROJECT_PACK_SOURCE as u16),
         "not this schema",
     )
     .custom_created_at(Timestamp::from(9_999))

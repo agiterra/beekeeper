@@ -5,7 +5,7 @@
  * both derived from the shared capability manifest via the interpreter in
  * `./modelCapabilities`; this module owns only the buzz-agent env-var keys and
  * the runtime-id guard. Mirrors the `config.rs` ⇄ `model_capabilities.rs` seam
- * in `crates/buzz-agent`, where effort resolution is delegated to the manifest.
+ * in `crates/beekeeper-agent`, where effort resolution is delegated to the manifest.
  * (The interpreter owns the value list rather than the reverse, because it uses
  * the values at module-load for zod — the acyclic direction.)
  */
@@ -30,7 +30,7 @@ export const BUZZ_AGENT_MAX_ROUNDS = "BUZZ_AGENT_MAX_ROUNDS";
 /**
  * Ordered set of valid thinking-effort values accepted by buzz-agent.
  * Re-exported from the manifest interpreter, which owns the canonical list
- * (mirrors `parse_thinking_effort` in `crates/buzz-agent/src/config.rs`).
+ * (mirrors `parse_thinking_effort` in `crates/beekeeper-agent/src/config.rs`).
  */
 export const BUZZ_AGENT_THINKING_EFFORT_VALUES = THINKING_EFFORT_VALUES;
 
