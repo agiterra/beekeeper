@@ -14,7 +14,7 @@ EVENT, REQ, REST, media, git, search, workflow, or pub/sub handling. Unknown
 hosts fail closed, and NIP-98/API-token stamps must agree with the host-derived
 community rather than overriding it.
 
-Beekeeper is a Rust monorepo, licensed Apache 2.0 under Block, Inc.
+Beekeeper is a Rust monorepo, licensed Apache 2.0 under Block, Inc. and Agiterra LLC.
 
 ---
 
