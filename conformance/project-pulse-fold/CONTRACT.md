@@ -1,7 +1,7 @@
 # Project Pulse digest fold — v2 conformance contract
 
 This directory is the byte-exact source of truth for the Project Pulse fold.
-The Rust fold in `buzz-cli`, the TypeScript fold in Desktop, and a relay-side
+The Rust fold in `beekeeper-cli`, the TypeScript fold in Desktop, and a relay-side
 kind 39011 projection must bind to the same vectors. A rule implemented in only
 one fold is a defect.
 
@@ -201,7 +201,7 @@ Other event streams may be positive activity evidence to a product, but never
 extend or manufacture a lease in this fold.
 
 Lifecycle commands, receipts, metadata, closures, and leases use the strict
-buzz-core decoders: exact accepted field sets, duplicate-key rejection at every
+beekeeper-core decoders: exact accepted field sets, duplicate-key rejection at every
 depth, bounded nonempty identifiers, exact enums and null coupling, and
 receipt status/session/error consistency. A malformed signed fact is not a
 partial source read and cannot mint, observe, close, or make a generation live.
@@ -330,6 +330,6 @@ The corpus preserves every v1 entry/supersession case and adds:
   successful proofs for one exact target reject the generation in both orders.
 
 `implementation.test.mjs` binds the production TypeScript fold. The Rust test
-in `buzz-cli` loads the same JSON with `include_str!` and compares both decoded
+in `beekeeper-cli` loads the same JSON with `include_str!` and compares both decoded
 objects and serialized field order. A relay-side fold must bind the same
 vectors with only the documented `source` substitution.

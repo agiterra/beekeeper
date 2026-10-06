@@ -66,8 +66,8 @@ resolves the symbols.
 
 | Reader | Test |
 | --- | --- |
-| `buzz-core`'s fold — the rule itself | `crates/beekeeper-core/src/coding_session_team_transaction_fold_settlement_conformance_tests.rs` |
-| `buzz-cli`'s `fold` object (`bee sessions operation list\|get`, `sessions complete`) | `crates/beekeeper-cli/src/commands/sessions/operations_completion_tests.rs` |
+| `beekeeper-core`'s fold — the rule itself | `crates/beekeeper-core/src/coding_session_team_transaction_fold_settlement_conformance_tests.rs` |
+| `beekeeper-cli`'s `fold` object (`bee sessions operation list\|get`, `sessions complete`) | `crates/beekeeper-cli/src/commands/sessions/operations_completion_tests.rs` |
 | `buzz-session-provider`'s settlement-fact classifier | `crates/beekeeper-session-provider/src/pending_completion_tests.rs` |
 | The desktop's strict native-fold decoder and the Mission panel's Settlement section | `desktop/src/features/coding-sessions/lib/codingSessionTeamSettlementConformance.test.mjs` |
 

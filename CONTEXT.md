@@ -1,4 +1,4 @@
-# Buzz Domain Context
+# Beekeeper Domain Context
 
 This file names domain concepts whose distinctions are easy to erase in code.
 It records product meaning, not implementation structure.

@@ -7,7 +7,7 @@ Two coexisting desktop instances built from `integrated`:
 | What | Installed `/Applications/Beekeeper.app` | `just desktop-standalone` (tauri dev) |
 | Source | newest `build/*` tag, dedicated worktree `~/Code/lightyear/buzz-prod` | main checkout (parked on `integrated`; re-fetch after ceremonies) |
 | Identifier | `io.agiterra.beekeeper.app` | `io.agiterra.beekeeper.app.dev` (worktrees: `.dev.<slug>`) |
-| Icon | stock Buzz | "dev"-badged (worktrees: branch-labelled) |
+| Icon | stock Beekeeper | "dev"-badged (worktrees: branch-labelled) |
 | Secrets | OS keychain, service `buzz-desktop` | 0600 files (with `nokeyring`), or keychain `buzz-desktop-dev[.slug]` |
 | Data | `~/Library/Application Support/io.agiterra.beekeeper.app`, nest `~/.beekeeper` | `…/io.agiterra.beekeeper.app.dev*`, nest `~/.beekeeper-dev` (shared by all dev instances) |
 

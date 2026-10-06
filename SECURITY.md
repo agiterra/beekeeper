@@ -70,7 +70,7 @@ unless the subscriber is a member.
 
 ### Append-Only Audit Log
 
-All events are written to a tamper-evident audit log (`buzz-audit`). Each
+All events are written to a tamper-evident audit log (`beekeeper-audit`). Each
 log entry is chained to the previous one via a SHA-256 hash chain. Because the
 chain is keyless, it is tamper-evident but not tamper-resistant: it detects
 accidental corruption or single-row edits, but an attacker with database write

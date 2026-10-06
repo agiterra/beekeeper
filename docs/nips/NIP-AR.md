@@ -66,7 +66,7 @@ What the relay does **not** check, stated so nobody reads more into a pin than i
 
 ## Fold
 
-Normative text is `conformance/project-artifact-pin-fold/CONTRACT.md`, pinned by `fixtures/fold-vectors.json`, which the Rust (`buzz-core`), TypeScript (Desktop) and Dart (Mobile) folds all bind to. In one paragraph: decode every op for the coordinate (a malformed op is `ignored`; a well-formed op for another repository is `otherRepo`); sort by `(created_at, id)`; a target exists when some `pin.set` names it, decided over the whole bag so arrival order never matters, and a `pin.rank` with no set is counted in `ranksWithoutPin`; per target per field the greatest key wins, with a `pin.set`'s own rank taking part under the set's key; rows sort by `(rank, target)` bytewise; `by` is the author of the winning `pin.set`.
+Normative text is `conformance/project-artifact-pin-fold/CONTRACT.md`, pinned by `fixtures/fold-vectors.json`, which the Rust (`beekeeper-core`), TypeScript (Desktop) and Dart (Mobile) folds all bind to. In one paragraph: decode every op for the coordinate (a malformed op is `ignored`; a well-formed op for another repository is `otherRepo`); sort by `(created_at, id)`; a target exists when some `pin.set` names it, decided over the whole bag so arrival order never matters, and a `pin.rank` with no set is counted in `ranksWithoutPin`; per target per field the greatest key wins, with a `pin.set`'s own rank taking part under the set's key; rows sort by `(rank, target)` bytewise; `by` is the author of the winning `pin.set`.
 
 An unpinned target stays in the digest with `pinned: false`, because the control that draws the pin needs to know the target was pinned once and is not now.
 

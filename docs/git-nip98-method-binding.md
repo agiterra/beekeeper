@@ -6,7 +6,7 @@ constrained behaviour, document, do not redesign this phase.
 
 ## The finding
 
-`buzz-auth`'s NIP-98 verifier is strict. `crates/beekeeper-auth/src/nip98.rs`
+`beekeeper-auth`'s NIP-98 verifier is strict. `crates/beekeeper-auth/src/nip98.rs`
 verifies, in order: event kind and signature, `created_at` within ±60 s, the
 `u` tag against the expected URL, the `method` tag against the expected method,
 and — when a `payload` tag is present and a body is supplied — the SHA-256 of
@@ -65,7 +65,7 @@ one is not defence-in-depth — it stops pushes outright.
 Git invokes the helper once per authentication challenge, at the ref
 advertisement (`GET info/refs`). That is when the token is minted. Git then does
 everything else — runs `pre-push`, enumerates and compresses the pack — and only
-then sends `POST git-receive-pack` carrying the same header. Under `buzz-auth`'s
+then sends `POST git-receive-pack` carrying the same header. Under `beekeeper-auth`'s
 ±60 s window, anything slow in that gap makes the push fail **deterministically**:
 
 - Observed here: a `pre-push` hook running the desktop test suite took **99.9 s**,

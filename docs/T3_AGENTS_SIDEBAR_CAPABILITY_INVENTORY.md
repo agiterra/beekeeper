@@ -1,7 +1,7 @@
 # t3code Agents-sidebar capability inventory
 
 _Read-only inventory, 2026-08-19. Companion to
-`AGENT_PROGRESS_UI_DESIGN_NOTE.md` §3, which folds these findings into a Buzz
+`AGENT_PROGRESS_UI_DESIGN_NOTE.md` §3, which folds these findings into a Beekeeper
 design. t3code paths are relative to `/Users/brian/Projects/t3code/t3code`.
 Every line carries the `file:line` the recon produced._
 

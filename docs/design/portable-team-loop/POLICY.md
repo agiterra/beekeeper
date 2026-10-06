@@ -424,7 +424,7 @@ LANE-B1 §B1.2 scoped it there.
 
 The consequence, which nothing currently discloses: **any signer the relay
 admits for a hire can attribute that request to a different seat's pubkey.**
-`buzz-core` exposes the claim beside the signer —
+`beekeeper-core` exposes the claim beside the signer —
 `CodingSessionLifecycleCommandPayload::hire_requester_matches_signer`, three
 answers (`Some(true)` attributed, `Some(false)` disputed, `None` unclaimed) —
 and **no consumer calls it yet**.

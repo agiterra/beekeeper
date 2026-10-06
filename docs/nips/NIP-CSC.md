@@ -1,6 +1,6 @@
 # NIP-CSC: Coding-Session Commands
 
-`kind:44220` is a durable, channel-scoped command from a Buzz operator to a
+`kind:44220` is a durable, channel-scoped command from a Beekeeper operator to a
 coding-session provider adapter. It is a storage and fan-out event: the relay
 validates it and stores it, but does not route it through `command_executor`
 and never executes it.
@@ -40,7 +40,7 @@ The event content is exactly this JSON shape (no additional fields):
 }
 ```
 
-`driver` is an open capability-driven slug, not a Buzz enum. `commandId` and
+`driver` is an open capability-driven slug, not a Beekeeper enum. `commandId` and
 all target identifiers are nonempty after trimming and at most 256 UTF-8 bytes.
 Start-action text is nonempty after trimming and at most 12 KiB (12,288 UTF-8
 bytes). `deliver` is an **optional** key on `thread.turn.start` — absent means

@@ -1,7 +1,7 @@
 # Project artifact pin fold — v1 conformance contract
 
 This directory is the byte-exact source of truth for the project artifact pin
-fold. The Rust fold in `buzz-core`
+fold. The Rust fold in `beekeeper-core`
 (`project_artifact_pin_fold.rs`, behind `bee pins`), the TypeScript fold in
 Desktop (`features/agents-repo/lib/artifactPinFold.ts`) and the Dart fold in
 Mobile (`features/agents_repo/domain/artifact_pin_fold.dart`) must bind to the

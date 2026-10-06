@@ -1,4 +1,4 @@
-# Buzz Docker Compose deployment
+# Beekeeper Docker Compose deployment
 
 This is the single-node/VPS deployment bundle. It is intentionally separate from
 the root `docker-compose.yml`, which remains local development infrastructure.
@@ -42,7 +42,7 @@ keypair.
   database. Auto-migration requires an image that includes embedded SQLx
   migrations.
 - The stack uses Postgres, Redis, RustFS, and a git data volume because
-  those are real Buzz dependencies today. Minimal mode can simplify this later.
+  those are real Beekeeper dependencies today. Minimal mode can simplify this later.
 - The bundled Compose stack fixes the relay endpoint to `http://rustfs:9000` and
   `BUZZ_S3_ADDRESSING_STYLE=path`: Docker DNS resolves `rustfs`, not
   `<bucket>.rustfs`. It is not configurable for an external S3 provider through

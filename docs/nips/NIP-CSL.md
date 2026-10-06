@@ -1,6 +1,6 @@
 # NIP-CSL: Coding-Session Lifecycle Commands
 
-`kind:44221` is a durable, channel-scoped lifecycle command from a Buzz
+`kind:44221` is a durable, channel-scoped lifecycle command from a Beekeeper
 operator to a coding-session provider adapter. It creates a new session without
 exposing a host path, environment, secret, provider session identifier, or
 generation in signed operator intent.
@@ -98,7 +98,7 @@ to name an old relay as old rather than blame its own request.
 
 `session.resume` addresses the exact disconnected generation the operator
 observed. The provider resolves its persisted ACP cursor, working directory,
-runtime, and model locally. On success it keeps the Buzz `sessionId`, advances
+runtime, and model locally. On success it keeps the Beekeeper `sessionId`, advances
 `generation` by one, resets the per-generation transcript sequence, and emits
 new metadata. ACP `session/resume` is preferred when advertised;
 `session/load` is a compatibility fallback. If neither recovers context, a new
@@ -642,7 +642,7 @@ The schema, the gates and the selection order live in
 `crates/beekeeper-core/src/coding_session_routing.rs`; the rows and their provenance
 live in `team/model-registry.yaml`. The two shapes are pinned byte-for-byte by
 `testdata/routing/hire-request-fixture.json` and
-`testdata/routing/create-record-fixture.json`, which `buzz-core`'s validator,
+`testdata/routing/create-record-fixture.json`, which `beekeeper-core`'s validator,
 the CLI's emitter and the desktop's parser all read.
 
 **Deployment order.** The relay validates 44221 with `deny_unknown_fields` and
@@ -683,7 +683,7 @@ commands addressed to another authority.
 
 **No host-local runtime state travels in signed content.** Not paths,
 environment variables, secrets, process identifiers, or opaque ACP session
-ids. The provider-neutral Buzz `cs-target` is the deliberate exception for
+ids. The provider-neutral Beekeeper `cs-target` is the deliberate exception for
 `session.resume` and `session.stop`: its public session id and generation fence
 already identify signed lifecycle facts. The working directory in particular
 is machine-local configuration the producer resolves for itself;

@@ -9,14 +9,14 @@ introduced around donor commit `7bd7ef4`, read at pin `e0b8198bd144` from
 `to_import/hive`. No donor code was executed to produce any value here; <!-- absorption-verify-exempt: non-production reference -->
 every expected value below is re-derived by `fixtures.test.mjs`'s own
 independent implementations.
-**Buzz status:** rendering is partial (`desktop/src/features/coding-sessions`
-transcript model/view); Buzz had **no standalone export implementation** when
+**Beekeeper status:** rendering is partial (`desktop/src/features/coding-sessions`
+transcript model/view); Beekeeper had **no standalone export implementation** when
 this corpus was banked, so per OPERATING-PLAN §5 this row banked the donor
-contract as a corpus with the future Buzz implementation as its named
+contract as a corpus with the future Beekeeper implementation as its named
 consumer. **Consumer landed 2026-08-06:** the implementation now exists —
 pure law engine `desktop/src/features/coding-sessions/lib/transcriptExport/`,
 Rust fs executor `desktop/src-tauri/src/transcript_export/` (refusal +
-never-overwrite laws), embedded Buzz-owned static viewer, and the
+never-overwrite laws), embedded Beekeeper-owned static viewer, and the
 release-manifest script `scripts/export-viewer-release-manifest.mjs` — and
 `implementation.test.mjs` in this directory binds it to every fixture
 vector, triangulating with `fixtures.test.mjs`'s independent
@@ -96,4 +96,4 @@ prepared assets is H-05c's plane.
 value is discarded at the call site, so a hypothetical top-level *string*
 argument would silently not be rewritten. The actual call passes the
 messages array, so the donor behavior is correct for its only call shape; a
-Buzz implementation should not copy the discard-the-return pattern.
+Beekeeper implementation should not copy the discard-the-return pattern.

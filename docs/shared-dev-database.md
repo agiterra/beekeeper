@@ -12,7 +12,7 @@ other worktree. The database can only match one branch at a time, and several
 tools will silently or loudly disagree with it. All four hazards below are real
 and were hit in one afternoon.
 
-## 1. The `#[ignore]`d buzz-db tests rebuild the schema from the invoking worktree
+## 1. The `#[ignore]`d beekeeper-db tests rebuild the schema from the invoking worktree
 
 `crates/beekeeper-db` has ~120 Postgres-backed tests marked
 `#[ignore = "requires Postgres"]`. Many are destructive: they `DROP SCHEMA
@@ -28,7 +28,7 @@ which come from `feature/project-access`.
 
 Nothing warns you. The tests pass.
 
-**Rule: never point a Postgres-backed buzz-db test at the default database.**
+**Rule: never point a Postgres-backed beekeeper-db test at the default database.**
 Create a throwaway one:
 
 ```bash
@@ -61,7 +61,7 @@ A related trap: cross-process contention produces failures that look exactly
 like code regressions. `deletion::postgres_tests` fails with
 `community deletion catalog drift (unknown=late_altered_scoped, …)` when
 `migration.rs`'s tests hold their fixture tables concurrently — nothing to do
-with the code under test. **Before believing a buzz-db failure, confirm no
+with the code under test. **Before believing a beekeeper-db failure, confirm no
 other cargo/just process is running.**
 
 ## 3. Nothing in the sanctioned gates runs these tests

@@ -1,4 +1,4 @@
-# Multi-Tenant Buzz Relay: A Formal Specification
+# Multi-Tenant Beekeeper Relay: A Formal Specification
 
 `draft`
 
@@ -13,7 +13,7 @@ across the relay's logical interface (query results, authorization decisions,
 emitted errors, and audit-chain contents) — and **authorization soundness** — no
 credential, signature, or forged event lets an actor cross a community boundary.
 
-Today a Buzz relay *process* is the security boundary: one `DATABASE_URL`, one
+Today a Beekeeper relay *process* is the security boundary: one `DATABASE_URL`, one
 relay keypair, one relay-global `relay_members` table, with `channel_id` (the
 `h` tag) as the only sub-relay locality. The model proven here demotes the relay
 process to stateless compute and elevates a new **community** entity to the
@@ -433,9 +433,9 @@ predicate fail closed rather than leak (Theorem I4).
   already relies on this; we cite it the way git-on-s3 cites its CAS axiom.)
 - **(P3)** *NIP-98 mint freshness.* A NIP-98 mint event (kind:27235) is accepted
   at most once. The implementation enforces this with two checks: a `created_at`
-  within ±60s of server time (`buzz-auth/src/nip98.rs:77-83`,
+  within ±60s of server time (`beekeeper-auth/src/nip98.rs:77-83`,
   `TIMESTAMP_TOLERANCE_SECS = 60`) **and** a seen-set keyed on event id
-  (`buzz-relay/src/api/bridge.rs::check_nip98_replay`), whose cache TTL (120s,
+  (`beekeeper-relay/src/api/bridge.rs::check_nip98_replay`), whose cache TTL (120s,
   `state.rs:407`) is 2× the window so a mint valid at either edge stays tracked
   for the full window. The Tamarin model abstracts the window as a fresh nonce on
   `~time` (`MultiTenantAuth.spthy:91`), which over-approximates the
@@ -663,7 +663,7 @@ Each axiom is *admitted* per deployment, not assumed universally:
   migration lint asserting `channels.community_id` is never mutated after insert
   (no `UPDATE`/`ALTER`/drop-recreate). A failing lint rejects the deployment.
 - **P-SIG / A_HASH** are the standard Nostr crypto assumptions; admitted by using
-  the audited libraries the rest of Buzz uses.
+  the audited libraries the rest of Beekeeper uses.
 - **P3** is admitted by the NIP-98 handler enforcing *both* timestamp-range
   validation and the seen-event-id check (`check_nip98_replay`) before any mint.
   Two structural gates make the seen-set sound, and both are conformance checks

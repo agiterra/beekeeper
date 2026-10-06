@@ -1848,7 +1848,7 @@ One column, in the order of the thinking:
 | **Governed** | genesis + authority chain, or not | **derived from the lead**, never a free switch |
 | **Provider and model** | what the lead runs on | the identity's own model, or an override with a reason |
 | **Bench** | who the lead may hire, and on which runtimes | published as `bench.identities` / `bench.providers` |
-| **Posture, budget, limits** | the kind:44245 record | native `buzz-core` validation, no TypeScript rules |
+| **Posture, budget, limits** | the kind:44245 record | native `beekeeper-core` validation, no TypeScript rules |
 | **Working directory / worktree** | where the lead runs | unchanged |
 | **Access** | the channel or the project | unchanged |
 | **Readiness** | blockers inline, unknowns behind *Details* | one pure function, shared with the button |
@@ -2580,7 +2580,7 @@ because acceptance is a fact about a relay receipt this boundary is not given.
 
 It does **not** re-derive the chain: a second implementation beside
 `crates/beekeeper-session-provider/src/authority.rs` would be the same drift with
-more code. **The real fix — lifting that file into `buzz-core` so provider,
+more code. **The real fix — lifting that file into `beekeeper-core` so provider,
 CLI and Desktop share one chain — is a named follow-on. This is a narrowing,
 not a closure.**
 
@@ -2625,7 +2625,7 @@ a badge with no event behind it.
 
 **An optional key is offered only where the bytes can carry it.** §1k's
 `condition` (lane L7) reaches the wire through a capability the Rust side
-**measures** — it hands `buzz-core`'s own decoder a canonical answer carrying
+**measures** — it hands `beekeeper-core`'s own decoder a canonical answer carrying
 the key and reports whether it was accepted. Where it is, the form shows
 `Condition (optional)` with a byte counter and §1l's hint; where it is not, the
 field is absent and a sentence says so rather than leaving a reader to guess
@@ -2722,10 +2722,10 @@ mechanism under a key, not by cooperation:
 
 | producer | what it produces | where |
 |---|---|---|
-| the hire host | a `post-commit` hook in the **seat's own worktree** that pushes `HEAD` to `refs/heads/wip/<role>/<assignment-hex8>` under the seat's key, and a `prepare-commit-msg` hook that adds an `Assignment:` trailer | `buzz-core::seat_git_hooks`, `scripts/wip-post-commit.sh` |
+| the hire host | a `post-commit` hook in the **seat's own worktree** that pushes `HEAD` to `refs/heads/wip/<role>/<assignment-hex8>` under the seat's key, and a `prepare-commit-msg` hook that adds an `Assignment:` trailer | `beekeeper-core::seat_git_hooks`, `scripts/wip-post-commit.sh` |
 | a person, opt-in | the same `post-commit` hook, pushing to `refs/heads/wip/<their-pubkey8>/<branch>` under **their own** key, off until `just wip-share-on` | `lefthook.yml` `post-commit`, `Justfile` |
 | the provider | 44246 `gate` rows with `source: "observed"` (Lane L5's field) | consumed here through one adapter |
-| the relay | kind 30618 ref state, signed after a push | `buzz-cli::commands::wip_refs` |
+| the relay | kind 30618 ref state, signed after a push | `beekeeper-cli::commands::wip_refs` |
 
 **What the installer writes, and the one line it writes outside the worktree.**
 Hooks go into the target worktree's own `.git/hooks`, and the config lines go
@@ -2754,7 +2754,7 @@ missions --format compact` prints exactly those strings and Desktop renders the
 same strings into elements with testids, re-wording nothing. A golden test
 (`crates/beekeeper-cli/src/commands/pulse_mission_tests.rs`) asserts the CLI adds no
 prose of its own; a second test asserts no sentence is composed outside
-`buzz-core`.
+`beekeeper-core`.
 
 **Two limits this surface states rather than implies.**
 

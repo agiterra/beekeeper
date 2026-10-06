@@ -1,7 +1,7 @@
 # Project to-do fold — v1 conformance contract
 
 This directory is the byte-exact source of truth for the project to-do fold
-and the fractional rank beneath it. The Rust fold in `buzz-core`
+and the fractional rank beneath it. The Rust fold in `beekeeper-core`
 (`project_todo_fold.rs`, used by `bee todos`), the TypeScript fold in Desktop
 (`features/project-todos/lib/todoFold.ts`) and the Dart fold in Mobile
 (`features/project_todos/domain/project_todo_fold.dart`) must bind to the

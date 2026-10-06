@@ -1,11 +1,11 @@
 # buzz-acp
 
-ACP harness that connects AI agents to Buzz. The harness listens for @mentions on the relay, prompts your agent, and the agent replies using the Buzz CLI.
+ACP harness that connects AI agents to Beekeeper. The harness listens for @mentions on the relay, prompts your agent, and the agent replies using the Beekeeper CLI.
 
 ```
-Buzz Relay ──WS──→ buzz-acp ──stdio──→ Your Agent
+Beekeeper Relay ──WS──→ buzz-acp ──stdio──→ Your Agent
                                                │
-                                          Buzz CLI
+                                          Beekeeper CLI
                                        (send_message, etc.)
 ```
 
@@ -13,7 +13,7 @@ Supports any agent that speaks [ACP](https://agentclientprotocol.com/) over stdi
 
 ## Prerequisites
 
-- A running Buzz relay (`just relay` starts Docker services automatically, or use a hosted instance)
+- A running Beekeeper relay (`just relay` starts Docker services automatically, or use a hosted instance)
 - A Nostr keypair for the agent (see [Generating Keys](#generating-keys))
 
 Build:
@@ -25,7 +25,7 @@ export PATH="$PWD/target/release:$PATH"
 
 ## Generating Keys
 
-Each agent needs a Nostr keypair — this is the agent's identity in Buzz. Use `buzz-admin` to generate one:
+Each agent needs a Nostr keypair — this is the agent's identity in Beekeeper. Use `buzz-admin` to generate one:
 
 ```bash
 cargo run -p beekeeper-admin -- generate-key
@@ -50,7 +50,7 @@ The harness discovers channels by querying the relay with the agent's authentica
 
 By default, the harness discovers only channels the agent is a **member** of (`GET /api/channels?member=true`). When the agent is added to a new channel, the membership notification subscription auto-subscribes to it.
 
-**Private channels** require explicit membership. The relay doesn't yet have a REST/event API for managing channel members — this is a known gap. For now, use `create_channel` via the Buzz CLI to create new channels (the creator is automatically a member).
+**Private channels** require explicit membership. The relay doesn't yet have a REST/event API for managing channel members — this is a known gap. For now, use `create_channel` via the Beekeeper CLI to create new channels (the creator is automatically a member).
 
 ## Quick Start (goose)
 
@@ -62,7 +62,7 @@ export GOOSE_MODE=auto
 buzz-acp
 ```
 
-That's it. The harness spawns `goose acp`, connects to the relay, discovers channels, and starts listening. When someone @mentions the agent, goose receives the message and can reply using the Buzz CLI that the harness configures automatically.
+That's it. The harness spawns `goose acp`, connects to the relay, discovers channels, and starts listening. When someone @mentions the agent, goose receives the message and can reply using the Beekeeper CLI that the harness configures automatically.
 
 ## Running with Codex
 
@@ -157,10 +157,10 @@ The gate applies to **all** inbound events — @mentions, DMs, thread replies, a
 
 Under the default `channel` policy, a session scope is the whole channel, so these commands retain their channel-wide behavior. Under the `thread` policy, post the command as a reply in the target thread so `!cancel` or `!rotate` affects only that thread. DMs remain one conversation scope. `!cancel` is a no-op when its scope is idle.
 
-Owner control commands must be kind:9 stream messages from the owner, must have body exactly `!cancel`, `!rotate`, or `!shutdown` after trimming, and must mention this agent with a separate `p` tag. They are consumed by the harness instead of being forwarded to the agent. An inline `@Name` changes the body and does not match. With the Buzz CLI, target a thread while preserving the exact command body by passing the mention separately:
+Owner control commands must be kind:9 stream messages from the owner, must have body exactly `!cancel`, `!rotate`, or `!shutdown` after trimming, and must mention this agent with a separate `p` tag. They are consumed by the harness instead of being forwarded to the agent. An inline `@Name` changes the body and does not match. With the Beekeeper CLI, target a thread while preserving the exact command body by passing the mention separately:
 
 ```bash
-buzz messages send --channel <channel-id> --reply-to <thread-root-id> \
+bee messages send --channel <channel-id> --reply-to <thread-root-id> \
   --mention <agent-pubkey> --content '!cancel'
 ```
 
@@ -259,7 +259,7 @@ Forum event kinds:
 2. **Channel discovery** — Queries the relay REST API for accessible channels, subscribes to each.
 3. **Event loop** — Listens for @mention events (kind 9 with the agent's pubkey in a `#p` tag). Events queue per channel.
 4. **Prompting** — When events are pending and no prompt is in flight for that channel, drains all queued events for the oldest channel into a single batched prompt via ACP `session/prompt`.
-5. **Agent response** — The agent processes the prompt and uses the Buzz CLI (`send_message`, `get_messages`, etc.) to interact with Buzz.
+5. **Agent response** — The agent processes the prompt and uses the Beekeeper CLI (`send_message`, `get_messages`, etc.) to interact with Beekeeper.
 6. **Recovery** — If the agent crashes, the harness respawns it. If the relay disconnects, the harness reconnects with a `since` filter to avoid missing events.
 
 Each channel has at most one prompt in flight. Multiple channels can be processed concurrently when agents > 1.
@@ -272,7 +272,7 @@ Beekeeper Desktop supports registering any ACP-speaking agent tool as a selectab
 
 ### How it works
 
-**Tier-1 — compiled-in runtimes** (Goose, Claude Code, Codex, Buzz Agent): have auto-installers, auth probes, and first-class onboarding. Their IDs (`goose`, `claude`, `codex`, `buzz-agent`) are reserved and cannot be overridden.
+**Tier-1 — compiled-in runtimes** (Goose, Claude Code, Codex, Beekeeper Agent): have auto-installers, auth probes, and first-class onboarding. Their IDs (`goose`, `claude`, `codex`, `buzz-agent`) are reserved and cannot be overridden.
 
 **Tier-2 — preset catalog** (Cursor, Oh My Pi, Grok Build, OpenCode, Kimi Code, Amp, Hermes Agent, OpenClaw): static `HarnessDefinition` entries in `desktop/src-tauri/src/managed_agents/discovery.rs` (`PRESET_HARNESSES`). They are always present in the runtime catalog, PATH-probed for availability, not editable or deletable by the user. Displayed with bundled logos; if not installed, a docs link appears instead.
 
@@ -301,7 +301,7 @@ Fields:
 - `label` — human-readable name shown in the UI
 - `command` — the executable name or absolute path (must be non-empty)
 - `args` — optional default CLI arguments (array); instance-level args override this when non-empty
-- `env` — optional environment variables injected at spawn time (definition env is a floor; user/persona/global env overrides it; Buzz-reserved keys like `BUZZ_MANAGED_AGENT` are always stripped and cannot be overridden)
+- `env` — optional environment variables injected at spawn time (definition env is a floor; user/persona/global env overrides it; Beekeeper-reserved keys like `BUZZ_MANAGED_AGENT` are always stripped and cannot be overridden)
 - `installInstructionsUrl` / `installHint` — shown when the binary is not on PATH
 
 Invalid files (bad JSON, unknown id, empty command) are skipped with a warning and do not break discovery for other entries.
@@ -311,7 +311,7 @@ Invalid files (bad JSON, unknown id, empty command) are skipped with a warning a
 - No install shell commands in preset or custom definitions — only the user's own PATH is consulted.
 - `can_auto_install` is always `false` for preset and custom entries.
 - No user-supplied icon URLs — icons are bundled assets keyed by id in `RuntimeIcon.tsx`.
-- `BUZZ_MANAGED_AGENT` and other Buzz identity keys cannot be overridden by `env` in a custom definition; they are stripped before merging.
+- `BUZZ_MANAGED_AGENT` and other Beekeeper identity keys cannot be overridden by `env` in a custom definition; they are stripped before merging.
 
 ### Adding a preset (contributor guide)
 

@@ -1,4 +1,4 @@
-# Trace Schema (`buzz-conformance`)
+# Trace Schema (`beekeeper-conformance`)
 
 Schema version: **1** (`SCHEMA_VERSION` in `src/lib.rs`).
 

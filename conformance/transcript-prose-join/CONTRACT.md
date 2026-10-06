@@ -154,7 +154,7 @@ S3–S5 reuse those folds rather than adding a second lease reader.
 
 Not readers for this purpose: the producer itself (`buzz-session-provider`
 `session.rs`, `lib.rs`, `context_projector.rs`, `config.rs`), the payload
-type registry (`buzz-core/src/coding_session_payload.rs`), the decoders'
+type registry (`beekeeper-core/src/coding_session_payload.rs`), the decoders'
 kind lists (`codingSessionTranscriptItemContract.ts`, `codingSessionDefensive.ts`,
 `transcriptItemContract.ts`, `defensive.ts`), the export engine and its
 viewer, which consume what `transcriptExportMessages.ts` hands them, and a

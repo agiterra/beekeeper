@@ -49,14 +49,14 @@ Prints all derived cryptographic values from the NIP-AB spec's fixed test keys. 
 buzz-pair test-vectors
 ```
 
-## Testing Against a Local Buzz Relay
+## Testing Against a Local Beekeeper Relay
 
-The CLI supports NIP-42 authentication, so it works with Buzz relays out of the box.
+The CLI supports NIP-42 authentication, so it works with Beekeeper relays out of the box.
 
 ### Prerequisites
 
 - Docker running (for Postgres, Redis, etc.)
-- Buzz relay built: `cargo build --release -p beekeeper-relay`
+- Beekeeper relay built: `cargo build --release -p beekeeper-relay`
 
 ### Start the relay
 

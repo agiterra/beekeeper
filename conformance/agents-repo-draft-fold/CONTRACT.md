@@ -1,7 +1,7 @@
 # Agents-repository draft fold — v1 conformance contract
 
 This directory is the byte-exact source of truth for the agents-repository
-draft fold. The Rust fold in `buzz-core` (`agents_repo_draft_fold.rs`, used
+draft fold. The Rust fold in `beekeeper-core` (`agents_repo_draft_fold.rs`, used
 by `bee agents-repo`), the TypeScript fold in Desktop
 (`features/agents-repo/lib/agentsRepoDraftFold.ts`) and the Dart fold in
 Mobile (`features/agents_repo/domain/agents_repo_draft_fold.dart`) must bind

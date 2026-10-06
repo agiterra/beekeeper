@@ -29,7 +29,7 @@ configuration**, **presence-is-status**, **at-most-one-live-instance**, and
 rules.
 
 A scoping note that governs the whole document: the desktop is **one
-launcher among many**. What makes a process a live Buzz agent is a keypair,
+launcher among many**. What makes a process a live Beekeeper agent is a keypair,
 a NIP-OA auth tag, and a relay URL, handed as environment to the `buzz-acp`
 harness; anything that can set that environment and exec the harness — a
 bash script, a systemd unit, a CI job, or this document's provider protocol
@@ -83,7 +83,7 @@ Five principals:
   `D` never talks to `S`.
 - **Agent** `A` — a `buzz-acp` harness process (plus the ACP agent under it)
   running on `S`, holding the nsec it was given, connected to the relay.
-- **Relay** `R` — the Buzz relay. The *only* channel that connects `D` to a
+- **Relay** `R` — the Beekeeper relay. The *only* channel that connects `D` to a
   running `A`. Everything `D` knows about a live remote agent, it learns
   from `R`.
 
@@ -119,7 +119,7 @@ That path is not the definition of a remote agent, and this section states
 the actual layering, because the obligations in this document do not all
 bind at the same layer. Three contracts, nested:
 
-1. **The agent/harness contract — binds every launcher.** A live Buzz agent
+1. **The agent/harness contract — binds every launcher.** A live Beekeeper agent
    is a `buzz-acp` process holding a keypair, a NIP-OA auth tag (or resolved
    owner pubkey), and a relay URL, delivered as environment. The relay
    authenticates the keypair and the auth tag — never the launcher. At this
@@ -245,7 +245,7 @@ one.
   `backend_agent_id`) is bookkeeping, not liveness. Staleness bound: presence
   can be wrong for the window between an abnormal agent death (SIGKILL, node
   loss) and the relay's presence expiry — **180 seconds**
-  (`PRESENCE_TTL_SECS`, `buzz-pubsub/src/presence.rs:16`; the vision's
+  (`PRESENCE_TTL_SECS`, `beekeeper-pubsub/src/presence.rs:16`; the vision's
   "a bounded wrong dot, never an indefinite one"), the accepted
   cost of M1. The specific number is a relay-wide constant, not a
   remote-agent choice: #3783 raised it from 90s to keep a three-heartbeat
@@ -655,13 +655,13 @@ failure. The provider/image re-derives:
 `auth_tag` (→ `BUZZ_AUTH_TAG`) or a non-null `launch.owner_pubkey`
 (→ `BUZZ_ACP_AGENT_OWNER`) before any mutation; if both are null it MUST
 refuse the deploy. Without an owner the harness cannot match `!shutdown`
-(`buzz-acp/src/lib.rs: resolve_agent_owner`, main-loop owner check) and the
+(`beekeeper-acp/src/lib.rs: resolve_agent_owner`, main-loop owner check) and the
 agent answers its own stop command conversationally — §Stop would be
 describing a mechanism that does not work. `BUZZ_ACP_AGENT_OWNER` is a
 reserved key, so this value can only arrive as authoritative launch data,
 never through user env.
 
-**Buzz shared compute (relay-mesh) is non-deployable, and this is forced,
+**Beekeeper shared compute (relay-mesh) is non-deployable, and this is forced,
 not chosen.** The mesh rewrite resolves to an OpenAI-compatible transport at
 `http://127.0.0.1:9337/v1` (`relay_mesh.rs: RELAY_MESH_API_BASE_URL`) — a
 loopback proxy on the desktop. Serializing that policy into a pod points the
@@ -703,7 +703,7 @@ no-op'd against, deleted, GC'd, or have its Secret touched; the provider
 MUST either ignore it or fail with an explicit collision error. Only
 annotation-verified objects proceed.
 
-**Auto-repair is fenced to Buzz-authored, positively identified residue
+**Auto-repair is fenced to Beekeeper-authored, positively identified residue
 (normative).** The destructive rows below (delete residue, replace a
 never-started body, GC a Secret) are legitimate *only because* every object
 they touch carries positive **protocol ownership evidence** — and identity
@@ -721,7 +721,7 @@ writer can forge metadata by definition, and an actor with write access to
 the namespace can already delete the pod outright — the marker's job is
 making *accidental* schema collisions and third-party objects fail closed,
 not defeating a hostile admin. The vision's rule that a never-started body
-is substrate-operator residue survives with one qualifier: *Buzz-authored*
+is substrate-operator residue survives with one qualifier: *Beekeeper-authored*
 create-state (a Secret our provider wrote, a pod carrying our verified
 annotations and marker) is the reconciler's to clear, because it is state
 the user cannot reasonably clear themselves; *substrate* wreckage —
@@ -1781,7 +1781,7 @@ Marked `[DECISION]` inline; consolidated:
   (shared-compute agents are local-only until an in-image mesh client
   exists).
 - **G. Remote override semantics** — the spec keeps local semantics: user
-  env continues to beat Buzz behavior defaults remotely (three-tier
+  env continues to beat Beekeeper behavior defaults remotely (three-tier
   precedence, §Launch data), because the alternative is a quiet behavior
   fork between local and remote spawns of the same record. Flagged because
   it is a policy statement about what power users may do to remote pods.
@@ -1799,7 +1799,7 @@ Marked `[DECISION]` inline; consolidated:
   (§Deploy State Machine) lets a config *change* replace a never-started
   pod, closing the config wedge. Ruled on the vision-consistency half:
   Start-time auto-repair of never-started bodies is legitimate, **fenced
-  to Buzz-authored, positively identified residue** (§Deploy State Machine
+  to Beekeeper-authored, positively identified residue** (§Deploy State Machine
   auto-repair rule) — the vision's "never-started body is operator
   residue" line gains that qualifier rather than being waived. The
   remaining product question: does v1 owe users an explicit in-product
@@ -1810,7 +1810,7 @@ Marked `[DECISION]` inline; consolidated:
 
 ## Summary
 
-Remote agents extend Buzz's managed-agent model across a deliberately thin
+Remote agents extend Beekeeper's managed-agent model across a deliberately thin
 boundary: one untrusted binary, two JSON operations, and a relay. The
 desktop's obligations end at a well-formed, fail-closed deploy payload; the
 provider's obligations are convergence and honesty about state; the agent's

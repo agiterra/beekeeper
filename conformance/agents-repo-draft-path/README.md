@@ -5,7 +5,7 @@ strict readers answer this question, in three languages:
 
 | reader | file |
 | --- | --- |
-| `buzz-core` (used by `bee agents-repo`) | `crates/beekeeper-core/src/agents_repo_draft.rs` — `validate_draft_path` |
+| `beekeeper-core` (used by `bee agents-repo`) | `crates/beekeeper-core/src/agents_repo_draft.rs` — `validate_draft_path` |
 | Desktop | `desktop/src/features/agents-repo/lib/agentsRepoDraftOp.ts` — `draftPathClass` |
 | Mobile | `mobile/lib/features/agents_repo/domain/agents_repo_draft_op.dart` — `draftPathClass` |
 
@@ -71,7 +71,7 @@ so it may be organised.
   Git has no empty directories, so a folder someone created and has not filled
   yet exists only as its keep; without that, "new folder" and "pin a folder"
   would be things the product claims and git drops at the next commit.
-- `svg` is admitted as an asset although `buzz-media` refuses `image/svg+xml`
+- `svg` is admitted as an asset although `beekeeper-media` refuses `image/svg+xml`
   as an upload MIME (`crates/beekeeper-media/src/validation.rs`, the active-web-content
   block). In the tree an asset is only ever rendered through `<img>`, which runs
   no script, or inside the preview window, which has its own CSP and no network.

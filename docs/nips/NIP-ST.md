@@ -6,7 +6,7 @@ Shared Terminals
 
 `draft` `optional` `relay`
 
-**Depends on**: NIP-01 (basic event format, addressable and ephemeral events), NIP-MP (`kind:30621` projects and the Buzz access extension's project ACL). Interacts with NIP-42 (relay auth).
+**Depends on**: NIP-01 (basic event format, addressable and ephemeral events), NIP-MP (`kind:30621` projects and the Beekeeper access extension's project ACL). Interacts with NIP-42 (relay auth).
 
 ## Abstract
 

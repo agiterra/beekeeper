@@ -1,9 +1,9 @@
-# Buzz Entity Links
+# Beekeeper Entity Links
 
 Status: **partially implemented**. Done on this branch:
 
 - Slice 0 — HTTPS relay git clone URLs (`{relay-origin}/git/<pubkey>/<repo>`)
-  render as Buzz repository preview cards in chat
+  render as Beekeeper repository preview cards in chat
   (`desktop/src/shared/lib/linkPreview.ts`).
 - Slice 1 — `beekeeper://pr|issue|repo|project` deep links: `entityLink.ts`
   builders/parser, preview cards with relay title enrichment (repo and
@@ -31,8 +31,8 @@ are produced entirely client-side by URL parsing in
 `desktop/src/shared/lib/linkPreview.ts` and rendered by
 `desktop/src/shared/ui/link-preview-attachment.tsx`.
 
-Buzz-hosted entities have no equivalent. There is **no link format at all**
-for a Buzz repository, project, pull request, or issue:
+Beekeeper-hosted entities have no equivalent. There is **no link format at all**
+for a Beekeeper repository, project, pull request, or issue:
 
 - The only rich deep link today is `beekeeper://message?channel=…&id=…`
   (`desktop/src/features/messages/lib/messageLink.ts`), rendered as an inline
@@ -42,17 +42,17 @@ for a Buzz repository, project, pull request, or issue:
   `add-community`, `message`, and `nostr-bind` — no git entities.
 - `bee pr open` / `bee issues create` return raw event ids; there is no URL
   in their output and no guidance in the agent base prompt
-  (`crates/beekeeper-acp/src/base_prompt.md`) for referencing Buzz work items in
+  (`crates/beekeeper-acp/src/base_prompt.md`) for referencing Beekeeper work items in
   chat. Agents can only say "PR up" with a hex id.
 - The relay-served web client only has `/repos/$repoId`; no PR/issue pages.
 
-So an agent that opens a PR on a Buzz-hosted repository cannot produce
+So an agent that opens a PR on a Beekeeper-hosted repository cannot produce
 anything clickable, while the same agent opening a GitHub PR gets a card for
 free.
 
 ## Goals
 
-1. A canonical, shareable link format for Buzz repositories, projects, pull
+1. A canonical, shareable link format for Beekeeper repositories, projects, pull
    requests, and issues.
 2. Rich preview cards in the desktop message timeline for those links, with
    parity to (and better data than) the GitHub cards — titles come from the
@@ -106,7 +106,7 @@ beekeeper://issue?id=<event-id-hex>&owner=<pubkey-hex>&d=<repo-dtag>
 
 Validation rules match the existing codebase: `owner` and `id` are
 `/^[a-f0-9]{64}$/`; `d` follows addressable d-tag rules already enforced in
-`projectModels.ts` / `buzz-sdk`.
+`projectModels.ts` / `beekeeper-sdk`.
 
 ### HTTPS URLs
 
@@ -134,7 +134,7 @@ today:
 
 1. **Autolinked bare URL** (`<beekeeper://pr?…>` or bare in text): render an
    **attachment card** below the message in the existing `AttachmentGroup`,
-   exactly like GitHub cards. Provider label `Buzz`, type label
+   exactly like GitHub cards. Provider label `Beekeeper`, type label
    `PR` / `issue` / `repo` / `project`.
 2. **Explicitly labeled markdown link** (`[fix the tooltip](beekeeper://pr?…)`):
    keep the author's label inline (same rule as
@@ -142,7 +142,7 @@ today:
 
 ### Card content and enrichment
 
-Unlike GitHub (title derived from URL path only), Buzz entities live on the
+Unlike GitHub (title derived from URL path only), Beekeeper entities live on the
 same relay, so the card can show real data:
 
 | Entity  | Title source                              | Fallback            |
@@ -211,7 +211,7 @@ in `AppShell` for the main window only — re-parses it with `parseEntityLink`
 and reuses `useOpenEntityLink`, so a link opened from the OS lands on the
 same view as one clicked in a message.
 
-## CLI (`buzz-cli`)
+## CLI (`beekeeper-cli`)
 
 Add a `link` field to the JSON output of the write commands that create
 linkable entities:
@@ -254,11 +254,11 @@ No persona changes needed — the base prompt applies to all managed agents.
 ## Implementation plan (suggested PR slices)
 
 0. **HTTPS clone-URL repo cards** *(done, this branch)* — recognize relay
-   `/git/<pubkey>/<repo>` URLs in `linkPreview.ts`, `Buzz` provider card
+   `/git/<pubkey>/<repo>` URLs in `linkPreview.ts`, `Beekeeper` provider card
    with the `BeekeeperMark` logo, href normalized to the `beekeeper://repo` deep link
    for in-app navigation.
 1. **Link core + cards** *(done, this branch)* — `entityLink.ts`, detection
-   in `linkPreview.ts`, `Buzz` card variant in
+   in `linkPreview.ts`, `Beekeeper` card variant in
    `link-preview-attachment.tsx`, in-timeline click navigation, relay title
    enrichment (with `resetLinkPreviewTitleCache()` wired into
    `resetCommunityState()`). Unit tests (`entityLink.test.mjs`, extended

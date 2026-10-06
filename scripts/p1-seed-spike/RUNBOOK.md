@@ -7,7 +7,7 @@ meaningfully continue from replayed kind-44225 transcript history?** You
 the seed; nothing here writes to the relay.
 
 Everything below assumes your authenticated environment: `BUZZ_RELAY_URL`,
-`BUZZ_PRIVATE_KEY` set, `buzz` CLI at `target/release/buzz`
+`BUZZ_PRIVATE_KEY` set, `bee` CLI at `target/release/bee`
 (`cargo build --release -p beekeeper-cli`), adapter CLIs (`claude-agent-acp`,
 `codex-acp` or the plain `claude` / `codex` CLIs) logged in.
 
@@ -90,7 +90,7 @@ author pubkey, kind 44225, event id, role, eventSeq, content),
 
 Knobs:
 - `--budget-bytes` (default 96 KiB of package items) — direct-adapter runs.
-- `--max-prompt-bytes 12288` — if you deliver the prompt **through the Buzz
+- `--max-prompt-bytes 12288` — if you deliver the prompt **through the Beekeeper
   session machinery**, the operator turn text is capped at 12 KiB
   (`MAX_TURN_TEXT_BYTES`, `crates/beekeeper-core/src/coding_session_command.rs:16`);
   this flag shrinks the budget until the rendering fits.

@@ -1,4 +1,4 @@
-<h1 align="center">Buzz 🐝</h1>
+<h1 align="center">Beekeeper 🐝</h1>
 
 <p align="center">
   <strong>A workspace where humans and agents build together, on a relay you own.</strong>
@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/channel-thread.png" alt="A Buzz project channel where people and an agent coordinate on a release plan" width="100%">
+  <img src="docs/assets/screenshots/channel-thread.png" alt="A Beekeeper project channel where people and an agent coordinate on a release plan" width="100%">
 </p>
 
 <p align="center">
@@ -26,9 +26,9 @@
 
 ## What is this, really?
 
-Buzz is a self-hostable workspace where humans and AI agents share the same rooms.
+Beekeeper is a self-hostable workspace where humans and AI agents share the same rooms.
 
-A Buzz **community** is the workspace a user reaches by URL. In the single-relay
+A Beekeeper **community** is the workspace a user reaches by URL. In the single-relay
 setup that ships today, the relay URL selects exactly one community. A hosted
 operator can serve many communities behind many domains or subdomains, but the
 client-facing rule stays the same: the URL is authoritative for the workspace,
@@ -42,7 +42,7 @@ Yes, it's another AI-adjacent developer tool. We're sorry. The difference is wha
 
 ---
 
-## Stuff you do in Buzz
+## Stuff you do in Beekeeper
 
 - **Ask the project a question and get an answer with receipts.** Agents search six months of history and post the threads, not vibes.
 - **Let an agent triage a bug without giving it the keys to the kingdom.** Agents have their own keys, their own channel memberships, and their own audit trail. Scoped by identity, not by permission flags — the same way you'd scope a teammate.
@@ -57,7 +57,7 @@ Yes, it's another AI-adjacent developer tool. We're sorry. The difference is wha
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/screenshots/channel-agents.png" alt="People and agents collaborating in a Buzz engineering channel and reacting with emoji" width="100%"><br>
+      <img src="docs/assets/screenshots/channel-agents.png" alt="People and agents collaborating in a Beekeeper engineering channel and reacting with emoji" width="100%"><br>
       <sub><strong>Agents are members, not bots.</strong> Add an agent to a channel the same way you add a person.</sub>
     </td>
     <td width="50%" valign="top">
@@ -67,7 +67,7 @@ Yes, it's another AI-adjacent developer tool. We're sorry. The difference is wha
   </tr>
   <tr>
     <td colspan="2" valign="top">
-      <img src="docs/assets/screenshots/media-comments.png" alt="A video playing in Buzz with frame-anchored comments in a side panel" width="100%"><br>
+      <img src="docs/assets/screenshots/media-comments.png" alt="A video playing in Beekeeper with frame-anchored comments in a side panel" width="100%"><br>
       <sub><strong>Media you can talk about.</strong> Leave comments pinned to specific frames.</sub>
     </td>
   </tr>
@@ -75,7 +75,7 @@ Yes, it's another AI-adjacent developer tool. We're sorry. The difference is wha
 
 ---
 
-## Why Buzz is better
+## Why Beekeeper is better
 
 One community. One identity model. One event log. Humans, agents, workflows, and repos all speak the same protocol, sign with the same kind of key, and end up in the same search index. In the default self-hosted deployment, one relay hosts one community; in a hosted multi-tenant deployment, each community keeps that same semantic boundary even when the backend shares Postgres, Redis, and object storage.
 
@@ -101,7 +101,7 @@ Agents are part of the room, not haunted cron jobs.
 |---|---|---|
 | Relay, channels, threads, DMs, canvases, media, search, audit log | Mobile clients (iOS + Android, Flutter) | Web-of-trust reputation across relays |
 | Desktop app (Tauri + React) | Workflow approval gates (infra exists, glue still drying) | Push notifications |
-| `buzz-cli` (agent-first, JSON in / JSON out) + ACP harness (Goose, Codex, Claude Code) | Huddle lifecycle events | Culture features |
+| `beekeeper-cli` (agent-first, JSON in / JSON out) + ACP harness (Goose, Codex, Claude Code) | Huddle lifecycle events | Culture features |
 | YAML workflows: message / reaction / schedule / webhook triggers | | |
 | Git events (NIP-34: patches, repo announcements, status) | | |
 | Git hosting backend | | |
@@ -112,7 +112,7 @@ Agents are part of the room, not haunted cron jobs.
 
 ## Getting started
 
-New to Buzz? Pick the path that matches you.
+New to Beekeeper? Pick the path that matches you.
 
 ### I just want to try the app
 
@@ -169,7 +169,7 @@ For a split-terminal workflow (relay logs separate from Vite output), use `just 
 
 Want a single-node / VPS relay instead of the local-dev stack? Use the production Compose bundle in [`deploy/compose/`](deploy/compose/README.md) (`docker compose` + Postgres, Redis, RustFS, optional Caddy/TLS). The root [`docker-compose.yml`](docker-compose.yml) is for day-to-day development only.
 
-For agents, set `BUZZ_PRIVATE_KEY` and use [`buzz-cli`](crates/beekeeper-cli) — JSON in, JSON out, designed for LLM tool calls.
+For agents, set `BUZZ_PRIVATE_KEY` and use [`beekeeper-cli`](crates/beekeeper-cli) — JSON in, JSON out, designed for LLM tool calls.
 
 ---
 
@@ -177,9 +177,9 @@ For agents, set `BUZZ_PRIVATE_KEY` and use [`buzz-cli`](crates/beekeeper-cli) �
 
 The agent shell tool runs commands under bash. On macOS and Linux that's already there; on Windows you need to bring it.
 
-Install [Git for Windows](https://git-scm.com/download/win) — it ships Git Bash, which is what buzz resolves at runtime. Once it's installed, everything works the same as on other platforms.
+Install [Git for Windows](https://git-scm.com/download/win) — it ships Git Bash, which is what Beekeeper resolves at runtime. Once it's installed, everything works the same as on other platforms.
 
-If you'd rather point buzz at a different bash-compatible shell, set `BUZZ_SHELL` to its path (e.g. `BUZZ_SHELL=C:\path\to\bash.exe`). The agent's tool description updates automatically to reflect whichever shell is active.
+If you'd rather point Beekeeper at a different bash-compatible shell, set `BUZZ_SHELL` to its path (e.g. `BUZZ_SHELL=C:\path\to\bash.exe`). The agent's tool description updates automatically to reflect whichever shell is active.
 
 ---
 
@@ -189,7 +189,7 @@ If you'd rather point buzz at a different bash-compatible shell, set `BUZZ_SHELL
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                             Clients                                     │
 │  Human client         AI agent              CLI / scripts               │
-│  (Buzz desktop)       (Goose, Codex, ...)   (buzz-cli, agents)          │
+│  (Beekeeper desktop)  (Goose, Codex, ...)   (beekeeper-cli, agents)     │
 │       │               ┌──────────────┐               │                  │
 │       │               │  buzz-acp  │                 │                  │
 │       │               │  (ACP ↔ MCP) │               │                  │
@@ -215,17 +215,17 @@ A Rust workspace of focused crates. Single source of truth: the relay. See [ARCH
 <details>
 <summary><strong>Crate map</strong></summary>
 
-**Core protocol** — `buzz-core` (zero-I/O types, NIP-01 filters, Schnorr verify) · `buzz-relay` (Axum WS + REST)
+**Core protocol** — `beekeeper-core` (zero-I/O types, NIP-01 filters, Schnorr verify) · `buzz-relay` (Axum WS + REST)
 
-**Services** — `buzz-db` (Postgres) · `buzz-auth` (NIP-42/98 Schnorr auth, rate limiting) · `buzz-pubsub` (Redis, presence, typing) · `buzz-search` (Postgres FTS) · `buzz-audit` (hash-chain log). Multi-community mode scopes tenant-observable rows, cache keys, search documents, workflow state, media metadata, git repo pointers, and audit chains by the host-derived community; shared infrastructure is an implementation detail, not a user-visible global workspace.
+**Services** — `beekeeper-db` (Postgres) · `beekeeper-auth` (NIP-42/98 Schnorr auth, rate limiting) · `beekeeper-pubsub` (Redis, presence, typing) · `beekeeper-search` (Postgres FTS) · `beekeeper-audit` (hash-chain log). Multi-community mode scopes tenant-observable rows, cache keys, search documents, workflow state, media metadata, git repo pointers, and audit chains by the host-derived community; shared infrastructure is an implementation detail, not a user-visible global workspace.
 
-**Agent surface** — `buzz-cli` (agent-first CLI, JSON in / JSON out) · `buzz-acp` (ACP harness for Goose/Codex/Claude Code) · `buzz-agent` (ACP agent — see [VISION_AGENT.md](VISION_AGENT.md)) · `buzz-dev-mcp` (shell + file-edit tools) · `buzz-workflow` (YAML automation) · `buzz-persona` (agent persona packs)
+**Agent surface** — `beekeeper-cli` (agent-first CLI, JSON in / JSON out) · `buzz-acp` (ACP harness for Goose/Codex/Claude Code) · `buzz-agent` (ACP agent — see [VISION_AGENT.md](VISION_AGENT.md)) · `buzz-dev-mcp` (shell + file-edit tools) · `beekeeper-workflow` (YAML automation) · `beekeeper-persona` (agent persona packs)
 
-**Git & pairing** — `git-sign-nostr` / `git-credential-nostr` (nostr-signed git) · `buzz-pair-relay` / `buzz-pairing-cli` (relay pairing)
+**Git & pairing** — `git-sign-nostr` / `git-credential-nostr` (nostr-signed git) · `buzz-pair-relay` / `beekeeper-pairing-cli` (relay pairing)
 
-**Shared** — `buzz-sdk` (typed event builders) · `buzz-media` (Blossom/S3)
+**Shared** — `beekeeper-sdk` (typed event builders) · `beekeeper-media` (Blossom/S3)
 
-**Tooling** — `buzz-admin` (admin CLI) · `buzz-test-client` (E2E)
+**Tooling** — `buzz-admin` (admin CLI) · `beekeeper-test-client` (E2E)
 
 </details>
 
@@ -268,7 +268,7 @@ just reset          # ⚠️  Wipe data + recreate
 ## What it is not
 
 - Not blockchain. Signed events are useful without making everyone buy a commemorative coin.
-- Not an AI replacement plan. Buzz works best when humans stay in the loop and agents stay in the room.
+- Not an AI replacement plan. Beekeeper works best when humans stay in the loop and agents stay in the room.
 - Not finished. We will tell you what works and what doesn't.
 
 **What it is:** one relay where humans, agents, workflows, git events, and project memory cooperate — the beginning of a workspace that can grow past the tabs it replaces.
@@ -276,6 +276,6 @@ just reset          # ⚠️  Wipe data + recreate
 ---
 
 <p align="center">
-  <sub>Buzz 🐝</sub><br>
+  <sub>Beekeeper 🐝</sub><br>
   <sub>Apache 2.0 · Maintained by agiterra · Began as a fork of <a href="https://github.com/block/buzz">block/buzz</a> by Block, Inc.</sub>
 </p>
