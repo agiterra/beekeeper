@@ -24,7 +24,7 @@ use serde_json::{json, Value};
 use beekeeper_core::coding_session_catalog::{parse_catalog, Catalog, CatalogModel};
 use beekeeper_core::kind::KIND_CODING_SESSION_PROVIDER_CATALOG;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::validate_uuid;
 
@@ -88,7 +88,7 @@ impl CatalogSnapshot {
 
 /// Read every 44222 in a channel and keep the newest per signer.
 pub async fn load_catalogs(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
 ) -> Result<CatalogSnapshot, CliError> {
     validate_uuid(channel_id)?;
@@ -176,7 +176,7 @@ fn described<'a>(models: &'a [CatalogModel], id: &str) -> Option<&'a CatalogMode
 
 /// `bee sessions catalog --channel <uuid>`.
 pub async fn cmd_catalog(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {

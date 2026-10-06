@@ -600,7 +600,7 @@ async fn a_lost_race_exits_five_and_names_the_claimant_who_won() {
 
     // The loser: the founder, who has standing and therefore gets past every
     // check before the write.
-    let client = BuzzClient::new(url, founder.clone(), None, None).expect("client");
+    let client = BeekeeperClient::new(url, founder.clone(), None, None).expect("client");
     let state = load_handover_state(&client, CHANNEL, SESSION, Some(&genesis_ref))
         .await
         .expect("state");

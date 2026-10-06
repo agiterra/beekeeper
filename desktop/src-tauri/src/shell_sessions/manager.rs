@@ -214,7 +214,7 @@ fn attach(
     // need it to keep running), so this constructs the driver directly
     // rather than going through `resolve_driver`'s `detect` gate — that gate
     // is reserved for the point a *new* host is about to be spawned.
-    let driver = session_driver::BuzzShellHostDriver;
+    let driver = session_driver::BeekeeperShellHostDriver;
     let (io, hello, mut read_half) = driver.attach_existing(socket, Duration::from_secs(10))?;
     // `attach_existing` only ever hands back the narrowed `io` handle (see
     // `host_client::AttachedClient`); `manager.rs` reconstitutes the full
@@ -363,7 +363,7 @@ pub fn reattach_hosts(app: &AppHandle) {
     let app_meta = crate::shell_sessions::persist::load_app_meta(app);
     // 1. Live hosts: a receipt whose host pid is alive and socket connects
     //    (list-probe — read-only, never deletes the receipt itself).
-    let driver = session_driver::BuzzShellHostDriver;
+    let driver = session_driver::BeekeeperShellHostDriver;
     let mut reattached: std::collections::HashSet<String> = std::collections::HashSet::new();
     if let Ok(dir) = hosts_dir() {
         if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -779,7 +779,7 @@ pub fn write(session_id: &str, data: &[u8]) -> Result<(), String> {
     if !running {
         return Err(format!("shell session {session_id} has exited"));
     }
-    session_driver::BuzzShellHostDriver.input_resize(&io, InputResize::Input(data))
+    session_driver::BeekeeperShellHostDriver.input_resize(&io, InputResize::Input(data))
 }
 
 /// Resize the session's PTY via its host (the frontend terminal drives this).
@@ -796,7 +796,8 @@ pub fn resize(session_id: &str, rows: u16, cols: u16) -> Result<(), String> {
         }
         session.io.clone()
     };
-    session_driver::BuzzShellHostDriver.input_resize(&io, InputResize::Resize { rows, cols })?;
+    session_driver::BeekeeperShellHostDriver
+        .input_resize(&io, InputResize::Resize { rows, cols })?;
     crate::shell_sessions::broadcast::on_resize(session_id, rows, cols);
     Ok(())
 }

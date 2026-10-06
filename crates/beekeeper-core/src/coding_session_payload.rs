@@ -1123,7 +1123,7 @@ pub struct SessionMetadata {
     /// sides: `provider` and `runtime` are in the *required* list of the
     /// Desktop decoder's `hasRequiredAndOptionalKeys` check
     /// (`desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts`,
-    /// `parseBuzzCodingSessionMetadata`), so omitting either would make **every**
+    /// `parseBeekeeperCodingSessionMetadata`), so omitting either would make **every**
     /// metadata event from an updated provider fail to decode on Desktop, not
     /// just the ones with nothing to say. Checked, not assumed (REVIEW-B2 F8).
     pub provider: Option<crate::coding_session_identity::ProviderInstanceAlias>,

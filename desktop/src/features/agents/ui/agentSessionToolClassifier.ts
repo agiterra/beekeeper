@@ -7,7 +7,7 @@ import type {
 } from "./agentSessionTypes";
 import {
   formatToolTitle,
-  getBuzzToolInfo,
+  getBeekeeperToolInfo,
   normalizeToolNameText,
 } from "./agentSessionToolCatalog";
 import {
@@ -112,7 +112,7 @@ const providers: ToolClassifierProvider[] = [
   classifyLoadSkillTool,
   classifyDeveloperHarnessTool,
   classifyProviderShellTool,
-  classifyBuzzTool,
+  classifyBeekeeperTool,
 ];
 
 /**
@@ -132,7 +132,7 @@ function classifyProviderShellTool(
   if (!isBash && input.toolKind !== "execute") return null;
   const command = getToolString(input.args, ["command", "cmd"]);
   return (
-    (command ? parseBuzzCliCommand(command) : null) ??
+    (command ? parseBeekeeperCliCommand(command) : null) ??
     shellDescriptor(command, "acp")
   );
 }
@@ -261,7 +261,7 @@ function classifyDeveloperHarnessTool(
 
   if (kind === "shell") {
     const command = getToolString(input.args, ["command"]);
-    const buzzCli = command ? parseBuzzCliCommand(command) : null;
+    const buzzCli = command ? parseBeekeeperCliCommand(command) : null;
     if (buzzCli) {
       return buzzCli;
     }
@@ -352,25 +352,25 @@ function classifyDeveloperHarnessTool(
   };
 }
 
-function classifyBuzzTool(
+function classifyBeekeeperTool(
   input: ToolClassificationInput,
 ): AgentActivityDescriptor | null {
   const name = [input.buzzToolName, input.toolName, input.title].find(
-    (value) => value && getBuzzToolInfo(value),
+    (value) => value && getBeekeeperToolInfo(value),
   );
   if (!name) return null;
 
-  const info = getBuzzToolInfo(name);
+  const info = getBeekeeperToolInfo(name);
   if (!info) return null;
 
   const operation = normalizeToolNameText(name);
   const label = formatToolTitle(name, input.title);
-  const preview = extractBuzzToolPreview(input.args);
+  const preview = extractBeekeeperToolPreview(input.args);
   return {
-    renderClass: isBuzzMessageSend(operation) ? "message" : "relay-op",
+    renderClass: isBeekeeperMessageSend(operation) ? "message" : "relay-op",
     label,
     preview,
-    action: actionForBuzzOperation(operation, preview, info.tone),
+    action: actionForBeekeeperOperation(operation, preview, info.tone),
     tone: info.tone,
     operation,
     object: preview,
@@ -434,11 +434,11 @@ function classifyDeveloperToolName(value: string | null | undefined) {
   return null;
 }
 
-export function parseBuzzCliCommand(
+export function parseBeekeeperCliCommand(
   command: string,
 ): AgentActivityDescriptor | null {
   const tokens = tokenizeShellCommand(command);
-  const range = findBuzzCommand(tokens);
+  const range = findBeekeeperCommand(tokens);
   if (!range) return null;
 
   const group = tokens[range.groupIndex];
@@ -446,14 +446,14 @@ export function parseBuzzCliCommand(
   const operation = `${group}.${verb}`;
   const isSend = group === "messages" && verb === "send";
   const preview = isSend
-    ? extractBuzzCliInlineContent(tokens, range)
-    : extractBuzzCliObjectPreview(tokens, range);
+    ? extractBeekeeperCliInlineContent(tokens, range)
+    : extractBeekeeperCliObjectPreview(tokens, range);
   const tone = buzzCliTone(group, verb);
   return {
     renderClass: isSend ? "message" : "relay-op",
-    label: titleForBuzzCli(group, verb),
+    label: titleForBeekeeperCli(group, verb),
     preview,
-    action: actionForBuzzOperation(operation, preview, tone),
+    action: actionForBeekeeperOperation(operation, preview, tone),
     tone,
     operation,
     object: preview,
@@ -462,7 +462,7 @@ export function parseBuzzCliCommand(
   };
 }
 
-function titleForBuzzCli(group: string, verb: string) {
+function titleForBeekeeperCli(group: string, verb: string) {
   if (group === "messages" && verb === "send") return "Send Message";
   return [group, verb]
     .map((part) =>
@@ -476,7 +476,7 @@ function titleForBuzzCli(group: string, verb: string) {
     .join(" ");
 }
 
-function actionForBuzzOperation(
+function actionForBeekeeperOperation(
   operation: string,
   object: string | null,
   tone: AgentActivityTone,
@@ -512,7 +512,7 @@ function buzzOperationVerb(verb: string, tone: AgentActivityTone) {
 }
 
 function buzzOperationObject(operation: string) {
-  if (isBuzzMessageSend(operation)) return "message";
+  if (isBeekeeperMessageSend(operation)) return "message";
   if (operation.includes(".")) {
     const [group] = operation.split(".");
     return group ? group.replace(/[-_]+/g, " ") : "relay";
@@ -531,9 +531,9 @@ function buzzCliTone(group: string, verb: string): AgentActivityTone {
   return "write";
 }
 
-function extractBuzzCliInlineContent(
+function extractBeekeeperCliInlineContent(
   tokens: string[],
-  range: BuzzCommandRange,
+  range: BeekeeperCommandRange,
 ): string | null {
   const content = getFlagValue(tokens, range.verbIndex + 1, "--content");
   if (!content || content === "-") return null;
@@ -541,9 +541,9 @@ function extractBuzzCliInlineContent(
   return content;
 }
 
-function extractBuzzCliObjectPreview(
+function extractBeekeeperCliObjectPreview(
   tokens: string[],
-  range: BuzzCommandRange,
+  range: BeekeeperCommandRange,
 ): string | null {
   const flagPreview =
     getFlagValue(tokens, range.verbIndex + 1, "--channel") ??
@@ -559,15 +559,15 @@ function extractBuzzCliObjectPreview(
     : null;
 }
 
-type BuzzCommandRange = {
+type BeekeeperCommandRange = {
   buzzIndex: number;
   groupIndex: number;
   verbIndex: number;
 };
 
-function findBuzzCommand(tokens: string[]): BuzzCommandRange | null {
+function findBeekeeperCommand(tokens: string[]): BeekeeperCommandRange | null {
   for (let i = 0; i < tokens.length; i++) {
-    if (!isBuzzExecutable(tokens[i])) continue;
+    if (!isBeekeeperExecutable(tokens[i])) continue;
 
     for (let j = i + 1; j < tokens.length; j++) {
       if (isCommandSeparator(tokens[j])) break;
@@ -640,7 +640,7 @@ export function tokenizeShellCommand(command: string): string[] {
   return tokens;
 }
 
-function isBuzzExecutable(token: string) {
+function isBeekeeperExecutable(token: string) {
   return token === "bee" || token.split(/[\\/]/).pop() === "bee";
 }
 
@@ -662,7 +662,9 @@ function getFlagValue(tokens: string[], start: number, flag: string) {
   return null;
 }
 
-function extractBuzzToolPreview(args: Record<string, unknown>): string | null {
+function extractBeekeeperToolPreview(
+  args: Record<string, unknown>,
+): string | null {
   const content = getToolString(args, ["content", "message", "text", "body"]);
   if (content) return content;
   const query = getToolString(args, ["query", "search"]);
@@ -691,7 +693,7 @@ function genericPreview(input: ToolClassificationInput): string | null {
   );
 }
 
-function isBuzzMessageSend(operation: string) {
+function isBeekeeperMessageSend(operation: string) {
   return operation === "send_message" || operation === "messages_send";
 }
 

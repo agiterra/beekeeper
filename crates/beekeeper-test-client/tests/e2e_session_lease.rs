@@ -23,7 +23,7 @@ use beekeeper_sdk::{
     build_coding_session_lease, build_coding_session_lifecycle_command,
     build_coding_session_lifecycle_receipt, build_join,
 };
-use beekeeper_test_client::{BuzzTestClient, RelayMessage};
+use beekeeper_test_client::{BeekeeperTestClient, RelayMessage};
 use nostr::{Alphabet, Event, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
@@ -51,7 +51,7 @@ fn lease_filter(channel_id: Uuid) -> Filter {
     )
 }
 
-async fn create_channel(client: &mut BuzzTestClient, owner: &Keys) -> Uuid {
+async fn create_channel(client: &mut BeekeeperTestClient, owner: &Keys) -> Uuid {
     let channel_id = Uuid::new_v4();
     let event = EventBuilder::new(Kind::Custom(9007), "")
         .tags([
@@ -67,7 +67,7 @@ async fn create_channel(client: &mut BuzzTestClient, owner: &Keys) -> Uuid {
     channel_id
 }
 
-async fn join_channel(client: &mut BuzzTestClient, keys: &Keys, channel_id: Uuid) {
+async fn join_channel(client: &mut BeekeeperTestClient, keys: &Keys, channel_id: Uuid) {
     let event = build_join(channel_id)
         .expect("build join")
         .sign_with_keys(keys)
@@ -91,7 +91,7 @@ fn lease_event(
         .expect("sign lease")
 }
 
-async fn ws_query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<Event> {
+async fn ws_query(client: &mut BeekeeperTestClient, name: &str, filter: Filter) -> Vec<Event> {
     let sub_id = format!("e2e-session-lease-{name}-{}", Uuid::new_v4());
     client
         .subscribe(&sub_id, vec![filter])
@@ -105,7 +105,7 @@ async fn ws_query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Ve
     events
 }
 
-async fn recv_event_id(client: &mut BuzzTestClient, sub_id: &str, event_id: nostr::EventId) {
+async fn recv_event_id(client: &mut BeekeeperTestClient, sub_id: &str, event_id: nostr::EventId) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
         let remaining = deadline
@@ -125,7 +125,11 @@ async fn recv_event_id(client: &mut BuzzTestClient, sub_id: &str, event_id: nost
     }
 }
 
-async fn assert_no_event_id(client: &mut BuzzTestClient, sub_id: &str, event_id: nostr::EventId) {
+async fn assert_no_event_id(
+    client: &mut BeekeeperTestClient,
+    sub_id: &str,
+    event_id: nostr::EventId,
+) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
     while let Some(remaining) = deadline.checked_duration_since(tokio::time::Instant::now()) {
         match client.recv_event(remaining).await {
@@ -154,7 +158,7 @@ async fn http_query_raw(pubkey: &str, filters: Value) -> (StatusCode, Value) {
     (status, body)
 }
 
-async fn assert_ws_unscoped_query_rejected(client: &mut BuzzTestClient) {
+async fn assert_ws_unscoped_query_rejected(client: &mut BeekeeperTestClient) {
     let sub_id = format!("e2e-session-lease-unscoped-{}", Uuid::new_v4());
     client
         .subscribe(&sub_id, vec![Filter::new().kind(Kind::Custom(LEASE_KIND))])
@@ -208,13 +212,13 @@ async fn session_lease_authority_register_and_cold_reads_are_end_to_end() {
     let operator = Keys::generate();
     let provider = Keys::generate();
     let attacker = Keys::generate();
-    let mut operator_ws = BuzzTestClient::connect(&url, &operator)
+    let mut operator_ws = BeekeeperTestClient::connect(&url, &operator)
         .await
         .expect("operator connect");
-    let mut provider_ws = BuzzTestClient::connect(&url, &provider)
+    let mut provider_ws = BeekeeperTestClient::connect(&url, &provider)
         .await
         .expect("provider connect");
-    let mut attacker_ws = BuzzTestClient::connect(&url, &attacker)
+    let mut attacker_ws = BeekeeperTestClient::connect(&url, &attacker)
         .await
         .expect("attacker connect");
 

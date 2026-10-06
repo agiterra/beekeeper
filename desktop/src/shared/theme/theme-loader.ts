@@ -17,7 +17,7 @@ import {
  * message area and containers are indistinguishable from GitHub Light. Its
  * one distinguishing feature is a branded gradient painted across the
  * sidebar/nav canvas, replacing GitHub Light's flat grey. The gradient is
- * applied by {@link ThemeProvider} toggling a `data-buzz-sidebar` attribute
+ * applied by {@link ThemeProvider} toggling a `data-beekeeper-sidebar` attribute
  * on the document root; the CSS lives in `shared/styles/globals/theme.css`.
  */
 export const BUZZ_THEME_NAME = "buzz";
@@ -26,7 +26,7 @@ export const BUZZ_THEME_NAME = "buzz";
  * Buzz Dark theme name. The dark-mode counterpart to {@link BUZZ_THEME_NAME}:
  * reuses the GitHub Dark palette for every base color, with the same branded
  * sidebar gradient (dark-tuned colors, see `shared/styles/globals/theme.css`).
- * {@link ThemeProvider} toggles the shared `data-buzz-sidebar` attribute for
+ * {@link ThemeProvider} toggles the shared `data-beekeeper-sidebar` attribute for
  * this theme too; the `.dark` root class selects the dark gradient values.
  *
  * Buzz and Buzz Dark are paired in {@link THEME_PAIRS}, so the picker shows a

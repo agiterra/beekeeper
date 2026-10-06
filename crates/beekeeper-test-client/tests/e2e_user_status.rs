@@ -20,7 +20,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag, Timestamp};
 
 const KIND_USER_STATUS: u16 = 30315;
@@ -54,7 +54,9 @@ fn build_user_status_event(
 async fn test_user_status_accepted() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let event = build_user_status_event(&keys, "general", "Working on NIP-38 support", vec![]);
 
@@ -74,7 +76,9 @@ async fn test_user_status_accepted() {
 async fn test_user_status_retrievable() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let d_tag = format!("retrieve-{}", uuid::Uuid::new_v4().simple());
     let event = build_user_status_event(&keys, &d_tag, "Currently online", vec![]);
@@ -112,7 +116,9 @@ async fn test_user_status_retrievable() {
 async fn test_user_status_nip33_replacement() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let d_tag = format!("replace-{}", uuid::Uuid::new_v4().simple());
 
@@ -163,7 +169,9 @@ async fn test_user_status_nip33_replacement() {
 async fn test_user_status_multiple_d_tags_coexist() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let general_d = format!("general-{}", uuid::Uuid::new_v4().simple());
     let music_d = format!("music-{}", uuid::Uuid::new_v4().simple());
@@ -213,7 +221,9 @@ async fn test_user_status_multiple_d_tags_coexist() {
 async fn test_user_status_stale_write_rejected() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let d_tag = format!("stale-{}", uuid::Uuid::new_v4().simple());
 

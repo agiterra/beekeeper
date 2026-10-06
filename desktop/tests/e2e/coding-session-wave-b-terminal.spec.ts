@@ -147,7 +147,7 @@ function events(): RelayEvent[] {
 /** The terminal mock's live state, declared before the app loads. */
 async function declareTerminalMock(page: Page, tree: "local" | "elsewhere") {
   await page.addInitScript((value) => {
-    window.__BUZZ_E2E_WAVE_B_TERMINAL__ = {
+    window.__BEEKEEPER_E2E_WAVE_B_TERMINAL__ = {
       tree: value,
       runningShellIds: [],
       announces: [],
@@ -160,7 +160,7 @@ async function openSession(page: Page): Promise<Locator> {
   await page.getByTestId(`channel-${channelName}`).click();
   await page.evaluate(
     ({ channelName: name, events: signedEvents }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of signedEvents) seed({ channelName: name, event });
     },
@@ -201,7 +201,7 @@ async function rest(page: Page) {
 
 async function setRunning(page: Page, ids: string[]) {
   await page.evaluate((running) => {
-    const state = window.__BUZZ_E2E_WAVE_B_TERMINAL__;
+    const state = window.__BEEKEEPER_E2E_WAVE_B_TERMINAL__;
     if (!state) throw new Error("terminal mock is missing");
     state.runningShellIds = running;
   }, ids);
@@ -234,7 +234,7 @@ test("SV-25 and SV-22: the drawer opens in the session's tree, splits, manages, 
   await expect(first).toBeVisible();
   // The renderer named the session, never a directory.
   const creates = await page.evaluate(() =>
-    (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+    (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? []).filter(
       (entry) => entry.command === "create_shell_session",
     ),
   );
@@ -343,7 +343,7 @@ test("SV-25 and SV-22: the drawer opens in the session's tree, splits, manages, 
   // One terminal left: the manager goes, the actions float again.
   await expect(manager).toHaveCount(0);
   const closes = await page.evaluate(() =>
-    (window.__BUZZ_E2E_COMMANDS__ ?? []).filter(
+    (window.__BEEKEEPER_E2E_COMMANDS__ ?? []).filter(
       (command) => command === "close_shell_session",
     ),
   );
@@ -442,7 +442,7 @@ test("SV-25 remote: no tree here, no New terminal; a teammate's shared terminal 
     secret,
   ) as unknown as RelayEvent;
   await page.evaluate((event) => {
-    const state = window.__BUZZ_E2E_WAVE_B_TERMINAL__;
+    const state = window.__BEEKEEPER_E2E_WAVE_B_TERMINAL__;
     if (!state) throw new Error("terminal mock is missing");
     state.announces = [event];
   }, announce);
@@ -454,7 +454,7 @@ test("SV-25 remote: no tree here, no New terminal; a teammate's shared terminal 
   await expect(async () => {
     await page.evaluate(
       ({ event, name }) =>
-        window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__?.({
+        window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__?.({
           channelName: name,
           event,
         }),
@@ -492,7 +492,7 @@ test("SV-25 remote: no tree here, no New terminal; a teammate's shared terminal 
     ) as unknown as RelayEvent;
     await page.evaluate(
       ({ event, name }) =>
-        window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__?.({
+        window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__?.({
           channelName: name,
           event,
         }),
@@ -503,7 +503,7 @@ test("SV-25 remote: no tree here, no New terminal; a teammate's shared terminal 
   // Owner and liveness, never a host name; and no input path.
   await expect(label).not.toContainText(".local");
   const commands = await page.evaluate(
-    () => window.__BUZZ_E2E_COMMANDS__ ?? [],
+    () => window.__BEEKEEPER_E2E_COMMANDS__ ?? [],
   );
   expect(commands).toContain("build_shell_watch_event");
   expect(commands).not.toContain("build_shell_input_event");

@@ -7,14 +7,14 @@ use clap::Parser;
 use serde_json::{json, Value};
 
 use super::{cmd_set_source_conditionally, PackSourceCondition, PackSourcePin};
-use crate::{client::BuzzClient, error::CliError};
+use crate::{client::BeekeeperClient, error::CliError};
 
 type Events = Arc<Mutex<Vec<nostr::Event>>>;
 
 async fn relay(
     status: StatusCode,
     message: &str,
-) -> (BuzzClient, Events, tokio::task::JoinHandle<()>) {
+) -> (BeekeeperClient, Events, tokio::task::JoinHandle<()>) {
     let events = Events::default();
     let captured = events.clone();
     let message = message.to_owned();
@@ -36,11 +36,11 @@ async fn relay(
         .expect("listener");
     let url = format!("http://{}", listener.local_addr().expect("address"));
     let task = tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
-    let client = BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+    let client = BeekeeperClient::new(url, nostr::Keys::generate(), None, None).expect("client");
     (client, events, task)
 }
 
-fn coordinates(client: &BuzzClient) -> (String, String) {
+fn coordinates(client: &BeekeeperClient) -> (String, String) {
     let owner = client.keys().public_key().to_hex();
     (
         format!("30621:{owner}:project"),

@@ -165,12 +165,13 @@ async function waitForMockLiveSubscription(page: Page, channelName: string) {
           ({ ch }) =>
             (
               window as Window & {
-                __BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
+                __BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
                   channelName: string;
                 }) => boolean;
               }
-            ).__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({ channelName: ch }) ??
-            false,
+            ).__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName: ch,
+            }) ?? false,
           { ch: channelName },
         ),
       { timeout: 20_000 },
@@ -182,7 +183,7 @@ async function openSession(page: Page): Promise<Locator> {
   await page.getByTestId(`channel-${sessionChannel}`).click();
   await page.evaluate(
     ({ channelName, signedEvents }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of signedEvents) seed({ channelName, event });
     },
@@ -228,7 +229,7 @@ test("audits SV-04 and SV-09..SV-12 against T3, hash-distinct", async ({
   await waitForMockLiveSubscription(page, chatChannel);
   await page.evaluate(
     ({ content, author }) => {
-      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+      window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?.({
         channelName: "random",
         content,
         pubkey: author,

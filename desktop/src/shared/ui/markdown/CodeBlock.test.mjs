@@ -134,9 +134,9 @@ test("the wrap rule beats the whitespace-pre utility on the code element", () =>
 test("the code scrollbar is styled with webkit pseudos, not scrollbar-color", () => {
   const scrollbarsCss = css("scrollbars.css");
   const block = scrollbarsCss.slice(
-    scrollbarsCss.indexOf(".buzz-code-scrollbar"),
+    scrollbarsCss.indexOf(".beekeeper-code-scrollbar"),
   );
-  assert.match(block, /\.buzz-code-scrollbar::-webkit-scrollbar-thumb \{/);
+  assert.match(block, /\.beekeeper-code-scrollbar::-webkit-scrollbar-thumb \{/);
   // Setting the standard property makes engines drop the pseudo styles and
   // fall back to overlay scrollbars — the bug this class exists to avoid.
   assert.doesNotMatch(block, /scrollbar-color/);

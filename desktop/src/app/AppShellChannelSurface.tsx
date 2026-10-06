@@ -1,5 +1,5 @@
 import type * as React from "react";
-import * as BuzzTheme from "@/app/BuzzThemeSurfaces";
+import * as BeekeeperTheme from "@/app/BeekeeperThemeSurfaces";
 import { HuddleRoomHeader, HuddleStartingView } from "@/features/huddle";
 import { MainInsetProvider } from "@/shared/layout/MainInsetContext";
 import { chromeCssVarDefaults } from "@/shared/layout/chromeLayout";
@@ -35,10 +35,10 @@ export function AppShellChannelSurface({
           "isolate z-0 min-h-0 min-w-0 overflow-hidden",
           isHuddleRoom ? "bg-background" : "bg-sidebar",
         )}
-        data-buzz-content-surface={isHuddleRoom ? true : undefined}
-        data-buzz-content-unframed={isHuddleRoom ? true : undefined}
-        data-buzz-glass-inset
-        data-buzz-shadow-viewport
+        data-beekeeper-content-surface={isHuddleRoom ? true : undefined}
+        data-beekeeper-content-unframed={isHuddleRoom ? true : undefined}
+        data-beekeeper-glass-inset
+        data-beekeeper-shadow-viewport
         data-project-tint={tint ? "" : undefined}
         style={
           {
@@ -48,9 +48,12 @@ export function AppShellChannelSurface({
         }
       >
         {isHuddleRoom && !isHuddleRoomStarting ? <HuddleRoomHeader /> : null}
-        <BuzzTheme.ContentSurface terminal={terminal} unframed={isHuddleRoom}>
+        <BeekeeperTheme.ContentSurface
+          terminal={terminal}
+          unframed={isHuddleRoom}
+        >
           {isHuddleRoomStarting ? <HuddleStartingView /> : children}
-        </BuzzTheme.ContentSurface>
+        </BeekeeperTheme.ContentSurface>
       </SidebarInset>
     </MainInsetProvider>
   );

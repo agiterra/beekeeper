@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:buzz/shared/theme/theme.dart';
-import 'package:buzz/shared/widgets/frosted_app_bar.dart';
+import 'package:beekeeper/shared/theme/theme.dart';
+import 'package:beekeeper/shared/widgets/frosted_app_bar.dart';
 
 void main() {
   group('Buzz theme catalog entries', () {
@@ -259,12 +259,12 @@ void main() {
     });
   });
 
-  group('isBuzzTheme', () {
+  group('isBeekeeperTheme', () {
     test('matches only the Buzz pair', () {
-      expect(isBuzzTheme(buzzThemeName), isTrue);
-      expect(isBuzzTheme(buzzDarkThemeName), isTrue);
-      expect(isBuzzTheme('github-light'), isFalse);
-      expect(isBuzzTheme(''), isFalse);
+      expect(isBeekeeperTheme(buzzThemeName), isTrue);
+      expect(isBeekeeperTheme(buzzDarkThemeName), isTrue);
+      expect(isBeekeeperTheme('github-light'), isFalse);
+      expect(isBeekeeperTheme(''), isFalse);
     });
   });
 }

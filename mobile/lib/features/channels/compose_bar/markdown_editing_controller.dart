@@ -382,7 +382,7 @@ class _MarkdownEditingController extends TextEditingController {
   (IconData, String, String)? _composerLinkPresentation(String raw) {
     final uri = Uri.tryParse(raw);
     if (uri == null) return null;
-    final link = parseBuzzDeepLink(uri) ?? parseEntityDeepLink(uri);
+    final link = parseBeekeeperDeepLink(uri) ?? parseEntityDeepLink(uri);
     return switch (link) {
       ChannelDeepLink(:final channelId) => (
         LucideIcons.hash,

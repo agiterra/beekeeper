@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use crate::client::{normalize_write_response, BuzzClient};
+use crate::client::{normalize_write_response, BeekeeperClient};
 use crate::error::CliError;
 use beekeeper_sdk::CustomEmoji;
 
@@ -74,7 +74,7 @@ fn union_custom_emoji(events: &[serde_json::Value]) -> Vec<EmojiEntry> {
 
 /// List the workspace custom emoji palette: the union of every member's
 /// own kind:30030 set (d=`buzz:custom-emoji`).
-async fn cmd_list(client: &BuzzClient) -> Result<(), CliError> {
+async fn cmd_list(client: &BeekeeperClient) -> Result<(), CliError> {
     let filter = serde_json::json!({
         "kinds": [beekeeper_sdk::kind::KIND_EMOJI_SET],
         "#d": [CUSTOM_EMOJI_SET_D_TAG],
@@ -90,7 +90,7 @@ async fn cmd_list(client: &BuzzClient) -> Result<(), CliError> {
 
 /// Fetch the caller's own current custom emoji set (latest kind:30030 under
 /// the d-tag, authored by the caller). Empty when none published yet.
-async fn fetch_own_emoji(client: &BuzzClient) -> Result<Vec<CustomEmoji>, CliError> {
+async fn fetch_own_emoji(client: &BeekeeperClient) -> Result<Vec<CustomEmoji>, CliError> {
     let me = client.keys().public_key().to_hex();
     let filter = serde_json::json!({
         "kinds": [beekeeper_sdk::kind::KIND_EMOJI_SET],
@@ -115,7 +115,7 @@ async fn fetch_own_emoji(client: &BuzzClient) -> Result<Vec<CustomEmoji>, CliErr
 }
 
 /// Publish the caller's own (replaced) kind:30030 set, signed as the caller.
-async fn publish_own_set(client: &BuzzClient, emojis: &[CustomEmoji]) -> Result<(), CliError> {
+async fn publish_own_set(client: &BeekeeperClient, emojis: &[CustomEmoji]) -> Result<(), CliError> {
     let builder = beekeeper_sdk::build_custom_emoji_set(emojis)
         .map_err(|e| CliError::Other(format!("build_custom_emoji_set failed: {e}")))?;
     let event = client.sign_event(builder)?;
@@ -125,7 +125,7 @@ async fn publish_own_set(client: &BuzzClient, emojis: &[CustomEmoji]) -> Result<
 }
 
 /// Add/update a shortcode in the caller's own set (read-modify-write).
-async fn cmd_set(client: &BuzzClient, shortcode: &str, url: &str) -> Result<(), CliError> {
+async fn cmd_set(client: &BeekeeperClient, shortcode: &str, url: &str) -> Result<(), CliError> {
     let normalized = beekeeper_sdk::normalize_custom_emoji_shortcode(shortcode)
         .map_err(|e| CliError::Other(format!("invalid shortcode: {e}")))?;
     let mut emojis = fetch_own_emoji(client).await?;
@@ -138,7 +138,7 @@ async fn cmd_set(client: &BuzzClient, shortcode: &str, url: &str) -> Result<(), 
 }
 
 /// Remove a shortcode from the caller's own set (read-modify-write).
-async fn cmd_rm(client: &BuzzClient, shortcode: &str) -> Result<(), CliError> {
+async fn cmd_rm(client: &BeekeeperClient, shortcode: &str) -> Result<(), CliError> {
     let normalized = beekeeper_sdk::normalize_custom_emoji_shortcode(shortcode)
         .map_err(|e| CliError::Other(format!("invalid shortcode: {e}")))?;
     let mut emojis = fetch_own_emoji(client).await?;
@@ -195,7 +195,7 @@ fn write_output(output: &str, file: Option<&str>) -> Result<(), CliError> {
 
 /// Export custom emojis to stdout or a file.
 async fn cmd_export(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     file: Option<&str>,
     scope: &crate::EmojiScope,
 ) -> Result<(), CliError> {
@@ -232,7 +232,7 @@ async fn cmd_export(
 
 /// Import custom emojis from stdin or a file into the caller's own set.
 async fn cmd_import(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     file: Option<&str>,
     replace: bool,
     dry_run: bool,
@@ -308,7 +308,7 @@ async fn cmd_import(
     publish_own_set(client, &final_set).await
 }
 
-pub async fn dispatch(cmd: crate::EmojiCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(cmd: crate::EmojiCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     use crate::EmojiCmd;
     match cmd {
         EmojiCmd::List => cmd_list(client).await,

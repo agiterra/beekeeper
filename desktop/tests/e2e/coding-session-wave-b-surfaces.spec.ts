@@ -494,14 +494,14 @@ async function openVariant(browser: Browser, variant: Variant): Promise<Page> {
     ({ identity, storageKey, surfaces, owner, channelId, agentsRepo }) => {
       window.localStorage.setItem(storageKey, JSON.stringify(identity));
       (
-        window as Window & { __BUZZ_E2E_WAVE_B_SURFACES__?: unknown }
-      ).__BUZZ_E2E_WAVE_B_SURFACES__ = surfaces;
+        window as Window & { __BEEKEEPER_E2E_WAVE_B_SURFACES__?: unknown }
+      ).__BEEKEEPER_E2E_WAVE_B_SURFACES__ = surfaces;
       // Pulse reads session facts only from the project's channels, and the
       // seeded `buzz` head names none, so this session's channel would be
       // outside it and Pulse would truthfully read empty. A newer head for
       // the same project (NIP-33: newest `(owner, d)` wins) that names this
       // channel puts the session where Pulse looks.
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
           id: "wave-b-surfaces-project".padEnd(64, "0"),
           pubkey: owner,
@@ -519,7 +519,7 @@ async function openVariant(browser: Browser, variant: Variant): Promise<Page> {
         },
       ];
       if (agentsRepo) {
-        window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__.push({
+        window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__.push({
           id: "wave-b-surfaces-agents-repo".padEnd(64, "0"),
           pubkey: owner,
           created_at: Math.floor(Date.now() / 1000) - 3_600,
@@ -533,7 +533,7 @@ async function openVariant(browser: Browser, variant: Variant): Promise<Page> {
           content: "",
           sig: "0".repeat(128),
         });
-        window.__BUZZ_E2E_AGENTS_REPO__ = {
+        window.__BEEKEEPER_E2E_AGENTS_REPO__ = {
           listing: {
             repo: `30617:${owner}:buzz-agents`,
             branch: "main",
@@ -608,7 +608,7 @@ async function openVariant(browser: Browser, variant: Variant): Promise<Page> {
         () =>
           page.evaluate(
             ({ channelName, kind }) =>
-              window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
                 channelName,
                 kind,
               }) ?? false,
@@ -623,7 +623,7 @@ async function openVariant(browser: Browser, variant: Variant): Promise<Page> {
   }
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },
@@ -830,7 +830,7 @@ test("SV-24, SV-23 and SV-41: every surface's contents, both localities, Landing
       () =>
         page.evaluate(
           ({ kind, grantee }) =>
-            (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).filter(
+            (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).filter(
               (event) =>
                 event.kind === kind &&
                 (JSON.parse(event.content) as { granteePubkey?: string })

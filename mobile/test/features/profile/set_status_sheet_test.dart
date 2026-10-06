@@ -1,7 +1,7 @@
-import 'package:buzz/features/profile/set_status_sheet.dart';
-import 'package:buzz/features/profile/user_status.dart';
-import 'package:buzz/features/profile/user_status_provider.dart';
-import 'package:buzz/shared/custom_emoji/custom_emoji_provider.dart';
+import 'package:beekeeper/features/profile/set_status_sheet.dart';
+import 'package:beekeeper/features/profile/user_status.dart';
+import 'package:beekeeper/features/profile/user_status_provider.dart';
+import 'package:beekeeper/shared/custom_emoji/custom_emoji_provider.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';

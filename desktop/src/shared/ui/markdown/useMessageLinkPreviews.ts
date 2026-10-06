@@ -6,7 +6,7 @@ import {
 } from "@/shared/lib/linkPreview";
 import { parseLinkPreviewSnapshots } from "@/shared/lib/linkPreviewSnapshot";
 import {
-  isBuzzEntityPreview,
+  isBeekeeperEntityPreview,
   type ResolvedLinkPreview,
   useResolvedLinkPreviews,
   withEntityFallbacks,
@@ -42,7 +42,7 @@ export function mergeMessageLinkPreviews(
   );
 
   return candidates.flatMap((candidate) => {
-    const preview = isBuzzEntityPreview(candidate)
+    const preview = isBeekeeperEntityPreview(candidate)
       ? entitiesByHref.get(candidate.href)
       : snapshotsByHref.get(candidate.href);
     return preview ? [preview] : [];
@@ -70,7 +70,7 @@ export function useMessageLinkPreviews({
     [content, interactive, linkPreviewsSuppressed, relayOrigin],
   );
   const entityLinkPreviews = React.useMemo(
-    () => linkPreviewCandidates.filter(isBuzzEntityPreview),
+    () => linkPreviewCandidates.filter(isBeekeeperEntityPreview),
     [linkPreviewCandidates],
   );
   const relayResolvedEntityLinkPreviews =

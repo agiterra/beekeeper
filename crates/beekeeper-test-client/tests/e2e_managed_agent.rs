@@ -24,7 +24,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag, Timestamp};
 
 const AGENT_KIND: u16 = 30177;
@@ -117,7 +117,9 @@ async fn test_managed_agent_publish_and_query() {
     let d_tag = agent_d_tag();
     let content = agent_projection_content("Test Agent");
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let event = agent_event(&keys, &d_tag, &content);
     let ok = client.send_event(event).await.expect("send agent");
@@ -162,7 +164,9 @@ async fn test_legacy_fat_agent_event_still_accepted() {
     let d_tag = agent_d_tag();
     let content = legacy_fat_agent_projection_content("Legacy Agent");
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let event = agent_event(&keys, &d_tag, &content);
     let ok = client.send_event(event).await.expect("send legacy agent");
     assert!(
@@ -189,7 +193,9 @@ async fn test_managed_agent_round_trips_only_projected_fields() {
     let d_tag = agent_d_tag();
     let content = agent_projection_content("Secret-Free Agent");
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let event = agent_event(&keys, &d_tag, &content);
     let ok = client.send_event(event).await.expect("send agent");
@@ -267,7 +273,9 @@ async fn test_managed_agent_nip33_replacement_newer_wins() {
     let keys = Keys::generate();
     let d_tag = agent_d_tag();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let now = Timestamp::now().as_secs();
     let old_content = agent_projection_content("Old Agent");
@@ -316,7 +324,9 @@ async fn test_managed_agent_tombstone_deletes_coordinate() {
     let d_tag = agent_d_tag();
     let content = agent_projection_content("Doomed Agent");
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let event = agent_event(&keys, &d_tag, &content);
     let ok = client.send_event(event).await.expect("send agent");

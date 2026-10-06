@@ -32,7 +32,7 @@ use beekeeper_core::project_agent_association::{
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::commands::projects::{
     project_roster, roster_with_creator, validate_member_pubkey, validate_project_slug,
 };
@@ -357,7 +357,7 @@ pub fn head_is_private(head: &Value) -> bool {
 /// The newest kind:30621 head at `coordinate` this identity can read, or
 /// `None` when the relay returns none (absent, or private and withheld).
 async fn read_project_head(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     coordinate: &str,
 ) -> Result<Option<Value>, CliError> {
     let mut parts = coordinate.splitn(3, ':');
@@ -388,7 +388,7 @@ async fn read_project_head(
 /// publish agent associations. Otherwise the signed roster decides whose
 /// kind:30177 claims count ([`fold_project_agents`]).
 pub async fn cmd_agents(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: Option<&str>,
     owner: Option<&str>,
     project: Option<&str>,

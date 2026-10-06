@@ -52,7 +52,7 @@ use beekeeper_core::kind::{
     PROJECT_ROLE_OWNER,
 };
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 
 /// How many kind:44228 transitions one status read may page through.
 ///
@@ -434,7 +434,7 @@ fn unknown(basis: String) -> ProjectActionAuthority {
 /// still print the entries, with the failure named in the basis. `channel` is
 /// `None` when `bee actions status` was given no `--channel`.
 pub async fn read_project_action_authority(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project_ref: &str,
     channel: Option<&str>,
 ) -> ProjectActionAuthorityInputs {
@@ -456,7 +456,7 @@ pub async fn read_project_action_authority(
 type ReadLink = (u32, String, String, CodingSessionAuthorityTransitionPayload);
 
 /// Fold every contiguous kind:44228 chain under one channel's `h` tag.
-async fn read_authority_chains(client: &BuzzClient, channel: &str) -> AuthorityChainRead {
+async fn read_authority_chains(client: &BeekeeperClient, channel: &str) -> AuthorityChainRead {
     let rows = match client
         .query_paginated(
             serde_json::json!({
@@ -554,7 +554,7 @@ fn contiguous_chain_links(mut links: Vec<ReadLink>) -> Option<Vec<ProjectActionG
 /// Role lives at index 3 of each `p` tag, and an unrecognized role reads as a
 /// collaborator exactly as `bee projects members` reads it — this must not
 /// disagree with what a person is shown.
-async fn read_project_roster(client: &BuzzClient, project_ref: &str) -> ProjectRosterRead {
+async fn read_project_roster(client: &BeekeeperClient, project_ref: &str) -> ProjectRosterRead {
     let raw = match client
         .query(&serde_json::json!({
             "kinds": [KIND_PROJECT_MEMBERS],

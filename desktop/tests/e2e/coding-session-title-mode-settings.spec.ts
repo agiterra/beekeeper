@@ -82,12 +82,12 @@ async function setCalls(page: Page) {
     () =>
       (
         window as typeof window & {
-          __BUZZ_E2E_CODING_SESSION_NAMING_SET_CALLS__?: Record<
+          __BEEKEEPER_E2E_CODING_SESSION_NAMING_SET_CALLS__?: Record<
             string,
             unknown
           >[];
         }
-      ).__BUZZ_E2E_CODING_SESSION_NAMING_SET_CALLS__ ?? [],
+      ).__BEEKEEPER_E2E_CODING_SESSION_NAMING_SET_CALLS__ ?? [],
   );
 }
 

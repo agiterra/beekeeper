@@ -19,7 +19,7 @@ async function enableProjectsFeature(page: import("@playwright/test").Page) {
   });
 }
 
-async function openBuzzProject(page: import("@playwright/test").Page) {
+async function openBeekeeperProject(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
   // The Projects tab is the container-management panel now; repo tiles live
@@ -41,7 +41,7 @@ test("same-second request changes supersedes approval", async ({ page }) => {
     Date.now = () => 1_900_000_000_000;
   });
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await page.getByRole("tab", { name: "Pull Request" }).click();
   const aliceRow = page
@@ -81,7 +81,7 @@ test("same-second request changes supersedes approval", async ({ page }) => {
 
   const [approvalEvent, changeRequestEvent] = await page.evaluate(() => {
     const decisions =
-      window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+      window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.filter(
         (event) =>
           event.kind === 1 &&
           event.tags.some(
@@ -104,10 +104,10 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
 }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
-    window.__BUZZ_E2E_REJECT_PROJECT_EVENT_KINDS__ = [1631];
+    window.__BEEKEEPER_E2E_REJECT_PROJECT_EVENT_KINDS__ = [1631];
   });
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await page.getByRole("tab", { name: "Pull Request" }).click();
   const prRows = page.getByTestId("project-pull-request-row");
@@ -165,7 +165,7 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
     .poll(() =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+          window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.filter(
             (event) =>
               event.kind === 1 &&
               event.tags.some(
@@ -213,7 +213,7 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
     page.getByText("Changes requested", { exact: true }),
   ).toHaveCount(0);
   const changeRequestEvent = await page.evaluate(() =>
-    window.__BUZZ_E2E_SIGNED_EVENTS__
+    window.__BEEKEEPER_E2E_SIGNED_EVENTS__
       ?.filter(
         (event) =>
           event.kind === 1 &&
@@ -229,7 +229,7 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
   expect(changeRequestEvent?.tags).toContainEqual(["c", expect.any(String)]);
   const reviewDecisionEvents = await page.evaluate(
     () =>
-      window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+      window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.filter(
         (event) =>
           event.kind === 1 &&
           event.tags.some(
@@ -306,7 +306,7 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
   ).toHaveCount(0);
   await expect(page.getByText("Approved", { exact: true })).toHaveCount(0);
   const approvalEvent = await page.evaluate(() =>
-    window.__BUZZ_E2E_SIGNED_EVENTS__
+    window.__BEEKEEPER_E2E_SIGNED_EVENTS__
       ?.filter(
         (event) =>
           event.kind === 1 &&
@@ -412,7 +412,7 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
     .poll(() =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+          window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.filter(
             (event) => event.kind === 1631,
           ).length ?? 0,
       ),
@@ -437,14 +437,14 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
     .poll(() =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+          window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.filter(
             (event) => event.kind === 1631,
           ).length ?? 0,
       ),
     )
     .toBe(1);
   const mergedEvent = await page.evaluate(() =>
-    window.__BUZZ_E2E_SIGNED_EVENTS__
+    window.__BEEKEEPER_E2E_SIGNED_EVENTS__
       ?.filter((event) => event.kind === 1631)
       .at(-1),
   );
@@ -455,13 +455,13 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
   expect(mergedEvent?.tags.some((tag) => tag[0] === "e")).toBe(true);
   const mergeCommandCount = await page.evaluate(
     () =>
-      window.__BUZZ_E2E_COMMANDS__?.filter(
+      window.__BEEKEEPER_E2E_COMMANDS__?.filter(
         (command) => command === "merge_project_pull_request",
       ).length ?? 0,
   );
   expect(mergeCommandCount).toBe(1);
   const mergePayload = await page.evaluate(() =>
-    window.__BUZZ_E2E_COMMAND_PAYLOADS__?.find(
+    window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__?.find(
       (entry) => entry.command === "merge_project_pull_request",
     ),
   );
@@ -481,9 +481,9 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
 test("merge conflicts offer persistent terminal recovery", async ({ page }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
   await page.evaluate(() => {
-    window.__BUZZ_E2E_PROJECT_MERGE_ERROR__ = {
+    window.__BEEKEEPER_E2E_PROJECT_MERGE_ERROR__ = {
       code: "merge_conflict",
       message: "Pull request has merge conflicts.",
       recovery: {
@@ -533,7 +533,7 @@ test("merge conflicts offer persistent terminal recovery", async ({ page }) => {
     .poll(() =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_COMMAND_PAYLOADS__?.find(
+          window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__?.find(
             (entry) => entry.command === "open_project_merge_recovery_terminal",
           ) ?? null,
       ),
@@ -555,7 +555,7 @@ test("reviewer can leave a commit-scoped inline diff comment", async ({
 }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await page.getByRole("tab", { name: "Pull Request" }).click();
   const aliceRow = page
@@ -584,14 +584,14 @@ test("reviewer can leave a commit-scoped inline diff comment", async ({
   await expect
     .poll(() =>
       page.evaluate(() =>
-        window.__BUZZ_E2E_SIGNED_EVENTS__?.find(
+        window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.find(
           (event) => event.content === "Please add a type for this parameter.",
         ),
       ),
     )
     .not.toBeUndefined();
   const inlineCommentEvent = await page.evaluate(() =>
-    window.__BUZZ_E2E_SIGNED_EVENTS__?.find(
+    window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.find(
       (event) => event.content === "Please add a type for this parameter.",
     ),
   );
@@ -647,7 +647,7 @@ test("reviewer can leave a commit-scoped inline diff comment", async ({
 test("managed agent repository owner can merge", async ({ page }) => {
   await enableProjectsFeature(page);
   await page.addInitScript((owner) => {
-    window.__BUZZ_E2E_PROJECT_OWNER_OVERRIDE__ = owner;
+    window.__BEEKEEPER_E2E_PROJECT_OWNER_OVERRIDE__ = owner;
   }, TEST_IDENTITIES.alice.pubkey);
   await installMockBridge(page, {
     managedAgents: [
@@ -661,7 +661,7 @@ test("managed agent repository owner can merge", async ({ page }) => {
       },
     ],
   });
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await page.getByRole("tab", { name: "Pull Request" }).click();
   const agentRow = page
@@ -677,7 +677,7 @@ test("managed agent repository owner can merge", async ({ page }) => {
     .click();
   await expect(page.getByText("Review requested.")).toBeVisible();
   const reviewRequestPayload = await page.evaluate(() =>
-    window.__BUZZ_E2E_COMMAND_PAYLOADS__?.find(
+    window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__?.find(
       (entry) => entry.command === "sign_project_pull_request_review_request",
     ),
   );
@@ -697,7 +697,7 @@ test("managed agent repository owner can merge", async ({ page }) => {
   await page.getByRole("button", { name: "Reopen pull request" }).click();
   await expect(page.getByText("Pull request reopened.")).toBeVisible();
   const statusPayloads = await page.evaluate(() =>
-    window.__BUZZ_E2E_COMMAND_PAYLOADS__?.filter(
+    window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__?.filter(
       (entry) => entry.command === "sign_project_pull_request_status",
     ),
   );
@@ -721,7 +721,7 @@ test("managed agent repository owner can merge", async ({ page }) => {
   await expect(page.getByText("Merged feature into main.")).toBeVisible();
 
   const mergePayload = await page.evaluate(() =>
-    window.__BUZZ_E2E_COMMAND_PAYLOADS__?.find(
+    window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__?.find(
       (entry) => entry.command === "merge_project_pull_request",
     ),
   );
@@ -738,7 +738,7 @@ test("managed agent repository owner can merge", async ({ page }) => {
 test("viewer without repository ownership cannot merge", async ({ page }) => {
   await enableProjectsFeature(page);
   await page.addInitScript((owner) => {
-    window.__BUZZ_E2E_PROJECT_OWNER_OVERRIDE__ = owner;
+    window.__BEEKEEPER_E2E_PROJECT_OWNER_OVERRIDE__ = owner;
   }, TEST_IDENTITIES.alice.pubkey);
   await installMockBridge(page, {
     managedAgents: [
@@ -748,7 +748,7 @@ test("viewer without repository ownership cannot merge", async ({ page }) => {
       },
     ],
   });
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await page.getByRole("tab", { name: "Pull Request" }).click();
   const prRow = page.getByTestId("project-pull-request-row").first();
@@ -760,7 +760,7 @@ test("viewer without repository ownership cannot merge", async ({ page }) => {
   ).toHaveCount(0);
   const mergeCommandCount = await page.evaluate(
     () =>
-      window.__BUZZ_E2E_COMMANDS__?.filter(
+      window.__BEEKEEPER_E2E_COMMANDS__?.filter(
         (command) => command === "merge_project_pull_request",
       ).length ?? 0,
   );
@@ -768,7 +768,7 @@ test("viewer without repository ownership cannot merge", async ({ page }) => {
 
   const authorizationError = await page.evaluate(async (targetOwner) => {
     try {
-      await window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.(
+      await window.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?.(
         "merge_project_pull_request",
         {
           input: {
@@ -798,7 +798,7 @@ test("project pull requests preserve partial results from batched queries", asyn
 }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
-    window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = [1619];
+    window.__BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__ = [1619];
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -819,7 +819,7 @@ test("project pull requests preserve partial results from batched queries", asyn
 
   const workItemFilters = await page.evaluate(
     () =>
-      window.__BUZZ_E2E_PROJECT_QUERY_FILTERS__?.filter(
+      window.__BEEKEEPER_E2E_PROJECT_QUERY_FILTERS__?.filter(
         (filter) => filter.limit === 2_000,
       ) ?? [],
   );
@@ -853,7 +853,7 @@ test("project pull requests preserve partial results from batched queries", asyn
   }
 
   await page.evaluate(() => {
-    window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = [];
+    window.__BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__ = [];
   });
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(
@@ -930,7 +930,7 @@ test("project pull requests report aggregate root query failures", async ({
 }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
-    window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = [1618];
+    window.__BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__ = [1618];
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -946,7 +946,7 @@ test("project pull requests report aggregate root query failures", async ({
   await expect(page.getByText("No pull requests yet.")).toHaveCount(0);
 
   await page.evaluate(() => {
-    window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = [];
+    window.__BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__ = [];
   });
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByText("Could not load pull requests.")).toHaveCount(0);
@@ -960,7 +960,7 @@ test("project issues preserve partial results from aggregate queries", async ({
 }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
-    window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = [1];
+    window.__BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__ = [1];
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -983,7 +983,7 @@ test("project issues preserve partial results from aggregate queries", async ({
   });
 
   await page.evaluate(() => {
-    window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = [];
+    window.__BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__ = [];
   });
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(
@@ -996,7 +996,7 @@ test("project overview reports aggregate work-item failures", async ({
 }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
-    window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = [1618];
+    window.__BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__ = [1618];
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -1011,7 +1011,7 @@ test("project overview reports aggregate work-item failures", async ({
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
 
   await page.evaluate(() => {
-    window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = [];
+    window.__BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__ = [];
   });
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByText("Could not load project activity.")).toHaveCount(
@@ -1136,7 +1136,7 @@ test("project detail content areas do not paint background fills", async ({
 }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   const expectVisiblePanelsToBeTransparent = async () => {
     const panels = page.locator("[data-project-detail-panel]:visible");
@@ -1175,7 +1175,7 @@ test("project without a checkout offers fetch feedback and dropdown cloning", as
 }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await expect(
     page.getByRole("button", { name: "Relay", exact: true }),
@@ -1205,7 +1205,7 @@ test("project without a checkout offers fetch feedback and dropdown cloning", as
   await cloneItem.click();
   await expect(page.getByText("Cloned repository.")).toBeVisible();
   const commands = await page.evaluate(
-    () => window.__BUZZ_E2E_COMMANDS__ ?? [],
+    () => window.__BEEKEEPER_E2E_COMMANDS__ ?? [],
   );
   expect(commands).toContain("clone_project_repository");
 });
@@ -1218,7 +1218,7 @@ test("project branches can be created from the selected remote branch", async ({
     projectHeadBranch: "master",
     relaySelf: TEST_IDENTITIES.bob.pubkey,
   });
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await page.getByRole("button", { name: /main/ }).click();
   await page.getByTestId("project-create-branch").click();
@@ -1247,11 +1247,11 @@ test("project branches can be created from the selected remote branch", async ({
     page.getByRole("menuitemradio", { name: "feature/branch-management" }),
   ).toBeVisible();
   const commands = await page.evaluate(
-    () => window.__BUZZ_E2E_COMMANDS__ ?? [],
+    () => window.__BEEKEEPER_E2E_COMMANDS__ ?? [],
   );
   expect(commands).toContain("create_project_remote_branch");
 
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
   await page.getByRole("button", { name: /main/ }).click();
   await expect(
     page.getByRole("menuitemradio", { name: "feature/branch-management" }),
@@ -1263,7 +1263,7 @@ test("repository tags can be browsed as immutable remote snapshots", async ({
 }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await page.getByRole("button", { name: /main/ }).click();
   await expect(page.getByText("Tags", { exact: true })).toBeVisible();
@@ -1279,7 +1279,7 @@ test("repository tags can be browsed as immutable remote snapshots", async ({
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const call = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
+        const call = [...(window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])]
           .reverse()
           .find((entry) => entry.command === "get_project_repo_snapshot");
         return (call?.payload as { targetRef?: string } | undefined)?.targetRef;
@@ -1300,7 +1300,7 @@ test("project branches can be deleted but the default branch cannot", async ({
 }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await page.getByRole("button", { name: /main/ }).click();
   await expect(page.getByTestId("project-delete-branch")).toBeDisabled();
@@ -1322,7 +1322,7 @@ test("project branches can be deleted but the default branch cannot", async ({
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /main/ })).toBeVisible();
   const commands = await page.evaluate(
-    () => window.__BUZZ_E2E_COMMANDS__ ?? [],
+    () => window.__BEEKEEPER_E2E_COMMANDS__ ?? [],
   );
   expect(commands).toContain("delete_project_remote_branch");
 });
@@ -1331,7 +1331,7 @@ test("pushed local branch can open a pull request", async ({ page }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
     const commit = "1234567890abcdef1234567890abcdef12345678";
-    window.__BUZZ_E2E_PROJECT_REPO_SYNC_STATUS__ = {
+    window.__BEEKEEPER_E2E_PROJECT_REPO_SYNC_STATUS__ = {
       local_path: "/tmp/buzz/REPOS/buzz",
       local_branch: "feature/projects-workflow",
       local_branches: ["feature/projects-workflow", "space"],
@@ -1352,7 +1352,7 @@ test("pushed local branch can open a pull request", async ({ page }) => {
     };
   });
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await page.getByRole("button", { name: /main/ }).click();
   await expect(
@@ -1394,7 +1394,7 @@ test("pushed local branch can open a pull request", async ({ page }) => {
 
   const createdEvents = await page.evaluate(
     () =>
-      window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+      window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.filter(
         (event) => event.kind === 1618,
       ) ?? [],
   );
@@ -1416,7 +1416,7 @@ test("project issue can be created from the issues header", async ({
 }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await page.getByRole("tab", { name: "Issues", exact: true }).click();
   await page.getByRole("button", { name: "New issue" }).click();
@@ -1433,7 +1433,9 @@ test("project issue can be created from the issues header", async ({
   });
 
   const createdEvent = await page.evaluate(() =>
-    window.__BUZZ_E2E_SIGNED_EVENTS__?.find((event) => event.kind === 1621),
+    window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.find(
+      (event) => event.kind === 1621,
+    ),
   );
   expect(createdEvent?.tags).toContainEqual([
     "subject",

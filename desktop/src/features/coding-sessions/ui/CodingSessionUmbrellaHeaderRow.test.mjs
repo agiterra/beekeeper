@@ -3,7 +3,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { parseBuzzCodingSessionMetadata } from "../lib/codingSessionIngressPayloads.ts";
+import { parseBeekeeperCodingSessionMetadata } from "../lib/codingSessionIngressPayloads.ts";
 import { deriveSeatBeeStamps } from "../lib/codingSessionSeatBee.ts";
 import { deriveCodingSessionStreamPresence } from "../lib/codingSessionStreamPresence.ts";
 import { groupCodingSessionCatalog } from "../lib/codingSessionUmbrellaModel.ts";
@@ -23,7 +23,7 @@ import { codingSessionHeaderRepoName } from "./CodingSessionHeaderDetails.tsx";
  * decoded kind:44223 `beeStamp` and asserts the chip is on the page.
  *
  * The stamp travels the real pipeline end to end except for React state: a
- * raw 44223 JSON payload goes through `parseBuzzCodingSessionMetadata` (the
+ * raw 44223 JSON payload goes through `parseBeekeeperCodingSessionMetadata` (the
  * real decoder this lane widened to accept `beeStamp`), the catalog record
  * carries it through `groupCodingSessionCatalog`, and `deriveSeatBeeStamps`
  * (the real L17 selector) turns the umbrella's executions into the map this
@@ -108,7 +108,7 @@ function catalogRecord({ target, signerPubkey, metadata }) {
 
 /** One umbrella of two seats: `builder`'s 44223 carries a real beeStamp, `codex`'s carries none. */
 function buildUmbrella() {
-  const claudeMetadata = parseBuzzCodingSessionMetadata(
+  const claudeMetadata = parseBeekeeperCodingSessionMetadata(
     metadataContent(CLAUDE_TARGET, {
       beeStamp: {
         path: "/Applications/Beekeeper.app/Contents/MacOS/bee",
@@ -125,7 +125,7 @@ function buildUmbrella() {
   );
   assert.equal(claudeMetadata.beeStamp.sha, "23728227b");
 
-  const codexMetadata = parseBuzzCodingSessionMetadata(
+  const codexMetadata = parseBeekeeperCodingSessionMetadata(
     metadataContent(CODEX_TARGET),
   );
   assert.ok(codexMetadata);

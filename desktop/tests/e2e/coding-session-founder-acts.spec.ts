@@ -152,7 +152,7 @@ test("L8.1: what the keyring signs is the native builder's own bytes", async ({
   // serialises a 44244 body: what is signed is the string the native builder
   // returned, and the assertion is on that exact string.
   const signed = await page.waitForFunction(() => {
-    const events = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    const events = window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [];
     return events.find((event) => event.kind === 44244) ?? null;
   });
   const value = (await signed.jsonValue()) as {
@@ -389,7 +389,7 @@ test("L20: a create that names a repository resolves it, and the founders line n
   // fetches the announcement below through the mock relay, not a stub).
   const mission = founderActMission({ repoRef: REPO_REF });
   await page.addInitScript((event) => {
-    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [event];
+    window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [event];
   }, repoAnnouncementEvent());
   // No `landResponse` override: the mock's own default derives its answer
   // from the request's `repoOwnerPubkey`, which is only set when the relay

@@ -32,12 +32,13 @@ async function waitForMockLiveSubscription(
           ({ ch }) =>
             (
               window as Window & {
-                __BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
+                __BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
                   channelName: string;
                 }) => boolean;
               }
-            ).__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({ channelName: ch }) ??
-            false,
+            ).__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName: ch,
+            }) ?? false,
           { ch: channelName },
         ),
       { timeout: 20_000 },

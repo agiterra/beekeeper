@@ -19,7 +19,7 @@ const SCROLLBACK = "\x1b]11;?\x07\x1b[6n$ ".repeat(3);
 
 function ptyWrites(page: Page): Promise<string> {
   return page.evaluate(() =>
-    (window.__BUZZ_E2E_COMMAND_LOG__ ?? [])
+    (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? [])
       .filter((entry) => entry.command === "write_shell_session")
       .map((entry) => (entry.payload as { data: string }).data)
       .join(""),
@@ -31,8 +31,8 @@ test("opening a shell tab does not answer its replayed scrollback's queries into
 }) => {
   await page.addInitScript(
     ([session, scrollbackB64]) => {
-      window.__BUZZ_E2E_SHELL_SESSIONS__ = [session];
-      window.__BUZZ_E2E_SHELL_SCROLLBACK_B64__ = scrollbackB64;
+      window.__BEEKEEPER_E2E_SHELL_SESSIONS__ = [session];
+      window.__BEEKEEPER_E2E_SHELL_SCROLLBACK_B64__ = scrollbackB64;
     },
     [SESSION, Buffer.from(SCROLLBACK).toString("base64")] as const,
   );

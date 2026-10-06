@@ -17,7 +17,7 @@ export type MockProjectTeamSetupSeed = {
 
 declare global {
   interface Window {
-    __BUZZ_E2E_PROJECT_TEAM_SETUP__?: MockProjectTeamSetupSeed;
+    __BEEKEEPER_E2E_PROJECT_TEAM_SETUP__?: MockProjectTeamSetupSeed;
   }
 }
 
@@ -33,7 +33,7 @@ export function handleMockProjectTeamSetupCommand(
   command: string,
   args: Args,
 ): { value: unknown } | undefined {
-  const seed = window.__BUZZ_E2E_PROJECT_TEAM_SETUP__ ?? {};
+  const seed = window.__BEEKEEPER_E2E_PROJECT_TEAM_SETUP__ ?? {};
   switch (command) {
     case "project_team_list_installed_roles": {
       const relay = text(args, "expectedRelayUrl");

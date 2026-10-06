@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../theme/theme.dart';
-import 'buzz_sheet_header.dart';
+import 'beekeeper_sheet_header.dart';
 import 'concentric_sheet_surface.dart';
 
 /// Shared solid sheet surface with a centered navigation row.
-class BuzzTitledSheetLayout extends StatelessWidget {
-  const BuzzTitledSheetLayout({
+class BeekeeperTitledSheetLayout extends StatelessWidget {
+  const BeekeeperTitledSheetLayout({
     super.key,
     required this.title,
     required this.child,
@@ -38,7 +38,7 @@ class BuzzTitledSheetLayout extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            BuzzSheetHeader(
+            BeekeeperSheetHeader(
               title: title,
               titleKey: titleKey,
               leading: leading,

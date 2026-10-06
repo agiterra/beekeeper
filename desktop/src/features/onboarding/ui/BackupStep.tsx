@@ -7,7 +7,7 @@ import type { IdentityStorage } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { writeTextToClipboard } from "@/shared/lib/clipboard";
 import { Button } from "@/shared/ui/button";
-import { FuzzyLogo } from "@/shared/ui/buzz-logo/FuzzyLogo";
+import { FuzzyLogo } from "@/shared/ui/beekeeper-logo/FuzzyLogo";
 import { Card } from "@/shared/ui/card";
 import { Spinner } from "@/shared/ui/spinner";
 import {
@@ -395,7 +395,7 @@ export function BackupStep({
               </p>
             ) : null}
 
-            <p className="mx-auto mt-5 flex max-w-[440px] items-start justify-center gap-1.5 text-center text-xs leading-5 text-[var(--buzz-onboarding-backup-ink)]">
+            <p className="mx-auto mt-5 flex max-w-[440px] items-start justify-center gap-1.5 text-center text-xs leading-5 text-[var(--beekeeper-onboarding-backup-ink)]">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>
                 Never share your private key. Anyone with this key can

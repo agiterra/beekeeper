@@ -31,7 +31,7 @@ async function openRoles(
 ) {
   await page.addInitScript(
     ({ owner }) => {
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
           id: "setup-general".padEnd(64, "0"),
           pubkey: owner,

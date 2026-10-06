@@ -14,7 +14,7 @@
 
 use beekeeper_workflow::{parse_actions_yml, ActionEntry, ACTIONS_YML};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::commands::actions_authority::{
     decide_project_action_authority, project_action_grant_remedy, read_project_action_authority,
 };
@@ -65,7 +65,7 @@ fn runs_on_host(entry: &ActionEntry) -> bool {
 /// Every entry is attempted; the command fails after the loop when any was
 /// refused, so one bad entry does not hide the others' outcome.
 pub async fn cmd_publish(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: &str,
     channel: &str,
     file: &str,
@@ -162,7 +162,7 @@ fn needs_channel_elevation(entry: &ActionEntry) -> bool {
 /// the missing read named, because a `false` nobody checked is a lie the same
 /// size as a `true`.
 pub async fn cmd_status(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: &str,
     channel: Option<&str>,
     file: &str,
@@ -199,7 +199,7 @@ pub async fn cmd_status(
     Ok(())
 }
 
-pub async fn dispatch(cmd: crate::ActionsCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(cmd: crate::ActionsCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     use crate::ActionsCmd;
     match cmd {
         // Dispatched ahead of the key gate in `lib.rs` too, so it answers

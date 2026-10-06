@@ -201,7 +201,7 @@ nak req -k 1059 --tag "p=<your-hex-pubkey>" \
 
 | Client | Platform | Evidence | Notes |
 |--------|----------|:--------:|-------|
-| **BuzzTestClient** | Rust (repo) | Automated E2E | Full NIP-29 flow: discovery (39000/39001/39002), kind:9 send/receive, reactions, deletions, h-tag enforcement |
+| **BeekeeperTestClient** | Rust (repo) | Automated E2E | Full NIP-29 flow: discovery (39000/39001/39002), kind:9 send/receive, reactions, deletions, h-tag enforcement |
 | **E2E nostr interop** | Rust (repo) | Automated E2E | NIP-50 search (3 tests), NIP-10 threads (3 tests), NIP-17 gift wraps (3 tests), DM discovery (1 test) |
 | **nak** | CLI | Manual (verified) | kind:9 send/recv, NIP-50 search, NIP-10 thread replies, group discovery |
 

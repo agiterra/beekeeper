@@ -10,7 +10,7 @@ import {
   useDismissMediaContextMenu,
 } from "./MediaContextMenu";
 
-function useBuzzLinkContextMenu({
+function useBeekeeperLinkContextMenu({
   href,
   interactive,
   onOpenLink,
@@ -36,7 +36,7 @@ function useBuzzLinkContextMenu({
   const contextMenu =
     position && href ? (
       <MediaContextMenu
-        dataAttributes={["data-buzz-link-context-menu"]}
+        dataAttributes={["data-beekeeper-link-context-menu"]}
         items={[
           {
             label: "Open link",
@@ -60,7 +60,7 @@ function useBuzzLinkContextMenu({
   return { contextMenu, onContextMenuCapture };
 }
 
-export function BuzzLinkChip({
+export function BeekeeperLinkChip({
   children,
   className,
   href,
@@ -74,7 +74,7 @@ export function BuzzLinkChip({
   interactive: boolean;
   onOpenLink: () => void;
 }) {
-  const { contextMenu, onContextMenuCapture } = useBuzzLinkContextMenu({
+  const { contextMenu, onContextMenuCapture } = useBeekeeperLinkContextMenu({
     href,
     interactive,
     onOpenLink,
@@ -84,7 +84,7 @@ export function BuzzLinkChip({
     return (
       <InlineChip
         {...(props as React.HTMLAttributes<HTMLSpanElement>)}
-        data-buzz-link=""
+        data-beekeeper-link=""
         className={className}
         icon={Icon}
       >
@@ -98,7 +98,7 @@ export function BuzzLinkChip({
       <InlineChip
         {...props}
         as="button"
-        data-buzz-link=""
+        data-beekeeper-link=""
         className={className}
         icon={Icon}
         interactive
@@ -112,7 +112,7 @@ export function BuzzLinkChip({
   );
 }
 
-export function BuzzInlineLink({
+export function BeekeeperInlineLink({
   children,
   href,
   interactive,
@@ -125,7 +125,7 @@ export function BuzzInlineLink({
 }) {
   const contextMenuHref =
     href ?? (typeof props.title === "string" ? props.title : undefined);
-  const { contextMenu, onContextMenuCapture } = useBuzzLinkContextMenu({
+  const { contextMenu, onContextMenuCapture } = useBeekeeperLinkContextMenu({
     href: contextMenuHref,
     interactive,
     onOpenLink,

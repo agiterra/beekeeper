@@ -1,7 +1,7 @@
-import 'package:buzz/shared/relay/poll_schedule.dart';
-import 'package:buzz/shared/relay/relay_closed_retry.dart';
-import 'package:buzz/shared/relay/relay_reconnect_policy.dart';
-import 'package:buzz/shared/relay/relay_closed_policy.dart';
+import 'package:beekeeper/shared/relay/poll_schedule.dart';
+import 'package:beekeeper/shared/relay/relay_closed_retry.dart';
+import 'package:beekeeper/shared/relay/relay_reconnect_policy.dart';
+import 'package:beekeeper/shared/relay/relay_closed_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

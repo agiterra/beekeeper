@@ -53,7 +53,7 @@ use nostr::Event;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::HandoverContinueArgs;
 
@@ -151,7 +151,7 @@ pub(super) fn decide_plan(
 /// `bee sessions handover continue`.
 #[allow(clippy::too_many_lines)]
 pub(super) async fn cmd_continue(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     args: HandoverContinueArgs,
 ) -> Result<(), CliError> {
     let wait_secs = bounded_wait(args.wait_secs)?;
@@ -535,7 +535,7 @@ struct NativeOutcome {
 
 /// Send the checkpoint's next action to the original execution as a turn.
 async fn send_native_turn(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     target: &CodingSessionTarget,
     text: &str,
@@ -587,7 +587,7 @@ async fn send_native_turn(
 
 /// Wait, bounded, for the first turn receipt answering `command_id`.
 async fn await_turn_stage(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     command_id: &str,
     since: i64,

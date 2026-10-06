@@ -1,8 +1,8 @@
 """Buzz orchestra custom agent for Harbor."""
 
-from .agent import BuzzOrchestraAgent
+from .agent import BeekeeperOrchestraAgent
 from .container_runtime import (
-    BuzzContainerRuntime,
+    BeekeeperContainerRuntime,
     EndpointLaunchConfig,
     RuntimeLaunchError,
 )
@@ -12,8 +12,8 @@ from .runtime import OrchestraRuntime, RuntimeResult
 
 __all__ = [
     "AgentCredential",
-    "BuzzContainerRuntime",
-    "BuzzOrchestraAgent",
+    "BeekeeperContainerRuntime",
+    "BeekeeperOrchestraAgent",
     "EndpointLaunchConfig",
     "ExperimentManifest",
     "ManifestError",

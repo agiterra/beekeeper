@@ -27,8 +27,9 @@ async function openChannel(page: Page, name: string) {
 
 async function readCommandLog(page: Page) {
   return page.evaluate(() => {
-    const commands = (window as Window & { __BUZZ_E2E_COMMANDS__?: string[] })
-      .__BUZZ_E2E_COMMANDS__;
+    const commands = (
+      window as Window & { __BEEKEEPER_E2E_COMMANDS__?: string[] }
+    ).__BEEKEEPER_E2E_COMMANDS__;
     if (!commands) {
       throw new Error("E2E bridge command log is not installed");
     }

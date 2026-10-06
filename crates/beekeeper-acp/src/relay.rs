@@ -13,7 +13,7 @@
 //!
 //! A background tokio task owns the WebSocket stream. It:
 //! - Responds to Ping frames with Pong (preventing relay disconnect on long turns)
-//! - Forwards `BuzzEvent`s through an `mpsc` channel
+//! - Forwards `BeekeeperEvent`s through an `mpsc` channel
 //! - Handles reconnection with `since` filters to avoid event loss
 //! - Responds to mid-session AUTH challenges
 //! - Publishes ephemeral events (typing indicators) via `PublishEvent` commands
@@ -813,7 +813,7 @@ fn parse_advertised_oids(body: &[u8]) -> Option<HashSet<String>> {
 
 /// Events the harness cares about.
 #[derive(Debug, Clone)]
-pub struct BuzzEvent {
+pub struct BeekeeperEvent {
     /// Which channel this event belongs to.
     pub channel_id: Uuid,
     /// The underlying Nostr event.
@@ -962,7 +962,7 @@ type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 /// Ping frames, preventing disconnection during long agent turns.
 pub struct HarnessRelay {
     /// Receiver for events forwarded by the background task.
-    event_rx: mpsc::Receiver<Option<BuzzEvent>>,
+    event_rx: mpsc::Receiver<Option<BeekeeperEvent>>,
     /// Receiver for encrypted observer control events addressed to this agent.
     observer_control_rx: Option<mpsc::Receiver<Event>>,
     /// Sender for commands to the background task.
@@ -1103,7 +1103,8 @@ impl HarnessRelay {
         let (ws, handshake_buffer) =
             retry_initial_connect(|| do_connect(relay_url, keys, auth_tag.as_ref())).await?;
 
-        let (event_tx, event_rx) = mpsc::channel::<Option<BuzzEvent>>(event_channel_capacity());
+        let (event_tx, event_rx) =
+            mpsc::channel::<Option<BeekeeperEvent>>(event_channel_capacity());
         let (observer_control_tx, observer_control_rx) =
             mpsc::channel::<Event>(event_channel_capacity());
         let (cmd_tx, cmd_rx) = mpsc::channel::<RelayCommand>(CMD_CHANNEL_CAPACITY);
@@ -1304,7 +1305,7 @@ impl HarnessRelay {
     ///
     /// Reads from the background task's event channel. Returns `None` on
     /// connection loss — the caller should call [`reconnect`](Self::reconnect).
-    pub async fn next_event(&mut self) -> Option<BuzzEvent> {
+    pub async fn next_event(&mut self) -> Option<BeekeeperEvent> {
         // The background task sends `None` to signal connection loss.
         self.event_rx.recv().await.flatten()
     }
@@ -2415,7 +2416,7 @@ async fn execute_connected_command(
 /// Report a connection drop to the caller without blocking, remembering the
 /// sentinel so the caller's echoing `Reconnect` command is recognized as a
 /// stale reference to a drop this task repairs itself.
-fn notify_connection_lost(event_tx: &mpsc::Sender<Option<BuzzEvent>>, state: &mut BgState) {
+fn notify_connection_lost(event_tx: &mpsc::Sender<Option<BeekeeperEvent>>, state: &mut BgState) {
     state.fail_acknowledged_publishes("relay connection was lost before publication acceptance");
     state.requeue_latest_ephemeral_in_flight();
     if event_tx.try_send(None).is_ok() {
@@ -2428,7 +2429,7 @@ fn notify_connection_lost(event_tx: &mpsc::Sender<Option<BuzzEvent>>, state: &mu
 async fn run_background_task(
     mut ws: WsStream,
     initial_handshake_buffer: std::collections::VecDeque<RelayMessage>,
-    event_tx: mpsc::Sender<Option<BuzzEvent>>,
+    event_tx: mpsc::Sender<Option<BeekeeperEvent>>,
     observer_control_tx: mpsc::Sender<Event>,
     mut cmd_rx: mpsc::Receiver<RelayCommand>,
     keys: Keys,
@@ -2977,7 +2978,7 @@ async fn run_background_task(
 async fn handle_ws_message(
     msg: Message,
     ws: &mut WsStream,
-    event_tx: &mpsc::Sender<Option<BuzzEvent>>,
+    event_tx: &mpsc::Sender<Option<BeekeeperEvent>>,
     observer_control_tx: &mpsc::Sender<Event>,
     state: &mut BgState,
     keys: &Keys,
@@ -3033,7 +3034,7 @@ async fn handle_ws_message(
                             return true;
                         }
                         let ts = event.created_at.as_secs();
-                        let buzz_event = BuzzEvent {
+                        let buzz_event = BeekeeperEvent {
                             channel_id: channel_uuid,
                             event: *event,
                         };
@@ -3074,7 +3075,7 @@ async fn handle_ws_message(
                         let ts = event.created_at.as_secs();
                         let event_id_hex = event.id.to_hex();
                         if state.record_event(channel_id, &event) {
-                            let buzz_event = BuzzEvent {
+                            let buzz_event = BeekeeperEvent {
                                 channel_id,
                                 event: *event,
                             };
@@ -3376,7 +3377,7 @@ fn handle_rate_limit_notice(state: &mut BgState, message: &str) -> Option<tokio:
 async fn process_handshake_buffer(
     ws: &mut WsStream,
     buffer: std::collections::VecDeque<RelayMessage>,
-    event_tx: &mpsc::Sender<Option<BuzzEvent>>,
+    event_tx: &mpsc::Sender<Option<BeekeeperEvent>>,
     observer_control_tx: &mpsc::Sender<Event>,
     state: &mut BgState,
     keys: &Keys,
@@ -3929,7 +3930,7 @@ async fn try_autonomous_reconnect(
     keys: &Keys,
     relay_url: &str,
     agent_pubkey_hex: &str,
-    event_tx: &mpsc::Sender<Option<BuzzEvent>>,
+    event_tx: &mpsc::Sender<Option<BeekeeperEvent>>,
     observer_control_tx: &mpsc::Sender<Event>,
     auth_tag: Option<&nostr::Tag>,
 ) -> ReconnectOutcome {
@@ -4059,7 +4060,7 @@ async fn wait_for_reconnect(
     keys: &Keys,
     relay_url: &str,
     agent_pubkey_hex: &str,
-    event_tx: &mpsc::Sender<Option<BuzzEvent>>,
+    event_tx: &mpsc::Sender<Option<BeekeeperEvent>>,
     observer_control_tx: &mpsc::Sender<Event>,
     skip_drain: bool,
     auth_tag: Option<&nostr::Tag>,
@@ -7560,7 +7561,7 @@ mod tests {
     #[tokio::test]
     async fn rate_limited_ok_arms_gate_and_reparks_refused_observer_frame() {
         let (mut client, _server) = test_ws_pair().await;
-        let (event_tx, _event_rx) = mpsc::channel::<Option<BuzzEvent>>(4);
+        let (event_tx, _event_rx) = mpsc::channel::<Option<BeekeeperEvent>>(4);
         let (observer_control_tx, _observer_control_rx) = mpsc::channel::<Event>(4);
         let keys = Keys::generate();
         let mut state = BgState::new();
@@ -7658,7 +7659,7 @@ mod tests {
     #[tokio::test]
     async fn non_rate_limited_ok_rejection_retires_frame_without_arming_gate() {
         let (mut client, _server) = test_ws_pair().await;
-        let (event_tx, _event_rx) = mpsc::channel::<Option<BuzzEvent>>(4);
+        let (event_tx, _event_rx) = mpsc::channel::<Option<BeekeeperEvent>>(4);
         let (observer_control_tx, _observer_control_rx) = mpsc::channel::<Event>(4);
         let keys = Keys::generate();
         let mut state = BgState::new();

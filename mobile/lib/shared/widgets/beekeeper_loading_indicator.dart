@@ -7,7 +7,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import '../theme/theme.dart';
 
 /// The shared mobile loading indicator, matching the desktop arc spinner.
-class BuzzLoadingIndicator extends HookConsumerWidget {
+class BeekeeperLoadingIndicator extends HookConsumerWidget {
   /// The spinner diameter.
   final double size;
 
@@ -18,7 +18,7 @@ class BuzzLoadingIndicator extends HookConsumerWidget {
   final String semanticLabel;
 
   /// Creates a looping arc loading indicator.
-  const BuzzLoadingIndicator({
+  const BeekeeperLoadingIndicator({
     this.size = 40,
     this.color,
     this.semanticLabel = 'Loading',

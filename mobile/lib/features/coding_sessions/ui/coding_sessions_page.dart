@@ -4,7 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../shared/theme/theme.dart';
 import '../../../shared/widgets/bee_refresh_indicator.dart';
-import '../../../shared/widgets/buzz_loading_indicator.dart';
+import '../../../shared/widgets/beekeeper_loading_indicator.dart';
 import '../../../shared/widgets/frosted_app_bar.dart';
 import '../../../shared/widgets/frosted_scaffold.dart';
 import '../domain/coding_sessions_domain.dart';

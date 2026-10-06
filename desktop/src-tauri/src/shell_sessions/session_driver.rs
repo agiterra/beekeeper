@@ -94,9 +94,9 @@ fn classify_availability(resolved: Option<PathBuf>) -> Detected {
 }
 
 #[derive(Debug)]
-pub struct BuzzShellHostDriver;
+pub struct BeekeeperShellHostDriver;
 
-impl SessionDriver for BuzzShellHostDriver {
+impl SessionDriver for BeekeeperShellHostDriver {
     fn detect(&self) -> Detected {
         classify_availability(crate::managed_agents::resolve_command(BUZZ_SHELL_HOST))
     }
@@ -139,9 +139,9 @@ impl SessionDriver for BuzzShellHostDriver {
 /// outcome.
 fn resolve_from_detection(
     backend: &str,
-    driver: BuzzShellHostDriver,
+    driver: BeekeeperShellHostDriver,
     detected: Detected,
-) -> Result<BuzzShellHostDriver, String> {
+) -> Result<BeekeeperShellHostDriver, String> {
     if backend != BUZZ_SHELL_HOST {
         return Err(format!("unknown session driver backend: {backend}"));
     }
@@ -161,8 +161,8 @@ fn resolve_from_detection(
 /// for the real binary (consulting the login shell's `PATH`), and that probe
 /// has no business running for a name this registry is about to reject
 /// anyway. The error string is unchanged either way; only the ordering is.
-pub fn resolve_driver(backend: &str) -> Result<BuzzShellHostDriver, String> {
-    let driver = BuzzShellHostDriver;
+pub fn resolve_driver(backend: &str) -> Result<BeekeeperShellHostDriver, String> {
+    let driver = BeekeeperShellHostDriver;
     if backend != BUZZ_SHELL_HOST {
         return Err(format!("unknown session driver backend: {backend}"));
     }
@@ -240,7 +240,7 @@ mod tests {
         // right now for BUZZ_SHELL_HOST is exactly what detect() must report.
         // A driver.detect() hardcoded to Available (ignoring resolve_command)
         // fails this in this dev worktree, where the sidecar binary isn't built.
-        let driver = BuzzShellHostDriver;
+        let driver = BeekeeperShellHostDriver;
         let resolved = crate::managed_agents::resolve_command(BUZZ_SHELL_HOST);
         match (driver.detect(), resolved) {
             (Detected::Available, Some(_)) => {}
@@ -261,7 +261,7 @@ mod tests {
         // fact about this machine. See BUILDER-BRIEF-PREAMBLE.md law 1.
         let err = resolve_from_detection(
             BUZZ_SHELL_HOST,
-            BuzzShellHostDriver,
+            BeekeeperShellHostDriver,
             Detected::Unavailable {
                 reason: "buzz-shell-host binary not found".to_string(),
             },
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn list_probe_dead_pid_is_dead_regardless_of_socket() {
-        let driver = BuzzShellHostDriver;
+        let driver = BeekeeperShellHostDriver;
         let dead_pid = dead_pid();
         assert!(
             !pid_alive(dead_pid),
@@ -292,7 +292,7 @@ mod tests {
     fn list_probe_alive_pid_but_missing_socket_is_dead() {
         // A live process whose socket file is gone (host mid-teardown) is not
         // a substrate that can still serve this session.
-        let driver = BuzzShellHostDriver;
+        let driver = BeekeeperShellHostDriver;
         let self_pid = std::process::id();
         let receipt = test_receipt(self_pid);
         let probed = driver.list_probe(&receipt, Path::new("/tmp/definitely-not-there.sock"));
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn list_probe_alive_pid_and_existing_socket_is_alive() {
-        let driver = BuzzShellHostDriver;
+        let driver = BeekeeperShellHostDriver;
         let self_pid = std::process::id();
         let dir = std::env::temp_dir().join(format!("a16-list-probe-{self_pid}"));
         std::fs::create_dir_all(&dir).unwrap();
@@ -319,7 +319,7 @@ mod tests {
         // list_probe is read-only: a Dead verdict must not delete anything.
         // Receipt mutation/cleanup is out of scope for the driver (it stays
         // in manager.rs::reattach_hosts, which decides what Dead means).
-        let driver = BuzzShellHostDriver;
+        let driver = BeekeeperShellHostDriver;
         let dir = std::env::temp_dir().join(format!("a16-list-probe-noop-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let socket = dir.join("fake.sock");
@@ -361,7 +361,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(100));
         });
 
-        let driver = BuzzShellHostDriver;
+        let driver = BeekeeperShellHostDriver;
         let (_client, received_hello, _read_half) = driver
             .attach_existing(&socket, Duration::from_secs(2))
             .expect("attach_existing must connect to a pre-existing socket");
@@ -387,7 +387,7 @@ mod tests {
             Frame::Hello(hello).write_to(&mut conn).unwrap();
             std::thread::sleep(Duration::from_millis(100));
         });
-        let driver = BuzzShellHostDriver;
+        let driver = BeekeeperShellHostDriver;
         let _ = driver
             .attach_existing(&socket, Duration::from_secs(2))
             .expect("attach must succeed");
@@ -409,7 +409,7 @@ mod tests {
             Frame::read_from(&mut conn).unwrap().unwrap()
         });
 
-        let driver = BuzzShellHostDriver;
+        let driver = BeekeeperShellHostDriver;
         let (client, _hello, _read_half) = driver
             .attach_existing(&socket, Duration::from_secs(2))
             .expect("attach must succeed");
@@ -441,7 +441,7 @@ mod tests {
             (frame, extra)
         });
 
-        let driver = BuzzShellHostDriver;
+        let driver = BeekeeperShellHostDriver;
         let (client, _hello, _read_half) = driver
             .attach_existing(&socket, Duration::from_secs(2))
             .expect("attach must succeed");

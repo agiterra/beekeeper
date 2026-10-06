@@ -69,10 +69,12 @@ const ENTERING_CURTAIN_FADE_MS = 500;
 const ENTERING_CURTAIN_MAX_WAIT_MS = 8_000;
 
 const NEUTRAL_EMOJI_PICKER_THEME_VARS = {
-  "--buzz-emoji-picker-rgb-background":
-    "var(--buzz-onboarding-emoji-picker-background)",
-  "--buzz-emoji-picker-rgb-color": "var(--buzz-onboarding-emoji-picker-color)",
-  "--buzz-emoji-picker-rgb-input": "var(--buzz-onboarding-emoji-picker-input)",
+  "--beekeeper-emoji-picker-rgb-background":
+    "var(--beekeeper-onboarding-emoji-picker-background)",
+  "--beekeeper-emoji-picker-rgb-color":
+    "var(--beekeeper-onboarding-emoji-picker-color)",
+  "--beekeeper-emoji-picker-rgb-input":
+    "var(--beekeeper-onboarding-emoji-picker-input)",
 } as React.CSSProperties;
 
 function AvatarCircle({
@@ -116,7 +118,7 @@ function AvatarCircle({
         />
       ) : (
         <span
-          className="flex h-36 w-36 items-center justify-center rounded-full bg-white/30 text-[var(--buzz-onboarding-backup-ink)] transition-colors group-hover:bg-white/40"
+          className="flex h-36 w-36 items-center justify-center rounded-full bg-white/30 text-[var(--beekeeper-onboarding-backup-ink)] transition-colors group-hover:bg-white/40"
           data-testid="community-avatar-empty"
         >
           <Plus className="h-7 w-7" aria-hidden="true" />
@@ -479,7 +481,7 @@ export function CommunityOnboardingFlow({
   return (
     <div
       className={cn(
-        "buzz-onboarding-neutral-theme buzz-startup-shell flex h-dvh justify-center overflow-y-auto px-4 text-foreground",
+        "beekeeper-onboarding-neutral-theme beekeeper-startup-shell flex h-dvh justify-center overflow-y-auto px-4 text-foreground",
         isProfileStage || isTeamStage
           ? "items-start pb-36 pt-[106px]"
           : "items-stretch",
@@ -523,9 +525,9 @@ export function CommunityOnboardingFlow({
             className={cn(
               "relative mx-auto w-full text-center",
               isProfileStage
-                ? "buzz-onboarding-step-frame flex max-w-[500px] flex-col items-center"
+                ? "beekeeper-onboarding-step-frame flex max-w-[500px] flex-col items-center"
                 : isTeamStage
-                  ? "buzz-onboarding-step-frame flex max-w-[760px] flex-col items-center"
+                  ? "beekeeper-onboarding-step-frame flex max-w-[760px] flex-col items-center"
                   : "flex min-h-dvh max-w-[560px] flex-col justify-center py-8",
             )}
             data-testid="community-onboarding-body"
@@ -596,7 +598,7 @@ export function CommunityOnboardingFlow({
                         autoCapitalize="none"
                         autoComplete="username"
                         autoCorrect="off"
-                        className="h-14 rounded-2xl border-[color:rgb(var(--buzz-onboarding-avatar-control-fg)_/_0.28)] bg-[rgb(var(--buzz-onboarding-avatar-dialog-bg)/0.95)] px-5 text-sm shadow-none placeholder:text-muted-foreground/60 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[color:rgb(var(--buzz-onboarding-avatar-control-fg)_/_0.5)] md:text-sm"
+                        className="h-14 rounded-2xl border-[color:rgb(var(--beekeeper-onboarding-avatar-control-fg)_/_0.28)] bg-[rgb(var(--beekeeper-onboarding-avatar-dialog-bg)/0.95)] px-5 text-sm shadow-none placeholder:text-muted-foreground/60 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[color:rgb(var(--beekeeper-onboarding-avatar-control-fg)_/_0.5)] md:text-sm"
                         data-testid="community-profile-name-key"
                         disabled={isPending || isUploadingAvatar}
                         id="community-display-name"
@@ -639,8 +641,8 @@ export function CommunityOnboardingFlow({
                   open={isAvatarEditorOpen}
                 >
                   <DialogContent
-                    className="buzz-onboarding-neutral-theme w-[min(calc(100vw-2rem),920px)] max-w-[920px] gap-0 overflow-hidden rounded-[18px] bg-[rgb(var(--buzz-onboarding-avatar-dialog-bg))] px-8 pb-6 pt-10 text-sm text-foreground shadow-[0_28px_90px_rgb(var(--buzz-onboarding-avatar-dialog-shadow)_/_0.28),0_8px_28px_rgb(var(--buzz-onboarding-avatar-dialog-shadow)_/_0.18)] transition-[height] duration-[250ms] ease-out"
-                    closeButtonClassName="right-6 top-6 h-10 w-10 rounded-full bg-[rgb(var(--buzz-onboarding-avatar-action-bg))] text-[rgb(var(--buzz-onboarding-avatar-action-fg))] hover:bg-[rgb(var(--buzz-onboarding-avatar-action-bg)/0.9)] hover:text-[rgb(var(--buzz-onboarding-avatar-action-fg))]"
+                    className="beekeeper-onboarding-neutral-theme w-[min(calc(100vw-2rem),920px)] max-w-[920px] gap-0 overflow-hidden rounded-[18px] bg-[rgb(var(--beekeeper-onboarding-avatar-dialog-bg))] px-8 pb-6 pt-10 text-sm text-foreground shadow-[0_28px_90px_rgb(var(--beekeeper-onboarding-avatar-dialog-shadow)_/_0.28),0_8px_28px_rgb(var(--beekeeper-onboarding-avatar-dialog-shadow)_/_0.18)] transition-[height] duration-[250ms] ease-out"
+                    closeButtonClassName="right-6 top-6 h-10 w-10 rounded-full bg-[rgb(var(--beekeeper-onboarding-avatar-action-bg))] text-[rgb(var(--beekeeper-onboarding-avatar-action-fg))] hover:bg-[rgb(var(--beekeeper-onboarding-avatar-action-bg)/0.9)] hover:text-[rgb(var(--beekeeper-onboarding-avatar-action-fg))]"
                     data-system-color-scheme="light"
                     data-testid="community-avatar-editor-key-frame"
                     onCloseAutoFocus={(event) => {
@@ -701,7 +703,7 @@ export function CommunityOnboardingFlow({
                                     <span
                                       className={cn(
                                         avatarSquishKey > 0 &&
-                                          "buzz-avatar-squish",
+                                          "beekeeper-avatar-squish",
                                       )}
                                       data-testid="community-avatar-live-preview-emoji"
                                       key={avatarSquishKey}

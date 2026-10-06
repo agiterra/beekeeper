@@ -10,7 +10,7 @@ class _CodingSessionsLoading extends StatelessWidget {
     padding: const EdgeInsets.only(top: Grid.xxl),
     children: const [
       Center(
-        child: BuzzLoadingIndicator(
+        child: BeekeeperLoadingIndicator(
           size: 40,
           semanticLabel: 'Reading coding sessions',
         ),

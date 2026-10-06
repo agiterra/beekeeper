@@ -430,7 +430,7 @@ test("message links to visible root messages open the thread panel", async ({
   await expect(composerLink).toHaveText("general · mock-gen");
   await expect(composerLink).toHaveClass(/mention-chip/);
   await expect(composerLink).toHaveClass(/inline-chip-icon-message/);
-  await expect(composerLink).toHaveAttribute("data-buzz-link", "");
+  await expect(composerLink).toHaveAttribute("data-beekeeper-link", "");
   await expect(composerLink).toHaveAttribute("title", "Thread in #general");
   await expect(composerInput).not.toContainText("beekeeper://message");
   await page.getByTestId("send-message").click();
@@ -451,7 +451,7 @@ test("message links to visible root messages open the thread panel", async ({
   await expect(randomChannelLink).toBeVisible();
   await rootThreadLink.click({ button: "right" });
 
-  const linkMenu = page.locator("[data-buzz-link-context-menu]");
+  const linkMenu = page.locator("[data-beekeeper-link-context-menu]");
   await expect(linkMenu).toBeVisible();
   await randomChannelLink.click({ button: "right" });
   await expect(linkMenu).toHaveCount(1);
@@ -466,12 +466,12 @@ test("message links to visible root messages open the thread panel", async ({
       page.evaluate(() => {
         return (
           window as Window & {
-            __BUZZ_E2E_COMMAND_LOG__?: Array<{
+            __BEEKEEPER_E2E_COMMAND_LOG__?: Array<{
               command: string;
               payload: { text?: string };
             }>;
           }
-        ).__BUZZ_E2E_COMMAND_LOG__?.findLast(
+        ).__BEEKEEPER_E2E_COMMAND_LOG__?.findLast(
           ({ command }) => command === "copy_text_to_clipboard",
         )?.payload.text;
       }),
@@ -572,7 +572,7 @@ test("cold-start channel deep link drains after the router mounts", async ({
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).filter(
+        (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? []).filter(
           (entry) =>
             entry.command === "acknowledge_pending_navigation_deep_link",
         ),

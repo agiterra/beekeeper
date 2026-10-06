@@ -3,7 +3,7 @@ import * as React from "react";
 import { buildMessageLink } from "@/features/messages/lib/messageLink";
 import { cn } from "@/shared/lib/cn";
 
-import { BuzzLinkChip } from "./BuzzLinkChip";
+import { BeekeeperLinkChip } from "./BeekeeperLinkChip";
 import type { MessageLinkPillProps } from "./types";
 import { getMessageLinkLabel } from "@/features/messages/lib/messageLinkLabel";
 
@@ -61,7 +61,7 @@ export function MessageLinkPill({
 
   if (!isSentFromThread) {
     return (
-      <BuzzLinkChip
+      <BeekeeperLinkChip
         data-message-link=""
         href={permalink}
         icon="message"
@@ -73,7 +73,7 @@ export function MessageLinkPill({
         }}
       >
         {channelLabel} · {shortId}
-      </BuzzLinkChip>
+      </BeekeeperLinkChip>
     );
   }
 

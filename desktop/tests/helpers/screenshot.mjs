@@ -171,11 +171,11 @@ await page.addInitScript(
       writable: true,
     });
 
-    window.__BUZZ_E2E__ = {
+    window.__BEEKEEPER_E2E__ = {
       mode: "mock",
       ...(updateReady ? { mock: { updateAvailable: true } } : {}),
     };
-    window.__BUZZ_E2E_APP_BADGE_COUNT__ = 0;
+    window.__BEEKEEPER_E2E_APP_BADGE_COUNT__ = 0;
   },
   { updateReady: args["update-ready"] },
 );
@@ -231,7 +231,7 @@ try {
     for (const ch of targetChannels) {
       await page.waitForFunction(
         (name) =>
-          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+          window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
             channelName: name,
           }) ?? false,
         ch,
@@ -242,7 +242,7 @@ try {
     for (const msg of messages) {
       await page.evaluate(
         (m) => {
-          window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.(m);
+          window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?.(m);
         },
         { ...msg, pubkey: msg.pubkey ?? DEFAULT_MOCK_PUBKEY },
       );

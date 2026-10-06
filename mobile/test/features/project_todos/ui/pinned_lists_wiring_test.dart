@@ -1,7 +1,7 @@
-import 'package:buzz/app.dart';
-import 'package:buzz/features/project_todos/domain/project_todo_op.dart';
-import 'package:buzz/features/project_todos/state/project_todos_provider.dart';
-import 'package:buzz/features/projects/ui/project_tree.dart';
+import 'package:beekeeper/app.dart';
+import 'package:beekeeper/features/project_todos/domain/project_todo_op.dart';
+import 'package:beekeeper/features/project_todos/state/project_todos_provider.dart';
+import 'package:beekeeper/features/projects/ui/project_tree.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';

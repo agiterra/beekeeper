@@ -11,7 +11,7 @@ import type {
  * Mock Tauri commands for the transcript minimap (SV-26, SV-27), owned by
  * lane B5.
  *
- * Off unless a spec sets `window.__BUZZ_E2E_WAVE_B_MINIMAP_TEAM_FOLD__ = true`
+ * Off unless a spec sets `window.__BEEKEEPER_E2E_WAVE_B_MINIMAP_TEAM_FOLD__ = true`
  * before the app loads. Then the kind-44244 team fold answers from the
  * signed transactions it is handed, so the minimap's waiting-ruling mark
  * (DB8) can be driven by a real signed `decision.request`: every input is
@@ -31,8 +31,11 @@ type MockEvent = {
 function enabled(): boolean {
   return (
     typeof window !== "undefined" &&
-    (window as Window & { __BUZZ_E2E_WAVE_B_MINIMAP_TEAM_FOLD__?: boolean })
-      .__BUZZ_E2E_WAVE_B_MINIMAP_TEAM_FOLD__ === true
+    (
+      window as Window & {
+        __BEEKEEPER_E2E_WAVE_B_MINIMAP_TEAM_FOLD__?: boolean;
+      }
+    ).__BEEKEEPER_E2E_WAVE_B_MINIMAP_TEAM_FOLD__ === true
   );
 }
 

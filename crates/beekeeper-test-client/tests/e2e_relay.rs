@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
-use beekeeper_test_client::{BuzzTestClient, RelayMessage, TestClientError};
+use beekeeper_test_client::{BeekeeperTestClient, RelayMessage, TestClientError};
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -213,7 +213,7 @@ async fn test_connect_and_authenticate() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let client = BuzzTestClient::connect(&url, &keys)
+    let client = BeekeeperTestClient::connect(&url, &keys)
         .await
         .expect("should connect and authenticate");
 
@@ -233,7 +233,9 @@ async fn test_client_submitted_nip43_membership_snapshots_are_rejected() {
         .sign_with_keys(&keys)
         .expect("sign forged membership snapshot");
 
-    let mut ws = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut ws = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let ok = ws
         .send_event(forged.clone())
         .await
@@ -365,7 +367,7 @@ async fn test_send_event_and_receive_via_subscription() {
     let keys_b = Keys::generate();
     let channel = create_test_channel(&keys_a).await;
 
-    let mut client_a = BuzzTestClient::connect(&url, &keys_a)
+    let mut client_a = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("client A connect");
 
@@ -385,7 +387,7 @@ async fn test_send_event_and_receive_via_subscription() {
         .await
         .expect("client A EOSE");
 
-    let mut client_b = BuzzTestClient::connect(&url, &keys_b)
+    let mut client_b = BeekeeperTestClient::connect(&url, &keys_b)
         .await
         .expect("client B connect");
 
@@ -429,7 +431,7 @@ async fn test_multi_channel_live_subscription_receives_events_from_all_channels(
     let channel_b = create_test_channel(&keys).await;
     let channel_c = create_test_channel(&keys).await;
 
-    let mut subscriber = BuzzTestClient::connect(&url, &keys)
+    let mut subscriber = BeekeeperTestClient::connect(&url, &keys)
         .await
         .expect("subscriber connect");
 
@@ -448,7 +450,7 @@ async fn test_multi_channel_live_subscription_receives_events_from_all_channels(
         .await
         .expect("EOSE");
 
-    let mut publisher = BuzzTestClient::connect(&url, &keys)
+    let mut publisher = BeekeeperTestClient::connect(&url, &keys)
         .await
         .expect("publisher connect");
 
@@ -505,7 +507,9 @@ async fn test_large_event_frame_below_configured_limit_is_accepted() {
 
     let keys = Keys::generate();
     let channel = create_test_channel(&keys).await;
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let h_tag = Tag::parse(["h", channel.as_str()]).expect("h tag");
     let content = "x".repeat(70_000);
@@ -557,7 +561,9 @@ async fn test_subscription_filters_by_kind() {
     let keys = Keys::generate();
     let channel = create_test_channel(&keys).await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let sid = sub_id("filter-kind");
     let filter = Filter::new()
@@ -625,7 +631,9 @@ async fn test_close_subscription_stops_delivery() {
 
     let keys = Keys::generate();
     let channel = create_test_channel(&keys).await;
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let sid = sub_id("close-sub");
     let filter = Filter::new()
@@ -676,7 +684,7 @@ async fn test_unauthenticated_rejected() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect_unauthenticated(&url)
+    let mut client = BeekeeperTestClient::connect_unauthenticated(&url)
         .await
         .expect("connect unauthenticated");
 
@@ -716,10 +724,11 @@ async fn test_multiple_concurrent_clients() {
     let keys: Vec<Keys> = (0..3).map(|_| Keys::generate()).collect();
     let channel = create_test_channel(&keys[0]).await;
 
-    let mut clients: Vec<BuzzTestClient> =
-        futures_util::future::try_join_all(keys.iter().map(|k| BuzzTestClient::connect(&url, k)))
-            .await
-            .expect("all clients connect");
+    let mut clients: Vec<BeekeeperTestClient> = futures_util::future::try_join_all(
+        keys.iter().map(|k| BeekeeperTestClient::connect(&url, k)),
+    )
+    .await
+    .expect("all clients connect");
 
     let filter = Filter::new()
         .kind(Kind::Custom(kind))
@@ -772,7 +781,9 @@ async fn test_stored_events_returned_before_eose() {
 
     let keys = Keys::generate();
     let channel = create_test_channel(&keys).await;
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let content = format!("stored-{}", uuid::Uuid::new_v4());
     let ok = client
@@ -815,7 +826,9 @@ async fn test_valid_channel_survives_malformed_or_empty_h_sibling() {
     let kind: u16 = 9;
     let keys = Keys::generate();
     let channel = create_test_channel(&keys).await;
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     for (label, sibling) in [
         (
@@ -889,7 +902,9 @@ async fn test_ephemeral_event_not_stored() {
 
     let keys = Keys::generate();
     let channel = create_test_channel(&keys).await;
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let ok = client
         .send_text_message(&keys, &channel, "ephemeral content", ephemeral_kind)
@@ -930,7 +945,9 @@ async fn test_ephemeral_event_not_stored() {
 async fn test_auth_event_kind_rejected() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let relay_url_parsed: nostr::RelayUrl = url.parse().unwrap();
     let auth_event = nostr::EventBuilder::auth("fake-challenge", relay_url_parsed)
@@ -964,7 +981,9 @@ async fn test_auth_event_kind_rejected() {
 async fn test_subscription_limit_enforced() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     for i in 0..1024 {
         let sid = format!("limit-sub-{i}");
@@ -1009,7 +1028,7 @@ async fn test_subscription_limit_enforced() {
     client.disconnect().await.expect("disconnect");
 }
 
-async fn subscribe_until_eose(client: &mut BuzzTestClient, sid: &str, filter: Filter) {
+async fn subscribe_until_eose(client: &mut BeekeeperTestClient, sid: &str, filter: Filter) {
     loop {
         client
             .subscribe(sid, vec![filter.clone()])
@@ -1095,7 +1114,7 @@ async fn test_pubkey_mismatch_rejected() {
     let keys_b = Keys::generate();
     let channel = create_test_channel(&keys_a).await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys_a)
+    let mut client = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("connect as keys_a");
 
@@ -1120,7 +1139,9 @@ async fn test_eose_sent_for_empty_subscription() {
 
     let keys = Keys::generate();
     let channel = create_test_channel(&keys).await;
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let sid = sub_id("empty-eose");
     let filter = Filter::new()
@@ -1177,7 +1198,9 @@ async fn test_kind0_nip05_sync() {
     let valid_handle = format!("{}@{}", unique_name, relay_domain);
 
     // Step 1: Connect and publish kind:0 with a valid nip05 handle.
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let kind0_content = serde_json::json!({
         "display_name": "Kind0 Test User",
@@ -1311,7 +1334,7 @@ async fn test_nip29_put_user_default_policy_allows() {
     let channel_id = create_test_channel(&channel_owner_keys).await;
 
     // Connect as channel_owner.
-    let mut ws = BuzzTestClient::connect(&url, &channel_owner_keys)
+    let mut ws = BeekeeperTestClient::connect(&url, &channel_owner_keys)
         .await
         .expect("connect as channel_owner");
 
@@ -1349,7 +1372,7 @@ async fn test_unarchive_emits_member_added_notification() {
     // Creating the channel makes the owner its sole member.
     let channel_id = create_test_channel(&owner_keys).await;
 
-    let mut ws = BuzzTestClient::connect(&url, &owner_keys)
+    let mut ws = BeekeeperTestClient::connect(&url, &owner_keys)
         .await
         .expect("connect as owner");
 
@@ -1443,7 +1466,7 @@ async fn test_nip29_put_user_nobody_blocks() {
     let channel_id = create_test_channel(&channel_owner_keys).await;
 
     // Connect as channel_owner.
-    let mut ws = BuzzTestClient::connect(&url, &channel_owner_keys)
+    let mut ws = BeekeeperTestClient::connect(&url, &channel_owner_keys)
         .await
         .expect("connect as channel_owner");
 
@@ -1505,7 +1528,7 @@ async fn test_nip29_put_user_self_add_bypasses_policy() {
     let channel_id = create_test_channel(&agent_keys).await;
 
     // Connect as agent.
-    let mut ws = BuzzTestClient::connect(&url, &agent_keys)
+    let mut ws = BeekeeperTestClient::connect(&url, &agent_keys)
         .await
         .expect("connect as agent");
 
@@ -1565,7 +1588,7 @@ async fn test_nip29_put_user_owner_only_blocks() {
     let channel_id = create_test_channel(&channel_owner_keys).await;
 
     // Connect as channel_owner.
-    let mut ws = BuzzTestClient::connect(&url, &channel_owner_keys)
+    let mut ws = BeekeeperTestClient::connect(&url, &channel_owner_keys)
         .await
         .expect("connect as channel_owner");
 
@@ -1602,7 +1625,7 @@ async fn test_nip29_standard_client_flow() {
     let keys = Keys::generate();
     let channel_id = create_test_channel(&keys).await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys)
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
         .await
         .expect("connect and authenticate via NIP-42");
 
@@ -1783,7 +1806,9 @@ async fn test_membership_notification_kind_rejected() {
     let keys = Keys::generate();
     let channel_id = create_test_channel(&keys).await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let p_tag = Tag::parse(["p", &keys.public_key().to_hex()]).expect("p tag");
     let h_tag = Tag::parse(["h", &channel_id]).expect("h tag");
@@ -1822,7 +1847,7 @@ async fn test_membership_notification_emitted_on_add() {
     let agent_pubkey_hex = agent_keys.public_key().to_hex();
 
     // Connect as agent — NIP-42 auth establishes the authenticated pubkey.
-    let mut agent_client = BuzzTestClient::connect(&url, &agent_keys)
+    let mut agent_client = BeekeeperTestClient::connect(&url, &agent_keys)
         .await
         .expect("connect as agent");
 
@@ -1923,7 +1948,9 @@ async fn test_membership_notification_requires_p_filter() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let sid = sub_id("no-p-filter");
     let filter = Filter::new().kinds(vec![Kind::Custom(44100), Kind::Custom(44101)]);
@@ -1974,7 +2001,9 @@ async fn test_membership_notification_wildcard_filter_rejected() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let sid = sub_id("wildcard-filter");
     // Empty filter — no kinds, no #p — can match kind:44100/44101.
@@ -2029,7 +2058,7 @@ async fn test_membership_notification_requires_own_p_filter() {
     let keys_b_pubkey_hex = keys_b.public_key().to_hex();
 
     // Connect as keys_a.
-    let mut client = BuzzTestClient::connect(&url, &keys_a)
+    let mut client = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("connect as keys_a");
 
@@ -2092,7 +2121,7 @@ async fn test_membership_notification_emitted_on_remove() {
     let agent_pubkey_hex = agent_keys.public_key().to_hex();
 
     // Connect as agent — NIP-42 auth establishes the authenticated pubkey.
-    let mut agent_client = BuzzTestClient::connect(&url, &agent_keys)
+    let mut agent_client = BeekeeperTestClient::connect(&url, &agent_keys)
         .await
         .expect("connect as agent");
 
@@ -2241,7 +2270,7 @@ async fn test_membership_notification_multi_p_rejected() {
     let keys_b_pubkey_hex = keys_b.public_key().to_hex();
 
     // Connect as keys_a.
-    let mut client = BuzzTestClient::connect(&url, &keys_a)
+    let mut client = BeekeeperTestClient::connect(&url, &keys_a)
         .await
         .expect("connect as keys_a");
 
@@ -2303,7 +2332,9 @@ async fn test_membership_notification_mixed_filter_rejected() {
     let keys = Keys::generate();
     let channel_id = create_test_channel(&keys).await;
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let sid = sub_id("mixed-filter");
     // Filter 1: has #h + membership kinds (would skip per-filter #h check)
@@ -2353,7 +2384,7 @@ async fn test_membership_notification_mixed_filter_rejected() {
 }
 
 /// Create a private channel over WebSocket and return the channel UUID.
-async fn create_private_channel_ws(client: &mut BuzzTestClient, keys: &Keys) -> String {
+async fn create_private_channel_ws(client: &mut BeekeeperTestClient, keys: &Keys) -> String {
     let channel_uuid = uuid::Uuid::new_v4().to_string();
     let channel_name = format!("relay-e2e-private-{}", channel_uuid);
 
@@ -2385,7 +2416,7 @@ async fn create_private_channel_ws(client: &mut BuzzTestClient, keys: &Keys) -> 
 /// drops a `p` tag matching the signer (nostr-0.44.3 builder.rs:435-449) and the
 /// event fails as "missing p tag" instead of exercising the authority check.
 async fn add_member_ws(
-    client: &mut BuzzTestClient,
+    client: &mut BeekeeperTestClient,
     channel_id: &str,
     target_pubkey_hex: &str,
     signer: &Keys,
@@ -2406,7 +2437,7 @@ async fn add_member_ws(
 ///
 /// See [`add_member_ws`] for why `allow_self_tagging` is required.
 async fn add_member_with_role_ws(
-    client: &mut BuzzTestClient,
+    client: &mut BeekeeperTestClient,
     channel_id: &str,
     target_pubkey_hex: &str,
     role: &str,
@@ -2441,7 +2472,7 @@ async fn test_private_channel_any_member_can_invite() {
     ];
 
     // Connect as owner and create a private channel.
-    let mut owner_client = BuzzTestClient::connect(&url, &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&url, &owner_keys)
         .await
         .expect("connect as owner");
     let channel_id = create_private_channel_ws(&mut owner_client, &owner_keys).await;
@@ -2462,7 +2493,7 @@ async fn test_private_channel_any_member_can_invite() {
     // Exercise the full ordinary-role target matrix. Relay and DB authorization
     // both run here, unlike the Desktop/mobile policy-unit-test mirrors.
     for (actor_role, actor_keys) in &actors {
-        let mut actor_client = BuzzTestClient::connect(&url, actor_keys)
+        let mut actor_client = BeekeeperTestClient::connect(&url, actor_keys)
             .await
             .unwrap_or_else(|err| panic!("connect as {actor_role}: {err}"));
 
@@ -2521,7 +2552,7 @@ async fn test_private_channel_admin_can_invite() {
     let admin_keys = Keys::generate();
     let invitee_keys = Keys::generate();
 
-    let mut owner_client = BuzzTestClient::connect(&url, &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&url, &owner_keys)
         .await
         .expect("connect as owner");
     let channel_id = create_private_channel_ws(&mut owner_client, &owner_keys).await;
@@ -2536,7 +2567,7 @@ async fn test_private_channel_admin_can_invite() {
     .await;
     assert!(accepted, "owner should add an admin, got: {msg}");
 
-    let mut admin_client = BuzzTestClient::connect(&url, &admin_keys)
+    let mut admin_client = BeekeeperTestClient::connect(&url, &admin_keys)
         .await
         .expect("connect as admin");
 
@@ -2566,13 +2597,13 @@ async fn test_private_channel_non_member_cannot_invite() {
     let target_keys = Keys::generate();
 
     // Owner creates a private channel.
-    let mut owner_client = BuzzTestClient::connect(&url, &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&url, &owner_keys)
         .await
         .expect("connect as owner");
     let channel_id = create_private_channel_ws(&mut owner_client, &owner_keys).await;
 
     // Connect as outsider (not a member of the channel).
-    let mut outsider_client = BuzzTestClient::connect(&url, &outsider_keys)
+    let mut outsider_client = BeekeeperTestClient::connect(&url, &outsider_keys)
         .await
         .expect("connect as outsider");
 
@@ -2610,7 +2641,7 @@ async fn test_private_channel_member_cannot_grant_admin() {
     let target_keys = Keys::generate();
 
     // Owner creates a private channel and adds a regular member.
-    let mut owner_client = BuzzTestClient::connect(&url, &owner_keys)
+    let mut owner_client = BeekeeperTestClient::connect(&url, &owner_keys)
         .await
         .expect("connect as owner");
     let channel_id = create_private_channel_ws(&mut owner_client, &owner_keys).await;
@@ -2625,7 +2656,7 @@ async fn test_private_channel_member_cannot_grant_admin() {
     assert!(accepted, "owner should add member, got: {msg}");
 
     // Connect as the regular member.
-    let mut member_client = BuzzTestClient::connect(&url, &member_keys)
+    let mut member_client = BeekeeperTestClient::connect(&url, &member_keys)
         .await
         .expect("connect as member");
 
@@ -2663,7 +2694,9 @@ async fn test_reply_ingest_pushes_live_thread_summary() {
     let url = relay_url();
     let keys = Keys::generate();
     let channel = create_test_channel(&keys).await;
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Root message for the thread — built locally so we keep its id.
     let root = EventBuilder::new(Kind::Custom(9), "thread root")
@@ -2689,7 +2722,7 @@ async fn test_reply_ingest_pushes_live_thread_summary() {
         .await
         .expect("EOSE");
 
-    async fn recv_summary(client: &mut BuzzTestClient) -> nostr::Event {
+    async fn recv_summary(client: &mut BeekeeperTestClient) -> nostr::Event {
         loop {
             match client
                 .recv_event(Duration::from_secs(5))
@@ -2749,7 +2782,9 @@ async fn test_reply_ingest_pushes_live_thread_summary() {
 /// be `accepted` (stored) while its membership side effect fails, so asserting
 /// on the OK alone cannot see a broken write.
 async fn member_role(url: &str, keys: &Keys, channel_id: &str, pubkey_hex: &str) -> Option<String> {
-    let mut ws = BuzzTestClient::connect(url, keys).await.expect("connect");
+    let mut ws = BeekeeperTestClient::connect(url, keys)
+        .await
+        .expect("connect");
     let sid = sub_id("members");
     let filter = Filter::new()
         .kind(Kind::Custom(39002))
@@ -2797,7 +2832,7 @@ async fn test_nip29_put_user_cannot_demote_owner() {
 
     // The attack: attacker (not a member, not the creator) publishes
     // kind:9000 { h=channel, p=victim, role=member }.
-    let mut ws = BuzzTestClient::connect(&url, &attacker_keys)
+    let mut ws = BeekeeperTestClient::connect(&url, &attacker_keys)
         .await
         .expect("connect as attacker");
     let event = EventBuilder::new(Kind::Custom(9000), "")
@@ -2849,7 +2884,7 @@ async fn test_nip29_owner_demotion_recovery_paths() {
         let channel_id = channel_id.clone();
         let url = url.clone();
         async move {
-            let mut ws = BuzzTestClient::connect(&url, &signer)
+            let mut ws = BeekeeperTestClient::connect(&url, &signer)
                 .await
                 .expect("connect");
             // `allow_self_tagging` is REQUIRED: EventBuilder otherwise silently
@@ -2894,7 +2929,7 @@ async fn test_nip29_owner_demotion_recovery_paths() {
 
     // `accepted` only means the event was stored — the membership side effect can
     // still fail. Read the authoritative roles back from the relay-signed 39002.
-    let mut ws = BuzzTestClient::connect(&url, &victim_keys)
+    let mut ws = BeekeeperTestClient::connect(&url, &victim_keys)
         .await
         .expect("connect");
     let sid = sub_id("members-final");
@@ -2964,7 +2999,7 @@ async fn test_nip29_put_user_without_role_tag_preserves_role() {
     let channel_id = create_test_channel(&owner_a).await;
 
     // owner_a promotes owner_b, so the channel has two owners.
-    let mut ws = BuzzTestClient::connect(&url, &owner_a)
+    let mut ws = BeekeeperTestClient::connect(&url, &owner_a)
         .await
         .expect("connect as owner_a");
     let promote = EventBuilder::new(Kind::Custom(9000), "")
@@ -2989,7 +3024,7 @@ async fn test_nip29_put_user_without_role_tag_preserves_role() {
     // The probe: owner_b sends a bare self-targeted PUT_USER — h + p, no `role`.
     // `allow_self_tagging` is required or EventBuilder drops the self `p` tag
     // (nostr-0.44.3 builder.rs:435-449) and the event fails as "missing p tag".
-    let mut ws = BuzzTestClient::connect(&url, &owner_b)
+    let mut ws = BeekeeperTestClient::connect(&url, &owner_b)
         .await
         .expect("connect as owner_b");
     let bare = EventBuilder::new(Kind::Custom(9000), "")
@@ -3050,7 +3085,7 @@ async fn test_nip29_relay_rejects_role_change_by_unprivileged_actor() {
     let channel_id = create_test_channel(&owner_a).await;
 
     // owner_a promotes owner_b -> the channel has two owners.
-    let mut ws = BuzzTestClient::connect(&url, &owner_a)
+    let mut ws = BeekeeperTestClient::connect(&url, &owner_a)
         .await
         .expect("connect as owner_a");
     let promote = EventBuilder::new(Kind::Custom(9000), "")
@@ -3066,7 +3101,7 @@ async fn test_nip29_relay_rejects_role_change_by_unprivileged_actor() {
     assert!(ok.accepted, "promote rejected: {}", ok.message);
 
     // The attacker joins the open channel as a plain member.
-    let mut ws = BuzzTestClient::connect(&url, &attacker)
+    let mut ws = BeekeeperTestClient::connect(&url, &attacker)
         .await
         .expect("connect as attacker");
     let join = EventBuilder::new(Kind::Custom(9000), "")
@@ -3091,7 +3126,7 @@ async fn test_nip29_relay_rejects_role_change_by_unprivileged_actor() {
 
     // The probe: a plain member demotes a co-owner. Two owners remain, so only
     // the actor-authorization guard can reject this.
-    let mut ws = BuzzTestClient::connect(&url, &attacker)
+    let mut ws = BeekeeperTestClient::connect(&url, &attacker)
         .await
         .expect("connect as attacker");
     let attack = EventBuilder::new(Kind::Custom(9000), "")
@@ -3149,7 +3184,7 @@ async fn test_nip29_relay_rejects_last_owner_self_demotion() {
 
     // The probe: the sole owner demotes themselves. Elevated actor, so the
     // actor check passes; the last-owner guard is the only thing left.
-    let mut ws = BuzzTestClient::connect(&url, &owner)
+    let mut ws = BeekeeperTestClient::connect(&url, &owner)
         .await
         .expect("connect as owner");
     let demote = EventBuilder::new(Kind::Custom(9000), "")

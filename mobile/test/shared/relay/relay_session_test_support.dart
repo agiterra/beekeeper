@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:buzz/shared/relay/relay.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
 
 /// A socket that records every frame the session sends.
 class RecordingRelaySocket extends RelaySocket {

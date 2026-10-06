@@ -12,13 +12,13 @@ import {
 import type { AgentPersona } from "@/shared/api/types";
 import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
 import {
-  BuzzAgentModelTuningFields,
+  BeekeeperAgentModelTuningFields,
   NumericTuningFields,
-} from "./buzzAgentModelTuningFields";
+} from "./beekeeperAgentModelTuningFields";
 import {
-  isBuzzAgentRuntime,
+  isBeekeeperAgentRuntime,
   BUZZ_AGENT_THINKING_EFFORT,
-} from "./buzzAgentConfig";
+} from "./beekeeperAgentConfig";
 import {
   EDIT_AGENT_PARALLELISM_HELP,
   parallelismCapHint,
@@ -69,7 +69,7 @@ export function EditAgentAdvancedFields({
   inheritedEnvVars: Record<string, string>;
   inheritHarness: boolean;
   linkedPersona: AgentPersona | null;
-  /** Active LLM model — forwarded to BuzzAgentModelTuningFields for effort filtering. */
+  /** Active LLM model — forwarded to BeekeeperAgentModelTuningFields for effort filtering. */
   model?: string;
   /**
    * The actual/prospective runtime id used to decide whether to show the
@@ -78,7 +78,7 @@ export function EditAgentAdvancedFields({
    */
   modelTuningRuntimeId: string;
   parallelism: string;
-  /** Active LLM provider id — forwarded to BuzzAgentModelTuningFields for effort filtering. */
+  /** Active LLM provider id — forwarded to BeekeeperAgentModelTuningFields for effort filtering. */
   provider?: string;
   requiredEnvKeys: readonly string[];
   /**
@@ -119,11 +119,11 @@ export function EditAgentAdvancedFields({
   );
 
   // Build the effective hidden-key list: caller's secrets + effort key (when
-  // rendered by BuzzAgentModelTuningFields) + numeric keys via structuredEnvKeys.
+  // rendered by BeekeeperAgentModelTuningFields) + numeric keys via structuredEnvKeys.
   const effectiveHiddenKeys = React.useMemo(
     () => [
       ...hiddenEnvKeys,
-      ...(isBuzzAgentRuntime(modelTuningRuntimeId)
+      ...(isBeekeeperAgentRuntime(modelTuningRuntimeId)
         ? [BUZZ_AGENT_THINKING_EFFORT]
         : []),
       ...structuredEnvKeys(numericDescriptors),
@@ -359,8 +359,8 @@ export function EditAgentAdvancedFields({
       ) : null}
 
       {/* Effort-tuning knob — only shown for buzz-agent. */}
-      {isBuzzAgentRuntime(modelTuningRuntimeId) ? (
-        <BuzzAgentModelTuningFields
+      {isBeekeeperAgentRuntime(modelTuningRuntimeId) ? (
+        <BeekeeperAgentModelTuningFields
           envVars={envVars}
           inheritedEnvVars={inheritedEnvVars}
           model={model}

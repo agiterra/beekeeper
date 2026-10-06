@@ -8,8 +8,8 @@ import {
   BUZZ_AGENT_THINKING_EFFORT,
   BUZZ_AGENT_THINKING_EFFORT_VALUES,
   getProviderEffortConfig,
-  isBuzzAgentRuntime,
-} from "./buzzAgentConfig.ts";
+  isBeekeeperAgentRuntime,
+} from "./beekeeperAgentConfig.ts";
 
 // ---------------------------------------------------------------------------
 // Thinking effort values
@@ -39,18 +39,18 @@ test("env var key constants match expected BUZZ_AGENT_* names", () => {
 });
 
 // ---------------------------------------------------------------------------
-// isBuzzAgentRuntime
+// isBeekeeperAgentRuntime
 // ---------------------------------------------------------------------------
 
-test("isBuzzAgentRuntime returns true only for buzz-agent id", () => {
-  assert.equal(isBuzzAgentRuntime("buzz-agent"), true);
+test("isBeekeeperAgentRuntime returns true only for buzz-agent id", () => {
+  assert.equal(isBeekeeperAgentRuntime("buzz-agent"), true);
 });
 
-test("isBuzzAgentRuntime returns false for other runtimes", () => {
-  assert.equal(isBuzzAgentRuntime("goose"), false);
-  assert.equal(isBuzzAgentRuntime("custom"), false);
-  assert.equal(isBuzzAgentRuntime(""), false);
-  assert.equal(isBuzzAgentRuntime("buzz-agent-v2"), false);
+test("isBeekeeperAgentRuntime returns false for other runtimes", () => {
+  assert.equal(isBeekeeperAgentRuntime("goose"), false);
+  assert.equal(isBeekeeperAgentRuntime("custom"), false);
+  assert.equal(isBeekeeperAgentRuntime(""), false);
+  assert.equal(isBeekeeperAgentRuntime("buzz-agent-v2"), false);
 });
 
 // ---------------------------------------------------------------------------
@@ -178,12 +178,12 @@ test("non-numeric string is stored as-is (validation is at the backend)", () => 
 // modelTuningRuntimeId → visibility mapping (regression for Edit dialog path)
 // ---------------------------------------------------------------------------
 
-// Mirrors the `isBuzzAgent` derivation in CreateAgentRuntimeFields.
+// Mirrors the `isBeekeeperAgent` derivation in CreateAgentRuntimeFields.
 // The point of modelTuningRuntimeId is that the Edit dialog can pass
 // prospectiveRuntimeId (the real resolved runtime) while selectedRuntimeId
 // carries the "inherit"/"custom" sentinel — the two must not be conflated.
 
-test("isBuzzAgentRuntime(prospectiveRuntimeId) shows fields when Edit resolves buzz-agent even though selectedRuntimeId sentinel is 'inherit'", () => {
+test("isBeekeeperAgentRuntime(prospectiveRuntimeId) shows fields when Edit resolves buzz-agent even though selectedRuntimeId sentinel is 'inherit'", () => {
   // Simulates Edit dialog state: inheritHarness=true, persona is buzz-agent.
   // selectedRuntimeId would be "inherit" (sentinel for custom-command hiding),
   // but prospectiveRuntimeId correctly resolves to "buzz-agent".
@@ -191,37 +191,37 @@ test("isBuzzAgentRuntime(prospectiveRuntimeId) shows fields when Edit resolves b
   const prospectiveRuntimeId = "buzz-agent"; // what Edit passes to modelTuningRuntimeId
 
   assert.equal(
-    isBuzzAgentRuntime(selectedRuntimeIdSentinel),
+    isBeekeeperAgentRuntime(selectedRuntimeIdSentinel),
     false,
     "sentinel 'inherit' must NOT trigger model-tuning fields",
   );
   assert.equal(
-    isBuzzAgentRuntime(prospectiveRuntimeId),
+    isBeekeeperAgentRuntime(prospectiveRuntimeId),
     true,
     "prospectiveRuntimeId 'buzz-agent' MUST trigger model-tuning fields",
   );
 });
 
-test("isBuzzAgentRuntime(prospectiveRuntimeId) shows fields when Edit has a pinned buzz-agent (selectedRuntimeId sentinel is also 'inherit')", () => {
+test("isBeekeeperAgentRuntime(prospectiveRuntimeId) shows fields when Edit has a pinned buzz-agent (selectedRuntimeId sentinel is also 'inherit')", () => {
   // Simulates Edit dialog with a pinned non-custom runtime:
   // selectedRuntimeId sentinel = "inherit" (non-custom known runtime),
   // prospectiveRuntimeId = "buzz-agent" (selectedRuntime?.id).
   const selectedRuntimeIdSentinel = "inherit";
   const prospectiveRuntimeId = "buzz-agent";
 
-  assert.equal(isBuzzAgentRuntime(prospectiveRuntimeId), true);
-  assert.equal(isBuzzAgentRuntime(selectedRuntimeIdSentinel), false);
+  assert.equal(isBeekeeperAgentRuntime(prospectiveRuntimeId), true);
+  assert.equal(isBeekeeperAgentRuntime(selectedRuntimeIdSentinel), false);
 });
 
-test("isBuzzAgentRuntime(prospectiveRuntimeId) hides fields when Edit resolves to non-buzz-agent", () => {
+test("isBeekeeperAgentRuntime(prospectiveRuntimeId) hides fields when Edit resolves to non-buzz-agent", () => {
   // E.g. user switches from buzz-agent to goose in Edit — prospectiveRuntimeId = "goose"
   const prospectiveRuntimeId = "goose";
-  assert.equal(isBuzzAgentRuntime(prospectiveRuntimeId), false);
+  assert.equal(isBeekeeperAgentRuntime(prospectiveRuntimeId), false);
 });
 
-test("isBuzzAgentRuntime(prospectiveRuntimeId) hides fields when Edit has no resolved runtime (empty string)", () => {
+test("isBeekeeperAgentRuntime(prospectiveRuntimeId) hides fields when Edit has no resolved runtime (empty string)", () => {
   // prospectiveRuntimeId falls back to "" when catalog hasn't loaded yet
-  assert.equal(isBuzzAgentRuntime(""), false);
+  assert.equal(isBeekeeperAgentRuntime(""), false);
 });
 
 // ---------------------------------------------------------------------------
@@ -585,7 +585,7 @@ test("provider id matching is case-insensitive", () => {
 // ---------------------------------------------------------------------------
 
 // Tests below verify the validValues membership check that the auto-clear
-// useEffect in BuzzAgentModelTuningFields and AgentDefaultsSettingsCard
+// useEffect in BeekeeperAgentModelTuningFields and AgentDefaultsSettingsCard
 // use to decide whether to reset the current effort to Inherit.
 
 test("effort max is invalid for OpenAI (should trigger auto-clear)", () => {

@@ -27,7 +27,7 @@ use beekeeper_sdk::{
     build_coding_session_genesis, build_coding_session_lifecycle_command,
     build_coding_session_lifecycle_receipt, build_join,
 };
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use nostr::{EventBuilder, Keys, Kind, Tag};
 use std::time::Duration;
 use uuid::Uuid;
@@ -88,7 +88,7 @@ async fn create_test_channel(keys: &Keys) -> Uuid {
 /// Join an open channel via a signed kind:9021 (NIP-29 join-request) event over
 /// the WebSocket connection. Coding-session kinds require strict active
 /// membership, so every non-founder participant in these tests joins first.
-async fn join_channel(ws: &mut BuzzTestClient, keys: &Keys, channel_id: Uuid) {
+async fn join_channel(ws: &mut BeekeeperTestClient, keys: &Keys, channel_id: Uuid) {
     let event = build_join(channel_id)
         .expect("build join event")
         .sign_with_keys(keys)
@@ -108,7 +108,7 @@ async fn genesis_fresh_founding_is_unique_live() {
     let founder = Keys::generate();
     let channel_id = create_test_channel(&founder).await;
 
-    let mut founder_ws = BuzzTestClient::connect(&url, &founder)
+    let mut founder_ws = BeekeeperTestClient::connect(&url, &founder)
         .await
         .expect("founder connect");
 
@@ -135,7 +135,7 @@ async fn genesis_fresh_founding_is_unique_live() {
     // 2. A second member joins the channel, then attempts a rival genesis for
     //    the SAME sessionRef — must lose the uniqueness race.
     let rival = Keys::generate();
-    let mut rival_ws = BuzzTestClient::connect(&url, &rival)
+    let mut rival_ws = BeekeeperTestClient::connect(&url, &rival)
         .await
         .expect("rival connect");
     join_channel(&mut rival_ws, &rival, channel_id).await;
@@ -208,7 +208,7 @@ async fn genesis_adoption_validates_referenced_history_live() {
     let founder = Keys::generate();
     let channel_id = create_test_channel(&founder).await;
 
-    let mut founder_ws = BuzzTestClient::connect(&url, &founder)
+    let mut founder_ws = BeekeeperTestClient::connect(&url, &founder)
         .await
         .expect("founder connect");
 
@@ -216,7 +216,7 @@ async fn genesis_adoption_validates_referenced_history_live() {
     // accepted by the relay's strict coding-session membership gate.
     let provider = Keys::generate();
     let provider_pubkey_hex = provider.public_key().to_hex();
-    let mut provider_ws = BuzzTestClient::connect(&url, &provider)
+    let mut provider_ws = BeekeeperTestClient::connect(&url, &provider)
         .await
         .expect("provider connect");
     join_channel(&mut provider_ws, &provider, channel_id).await;
@@ -318,7 +318,7 @@ async fn genesis_adoption_validates_referenced_history_live() {
     //     create+receipt, must be rejected: the genesis signer must equal the
     //     create's actual signer (the founder), not merely name valid events.
     let outsider = Keys::generate();
-    let mut outsider_ws = BuzzTestClient::connect(&url, &outsider)
+    let mut outsider_ws = BeekeeperTestClient::connect(&url, &outsider)
         .await
         .expect("outsider connect");
     join_channel(&mut outsider_ws, &outsider, channel_id).await;
@@ -443,12 +443,12 @@ async fn genesis_is_linked_from_session_create_live() {
     let url = relay_url();
     let founder = Keys::generate();
     let channel_id = create_test_channel(&founder).await;
-    let mut founder_ws = BuzzTestClient::connect(&url, &founder)
+    let mut founder_ws = BeekeeperTestClient::connect(&url, &founder)
         .await
         .expect("founder connect");
 
     let provider = Keys::generate();
-    let mut provider_ws = BuzzTestClient::connect(&url, &provider)
+    let mut provider_ws = BeekeeperTestClient::connect(&url, &provider)
         .await
         .expect("provider connect");
     join_channel(&mut provider_ws, &provider, channel_id).await;

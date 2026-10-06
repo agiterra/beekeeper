@@ -2,7 +2,7 @@ import type {
   AcpRuntimeCatalogEntry,
   GlobalAgentConfig,
 } from "@/shared/api/types";
-import { BUZZ_AGENT_THINKING_EFFORT } from "./buzzAgentConfig";
+import { BUZZ_AGENT_THINKING_EFFORT } from "./beekeeperAgentConfig";
 import type { RuntimeFileConfigSubset } from "@/shared/api/tauri";
 // Dialogs import getDefaultPersonaRuntime via this re-export; lib code imports
 // directly from lib/resolvePersonaRuntime.

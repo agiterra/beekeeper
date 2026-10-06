@@ -21,13 +21,13 @@ import {
   KIND_CODING_SESSION_TRANSCRIPT,
 } from "../../../shared/lib/kinds.ts";
 import { hasValidSignature } from "../../../shared/lib/verify.ts";
-import type { BuzzCodingSessionMetadataV1 } from "./ingressPayloads.ts";
+import type { BeekeeperCodingSessionMetadataV1 } from "./ingressPayloads.ts";
 import {
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   type CodingSessionLifecycleReceipt,
   CODING_SESSION_METADATA_TAG_VERSION,
   isCodingSessionTurnReceiptStatus,
-  parseBuzzCodingSessionMetadata,
+  parseBeekeeperCodingSessionMetadata,
   parseCodingSessionLifecycleReceipt,
 } from "./ingressPayloads.ts";
 import {
@@ -38,9 +38,9 @@ import {
 } from "./keys.ts";
 import { canonicalizeProjectionPayload } from "./payload.ts";
 import {
-  type BuzzCodingSessionTranscriptV1,
+  type BeekeeperCodingSessionTranscriptV1,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
-  parseBuzzCodingSessionTranscript,
+  parseBeekeeperCodingSessionTranscript,
 } from "./transcriptEnvelope.ts";
 import type { ObservedEvent } from "./types.ts";
 import { hasTagNamed, normalizePubkey, parseExactTags } from "./wireDecode.ts";
@@ -55,7 +55,7 @@ export type TrustedIngressClassification =
       channelId: string;
       signerPubkey: string;
       targetKey: string;
-      metadata: Readonly<BuzzCodingSessionMetadataV1>;
+      metadata: Readonly<BeekeeperCodingSessionMetadataV1>;
       canonicalPayload: string;
     }
   | {
@@ -70,7 +70,7 @@ export type TrustedIngressClassification =
       channelId: string;
       signerPubkey: string;
       targetKey: string;
-      transcript: Readonly<BuzzCodingSessionTranscriptV1>;
+      transcript: Readonly<BeekeeperCodingSessionTranscriptV1>;
       canonicalPayload: string;
     };
 
@@ -188,7 +188,7 @@ function classifyTranscript(
   ) {
     return { kind: "malformed" };
   }
-  const transcript = parseBuzzCodingSessionTranscript(event.content);
+  const transcript = parseBeekeeperCodingSessionTranscript(event.content);
   if (!transcript) return { kind: "malformed" };
   const targetKey = buildCodingSessionTargetKey(transcript.session);
   if (
@@ -232,7 +232,7 @@ function classifyMetadata(
   ) {
     return { kind: "malformed" };
   }
-  const metadata = parseBuzzCodingSessionMetadata(event.content);
+  const metadata = parseBeekeeperCodingSessionMetadata(event.content);
   if (!metadata) return { kind: "malformed" };
   const targetKey = buildCodingSessionTargetKey(metadata.session);
   if (

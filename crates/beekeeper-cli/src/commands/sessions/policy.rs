@@ -48,7 +48,7 @@ use beekeeper_sdk::coding_session_policy::build_coding_session_policy;
 use nostr::Event;
 use serde_json::{json, Value};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
 use crate::{SessionPolicyCmd, SessionPolicySetArgs};
@@ -77,7 +77,7 @@ pub const POLICY_ENFORCEMENT_DISCLOSURE: &str =
      push. Every other field is read and shown, never counted.";
 
 /// Dispatch `bee sessions policy`.
-pub async fn cmd_policy(client: &BuzzClient, cmd: SessionPolicyCmd) -> Result<(), CliError> {
+pub async fn cmd_policy(client: &BeekeeperClient, cmd: SessionPolicyCmd) -> Result<(), CliError> {
     match cmd {
         SessionPolicyCmd::Set(args) => set(client, args).await,
         SessionPolicyCmd::Get {
@@ -227,14 +227,14 @@ fn stop_is_set(stop: &CodingSessionPolicyStop) -> bool {
     stop.time_box_secs.is_some() || stop.on_milestone.is_some()
 }
 
-async fn set(client: &BuzzClient, args: SessionPolicySetArgs) -> Result<(), CliError> {
+async fn set(client: &BeekeeperClient, args: SessionPolicySetArgs) -> Result<(), CliError> {
     validate_coordinates(&args.channel, &args.session_ref, &args.genesis)?;
     let payload = payload_from_args(&args)?;
     publish(client, &args.channel, payload, "set").await
 }
 
 async fn clear(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: &str,
@@ -262,7 +262,7 @@ async fn clear(
 /// once, at write time, in one operator's terminal — it does not travel with
 /// the record (REVIEW-B2 F2). Refusing costs nothing and is the honest answer.
 async fn require_policy_standing(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: &str,
@@ -300,7 +300,7 @@ pub(super) fn refuse_without_policy_standing(
 }
 
 async fn publish(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     payload: CodingSessionPolicyPayload,
     verb: &str,
@@ -326,7 +326,7 @@ async fn publish(
 }
 
 async fn get(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: &str,

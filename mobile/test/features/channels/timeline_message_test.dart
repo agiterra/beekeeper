@@ -1,9 +1,9 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:buzz/features/channels/channel_window.dart';
-import 'package:buzz/features/channels/timeline_message.dart';
-import 'package:buzz/shared/relay/relay.dart';
+import 'package:beekeeper/features/channels/channel_window.dart';
+import 'package:beekeeper/features/channels/timeline_message.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
 
 NostrEvent _textMsg({
   required String id,

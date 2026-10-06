@@ -606,7 +606,7 @@ Must not touch anything else; if a correct change needs a file outside this list
 Problem, with evidence:
   - There is no `Cmd::Events` (crates/beekeeper-cli/src/lib.rs:194-278). The lead hand-wrote an
     authenticated REQ three times in /tmp on 2026-08-27 because the CLI cannot run one, even though
-    `BuzzClient::query_all` / `query_paginated` already page the relay's `/query` bridge
+    `BeekeeperClient::query_all` / `query_paginated` already page the relay's `/query` bridge
     (crates/beekeeper-cli/src/client.rs:683-729).
   - `bee sessions status` prints target, seat, liveness, open turn and budget
     (commands/sessions/crew_cmds.rs:493-580) and never names the founder — which is how a probe

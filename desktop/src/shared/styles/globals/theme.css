@@ -48,11 +48,11 @@
     --sidebar-border: 225 13.56% 76.86%;
     --sidebar-ring: 225 13.56% 76.86%;
     /* Exact Buzz palette tokens; components consume these semantically. */
-    --buzz-gradient-light-top: #e6e6b6;
-    --buzz-gradient-light-bottom: #c4d0da;
-    --buzz-gradient-dark-top: #4a4616;
-    --buzz-gradient-dark-bottom: #0a1423;
-    --buzz-content-dark: 0 0% 10.1960784314%;
+    --beekeeper-gradient-light-top: #e6e6b6;
+    --beekeeper-gradient-light-bottom: #c4d0da;
+    --beekeeper-gradient-dark-top: #4a4616;
+    --beekeeper-gradient-dark-bottom: #0a1423;
+    --beekeeper-content-dark: 0 0% 10.1960784314%;
   }
 
   .dark {
@@ -186,11 +186,11 @@
 }
 
 /* The prominent treatment is exclusive to Buzz's painted gradient. */
-:root[data-buzz-sidebar] {
+:root[data-beekeeper-sidebar] {
   --sidebar-row-active-surface: rgb(255 255 255 / 82%);
 }
 
-:root[data-buzz-sidebar].dark {
+:root[data-beekeeper-sidebar].dark {
   --sidebar-row-active-surface: rgb(255 255 255 / 18%);
 }
 
@@ -200,7 +200,7 @@
  * Buzz reuses the GitHub Light palette for every base color; its one
  * distinguishing feature is this gradient painted across the sidebar/nav
  * canvas, replacing GitHub Light's flat grey. ThemeProvider toggles the
- * `data-buzz-sidebar` attribute on <html> when the Buzz theme is active.
+ * `data-beekeeper-sidebar` attribute on <html> when the Buzz theme is active.
  *
  * These rules are intentionally UNLAYERED: the `bg-sidebar` background-color
  * lives in Tailwind's `utilities` layer, and unlayered declarations win over
@@ -214,26 +214,26 @@
  * paint because it lives outside the app surface.
  *
  * Small transient `bg-sidebar` chips inside the shell that are NOT canvas
- * surfaces (the drag-overlay pills) opt out via `[data-buzz-flat]` - a
+ * surfaces (the drag-overlay pills) opt out via `[data-beekeeper-flat]` - a
  * floating chip should retain its own fill rather than becoming transparent
  * over the full-app gradient.
  *
  * Shared row state colors are applied below so Buzz and flat themes use the
  * same hover/selection hierarchy.
  */
-:root[data-buzz-sidebar] {
-  --buzz-gradient-top: var(--buzz-gradient-light-top);
-  --buzz-gradient-bottom: var(--buzz-gradient-light-bottom);
-  --buzz-muted-foreground: rgb(0 0 0 / 40%);
-  --buzz-search-surface: rgb(0 0 0 / 4%);
-  --buzz-chrome-foreground: rgb(0 0 0 / 50%);
-  --buzz-channel-fg: inherit;
-  --buzz-dm-fg: inherit;
-  --buzz-nav-fg: inherit;
-  --buzz-hover-surface: rgb(0 0 0 / 4%);
-  --buzz-sidebar-scrollbar-thumb: var(--buzz-hover-surface);
-  --buzz-active-fill: 0 0% 0%;
-  --buzz-active-foreground: var(--foreground);
+:root[data-beekeeper-sidebar] {
+  --beekeeper-gradient-top: var(--beekeeper-gradient-light-top);
+  --beekeeper-gradient-bottom: var(--beekeeper-gradient-light-bottom);
+  --beekeeper-muted-foreground: rgb(0 0 0 / 40%);
+  --beekeeper-search-surface: rgb(0 0 0 / 4%);
+  --beekeeper-chrome-foreground: rgb(0 0 0 / 50%);
+  --beekeeper-channel-fg: inherit;
+  --beekeeper-dm-fg: inherit;
+  --beekeeper-nav-fg: inherit;
+  --beekeeper-hover-surface: rgb(0 0 0 / 4%);
+  --beekeeper-sidebar-scrollbar-thumb: var(--beekeeper-hover-surface);
+  --beekeeper-active-fill: 0 0% 0%;
+  --beekeeper-active-foreground: var(--foreground);
 }
 
 /*
@@ -242,49 +242,53 @@
  * search box, muted labels, active pill) adapts automatically. The `.dark`
  * class is set on the document root whenever a dark theme is active.
  */
-:root[data-buzz-sidebar].dark {
-  --buzz-gradient-top: var(--buzz-gradient-dark-top);
-  --buzz-gradient-bottom: var(--buzz-gradient-dark-bottom);
-  --buzz-muted-foreground: rgb(255 255 255 / 40%);
-  --buzz-search-surface: rgb(255 255 255 / 4%);
-  --buzz-chrome-foreground: rgb(255 255 255 / 50%);
-  --buzz-hover-surface: rgb(255 255 255 / 4%);
-  --buzz-active-fill: 0 0% 100%;
-  --buzz-active-foreground: 0 0% 100%;
+:root[data-beekeeper-sidebar].dark {
+  --beekeeper-gradient-top: var(--beekeeper-gradient-dark-top);
+  --beekeeper-gradient-bottom: var(--beekeeper-gradient-dark-bottom);
+  --beekeeper-muted-foreground: rgb(255 255 255 / 40%);
+  --beekeeper-search-surface: rgb(255 255 255 / 4%);
+  --beekeeper-chrome-foreground: rgb(255 255 255 / 50%);
+  --beekeeper-hover-surface: rgb(255 255 255 / 4%);
+  --beekeeper-active-fill: 0 0% 100%;
+  --beekeeper-active-foreground: 0 0% 100%;
 }
 
 /*
  * Use the Buzz primary color for the floating selection-formatting tray.
  * Other themes retain the standard popover treatment.
  */
-:root[data-buzz-sidebar] [data-buzz-selection-formatting-tray] {
+:root[data-beekeeper-sidebar] [data-beekeeper-selection-formatting-tray] {
   border-color: hsl(var(--primary-foreground) / 0.18);
   background-color: hsl(var(--primary));
   color: hsl(var(--primary-foreground));
 }
 
-:root[data-buzz-sidebar] [data-buzz-selection-formatting-tray] button {
+:root[data-beekeeper-sidebar]
+  [data-beekeeper-selection-formatting-tray]
+  button {
   color: hsl(var(--primary-foreground));
 }
 
-:root[data-buzz-sidebar] [data-buzz-selection-formatting-tray] button:hover,
-:root[data-buzz-sidebar]
-  [data-buzz-selection-formatting-tray]
+:root[data-beekeeper-sidebar]
+  [data-beekeeper-selection-formatting-tray]
+  button:hover,
+:root[data-beekeeper-sidebar]
+  [data-beekeeper-selection-formatting-tray]
   button[aria-pressed="true"] {
   background-color: hsl(var(--primary-foreground) / 0.16);
   color: hsl(var(--primary-foreground));
 }
 
 /* Keep the subtle content-card lift in Buzz Light only. */
-:root[data-buzz-sidebar]:not(.dark)
-  [data-buzz-content-surface]:not([data-buzz-content-unframed]) {
+:root[data-beekeeper-sidebar]:not(.dark)
+  [data-beekeeper-content-surface]:not([data-beekeeper-content-unframed]) {
   box-shadow:
     -1px -1px 0 0 hsl(var(--sidebar-border) / 0.45),
     0 0 4px 0 rgb(0 0 0 / 7%);
 }
 
 /* Let the content card's shadow feather into the surrounding gradient. */
-:root[data-buzz-sidebar]:not(.dark) [data-buzz-shadow-viewport] {
+:root[data-beekeeper-sidebar]:not(.dark) [data-beekeeper-shadow-viewport] {
   overflow: visible;
 }
 
@@ -293,12 +297,12 @@
  * Override `--background` locally as well as the surface fill so descendant
  * headers and panes using `bg-background` remain visually continuous.
  */
-:root[data-buzz-sidebar].dark [data-buzz-content-surface] {
-  --background: var(--buzz-content-dark);
+:root[data-beekeeper-sidebar].dark [data-beekeeper-content-surface] {
+  --background: var(--beekeeper-content-dark);
   background-color: hsl(var(--background));
 }
 
-:root[data-buzz-sidebar] .buzz-huddle-app-surface {
+:root[data-beekeeper-sidebar] .beekeeper-huddle-app-surface {
   background-color: transparent;
   background-image: none;
   isolation: isolate;
@@ -307,11 +311,11 @@
 /* The Buzz theme uses a translucent color wash. Back it with an opaque copy
  * of the same gradient by default so its color remains stable over every app
  * surface, including a lifted huddle. */
-:root[data-buzz-sidebar] .buzz-theme-gradient-underlay {
+:root[data-beekeeper-sidebar] .beekeeper-theme-gradient-underlay {
   background-image: linear-gradient(
     to bottom,
-    var(--buzz-gradient-top),
-    var(--buzz-gradient-bottom)
+    var(--beekeeper-gradient-top),
+    var(--beekeeper-gradient-bottom)
   );
   background-repeat: no-repeat;
   background-size: 100vw 100vh;
@@ -323,77 +327,79 @@
  * a translucent surface. The center content already follows `.dark`, so using
  * that same state for layer visibility keeps both surfaces in lockstep.
  */
-:root[data-buzz-sidebar] .buzz-theme-gradient-layer-light {
+:root[data-beekeeper-sidebar] .beekeeper-theme-gradient-layer-light {
   background-image: linear-gradient(
     to bottom,
-    var(--buzz-gradient-light-top),
-    var(--buzz-gradient-light-bottom)
+    var(--beekeeper-gradient-light-top),
+    var(--beekeeper-gradient-light-bottom)
   );
   background-size: 100vw 100vh;
   background-repeat: no-repeat;
 }
 
-:root[data-buzz-sidebar] .buzz-theme-gradient-layer-dark {
+:root[data-beekeeper-sidebar] .beekeeper-theme-gradient-layer-dark {
   background-image: linear-gradient(
     to bottom,
-    var(--buzz-gradient-dark-top),
-    var(--buzz-gradient-dark-bottom)
+    var(--beekeeper-gradient-dark-top),
+    var(--beekeeper-gradient-dark-bottom)
   );
   background-size: 100vw 100vh;
   background-repeat: no-repeat;
 }
 
-:root[data-buzz-sidebar]:not(.dark) .buzz-theme-gradient-layer-light,
-:root[data-buzz-sidebar].dark .buzz-theme-gradient-layer-dark {
+:root[data-beekeeper-sidebar]:not(.dark) .beekeeper-theme-gradient-layer-light,
+:root[data-beekeeper-sidebar].dark .beekeeper-theme-gradient-layer-dark {
   opacity: 1;
 }
 
 /* The mobile sidebar is portaled outside the app surface. */
-:root[data-buzz-sidebar]:not(.dark)
+:root[data-beekeeper-sidebar]:not(.dark)
   [data-sidebar="sidebar"][data-mobile="true"].bg-sidebar {
   background-color: transparent;
   background-image: linear-gradient(
     to bottom,
-    var(--buzz-gradient-light-top),
-    var(--buzz-gradient-light-bottom)
+    var(--beekeeper-gradient-light-top),
+    var(--beekeeper-gradient-light-bottom)
   );
   background-size: 100vw 100vh;
   background-repeat: no-repeat;
 }
 
-:root[data-buzz-sidebar].dark
+:root[data-beekeeper-sidebar].dark
   [data-sidebar="sidebar"][data-mobile="true"].bg-sidebar {
   background-color: transparent;
   background-image: linear-gradient(
     to bottom,
-    var(--buzz-gradient-dark-top),
-    var(--buzz-gradient-dark-bottom)
+    var(--beekeeper-gradient-dark-top),
+    var(--beekeeper-gradient-dark-bottom)
   );
   background-size: 100vw 100vh;
   background-repeat: no-repeat;
 }
 
 /* All in-shell chrome reveals the single gradient painted above. */
-:root[data-buzz-sidebar] .group\/sidebar-wrapper,
-:root[data-buzz-sidebar] [data-testid="app-sidebar"],
-:root[data-buzz-sidebar] [data-buzz-glass-inset],
-:root[data-buzz-sidebar] [data-buzz-glass-footer-wrap],
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar] .group\/sidebar-wrapper,
+:root[data-beekeeper-sidebar] [data-testid="app-sidebar"],
+:root[data-beekeeper-sidebar] [data-beekeeper-glass-inset],
+:root[data-beekeeper-sidebar] [data-beekeeper-glass-footer-wrap],
+:root[data-beekeeper-sidebar]
   .group\/sidebar-wrapper
-  .bg-sidebar:not([data-buzz-flat]),
-:root[data-buzz-sidebar] [data-testid="community-rail"].bg-sidebar,
-:root[data-buzz-sidebar]
+  .bg-sidebar:not([data-beekeeper-flat]),
+:root[data-beekeeper-sidebar] [data-testid="community-rail"].bg-sidebar,
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="sidebar-pinned-header"],
-:root[data-buzz-sidebar] [data-testid="app-sidebar"] [data-sidebar="footer"] {
+:root[data-beekeeper-sidebar]
+  [data-testid="app-sidebar"]
+  [data-sidebar="footer"] {
   background-color: transparent;
   background-image: none;
 }
 
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="sidebar-pinned-header"]::before,
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-sidebar="footer"]::before {
   background: none;
@@ -416,20 +422,20 @@
  * turned those white (white-on-white under Buzz Dark); scoping keeps them on
  * the normal accent-driven active colors.
  */
-:root[data-buzz-sidebar] [data-testid="app-sidebar"],
-:root[data-buzz-sidebar] [data-testid="settings-sidebar"] {
-  --sidebar-active: var(--buzz-active-fill);
-  --sidebar-active-foreground: var(--buzz-active-foreground);
+:root[data-beekeeper-sidebar] [data-testid="app-sidebar"],
+:root[data-beekeeper-sidebar] [data-testid="settings-sidebar"] {
+  --sidebar-active: var(--beekeeper-active-fill);
+  --sidebar-active-foreground: var(--beekeeper-active-foreground);
 }
 
 /*
  * Dark variant: keep the active-pill foreground white on the dark gradient.
  * (The pill itself is repainted to a translucent tint by the rule below.)
  */
-:root[data-buzz-sidebar].dark [data-testid="app-sidebar"],
-:root[data-buzz-sidebar].dark [data-testid="settings-sidebar"] {
-  --sidebar-active: var(--buzz-active-fill);
-  --sidebar-active-foreground: var(--buzz-active-foreground);
+:root[data-beekeeper-sidebar].dark [data-testid="app-sidebar"],
+:root[data-beekeeper-sidebar].dark [data-testid="settings-sidebar"] {
+  --sidebar-active: var(--beekeeper-active-fill);
+  --sidebar-active-foreground: var(--beekeeper-active-foreground);
 }
 
 /*
@@ -437,16 +443,18 @@
  * matching Buzz's established production treatment. The optional prominent
  * preference repaints that same row with the higher-contrast tab surface.
  */
-:root[data-buzz-sidebar] [data-testid="app-sidebar"] [data-active="true"],
-:root[data-buzz-sidebar] [data-testid="settings-sidebar"] [data-active="true"] {
+:root[data-beekeeper-sidebar] [data-testid="app-sidebar"] [data-active="true"],
+:root[data-beekeeper-sidebar]
+  [data-testid="settings-sidebar"]
+  [data-active="true"] {
   background-color: var(--sidebar-row-subtle-active-surface);
   box-shadow: none;
 }
 
-:root[data-buzz-sidebar][data-prominent-active-tab]
+:root[data-beekeeper-sidebar][data-prominent-active-tab]
   [data-testid="app-sidebar"]
   [data-active="true"],
-:root[data-buzz-sidebar][data-prominent-active-tab]
+:root[data-beekeeper-sidebar][data-prominent-active-tab]
   [data-testid="settings-sidebar"]
   [data-active="true"] {
   --sidebar-active-foreground: var(--sidebar-foreground);
@@ -459,19 +467,19 @@
  * tint. Active items are excluded so they retain the selected surface. Covers
  * both top-level menu buttons and channel sub-buttons in app and Settings nav.
  */
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-sidebar="menu-button"]:not([data-active="true"]):hover,
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-sidebar="menu-sub-button"]:not([data-active="true"]):hover,
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="settings-sidebar"]
   [data-sidebar="menu-button"]:not([data-active="true"]):hover,
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="settings-sidebar"]
   [data-sidebar="menu-sub-button"]:not([data-active="true"]):hover {
-  background-color: var(--buzz-hover-surface);
+  background-color: var(--beekeeper-hover-surface);
 }
 
 /*
@@ -480,11 +488,11 @@
  * so cover the whole menu item to keep that sibling-hover path on the same
  * neutral surface instead of falling back to the legacy accent.
  */
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   :where([data-sidebar="menu-item"]:hover)
   > [data-sidebar="menu-button"]:not([data-active="true"]) {
-  background-color: var(--buzz-hover-surface);
+  background-color: var(--beekeeper-hover-surface);
 }
 
 /*
@@ -503,77 +511,77 @@
  * `bg-sidebar-border/35` fill. Its label, shortcut, and magnifying glass share
  * the 40% muted foreground at rest and on hover/focus.
  */
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="open-search"],
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="open-search"]:hover,
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="open-search"]:focus-visible {
-  background-color: var(--buzz-search-surface);
-  color: var(--buzz-muted-foreground);
+  background-color: var(--beekeeper-search-surface);
+  color: var(--beekeeper-muted-foreground);
 }
 
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="open-search"]
   > * {
-  color: var(--buzz-muted-foreground);
+  color: var(--beekeeper-muted-foreground);
 }
 
 /* Match the hover treatment used by inactive channel rows. */
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="sidebar-profile-card"]:hover {
-  background-color: var(--buzz-hover-surface);
+  background-color: var(--beekeeper-hover-surface);
 }
 
 /*
  * App and settings sidebar section headings plus secondary footer text use the
  * same tint. Navigation rows keep their normal foreground in both sidebars.
  */
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-sidebar="group-label"],
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="settings-sidebar"]
   [data-sidebar="group-label"],
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
-  [data-buzz-sidebar-secondary],
-:root[data-buzz-sidebar]
+  [data-beekeeper-sidebar-secondary],
+:root[data-beekeeper-sidebar]
   [data-testid="settings-sidebar"]
-  [data-buzz-sidebar-secondary] {
-  color: var(--buzz-muted-foreground);
+  [data-beekeeper-sidebar-secondary] {
+  color: var(--beekeeper-muted-foreground);
 }
 
 /* Sidebar toggle plus back/forward navigation controls in the top chrome. */
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-top-chrome"]
   :is(
     [data-sidebar="trigger"],
     [data-testid="global-back"],
     [data-testid="global-forward"]
   ) {
-  color: var(--buzz-chrome-foreground);
+  color: var(--beekeeper-chrome-foreground);
 }
 
 /*
  * Section action buttons (the "+" and "..." at the right edge of each sidebar
  * section header): match the same translucent white fill (see
- * `--buzz-hover-surface`) on hover/focus instead of the grey
- * `bg-sidebar-border/35` fill. Unlayered + `[data-buzz-sidebar]` prefix beats
+ * `--beekeeper-hover-surface`) on hover/focus instead of the grey
+ * `bg-sidebar-border/35` fill. Unlayered + `[data-beekeeper-sidebar]` prefix beats
  * the Tailwind utility so it only applies under the Buzz theme.
  */
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   .sidebar-section-action:hover,
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   .sidebar-section-action:focus-visible {
-  background-color: var(--buzz-hover-surface);
+  background-color: var(--beekeeper-hover-surface);
 }
 
 /*
@@ -589,35 +597,35 @@
  * untouched.
  */
 /* Channels: rows live inside the `stream-list` / `starred-list` menus. */
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="stream-list"]
   [data-sidebar="menu-button"]:not([data-active="true"]),
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="stream-list"]
   [data-sidebar="menu-sub-button"]:not([data-active="true"]),
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="starred-list"]
   [data-sidebar="menu-button"]:not([data-active="true"]),
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="starred-list"]
   [data-sidebar="menu-sub-button"]:not([data-active="true"]) {
-  color: var(--buzz-channel-fg);
+  color: var(--beekeeper-channel-fg);
 }
 
 /* Direct messages: rows live inside the `dm-list` menu. */
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="dm-list"]
   [data-sidebar="menu-button"]:not([data-active="true"]),
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="dm-list"]
   [data-sidebar="menu-sub-button"]:not([data-active="true"]) {
-  color: var(--buzz-dm-fg);
+  color: var(--beekeeper-dm-fg);
 }
 
 /*
@@ -625,11 +633,11 @@
  * Projects, Agents, Workflows). Excludes the active row so the active-pill
  * foreground still wins.
  */
-:root[data-buzz-sidebar]
+:root[data-beekeeper-sidebar]
   [data-testid="app-sidebar"]
   [data-testid="sidebar-primary-menu"]
   [data-sidebar="menu-button"]:not([data-active="true"]) {
-  color: var(--buzz-nav-fg);
+  color: var(--beekeeper-nav-fg);
 }
 
 /* Follow Buzz's selected appearance, independent of the OS color scheme. */
@@ -650,38 +658,38 @@
     var(--sidebar-background) /
     var(--glass-background-opacity, 65%)
   );
-  --buzz-translucency-gradient-alpha: var(--glass-background-opacity, 65%);
-  --buzz-translucency-wash-alpha: 2.4%;
+  --beekeeper-translucency-gradient-alpha: var(--glass-background-opacity, 65%);
+  --beekeeper-translucency-wash-alpha: 2.4%;
 }
 
 /* The regular Buzz theme keeps an opaque copy of the gradient beneath its
  * color layers. Remove that backing while glass is enabled so the translucent
  * wash can reveal the native macOS vibrancy view. */
-:root[data-glass-background] .buzz-theme-gradient-underlay {
+:root[data-glass-background] .beekeeper-theme-gradient-underlay {
   background: transparent;
 }
 
 /* Non-Buzz themes use their existing sidebar color as the glass tint. */
-:root[data-glass-background]:not([data-buzz-sidebar])
-  .buzz-theme-gradient-layer {
+:root[data-glass-background]:not([data-beekeeper-sidebar])
+  .beekeeper-theme-gradient-layer {
   background-color: var(--glass-sidebar-surface);
 }
 
-:root[data-glass-background] .buzz-theme-gradient-layer-light {
+:root[data-glass-background] .beekeeper-theme-gradient-layer-light {
   /* Buzz color wash above a neutral frost wash. */
   background-image:
     linear-gradient(
       to bottom,
       color-mix(
         in srgb,
-        var(--buzz-gradient-light-top)
-          var(--buzz-translucency-gradient-alpha, 70%),
+        var(--beekeeper-gradient-light-top)
+          var(--beekeeper-translucency-gradient-alpha, 70%),
         transparent
       ),
       color-mix(
         in srgb,
-        var(--buzz-gradient-light-bottom)
-          var(--buzz-translucency-gradient-alpha, 70%),
+        var(--beekeeper-gradient-light-bottom)
+          var(--beekeeper-translucency-gradient-alpha, 70%),
         transparent
       )
     ),
@@ -689,12 +697,12 @@
       to bottom,
       color-mix(
         in srgb,
-        #ffffff var(--buzz-translucency-wash-alpha, 2.4%),
+        #ffffff var(--beekeeper-translucency-wash-alpha, 2.4%),
         transparent
       ),
       color-mix(
         in srgb,
-        #ffffff var(--buzz-translucency-wash-alpha, 2.4%),
+        #ffffff var(--beekeeper-translucency-wash-alpha, 2.4%),
         transparent
       )
     );
@@ -704,20 +712,20 @@
   background-repeat: no-repeat, no-repeat;
 }
 
-:root[data-glass-background] .buzz-theme-gradient-layer-dark {
+:root[data-glass-background] .beekeeper-theme-gradient-layer-dark {
   background-image:
     linear-gradient(
       to bottom,
       color-mix(
         in srgb,
-        var(--buzz-gradient-dark-top)
-          var(--buzz-translucency-gradient-alpha, 70%),
+        var(--beekeeper-gradient-dark-top)
+          var(--beekeeper-translucency-gradient-alpha, 70%),
         transparent
       ),
       color-mix(
         in srgb,
-        var(--buzz-gradient-dark-bottom)
-          var(--buzz-translucency-gradient-alpha, 70%),
+        var(--beekeeper-gradient-dark-bottom)
+          var(--beekeeper-translucency-gradient-alpha, 70%),
         transparent
       )
     ),
@@ -725,12 +733,12 @@
       to bottom,
       color-mix(
         in srgb,
-        #12161d var(--buzz-translucency-wash-alpha, 2.4%),
+        #12161d var(--beekeeper-translucency-wash-alpha, 2.4%),
         transparent
       ),
       color-mix(
         in srgb,
-        #12161d var(--buzz-translucency-wash-alpha, 2.4%),
+        #12161d var(--beekeeper-translucency-wash-alpha, 2.4%),
         transparent
       )
     );
@@ -740,7 +748,7 @@
   background-repeat: no-repeat, no-repeat;
 }
 
-:root[data-glass-background][data-buzz-sidebar]:not(.dark)
+:root[data-glass-background][data-beekeeper-sidebar]:not(.dark)
   [data-sidebar="sidebar"][data-mobile="true"].bg-sidebar {
   background-color: transparent;
   background-image:
@@ -748,14 +756,14 @@
       to bottom,
       color-mix(
         in srgb,
-        var(--buzz-gradient-light-top)
-          var(--buzz-translucency-gradient-alpha, 70%),
+        var(--beekeeper-gradient-light-top)
+          var(--beekeeper-translucency-gradient-alpha, 70%),
         transparent
       ),
       color-mix(
         in srgb,
-        var(--buzz-gradient-light-bottom)
-          var(--buzz-translucency-gradient-alpha, 70%),
+        var(--beekeeper-gradient-light-bottom)
+          var(--beekeeper-translucency-gradient-alpha, 70%),
         transparent
       )
     ),
@@ -763,12 +771,12 @@
       to bottom,
       color-mix(
         in srgb,
-        #ffffff var(--buzz-translucency-wash-alpha, 2.4%),
+        #ffffff var(--beekeeper-translucency-wash-alpha, 2.4%),
         transparent
       ),
       color-mix(
         in srgb,
-        #ffffff var(--buzz-translucency-wash-alpha, 2.4%),
+        #ffffff var(--beekeeper-translucency-wash-alpha, 2.4%),
         transparent
       )
     );
@@ -778,7 +786,7 @@
   background-repeat: no-repeat, no-repeat;
 }
 
-:root[data-glass-background][data-buzz-sidebar].dark
+:root[data-glass-background][data-beekeeper-sidebar].dark
   [data-sidebar="sidebar"][data-mobile="true"].bg-sidebar {
   background-color: transparent;
   background-image:
@@ -786,14 +794,14 @@
       to bottom,
       color-mix(
         in srgb,
-        var(--buzz-gradient-dark-top)
-          var(--buzz-translucency-gradient-alpha, 70%),
+        var(--beekeeper-gradient-dark-top)
+          var(--beekeeper-translucency-gradient-alpha, 70%),
         transparent
       ),
       color-mix(
         in srgb,
-        var(--buzz-gradient-dark-bottom)
-          var(--buzz-translucency-gradient-alpha, 70%),
+        var(--beekeeper-gradient-dark-bottom)
+          var(--beekeeper-translucency-gradient-alpha, 70%),
         transparent
       )
     ),
@@ -801,12 +809,12 @@
       to bottom,
       color-mix(
         in srgb,
-        #12161d var(--buzz-translucency-wash-alpha, 2.4%),
+        #12161d var(--beekeeper-translucency-wash-alpha, 2.4%),
         transparent
       ),
       color-mix(
         in srgb,
-        #12161d var(--buzz-translucency-wash-alpha, 2.4%),
+        #12161d var(--beekeeper-translucency-wash-alpha, 2.4%),
         transparent
       )
     );
@@ -816,7 +824,7 @@
   background-repeat: no-repeat, no-repeat;
 }
 
-:root[data-glass-background]:not([data-buzz-sidebar])
+:root[data-glass-background]:not([data-beekeeper-sidebar])
   [data-sidebar="sidebar"][data-mobile="true"].bg-sidebar {
   background-color: var(--glass-sidebar-surface);
   background-image: none;
@@ -825,11 +833,11 @@
 :root[data-glass-background] .group\/sidebar-wrapper,
 :root[data-glass-background] [data-testid="app-sidebar"],
 :root[data-glass-background] [data-testid="settings-sidebar"],
-:root[data-glass-background] [data-buzz-glass-inset],
-:root[data-glass-background] [data-buzz-glass-footer-wrap],
+:root[data-glass-background] [data-beekeeper-glass-inset],
+:root[data-glass-background] [data-beekeeper-glass-footer-wrap],
 :root[data-glass-background]
   .group\/sidebar-wrapper
-  .bg-sidebar:not([data-buzz-flat]),
+  .bg-sidebar:not([data-beekeeper-flat]),
 :root[data-glass-background]
   [data-testid="app-sidebar"]
   [data-testid="sidebar-pinned-header"],
@@ -851,10 +859,10 @@
 :root[data-glass-background]
   [data-testid="app-sidebar"]
   [data-testid="sidebar-pinned-header"],
-:root[data-glass-background] [data-buzz-glass-inset],
+:root[data-glass-background] [data-beekeeper-glass-inset],
 :root[data-glass-background]
   [data-testid="app-sidebar"]
-  [data-buzz-glass-footer-wrap],
+  [data-beekeeper-glass-footer-wrap],
 :root[data-glass-background]
   [data-testid="app-sidebar"]
   [data-sidebar="footer"] {
@@ -880,36 +888,36 @@
 }
 
 /* The outer shell stays clear; the app surface owns the translucent tint. */
-:root[data-glass-background] .buzz-huddle-shell {
+:root[data-glass-background] .beekeeper-huddle-shell {
   background: transparent;
 }
 
-:root[data-glass-background] .buzz-huddle-app-surface {
+:root[data-glass-background] .beekeeper-huddle-app-surface {
   background-color: transparent;
   background-image: none;
   isolation: isolate;
 }
 
-:root[data-glass-background] .buzz-huddle-app-surface::after {
+:root[data-glass-background] .beekeeper-huddle-app-surface::after {
   background: transparent;
 }
 
 :root[data-glass-background]
-  .buzz-huddle-shell[data-huddle-window="true"]
-  .buzz-huddle-app-surface-open::after {
-  background: hsl(var(--buzz-huddle-drawer-surface));
+  .beekeeper-huddle-shell[data-huddle-window="true"]
+  .beekeeper-huddle-app-surface-open::after {
+  background: hsl(var(--beekeeper-huddle-drawer-surface));
 }
 
 /* Keep the Buzz gradient in the lifted app surface. The shell beneath it is
  * strictly the huddle drawer, so its dark surface is revealed at the rounded
  * lower corners instead of the theme gradient bleeding through there. */
-:root[data-buzz-sidebar] .buzz-huddle-shell[data-huddle-open="true"] {
-  background-color: hsl(var(--buzz-huddle-drawer-surface));
+:root[data-beekeeper-sidebar] .beekeeper-huddle-shell[data-huddle-open="true"] {
+  background-color: hsl(var(--beekeeper-huddle-drawer-surface));
   background-image: none;
 }
 
-:root[data-buzz-sidebar][data-glass-background]
-  .buzz-huddle-shell[data-huddle-window="false"][data-huddle-open="true"] {
+:root[data-beekeeper-sidebar][data-glass-background]
+  .beekeeper-huddle-shell[data-huddle-window="false"][data-huddle-open="true"] {
   background-color: transparent;
   background-image: none;
 }
@@ -917,8 +925,9 @@
 /* Keep an explicit black base at z-0 while the lifted app surface (and its
  * two gradient layers) sits above it. This prevents the default gradient
  * backing from ever replacing the huddle drawer at the exposed corners. */
-:root[data-buzz-sidebar] .buzz-huddle-shell[data-huddle-open="true"]::before {
-  background: hsl(var(--buzz-huddle-drawer-surface));
+:root[data-beekeeper-sidebar]
+  .beekeeper-huddle-shell[data-huddle-open="true"]::before {
+  background: hsl(var(--beekeeper-huddle-drawer-surface));
   content: "";
   inset: 0;
   pointer-events: none;
@@ -930,31 +939,31 @@
  * and present the tray as an inset four-corner surface. The dedicated Huddle
  * window keeps the full-width dark control dock above. */
 :root[data-glass-background]
-  .buzz-huddle-shell[data-huddle-window="false"]
-  .buzz-huddle-drawer-backdrop {
+  .beekeeper-huddle-shell[data-huddle-window="false"]
+  .beekeeper-huddle-drawer-backdrop {
   background: transparent;
 }
 
-:root[data-buzz-sidebar][data-glass-background]
-  .buzz-huddle-shell[data-huddle-window="false"][data-huddle-open="true"]::before {
+:root[data-beekeeper-sidebar][data-glass-background]
+  .beekeeper-huddle-shell[data-huddle-window="false"][data-huddle-open="true"]::before {
   content: none;
 }
 
 :root[data-glass-background]
-  .buzz-huddle-shell[data-huddle-window="false"]
-  .buzz-huddle-drawer-slot {
-  padding: var(--buzz-huddle-drawer-inset);
+  .beekeeper-huddle-shell[data-huddle-window="false"]
+  .beekeeper-huddle-drawer-slot {
+  padding: var(--beekeeper-huddle-drawer-inset);
 }
 
 :root[data-glass-background]
-  .buzz-huddle-shell[data-huddle-window="false"]
-  .buzz-huddle-drawer-slot
-  > .buzz-huddle-drawer {
+  .beekeeper-huddle-shell[data-huddle-window="false"]
+  .beekeeper-huddle-drawer-slot
+  > .beekeeper-huddle-drawer {
   border-radius: calc(
-    var(--buzz-huddle-drawer-radius) -
-    var(--buzz-huddle-drawer-inset)
+    var(--beekeeper-huddle-drawer-radius) -
+    var(--beekeeper-huddle-drawer-inset)
   );
   height: 100%;
-  padding-block: var(--buzz-huddle-drawer-inset);
-  padding-inline: var(--buzz-huddle-drawer-inset);
+  padding-block: var(--beekeeper-huddle-drawer-inset);
+  padding-inline: var(--beekeeper-huddle-drawer-inset);
 }

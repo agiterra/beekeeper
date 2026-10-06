@@ -12,7 +12,7 @@ use nostr::PublicKey;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::{CiCmd, CiContinuationCmd, CiPhaseArg};
 
@@ -112,7 +112,7 @@ fn timeout_error(digest: &str) -> CliError {
 }
 
 async fn trusted_relay_self(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     deadline: Option<tokio::time::Instant>,
     digest: &str,
 ) -> Result<String, CliError> {
@@ -188,7 +188,7 @@ fn permanent_ws_error(error: WsClientError, stage: &str) -> Result<ConnectionOut
 }
 
 async fn run_connection(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     relay_self: &str,
     identity: &CiResultIdentity,
     digest: &str,
@@ -260,7 +260,7 @@ async fn run_connection(
 }
 
 async fn wait_for_result(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     relay_self: &str,
     identity: &CiResultIdentity,
     deadline: Option<tokio::time::Instant>,
@@ -298,7 +298,7 @@ async fn wait_for_result(
 
 pub async fn dispatch(
     cmd: CiCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     match cmd {
@@ -385,7 +385,7 @@ pub async fn dispatch(
 
 #[allow(clippy::too_many_arguments)]
 async fn cmd_wait(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: String,
     repository: String,
     commit: String,

@@ -8,7 +8,7 @@ import type {
  * (SV-22), owned by lane B4.
  *
  * Tried before the bridge's built-in `switch` (`e2eBridge.ts`). Inert unless
- * a spec declares `window.__BUZZ_E2E_WAVE_B_TERMINAL__` before the app loads,
+ * a spec declares `window.__BEEKEEPER_E2E_WAVE_B_TERMINAL__` before the app loads,
  * so every other spec keeps the bridge's own shell mocks.
  *
  * The declared object is live state the spec can change mid-test:
@@ -36,13 +36,13 @@ export type WaveBTerminalMockState = {
 
 declare global {
   interface Window {
-    __BUZZ_E2E_WAVE_B_TERMINAL__?: WaveBTerminalMockState;
+    __BEEKEEPER_E2E_WAVE_B_TERMINAL__?: WaveBTerminalMockState;
   }
 }
 
 function state(): WaveBTerminalMockState | null {
   if (typeof window === "undefined") return null;
-  const value = window.__BUZZ_E2E_WAVE_B_TERMINAL__;
+  const value = window.__BEEKEEPER_E2E_WAVE_B_TERMINAL__;
   if (!value) return null;
   value.shells ??= [];
   value.nextShell ??= 1;

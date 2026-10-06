@@ -2,7 +2,7 @@ use beekeeper_sdk::{DeleteMessageOptions, DiffMeta, ThreadRef, VoteDirection};
 use nostr::PublicKey;
 use uuid::Uuid;
 
-use crate::client::{normalize_events, normalize_write_response, BuzzClient};
+use crate::client::{normalize_events, normalize_write_response, BeekeeperClient};
 use crate::error::CliError;
 use crate::validate::{
     infer_language, parse_event_id, parse_uuid, read_or_stdin, truncate_diff,
@@ -55,7 +55,7 @@ fn find_root_from_tags(tags: &serde_json::Value) -> Option<String> {
 ///
 /// Ensures CLI-sent replies thread correctly using the same NIP-10 logic.
 async fn resolve_thread_ref(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     parent_event_id: &str,
 ) -> Result<ThreadRef, CliError> {
     let parent_eid = parse_event_id(parent_event_id)?;
@@ -85,7 +85,7 @@ async fn resolve_thread_ref(
 
 /// Resolve the channel UUID for an event by querying for it via POST /query.
 /// Extracts the `h` tag value from the returned event's tags.
-async fn resolve_channel_id(client: &BuzzClient, event_id: &str) -> Result<Uuid, CliError> {
+async fn resolve_channel_id(client: &BeekeeperClient, event_id: &str) -> Result<Uuid, CliError> {
     let filter = serde_json::json!({
         "ids": [event_id]
     });
@@ -155,7 +155,7 @@ fn resolve_names_to_pubkeys(
 /// Lookup failures are fatal when mention processing is requested: publishing
 /// visible mention text without its intended `p` tag is worse than not sending.
 async fn resolve_content_mentions(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     content: &str,
     has_explicit_mentions: bool,
@@ -291,7 +291,7 @@ fn event_mention_pubkeys(event: &nostr::Event) -> Vec<String> {
 /// Fetch raw events for `filter` via the relay's `/query` endpoint.
 /// Returns `None` on any I/O or parse failure.
 async fn fetch_events(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     filter: &serde_json::Value,
 ) -> Option<Vec<serde_json::Value>> {
     let raw = client.query(filter).await.ok()?;
@@ -301,7 +301,7 @@ async fn fetch_events(
 
 /// Extract member pubkeys (the `p` tag values) from a single 39002 event.
 async fn fetch_member_pubkeys(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     filter: &serde_json::Value,
 ) -> Option<Vec<String>> {
     let events = fetch_events(client, filter).await?;
@@ -351,7 +351,7 @@ fn format_events(normalized: &str, format: &crate::OutputFormat) -> String {
 }
 
 pub async fn cmd_get_messages(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     limit: Option<u32>,
     before: Option<i64>,
@@ -392,7 +392,7 @@ pub async fn cmd_get_messages(
 }
 
 pub async fn cmd_get_thread(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     event_id: &str,
     limit: Option<u32>,
@@ -428,7 +428,7 @@ pub async fn cmd_get_thread(
 }
 
 pub async fn cmd_search(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     query: Option<&str>,
     author: Option<&str>,
     since: Option<i64>,
@@ -481,7 +481,7 @@ pub async fn cmd_search(
 /// must match exactly one user (case-insensitive, on `display_name` or
 /// `name`) — ambiguity is an error listing the candidates rather than a
 /// silent mix of authors.
-async fn resolve_author(client: &BuzzClient, author: &str) -> Result<String, CliError> {
+async fn resolve_author(client: &BeekeeperClient, author: &str) -> Result<String, CliError> {
     let author = author.trim();
     if author.len() == 64 && author.chars().all(|c| c.is_ascii_hexdigit()) {
         return Ok(author.to_ascii_lowercase());
@@ -572,7 +572,7 @@ pub struct SendMessageParams {
 }
 
 pub async fn cmd_send_message(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     mut p: SendMessageParams,
 ) -> Result<(), CliError> {
     // Allow '-' to read content from stdin. This keeps callers from having to
@@ -710,7 +710,10 @@ pub struct SendDiffParams {
     pub reply_to: Option<String>,
 }
 
-pub async fn cmd_send_diff_message(client: &BuzzClient, p: SendDiffParams) -> Result<(), CliError> {
+pub async fn cmd_send_diff_message(
+    client: &BeekeeperClient,
+    p: SendDiffParams,
+) -> Result<(), CliError> {
     if let Some(r) = &p.reply_to {
         validate_hex64(r)?;
     }
@@ -784,7 +787,7 @@ pub async fn cmd_send_diff_message(client: &BuzzClient, p: SendDiffParams) -> Re
 }
 
 pub async fn cmd_delete_message(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     event_id: &str,
     action_id: Option<Uuid>,
     reason_code: Option<&str>,
@@ -816,7 +819,7 @@ pub async fn cmd_delete_message(
 
 /// Edit a message you previously sent.
 pub async fn cmd_edit_message(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     event_id: &str,
     content: &str,
 ) -> Result<(), CliError> {
@@ -839,7 +842,7 @@ pub async fn cmd_edit_message(
 
 /// Vote on a forum post or comment.
 pub async fn cmd_vote_on_post(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     event_id: &str,
     direction: &str,
 ) -> Result<(), CliError> {
@@ -870,7 +873,7 @@ pub async fn cmd_vote_on_post(
 
 pub async fn dispatch(
     cmd: crate::MessagesCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     use crate::MessagesCmd;

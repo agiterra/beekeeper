@@ -241,12 +241,15 @@ test.describe("global agent config screenshots", () => {
     const saved = await page.evaluate(async () =>
       (
         window as typeof window & {
-          __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: (
+          __BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?: (
             command: string,
             payload: unknown,
           ) => Promise<unknown>;
         }
-      ).__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.("get_global_agent_config", null),
+      ).__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?.(
+        "get_global_agent_config",
+        null,
+      ),
     );
     expect(saved).toMatchObject({ preferred_runtime: "codex" });
   });
@@ -587,12 +590,15 @@ test.describe("global agent config screenshots", () => {
     const saved = await page.evaluate(async () =>
       (
         window as typeof window & {
-          __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: (
+          __BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?: (
             command: string,
             payload: unknown,
           ) => Promise<unknown>;
         }
-      ).__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.("get_global_agent_config", null),
+      ).__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?.(
+        "get_global_agent_config",
+        null,
+      ),
     );
     expect(saved).toMatchObject({
       preferred_runtime: "buzz-agent",
@@ -639,12 +645,12 @@ test.describe("global agent config screenshots", () => {
         page.evaluate(() => {
           const log = (
             window as Window & {
-              __BUZZ_E2E_COMMAND_LOG__?: Array<{
+              __BEEKEEPER_E2E_COMMAND_LOG__?: Array<{
                 command: string;
                 payload: { input?: Record<string, unknown> };
               }>;
             }
-          ).__BUZZ_E2E_COMMAND_LOG__;
+          ).__BEEKEEPER_E2E_COMMAND_LOG__;
           const createPayload = log?.find(
             (entry) => entry.command === "create_persona",
           )?.payload.input;

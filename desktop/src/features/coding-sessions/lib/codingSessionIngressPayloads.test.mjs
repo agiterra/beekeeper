@@ -15,7 +15,7 @@ import {
   CODING_SESSION_TURN_RECEIPT_STATUSES,
   codingSessionReceiptSemanticKey,
   isCodingSessionTurnReceiptStatus,
-  parseBuzzCodingSessionMetadata,
+  parseBeekeeperCodingSessionMetadata,
   parseCodingSessionLifecycleReceipt,
 } from "./codingSessionIngressPayloads.ts";
 
@@ -210,13 +210,13 @@ test("an explicit null role decodes as an unseated execution, as Rust reads it",
   // producer's own doc forbids emitting it, so the only way this shape reaches
   // a client is from a producer this one does not control. Dropping the whole
   // metadata over it loses the status, the model and the capabilities too.
-  const parsed = parseBuzzCodingSessionMetadata(
+  const parsed = parseBeekeeperCodingSessionMetadata(
     metadataContent({ role: null }),
   );
   assert.notEqual(parsed, null);
   assert.equal(Object.hasOwn(parsed, "role"), false);
 
-  const seated = parseBuzzCodingSessionMetadata(
+  const seated = parseBeekeeperCodingSessionMetadata(
     metadataContent({ agentRef: SEAT_ACTOR, role: null }),
   );
   assert.equal(seated?.agentRef, SEAT_ACTOR);
@@ -230,7 +230,7 @@ const UMBRELLA = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
 // crew allowance for a session that has no crew, or print "0 turns allowed"
 // where the host meant "no budget".
 test("a crew turn budget decodes only beside the umbrella it describes", () => {
-  const parsed = parseBuzzCodingSessionMetadata(
+  const parsed = parseBeekeeperCodingSessionMetadata(
     metadataContent({
       sessionRef: UMBRELLA,
       turnBudget: { used: 12, limit: 200 },
@@ -241,7 +241,7 @@ test("a crew turn budget decodes only beside the umbrella it describes", () => {
   // Over-spent is a real state — the founder is never refused — and is
   // reported rather than clamped.
   assert.deepEqual(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       metadataContent({
         sessionRef: UMBRELLA,
         turnBudget: { used: 201, limit: 200 },
@@ -270,14 +270,14 @@ test("a crew turn budget decodes only beside the umbrella it describes", () => {
     ["a missing half", { sessionRef: UMBRELLA, turnBudget: { used: 1 } }],
   ]) {
     assert.equal(
-      parseBuzzCodingSessionMetadata(metadataContent(extra)),
+      parseBeekeeperCodingSessionMetadata(metadataContent(extra)),
       null,
       `accepted a turnBudget with ${label}`,
     );
   }
 
   // An unbudgeted umbrella omits the key, and still decodes.
-  const unbudgeted = parseBuzzCodingSessionMetadata(
+  const unbudgeted = parseBeekeeperCodingSessionMetadata(
     metadataContent({ sessionRef: UMBRELLA }),
   );
   assert.notEqual(unbudgeted, null);
@@ -290,14 +290,14 @@ test("an explicit null turnBudget decodes as unbudgeted, as Rust reads it", () =
   // the shape check passes, and the value reads as `None`. Dropping the whole
   // metadata here would lose the status, the model and the capabilities over a
   // key that says nothing.
-  const parsed = parseBuzzCodingSessionMetadata(
+  const parsed = parseBeekeeperCodingSessionMetadata(
     metadataContent({ sessionRef: UMBRELLA, turnBudget: null }),
   );
   assert.notEqual(parsed, null);
   assert.equal(Object.hasOwn(parsed, "turnBudget"), false);
 
   // Even without an umbrella: a null budget makes no claim about one.
-  const loose = parseBuzzCodingSessionMetadata(
+  const loose = parseBeekeeperCodingSessionMetadata(
     metadataContent({ turnBudget: null }),
   );
   assert.notEqual(loose, null);
@@ -315,14 +315,15 @@ test("an agentRef that is not a 64-hex pubkey is refused, as Rust refuses it", (
     `${"ab".repeat(32)}f`,
   ]) {
     assert.equal(
-      parseBuzzCodingSessionMetadata(metadataContent({ agentRef })),
+      parseBeekeeperCodingSessionMetadata(metadataContent({ agentRef })),
       null,
       `accepted a non-pubkey agentRef: ${agentRef}`,
     );
   }
   assert.equal(
-    parseBuzzCodingSessionMetadata(metadataContent({ agentRef: SEAT_ACTOR }))
-      ?.agentRef,
+    parseBeekeeperCodingSessionMetadata(
+      metadataContent({ agentRef: SEAT_ACTOR }),
+    )?.agentRef,
     SEAT_ACTOR,
   );
 });
@@ -346,7 +347,7 @@ const ROUTING_RECORD = {
 };
 
 test("metadata carrying a routing record decodes it", () => {
-  const parsed = parseBuzzCodingSessionMetadata(
+  const parsed = parseBeekeeperCodingSessionMetadata(
     metadataContent({ routing: ROUTING_RECORD }),
   );
   assert.deepEqual(parsed?.routing, ROUTING_RECORD);
@@ -354,11 +355,11 @@ test("metadata carrying a routing record decodes it", () => {
 
 test("metadata omits absent routing and rejects an explicit null", () => {
   assert.equal(
-    parseBuzzCodingSessionMetadata(metadataContent({})).routing,
+    parseBeekeeperCodingSessionMetadata(metadataContent({})).routing,
     undefined,
   );
   assert.equal(
-    parseBuzzCodingSessionMetadata(metadataContent({ routing: null })),
+    parseBeekeeperCodingSessionMetadata(metadataContent({ routing: null })),
     null,
   );
 });
@@ -373,7 +374,7 @@ test("a malformed routing record refuses the payload, it is not dropped", () => 
     { ...ROUTING_RECORD, risk: { ...ROUTING_RECORD.risk, score: 3 } },
   ]) {
     assert.equal(
-      parseBuzzCodingSessionMetadata(metadataContent({ routing })),
+      parseBeekeeperCodingSessionMetadata(metadataContent({ routing })),
       null,
       `decoded ${JSON.stringify(routing)} instead of refusing it`,
     );
@@ -393,7 +394,7 @@ const PACK_REF = {
 };
 
 test("metadata carrying a packRef decodes it", () => {
-  const parsed = parseBuzzCodingSessionMetadata(
+  const parsed = parseBeekeeperCodingSessionMetadata(
     metadataContent({ packRef: PACK_REF }),
   );
   assert.deepEqual(parsed?.packRef, PACK_REF);
@@ -409,7 +410,7 @@ test("metadata carrying a shipped-defaults packRef decodes it", () => {
     role: "builder",
     path: "personas/roles/builder",
   };
-  const parsed = parseBuzzCodingSessionMetadata(
+  const parsed = parseBeekeeperCodingSessionMetadata(
     metadataContent({ packRef: shipped }),
   );
   assert.deepEqual(parsed?.packRef, shipped);
@@ -417,14 +418,14 @@ test("metadata carrying a shipped-defaults packRef decodes it", () => {
 
 test("a 44223 signed before packRef existed still decodes, with the key absent", () => {
   // No `packRef` key at all — the shape every host before this lane signed.
-  const parsed = parseBuzzCodingSessionMetadata(metadataContent({}));
+  const parsed = parseBeekeeperCodingSessionMetadata(metadataContent({}));
   assert.notEqual(parsed, null, "an older 44223 must still decode");
   assert.equal(Object.hasOwn(parsed, "packRef"), false);
 });
 
 test("metadata rejects an explicit null packRef", () => {
   assert.equal(
-    parseBuzzCodingSessionMetadata(metadataContent({ packRef: null })),
+    parseBeekeeperCodingSessionMetadata(metadataContent({ packRef: null })),
     null,
   );
 });
@@ -437,7 +438,7 @@ test("a malformed packRef refuses the payload, it is not dropped", () => {
     { class: "builder" },
   ]) {
     assert.equal(
-      parseBuzzCodingSessionMetadata(metadataContent({ packRef })),
+      parseBeekeeperCodingSessionMetadata(metadataContent({ packRef })),
       null,
       `decoded ${JSON.stringify(packRef)} instead of refusing it`,
     );

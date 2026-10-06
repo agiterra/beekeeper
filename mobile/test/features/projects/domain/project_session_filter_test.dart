@@ -1,4 +1,4 @@
-import 'package:buzz/features/projects/domain/project_session_filter.dart';
+import 'package:beekeeper/features/projects/domain/project_session_filter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const me = 'aa0011223344556677889900aabbccddeeff00112233445566778899aabbccdd';

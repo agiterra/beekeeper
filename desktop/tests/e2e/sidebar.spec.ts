@@ -510,7 +510,7 @@ test("aligns the sidebar search with the channel title outside the Buzz theme", 
   const root = page.locator("html");
   const search = page.getByTestId("open-search");
   const channelTitle = page.getByTestId("chat-title");
-  await expect(root).not.toHaveAttribute("data-buzz-sidebar", "");
+  await expect(root).not.toHaveAttribute("data-beekeeper-sidebar", "");
   await expect(search).toBeVisible();
   await expect(channelTitle).toHaveText("general");
 
@@ -572,13 +572,13 @@ test("shows a sidebar update card when an update is ready", async ({
 
   await page.evaluate(() => {
     const testWindow = window as Window & {
-      __BUZZ_E2E__?: { mock?: { updateAvailable?: boolean } };
+      __BEEKEEPER_E2E__?: { mock?: { updateAvailable?: boolean } };
     };
 
-    testWindow.__BUZZ_E2E__ = {
-      ...(testWindow.__BUZZ_E2E__ ?? {}),
+    testWindow.__BEEKEEPER_E2E__ = {
+      ...(testWindow.__BEEKEEPER_E2E__ ?? {}),
       mock: {
-        ...(testWindow.__BUZZ_E2E__?.mock ?? {}),
+        ...(testWindow.__BEEKEEPER_E2E__?.mock ?? {}),
         restartDelayMs: 500,
         updateAvailable: true,
       },
@@ -598,9 +598,9 @@ test("shows a sidebar update card when an update is ready", async ({
         const commands =
           (
             window as Window & {
-              __BUZZ_E2E_COMMANDS__?: string[];
+              __BEEKEEPER_E2E_COMMANDS__?: string[];
             }
-          ).__BUZZ_E2E_COMMANDS__ ?? [];
+          ).__BEEKEEPER_E2E_COMMANDS__ ?? [];
         return (
           commands.includes("plugin:updater|install") ||
           commands.includes("plugin:process|restart")
@@ -626,9 +626,9 @@ test("shows a sidebar update card when an update is ready", async ({
         () =>
           (
             window as Window & {
-              __BUZZ_E2E_COMMANDS__?: string[];
+              __BEEKEEPER_E2E_COMMANDS__?: string[];
             }
-          ).__BUZZ_E2E_COMMANDS__ ?? [],
+          ).__BEEKEEPER_E2E_COMMANDS__ ?? [],
       ),
     )
     .toEqual(
@@ -643,9 +643,9 @@ test("shows a sidebar update card when an update is ready", async ({
     () =>
       (
         window as Window & {
-          __BUZZ_E2E_COMMANDS__?: string[];
+          __BEEKEEPER_E2E_COMMANDS__?: string[];
         }
-      ).__BUZZ_E2E_COMMANDS__ ?? [],
+      ).__BEEKEEPER_E2E_COMMANDS__ ?? [],
   );
   expect(commands.indexOf("plugin:updater|download")).toBeLessThan(
     commands.indexOf("plugin:updater|install"),
@@ -667,13 +667,13 @@ test("reflects an install started from the header update button on the sidebar c
 
   await page.evaluate(() => {
     const testWindow = window as Window & {
-      __BUZZ_E2E__?: { mock?: { updateAvailable?: boolean } };
+      __BEEKEEPER_E2E__?: { mock?: { updateAvailable?: boolean } };
     };
 
-    testWindow.__BUZZ_E2E__ = {
-      ...(testWindow.__BUZZ_E2E__ ?? {}),
+    testWindow.__BEEKEEPER_E2E__ = {
+      ...(testWindow.__BEEKEEPER_E2E__ ?? {}),
       mock: {
-        ...(testWindow.__BUZZ_E2E__?.mock ?? {}),
+        ...(testWindow.__BEEKEEPER_E2E__?.mock ?? {}),
         restartDelayMs: 500,
         updateAvailable: true,
       },
@@ -719,14 +719,14 @@ test("shows manual-required update card and never auto-downloads on non-AppImage
   // live (mirrors the ready-card test pattern).
   await page.evaluate(() => {
     const testWindow = window as Window & {
-      __BUZZ_E2E__?: {
+      __BEEKEEPER_E2E__?: {
         mock?: { updateAvailable?: boolean; autoUpdateSupported?: boolean };
       };
     };
-    testWindow.__BUZZ_E2E__ = {
-      ...(testWindow.__BUZZ_E2E__ ?? {}),
+    testWindow.__BEEKEEPER_E2E__ = {
+      ...(testWindow.__BEEKEEPER_E2E__ ?? {}),
       mock: {
-        ...(testWindow.__BUZZ_E2E__?.mock ?? {}),
+        ...(testWindow.__BEEKEEPER_E2E__?.mock ?? {}),
         updateAvailable: true,
         autoUpdateSupported: false,
       },
@@ -758,9 +758,9 @@ test("shows manual-required update card and never auto-downloads on non-AppImage
     () =>
       (
         window as Window & {
-          __BUZZ_E2E_COMMANDS__?: string[];
+          __BEEKEEPER_E2E_COMMANDS__?: string[];
         }
-      ).__BUZZ_E2E_COMMANDS__ ?? [],
+      ).__BEEKEEPER_E2E_COMMANDS__ ?? [],
   );
   expect(commands).not.toContain("plugin:updater|download");
   expect(commands).not.toContain("plugin:updater|install");

@@ -7,7 +7,7 @@ import type {
   TranscriptItem,
 } from "./agentSessionTypes";
 import {
-  findBuzzToolName,
+  findBeekeeperToolName,
   isGenericToolTitle,
   normalizeToolStatus,
 } from "./agentSessionToolCatalog";
@@ -619,15 +619,15 @@ function upsertTool(
   acpSource?: string,
 ) {
   const existing = d.itemsById.get(id);
-  const canonicalBuzzToolName =
-    buzzToolName ?? findBuzzToolName(toolName, true);
+  const canonicalBeekeeperToolName =
+    buzzToolName ?? findBeekeeperToolName(toolName, true);
   if (existing?.type === "tool") {
     const updatedTitle = !isGenericToolTitle(title) ? title : existing.title;
     let updatedToolName = existing.toolName;
-    let updatedBuzzToolName = existing.buzzToolName;
-    if (canonicalBuzzToolName) {
-      updatedBuzzToolName = canonicalBuzzToolName;
-      updatedToolName = canonicalBuzzToolName;
+    let updatedBeekeeperToolName = existing.buzzToolName;
+    if (canonicalBeekeeperToolName) {
+      updatedBeekeeperToolName = canonicalBeekeeperToolName;
+      updatedToolName = canonicalBeekeeperToolName;
     } else if (!existing.buzzToolName && !isGenericToolTitle(toolName)) {
       updatedToolName = toolName;
     }
@@ -638,7 +638,7 @@ function upsertTool(
     const descriptor = classifyTool({
       title: updatedTitle,
       toolName: updatedToolName,
-      buzzToolName: updatedBuzzToolName,
+      buzzToolName: updatedBeekeeperToolName,
       args: updatedArgs,
       result: updatedResult,
       isError: updatedIsError || mergedStatus === "failed",
@@ -649,7 +649,7 @@ function upsertTool(
       descriptor,
       title: updatedTitle,
       toolName: updatedToolName,
-      buzzToolName: updatedBuzzToolName,
+      buzzToolName: updatedBeekeeperToolName,
       status: mergedStatus,
       args: updatedArgs,
       result: updatedResult,
@@ -665,11 +665,11 @@ function upsertTool(
     });
     return;
   }
-  const resolvedToolName = canonicalBuzzToolName ?? toolName;
+  const resolvedToolName = canonicalBeekeeperToolName ?? toolName;
   const descriptor = classifyTool({
     title,
     toolName: resolvedToolName,
-    buzzToolName: canonicalBuzzToolName,
+    buzzToolName: canonicalBeekeeperToolName,
     args,
     result,
     isError: isError || status === "failed",
@@ -682,7 +682,7 @@ function upsertTool(
     descriptor,
     title,
     toolName: resolvedToolName,
-    buzzToolName: canonicalBuzzToolName,
+    buzzToolName: canonicalBeekeeperToolName,
     status,
     args,
     result,

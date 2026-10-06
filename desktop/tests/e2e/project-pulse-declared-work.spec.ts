@@ -44,7 +44,7 @@ async function openDeclaredPulse(page: Page): Promise<void> {
   });
   await page.addInitScript(
     (events) => {
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events as never;
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events as never;
     },
     [projectHeadEvent(), ...seededEntries()] as never,
   );
@@ -55,7 +55,7 @@ async function openDeclaredPulse(page: Page): Promise<void> {
   });
   await page.evaluate(
     ({ channelName, seeds }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("mock signed-event seam is missing");
       for (const event of seeds as never[]) seed({ channelName, event });
     },
@@ -236,8 +236,8 @@ test("Open session navigates to the execution and publishes nothing", async ({
   const row = declaredRow(page, "Build the declared-work wire");
   await expect(row).toHaveAttribute("data-session-key", OPEN_SESSION_REF);
   const before = await page.evaluate(() => ({
-    commands: (window.__BUZZ_E2E_COMMANDS__ ?? []).length,
-    signed: (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).length,
+    commands: (window.__BEEKEEPER_E2E_COMMANDS__ ?? []).length,
+    signed: (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).length,
   }));
 
   await row.getByTestId("pulse-declared-open-session").click();
@@ -245,8 +245,8 @@ test("Open session navigates to the execution and publishes nothing", async ({
 
   const after = await page.evaluate(
     (start) => ({
-      commands: (window.__BUZZ_E2E_COMMANDS__ ?? []).slice(start.commands),
-      signed: (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).length,
+      commands: (window.__BEEKEEPER_E2E_COMMANDS__ ?? []).slice(start.commands),
+      signed: (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).length,
     }),
     before,
   );

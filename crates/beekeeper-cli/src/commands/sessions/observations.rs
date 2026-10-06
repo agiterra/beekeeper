@@ -40,7 +40,7 @@ use beekeeper_sdk::coding_session_observation::build_coding_session_observation;
 use nostr::Event;
 use serde_json::{json, Value};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
 use crate::{SessionObserveCmd, SessionObserveGateArgs};
@@ -51,7 +51,7 @@ pub const OBSERVATION_DISCLOSURE: &str =
      nothing and excludes nothing, and every duration in it is the author's own measurement";
 
 /// Dispatch `bee sessions observe`.
-pub async fn cmd_observe(client: &BuzzClient, cmd: SessionObserveCmd) -> Result<(), CliError> {
+pub async fn cmd_observe(client: &BeekeeperClient, cmd: SessionObserveCmd) -> Result<(), CliError> {
     cmd_observe_as(client, cmd, CodingSessionObservationSource::Declared).await
 }
 
@@ -63,7 +63,7 @@ pub async fn cmd_observe(client: &BuzzClient, cmd: SessionObserveCmd) -> Result<
 /// a subject describing its own work. `observed` is never reachable from here:
 /// a row nobody watched cannot become one by asking.
 pub(super) async fn cmd_observe_as(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     cmd: SessionObserveCmd,
     source: CodingSessionObservationSource,
 ) -> Result<(), CliError> {
@@ -76,7 +76,7 @@ pub(super) async fn cmd_observe_as(
 }
 
 async fn cmd_observe_inner(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     cmd: SessionObserveCmd,
     source: CodingSessionObservationSource,
 ) -> Result<(), CliError> {
@@ -285,7 +285,7 @@ fn closed_word<T: serde::de::DeserializeOwned>(
 
 /// Resolve the umbrella's genesis, from the flag or from the relay.
 async fn genesis_for(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: Option<&str>,
@@ -308,7 +308,7 @@ async fn genesis_for(
 }
 
 async fn publish(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: Option<&str>,
@@ -360,7 +360,7 @@ async fn publish(
 
 /// `bee sessions observations` — print the bounded observation fold.
 pub async fn cmd_observations(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: Option<&str>,

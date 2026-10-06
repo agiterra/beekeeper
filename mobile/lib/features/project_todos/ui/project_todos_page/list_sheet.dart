@@ -82,7 +82,7 @@ Future<String?> _showListTitleSheet(
   BuildContext context, {
   required String title,
   String? initial,
-}) => showBuzzModalBottomSheet<String>(
+}) => showBeekeeperModalBottomSheet<String>(
   context: context,
   title: title,
   isScrollControlled: true,
@@ -163,7 +163,7 @@ class NewListDraft {
 /// Ask for a new list. Resolves to the draft, or `null` when the sheet is
 /// dismissed.
 Future<NewListDraft?> _showNewListSheet(BuildContext context) =>
-    showBuzzModalBottomSheet<NewListDraft>(
+    showBeekeeperModalBottomSheet<NewListDraft>(
       context: context,
       title: 'New list',
       isScrollControlled: true,

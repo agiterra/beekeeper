@@ -31,7 +31,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use beekeeper_ws_client::RelayMessage;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag, Timestamp};
 use reqwest::Client;
@@ -141,7 +141,7 @@ fn project_delete(keys: &Keys, d_tag: &str) -> nostr::Event {
 /// Create an open-visibility channel, optionally bound to a project via the
 /// `project` ref tag captured into `channels.project_ref` on ingest.
 async fn create_channel(
-    client: &mut BuzzTestClient,
+    client: &mut BeekeeperTestClient,
     keys: &Keys,
     project_ref: Option<&str>,
 ) -> String {
@@ -178,7 +178,7 @@ fn channel_messages_filter(channel_id: &str) -> Filter {
 }
 
 /// Subscribe with `filter` and drain to EOSE.
-async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
+async fn query(client: &mut BeekeeperTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
     let sid = sub_id(name);
     client
         .subscribe(&sid, vec![filter])
@@ -193,7 +193,7 @@ async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<n
 }
 
 /// Subscribe expecting the relay to CLOSE the subscription with `restricted:`.
-async fn expect_restricted(client: &mut BuzzTestClient, name: &str, filter: Filter) {
+async fn expect_restricted(client: &mut BeekeeperTestClient, name: &str, filter: Filter) {
     let sid = sub_id(name);
     client
         .subscribe(&sid, vec![filter])
@@ -274,7 +274,7 @@ async fn test_private_container_hidden_from_stranger_everywhere() {
     let stranger = Keys::generate();
     let d_tag = unique("secret");
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(&owner, &d_tag, Some("private"), &[&member], None);
@@ -287,7 +287,7 @@ async fn test_private_container_hidden_from_stranger_everywhere() {
     assert_eq!(seen.len(), 1, "author must see their private project");
 
     // Invited member sees it.
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
     let seen = query(
@@ -299,7 +299,7 @@ async fn test_private_container_hidden_from_stranger_everywhere() {
     assert_eq!(seen.len(), 1, "invited member must see the private project");
 
     // Stranger sees nothing via the coordinate filter…
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let seen = query(
@@ -369,10 +369,10 @@ async fn test_private_container_fanout_filtered_live() {
     let stranger = Keys::generate();
     let d_tag = unique("live");
 
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
 
@@ -396,7 +396,7 @@ async fn test_private_container_fanout_filtered_live() {
         .await
         .expect("stranger eose");
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(&owner, &d_tag, Some("private"), &[&member], None);
@@ -452,7 +452,7 @@ async fn test_roster_op_member_receives_live_fanout() {
     let d_tag = unique("ops-live");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let now = Timestamp::now().as_secs();
@@ -473,7 +473,7 @@ async fn test_roster_op_member_receives_live_fanout() {
         .expect("send put-member");
     assert!(ok.accepted, "put-member op rejected: {}", ok.message);
 
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
     let member_sid = sub_id("ops-live-member");
@@ -533,7 +533,7 @@ async fn test_roster_op_member_reads_the_container_everywhere() {
     let d_tag = unique("ops-roster");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     // A private head with no invites at all.
@@ -542,7 +542,7 @@ async fn test_roster_op_member_reads_the_container_everywhere() {
     let ok = owner_client.send_event(head).await.expect("send project");
     assert!(ok.accepted, "private project rejected: {}", ok.message);
 
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
     let seen = query(
@@ -613,7 +613,7 @@ async fn test_roster_op_member_reads_the_container_everywhere() {
     assert_eq!(n, 1, "HTTP /count must include the head for a member");
 
     // A stranger is unaffected by any of it.
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let seen = query(
@@ -643,7 +643,7 @@ async fn test_roster_op_removal_revokes_a_stale_head_invite() {
     let d_tag = unique("ops-revoke");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     // The head invites the member directly, and is never republished.
@@ -651,7 +651,7 @@ async fn test_roster_op_removal_revokes_a_stale_head_invite() {
     let ok = owner_client.send_event(head).await.expect("send project");
     assert!(ok.accepted, "private project rejected: {}", ok.message);
 
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
     let seen = query(
@@ -702,7 +702,7 @@ async fn test_private_project_channel_gates_reads_and_writes() {
     let stranger = Keys::generate();
     let d_tag = unique("chan");
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(&owner, &d_tag, Some("private"), &[&member], None);
@@ -720,7 +720,7 @@ async fn test_private_project_channel_gates_reads_and_writes() {
 
     // Member (not an explicit channel member — admitted via project ACL) can
     // read and write.
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
     let seen = query(
@@ -741,7 +741,7 @@ async fn test_private_project_channel_gates_reads_and_writes() {
     assert!(ok.accepted, "member write rejected: {}", ok.message);
 
     // Stranger: read is CLOSED restricted, write is rejected.
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     expect_restricted(
@@ -769,7 +769,7 @@ async fn test_private_project_channel_gates_reads_and_writes() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let mut revealed = false;
     while tokio::time::Instant::now() < deadline {
-        let mut fresh = BuzzTestClient::connect(&relay_url(), &stranger)
+        let mut fresh = BeekeeperTestClient::connect(&relay_url(), &stranger)
             .await
             .expect("stranger reconnect");
         let sid = sub_id("stranger-after-delete");
@@ -800,7 +800,7 @@ async fn test_membership_republish_revokes_access() {
     let member = Keys::generate();
     let d_tag = unique("revoke");
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let now = Timestamp::now().as_secs();
@@ -808,7 +808,7 @@ async fn test_membership_republish_revokes_access() {
     let ok = owner_client.send_event(head).await.expect("send project");
     assert!(ok.accepted, "private project rejected: {}", ok.message);
 
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
     let seen = query(
@@ -846,7 +846,7 @@ async fn test_public_and_tagless_projects_stay_visible() {
     let tagless_d = unique("tagless");
     let public_d = unique("public");
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let ok = owner_client
@@ -860,7 +860,7 @@ async fn test_public_and_tagless_projects_stay_visible() {
         .expect("send public");
     assert!(ok.accepted, "public project rejected: {}", ok.message);
 
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let seen = query(
@@ -886,7 +886,7 @@ async fn test_public_and_tagless_projects_stay_visible() {
 #[ignore = "requires running relay"]
 async fn test_malformed_access_envelopes_rejected() {
     let owner = Keys::generate();
-    let mut client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("connect");
 

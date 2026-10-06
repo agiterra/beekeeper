@@ -8,7 +8,7 @@
  * synthesized by the bridge: a spec builds the whole signed event with these
  * helpers, from the execution signer's key (a title with standing) or from a
  * key that runs nothing in the session (a foreign title, which readers set
- * aside), and seeds it through `__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__`.
+ * aside), and seeds it through `__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__`.
  *
  * The mock relay already serves the kind: 44252 is in
  * `CODING_SESSION_EVENT_KINDS`, which drives the single-channel history path

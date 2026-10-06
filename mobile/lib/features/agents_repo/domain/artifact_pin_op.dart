@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:buzz/shared/utils/fractional_rank.dart';
+import 'package:beekeeper/shared/utils/fractional_rank.dart';
 import 'package:flutter/foundation.dart';
 
 import 'agents_repo_draft_op.dart';

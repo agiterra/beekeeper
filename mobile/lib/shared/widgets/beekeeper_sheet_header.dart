@@ -7,8 +7,8 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../theme/theme.dart';
 
 /// A titled sheet header with balanced actions and an exactly centered title.
-class BuzzSheetHeader extends StatelessWidget {
-  const BuzzSheetHeader({
+class BeekeeperSheetHeader extends StatelessWidget {
+  const BeekeeperSheetHeader({
     super.key,
     this.title,
     this.titleKey,

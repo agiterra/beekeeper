@@ -34,7 +34,7 @@ void showEmojiPicker({
   required void Function(String emoji) onSelect,
   VoidCallback? onDismiss,
 }) {
-  showBuzzModalBottomSheet<void>(
+  showBeekeeperModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,

@@ -52,11 +52,11 @@ async function waitForMockLiveSubscription(page: Page, channelName: string) {
           return (
             (
               window as Window & {
-                __BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
+                __BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
                   channelName: string;
                 }) => boolean;
               }
-            ).__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({ channelName }) ??
+            ).__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({ channelName }) ??
             false
           );
         }, channelName);
@@ -76,14 +76,14 @@ function emitMockMessage(
     ({ channelName, content, extraTags, parentEventId }) => {
       const emit = (
         window as Window & {
-          __BUZZ_E2E_EMIT_MOCK_MESSAGE__?: (input: {
+          __BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?: (input: {
             channelName: string;
             content: string;
             extraTags?: string[][];
             parentEventId?: string;
           }) => unknown;
         }
-      ).__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+      ).__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__;
       if (!emit) {
         throw new Error("Mock message emitter is unavailable.");
       }
@@ -103,7 +103,7 @@ function pushMockFeedItems(page: Page, messages: MockFeedMessage[]) {
     ({ channelId, messages }) => {
       const pushFeedItem = (
         window as Window & {
-          __BUZZ_E2E_PUSH_MOCK_FEED_ITEM__?: (item: {
+          __BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__?: (item: {
             category: "mention";
             channel_id: string;
             channel_name: string;
@@ -115,7 +115,7 @@ function pushMockFeedItems(page: Page, messages: MockFeedMessage[]) {
             tags: string[][];
           }) => unknown;
         }
-      ).__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__;
+      ).__BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__;
       if (!pushFeedItem) throw new Error("Mock feed helper is unavailable.");
       for (const message of messages) {
         pushFeedItem({
@@ -1487,8 +1487,8 @@ test("right-click menus expose distinct selectors for links, relay video, and of
     .poll(() =>
       page.evaluate(
         () =>
-          (window as Window & { __BUZZ_E2E_COMMANDS__?: string[] })
-            .__BUZZ_E2E_COMMANDS__ ?? [],
+          (window as Window & { __BEEKEEPER_E2E_COMMANDS__?: string[] })
+            .__BEEKEEPER_E2E_COMMANDS__ ?? [],
       ),
     )
     .toContain("download_file");

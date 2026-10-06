@@ -361,7 +361,7 @@ class _TodoListBody extends HookConsumerWidget {
     Future<void> setDone(TodoItem item, bool done) =>
         runTodoAction(context, () => actions().setDone(list.id, item.id, done));
 
-    void openItem(TodoItem item) => showBuzzModalBottomSheet<void>(
+    void openItem(TodoItem item) => showBeekeeperModalBottomSheet<void>(
       context: context,
       title: 'Edit item',
       isScrollControlled: true,

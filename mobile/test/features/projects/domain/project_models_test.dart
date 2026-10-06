@@ -1,5 +1,5 @@
-import 'package:buzz/features/projects/domain/project_models.dart';
-import 'package:buzz/shared/relay/nostr_models.dart';
+import 'package:beekeeper/features/projects/domain/project_models.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const owner =

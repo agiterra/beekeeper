@@ -24,7 +24,7 @@ use std::str::FromStr;
 
 use super::pulse::resolve_project;
 use super::repos::next_replaceable_created_at;
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// The relay's ingest window is ±900 s; a bump that would land past this
@@ -40,7 +40,7 @@ struct Snapshot {
     latest: std::collections::HashMap<(String, String), u64>,
 }
 
-async fn snapshot(client: &BuzzClient, project: Option<&str>) -> Result<Snapshot, CliError> {
+async fn snapshot(client: &BeekeeperClient, project: Option<&str>) -> Result<Snapshot, CliError> {
     let coordinate = resolve_project(client, project).await?;
     let raw = client
         .query_all(json!({ "kinds": [KIND_PROJECT_TODO_OP], "#a": [coordinate] }))
@@ -172,7 +172,7 @@ fn visibility_of(list: &TodoList) -> Result<TodoVisibility, CliError> {
 /// empty assignee outrank it.
 async fn publish(
     snap: &mut Snapshot,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     op: &ProjectTodoOp,
 ) -> Result<Value, CliError> {
     let target = (
@@ -294,7 +294,7 @@ fn item_row(item: &TodoItem, format: &crate::OutputFormat) -> Value {
 }
 
 async fn cmd_lists(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     archived: bool,
     format: &crate::OutputFormat,
@@ -316,7 +316,7 @@ async fn cmd_lists(
 }
 
 async fn cmd_show(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     list: &str,
     format: &crate::OutputFormat,
@@ -348,7 +348,7 @@ async fn cmd_show(
 /// Dispatch `bee todos`.
 pub async fn dispatch(
     cmd: crate::TodosCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     use crate::TodosCmd;
@@ -612,7 +612,7 @@ pub async fn dispatch(
 }
 
 async fn set_done(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     item: &str,
     done: bool,
@@ -632,7 +632,7 @@ async fn set_done(
 }
 
 async fn set_pinned(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     list: &str,
     pinned: bool,

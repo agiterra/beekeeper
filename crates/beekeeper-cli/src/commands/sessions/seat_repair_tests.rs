@@ -48,7 +48,7 @@ use uuid::Uuid;
 
 use super::super::crew::{seat_repair_exit_code, SeatRepairOutcome};
 use super::{cmd_seat_repair, seat_repair_document};
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 const CHANNEL: &str = "f4829942-15a8-4e74-accd-51c8448f250f";
@@ -444,7 +444,7 @@ fn seed_seat_grant(wire: &mut Wire, relay: &Keys, actor: &str, role: &str) -> St
 
 struct Harness {
     relay: Arc<RecordingRelay>,
-    client: BuzzClient,
+    client: BeekeeperClient,
     actor: String,
     genesis: String,
     create_id: String,
@@ -460,7 +460,7 @@ async fn harness(wire: Wire, relay_keys: Keys) -> Harness {
     let url = serve(relay.clone()).await;
     // The founder signs: the host that seated the role is the party whose
     // authority the chain accepts, and the CLI runs as it.
-    let client = BuzzClient::new(url, wire.founder, None, None).expect("client");
+    let client = BeekeeperClient::new(url, wire.founder, None, None).expect("client");
     Harness {
         relay,
         client,

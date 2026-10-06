@@ -17,7 +17,7 @@ import 'channels_provider.dart';
 /// held (not dropped) while channels are still loading, so cold-start links
 /// dispatch as soon as the first channel fetch completes.
 typedef DeepLinkDestinationBuilder =
-    Widget Function(Channel channel, BuzzDeepLink link);
+    Widget Function(Channel channel, BeekeeperDeepLink link);
 
 class DeepLinkDispatcher extends ConsumerStatefulWidget {
   final Widget child;
@@ -50,7 +50,7 @@ class _DeepLinkDispatcherState extends ConsumerState<DeepLinkDispatcher> {
   @override
   Widget build(BuildContext context) {
     // Re-evaluate dispatch when either a new link arrives or channels load.
-    ref.listen<BuzzDeepLink?>(pendingDeepLinkProvider, (_, link) {
+    ref.listen<BeekeeperDeepLink?>(pendingDeepLinkProvider, (_, link) {
       _maybeDispatch(link);
     });
     if (widget.dispatchMessageLinks) {
@@ -62,7 +62,7 @@ class _DeepLinkDispatcherState extends ConsumerState<DeepLinkDispatcher> {
     return widget.child;
   }
 
-  void _maybeDispatch(BuzzDeepLink? link) {
+  void _maybeDispatch(BeekeeperDeepLink? link) {
     if (link == null || _preparingInvite) return;
     if (link is InviteDeepLink) {
       _maybeDispatchInvite(link);

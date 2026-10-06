@@ -6,7 +6,7 @@ import '../../../shared/relay/relay_provider.dart';
 import '../../../shared/theme/theme.dart';
 import '../../../shared/utils/string_utils.dart';
 import '../../../shared/widgets/bee_refresh_indicator.dart';
-import '../../../shared/widgets/buzz_loading_indicator.dart';
+import '../../../shared/widgets/beekeeper_loading_indicator.dart';
 import '../../../shared/widgets/frosted_app_bar.dart';
 import '../../../shared/widgets/frosted_scaffold.dart';
 import '../domain/terminals_domain.dart';
@@ -113,7 +113,7 @@ class TerminalsList extends StatelessWidget {
           padding: const EdgeInsets.only(top: Grid.xxl),
           children: const [
             Center(
-              child: BuzzLoadingIndicator(
+              child: BeekeeperLoadingIndicator(
                 size: 40,
                 semanticLabel: 'Reading shared terminals',
               ),

@@ -101,7 +101,7 @@ fn cli_login_requirements_codex_outdated_adapter_emits_adapter_outdated() {
         Some(exe),
     );
     let reqs = cli_login::requirements(
-        &[exe, "--buzz-probe-must-not-run-xyz"],
+        &[exe, "--beekeeper-probe-must-not-run-xyz"],
         "run `codex login`",
         &rt,
     );
@@ -141,7 +141,7 @@ fn cli_login_requirements_codex_garbage_version_output_emits_adapter_outdated() 
         Some(exe),
     );
     let reqs = cli_login::requirements(
-        &[exe, "--buzz-probe-must-not-run-xyz"],
+        &[exe, "--beekeeper-probe-must-not-run-xyz"],
         "run `codex login`",
         &rt,
     );

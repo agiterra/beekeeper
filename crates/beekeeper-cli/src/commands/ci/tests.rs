@@ -371,7 +371,7 @@ async fn disconnect_reauthenticates_resubscribes_and_consumes_stored_replay_thro
     let auth_json =
         beekeeper_sdk::nip_oa::compute_auth_tag(&owner, &caller.public_key(), "").unwrap();
     let auth_tag = beekeeper_sdk::nip_oa::parse_auth_tag(&auth_json).unwrap();
-    let client = BuzzClient::new(url, caller, Some(auth_tag), Some(auth_json)).unwrap();
+    let client = BeekeeperClient::new(url, caller, Some(auth_tag), Some(auth_json)).unwrap();
 
     let accepted = wait_for_result(
         &client,
@@ -429,7 +429,7 @@ async fn empty_eose_keeps_waiting_for_live_terminal() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let client = BuzzClient::new(url, caller, None, None).unwrap();
+    let client = BeekeeperClient::new(url, caller, None, None).unwrap();
     let accepted = wait_for_result(
         &client,
         &relay.public_key().to_hex(),
@@ -460,7 +460,7 @@ async fn overall_timeout_survives_reconnect_backoff() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let client = BuzzClient::new(url, caller, None, None).unwrap();
+    let client = BeekeeperClient::new(url, caller, None, None).unwrap();
     let error = wait_for_result(
         &client,
         &relay.public_key().to_hex(),
@@ -492,7 +492,7 @@ async fn overall_deadline_includes_stalled_relay_metadata_fetch() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let client = BuzzClient::new(url, nostr::Keys::generate(), None, None).unwrap();
+    let client = BeekeeperClient::new(url, nostr::Keys::generate(), None, None).unwrap();
     let digest = correlation_id(&sample_identity()).unwrap();
 
     let error = trusted_relay_self(
@@ -548,7 +548,7 @@ async fn authentication_refusal_is_permanent() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let client = BuzzClient::new(url, caller, None, None).unwrap();
+    let client = BeekeeperClient::new(url, caller, None, None).unwrap();
     let error = wait_for_result(
         &client,
         &relay.public_key().to_hex(),
@@ -1109,7 +1109,7 @@ fn build_wrong_target_receipt(command_id: &str, target: &CodingSessionTarget) ->
 
 #[allow(clippy::too_many_arguments)]
 async fn run_continue(url: String, ack_timeout: u64) -> Result<(), CliError> {
-    let client = BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+    let client = BeekeeperClient::new(url, nostr::Keys::generate(), None, None).expect("client");
     continuation::cmd_continue(
         &client,
         &crate::OutputFormat::Json,
@@ -1232,7 +1232,7 @@ async fn continuation_status_status_reads_are_read_only_and_exit_zero() {
         "r1",
     )];
     let url = serve_query_only(events).await;
-    let client = BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+    let client = BeekeeperClient::new(url, nostr::Keys::generate(), None, None).expect("client");
     let result = continuation::cmd_continuation_status(
         &client,
         &crate::OutputFormat::Json,

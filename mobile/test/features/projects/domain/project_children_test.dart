@@ -1,6 +1,6 @@
-import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
-import 'package:buzz/features/projects/domain/project_children.dart';
-import 'package:buzz/features/projects/domain/project_models.dart';
+import 'package:beekeeper/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:beekeeper/features/projects/domain/project_children.dart';
+import 'package:beekeeper/features/projects/domain/project_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../coding_sessions/ui/fake_observer.dart';

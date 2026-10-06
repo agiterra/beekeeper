@@ -1,4 +1,4 @@
-import 'package:buzz/shared/deeplink/deep_link.dart';
+import 'package:beekeeper/shared/deeplink/deep_link.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -104,7 +104,7 @@ void _channelTests() {
 
     test('is included in the top-level parser', () {
       expect(
-        parseBuzzDeepLink(
+        parseBeekeeperDeepLink(
           Uri.parse('beekeeper://channel/580ca78b-9dae-46f3-8854-bd671853ba32'),
         ),
         const ChannelDeepLink(

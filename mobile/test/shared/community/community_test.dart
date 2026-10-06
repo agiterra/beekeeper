@@ -1,4 +1,4 @@
-import 'package:buzz/shared/community/community.dart';
+import 'package:beekeeper/shared/community/community.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

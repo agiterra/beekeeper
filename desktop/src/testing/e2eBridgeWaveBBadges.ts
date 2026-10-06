@@ -14,7 +14,7 @@ import type {
 /**
  * Mock Tauri commands for surface badges (SV-22, SV-41), owned by lane B3.
  *
- * Off unless a spec sets `window.__BUZZ_E2E_WAVE_B_BADGES_FOLDS__ = true`
+ * Off unless a spec sets `window.__BEEKEEPER_E2E_WAVE_B_BADGES_FOLDS__ = true`
  * before the app loads. Then the two native folds a badge reads through —
  * the kind-44246 observation fold and the kind-44244 team fold — answer
  * from the events they are actually handed, so a spec can seed signed
@@ -38,8 +38,8 @@ type MockEvent = {
 function enabled(): boolean {
   return (
     typeof window !== "undefined" &&
-    (window as Window & { __BUZZ_E2E_WAVE_B_BADGES_FOLDS__?: boolean })
-      .__BUZZ_E2E_WAVE_B_BADGES_FOLDS__ === true
+    (window as Window & { __BEEKEEPER_E2E_WAVE_B_BADGES_FOLDS__?: boolean })
+      .__BEEKEEPER_E2E_WAVE_B_BADGES_FOLDS__ === true
   );
 }
 

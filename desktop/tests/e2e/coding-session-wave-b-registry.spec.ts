@@ -192,7 +192,7 @@ async function openSession(page: Page): Promise<Locator> {
   await page.getByTestId(`channel-${channelName}`).click();
   await page.evaluate(
     ({ channelName: name, events: signedEvents }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of signedEvents) seed({ channelName: name, event });
     },
@@ -258,8 +258,8 @@ test("SV-21, SV-23 and SV-38: launcher, tabs, dimmed reasons, a fake surface", a
   // and read only by a `--mode e2e` build. No product file names it.
   await page.addInitScript(() => {
     (
-      window as Window & { __BUZZ_E2E_EXTRA_SURFACES__?: unknown }
-    ).__BUZZ_E2E_EXTRA_SURFACES__ = [
+      window as Window & { __BEEKEEPER_E2E_EXTRA_SURFACES__?: unknown }
+    ).__BEEKEEPER_E2E_EXTRA_SURFACES__ = [
       {
         id: "memory",
         label: "Memory",

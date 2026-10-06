@@ -562,7 +562,7 @@ fn mentions_rule(kinds: Vec<u32>) -> filter::SubscriptionRule {
 /// teardown — there is no pool.
 async fn handle_setup_membership(
     relay: &mut HarnessRelay,
-    buzz_event: &crate::relay::BuzzEvent,
+    buzz_event: &crate::relay::BeekeeperEvent,
     config: &Config,
     rules: &[filter::SubscriptionRule],
     _initial_channel_ids: &[Uuid],

@@ -19,12 +19,12 @@ import {
   BUZZ_AGENT_THINKING_EFFORT,
   BUZZ_AGENT_THINKING_EFFORT_VALUES,
   getProviderEffortConfig,
-} from "./buzzAgentConfig";
+} from "./beekeeperAgentConfig";
 
 /**
  * Shared effort-select dropdown for the `BUZZ_AGENT_THINKING_EFFORT` env var.
  *
- * Used by both `BuzzAgentModelTuningFields` (per-agent/persona dialogs) and
+ * Used by both `BeekeeperAgentModelTuningFields` (per-agent/persona dialogs) and
  * `AgentDefaultsSettingsCard` (global defaults settings card) to ensure a
  * single rendering surface for this control.
  *
@@ -75,7 +75,7 @@ export function EffortSelectField({
    *
    * Defaults to `"Inherit"`.
    *
-   * Per-agent callers (BuzzAgentModelTuningFields) pass `"Inherit (agent default)"`
+   * Per-agent callers (BeekeeperAgentModelTuningFields) pass `"Inherit (agent default)"`
    * to preserve the label that appeared before this component was extracted.
    *
    * The global-defaults card (AgentDefaultsSettingsCard) passes
@@ -292,7 +292,7 @@ export function NumericTuningFields({
   );
 }
 
-export function BuzzAgentModelTuningFields({
+export function BeekeeperAgentModelTuningFields({
   envVars,
   inheritedEnvVars,
   model,

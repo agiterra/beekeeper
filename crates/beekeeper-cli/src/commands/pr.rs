@@ -1,4 +1,4 @@
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::commands::with_git_provenance;
 use crate::error::CliError;
 use crate::validate::{
@@ -19,7 +19,7 @@ fn read_optional_body(body: Option<&str>, body_file: Option<&str>) -> Result<Str
 
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_open_pr(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_owner: &str,
     repo_id: &str,
     subject: &str,
@@ -71,7 +71,7 @@ pub async fn cmd_open_pr(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_update_pr(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_owner: &str,
     repo_id: &str,
     pr: &str,
@@ -113,7 +113,7 @@ pub async fn cmd_update_pr(
     Ok(())
 }
 
-pub async fn cmd_get_pr(client: &BuzzClient, event: &str) -> Result<(), CliError> {
+pub async fn cmd_get_pr(client: &BeekeeperClient, event: &str) -> Result<(), CliError> {
     validate_hex64(event)?;
     let filter = serde_json::json!({
         "kinds": [1618],
@@ -125,7 +125,7 @@ pub async fn cmd_get_pr(client: &BuzzClient, event: &str) -> Result<(), CliError
 }
 
 pub async fn cmd_list_prs(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_owner: &str,
     repo_id: &str,
     author: Option<&str>,
@@ -159,7 +159,7 @@ pub async fn cmd_list_prs(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_pr_status(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     pr: &str,
     status: &str,
     body: Option<&str>,
@@ -224,7 +224,7 @@ pub async fn cmd_pr_status(
     Ok(())
 }
 
-pub async fn dispatch(cmd: crate::PrCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(cmd: crate::PrCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     use crate::PrCmd;
     match cmd {
         PrCmd::Open {

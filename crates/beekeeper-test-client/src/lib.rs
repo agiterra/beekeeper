@@ -13,7 +13,7 @@ use tracing::debug;
 use beekeeper_ws_client::NostrWsConnection;
 pub use beekeeper_ws_client::{parse_relay_message, OkResponse, RelayMessage, WsClientError};
 
-/// Errors returned by [`BuzzTestClient`] operations.
+/// Errors returned by [`BeekeeperTestClient`] operations.
 #[derive(Debug, Error)]
 pub enum TestClientError {
     /// A WebSocket transport error occurred.
@@ -81,11 +81,11 @@ impl From<nostr::event::builder::Error> for TestClientError {
 }
 
 /// WebSocket test client for integration testing against a running Buzz relay.
-pub struct BuzzTestClient {
+pub struct BeekeeperTestClient {
     inner: NostrWsConnection,
 }
 
-impl BuzzTestClient {
+impl BeekeeperTestClient {
     /// Connects to the relay at `url` and performs NIP-42 authentication with `keys`.
     pub async fn connect(url: &str, keys: &Keys) -> Result<Self, TestClientError> {
         let mut client = Self::connect_unauthenticated(url).await?;

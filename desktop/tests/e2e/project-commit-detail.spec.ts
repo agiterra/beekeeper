@@ -229,7 +229,7 @@ test("creating a repository publishes only the repo announcement into the projec
 
   const createdEvents = await page.evaluate(
     () =>
-      window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.filter((event) =>
+      window.__BEEKEEPER_E2E_ACCEPTED_PROJECT_EVENTS__?.filter((event) =>
         event.tags.some(
           (tag) => tag[0] === "d" && tag[1] === "multi-repo-demo",
         ),
@@ -259,7 +259,7 @@ test("creating a repository publishes only the repo announcement into the projec
     .poll(() =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.filter((event) =>
+          window.__BEEKEEPER_E2E_ACCEPTED_PROJECT_EVENTS__?.filter((event) =>
             event.tags.some(
               (tag) => tag[0] === "d" && tag[1] === "multi-repo-demo",
             ),
@@ -272,11 +272,11 @@ test("creating a repository publishes only the repo announcement into the projec
 test("unsupported relays keep the repository accessible", async ({ page }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
-    window.__BUZZ_E2E_UNSUPPORTED_PROJECT_ANNOUNCEMENTS__ = true;
+    window.__BEEKEEPER_E2E_UNSUPPORTED_PROJECT_ANNOUNCEMENTS__ = true;
     // A real target container: creating into the local General placeholder
     // would first publish General itself (a 30621), which this relay flag
     // would reject before the repo flow under test even runs.
-    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+    window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
       {
         id: "workbenchseed".padEnd(64, "0"),
         kind: 30621,
@@ -326,7 +326,7 @@ test("unsupported relays keep the repository accessible", async ({ page }) => {
 
   const acceptedKinds = await page.evaluate(
     () =>
-      window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__
+      window.__BEEKEEPER_E2E_ACCEPTED_PROJECT_EVENTS__
         ?.filter((event) =>
           event.tags.some(
             (tag) => tag[0] === "d" && tag[1] === "legacy-fallback",
@@ -344,10 +344,10 @@ test("repository creation can retry after its publication fails", async ({
   await page.addInitScript(() => {
     // The one-shot 30617 rejection can be armed at boot: nothing else in the
     // boot path publishes a repo announcement (the General sweep is a 30621).
-    window.__BUZZ_E2E_REJECT_PROJECT_EVENT_KINDS__ = [30617];
+    window.__BEEKEEPER_E2E_REJECT_PROJECT_EVENT_KINDS__ = [30617];
     // A real target container keeps ensureRealProject from publishing a
     // General head mid-flow.
-    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+    window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
       {
         id: "workbenchseed".padEnd(64, "0"),
         kind: 30621,
@@ -395,10 +395,10 @@ test("repository creation recovers from a lost publish acknowledgement", async (
   await page.addInitScript(() => {
     // The one-shot 30617 lost-ack can be armed at boot: nothing else in the
     // boot path publishes a repo announcement (the General sweep is a 30621).
-    window.__BUZZ_E2E_FAIL_PROJECT_EVENT_ACK_KINDS__ = [30617];
+    window.__BEEKEEPER_E2E_FAIL_PROJECT_EVENT_ACK_KINDS__ = [30617];
     // A real target container keeps ensureRealProject from publishing a
     // General head mid-flow.
-    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+    window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
       {
         id: "workbenchseed".padEnd(64, "0"),
         kind: 30621,
@@ -439,7 +439,7 @@ test("repository creation recovers from a lost publish acknowledgement", async (
     .poll(() =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.filter((event) =>
+          window.__BEEKEEPER_E2E_ACCEPTED_PROJECT_EVENTS__?.filter((event) =>
             event.tags.some(
               (tag) => tag[0] === "d" && tag[1] === "lost-ack-project",
             ),
@@ -494,7 +494,7 @@ test("multi-repository projects switch the active repository", async ({
   await expect(picker).toContainText("mobile-app");
   const addedEvents = await page.evaluate(
     () =>
-      window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.filter(
+      window.__BEEKEEPER_E2E_ACCEPTED_PROJECT_EVENTS__?.filter(
         (event) =>
           event.tags.some((tag) => tag[0] === "d" && tag[1] === "mobile-app") ||
           event.tags.some(
@@ -525,7 +525,7 @@ test("multi-repository projects switch the active repository", async ({
     .poll(() =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.some(
+          window.__BEEKEEPER_E2E_ACCEPTED_PROJECT_EVENTS__?.some(
             (event) =>
               event.kind === 30621 &&
               event.tags.some(
@@ -715,7 +715,7 @@ test("adding a repository retries and reports an error when the 30617 publicatio
   // exhausts its retry and surfaces a partial-write error.
   await page.addInitScript(() => {
     // Reject kind 30617 twice (initial attempt + one retry).
-    window.__BUZZ_E2E_REJECT_PROJECT_EVENT_KINDS__ = [30617, 30617];
+    window.__BEEKEEPER_E2E_REJECT_PROJECT_EVENT_KINDS__ = [30617, 30617];
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -749,7 +749,7 @@ test("adding a repository retries and reports an error when the 30617 publicatio
     .poll(() =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.some(
+          window.__BEEKEEPER_E2E_ACCEPTED_PROJECT_EVENTS__?.some(
             (event) =>
               event.kind === 30621 &&
               event.tags.some(
@@ -763,7 +763,7 @@ test("adding a repository retries and reports an error when the 30617 publicatio
   // The 30617 must NOT have been accepted (both attempts were rejected).
   const acceptedRepo = await page.evaluate(
     () =>
-      window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.some(
+      window.__BEEKEEPER_E2E_ACCEPTED_PROJECT_EVENTS__?.some(
         (event) =>
           event.kind === 30617 &&
           event.tags.some(
@@ -784,7 +784,7 @@ test("adding a repository treats a lost 30617 acknowledgement as success", async
   // The relay will accept the 30617 but fail to deliver the ACK, then on the
   // retry query the event will be found — the mutation must succeed.
   await page.addInitScript(() => {
-    window.__BUZZ_E2E_FAIL_PROJECT_EVENT_ACK_KINDS__ = [30617];
+    window.__BEEKEEPER_E2E_FAIL_PROJECT_EVENT_ACK_KINDS__ = [30617];
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -818,7 +818,7 @@ test("adding a repository treats a lost 30617 acknowledgement as success", async
     .poll(() =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.filter((event) =>
+          window.__BEEKEEPER_E2E_ACCEPTED_PROJECT_EVENTS__?.filter((event) =>
             event.tags.some(
               (tag) => tag[0] === "d" && tag[1] === "lost-ack-repo",
             ),
@@ -839,7 +839,7 @@ test("adding a repository blocks when a standalone 30617 already exists at that 
   const STANDALONE_DTAG = "existing-standalone";
   await page.addInitScript(
     ({ owner, dtag }) => {
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
           id: "standalone00".padEnd(64, "0"),
           kind: 30617,
@@ -888,7 +888,7 @@ test("adding a repository blocks when a standalone 30617 already exists at that 
   // Neither a 30621 (project update) nor a 30617 (new repo) must have been published.
   const publishedForStandalone = await page.evaluate(
     ({ dtag }) =>
-      window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.some((event) => {
+      window.__BEEKEEPER_E2E_ACCEPTED_PROJECT_EVENTS__?.some((event) => {
         // The General-container sweep legitimately claims unowned repos by
         // `a`-ref on the General 30621 — only a new 30617 at the coordinate
         // or a non-General project update means the clobber guard failed.
@@ -924,7 +924,7 @@ test("navigating via a 30617 entity-link route opens the correct non-primary rep
 
   await page.addInitScript(
     ({ repoAddress, prId, alicePubkey }) => {
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
           id: prId,
           kind: 1618, // KIND_GIT_PULL_REQUEST

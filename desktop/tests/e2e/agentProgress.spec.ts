@@ -529,7 +529,7 @@ async function boot(page: Page, options: { rejectKinds?: number[] } = {}) {
         JSON.stringify({ "agent-progress": true }),
       );
       if (rejectKinds) {
-        window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = rejectKinds;
+        window.__BEEKEEPER_E2E_REJECT_PROJECT_QUERY_KINDS__ = rejectKinds;
       }
     },
     { rejectKinds: options.rejectKinds ?? null },
@@ -556,7 +556,7 @@ async function boot(page: Page, options: { rejectKinds?: number[] } = {}) {
 async function seedSessionFacts(page: Page, events: RelayEvent[]) {
   await page.evaluate(
     ({ channelName, seeds }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("mock signed-event seam is missing");
       for (const event of seeds as never[]) {
         seed({ channelName, event });

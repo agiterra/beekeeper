@@ -376,7 +376,7 @@ async function foundSession(page: Page): Promise<string> {
 
 /** Every event this app has signed, in order, as `{kind, content, tags}`. */
 async function signedEvents(page: Page) {
-  return page.evaluate(() => window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []);
+  return page.evaluate(() => window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []);
 }
 
 async function signedKinds(page: Page) {
@@ -894,7 +894,7 @@ test("Team to Solo discards hidden readiness blockers and launches without an ag
   test.setTimeout(90_000);
   await page.addInitScript(
     ({ owner, channelId }) => {
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
           id: "solo-project".padEnd(64, "0"),
           pubkey: owner,
@@ -946,7 +946,7 @@ test("Team to Solo discards hidden readiness blockers and launches without an ag
     (
       window as typeof window & { __FOUNDED_HIDDEN_ACTOR__?: string }
     ).__FOUNDED_HIDDEN_ACTOR__ = actor;
-    await window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+    await window.__BEEKEEPER_E2E_QUERY_CLIENT__?.invalidateQueries({
       queryKey: ["managed-agents"],
     });
   }, ROLES[1].pubkey);

@@ -212,7 +212,7 @@ test("composer node uses the sent-message chip presentation", () => {
   assert.match(rendered[1].class, /mention-chip/);
   assert.match(rendered[1].class, /inline-chip-with-icon/);
   assert.match(rendered[1].class, /inline-chip-icon-message/);
-  assert.equal(rendered[1]["data-buzz-link"], "");
+  assert.equal(rendered[1]["data-beekeeper-link"], "");
   assert.equal(rendered[2], "general · root-eve");
 });
 
@@ -234,12 +234,12 @@ test("composer node renders channel and entity chip presentations", () => {
   assert.equal(channel[2], "general");
 
   const repo = render(REPO_HREF);
-  assert.equal(repo[1]["data-buzz-link-kind"], "repo");
+  assert.equal(repo[1]["data-beekeeper-link-kind"], "repo");
   assert.match(repo[1].class, /inline-chip-icon-repo/);
   assert.equal(repo[2], "buzz-world");
 
   const issue = render(ISSUE_HREF);
-  assert.equal(issue[1]["data-buzz-link-kind"], "issue");
+  assert.equal(issue[1]["data-beekeeper-link-kind"], "issue");
   assert.match(issue[1].class, /inline-chip-icon-issue/);
   assert.equal(issue[2], "buzz-world · bbbbbbbb");
 });

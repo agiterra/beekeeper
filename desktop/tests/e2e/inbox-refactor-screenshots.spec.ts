@@ -30,7 +30,7 @@ const DRAFT_CREATED_AT_1 = "2026-07-01T10:00:00.000Z";
 const DRAFT_CREATED_AT_2 = "2026-07-02T14:30:00.000Z";
 
 type MockFeedWindow = Window & {
-  __BUZZ_E2E_EMIT_MOCK_MESSAGE__?: (input: {
+  __BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?: (input: {
     channelName: string;
     content: string;
     createdAt?: number;
@@ -45,7 +45,7 @@ type MockFeedWindow = Window & {
     pubkey: string;
     tags: string[][];
   };
-  __BUZZ_E2E_PUSH_MOCK_FEED_ITEM__?: (item: {
+  __BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__?: (item: {
     category: "mention" | "needs_action" | "activity" | "agent_activity";
     channel_id: string | null;
     channel_name: string;
@@ -133,8 +133,8 @@ async function waitForMockFeedHelpers(page: import("@playwright/test").Page) {
   await page.waitForFunction(() => {
     const win = window as MockFeedWindow;
     return (
-      typeof win.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function" &&
-      typeof win.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__ === "function"
+      typeof win.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__ === "function" &&
+      typeof win.__BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__ === "function"
     );
   });
 }
@@ -220,8 +220,8 @@ test.describe("inbox refactor screenshots", () => {
     await page.evaluate(
       ({ channelId, createdAt, ids, senderPubkey }) => {
         const win = window as MockFeedWindow;
-        const emitMessage = win.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
-        const pushFeedItem = win.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__;
+        const emitMessage = win.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__;
+        const pushFeedItem = win.__BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__;
         if (!emitMessage || !pushFeedItem) {
           throw new Error("Mock bridge helpers are not installed.");
         }
@@ -293,8 +293,8 @@ test.describe("inbox refactor screenshots", () => {
     await page.evaluate(
       ({ agentPubkeys, channelId, currentPubkey, ids }) => {
         const win = window as MockFeedWindow;
-        const emitMessage = win.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
-        const pushFeedItem = win.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__;
+        const emitMessage = win.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__;
+        const pushFeedItem = win.__BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__;
         if (!emitMessage || !pushFeedItem) {
           throw new Error("Mock bridge helpers are not installed.");
         }

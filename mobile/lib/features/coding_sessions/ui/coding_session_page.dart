@@ -8,7 +8,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../shared/theme/theme.dart';
 import '../../../shared/utils/string_utils.dart';
 import '../../../shared/widgets/bee_refresh_indicator.dart';
-import '../../../shared/widgets/buzz_loading_indicator.dart';
+import '../../../shared/widgets/beekeeper_loading_indicator.dart';
 import '../../../shared/widgets/frosted_app_bar.dart';
 import '../../../shared/widgets/frosted_scaffold.dart';
 import '../../../shared/widgets/modal_presentation.dart';
@@ -305,7 +305,7 @@ class _MissingSession extends StatelessWidget {
         padding: const EdgeInsets.only(top: Grid.xxl),
         children: const [
           Center(
-            child: BuzzLoadingIndicator(
+            child: BeekeeperLoadingIndicator(
               size: 40,
               semanticLabel: 'Reading this coding session',
             ),

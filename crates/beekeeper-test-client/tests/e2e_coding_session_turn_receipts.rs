@@ -24,7 +24,7 @@ use beekeeper_core::coding_session_payload::{
 use beekeeper_sdk::{
     build_coding_session_transcript_item, build_coding_session_turn_receipt, build_join,
 };
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use nostr::{Alphabet, Event, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag};
 use uuid::Uuid;
 
@@ -35,7 +35,7 @@ fn relay_url() -> String {
     std::env::var("RELAY_URL").unwrap_or_else(|_| "ws://localhost:3000".to_owned())
 }
 
-async fn create_channel(client: &mut BuzzTestClient, owner: &Keys) -> Uuid {
+async fn create_channel(client: &mut BeekeeperTestClient, owner: &Keys) -> Uuid {
     let channel_id = Uuid::new_v4();
     let event = EventBuilder::new(Kind::Custom(9007), "")
         .tags([
@@ -51,7 +51,7 @@ async fn create_channel(client: &mut BuzzTestClient, owner: &Keys) -> Uuid {
     channel_id
 }
 
-async fn join_channel(client: &mut BuzzTestClient, keys: &Keys, channel_id: Uuid) {
+async fn join_channel(client: &mut BeekeeperTestClient, keys: &Keys, channel_id: Uuid) {
     let event = build_join(channel_id)
         .expect("build join")
         .sign_with_keys(keys)
@@ -85,10 +85,10 @@ async fn every_stage_of_one_turn_survives_the_relay_as_its_own_receipt() {
     let url = relay_url();
     let operator = Keys::generate();
     let provider = Keys::generate();
-    let mut operator_ws = BuzzTestClient::connect(&url, &operator)
+    let mut operator_ws = BeekeeperTestClient::connect(&url, &operator)
         .await
         .expect("operator connect");
-    let mut provider_ws = BuzzTestClient::connect(&url, &provider)
+    let mut provider_ws = BeekeeperTestClient::connect(&url, &provider)
         .await
         .expect("provider connect");
 

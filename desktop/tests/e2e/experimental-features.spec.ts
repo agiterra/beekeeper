@@ -16,7 +16,7 @@ test("thread-scoped ACP sessions is default-off, persists, and applies on reload
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const call = window.__BUZZ_E2E_COMMAND_LOG__?.find(
+        const call = window.__BEEKEEPER_E2E_COMMAND_LOG__?.find(
           ({ command }) => command === "apply_workspace",
         );
         return (call?.payload as { threadScopedAcpSessions?: boolean } | null)
@@ -41,7 +41,7 @@ test("thread-scoped ACP sessions is default-off, persists, and applies on reload
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const calls = window.__BUZZ_E2E_COMMAND_LOG__ ?? [];
+        const calls = window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? [];
         const call = calls.findLast(
           ({ command }) => command === "set_thread_scoped_acp_sessions",
         );
@@ -68,7 +68,7 @@ test("thread-scoped ACP sessions is default-off, persists, and applies on reload
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const call = window.__BUZZ_E2E_COMMAND_LOG__?.find(
+        const call = window.__BEEKEEPER_E2E_COMMAND_LOG__?.find(
           ({ command }) => command === "apply_workspace",
         );
         return (call?.payload as { threadScopedAcpSessions?: boolean } | null)

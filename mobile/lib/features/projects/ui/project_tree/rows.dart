@@ -150,7 +150,7 @@ class _ProjectFilterBar extends StatelessWidget {
               visualDensity: VisualDensity.compact,
               foregroundColor: colors.onSurfaceVariant,
             ),
-            onPressed: () => showBuzzModalBottomSheet<void>(
+            onPressed: () => showBeekeeperModalBottomSheet<void>(
               context: context,
               title: 'Sessions in ${project.name}',
               isScrollControlled: true,

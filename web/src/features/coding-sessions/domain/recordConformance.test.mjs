@@ -25,7 +25,7 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 
 import {
-  parseBuzzCodingSessionMetadata,
+  parseBeekeeperCodingSessionMetadata,
   parseCodingSessionLifecycleReceipt,
 } from "./ingressPayloads.ts";
 
@@ -102,7 +102,8 @@ function runRawVectors(parsed, accepts) {
   );
 }
 
-const metadata = (source) => parseBuzzCodingSessionMetadata(source) !== null;
+const metadata = (source) =>
+  parseBeekeeperCodingSessionMetadata(source) !== null;
 const receipt = (source) => parseCodingSessionLifecycleReceipt(source) !== null;
 
 test("44223 metadata — this client runs the shared vectors", () => {

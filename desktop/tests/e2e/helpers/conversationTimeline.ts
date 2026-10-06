@@ -5,7 +5,7 @@ import { expect, type Page } from "@playwright/test";
  *
  * `data-testid="message-timeline"` is worn by **two different elements** over a
  * channel's life. Before the message list renders, `MessageTimeline.tsx:741-749`
- * puts it (and `data-buzz-conversation-scroll`) on the empty/intro container
+ * puts it (and `data-beekeeper-conversation-scroll`) on the empty/intro container
  * declaratively. Once the list renders, that container drops both ids and
  * Virtua's own scroller takes them over imperatively, in a layout effect
  * (`TimelineMessageList.tsx:663-665`).
@@ -31,7 +31,7 @@ export async function waitForScrollableConversationTimeline(page: Page) {
         // More than one means the hand-off is mid-flight; neither is settled.
         if (scrollers.length !== 1) return -1;
         const scroller = scrollers[0];
-        if (scroller.dataset.buzzConversationScroll !== "true") return -1;
+        if (scroller.dataset.beekeeperConversationScroll !== "true") return -1;
         return scroller.scrollHeight - scroller.clientHeight;
       }),
     )

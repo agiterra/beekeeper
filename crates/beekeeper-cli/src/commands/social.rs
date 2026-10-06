@@ -5,7 +5,7 @@ use beekeeper_sdk::kind::{
 use nostr::{EventBuilder, Kind, Tag};
 use serde::Deserialize;
 
-use crate::client::{normalize_write_response, BuzzClient};
+use crate::client::{normalize_write_response, BeekeeperClient};
 use crate::error::CliError;
 use crate::validate::{parse_event_id, validate_hex64};
 
@@ -20,7 +20,7 @@ pub struct ContactEntry {
 }
 
 pub async fn cmd_publish_note(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     content: &str,
     reply_to: Option<&str>,
 ) -> Result<(), CliError> {
@@ -41,7 +41,7 @@ pub async fn cmd_publish_note(
 }
 
 pub async fn cmd_set_contact_list(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     contacts_json: &str,
 ) -> Result<(), CliError> {
     let entries: Vec<ContactEntry> = serde_json::from_str(contacts_json)
@@ -69,7 +69,7 @@ pub async fn cmd_set_contact_list(
 }
 
 /// Get a single event by ID via POST /query.
-pub async fn cmd_get_event(client: &BuzzClient, event_id: &str) -> Result<(), CliError> {
+pub async fn cmd_get_event(client: &BeekeeperClient, event_id: &str) -> Result<(), CliError> {
     validate_hex64(event_id)?;
     let filter = serde_json::json!({
         "ids": [event_id]
@@ -81,7 +81,7 @@ pub async fn cmd_get_event(client: &BuzzClient, event_id: &str) -> Result<(), Cl
 
 /// Get user notes (kind:1) by author pubkey.
 pub async fn cmd_get_user_notes(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     pubkey: &str,
     limit: Option<u32>,
     before: Option<i64>,
@@ -112,7 +112,7 @@ pub async fn cmd_get_user_notes(
 }
 
 /// Get a user's contact list (kind:3) by pubkey.
-pub async fn cmd_get_contact_list(client: &BuzzClient, pubkey: &str) -> Result<(), CliError> {
+pub async fn cmd_get_contact_list(client: &BeekeeperClient, pubkey: &str) -> Result<(), CliError> {
     validate_hex64(pubkey)?;
     let filter = serde_json::json!({
         "kinds": [3],
@@ -160,7 +160,7 @@ fn has_d_tag(tags: &[Tag]) -> bool {
 }
 
 pub async fn cmd_set_list(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     kind: u16,
     tags_json: &str,
     content: &str,
@@ -182,7 +182,7 @@ pub async fn cmd_set_list(
 }
 
 pub async fn cmd_get_list(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     pubkey: &str,
     kind: u32,
     d_tag: Option<&str>,
@@ -208,7 +208,7 @@ pub async fn cmd_get_list(
     Ok(())
 }
 
-pub async fn dispatch(cmd: crate::SocialCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(cmd: crate::SocialCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     use crate::SocialCmd;
     match cmd {
         SocialCmd::PublishNote { content, reply_to } => {

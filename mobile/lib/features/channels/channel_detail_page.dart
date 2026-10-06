@@ -13,7 +13,7 @@ import '../../shared/mentions/agent_identity_provider.dart';
 import '../../shared/relay/relay.dart';
 import '../../shared/theme/theme.dart';
 import '../../shared/widgets/avatar_image.dart';
-import '../../shared/widgets/buzz_loading_indicator.dart';
+import '../../shared/widgets/beekeeper_loading_indicator.dart';
 import '../../shared/widgets/frosted_app_bar.dart';
 import '../../shared/widgets/frosted_scaffold.dart';
 import '../../shared/widgets/keyboard_dismiss_on_drag.dart';

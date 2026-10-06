@@ -1,6 +1,6 @@
-import 'package:buzz/shared/widgets/concentric_sheet_surface.dart';
-import 'package:buzz/shared/theme/theme.dart';
-import 'package:buzz/shared/widgets/modal_presentation.dart';
+import 'package:beekeeper/shared/widgets/concentric_sheet_surface.dart';
+import 'package:beekeeper/shared/theme/theme.dart';
+import 'package:beekeeper/shared/widgets/modal_presentation.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -96,7 +96,7 @@ void main() {
           home: Scaffold(
             body: Builder(
               builder: (context) => FilledButton(
-                onPressed: () => showBuzzModalBottomSheet<void>(
+                onPressed: () => showBeekeeperModalBottomSheet<void>(
                   context: context,
                   title: 'Members',
                   builder: (_) => const Text('Sheet body'),
@@ -151,7 +151,7 @@ void main() {
             home: Scaffold(
               body: Builder(
                 builder: (context) => FilledButton(
-                  onPressed: () => showBuzzModalBottomSheet<void>(
+                  onPressed: () => showBeekeeperModalBottomSheet<void>(
                     context: context,
                     title: 'Sheet title',
                     showDragHandle: true,
@@ -279,7 +279,7 @@ void main() {
           home: Scaffold(
             body: Builder(
               builder: (context) => FilledButton(
-                onPressed: () => showBuzzModalBottomSheet<void>(
+                onPressed: () => showBeekeeperModalBottomSheet<void>(
                   context: context,
                   showDragHandle: true,
                   builder: (_) => const Text('Sheet body'),
@@ -329,7 +329,7 @@ void main() {
           home: Scaffold(
             body: Builder(
               builder: (context) => FilledButton(
-                onPressed: () => showBuzzModalBottomSheet<void>(
+                onPressed: () => showBeekeeperModalBottomSheet<void>(
                   context: context,
                   showDragHandle: true,
                   showCloseButton: false,

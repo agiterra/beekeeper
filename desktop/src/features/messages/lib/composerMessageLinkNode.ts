@@ -48,7 +48,7 @@ const BUZZ_LINK_SUFFIX_AT_START =
   /^:\/\/(?:message\?|channel\/|(?:pr|issue|repo|project)\?)[^\s<>"')\]}*]+/i;
 const TRAILING_PUNCTUATION = /[.,;:!?]+$/;
 
-function trimBareBuzzLink(value: string): string {
+function trimBareBeekeeperLink(value: string): string {
   let trimmed = value.replace(TRAILING_PUNCTUATION, "");
   while (/[)\]]$/.test(trimmed)) {
     const closing = trimmed.at(-1) ?? "";
@@ -114,7 +114,7 @@ export function resolveComposerMessageLinkAttributes(
   }
 }
 
-function unwrapExactBuzzLink(text: string): string | null {
+function unwrapExactBeekeeperLink(text: string): string | null {
   const href =
     text.startsWith("<") && text.endsWith(">") ? text.slice(1, -1) : text;
   if (!href || /\s/.test(href)) return null;
@@ -149,7 +149,7 @@ export function createComposerLinkPasteHandler(
 ) {
   return (view: EditorView, event: ClipboardEvent): boolean => {
     const text = event.clipboardData?.getData("text/plain") ?? "";
-    const buzzHref = unwrapExactBuzzLink(text);
+    const buzzHref = unwrapExactBeekeeperLink(text);
     const buzzLinkType =
       view.state.schema.nodes[COMPOSER_MESSAGE_LINK_NODE_NAME];
     if (buzzHref && buzzLinkType) {
@@ -196,7 +196,7 @@ export function registerComposerMessageLinkMarkdownIt(
       fullMatch?.[0] ??
       (resumesTextToken ? `${SCHEME}${suffixMatch[0]}` : null);
     if (!rawHref) return false;
-    const href = trimBareBuzzLink(rawHref);
+    const href = trimBareBeekeeperLink(rawHref);
     const attrs = resolveComposerMessageLinkAttributes(
       href,
       options.resolveChannelName,
@@ -288,7 +288,7 @@ function composerLinkPresentation(
           ? `Open project ${entity.value.dtag}`
           : `Open ${entity.value.type === "pr" ? "pull request" : "issue"} ${shortId} in repository ${entity.value.dtag}`,
     channelName: "",
-    dataAttributes: { "data-buzz-link-kind": entity.value.type },
+    dataAttributes: { "data-beekeeper-link-kind": entity.value.type },
     icon: entity.value.type,
     label:
       entity.value.type === "repo" || entity.value.type === "project"
@@ -345,7 +345,7 @@ export const ComposerMessageLinkNode =
         mergeAttributes(HTMLAttributes, {
           "aria-label": presentation.ariaLabel,
           class: `${MENTION_CHIP_BASE_CLASSES} ${inlineChipIconClasses(presentation.icon)} cursor-text`,
-          "data-buzz-link": "",
+          "data-beekeeper-link": "",
           "data-channel-name": presentation.channelName,
           "data-composer-buzz-link": "",
           "data-href": href,

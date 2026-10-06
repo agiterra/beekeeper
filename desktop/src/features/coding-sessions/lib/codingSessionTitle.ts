@@ -45,7 +45,7 @@ import {
   codingSessionMetadataSemanticKey,
   codingSessionReceiptSemanticKey,
   isCodingSessionTurnReceiptStatus,
-  parseBuzzCodingSessionMetadata,
+  parseBeekeeperCodingSessionMetadata,
   parseCodingSessionLifecycleReceipt,
 } from "./codingSessionIngressPayloads";
 import {
@@ -194,7 +194,7 @@ function standingMetadata(event: RelayEvent): StandingMetadata | null {
     "csm-key",
   ]);
   if (!tags || tags[1] !== CODING_SESSION_METADATA_TAG_VERSION) return null;
-  const metadata = parseBuzzCodingSessionMetadata(event.content);
+  const metadata = parseBeekeeperCodingSessionMetadata(event.content);
   if (
     !metadata?.sessionRef ||
     tags[2] !== buildCodingSessionTargetKey(metadata.session) ||

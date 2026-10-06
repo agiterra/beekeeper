@@ -197,7 +197,7 @@ test("terminal viewport click retains keyboard input ownership", async ({
   await expect(input).toBeFocused();
 
   await page
-    .locator(".buzz-terminal-viewport")
+    .locator(".beekeeper-terminal-viewport")
     .click({ position: { x: 40, y: 40 } });
   await expect(input).toBeFocused();
 

@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
-import 'package:buzz/shared/relay/nostr_models.dart';
+import 'package:beekeeper/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// The mobile projection binds to `conformance/transcript-prose-join/

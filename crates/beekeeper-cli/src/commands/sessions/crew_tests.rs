@@ -3856,7 +3856,7 @@ async fn serve_recorder(recorder: std::sync::Arc<CheckRecorder>) -> String {
 
 #[allow(clippy::too_many_arguments)]
 async fn run_hire_check(
-    client: &crate::client::BuzzClient,
+    client: &crate::client::BeekeeperClient,
     genesis: &str,
     brief: &str,
     check: bool,
@@ -3895,8 +3895,8 @@ async fn run_hire_check(
 async fn hire_check_validates_and_publishes_nothing() {
     let recorder = std::sync::Arc::new(CheckRecorder::default());
     let url = serve_recorder(recorder.clone()).await;
-    let client =
-        crate::client::BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+    let client = crate::client::BeekeeperClient::new(url, nostr::Keys::generate(), None, None)
+        .expect("client");
 
     let outcome = run_hire_check(
         &client,
@@ -3920,8 +3920,8 @@ async fn hire_check_validates_and_publishes_nothing() {
 async fn hire_check_refuses_a_payload_the_relay_would_refuse() {
     let recorder = std::sync::Arc::new(CheckRecorder::default());
     let url = serve_recorder(recorder.clone()).await;
-    let client =
-        crate::client::BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+    let client = crate::client::BeekeeperClient::new(url, nostr::Keys::generate(), None, None)
+        .expect("client");
 
     let error = run_hire_check(&client, &"a".repeat(64), "   ", true)
         .await
@@ -4914,8 +4914,8 @@ async fn the_hire_seam_aggregates_across_candidates_without_misattributing_them(
     events.push(unbound_receipt(&hire.channel, "create-silent", 900));
 
     let url = serve_hire_events(events).await;
-    let client =
-        crate::client::BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+    let client = crate::client::BeekeeperClient::new(url, nostr::Keys::generate(), None, None)
+        .expect("client");
     let answer = super::crew_cmds::read_hire_answer(
         &client,
         &hire.channel,
@@ -4974,8 +4974,8 @@ async fn one_candidate_still_reports_its_own_evidence_error() {
     });
 
     let url = serve_hire_events(events).await;
-    let client =
-        crate::client::BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+    let client = crate::client::BeekeeperClient::new(url, nostr::Keys::generate(), None, None)
+        .expect("client");
     let answer = super::crew_cmds::read_hire_answer(
         &client,
         &hire.channel,

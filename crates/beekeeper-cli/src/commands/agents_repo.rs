@@ -37,7 +37,7 @@ use super::agents_repo_git::{
 };
 use super::pulse::resolve_project;
 use super::repos::next_replaceable_created_at;
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// The relay's ingest window is ±900 s; a bump that would land past this
@@ -84,7 +84,7 @@ impl Snapshot {
     }
 }
 
-async fn snapshot(client: &BuzzClient, project: Option<&str>) -> Result<Snapshot, CliError> {
+async fn snapshot(client: &BeekeeperClient, project: Option<&str>) -> Result<Snapshot, CliError> {
     let coordinate = resolve_project(client, project).await?;
     let sources = super::packs::query_pack_sources(client, &coordinate).await?;
     let Some((source, _)) = sources.into_iter().next() else {
@@ -155,7 +155,7 @@ async fn snapshot(client: &BuzzClient, project: Option<&str>) -> Result<Snapshot
 /// Publish one op, stamped past the latest op on its path.
 async fn publish(
     snap: &mut Snapshot,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     op: &AgentsRepoDraftOp,
 ) -> Result<Value, CliError> {
     let now = Timestamp::now().as_secs();
@@ -216,7 +216,7 @@ struct TipFile {
 /// has no such file.
 async fn read_tip(
     snap: &Snapshot,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     path: &str,
 ) -> Result<Option<TipFile>, CliError> {
     let tail = format!("raw/refs/heads/main/{path}");
@@ -284,7 +284,7 @@ fn honesty(snap: &Snapshot, out: &mut Value) {
     }
 }
 
-async fn cmd_ls(client: &BuzzClient, project: Option<&str>) -> Result<(), CliError> {
+async fn cmd_ls(client: &BeekeeperClient, project: Option<&str>) -> Result<(), CliError> {
     let snap = snapshot(client, project).await?;
     let listing = client
         .get_git_read(&snap.repo_owner, &snap.repo_id, "tree/refs/heads/main")
@@ -337,7 +337,7 @@ async fn cmd_ls(client: &BuzzClient, project: Option<&str>) -> Result<(), CliErr
 }
 
 async fn cmd_show(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     path: &str,
     draft: bool,
@@ -382,7 +382,7 @@ async fn cmd_show(
 }
 
 async fn cmd_drafts(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     path: Option<&str>,
     all: bool,
@@ -493,7 +493,7 @@ fn read_text_arg(file: Option<&Path>) -> Result<String, CliError> {
 
 #[allow(clippy::too_many_arguments)]
 async fn cmd_draft_put(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     path: &str,
     file: Option<&Path>,
@@ -506,7 +506,7 @@ async fn cmd_draft_put(
 
 /// The body of [`cmd_draft_put`] with the text already in hand.
 async fn cmd_draft_put_text(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     path: &str,
     text: String,
@@ -554,7 +554,7 @@ async fn cmd_draft_put_text(
 }
 
 async fn cmd_draft_move(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     path: &str,
     expect: Option<DraftPathClass>,
@@ -608,7 +608,7 @@ async fn cmd_draft_move(
 }
 
 async fn cmd_draft_delete(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     path: &str,
     message: Option<String>,
@@ -640,7 +640,7 @@ async fn cmd_draft_delete(
 }
 
 async fn cmd_draft_withdraw(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     id: &str,
 ) -> Result<(), CliError> {
@@ -689,7 +689,7 @@ async fn cmd_draft_withdraw(
 
 /// Display names for commit trailers, from kind:0 profiles; a pubkey with
 /// none is named by its first eight characters.
-async fn author_identities(client: &BuzzClient, pubkeys: &[String]) -> Vec<Identity> {
+async fn author_identities(client: &BeekeeperClient, pubkeys: &[String]) -> Vec<Identity> {
     let mut names: HashMap<String, String> = HashMap::new();
     if !pubkeys.is_empty() {
         if let Ok(rows) = client
@@ -740,7 +740,7 @@ async fn author_identities(client: &BuzzClient, pubkeys: &[String]) -> Vec<Ident
 /// `fetch_commit_assets` in the desktop host — the two commit paths read the
 /// same ops and must agree on what they do with them.
 async fn fetch_commit_assets(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     changes: &[DraftChange],
 ) -> Result<AssetBytes, CliError> {
     use sha2::{Digest, Sha256};
@@ -784,7 +784,7 @@ async fn fetch_commit_assets(
 }
 
 async fn cmd_commit(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     all: bool,
     drafts: &[String],
@@ -959,7 +959,7 @@ async fn cmd_commit(
 
 async fn publish_record(
     snap: &mut Snapshot,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     commit: &str,
     paths: Vec<String>,
     drafts: Vec<String>,
@@ -1062,7 +1062,7 @@ pub fn check_tree(
 }
 
 async fn cmd_commit_record(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     commit: &str,
     drafts: &[String],
@@ -1114,7 +1114,7 @@ async fn cmd_commit_record(
 /// `bee agents-repo`.
 pub async fn dispatch(
     cmd: crate::AgentsRepoCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     _format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     use crate::{AgentsRepoCmd, AgentsRepoDraftCmd};
@@ -1255,7 +1255,7 @@ pub async fn dispatch(
 /// `bee plans` — sugar over `plans/<name>.md`.
 pub async fn dispatch_plans(
     cmd: crate::PlansCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     _format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     use crate::PlansCmd;
@@ -1339,7 +1339,7 @@ pub async fn dispatch_plans(
 /// `bee docs` — the document artifacts tree, `docs/<folder>/…`.
 pub async fn dispatch_docs(
     cmd: crate::DocsCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     _format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     use crate::DocsCmd;
@@ -1530,7 +1530,7 @@ fn doc_path(path: &str) -> Result<String, CliError> {
 /// Draft a move to an explicit destination — a document rename or a move
 /// between folders, which `cmd_draft_move`'s archive counterpart cannot name.
 async fn cmd_draft_move_to(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     path: &str,
     to: &str,
@@ -1566,7 +1566,7 @@ async fn cmd_draft_move_to(
 /// Upload an image and draft it at `path`, so the committer writes the bytes
 /// into the tree beside the document that embeds it.
 async fn cmd_draft_asset(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     path: &str,
     file: &str,

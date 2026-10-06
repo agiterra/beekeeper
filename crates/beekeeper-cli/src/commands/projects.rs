@@ -25,7 +25,7 @@ use beekeeper_sdk::{
 };
 use nostr::{Event, EventBuilder, Kind, Tag, Timestamp};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::commands::parse_write_response;
 use crate::commands::projects_cascade;
 use crate::error::CliError;
@@ -67,13 +67,16 @@ fn parse_events(json: &str) -> Result<Vec<Event>, CliError> {
 }
 
 /// Fetch the caller's own live kind:30621 head for `slug`.
-async fn fetch_own_project(client: &BuzzClient, slug: &str) -> Result<Option<Event>, CliError> {
+async fn fetch_own_project(
+    client: &BeekeeperClient,
+    slug: &str,
+) -> Result<Option<Event>, CliError> {
     fetch_project(client, slug, None).await
 }
 
 /// Fetch a project head by slug and optional owner pubkey.
 async fn fetch_project(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     owner: Option<&str>,
 ) -> Result<Option<Event>, CliError> {
@@ -113,7 +116,7 @@ fn make_tag(parts: &[&str]) -> Result<Tag, CliError> {
 
 // ── Submit helper ─────────────────────────────────────────────────────────────
 
-async fn submit_project(client: &BuzzClient, builder: EventBuilder) -> Result<(), CliError> {
+async fn submit_project(client: &BeekeeperClient, builder: EventBuilder) -> Result<(), CliError> {
     let event = client.sign_event(builder)?;
     let raw = client.submit_event(event).await?;
     println!(
@@ -161,7 +164,7 @@ fn rebuild_project(
 /// `bee projects create`
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_create(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     repos: &[String],
     name: Option<&str>,
@@ -317,7 +320,7 @@ pub(crate) fn taken_repository_refusal(
 /// and the code repository stand, and the printed JSON says what landed.
 #[allow(clippy::too_many_arguments)]
 async fn create_with_repositories(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     name: Option<&str>,
     description: Option<&str>,
@@ -536,7 +539,11 @@ async fn create_with_repositories(
 }
 
 /// `bee projects get`
-pub async fn cmd_get(client: &BuzzClient, slug: &str, owner: Option<&str>) -> Result<(), CliError> {
+pub async fn cmd_get(
+    client: &BeekeeperClient,
+    slug: &str,
+    owner: Option<&str>,
+) -> Result<(), CliError> {
     validate_project_slug(slug)?;
     let resp = match fetch_project(client, slug, owner).await? {
         Some(event) => serde_json::json!({
@@ -560,7 +567,7 @@ pub async fn cmd_get(client: &BuzzClient, slug: &str, owner: Option<&str>) -> Re
 
 /// `bee projects list`
 pub async fn cmd_list(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     owner: Option<&str>,
     limit: Option<u32>,
 ) -> Result<(), CliError> {
@@ -585,7 +592,7 @@ pub async fn cmd_list(
 
 /// `bee projects add-repo`
 pub async fn cmd_add_repo(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     repos: &[String],
 ) -> Result<(), CliError> {
@@ -650,7 +657,7 @@ pub async fn cmd_add_repo(
 
 /// `bee projects remove-repo`
 pub async fn cmd_remove_repo(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     repos: &[String],
 ) -> Result<(), CliError> {
@@ -716,7 +723,7 @@ pub async fn cmd_remove_repo(
 /// Requires at least one setter or clearer; a no-op call is a usage error.
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_update(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     name: Option<&str>,
     clear_name: bool,
@@ -837,7 +844,7 @@ pub async fn cmd_update(
 /// Shared by the default delete and the `--cascade` path so the two can never
 /// drift; the cascade runs this **last**.
 async fn publish_project_tombstone(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     head: &Event,
 ) -> Result<(), CliError> {
@@ -884,7 +891,7 @@ async fn publish_project_tombstone(
 /// and a destructive command must not skip its own gate on the strength of a
 /// guess.
 pub async fn cmd_delete(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     cascade: bool,
     dry_run: bool,
@@ -1022,7 +1029,7 @@ pub(crate) fn validate_member_pubkey(pubkey: &str) -> Result<(), CliError> {
 /// Build the canonical project coordinate `30621:<owner>:<slug>` a membership
 /// op or roster read is scoped to. Owner defaults to the caller.
 fn membership_coordinate(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     owner: Option<&str>,
 ) -> Result<String, CliError> {
@@ -1042,7 +1049,7 @@ fn membership_coordinate(
 /// Shared by `add-member` and `set-role` — the relay treats a re-put of an
 /// existing member as a role change.
 pub async fn cmd_put_member(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     pubkey: &str,
     role: &str,
@@ -1068,7 +1075,7 @@ pub async fn cmd_put_member(
 
 /// Publish a kind 9011 remove-member op.
 pub async fn cmd_remove_member(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     pubkey: &str,
     owner: Option<&str>,
@@ -1161,7 +1168,7 @@ fn coordinate_creator(coordinate: &str) -> &str {
 /// An `Err` here means the roster could not be **read**, which every caller
 /// must disclose rather than treat as "there are no other owners".
 pub(crate) async fn project_owner_pubkeys(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     coordinate: &str,
 ) -> Result<Vec<String>, CliError> {
     let creator = coordinate_creator(coordinate).to_ascii_lowercase();
@@ -1201,7 +1208,7 @@ pub(crate) async fn project_owner_pubkeys(
 /// when none exists (the roster is still head-sourced) falls back to the
 /// head's own `p` tags, where a role-less invite is a legacy collaborator.
 pub async fn cmd_members(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     slug: &str,
     owner: Option<&str>,
 ) -> Result<(), CliError> {
@@ -1225,7 +1232,7 @@ pub async fn cmd_members(
 /// projection nor a head exists: an unreadable project is never reported as
 /// a roster of one.
 pub(crate) async fn project_roster(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     coordinate: &str,
 ) -> Result<Vec<(String, String)>, CliError> {
     let creator = coordinate_creator(coordinate).to_ascii_lowercase();
@@ -1289,7 +1296,7 @@ fn validate_visibility(vis: &str) -> Result<(), CliError> {
 
 pub async fn dispatch(
     cmd: crate::ProjectsCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     use crate::ProjectsCmd;
@@ -1874,8 +1881,9 @@ mod tests {
         // Port 9 is the discard protocol — any real connect will be refused
         // immediately, but the guard fires before the first await so this
         // never reaches the network.
-        let client = crate::client::BuzzClient::new("http://127.0.0.1:9".into(), keys, None, None)
-            .expect("client construction");
+        let client =
+            crate::client::BeekeeperClient::new("http://127.0.0.1:9".into(), keys, None, None)
+                .expect("client construction");
 
         let err = cmd_update(
             &client, "my-slug", None, false, // name / clear_name
@@ -1899,9 +1907,9 @@ mod tests {
     // refused immediately, but local validation fires before the first .await
     // so the network is never touched.
 
-    fn discard_client() -> crate::client::BuzzClient {
+    fn discard_client() -> crate::client::BeekeeperClient {
         let keys = nostr::Keys::generate();
-        crate::client::BuzzClient::new("http://127.0.0.1:9".into(), keys, None, None)
+        crate::client::BeekeeperClient::new("http://127.0.0.1:9".into(), keys, None, None)
             .expect("client construction")
     }
 
@@ -2473,7 +2481,10 @@ mod cascade_relay_tests {
         (format!("http://{addr}"), submitted)
     }
 
-    async fn client_against(keys: &Keys, slug: &str) -> (crate::client::BuzzClient, Submitted) {
+    async fn client_against(
+        keys: &Keys,
+        slug: &str,
+    ) -> (crate::client::BeekeeperClient, Submitted) {
         let coordinate = projects_cascade::project_coordinate(&keys.public_key().to_hex(), slug);
         client_against_fixture(keys, slug, default_fixture(keys, &coordinate)).await
     }
@@ -2482,9 +2493,9 @@ mod cascade_relay_tests {
         keys: &Keys,
         slug: &str,
         fixture: Fixture,
-    ) -> (crate::client::BuzzClient, Submitted) {
+    ) -> (crate::client::BeekeeperClient, Submitted) {
         let (url, submitted) = mock_relay(keys, slug, fixture).await;
-        let client = crate::client::BuzzClient::new(url, keys.clone(), None, None)
+        let client = crate::client::BeekeeperClient::new(url, keys.clone(), None, None)
             .expect("client construction");
         (client, submitted)
     }

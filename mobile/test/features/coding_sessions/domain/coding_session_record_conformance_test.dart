@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:buzz/features/coding_sessions/domain/coding_session_wire.dart';
-import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
-import 'package:buzz/shared/relay/nostr_models.dart';
+import 'package:beekeeper/features/coding_sessions/domain/coding_session_wire.dart';
+import 'package:beekeeper/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// The shared closed-record vectors, run against this app's strict decoders.

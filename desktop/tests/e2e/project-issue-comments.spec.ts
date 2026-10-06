@@ -9,7 +9,7 @@ const ISSUE_COMMENTS = [
   "Fourth issue comment",
 ];
 
-async function openBuzzProject(page: import("@playwright/test").Page) {
+async function openBeekeeperProject(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
   // The Projects tab is the container-management panel now; repo tiles live
@@ -26,7 +26,7 @@ async function openBuzzProject(page: import("@playwright/test").Page) {
 
 test("issue comments use the project activity timeline", async ({ page }) => {
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await page.getByRole("tab", { name: "Issues", exact: true }).click();
   const issueRow = page.getByTestId("project-issue-row").first();
@@ -75,7 +75,7 @@ test("issue comments use the project activity timeline", async ({ page }) => {
 
 test("issue assignees can be assigned and unassigned", async ({ page }) => {
   await installMockBridge(page);
-  await openBuzzProject(page);
+  await openBeekeeperProject(page);
 
   await page.getByRole("tab", { name: "Issues", exact: true }).click();
   const issueRow = page.getByTestId("project-issue-row").first();

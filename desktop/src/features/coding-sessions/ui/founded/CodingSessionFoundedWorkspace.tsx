@@ -7,7 +7,7 @@ import { useChannelsQuery } from "@/features/channels/hooks";
 import { useProjectsQuery } from "@/features/projects/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { Button } from "@/shared/ui/button";
-import { FuzzyLogo } from "@/shared/ui/buzz-logo/FuzzyLogo";
+import { FuzzyLogo } from "@/shared/ui/beekeeper-logo/FuzzyLogo";
 import {
   codingSessionClosureIsClosed,
   codingSessionClosureKey,

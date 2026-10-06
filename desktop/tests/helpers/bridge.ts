@@ -274,7 +274,7 @@ type MockBridgeOptions = {
   huddleStateReadDelayMs?: number;
   /** Delay (ms) for `sync_agents_to_active_huddle` so e2e tests can hold the
    * send path open across a leg that writes nothing to the relay.
-   * Releasable early via `__BUZZ_E2E_RELEASE_HUDDLE_AGENT_SYNCS__()`. */
+   * Releasable early via `__BEEKEEPER_E2E_RELEASE_HUDDLE_AGENT_SYNCS__()`. */
   syncAgentsToActiveHuddleDelayMs?: number;
   /** Delay companion creation to expose the newly-started huddle handoff state. */
   openHuddleWindowDelayMs?: number;
@@ -1015,18 +1015,18 @@ export async function installBridge(page: Page, options: BridgeOptions) {
       });
 
       const testWindow = window as Window & {
-        __BUZZ_E2E__?: Record<string, unknown>;
-        __BUZZ_E2E_APP_BADGE_COUNT__?: number;
-        __BUZZ_E2E_APP_BADGE_STATE__?: string;
-        __BUZZ_E2E_CLICK_NOTIFICATION__?: (index: number) => boolean;
-        __BUZZ_E2E_NOTIFICATIONS__?: Array<{
+        __BEEKEEPER_E2E__?: Record<string, unknown>;
+        __BEEKEEPER_E2E_APP_BADGE_COUNT__?: number;
+        __BEEKEEPER_E2E_APP_BADGE_STATE__?: string;
+        __BEEKEEPER_E2E_CLICK_NOTIFICATION__?: (index: number) => boolean;
+        __BEEKEEPER_E2E_NOTIFICATIONS__?: Array<{
           body: string | null;
           title: string;
         }>;
       };
-      const currentConfig = testWindow.__BUZZ_E2E__ ?? {};
+      const currentConfig = testWindow.__BEEKEEPER_E2E__ ?? {};
 
-      testWindow.__BUZZ_E2E__ = {
+      testWindow.__BEEKEEPER_E2E__ = {
         ...currentConfig,
         identity: bridgeIdentity ?? currentConfig.identity,
         mock,
@@ -1036,9 +1036,9 @@ export async function installBridge(page: Page, options: BridgeOptions) {
         autoConnectDefaultRelay:
           autoConnectDefaultRelay ?? currentConfig.autoConnectDefaultRelay,
       };
-      testWindow.__BUZZ_E2E_APP_BADGE_COUNT__ = 0;
-      testWindow.__BUZZ_E2E_APP_BADGE_STATE__ = "none";
-      testWindow.__BUZZ_E2E_CLICK_NOTIFICATION__ = (index: number) => {
+      testWindow.__BEEKEEPER_E2E_APP_BADGE_COUNT__ = 0;
+      testWindow.__BEEKEEPER_E2E_APP_BADGE_STATE__ = "none";
+      testWindow.__BEEKEEPER_E2E_CLICK_NOTIFICATION__ = (index: number) => {
         const notification = notificationInstances[index];
         if (!notification) {
           return false;
@@ -1049,7 +1049,7 @@ export async function installBridge(page: Page, options: BridgeOptions) {
         notification.onclick?.(event);
         return true;
       };
-      testWindow.__BUZZ_E2E_NOTIFICATIONS__ = notificationLog;
+      testWindow.__BEEKEEPER_E2E_NOTIFICATIONS__ = notificationLog;
     },
     {
       identity,

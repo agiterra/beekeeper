@@ -48,7 +48,7 @@ use beekeeper_core::pulse_fold::{
 #[cfg(test)]
 use serde::Deserialize;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// The reserved `--branch` value selecting rows that carry no branch at all.
@@ -158,7 +158,7 @@ fn session_lease_filter(channel_id: &str) -> Value {
 
 /// Fetch a project's Pulse entries, reporting whether `--limit` truncated them.
 async fn fetch_entry_events(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     coordinate: &str,
     since: Option<u64>,
     limit: Option<u32>,
@@ -187,7 +187,7 @@ async fn fetch_entry_events(
 /// with an empty `sessions` list would tell an agent the project is quiet
 /// while a live session runs in a channel it never looked at.
 async fn project_channel_ids(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     coordinate: &str,
 ) -> Result<(Vec<String>, bool), CliError> {
     let mut channels: HashSet<String> = HashSet::new();
@@ -258,7 +258,7 @@ struct SessionScan {
 ///
 /// A channel that fails is recorded and the scan continues: a partial read is
 /// reported as partial, never silently narrowed to the channels that answered.
-async fn scan_project_sessions(client: &BuzzClient, coordinate: &str) -> SessionScan {
+async fn scan_project_sessions(client: &BeekeeperClient, coordinate: &str) -> SessionScan {
     let mut scan = SessionScan {
         events: Vec::new(),
         errors: Vec::new(),
@@ -338,7 +338,7 @@ async fn scan_project_sessions(client: &BuzzClient, coordinate: &str) -> Session
 /// Returns the digest plus the first transport failure, if any, so the caller
 /// can print the (partial) digest *and* exit on the relay's own error.
 async fn compose_digest(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     coordinate: &str,
     limit: Option<u32>,
 ) -> (PulseDigest, Option<CliError>) {
@@ -415,7 +415,7 @@ fn split_project_coordinate(coordinate: &str) -> Option<(&str, &str)> {
 /// resolves only when exactly one **visible** project matches, because
 /// guessing an owner would silently write another person's project.
 pub(crate) async fn resolve_project(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
 ) -> Result<String, CliError> {
     if let Some(coordinate) = direct_project_coordinate(project)? {
@@ -459,7 +459,7 @@ fn direct_project_coordinate(project: Option<&str>) -> Result<Option<String>, Cl
 /// at. `projects list` cannot answer this — it always queries one explicit
 /// author.
 async fn visible_project_coordinates(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     dtag: &str,
 ) -> Result<Vec<String>, CliError> {
     let self_hex = client.keys().public_key().to_hex();
@@ -836,7 +836,7 @@ fn fold_session_cost(
 /// dropped its cost because the relay was unreachable would be indistinguishable
 /// from one whose lane genuinely published no usage.
 async fn resolve_cost(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     source: &CostSource,
     seat: Option<&str>,
 ) -> Result<CostFold, CliError> {
@@ -896,7 +896,7 @@ fn build_entry(
 /// would take for a lane that measured nothing.
 #[allow(clippy::too_many_arguments)]
 async fn cmd_update(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     kind: crate::PulseKindArg,
     areas: Option<&str>,
@@ -1021,7 +1021,7 @@ fn list_row(entry: &PulseDigestEntry, format: &crate::OutputFormat) -> Value {
 
 /// `bee pulse list` — unfolded entries, newest first.
 async fn cmd_list(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     since: Option<u64>,
     kind: Option<crate::PulseKindArg>,
@@ -1135,7 +1135,7 @@ fn name_origins(digest: &PulseDigest) -> Value {
 /// channels", and a channel that could not be read is disclosed rather than
 /// quietly narrowing the answer.
 async fn cmd_sessions(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
@@ -1157,7 +1157,7 @@ async fn cmd_sessions(
 
 /// `bee pulse digest` — the §6 envelope, printed verbatim.
 async fn cmd_digest(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     project: Option<&str>,
     branch: Option<&str>,
     limit: Option<u32>,
@@ -1330,7 +1330,7 @@ fn compact_digest(digest: &PulseDigest) -> Value {
 /// Route a `bee pulse` subcommand.
 pub async fn dispatch(
     cmd: crate::PulseCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     use crate::PulseCmd;

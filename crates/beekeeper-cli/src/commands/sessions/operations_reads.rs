@@ -20,11 +20,11 @@ use nostr::Event;
 use serde_json::{json, Value};
 
 use super::operations_authority::fetch_projected_authority;
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 pub(crate) async fn fetch_transactions(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: &str,
@@ -109,7 +109,7 @@ pub(super) fn transaction_matches_context(
 }
 
 pub(crate) async fn fetch_session_authority(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: &str,
@@ -229,7 +229,7 @@ pub(crate) struct SessionAuthority {
 
 /// The kind-44244 fold context alone, for the callers that need nothing else.
 pub(super) async fn fetch_founder_context(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: &str,

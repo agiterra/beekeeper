@@ -1,6 +1,6 @@
-import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
-import 'package:buzz/features/coding_sessions/state/coding_sessions_state.dart';
-import 'package:buzz/shared/relay/relay.dart';
+import 'package:beekeeper/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:beekeeper/features/coding_sessions/state/coding_sessions_state.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 

@@ -9,7 +9,7 @@ import type {
  * Tried before the bridge's built-in `switch` (`e2eBridge.ts`). Return
  * `{ handled: true, value }` to answer a command, or `null` to pass it on.
  *
- * A spec opts in by setting `window.__BUZZ_E2E_WAVE_B_SURFACES__` in an init
+ * A spec opts in by setting `window.__BEEKEEPER_E2E_WAVE_B_SURFACES__` in an init
  * script; with nothing set every command passes through untouched, so no
  * other spec sees a different bridge. Paths never appear here: the tree mock
  * answers in relative entries exactly as the host does.
@@ -52,7 +52,7 @@ export type WaveBSurfacesMock = {
 
 declare global {
   interface Window {
-    __BUZZ_E2E_WAVE_B_SURFACES__?: WaveBSurfacesMock;
+    __BEEKEEPER_E2E_WAVE_B_SURFACES__?: WaveBSurfacesMock;
   }
 }
 
@@ -148,7 +148,7 @@ export async function handleWaveBSurfacesMockCommand(
   const mock =
     typeof window === "undefined"
       ? undefined
-      : window.__BUZZ_E2E_WAVE_B_SURFACES__;
+      : window.__BEEKEEPER_E2E_WAVE_B_SURFACES__;
   if (!mock) return null;
   switch (command) {
     case "resolve_coding_session_tree":

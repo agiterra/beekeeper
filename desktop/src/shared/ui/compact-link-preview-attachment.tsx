@@ -12,7 +12,7 @@ import {
   AttachmentTrigger,
 } from "@/shared/ui/attachment";
 import { LinkPreviewControls } from "@/shared/ui/link-preview-controls";
-import { BuzzMark } from "@/shared/ui/buzz-logo/BuzzMark";
+import { BeekeeperMark } from "@/shared/ui/beekeeper-logo/BeekeeperMark";
 import { useSmoothCorners } from "@/shared/ui/smoothCorners";
 
 function getHostname(preview: ResolvedLinkPreview): string {
@@ -76,7 +76,7 @@ export function CompactLinkPreviewAttachment({
   const showFallback =
     preview.imageState === "fallback" || Boolean(imageSrc && !showImage);
   const hostname = getHostname(preview);
-  const showBuzzMark =
+  const showBeekeeperMark =
     preview.kind === "buzz-pull-request" ||
     preview.kind === "buzz-issue" ||
     preview.kind === "buzz-repository";
@@ -135,13 +135,13 @@ export function CompactLinkPreviewAttachment({
             rel="noreferrer"
             target="_blank"
           >
-            {showBuzzMark ? (
+            {showBeekeeperMark ? (
               <span
                 aria-hidden="true"
                 className="flex size-3 shrink-0 items-center text-foreground/70"
                 data-link-preview-hostname-buzz-mark=""
               >
-                <BuzzMark className="h-auto w-full" />
+                <BeekeeperMark className="h-auto w-full" />
               </span>
             ) : preview.faviconDataUrl ? (
               <img

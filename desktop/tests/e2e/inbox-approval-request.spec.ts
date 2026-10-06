@@ -27,7 +27,7 @@ const APPROVAL_REF = "5f".repeat(32);
 const APPROVAL_EVENT_ID = "7c".repeat(32);
 
 type MockWindow = Window & {
-  __BUZZ_E2E_EMIT_MOCK_MESSAGE__?: (input: {
+  __BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?: (input: {
     channelName: string;
     content: string;
     pubkey?: string;
@@ -43,7 +43,7 @@ type MockWindow = Window & {
     created_at: number;
     tags: string[][];
   };
-  __BUZZ_E2E_PUSH_MOCK_FEED_ITEM__?: (item: {
+  __BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__?: (item: {
     category: "mention" | "needs_action" | "activity" | "agent_activity";
     channel_id: string | null;
     channel_name: string;
@@ -66,8 +66,8 @@ test.describe("inbox approval request", () => {
     await page.waitForFunction(() => {
       const win = window as MockWindow;
       return (
-        typeof win.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function" &&
-        typeof win.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__ === "function"
+        typeof win.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__ === "function" &&
+        typeof win.__BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__ === "function"
       );
     });
 
@@ -86,8 +86,8 @@ test.describe("inbox approval request", () => {
         channelId,
       }) => {
         const win = window as MockWindow;
-        const emit = win.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
-        const push = win.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__;
+        const emit = win.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__;
+        const push = win.__BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__;
         if (!emit || !push) throw new Error("Bridge helpers not ready");
         const event = emit({
           channelName: "general",

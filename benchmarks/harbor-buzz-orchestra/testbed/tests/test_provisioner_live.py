@@ -15,9 +15,9 @@ import uuid
 import psycopg
 import pytest
 
-from harbor_buzz_testbed.buzz_cli import BuzzCli, BuzzCliError
+from harbor_buzz_testbed.buzz_cli import BeekeeperCli, BeekeeperCliError
 from harbor_buzz_testbed.provisioner import (
-    BuzzTrialProvisioner,
+    BeekeeperTrialProvisioner,
     ProvisioningError,
     TestbedConfig,
 )
@@ -29,12 +29,12 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture()
-def provisioner() -> BuzzTrialProvisioner:
+def provisioner() -> BeekeeperTrialProvisioner:
     owner_key = os.environ.get("BUZZ_TESTBED_OWNER_KEY")
     dsn = os.environ.get("BUZZ_TESTBED_PG_DSN")
     if not owner_key or not dsn:
         pytest.fail("BUZZ_TESTBED_OWNER_KEY and BUZZ_TESTBED_PG_DSN are required")
-    return BuzzTrialProvisioner(
+    return BeekeeperTrialProvisioner(
         TestbedConfig(
             relay_http_url=os.environ.get(
                 "BUZZ_TESTBED_RELAY_HTTP", "http://localhost:3000"
@@ -52,7 +52,7 @@ def provisioner() -> BuzzTrialProvisioner:
     )
 
 
-def cli_for(provisioner: BuzzTrialProvisioner, credential) -> BuzzCli:
+def cli_for(provisioner: BeekeeperTrialProvisioner, credential) -> BeekeeperCli:
     return provisioner._cli_for(credential)
 
 
@@ -95,7 +95,7 @@ def test_create_is_idempotent_and_isolated(provisioner, manifest):
             "messages", "get", "--channel", handle_a.channel_id, "--limit", "10"
         )
         assert foreign_read == [], "cross-trial read must return nothing"
-        with pytest.raises(BuzzCliError, match="private"):
+        with pytest.raises(BeekeeperCliError, match="private"):
             cli_b.run("channels", "join", "--channel", handle_a.channel_id)
 
         # Members can read their own channel.

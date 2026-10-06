@@ -1,11 +1,11 @@
-import 'package:buzz/features/agents_repo/data/agents_repo_http_client.dart';
-import 'package:buzz/features/agents_repo/domain/agents_repo_draft_fold.dart';
-import 'package:buzz/features/agents_repo/domain/agents_repo_draft_op.dart';
-import 'package:buzz/features/agents_repo/state/agents_repo_actions.dart';
-import 'package:buzz/features/agents_repo/state/agents_repo_drafts_provider.dart';
-import 'package:buzz/features/agents_repo/state/agents_repo_main_provider.dart';
-import 'package:buzz/features/agents_repo/state/agents_repo_source_provider.dart';
-import 'package:buzz/shared/relay/relay.dart';
+import 'package:beekeeper/features/agents_repo/data/agents_repo_http_client.dart';
+import 'package:beekeeper/features/agents_repo/domain/agents_repo_draft_fold.dart';
+import 'package:beekeeper/features/agents_repo/domain/agents_repo_draft_op.dart';
+import 'package:beekeeper/features/agents_repo/state/agents_repo_actions.dart';
+import 'package:beekeeper/features/agents_repo/state/agents_repo_drafts_provider.dart';
+import 'package:beekeeper/features/agents_repo/state/agents_repo_main_provider.dart';
+import 'package:beekeeper/features/agents_repo/state/agents_repo_source_provider.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
 
 import '../../helpers/recording_relay_session.dart';
 import '../projects/ui/fake_projects.dart';

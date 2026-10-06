@@ -136,8 +136,8 @@ async function openProjectAgentsTab(page: Page) {
   await page.addInitScript(
     (events) => {
       (
-        window as unknown as { __BUZZ_E2E_EXTRA_PROJECT_EVENTS__: unknown }
-      ).__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events;
+        window as unknown as { __BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__: unknown }
+      ).__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events;
     },
     [generalProjectWithChannel()],
   );
@@ -166,8 +166,8 @@ async function openProjectAgentsTab(page: Page) {
   ];
   await page.addInitScript((roles) => {
     (
-      window as unknown as { __BUZZ_E2E_PROJECT_TEAM_SETUP__: unknown }
-    ).__BUZZ_E2E_PROJECT_TEAM_SETUP__ = { installedRoles: roles };
+      window as unknown as { __BEEKEEPER_E2E_PROJECT_TEAM_SETUP__: unknown }
+    ).__BEEKEEPER_E2E_PROJECT_TEAM_SETUP__ = { installedRoles: roles };
   }, installed);
   const managed = (
     agent: { pubkey: string; name: string },
@@ -206,7 +206,7 @@ async function openProjectAgentsTab(page: Page) {
 async function seedSeats(page: Page) {
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("mock signed-event seam is missing");
       for (const event of events as never[]) seed({ channelName, event });
     },

@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use super::operations::{fetch_projected_authority, ProjectedAuthority};
 use super::operations_reads::fetch_founder_context;
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// The accepted authority fact returned with a successful hire.
@@ -86,7 +86,7 @@ fn decide_seat_grant(
 /// transition is re-read through the trusted relay-receipt projection before
 /// it is reported accepted.
 pub(super) async fn ensure_hired_seat_grant(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     genesis: &str,

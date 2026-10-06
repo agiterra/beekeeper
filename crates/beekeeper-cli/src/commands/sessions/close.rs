@@ -35,7 +35,7 @@ use beekeeper_core::coding_session_closure::{
 use beekeeper_core::kind::KIND_CODING_SESSION_GENESIS;
 use beekeeper_sdk::builders::build_coding_session_closure;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::commands::parse_write_response;
 use crate::error::CliError;
 use crate::validate::validate_uuid;
@@ -77,7 +77,7 @@ pub fn find_genesis<'a>(events: &'a [Value], session_ref: &str) -> Option<&'a st
 
 /// `bee sessions close` — settle (or reopen) one umbrella session.
 pub async fn cmd_close(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_ref: &str,
     action: CodingSessionClosureAction,

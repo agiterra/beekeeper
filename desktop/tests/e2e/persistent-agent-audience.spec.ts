@@ -49,13 +49,13 @@ async function emitRootMessage(
     ({ message, pubkeys }) =>
       (
         window as Window & {
-          __BUZZ_E2E_EMIT_MOCK_MESSAGE__?: (input: {
+          __BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?: (input: {
             channelName: string;
             content: string;
             mentionPubkeys: string[];
           }) => { id: string };
         }
-      ).__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+      ).__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?.({
         channelName: "general",
         content: message,
         mentionPubkeys: pubkeys,

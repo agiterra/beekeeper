@@ -52,13 +52,13 @@ import { resolveModelLabel } from "@/features/agents/lib/formatAgentModelLabel";
 import {
   BUZZ_AGENT_THINKING_EFFORT,
   getProviderEffortConfig,
-} from "@/features/agents/ui/buzzAgentConfig";
+} from "@/features/agents/ui/beekeeperAgentConfig";
 import {
   EffortSelectField,
   NumericTuningFields,
   useEffortAutoClear,
   type NumericDescriptor,
-} from "@/features/agents/ui/buzzAgentModelTuningFields";
+} from "@/features/agents/ui/beekeeperAgentModelTuningFields";
 import { SettingsOptionGroup } from "@/features/settings/ui/SettingsOptionGroup";
 import { AdvancedRequiredBadge } from "./AdvancedRequiredBadge";
 import { CardMintKeyCue } from "./CardMintKeyCue";

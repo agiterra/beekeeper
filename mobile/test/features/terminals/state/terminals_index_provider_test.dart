@@ -1,5 +1,5 @@
-import 'package:buzz/features/terminals/state/terminals_index_provider.dart';
-import 'package:buzz/shared/relay/relay.dart';
+import 'package:beekeeper/features/terminals/state/terminals_index_provider.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 

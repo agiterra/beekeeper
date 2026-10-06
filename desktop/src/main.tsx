@@ -20,7 +20,7 @@ import { recoverLocalStorageQuotaOnStartup } from "@/shared/lib/localStorageQuot
 import { startLocalStorageSweep } from "@/shared/lib/localStorageSweep";
 
 type E2eWindow = Window & {
-  __BUZZ_E2E__?: unknown;
+  __BEEKEEPER_E2E__?: unknown;
 };
 
 const E2E_DEFAULT_PUBKEY = "deadbeef".repeat(8);
@@ -58,7 +58,7 @@ function configureDevE2eBridgeFromUrl() {
   }
 
   const e2eWindow = window as E2eWindow;
-  e2eWindow.__BUZZ_E2E__ ??= { mode: "mock" };
+  e2eWindow.__BEEKEEPER_E2E__ ??= { mode: "mock" };
 
   const community = {
     addedAt: new Date().toISOString(),
@@ -109,7 +109,7 @@ async function installE2eBridgeIfConfigured() {
   // pre-bootstrap global alone must never activate mock IPC in production.
   if (
     !(import.meta.env.DEV || import.meta.env.MODE === "e2e") ||
-    !(window as E2eWindow).__BUZZ_E2E__
+    !(window as E2eWindow).__BEEKEEPER_E2E__
   ) {
     return;
   }

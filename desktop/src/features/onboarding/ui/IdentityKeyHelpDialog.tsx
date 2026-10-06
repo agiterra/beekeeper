@@ -65,7 +65,7 @@ export function IdentityKeyHelpDialog() {
         </DialogTrigger>
       </OnboardingFooter>
       <DialogContent
-        className="buzz-onboarding-neutral-theme max-w-[47.5rem] -translate-y-5"
+        className="beekeeper-onboarding-neutral-theme max-w-[47.5rem] -translate-y-5"
         closeButtonClassName={ONBOARDING_INK_ICON_CLASS}
         data-system-color-scheme="light"
         data-testid="identity-key-help-dialog"
@@ -78,7 +78,7 @@ export function IdentityKeyHelpDialog() {
           </DialogTitle>
           <DialogDescription
             asChild
-            className="mt-6 space-y-4 text-pretty text-base leading-7 text-[color:var(--buzz-onboarding-backup-ink)]"
+            className="mt-6 space-y-4 text-pretty text-base leading-7 text-[color:var(--beekeeper-onboarding-backup-ink)]"
           >
             <div>
               <p>

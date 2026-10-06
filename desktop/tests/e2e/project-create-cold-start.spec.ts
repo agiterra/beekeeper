@@ -18,7 +18,7 @@ async function openCreate(page: Page, name: string) {
 async function outgoingReads(page: Page) {
   return page.evaluate(
     () =>
-      (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).filter((entry) => {
+      (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? []).filter((entry) => {
         if (entry.command !== "plugin:websocket|send") return false;
         const data = (entry.payload as { message?: { data?: string } })?.message
           ?.data;
@@ -69,7 +69,7 @@ test("cold-start Create checks the exact address without waiting for discovery's
   // borrow the write reserve for read frames or unfreeze discovery's budget.
   const lookup = await page.evaluate(
     (owner) =>
-      (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).some((entry) => {
+      (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? []).some((entry) => {
         if (entry.command !== "query_relay_filters") return false;
         const filters = (entry.payload as { filters: unknown }).filters;
         return (
@@ -113,7 +113,7 @@ test("an owned project older than the discovery page cannot be overwritten by Cr
 }) => {
   await page.addInitScript((owner) => {
     const now = Math.floor(Date.now() / 1_000);
-    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = Array.from(
+    window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = Array.from(
       { length: 251 },
       (_, index) => ({
         id: index.toString(16).padStart(64, "0"),
@@ -142,7 +142,7 @@ test("an owned project older than the discovery page cannot be overwritten by Cr
   );
   expect(
     await page.evaluate(() =>
-      (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).some(
+      (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).some(
         (event) =>
           event.kind === 30621 &&
           event.tags.some(

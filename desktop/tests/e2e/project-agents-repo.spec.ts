@@ -148,18 +148,18 @@ async function openFilesTab(page: Page) {
   await page.addInitScript(
     (events) => {
       (
-        window as unknown as { __BUZZ_E2E_EXTRA_PROJECT_EVENTS__: unknown }
-      ).__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events;
+        window as unknown as { __BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__: unknown }
+      ).__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events;
     },
     [generalProject(), agentsRepoSource()],
   );
   await page.addInitScript((seed) => {
     (
-      window as unknown as { __BUZZ_E2E_AGENTS_REPO__: unknown }
-    ).__BUZZ_E2E_AGENTS_REPO__ = seed;
+      window as unknown as { __BEEKEEPER_E2E_AGENTS_REPO__: unknown }
+    ).__BEEKEEPER_E2E_AGENTS_REPO__ = seed;
     (
-      window as unknown as { __BUZZ_E2E_SIGNED_EVENTS__: unknown[] }
-    ).__BUZZ_E2E_SIGNED_EVENTS__ = [];
+      window as unknown as { __BEEKEEPER_E2E_SIGNED_EVENTS__: unknown[] }
+    ).__BEEKEEPER_E2E_SIGNED_EVENTS__ = [];
   }, SEED);
   await installMockBridge(page, {});
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -213,13 +213,13 @@ test("a plan is read from main, drafted, previewed, badged, and refused when a n
     () =>
       (
         window as unknown as {
-          __BUZZ_E2E_SIGNED_EVENTS__: {
+          __BEEKEEPER_E2E_SIGNED_EVENTS__: {
             kind: number;
             content: string;
             tags: string[][];
           }[];
         }
-      ).__BUZZ_E2E_SIGNED_EVENTS__,
+      ).__BEEKEEPER_E2E_SIGNED_EVENTS__,
   );
   const draft = signed.find(
     (event) => event.kind === KIND_AGENTS_REPO_DRAFT_OP,
@@ -253,7 +253,7 @@ test("a plan is read from main, drafted, previewed, badged, and refused when a n
   const otherId = "b".repeat(64);
   await page.evaluate(
     (event) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_PROJECT_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_PROJECT_EVENT__;
       if (!seed) throw new Error("mock project-event seam is missing");
       seed(event as never);
     },
@@ -293,8 +293,10 @@ test("a plan is read from main, drafted, previewed, badged, and refused when a n
   const signedAfter = await page.evaluate(
     () =>
       (
-        window as unknown as { __BUZZ_E2E_SIGNED_EVENTS__: { kind: number }[] }
-      ).__BUZZ_E2E_SIGNED_EVENTS__.filter((e) => e.kind === 44250).length,
+        window as unknown as {
+          __BEEKEEPER_E2E_SIGNED_EVENTS__: { kind: number }[];
+        }
+      ).__BEEKEEPER_E2E_SIGNED_EVENTS__.filter((e) => e.kind === 44250).length,
   );
   expect(signedAfter).toBe(1);
 });
@@ -331,9 +333,9 @@ test("New plan asks for a name in a dialog and opens the editor on a path that i
   const draft = await page.evaluate(() => {
     const events = (
       window as unknown as {
-        __BUZZ_E2E_SIGNED_EVENTS__: { kind: number; content: string }[];
+        __BEEKEEPER_E2E_SIGNED_EVENTS__: { kind: number; content: string }[];
       }
-    ).__BUZZ_E2E_SIGNED_EVENTS__;
+    ).__BEEKEEPER_E2E_SIGNED_EVENTS__;
     const found = events.find((e) => e.kind === 44250);
     return found ? JSON.parse(found.content) : null;
   });
@@ -409,11 +411,11 @@ test("the commit dialog prints a stale-base refusal verbatim, then a landing, an
     () =>
       (
         window as unknown as {
-          __BUZZ_E2E_AGENTS_REPO_COMMIT_CALLS__: {
+          __BEEKEEPER_E2E_AGENTS_REPO_COMMIT_CALLS__: {
             request: Record<string, unknown>;
           }[];
         }
-      ).__BUZZ_E2E_AGENTS_REPO_COMMIT_CALLS__,
+      ).__BEEKEEPER_E2E_AGENTS_REPO_COMMIT_CALLS__,
   );
   expect(calls).toHaveLength(2);
   expect(calls[1]?.request.expectedTip).toBe(TIP);
@@ -421,9 +423,9 @@ test("the commit dialog prints a stale-base refusal verbatim, then a landing, an
   const record = await page.evaluate(() =>
     (
       window as unknown as {
-        __BUZZ_E2E_SIGNED_EVENTS__: { kind: number; content: string }[];
+        __BEEKEEPER_E2E_SIGNED_EVENTS__: { kind: number; content: string }[];
       }
-    ).__BUZZ_E2E_SIGNED_EVENTS__
+    ).__BEEKEEPER_E2E_SIGNED_EVENTS__
       .filter((e) => e.kind === 44250)
       .map((e) => JSON.parse(e.content) as Record<string, unknown>)
       .find((c) => c.op === "commit.record"),
@@ -463,15 +465,15 @@ test("a viewer of a private project reads only, and the commit button is replace
   await page.addInitScript(
     (events) => {
       (
-        window as unknown as { __BUZZ_E2E_EXTRA_PROJECT_EVENTS__: unknown }
-      ).__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events;
+        window as unknown as { __BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__: unknown }
+      ).__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events;
     },
     [privateProject, agentsRepoSource()],
   );
   await page.addInitScript((seed) => {
     (
-      window as unknown as { __BUZZ_E2E_AGENTS_REPO__: unknown }
-    ).__BUZZ_E2E_AGENTS_REPO__ = seed;
+      window as unknown as { __BEEKEEPER_E2E_AGENTS_REPO__: unknown }
+    ).__BEEKEEPER_E2E_AGENTS_REPO__ = seed;
   }, SEED);
   await page.addInitScript(
     (identity) => {
@@ -541,11 +543,11 @@ test("a plan round-trips byte-identical through New plan, draft, edit and the co
     () =>
       (
         window as unknown as {
-          __BUZZ_E2E_AGENTS_REPO_COMMIT_CALLS__: {
+          __BEEKEEPER_E2E_AGENTS_REPO_COMMIT_CALLS__: {
             request: { drafts: { path: string; text: string | null }[] };
           }[];
         }
-      ).__BUZZ_E2E_AGENTS_REPO_COMMIT_CALLS__[0]?.request.drafts,
+      ).__BEEKEEPER_E2E_AGENTS_REPO_COMMIT_CALLS__[0]?.request.drafts,
   );
   expect(sent?.find((d) => d.path === "plans/kettle.md")?.text).toBe(
     KETTLE_PLAN,
@@ -567,9 +569,9 @@ test("a plan round-trips byte-identical through New plan, draft, edit and the co
     () =>
       (
         window as unknown as {
-          __BUZZ_E2E_AGENTS_REPO_COMMIT_CALLS__: unknown[];
+          __BEEKEEPER_E2E_AGENTS_REPO_COMMIT_CALLS__: unknown[];
         }
-      ).__BUZZ_E2E_AGENTS_REPO_COMMIT_CALLS__.length,
+      ).__BEEKEEPER_E2E_AGENTS_REPO_COMMIT_CALLS__.length,
   );
   expect(calls).toBe(1);
 });

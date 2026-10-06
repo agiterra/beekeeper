@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useRef } from "react";
 import type { CSSProperties } from "react";
-import "./buzz-logo-animation.css";
+import "./beekeeper-logo-animation.css";
 
 const LOOP = "indefinite";
 const EASE = ".16 1 .3 1";
@@ -30,7 +30,7 @@ type TextureConfig = {
   seedValues: string;
 };
 
-export type BuzzLogoAnimationProps = {
+export type BeekeeperLogoAnimationProps = {
   ariaLabel?: string;
   className?: string;
   fullScreen?: boolean;
@@ -621,7 +621,7 @@ function RestWindowFade({
   );
 }
 
-export default function BuzzLogoAnimation({
+export default function BeekeeperLogoAnimation({
   ariaLabel = "Beekeeper logo animation",
   className = "",
   fullScreen = true,
@@ -632,7 +632,7 @@ export default function BuzzLogoAnimation({
   style,
   textured = true,
   variant = "v8",
-}: BuzzLogoAnimationProps) {
+}: BeekeeperLogoAnimationProps) {
   const markRef = useRef<SVGSVGElement>(null);
   const idSuffix = idPart(useId());
   const baseConfig = VARIANTS[variant] ?? VARIANTS.v8;
@@ -656,10 +656,10 @@ export default function BuzzLogoAnimation({
   const textureId = `buzz-logo-texture-${idSuffix}`;
   const texture = TEXTURES[config.texture ?? "soft"] ?? TEXTURES.soft;
   const classes = [
-    "buzz-logo",
-    fullScreen && "buzz-logo--screen",
-    !fullScreen && "buzz-logo--compact",
-    showBackground && "buzz-logo--background",
+    "beekeeper-logo",
+    fullScreen && "beekeeper-logo--screen",
+    !fullScreen && "beekeeper-logo--compact",
+    showBackground && "beekeeper-logo--background",
     className,
   ]
     .filter(Boolean)

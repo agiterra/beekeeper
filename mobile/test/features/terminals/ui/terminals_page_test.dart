@@ -1,7 +1,7 @@
-import 'package:buzz/features/terminals/domain/terminals_domain.dart';
-import 'package:buzz/features/terminals/state/terminals_index_provider.dart';
-import 'package:buzz/features/terminals/ui/terminals_page.dart';
-import 'package:buzz/shared/relay/relay_provider.dart';
+import 'package:beekeeper/features/terminals/domain/terminals_domain.dart';
+import 'package:beekeeper/features/terminals/state/terminals_index_provider.dart';
+import 'package:beekeeper/features/terminals/ui/terminals_page.dart';
+import 'package:beekeeper/shared/relay/relay_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

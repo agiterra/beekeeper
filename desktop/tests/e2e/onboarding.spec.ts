@@ -31,18 +31,18 @@ async function setRelayConnectionState(
     () =>
       typeof (
         window as Window & {
-          __BUZZ_E2E_SET_RELAY_CONNECTION_STATE__?: unknown;
+          __BEEKEEPER_E2E_SET_RELAY_CONNECTION_STATE__?: unknown;
         }
-      ).__BUZZ_E2E_SET_RELAY_CONNECTION_STATE__ === "function",
+      ).__BEEKEEPER_E2E_SET_RELAY_CONNECTION_STATE__ === "function",
   );
   await page.evaluate((nextState) => {
     const testWindow = window as Window & {
-      __BUZZ_E2E_SET_RELAY_CONNECTION_STATE__?: (
+      __BEEKEEPER_E2E_SET_RELAY_CONNECTION_STATE__?: (
         state: RelayConnectionState,
       ) => void;
     };
     const setConnectionState =
-      testWindow.__BUZZ_E2E_SET_RELAY_CONNECTION_STATE__;
+      testWindow.__BEEKEEPER_E2E_SET_RELAY_CONNECTION_STATE__;
     if (!setConnectionState) {
       throw new Error("Mock relay connection state helper is not installed.");
     }
@@ -481,7 +481,7 @@ async function expectWelcomeComposerBannerCompletesAfterPersonaMention(
 async function getMockChannels(page: Page) {
   return page.evaluate(async () => {
     const bridgeWindow = window as Window & {
-      __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: (
+      __BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?: (
         command: string,
         payload?: Record<string, unknown>,
       ) => Promise<unknown>;
@@ -493,7 +493,7 @@ async function getMockChannels(page: Page) {
       };
     };
     const invoke =
-      bridgeWindow.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ ??
+      bridgeWindow.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__ ??
       bridgeWindow.__TAURI_INTERNALS__?.invoke;
 
     if (!invoke) {
@@ -523,7 +523,7 @@ async function invokeMockCommand<T>(
   return page.evaluate(
     async ({ command, payload }) => {
       const bridgeWindow = window as Window & {
-        __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: (
+        __BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?: (
           command: string,
           payload?: Record<string, unknown>,
         ) => Promise<unknown>;
@@ -535,7 +535,7 @@ async function invokeMockCommand<T>(
         };
       };
       const invoke =
-        bridgeWindow.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ ??
+        bridgeWindow.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__ ??
         bridgeWindow.__TAURI_INTERNALS__?.invoke;
 
       if (!invoke) {
@@ -551,17 +551,18 @@ async function invokeMockCommand<T>(
 async function seedCurrentAvatar(page: Page, avatarUrl: string) {
   await page.waitForFunction(() => {
     const bridgeWindow = window as Window & {
-      __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: unknown;
+      __BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?: unknown;
       __TAURI_INTERNALS__?: { invoke?: unknown };
     };
     return (
-      typeof bridgeWindow.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ === "function" ||
+      typeof bridgeWindow.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__ ===
+        "function" ||
       typeof bridgeWindow.__TAURI_INTERNALS__?.invoke === "function"
     );
   });
   await invokeMockCommand(page, "update_profile", { avatarUrl });
   await page.evaluate(() => {
-    window.__BUZZ_E2E_COMMAND_PAYLOADS__ = [];
+    window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ = [];
   });
 }
 
@@ -1208,12 +1209,12 @@ test("first-community shows the scenario cards for localhost", async ({
   await expect(
     page
       .getByTestId("welcome-setup")
-      .locator(".buzz-onboarding-transition-line"),
+      .locator(".beekeeper-onboarding-transition-line"),
   ).toHaveAttribute("data-onboarding-direction", "forward");
   await expect(
     page
       .getByTestId("welcome-setup")
-      .locator(".buzz-onboarding-transition-line"),
+      .locator(".beekeeper-onboarding-transition-line"),
   ).toHaveAttribute("data-onboarding-effect", "line-slide");
   const joinBack = page.getByTestId("welcome-join-back");
   await expect(joinBack).toBeVisible();
@@ -1221,7 +1222,7 @@ test("first-community shows the scenario cards for localhost", async ({
   await expect(
     page
       .getByTestId("welcome-setup")
-      .locator(".buzz-onboarding-transition-line"),
+      .locator(".beekeeper-onboarding-transition-line"),
   ).toHaveAttribute("data-onboarding-direction", "backward");
 
   await page.getByTestId("welcome-setup-back").click();
@@ -1332,8 +1333,8 @@ test("community onboarding reuses an existing relay profile", async ({
       page.evaluate(
         () =>
           (
-            window as Window & { __BUZZ_E2E_COMMANDS__?: string[] }
-          ).__BUZZ_E2E_COMMANDS__?.filter(
+            window as Window & { __BEEKEEPER_E2E_COMMANDS__?: string[] }
+          ).__BEEKEEPER_E2E_COMMANDS__?.filter(
             (command) => command === "get_profile",
           ).length ?? 0,
       ),
@@ -1345,7 +1346,7 @@ test("community onboarding reuses an existing relay profile", async ({
   await expect(
     page
       .getByTestId("community-onboarding-flow")
-      .locator(".buzz-onboarding-transition-line"),
+      .locator(".beekeeper-onboarding-transition-line"),
   ).toHaveAttribute("data-onboarding-direction", "forward");
   await expect(
     page.getByRole("heading", { name: "Build your profile" }),
@@ -1357,7 +1358,7 @@ test("community onboarding reuses an existing relay profile", async ({
   await expect(
     page
       .getByTestId("community-onboarding-flow")
-      .locator(".buzz-onboarding-transition-line"),
+      .locator(".beekeeper-onboarding-transition-line"),
   ).toHaveAttribute("data-onboarding-direction", "backward");
 });
 
@@ -1949,7 +1950,7 @@ test("name-only community profile save preserves an existing avatar", async ({
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])
+        (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])
           .filter(
             ({ command }) =>
               command === "update_profile" ||
@@ -2068,7 +2069,7 @@ test("pending avatar stays navigable, clears failures, and retries", async ({
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])
+        (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])
           .filter(
             ({ command }) =>
               command === "update_profile" ||
@@ -2084,7 +2085,7 @@ test("pending avatar stays navigable, clears failures, and retries", async ({
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])
+        (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])
           .filter(
             ({ command }) =>
               command === "update_profile" ||
@@ -2148,7 +2149,7 @@ test("a pending avatar never becomes durable if propagation fails after onboardi
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])
+        (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])
           .filter(
             ({ command }) =>
               command === "update_profile" ||
@@ -2215,7 +2216,7 @@ test("a pending avatar becomes durable after onboarding unmounts once ready", as
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])
+        (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])
           .filter(
             ({ command }) =>
               command === "update_profile" ||
@@ -2230,7 +2231,7 @@ test("a pending avatar becomes durable after onboarding unmounts once ready", as
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])
+        (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])
           .filter(
             ({ command }) =>
               command === "update_profile" ||
@@ -2287,7 +2288,7 @@ test("a failed pending replacement leaves the confirmed avatar untouched", async
   await expect
     .poll(() =>
       page.evaluate(() =>
-        (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])
+        (window.__BEEKEEPER_E2E_COMMAND_PAYLOADS__ ?? [])
           .filter(
             ({ command }) =>
               command === "update_profile" ||
@@ -2310,11 +2311,11 @@ test("replacing a pending upload disposes its verifier and local preview", async
   await seedCommunityProfileStage(page, "txn-avatar-replacement");
   await page.addInitScript(() => {
     const testWindow = window as Window & {
-      __BUZZ_E2E_REVOKED_OBJECT_URLS__?: string[];
+      __BEEKEEPER_E2E_REVOKED_OBJECT_URLS__?: string[];
     };
     const revokedUrls: string[] = [];
     const revokeObjectUrl = URL.revokeObjectURL.bind(URL);
-    testWindow.__BUZZ_E2E_REVOKED_OBJECT_URLS__ = revokedUrls;
+    testWindow.__BEEKEEPER_E2E_REVOKED_OBJECT_URLS__ = revokedUrls;
     URL.revokeObjectURL = (url) => {
       revokedUrls.push(url);
       revokeObjectUrl(url);
@@ -2363,9 +2364,9 @@ test("replacing a pending upload disposes its verifier and local preview", async
     .poll(() =>
       page.evaluate(() => {
         const testWindow = window as Window & {
-          __BUZZ_E2E_REVOKED_OBJECT_URLS__?: string[];
+          __BEEKEEPER_E2E_REVOKED_OBJECT_URLS__?: string[];
         };
-        return testWindow.__BUZZ_E2E_REVOKED_OBJECT_URLS__ ?? [];
+        return testWindow.__BEEKEEPER_E2E_REVOKED_OBJECT_URLS__ ?? [];
       }),
     )
     .toContain(supersededPreviewUrl);
@@ -2620,10 +2621,10 @@ test("failed avatar saves can continue without saving the avatar", async ({
     .fill("https://example.com/morty.png");
   await page.evaluate(() => {
     const testWindow = window as Window & {
-      __BUZZ_E2E__?: { mock?: { profileUpdateError?: string } };
+      __BEEKEEPER_E2E__?: { mock?: { profileUpdateError?: string } };
     };
-    if (testWindow.__BUZZ_E2E__?.mock) {
-      testWindow.__BUZZ_E2E__.mock.profileUpdateError =
+    if (testWindow.__BEEKEEPER_E2E__?.mock) {
+      testWindow.__BEEKEEPER_E2E__.mock.profileUpdateError =
         "Temporary avatar sync failure.";
     }
   });
@@ -2743,7 +2744,7 @@ test("first-run onboarding keeps the shell hidden and lands on private Welcome a
 async function commandCount(page: Page, command: string) {
   return page.evaluate(
     (target) =>
-      window.__BUZZ_E2E_COMMANDS__?.filter((entry) => entry === target)
+      window.__BEEKEEPER_E2E_COMMANDS__?.filter((entry) => entry === target)
         .length ?? 0,
     command,
   );
@@ -3187,10 +3188,11 @@ test("membership denial can import a different invited key", async ({
         () =>
           (
             window as Window & {
-              __BUZZ_E2E_COMMANDS__?: string[];
+              __BEEKEEPER_E2E_COMMANDS__?: string[];
             }
-          ).__BUZZ_E2E_COMMANDS__?.includes("plugin:websocket|disconnect") ??
-          false,
+          ).__BEEKEEPER_E2E_COMMANDS__?.includes(
+            "plugin:websocket|disconnect",
+          ) ?? false,
       ),
     )
     .toBe(true);

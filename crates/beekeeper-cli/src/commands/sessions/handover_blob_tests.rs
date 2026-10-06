@@ -56,7 +56,7 @@ async fn fake_relay(
     upload: UploadBehaviour,
     download: DownloadBehaviour,
     max_message_length: u64,
-) -> (BuzzClient, Arc<FakeRelay>, tokio::task::JoinHandle<()>) {
+) -> (BeekeeperClient, Arc<FakeRelay>, tokio::task::JoinHandle<()>) {
     let state = Arc::new(FakeRelay {
         stored: std::sync::Mutex::new(None),
         upload,
@@ -140,7 +140,7 @@ async fn fake_relay(
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.expect("fake relay");
     });
-    let client = BuzzClient::new(url, nostr::Keys::generate(), None, None).expect("client");
+    let client = BeekeeperClient::new(url, nostr::Keys::generate(), None, None).expect("client");
     (client, state, server)
 }
 
@@ -416,7 +416,7 @@ fn a_blob_artifact_naming_no_hash_is_refused_before_any_fetch() {
 
 /// Drive the no-hash branch, which never awaits anything.
 async fn fetch_verified_blob_no_hash() -> CliError {
-    let client = BuzzClient::new(
+    let client = BeekeeperClient::new(
         "http://127.0.0.1:1".to_owned(),
         nostr::Keys::generate(),
         None,

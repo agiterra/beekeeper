@@ -25,7 +25,7 @@ test("agent-style message with bare beekeeper:// links renders entity cards with
 }) => {
   await page.addInitScript(
     ({ repoAddress, prId, alicePubkey, subject }) => {
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
           id: prId,
           kind: 1618, // KIND_GIT_PULL_REQUEST
@@ -54,14 +54,14 @@ test("agent-style message with bare beekeeper:// links renders entity cards with
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("channel-general").click();
   await page.waitForFunction(
-    () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
+    () => typeof window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__ === "function",
   );
 
   // Simulate an agent/CLI sender: plain kind-9 message with bare beekeeper://
   // URLs in the content and NO link-preview snapshot tags.
   await page.evaluate(
     ({ prId, alicePubkey }) => {
-      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+      window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?.({
         channelName: "general",
         pubkey: alicePubkey,
         content: [
@@ -176,7 +176,7 @@ test("reopening the same entity link reapplies its workspace state", async ({
   await page.addInitScript(
     ({ issueId, issueSubject, prId, prSubject, repoAddress, owner }) => {
       const createdAt = Math.floor(Date.now() / 1000) - 60;
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
           id: prId,
           kind: 1618, // KIND_GIT_PULL_REQUEST

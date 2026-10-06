@@ -20,7 +20,7 @@ function configureQueryFocusManager() {
   });
 }
 
-export function createBuzzQueryClient() {
+export function createBeekeeperQueryClient() {
   configureQueryFocusManager();
   return new QueryClient({
     defaultOptions: {

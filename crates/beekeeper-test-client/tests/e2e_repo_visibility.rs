@@ -29,7 +29,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use beekeeper_ws_client::RelayMessage;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag, Timestamp};
 use reqwest::Client;
@@ -157,7 +157,7 @@ fn issues_filter(repo_coord: &str) -> Filter {
 }
 
 /// Subscribe with `filter` and drain to EOSE.
-async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
+async fn query(client: &mut BeekeeperTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
     let sid = sub_id(name);
     client
         .subscribe(&sid, vec![filter])
@@ -213,7 +213,7 @@ async fn count_events_http(client: &Client, pubkey_hex: &str, filters: Vec<Filte
 /// Owner sets up a private project (with `member` invited) and announces a
 /// repo inside it. Returns the repo `d` and the repo coordinate.
 async fn setup_private_repo(
-    owner_client: &mut BuzzTestClient,
+    owner_client: &mut BeekeeperTestClient,
     owner: &Keys,
     member: &Keys,
 ) -> (String, String, String) {
@@ -246,7 +246,7 @@ async fn test_private_repo_surface_hidden_from_stranger_everywhere() {
     let member = Keys::generate();
     let stranger = Keys::generate();
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let (_project_d, repo_d, repo_coord) =
@@ -275,7 +275,7 @@ async fn test_private_repo_surface_hidden_from_stranger_everywhere() {
     assert_eq!(seen.len(), 1, "owner must see the issue");
 
     // Invited project member sees all three.
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
     let seen = query(
@@ -301,7 +301,7 @@ async fn test_private_repo_surface_hidden_from_stranger_everywhere() {
     assert_eq!(seen.len(), 1, "project member must see the issue");
 
     // Stranger sees none of it via WS…
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let seen = query(
@@ -378,13 +378,13 @@ async fn test_repo_child_write_gate() {
     let member = Keys::generate();
     let stranger = Keys::generate();
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let (_project_d, _repo_d, repo_coord) =
         setup_private_repo(&mut owner_client, &owner, &member).await;
 
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let ok = stranger_client
@@ -401,7 +401,7 @@ async fn test_repo_child_write_gate() {
         ok.message
     );
 
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
     let ok = member_client
@@ -443,7 +443,7 @@ async fn test_private_link_requires_project_membership() {
     let stranger = Keys::generate();
     let project_d = unique("link-proj");
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let ok = owner_client
@@ -459,7 +459,7 @@ async fn test_private_link_requires_project_membership() {
     let coord = project_coordinate(&owner, &project_d);
 
     // Stranger cannot link their repo into someone else's private project.
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let ok = stranger_client
@@ -477,7 +477,7 @@ async fn test_private_link_requires_project_membership() {
     );
 
     // The invited member can.
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
     let ok = member_client
@@ -517,7 +517,7 @@ async fn test_unlink_republish_re_reveals() {
     let member = Keys::generate();
     let stranger = Keys::generate();
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let (_project_d, repo_d, repo_coord) =
@@ -529,7 +529,7 @@ async fn test_unlink_republish_re_reveals() {
     assert!(ok.accepted, "issue rejected: {}", ok.message);
 
     // Hidden first.
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let seen = query(
@@ -586,16 +586,16 @@ async fn test_repo_issue_fanout_filtered_live() {
     let member = Keys::generate();
     let stranger = Keys::generate();
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let (_project_d, _repo_d, repo_coord) =
         setup_private_repo(&mut owner_client, &owner, &member).await;
 
-    let mut member_client = BuzzTestClient::connect(&relay_url(), &member)
+    let mut member_client = BeekeeperTestClient::connect(&relay_url(), &member)
         .await
         .expect("member connect");
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
 
@@ -670,7 +670,7 @@ async fn test_public_project_repo_stays_visible() {
     let stranger = Keys::generate();
     let project_d = unique("pub-proj");
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let ok = owner_client
@@ -694,7 +694,7 @@ async fn test_public_project_repo_stays_visible() {
         .expect("send bare repo");
     assert!(ok.accepted, "bare repo rejected: {}", ok.message);
 
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let seen = query(

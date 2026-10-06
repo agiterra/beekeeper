@@ -49,7 +49,7 @@ use clap::{Args, Subcommand};
 use nostr::EventBuilder;
 use serde_json::{json, Value};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::{validate_lower_hex64, validate_uuid};
 
@@ -74,7 +74,7 @@ pub(crate) trait WorkWire {
     fn caller_pubkey(&self) -> String;
 }
 
-impl WorkWire for BuzzClient {
+impl WorkWire for BeekeeperClient {
     async fn query_events(
         &self,
         filter: Value,
@@ -105,7 +105,10 @@ impl WorkWire for BuzzClient {
 /// the wire are reachable from a unit test without a relay: the defect this
 /// seam exists for was invisible to every test that stubbed the wire, because
 /// the stub never saw the signature step at all.
-fn sign_work_record(client: &BuzzClient, builder: EventBuilder) -> Result<nostr::Event, CliError> {
+fn sign_work_record(
+    client: &BeekeeperClient,
+    builder: EventBuilder,
+) -> Result<nostr::Event, CliError> {
     // `sign_event_unchecked`, never `sign_event`. The latter injects this
     // client's NIP-OA `auth` tag into every event it signs, and a managed
     // agent always has one (`BUZZ_AUTH_TAG`), so a seat's adopt carried a
@@ -797,7 +800,7 @@ async fn channel_project(wire: &impl WorkWire, channel: &str) -> Result<String, 
 
 /// Read the session's genesis, authority and project, and the relay's key.
 pub(super) async fn session_context(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
 ) -> Result<SessionContext, CliError> {
@@ -948,7 +951,7 @@ fn decode_rows(rows: Vec<Value>, what: &str) -> Result<Vec<ProjectWorkEvent>, Cl
 /// # Errors
 /// [`CliError::Usage`] when anything the declaration would reference does not
 /// resolve — and in that case **no event is signed**.
-pub async fn cmd_adopt(client: &BuzzClient, args: &WorkAdoptArgs) -> Result<(), CliError> {
+pub async fn cmd_adopt(client: &BeekeeperClient, args: &WorkAdoptArgs) -> Result<(), CliError> {
     if let Some(label) = &args.example {
         return print_example("adopt", label);
     }
@@ -1202,7 +1205,7 @@ async fn current_goal(wire: &impl WorkWire, session: &SessionContext) -> Result<
 /// [`CliError::Usage`] when a criterion does not exist under the declaration's
 /// plan, or the assignment is not readable on the relay.
 pub async fn cmd_bind_assignment(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     args: &WorkBindAssignmentArgs,
 ) -> Result<(), CliError> {
     if let Some(label) = &args.envelope.example {
@@ -1259,7 +1262,7 @@ pub(super) async fn bind_assignment_with(
 /// [`CliError::Usage`] for an unknown criterion, an evidence kind the
 /// criterion's proof form cannot use, or an unreadable referenced event.
 pub async fn cmd_bind_evidence(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     args: &WorkBindEvidenceArgs,
 ) -> Result<(), CliError> {
     if let Some(label) = &args.envelope.example {
@@ -1356,7 +1359,7 @@ fn report_existing(event_id: &str, what: &str) -> Result<(), CliError> {
 
 /// Resolve the session a bind's envelope names.
 async fn envelope_session(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     envelope: &WorkBindEnvelopeArgs,
 ) -> Result<SessionContext, CliError> {
     let (Some(channel), Some(session_ref)) =
@@ -1554,7 +1557,7 @@ fn proof_name(proof: &PlanProof) -> &'static str {
 /// [`CliError::Other`] naming the read that failed. Incomplete coverage is
 /// exit 0: it is the fact the caller asked for.
 pub async fn cmd_status(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     args: &WorkStatusArgs,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
@@ -1621,7 +1624,7 @@ pub async fn cmd_status(
 /// [`CliError::Other`] naming the read that failed; a refused or failed read
 /// is never an empty result.
 pub(super) async fn coverage_for_session(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     session: &SessionContext,
     agents_repo: Option<&str>,
 ) -> Result<(WorkProjection, Value), CliError> {
@@ -1865,7 +1868,10 @@ fn declarations(events: &[ProjectWorkEvent]) -> Vec<ProjectWorkDeclared> {
 }
 
 /// The 44244 mission state, on its own row. Nothing merges the two.
-async fn mission_row(client: &BuzzClient, session: &SessionContext) -> Result<Value, CliError> {
+async fn mission_row(
+    client: &BeekeeperClient,
+    session: &SessionContext,
+) -> Result<Value, CliError> {
     let events = super::operations_reads::fetch_transactions(
         client,
         &session.channel,
@@ -1979,7 +1985,7 @@ fn print_table(coverage: &WorkProjection, mission: &Value, channel: &str, sessio
 /// Whatever the verb returns.
 pub async fn dispatch(
     cmd: SessionWorkCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     match cmd {

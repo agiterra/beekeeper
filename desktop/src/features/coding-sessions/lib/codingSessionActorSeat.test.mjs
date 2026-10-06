@@ -9,7 +9,7 @@ import {
   resolveCodingSessionActorSeat,
 } from "./codingSessionActorSeat.ts";
 import { buildCodingSessionCreateEvent } from "./codingSessionLifecycleCommand.ts";
-import { parseBuzzCodingSessionMetadata } from "./codingSessionIngressPayloads.ts";
+import { parseBeekeeperCodingSessionMetadata } from "./codingSessionIngressPayloads.ts";
 
 const ACTOR =
   "aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66";
@@ -154,13 +154,13 @@ function metadata(extra) {
 }
 
 test("metadata with no actor decodes exactly as before", () => {
-  const parsed = parseBuzzCodingSessionMetadata(metadata());
+  const parsed = parseBeekeeperCodingSessionMetadata(metadata());
   assert.equal(parsed?.agentRef, null);
   assert.equal(Object.hasOwn(parsed, "role"), false);
 });
 
 test("metadata carries the seat's role beside its actor", () => {
-  const parsed = parseBuzzCodingSessionMetadata(
+  const parsed = parseBeekeeperCodingSessionMetadata(
     metadata({ agentRef: ACTOR, role: "verifier" }),
   );
   assert.equal(parsed?.agentRef, ACTOR);
@@ -169,15 +169,19 @@ test("metadata carries the seat's role beside its actor", () => {
 
 test("a role with no actor is malformed metadata, not a partial dialect", () => {
   assert.equal(
-    parseBuzzCodingSessionMetadata(metadata({ role: "lead" })),
+    parseBeekeeperCodingSessionMetadata(metadata({ role: "lead" })),
     null,
   );
   assert.equal(
-    parseBuzzCodingSessionMetadata(metadata({ agentRef: ACTOR, role: "Lead" })),
+    parseBeekeeperCodingSessionMetadata(
+      metadata({ agentRef: ACTOR, role: "Lead" }),
+    ),
     null,
   );
   assert.equal(
-    parseBuzzCodingSessionMetadata(metadata({ agentRef: ACTOR, role: "" })),
+    parseBeekeeperCodingSessionMetadata(
+      metadata({ agentRef: ACTOR, role: "" }),
+    ),
     null,
   );
 });

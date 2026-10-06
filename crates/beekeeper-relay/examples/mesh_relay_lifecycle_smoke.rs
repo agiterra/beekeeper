@@ -58,7 +58,7 @@ use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use mesh_llm_host_runtime::crypto::{load_keystore, save_keystore, OwnerKeypair};
 use mesh_llm_sdk::{client, serve, MeshDiscoveryMode, TrustPolicy};
@@ -212,7 +212,7 @@ fn membership_filter() -> Filter {
 }
 
 async fn query_events(
-    relay: &mut BuzzTestClient,
+    relay: &mut BeekeeperTestClient,
     filters: Vec<Filter>,
 ) -> anyhow::Result<Vec<Event>> {
     let sid = format!("mesh-lifecycle-{}", uuid::Uuid::new_v4().simple());
@@ -228,7 +228,7 @@ async fn query_events(
 /// payload the desktop coordinator's `bind_payload_to_member` +
 /// `build_status_report_event` produce.
 async fn publish_status(
-    relay: &mut BuzzTestClient,
+    relay: &mut BeekeeperTestClient,
     keys: &Keys,
     owner: &OwnerKeypair,
     serve_targets: &[(String, String)],
@@ -410,7 +410,7 @@ async fn role_serve() -> anyhow::Result<()> {
         "serve owner id is not in MESH_EXPECTED_OWNERS"
     );
 
-    let mut relay = BuzzTestClient::connect(&relay_ws_url(), &keys)
+    let mut relay = BeekeeperTestClient::connect(&relay_ws_url(), &keys)
         .await
         .map_err(|error| anyhow::anyhow!("serve member relay connect: {error}"))?;
     publish_status(&mut relay, &keys, &owner, &[]).await?;
@@ -470,7 +470,7 @@ async fn role_serve() -> anyhow::Result<()> {
     // ADVERTISE: refresh the status note with the live serve target, exactly
     // what the desktop's 45s heartbeat publishes once serving. Fresh relay
     // connection — the pre-download socket has long been idle-closed.
-    let mut relay = BuzzTestClient::connect(&relay_ws_url(), &keys)
+    let mut relay = BeekeeperTestClient::connect(&relay_ws_url(), &keys)
         .await
         .map_err(|error| anyhow::anyhow!("serve member relay reconnect: {error}"))?;
     publish_status(
@@ -498,7 +498,7 @@ async fn role_client() -> anyhow::Result<()> {
     let owner = load_keystore(std::path::Path::new(&env("MESH_OWNER_KEY")?), None)
         .map_err(|error| anyhow::anyhow!("loading client owner keystore: {error}"))?;
 
-    let mut relay = BuzzTestClient::connect(&relay_ws_url(), &keys)
+    let mut relay = BeekeeperTestClient::connect(&relay_ws_url(), &keys)
         .await
         .map_err(|error| anyhow::anyhow!("client member relay connect: {error}"))?;
     publish_status(&mut relay, &keys, &owner, &[]).await?;
@@ -610,7 +610,7 @@ async fn role_stranger() -> anyhow::Result<()> {
     // stranger's NIP-42 auth with its membership error specifically. Any
     // other failure (relay down, timeout) is inconclusive and fails the
     // test; a successful auth is a gating regression and also fails.
-    match BuzzTestClient::connect(&relay_ws_url(), &keys).await {
+    match BeekeeperTestClient::connect(&relay_ws_url(), &keys).await {
         Err(error) => {
             let message = error.to_string();
             if message.contains("not a relay member") {

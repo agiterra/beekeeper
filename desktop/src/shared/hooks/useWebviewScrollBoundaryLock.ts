@@ -1,7 +1,7 @@
 import * as React from "react";
 
 const BOUNDARY_EPSILON_PX = 1;
-const CONVERSATION_SCROLL_SELECTOR = "[data-buzz-conversation-scroll]";
+const CONVERSATION_SCROLL_SELECTOR = "[data-beekeeper-conversation-scroll]";
 const TERMINAL_SUBSTRATE_SELECTOR = '[data-terminal-owner="terminal"]';
 const SCROLLABLE_OVERFLOW_VALUES = new Set(["auto", "scroll", "overlay"]);
 
@@ -76,7 +76,7 @@ function isConversationScroller(element: HTMLElement) {
  *
  * Real scrolling is left alone: if any scroll container under the pointer can
  * move in the wheel direction, the browser handles it normally. At vertical
- * boundaries, only containers marked with `data-buzz-conversation-scroll` are
+ * boundaries, only containers marked with `data-beekeeper-conversation-scroll` are
  * allowed to receive the gesture so their own local elastic affordance can
  * remain; every other boundary — including all horizontal ones — is locked and
  * cannot chain to the viewport.

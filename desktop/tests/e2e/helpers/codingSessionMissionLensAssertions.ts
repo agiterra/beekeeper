@@ -28,7 +28,10 @@ export async function assertConversationAndMissionLenses(
       page.evaluate(() => getComputedStyle(document.documentElement).fontSize),
     )
     .toBe("20px");
-  await expect(page.locator("html")).toHaveAttribute("data-buzz-theme", "buzz");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-beekeeper-theme",
+    "buzz",
+  );
 
   const conversation = page.getByRole("button", {
     name: "Conversation lens",
@@ -613,7 +616,7 @@ export async function assertMissionRestartRecovery(
       () =>
         page.evaluate(
           ({ channelName, transactionKind }) =>
-            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+            window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
               channelName,
               kind: transactionKind,
             }) ?? false,
@@ -632,8 +635,8 @@ export async function assertMissionRestartRecovery(
     const events = phase.events.filter((event) => !priorIds.has(event.id));
     await page.evaluate(
       ({ channelName, events, response }) => {
-        const setResponse = window.__BUZZ_E2E_SET_MISSION_FOLD_RESPONSE__;
-        const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+        const setResponse = window.__BEEKEEPER_E2E_SET_MISSION_FOLD_RESPONSE__;
+        const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
         if (!setResponse || !seed) throw new Error("Mission E2E hooks missing");
         setResponse(response);
         for (const event of events) seed({ channelName, event });
@@ -684,10 +687,10 @@ export async function assertMissionRestartRecovery(
   // this is the suite's own idiom for a bridge global (see
   // `mock-bridge-global-config-shape.spec.ts`, `persona-sync.spec.ts`).
   await page.waitForFunction(() =>
-    Boolean(window.__BUZZ_E2E_SET_MISSION_FOLD_RESPONSE__),
+    Boolean(window.__BEEKEEPER_E2E_SET_MISSION_FOLD_RESPONSE__),
   );
   await page.evaluate((response) => {
-    const setResponse = window.__BUZZ_E2E_SET_MISSION_FOLD_RESPONSE__;
+    const setResponse = window.__BEEKEEPER_E2E_SET_MISSION_FOLD_RESPONSE__;
     if (!setResponse) throw new Error("Mission fold hook missing");
     setResponse(response);
   }, harness.completed.foldResponse);

@@ -35,7 +35,7 @@ import { E2E_IDENTITY_OVERRIDE_STORAGE_KEY } from "../../helpers/onboarding";
  * the recipient picker reads the same `search_users` path the app uses in
  * production. No handler inside `src/testing/e2eBridge.ts` is touched — every
  * fixture below rides seams that file already exposes (`searchProfiles`,
- * `relayAgents`, `relaySelf`, `__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__`).
+ * `relayAgents`, `relaySelf`, `__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__`).
  *
  * The one rule every assertion here enforces: **there is no positive evidence
  * that a key is a person.** `isAgent: false` means "this profile carried no
@@ -413,7 +413,7 @@ export async function openPeopleSetupSession(
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },
@@ -705,7 +705,7 @@ export function isReadOnlyCommand(command: string): boolean {
 }
 
 export async function commandCount(page: Page): Promise<number> {
-  return page.evaluate(() => window.__BUZZ_E2E_COMMANDS__?.length ?? 0);
+  return page.evaluate(() => window.__BEEKEEPER_E2E_COMMANDS__?.length ?? 0);
 }
 
 export async function commandsSince(
@@ -713,7 +713,7 @@ export async function commandsSince(
   from: number,
 ): Promise<string[]> {
   return page.evaluate(
-    (start) => (window.__BUZZ_E2E_COMMANDS__ ?? []).slice(start),
+    (start) => (window.__BEEKEEPER_E2E_COMMANDS__ ?? []).slice(start),
     from,
   );
 }
@@ -723,7 +723,7 @@ export async function signedAuthorityTransitions(
   page: Page,
 ): Promise<Array<{ granteePubkey: string; type: string }>> {
   return page.evaluate((kind) => {
-    const events = window.__BUZZ_E2E_SIGNED_EVENTS__ ?? [];
+    const events = window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [];
     return events
       .filter((event) => event.kind === kind)
       .map((event) => {

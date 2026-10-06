@@ -512,8 +512,8 @@ export async function openHandoverSession(
   // The patch event lives in the mock relay's project store, which is where a
   // `kinds:[1617] ids:[…]` read is answered — the same read the app makes.
   await page.addInitScript((event) => {
-    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
-      ...(window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ ?? []),
+    window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
+      ...(window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ ?? []),
       event,
     ];
   }, patch);
@@ -575,7 +575,7 @@ export async function openHandoverSession(
   }
   await page.evaluate(
     ({ channelName, seeds }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of seeds) seed({ channelName, event });
     },
@@ -730,7 +730,7 @@ export async function queryMockEvents(
   filter: Record<string, unknown>,
 ): Promise<RelayEvent[]> {
   return page.evaluate(async (one) => {
-    const invoke = window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
+    const invoke = window.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__;
     if (!invoke) throw new Error("mock command hook is missing");
     const answer = (await invoke("query_relay_filters", {
       filters: [one],
@@ -866,7 +866,7 @@ export async function answerPublishedCreate(page: Page): Promise<RelayEvent> {
 async function seedEvent(page: Page, event: RelayEvent): Promise<void> {
   await page.evaluate(
     ({ channelName, one }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       seed({ channelName, event: one });
     },

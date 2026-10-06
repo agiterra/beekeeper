@@ -13,12 +13,12 @@ export const BUZZ_GRADIENT_STOPS: Record<
   { top: string; bottom: string }
 > = {
   buzz: {
-    top: "var(--buzz-gradient-light-top)",
-    bottom: "var(--buzz-gradient-light-bottom)",
+    top: "var(--beekeeper-gradient-light-top)",
+    bottom: "var(--beekeeper-gradient-light-bottom)",
   },
   "buzz-dark": {
-    top: "var(--buzz-gradient-dark-top)",
-    bottom: "var(--buzz-gradient-dark-bottom)",
+    top: "var(--beekeeper-gradient-dark-top)",
+    bottom: "var(--beekeeper-gradient-dark-bottom)",
   },
 };
 

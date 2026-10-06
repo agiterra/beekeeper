@@ -205,7 +205,7 @@ function wokenTurn(): RelayEvent[] {
 async function seed(page: Page, events: RelayEvent[]) {
   await page.evaluate(
     ({ channelName: name, events: signedEvents }) => {
-      const seedEvent = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seedEvent = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seedEvent) throw new Error("signed-event seeding hook is missing");
       for (const event of signedEvents) seedEvent({ channelName: name, event });
     },

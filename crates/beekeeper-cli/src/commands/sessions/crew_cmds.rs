@@ -7,7 +7,7 @@
 //!   (`crates/beekeeper-relay/src/handlers/ingest.rs`) rejects any 44220 tag that is
 //!   not `h`, `cs-v`, or `cs-target`, and the 44221 validator is the same shape.
 //!   So these two kinds are signed with
-//!   [`BuzzClient::sign_event_unchecked`], never with `sign_event`, whose
+//!   [`BeekeeperClient::sign_event_unchecked`], never with `sign_event`, whose
 //!   NIP-OA `auth` tag injection would make the event invalid. Membership
 //!   delegation still reaches the relay: `submit_event` sends the same tag in
 //!   the `x-auth-tag` header, which is where `POST /events` reads it
@@ -62,7 +62,7 @@ use super::crew::{
     DELIVERY_WAIT_SECONDS, HIRE_WAIT_SECONDS,
 };
 use super::{decode_metadata, decode_receipts, decode_transcripts, fetch_channel_events, rfc3339};
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::{read_file_or_stdin, read_or_stdin, sdk_err, validate_uuid};
 
@@ -177,7 +177,10 @@ struct CrewFacts {
 /// The lease snapshot is fetched separately and never paged: kind 24223 is
 /// ephemeral, served from Redis rather than from stored events, so a second
 /// page would join lease states from two different instants.
-async fn fetch_crew_facts(client: &BuzzClient, channel_id: &str) -> Result<CrewFacts, CliError> {
+async fn fetch_crew_facts(
+    client: &BeekeeperClient,
+    channel_id: &str,
+) -> Result<CrewFacts, CliError> {
     let events = fetch_channel_events(client, channel_id, CREW_FACT_KINDS).await?;
     let lease_events = client
         .query_all(json!({ "kinds": [KIND_CODING_SESSION_LEASE], "#h": [channel_id] }))
@@ -203,7 +206,7 @@ async fn fetch_crew_facts(client: &BuzzClient, channel_id: &str) -> Result<CrewF
 /// Publish one signed coding-session event and return the write response,
 /// merged with the crew fields the caller needs to follow it up.
 pub(super) async fn submit_with(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     event: nostr::Event,
     conflict: &str,
     extra: Value,
@@ -263,7 +266,7 @@ pub(super) fn team_operation_wake_command_id(operation_id: &str, target_key: &st
 /// stored, via [`team_operation_wake_command_id`].
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn send_team_operation_wake(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     to: &str,
     session_ref: &str,
@@ -351,7 +354,7 @@ const DELIVERY_POLL: std::time::Duration = std::time::Duration::from_millis(500)
 /// already landed, and turning a transient read error into a command failure
 /// would tell the sender its turn was not sent when it was.
 async fn await_delivery(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     command_id: &str,
     since: i64,
@@ -402,7 +405,7 @@ async fn await_delivery(
 /// The blob is addressed by hash, never by URL: the consuming provider derives
 /// the fetch URL from the relay it is already connected to.
 async fn upload_turn_images(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     images: &[String],
 ) -> Result<Vec<TurnAttachment>, CliError> {
     if images.is_empty() {
@@ -442,7 +445,7 @@ async fn upload_turn_images(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_send(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     to: Option<&str>,
     session_ref: Option<&str>,
@@ -597,7 +600,7 @@ struct CreatorOwnerGovernance {
 /// cross the immutable founder boundary. Both setup writes precede the create,
 /// so a failed genesis or grant never leaves an ungoverned execution running.
 async fn prepare_creator_owner_governance(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: Uuid,
 ) -> Result<Option<CreatorOwnerGovernance>, CliError> {
     let Some(owner_pubkey) = client.verified_auth_tag_owner_hex()? else {
@@ -646,7 +649,7 @@ async fn prepare_creator_owner_governance(
 /// `bee sessions create` — publish one 44221 `session.create`.
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_create(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_ref: Option<&str>,
     genesis: Option<&str>,
@@ -1129,7 +1132,7 @@ pub(super) enum ReceiptWait<T> {
 /// answer or `timeout_secs` passes. Publishes nothing and never retries the
 /// command itself.
 pub(super) async fn await_command_receipt<T>(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     command_id: &str,
     timeout_secs: u64,
@@ -1163,7 +1166,7 @@ pub(super) async fn await_command_receipt<T>(
 }
 
 async fn await_create_receipt(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     command_id: &str,
     provider_authority: &str,
@@ -1268,7 +1271,7 @@ pub(super) struct HireAnswer {
 /// lives in kind:40099 acceptance receipts rather than in the lifecycle
 /// stream the rest of this reads.
 pub(super) async fn read_hire_answer(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_ref: &str,
     genesis_ref: &str,
@@ -1428,7 +1431,7 @@ struct HireRoutingPlan {
 /// nobody asked for. The reason is reported instead, under
 /// `proposedUnavailable`.
 async fn resolve_hire_routing(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     routing: &HireRouting,
     provider_instance: Option<&str>,
@@ -1545,7 +1548,7 @@ async fn resolve_hire_routing(
 /// clears. The caller reports it; it never blocks the hire, because the
 /// founder's host routes against a catalog this machine may not share.
 async fn local_proposal(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     request: &beekeeper_core::coding_session_routing::HireRoutingRequest,
 ) -> Result<Option<beekeeper_core::coding_session_routing::ProposedRouting>, String> {
@@ -1568,7 +1571,7 @@ async fn local_proposal(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_hire(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_ref: &str,
     genesis: Option<&str>,
@@ -1943,7 +1946,7 @@ pub async fn cmd_hire(
 /// `seating` outcome caused by a binding defect can never again read as a slow
 /// host. The state machine itself is [`HireWait`], which is pure and tested.
 async fn wait_for_hire(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_ref: &str,
     genesis_ref: &str,
@@ -1997,7 +2000,7 @@ async fn wait_for_hire(
 /// The role comes from the create, never from a flag: a repair that took the
 /// role from its caller could grant a role no host ever seated.
 pub async fn cmd_seat_repair(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_ref: &str,
     genesis: Option<&str>,
@@ -2582,7 +2585,7 @@ fn finish_seat_repair(
 
 /// `bee sessions inbox` — turns addressed to seats this identity holds.
 pub async fn cmd_inbox(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     since: Option<&str>,
     format: &crate::OutputFormat,
@@ -2913,7 +2916,7 @@ pub fn status_json_lines(
 /// `bee sessions status` — one row per execution: who is seated, whether an
 /// actor is behind it, and what it owes.
 pub async fn cmd_status(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     json_lines: bool,
     format: &crate::OutputFormat,
@@ -3042,7 +3045,7 @@ mod seat_repair_tests;
 /// [`super::operations_reads::fetch_founder_context`], which re-verifies the whole
 /// envelope including this pairing.
 async fn session_ref_of_genesis(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     genesis: &str,
 ) -> Result<String, CliError> {
@@ -3071,7 +3074,7 @@ async fn session_ref_of_genesis(
 
 /// Resolve the umbrella a seat verb operates on.
 async fn resolve_seat_session_ref(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_ref: Option<&str>,
     genesis: &str,
@@ -3103,7 +3106,7 @@ async fn resolve_seat_session_ref(
 /// refused rather than overwritten. Idempotent — a seat that already holds
 /// this exact role is reported `already_granted` with no write.
 pub async fn cmd_grant_seat(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_ref: Option<&str>,
     genesis: &str,
@@ -3193,7 +3196,7 @@ pub(super) fn decide_seat_revoke(
 /// projection before it is reported: a submitted transition nothing accepted is
 /// `unconfirmed`, never a success.
 pub async fn cmd_revoke_seat(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel_id: &str,
     session_ref: Option<&str>,
     genesis: &str,

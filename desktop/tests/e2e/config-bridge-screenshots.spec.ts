@@ -47,11 +47,12 @@ async function waitForInvokeBridge(page: import("@playwright/test").Page) {
   await page.waitForFunction(
     () => {
       const tauriWindow = window as Window & {
-        __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: unknown;
+        __BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?: unknown;
         __TAURI_INTERNALS__?: { invoke?: unknown };
       };
       return (
-        typeof tauriWindow.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ === "function" ||
+        typeof tauriWindow.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__ ===
+          "function" ||
         typeof tauriWindow.__TAURI_INTERNALS__?.invoke === "function"
       );
     },
@@ -69,7 +70,7 @@ async function invokeMockCommand(
   return page.evaluate(
     async ({ command: cmd, payload: pl }) => {
       const tauriWindow = window as Window & {
-        __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: (
+        __BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__?: (
           command: string,
           payload?: Record<string, unknown>,
         ) => Promise<unknown>;
@@ -81,7 +82,7 @@ async function invokeMockCommand(
         };
       };
       const invoke =
-        tauriWindow.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ ??
+        tauriWindow.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__ ??
         tauriWindow.__TAURI_INTERNALS__?.invoke;
       if (!invoke) throw new Error("Mock invoke bridge is unavailable.");
       return invoke(cmd, pl);

@@ -208,13 +208,15 @@ async function openApp(page: Page) {
   }, FOUNDER_IDENTITY);
   // Project events (kind 30621) are served from a dedicated mock project
   // store, not the generic per-channel message store
-  // `__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__` writes into — this is the seam
+  // `__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__` writes into — this is the seam
   // `getMockProjectEventStore` documents for exactly this case: standalone
   // project-scoped events a test needs before the app boots.
   await page.addInitScript((event) => {
     (
-      window as unknown as { __BUZZ_E2E_EXTRA_PROJECT_EVENTS__?: unknown[] }
-    ).__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [event];
+      window as unknown as {
+        __BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__?: unknown[];
+      }
+    ).__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [event];
   }, projectEvent());
   await installMockBridge(page, {
     globalAgentConfig: {
@@ -285,7 +287,7 @@ async function openJoinDialogOnSeededSession(page: Page) {
   ).toBeVisible();
   await page.evaluate(
     ({ channelName, events }) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       for (const event of events) seed({ channelName, event });
     },

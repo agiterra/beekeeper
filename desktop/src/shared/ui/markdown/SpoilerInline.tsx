@@ -112,7 +112,7 @@ export function SpoilerInline({
     if (isBlock) {
       return (
         <div
-          className="buzz-spoiler buzz-spoiler--block buzz-spoiler--inert"
+          className="beekeeper-spoiler beekeeper-spoiler--block beekeeper-spoiler--inert"
           data-revealed="false"
           data-spoiler=""
         >
@@ -128,7 +128,7 @@ export function SpoilerInline({
 
     return (
       <span
-        className="buzz-spoiler buzz-spoiler--inert"
+        className="beekeeper-spoiler beekeeper-spoiler--inert"
         data-revealed="false"
         data-spoiler=""
       >
@@ -146,7 +146,7 @@ export function SpoilerInline({
     return (
       <div
         {...revealProps}
-        className="buzz-spoiler buzz-spoiler--block"
+        className="beekeeper-spoiler beekeeper-spoiler--block"
         data-revealed={revealed ? "true" : "false"}
         data-spoiler=""
       >
@@ -163,7 +163,7 @@ export function SpoilerInline({
   return (
     <span
       {...revealProps}
-      className="buzz-spoiler"
+      className="beekeeper-spoiler"
       data-revealed={revealed ? "true" : "false"}
       data-spoiler=""
     >

@@ -15,7 +15,7 @@ export type WordmarkProps = {
  * than a trip through a design tool.
  *
  * The grain filter is the same construction the animated bee mark uses
- * (`BuzzLogoAnimation`) — blur, then displace by fractal noise, then composite
+ * (`BeekeeperLogoAnimation`) — blur, then displace by fractal noise, then composite
  * the noise back as grain — minus the `<animate>` children, because the
  * wordmark sits still. Kept in sync by eye, not by code: they are deliberately
  * separate so the mark can animate without dragging the wordmark with it.

@@ -36,7 +36,7 @@ use nostr::Event;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::sdk_err;
 
@@ -63,7 +63,7 @@ pub(super) struct Recovery {
 /// fails `git apply --check` is a `missing` line and the tree is exactly as it
 /// was, because the check runs before anything is written.
 pub(super) async fn recover_checkout(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     cwd: Option<&Path>,
     session8: &str,
     checkpoint: Option<&CodingSessionHandoverCheckpoint>,
@@ -225,7 +225,7 @@ impl BaseState {
 /// Fetch one wip-ref artifact and check it out, or say why it could not be.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn recover_wip_ref(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     cwd: &Path,
     session8: &str,
     artifact: &beekeeper_core::coding_session_handover::CodingSessionHandoverArtifact,
@@ -303,7 +303,7 @@ pub(super) async fn recover_wip_ref(
 ///
 /// `None` means the read failed, which is neither yes nor no and is reported
 /// as unknown rather than folded into "not present".
-async fn relay_shows_sha(client: &BuzzClient, repo_ref: &str, sha: &str) -> Option<bool> {
+async fn relay_shows_sha(client: &BeekeeperClient, repo_ref: &str, sha: &str) -> Option<bool> {
     let oids = super::worktree::relay_ref_oids(client, repo_ref)
         .await
         .ok()?;
@@ -312,7 +312,7 @@ async fn relay_shows_sha(client: &BuzzClient, repo_ref: &str, sha: &str) -> Opti
 
 /// Read one NIP-34 patch event's content back off the relay.
 async fn fetch_patch_event(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     event_id: Option<&str>,
 ) -> Result<String, CliError> {
     let event_id =
@@ -334,7 +334,7 @@ async fn fetch_patch_event(
 /// Publish the `session.create` that joins this umbrella, and wait for it.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn create_execution(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     state: &HandoverState,
     provider_authority: &str,
     provider_instance: Option<&str>,
@@ -449,7 +449,7 @@ pub(super) async fn create_execution(
 
 /// Wait, bounded, for the create receipt answering `command_id`.
 async fn await_create(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     command_id: &str,
     since: i64,
@@ -786,7 +786,7 @@ pub(super) fn workdir_mismatch_line(
 
 /// Wait, bounded, for the new execution's first metadata and check where it is.
 pub(super) async fn verify_execution_workdir(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     target: &CodingSessionTarget,
     expected_branch: &str,

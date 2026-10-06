@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
-use crate::{client::BuzzClient, error::CliError};
+use crate::{client::BeekeeperClient, error::CliError};
 
 /// Where a project's persona packs live — the kind:30624 record and what it
 /// means on this machine.
@@ -115,7 +115,7 @@ pub enum PacksCmd {
     },
 }
 
-pub(crate) async fn dispatch(sub: PacksCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub(crate) async fn dispatch(sub: PacksCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     match sub {
         PacksCmd::SetSource {
             project,

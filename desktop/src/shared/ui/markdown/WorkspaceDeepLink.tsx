@@ -7,7 +7,7 @@ import {
   parseCodingSessionLink,
 } from "@/features/coding-sessions/lib/codingSessionLink";
 import { parseChannelLink } from "@/features/messages/lib/channelLink";
-import { BuzzInlineLink } from "./BuzzLinkChip";
+import { BeekeeperInlineLink } from "./BeekeeperLinkChip";
 import { ChannelDeepLinkAnchor } from "./ChannelDeepLink";
 
 /** Render workspace navigation links before falling back to external anchors. */
@@ -46,7 +46,7 @@ export function CodingSessionDeepLinkAnchor({
 }) {
   const { goCodingSession } = useAppNavigation();
   return (
-    <BuzzInlineLink
+    <BeekeeperInlineLink
       href={href}
       title={href}
       aria-label="Open coding session"
@@ -59,6 +59,6 @@ export function CodingSessionDeepLinkAnchor({
       }}
     >
       {children}
-    </BuzzInlineLink>
+    </BeekeeperInlineLink>
   );
 }

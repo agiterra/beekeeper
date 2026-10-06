@@ -113,7 +113,7 @@ test("projects heading opens the management screen", async ({ page }) => {
     .poll(async () =>
       page.evaluate(
         () =>
-          window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+          window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.filter(
             (event) => event.kind === 30621,
           ).length ?? 0,
       ),
@@ -316,7 +316,7 @@ test("private projects publish access tags and show a lock badge", async ({
   const findPublishedEvent = () =>
     page.evaluate(
       () =>
-        window.__BUZZ_E2E_SIGNED_EVENTS__?.find(
+        window.__BEEKEEPER_E2E_SIGNED_EVENTS__?.find(
           (event) =>
             event.kind === 30621 &&
             event.tags.some((tag) => tag[0] === "d" && tag[1] === "skunkworks"),
@@ -377,7 +377,7 @@ function seedOrderingProjects(page: import("@playwright/test").Page) {
         "buzz-feature-overrides-v1",
         JSON.stringify({ projects: true }),
       );
-      window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      window.__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
           id: "seeded-project-zulu",
           kind: 30621,

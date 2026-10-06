@@ -310,7 +310,7 @@ export type PromptSection = {
   body: string;
 };
 
-export type BuzzToolInfo = {
+export type BeekeeperToolInfo = {
   icon: LucideIcon;
   label: string;
   tone: "read" | "write" | "admin";

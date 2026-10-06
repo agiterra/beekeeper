@@ -1166,7 +1166,7 @@ fn declared_for_signing() -> (ProjectWorkEnvelope, ProjectWorkDeclared) {
 #[test]
 fn the_adopt_record_a_seat_signs_is_one_the_relay_admits() {
     let (auth_tag, auth_json) = seat_auth_tag();
-    let client = BuzzClient::new(
+    let client = BeekeeperClient::new(
         "https://test.relay".into(),
         nostr::Keys::generate(),
         Some(auth_tag),
@@ -1186,7 +1186,7 @@ fn the_adopt_record_a_seat_signs_is_one_the_relay_admits() {
 /// admitted — which is why this went unseen until a seat ran it.
 #[test]
 fn the_adopt_record_an_undecorated_client_signs_is_admitted_too() {
-    let client = BuzzClient::new(
+    let client = BeekeeperClient::new(
         "https://test.relay".into(),
         nostr::Keys::generate(),
         None,
@@ -1228,7 +1228,7 @@ fn a_decorated_work_record_is_refused_before_it_is_published() {
     assert_eq!(vector_refusal.code.as_str(), declared);
 
     let (auth_tag, auth_json) = seat_auth_tag();
-    let client = BuzzClient::new(
+    let client = BeekeeperClient::new(
         "https://test.relay".into(),
         nostr::Keys::generate(),
         Some(auth_tag.clone()),

@@ -24,7 +24,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag, Timestamp};
 
 const PROJECT_KIND: u16 = 30621;
@@ -99,7 +99,7 @@ fn remove_member_op(signer: &Keys, coordinate: &str, targets: &[&Keys]) -> nostr
 
 /// Create an open channel bound to `project_ref`, signed by `keys`.
 async fn create_project_channel(
-    client: &mut BuzzTestClient,
+    client: &mut BeekeeperTestClient,
     keys: &Keys,
     project_ref: &str,
 ) -> String {
@@ -133,7 +133,7 @@ fn roster_filter(coordinate: &str) -> Filter {
         .custom_tags(SingleLetterTag::lowercase(Alphabet::D), [coordinate])
 }
 
-async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
+async fn query(client: &mut BeekeeperTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
     let sid = sub_id(name);
     client
         .subscribe(&sid, vec![filter])
@@ -176,7 +176,7 @@ async fn viewer_reads_but_never_writes_live() {
     let d_tag = unique("roles-view");
     let coordinate = project_coordinate(&owner, &d_tag);
 
-    let mut owner_client = BuzzTestClient::connect(&relay_url(), &owner)
+    let mut owner_client = BeekeeperTestClient::connect(&relay_url(), &owner)
         .await
         .expect("owner connect");
     let head = project_event(
@@ -190,7 +190,7 @@ async fn viewer_reads_but_never_writes_live() {
     let channel_id = create_project_channel(&mut owner_client, &owner, &coordinate).await;
 
     // Viewer reads the container.
-    let mut viewer_client = BuzzTestClient::connect(&relay_url(), &viewer)
+    let mut viewer_client = BeekeeperTestClient::connect(&relay_url(), &viewer)
         .await
         .expect("viewer connect");
     let container = query(
@@ -220,7 +220,7 @@ async fn viewer_reads_but_never_writes_live() {
     );
 
     // Collaborator writes land.
-    let mut collab_client = BuzzTestClient::connect(&relay_url(), &collaborator)
+    let mut collab_client = BeekeeperTestClient::connect(&relay_url(), &collaborator)
         .await
         .expect("collaborator connect");
     let accepted = collab_client
@@ -252,7 +252,7 @@ async fn membership_ops_seat_co_owners_and_survive_head_replay_live() {
     let d_tag = unique("roles-ops");
     let coordinate = project_coordinate(&creator, &d_tag);
 
-    let mut creator_client = BuzzTestClient::connect(&relay_url(), &creator)
+    let mut creator_client = BeekeeperTestClient::connect(&relay_url(), &creator)
         .await
         .expect("creator connect");
     let head = project_event(&creator, &d_tag, &[], Some(Timestamp::now().as_secs()));
@@ -260,7 +260,7 @@ async fn membership_ops_seat_co_owners_and_survive_head_replay_live() {
     assert!(ok.accepted, "project head rejected: {}", ok.message);
 
     // A stranger cannot manage the roster.
-    let mut stranger_client = BuzzTestClient::connect(&relay_url(), &stranger)
+    let mut stranger_client = BeekeeperTestClient::connect(&relay_url(), &stranger)
         .await
         .expect("stranger connect");
     let refused = stranger_client
@@ -300,7 +300,7 @@ async fn membership_ops_seat_co_owners_and_survive_head_replay_live() {
     );
 
     // The co-owner can now invite a third member.
-    let mut co_owner_client = BuzzTestClient::connect(&relay_url(), &co_owner)
+    let mut co_owner_client = BeekeeperTestClient::connect(&relay_url(), &co_owner)
         .await
         .expect("co-owner connect");
     let ok = co_owner_client
@@ -394,7 +394,7 @@ async fn membership_ops_seat_co_owners_and_survive_head_replay_live() {
 #[ignore]
 async fn envelope_guards_live() {
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&relay_url(), &keys)
+    let mut client = BeekeeperTestClient::connect(&relay_url(), &keys)
         .await
         .expect("connect");
 

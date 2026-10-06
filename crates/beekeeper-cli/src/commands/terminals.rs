@@ -18,7 +18,7 @@ use beekeeper_core::kind::{KIND_SHELL_INPUT, KIND_SHELL_SESSION, SHELL_ROLES};
 use nostr::{Event, EventBuilder, Kind, Tag, Timestamp};
 use serde_json::{json, Value};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use beekeeper_sdk::build_delete_addressable;
 
 use crate::commands::parse_write_response;
@@ -124,7 +124,7 @@ fn json_tag_value(event: &Value, name: &str) -> Option<String> {
 /// Fetch one owner's announce head for a session id, as a signed `Event`
 /// (used by the read-modify-write mutations).
 async fn fetch_announce(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     owner_hex: &str,
     session_id: &str,
 ) -> Result<Option<Event>, CliError> {
@@ -144,7 +144,7 @@ async fn fetch_announce(
 /// Fetch one owner's announce head as raw JSON (used by the read commands,
 /// which do not need to re-sign it).
 async fn fetch_announce_json(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     owner_hex: &str,
     session_id: &str,
 ) -> Result<Option<Value>, CliError> {
@@ -165,7 +165,7 @@ async fn fetch_announce_json(
 
 /// `bee terminals list` — announces visible to the caller, optionally
 /// scoped to one project coordinate.
-pub async fn cmd_list(client: &BuzzClient, project: Option<&str>) -> Result<(), CliError> {
+pub async fn cmd_list(client: &BeekeeperClient, project: Option<&str>) -> Result<(), CliError> {
     let caller = client.keys().public_key().to_hex();
     let mut filter = json!({ "kinds": [KIND_SHELL_SESSION] });
     if let Some(project) = project {
@@ -220,7 +220,7 @@ fn rebuild_announce(head: &Event, tags: Vec<Tag>) -> Result<EventBuilder, CliErr
 }
 
 /// Fetch the caller's own announce head, or error with a clear message.
-async fn fetch_own_announce(client: &BuzzClient, session_id: &str) -> Result<Event, CliError> {
+async fn fetch_own_announce(client: &BeekeeperClient, session_id: &str) -> Result<Event, CliError> {
     let caller = client.keys().public_key().to_hex();
     fetch_announce(client, &caller, session_id)
         .await?
@@ -235,7 +235,7 @@ async fn fetch_own_announce(client: &BuzzClient, session_id: &str) -> Result<Eve
 /// `bee terminals invite` — add a pubkey to the caller's own announce
 /// roster, or change their role.
 pub async fn cmd_invite(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     session_id: &str,
     pubkey: &str,
     role: &str,
@@ -274,7 +274,7 @@ pub async fn cmd_invite(
 /// `bee terminals revoke` — remove a pubkey from the caller's own announce
 /// roster.
 pub async fn cmd_revoke(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     session_id: &str,
     pubkey: &str,
 ) -> Result<(), CliError> {
@@ -329,7 +329,7 @@ pub async fn cmd_revoke(
 /// running keeps running; it simply becomes unshareable. Saying otherwise
 /// in the output would be a claim this command cannot keep.
 pub async fn cmd_delete(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     session_id: &str,
     owner: Option<&str>,
 ) -> Result<(), CliError> {
@@ -356,7 +356,7 @@ pub async fn cmd_delete(
 /// `bee terminals roster` — print an announce's roster as
 /// `[{pubkey, role}]`.
 pub async fn cmd_roster(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     session_id: &str,
     owner: Option<&str>,
 ) -> Result<(), CliError> {
@@ -400,7 +400,7 @@ fn chunk_input_bytes(bytes: &[u8]) -> Vec<String> {
 /// (kind 24312 is ephemeral; the relay rejects ephemeral kinds over HTTP)
 /// and the relay's 20 events/s input budget comfortably covers them.
 pub async fn cmd_send_input(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     session_id: &str,
     owner: &str,
     text: Option<&str>,
@@ -475,7 +475,7 @@ pub async fn cmd_send_input(
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 /// Route one `terminals` subcommand.
-pub async fn dispatch(cmd: crate::TerminalsCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(cmd: crate::TerminalsCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     use crate::TerminalsCmd;
     match cmd {
         TerminalsCmd::List { project } => cmd_list(client, project.as_deref()).await,
@@ -696,8 +696,8 @@ mod tests {
 
     // ── No-network input validation ───────────────────────────────────────────
 
-    fn discard_client() -> BuzzClient {
-        BuzzClient::new("http://127.0.0.1:9".into(), Keys::generate(), None, None)
+    fn discard_client() -> BeekeeperClient {
+        BeekeeperClient::new("http://127.0.0.1:9".into(), Keys::generate(), None, None)
             .expect("client construction")
     }
 

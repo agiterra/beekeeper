@@ -15,7 +15,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::{BuzzTestClient, RelayMessage};
+use beekeeper_test_client::{BeekeeperTestClient, RelayMessage};
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag, Timestamp};
 use reqwest::Client;
 use serde_json::Value;
@@ -165,7 +165,9 @@ async fn test_persona_publish_and_query() {
     })
     .to_string();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Publish persona event
     let event = persona_event(&keys, &d_tag, &content);
@@ -213,7 +215,9 @@ async fn test_promptless_persona_ingests_and_round_trips() {
     let d_tag = format!("promptless-{}", &uuid::Uuid::new_v4().to_string()[..8]);
     let content = serde_json::json!({ "display_name": "Config Only" }).to_string();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let event = persona_event(&keys, &d_tag, &content);
     let ok = client.send_event(event).await.expect("send promptless");
     assert!(
@@ -257,7 +261,9 @@ async fn test_behavioral_fields_persona_ingests_and_round_trips() {
     })
     .to_string();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
     let event = persona_event(&keys, &d_tag, &content);
     let ok = client.send_event(event).await.expect("send behavioral");
     assert!(
@@ -291,7 +297,9 @@ async fn test_persona_nip33_replacement_newer_wins() {
     let keys = Keys::generate();
     let d_tag = format!("replace-{}", &uuid::Uuid::new_v4().to_string()[..8]);
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Publish older version
     let now = Timestamp::now().as_secs();
@@ -337,7 +345,9 @@ async fn test_persona_nip33_older_does_not_replace_newer() {
     let keys = Keys::generate();
     let d_tag = format!("no-replace-{}", &uuid::Uuid::new_v4().to_string()[..8]);
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Publish newer version first
     let now = Timestamp::now().as_secs();
@@ -383,7 +393,9 @@ async fn test_persona_rejects_empty_d_tag() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let event = EventBuilder::new(
         Kind::Custom(PERSONA_KIND),
@@ -410,7 +422,9 @@ async fn test_persona_rejects_missing_d_tag() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // No d-tag at all
     let event = EventBuilder::new(
@@ -432,7 +446,9 @@ async fn test_persona_rejects_d_tag_too_long() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // 65 characters — exceeds the 64-char limit
     let long_slug = "a".repeat(65);
@@ -461,7 +477,9 @@ async fn test_persona_rejects_d_tag_uppercase() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let event = persona_event(
         &keys,
@@ -483,7 +501,9 @@ async fn test_persona_rejects_d_tag_special_chars() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let event = persona_event(
         &keys,
@@ -505,7 +525,9 @@ async fn test_persona_rejects_d_tag_starting_with_underscore() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Slug must start with [a-z0-9], not underscore
     let event = persona_event(
@@ -528,7 +550,9 @@ async fn test_persona_accepts_valid_slugs() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Various valid slug patterns
     let valid_slugs = [
@@ -563,7 +587,9 @@ async fn test_persona_multiple_per_author() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Publish two different personas (different d-tags)
     let slug_a = format!("persona-a-{}", &uuid::Uuid::new_v4().to_string()[..8]);
@@ -665,7 +691,7 @@ async fn test_persona_shared_read_gate_foreign_sees_only_shared() {
     let d_shared = format!("pub-{}", &uuid::Uuid::new_v4().to_string()[..8]);
 
     // Author publishes one unshared and one shared persona.
-    let mut author = BuzzTestClient::connect(&url, &author_keys)
+    let mut author = BeekeeperTestClient::connect(&url, &author_keys)
         .await
         .expect("connect author");
     let ev_unshared = persona_event_with_shared(&author_keys, &d_unshared, false);
@@ -678,7 +704,7 @@ async fn test_persona_shared_read_gate_foreign_sees_only_shared() {
     assert!(ok.accepted, "shared ingest rejected: {}", ok.message);
 
     // Foreign reader queries all personas by the author.
-    let mut foreign = BuzzTestClient::connect(&url, &foreign_keys)
+    let mut foreign = BeekeeperTestClient::connect(&url, &foreign_keys)
         .await
         .expect("connect foreign");
     let sid = sub_id("fg-all");
@@ -742,14 +768,14 @@ async fn test_persona_ids_lookup_unshared_returns_nothing_to_foreign() {
     let ev = persona_event_with_shared(&author_keys, &d_tag, false);
     let event_id = ev.id;
 
-    let mut author = BuzzTestClient::connect(&url, &author_keys)
+    let mut author = BeekeeperTestClient::connect(&url, &author_keys)
         .await
         .expect("connect author");
     let ok = author.send_event(ev).await.expect("send");
     assert!(ok.accepted, "ingest rejected: {}", ok.message);
     author.disconnect().await.expect("disconnect");
 
-    let mut foreign = BuzzTestClient::connect(&url, &foreign_keys)
+    let mut foreign = BeekeeperTestClient::connect(&url, &foreign_keys)
         .await
         .expect("connect foreign");
     let sid = sub_id("ids-unshared");
@@ -788,7 +814,7 @@ async fn test_persona_count_excludes_foreign_unshared() {
     let d_shared = format!("pub-{}", &uuid::Uuid::new_v4().to_string()[..8]);
 
     // Publish one unshared and one shared persona.
-    let mut author = BuzzTestClient::connect(&url, &author_keys)
+    let mut author = BeekeeperTestClient::connect(&url, &author_keys)
         .await
         .expect("connect author");
     let ok = author
@@ -805,7 +831,7 @@ async fn test_persona_count_excludes_foreign_unshared() {
 
     // Foreign sends COUNT for {kinds:[30175], authors:[author]} — uses fallback path
     // and must exclude the unshared event.
-    let mut foreign = BuzzTestClient::connect(&url, &foreign_keys)
+    let mut foreign = BeekeeperTestClient::connect(&url, &foreign_keys)
         .await
         .expect("connect foreign");
     let sid = sub_id("count-persona");
@@ -864,7 +890,7 @@ async fn test_persona_live_fanout_shared_gate() {
     // Foreign subscribes to the test author's kind:30175 events BEFORE the author
     // publishes. Scoped to this author so concurrent persona tests publishing their
     // own 30175s don't trip the leak-panic (parallel suite interference).
-    let mut foreign = BuzzTestClient::connect(&url, &foreign_keys)
+    let mut foreign = BeekeeperTestClient::connect(&url, &foreign_keys)
         .await
         .expect("connect foreign");
     let sid = sub_id("fanout-gate");
@@ -882,7 +908,7 @@ async fn test_persona_live_fanout_shared_gate() {
         .expect("drain eose");
 
     // Author publishes an UNSHARED persona (t0) — foreign must NOT receive it.
-    let mut author = BuzzTestClient::connect(&url, &author_keys)
+    let mut author = BeekeeperTestClient::connect(&url, &author_keys)
         .await
         .expect("connect author");
     let ev_unshared = persona_event_with_shared_at(&author_keys, &d_tag, false, t0);
@@ -1038,7 +1064,9 @@ async fn test_persona_ingest_shared_tag_validation() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Accept: no shared tag
     let ev = persona_event_with_shared(
@@ -1161,7 +1189,7 @@ async fn test_persona_mixed_kind_filter_does_not_leak() {
     let channel_id = create_test_channel(&author_keys).await;
 
     // Author publishes an unshared persona AND a kind:9 message in the open channel.
-    let mut author = BuzzTestClient::connect(&url, &author_keys)
+    let mut author = BeekeeperTestClient::connect(&url, &author_keys)
         .await
         .expect("connect author");
     let ev = persona_event_with_shared(&author_keys, &d_tag, false);
@@ -1183,7 +1211,7 @@ async fn test_persona_mixed_kind_filter_does_not_leak() {
     author.disconnect().await.expect("disconnect author");
 
     // Foreign queries with mixed-kind filter.
-    let mut foreign = BuzzTestClient::connect(&url, &foreign_keys)
+    let mut foreign = BeekeeperTestClient::connect(&url, &foreign_keys)
         .await
         .expect("connect foreign");
     let sid = sub_id("mixed-kind");
@@ -1419,7 +1447,7 @@ async fn test_persona_ws_req_shared_visible_with_newer_private_ahead() {
     let now = nostr::Timestamp::now().as_secs();
     let shared_ts = now.saturating_sub(10);
 
-    let mut author = BuzzTestClient::connect(&url, &author_keys)
+    let mut author = BeekeeperTestClient::connect(&url, &author_keys)
         .await
         .expect("connect author");
 
@@ -1445,7 +1473,7 @@ async fn test_persona_ws_req_shared_visible_with_newer_private_ahead() {
 
     // Foreign queries with limit=2: private rows are excluded at SQL level,
     // so the shared event must appear despite having a lower timestamp.
-    let mut foreign = BuzzTestClient::connect(&url, &foreign_keys)
+    let mut foreign = BeekeeperTestClient::connect(&url, &foreign_keys)
         .await
         .expect("connect foreign");
     let sid = sub_id("limit-gate");
@@ -1556,7 +1584,9 @@ async fn test_persona_ingest_rejects_three_element_shared_tag() {
     let url = relay_url();
     let keys = Keys::generate();
 
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Build a persona event with a three-element ["shared","true","extra"] tag.
     // nostr::Tag::parse accepts variable-length slices, so this is straightforward.

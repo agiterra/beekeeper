@@ -20,7 +20,7 @@
 
 use std::time::Duration;
 
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag, Timestamp};
 
 const KIND_LONG_FORM: u16 = 30023;
@@ -58,7 +58,9 @@ fn build_long_form_event(
 async fn test_long_form_accepted() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let event = build_long_form_event(
         &keys,
@@ -84,7 +86,9 @@ async fn test_long_form_accepted() {
 async fn test_long_form_retrievable() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let d_tag = format!("retrieve-{}", uuid::Uuid::new_v4().simple());
     let event = build_long_form_event(
@@ -130,7 +134,9 @@ async fn test_long_form_retrievable() {
 async fn test_long_form_stray_h_tag_ignored() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Publish with a stray h-tag (a UUID that doesn't correspond to any channel).
     let fake_channel = uuid::Uuid::new_v4().to_string();
@@ -184,7 +190,9 @@ async fn test_long_form_stray_h_tag_ignored() {
 async fn test_long_form_nip33_replacement() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let d_tag = format!("replace-{}", uuid::Uuid::new_v4().simple());
 
@@ -244,7 +252,9 @@ async fn test_long_form_nip33_replacement() {
 async fn test_long_form_stale_write_rejected() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let d_tag = format!("stale-{}", uuid::Uuid::new_v4().simple());
 
@@ -321,7 +331,9 @@ async fn test_long_form_stale_write_rejected() {
 async fn test_long_form_a_tag_deletion() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     // Publish a note.
     let d_tag = format!("a-del-{}", uuid::Uuid::new_v4().simple());
@@ -400,7 +412,9 @@ async fn test_long_form_a_tag_deletion() {
 async fn test_long_form_malformed_e_plus_a_does_not_delete() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let d_tag = format!("mixed-del-{}", uuid::Uuid::new_v4().simple());
     let note = build_long_form_event(&keys, &d_tag, "Survivor", "Body.", vec![]);
@@ -461,7 +475,9 @@ async fn test_long_form_malformed_e_plus_a_does_not_delete() {
 async fn test_long_form_set_twice_preserves_published_at() {
     let url = relay_url();
     let keys = Keys::generate();
-    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+    let mut client = BeekeeperTestClient::connect(&url, &keys)
+        .await
+        .expect("connect");
 
     let d_tag = format!("preserve-pat-{}", uuid::Uuid::new_v4().simple());
     let original_published_at: u64 = 1_700_000_000;

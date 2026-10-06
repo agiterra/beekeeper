@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:buzz/shared/crypto/nip44.dart';
-import 'package:buzz/shared/relay/relay.dart';
-import 'package:buzz/shared/theme/theme.dart';
+import 'package:beekeeper/shared/crypto/nip44.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
+import 'package:beekeeper/shared/theme/theme.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:nostr/nostr.dart' as nostr;

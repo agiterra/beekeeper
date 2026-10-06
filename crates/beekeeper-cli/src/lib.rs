@@ -14,7 +14,7 @@ mod validate;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use client::BuzzClient;
+use client::BeekeeperClient;
 use error::CliError;
 use nostr::Keys;
 use uuid::Uuid;
@@ -5916,7 +5916,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         _ => (None, None),
     };
 
-    let client = BuzzClient::new(relay_url, keys, auth_tag, auth_tag_json)?;
+    let client = BeekeeperClient::new(relay_url, keys, auth_tag, auth_tag_json)?;
 
     match cli.command {
         Cmd::Agents(sub) => commands::agents::dispatch(sub, &client).await,

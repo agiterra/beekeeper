@@ -12,7 +12,7 @@
 
 use std::time::{Duration, Instant};
 
-use beekeeper_test_client::BuzzTestClient;
+use beekeeper_test_client::BeekeeperTestClient;
 use nostr::Keys;
 use tokio::time::MissedTickBehavior;
 
@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
         let keys = keys.clone();
         let channel_id = channel_id.clone();
         tasks.push(tokio::spawn(async move {
-            let mut client = BuzzTestClient::connect(&url, &keys).await?;
+            let mut client = BeekeeperTestClient::connect(&url, &keys).await?;
             let mut interval = tokio::time::interval(per_conn_interval);
             interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
             let mut latencies: Vec<f64> = Vec::new();

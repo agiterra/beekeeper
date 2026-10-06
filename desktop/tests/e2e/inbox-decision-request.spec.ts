@@ -83,7 +83,7 @@ function leadMetadata() {
 }
 
 type MockWindow = Window & {
-  __BUZZ_E2E_EMIT_MOCK_MESSAGE__?: (input: {
+  __BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?: (input: {
     channelName: string;
     content: string;
     pubkey?: string;
@@ -99,7 +99,7 @@ type MockWindow = Window & {
     created_at: number;
     tags: string[][];
   };
-  __BUZZ_E2E_PUSH_MOCK_FEED_ITEM__?: (item: {
+  __BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__?: (item: {
     category: "mention" | "needs_action" | "activity" | "agent_activity";
     channel_id: string | null;
     channel_name: string;
@@ -129,12 +129,12 @@ test.describe("inbox decision request", () => {
     await page.waitForFunction(() => {
       const win = window as MockWindow;
       return (
-        typeof win.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function" &&
-        typeof win.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__ === "function"
+        typeof win.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__ === "function" &&
+        typeof win.__BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__ === "function"
       );
     });
     await page.evaluate((event) => {
-      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const seed = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
       seed({ channelName: "general", event: event as never });
     }, leadMetadata());
@@ -142,8 +142,8 @@ test.describe("inbox decision request", () => {
     const request = await page.evaluate(
       ({ senderPubkey, sessionRef, genesisRef, eventId, channelId }) => {
         const win = window as MockWindow;
-        const emit = win.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
-        const push = win.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__;
+        const emit = win.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__;
+        const push = win.__BEEKEEPER_E2E_PUSH_MOCK_FEED_ITEM__;
         if (!emit || !push) throw new Error("Bridge helpers not ready");
         // Run 2's wire shape: the five NIP-CSTX tags, no `p`.
         const event = emit({
@@ -226,13 +226,13 @@ test.describe("inbox decision request", () => {
       () =>
         (
           window as unknown as {
-            __BUZZ_E2E_SIGNED_EVENTS__: {
+            __BEEKEEPER_E2E_SIGNED_EVENTS__: {
               kind: number;
               content: string;
               tags: string[][];
             }[];
           }
-        ).__BUZZ_E2E_SIGNED_EVENTS__,
+        ).__BEEKEEPER_E2E_SIGNED_EVENTS__,
     );
     const answers = signed.filter(
       (event) =>

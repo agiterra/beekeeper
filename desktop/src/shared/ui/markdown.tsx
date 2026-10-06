@@ -112,7 +112,7 @@ import { ImageMosaic } from "./markdown/ImageMosaic";
 import { createTableComponents } from "./markdown/MarkdownTable";
 import { ProgressiveImage } from "./markdown/ProgressiveImage";
 import { RedactedPill } from "./RedactedPill";
-import { BuzzInlineLink } from "./markdown/BuzzLinkChip";
+import { BeekeeperInlineLink } from "./markdown/BeekeeperLinkChip";
 import { MessageLinkPill } from "./markdown/MessageLinkPill";
 import { renderCachedMarkdown } from "./markdown/nodeCache";
 import { useMessageLinkPreviews } from "./markdown/useMessageLinkPreviews";
@@ -1064,7 +1064,7 @@ function ImageBlock({ alt, dim, resolvedSrc, src, thumbSrc }: ImageBlockProps) {
 
     updateHiddenState();
 
-    const spoiler = trigger.closest(".buzz-spoiler[data-spoiler]");
+    const spoiler = trigger.closest(".beekeeper-spoiler[data-spoiler]");
     if (!spoiler) return;
 
     const observer = new MutationObserver(updateHiddenState);
@@ -1330,13 +1330,13 @@ export function createMarkdownComponents(
         }
 
         return (
-          <BuzzInlineLink
+          <BeekeeperInlineLink
             title={href}
             interactive={interactive}
             onOpenLink={() => onOpenMessageLink(messageLinkTarget.link)}
           >
             {children}
-          </BuzzInlineLink>
+          </BeekeeperInlineLink>
         );
       }
       // Malformed message deep link — fall through to the default

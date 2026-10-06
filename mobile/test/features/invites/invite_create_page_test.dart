@@ -1,10 +1,10 @@
 import 'dart:async';
 
-import 'package:buzz/features/invites/invite_create_page.dart';
-import 'package:buzz/features/invites/invite_create_provider.dart';
-import 'package:buzz/shared/community/community_membership_provider.dart';
-import 'package:buzz/shared/relay/relay.dart';
-import 'package:buzz/shared/theme/theme.dart';
+import 'package:beekeeper/features/invites/invite_create_page.dart';
+import 'package:beekeeper/features/invites/invite_create_provider.dart';
+import 'package:beekeeper/shared/community/community_membership_provider.dart';
+import 'package:beekeeper/shared/relay/relay.dart';
+import 'package:beekeeper/shared/theme/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';

@@ -17,7 +17,7 @@ use beekeeper_core::pulse_mission::{
     is_wip_ref, PulseRefState, WIP_REF_PREFIX, WIP_REF_RETENTION_DAYS,
 };
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 
 /// Kind of the relay-signed repository state announcement (NIP-34).
@@ -76,7 +76,7 @@ pub fn decode_ref_state(event: &Value) -> Vec<PulseRefState> {
 /// A read that returns nothing is a real answer — `No ref state on the wire for
 /// this repo` — and is never rendered as a repo where nothing moved.
 pub async fn fetch_ref_state(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_id: &str,
 ) -> Result<Vec<PulseRefState>, CliError> {
     let events = client.query_all(ref_state_filter(repo_id)).await?;
@@ -189,7 +189,7 @@ pub fn prune_plan_json(plan: &WipPrunePlan) -> Value {
 /// irreversible: this command shows what would go and leaves the deletion to
 /// the person or the hook that owns the credential.
 pub async fn cmd_prune_wip(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo: &str,
     merged: Option<&str>,
 ) -> Result<(), CliError> {

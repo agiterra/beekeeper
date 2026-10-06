@@ -220,7 +220,7 @@ impl Drop for LiveSessionGuard {
 /// Fakes a live host over a real Unix socket, attaches to it via the
 /// driver (exactly as `attach()` does), and registers the session live —
 /// so `write`/`resize` below exercise the real production call chain:
-/// `manager::write`/`manager::resize` -> `BuzzShellHostDriver::input_resize`
+/// `manager::write`/`manager::resize` -> `BeekeeperShellHostDriver::input_resize`
 /// -> the socket. Returns a guard that panic-safely removes the session
 /// and temp dir on drop, and a handle that yields the one frame the fake
 /// host receives.
@@ -248,7 +248,7 @@ fn register_live_session_with_fake_host(
         Frame::read_from(&mut conn).unwrap().unwrap()
     });
 
-    let driver = session_driver::BuzzShellHostDriver;
+    let driver = session_driver::BeekeeperShellHostDriver;
     let (io, _hello, _read_half) = driver
         .attach_existing(&socket, Duration::from_secs(2))
         .expect("attach must succeed");

@@ -173,7 +173,7 @@ export function resolveCodingSessionSurfaces(
 
 // ---------------------------------------------------------------------------
 // E2E-only extra surfaces (SV-38's screenshot): plain data a spec sets on
-// `window.__BUZZ_E2E_EXTRA_SURFACES__` before the app loads. Read only in a
+// `window.__BEEKEEPER_E2E_EXTRA_SURFACES__` before the app loads. Read only in a
 // `--mode e2e` build; every other build ignores the global entirely.
 // ---------------------------------------------------------------------------
 
@@ -252,8 +252,8 @@ export function codingSessionE2eExtraSurfaceDefinition(
 export function readCodingSessionE2eExtraSurfaces(): CodingSessionSurfaceDefinition[] {
   if (!isE2eBuild() || typeof window === "undefined") return [];
   const declared = (
-    window as Window & { __BUZZ_E2E_EXTRA_SURFACES__?: unknown }
-  ).__BUZZ_E2E_EXTRA_SURFACES__;
+    window as Window & { __BEEKEEPER_E2E_EXTRA_SURFACES__?: unknown }
+  ).__BEEKEEPER_E2E_EXTRA_SURFACES__;
   if (!Array.isArray(declared)) return [];
   return declared.map((extra) =>
     codingSessionE2eExtraSurfaceDefinition(

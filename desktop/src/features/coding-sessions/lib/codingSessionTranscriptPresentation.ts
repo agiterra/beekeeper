@@ -22,7 +22,7 @@ const MAX_TRANSCRIPT_CONTENT_BYTES = 32 * 1024;
 const MAX_TRANSCRIPT_ITEM_DEPTH = 24;
 const MAX_TRANSCRIPT_IDENTITY_BYTES = 512;
 
-export type BuzzCodingSessionTranscriptV1 = {
+export type BeekeeperCodingSessionTranscriptV1 = {
   schema: typeof BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA;
   session: CodingSessionCommandTarget;
   eventSeq: number;
@@ -35,7 +35,7 @@ export type TrustedCodingSessionTranscriptEntry = {
   channelId: string;
   targetKey: string;
   signerPubkey: string;
-  transcript: Readonly<BuzzCodingSessionTranscriptV1>;
+  transcript: Readonly<BeekeeperCodingSessionTranscriptV1>;
   eventId: string;
   createdAt: number;
   conflictCount: number;
@@ -57,9 +57,9 @@ export function codingSessionTranscriptSemanticKey(
 }
 
 /** Strict mirror of the provider's CST envelope encoder. */
-export function parseBuzzCodingSessionTranscript(
+export function parseBeekeeperCodingSessionTranscript(
   content: unknown,
-): Readonly<BuzzCodingSessionTranscriptV1> | null {
+): Readonly<BeekeeperCodingSessionTranscriptV1> | null {
   const value = parseBoundedJson(content, MAX_TRANSCRIPT_CONTENT_BYTES);
   if (
     !isPlainRecord(value) ||

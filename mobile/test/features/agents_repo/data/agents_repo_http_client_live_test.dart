@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:buzz/features/agents_repo/data/agents_repo_http_client.dart';
+import 'package:beekeeper/features/agents_repo/data/agents_repo_http_client.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nostr/nostr.dart' as nostr;
 

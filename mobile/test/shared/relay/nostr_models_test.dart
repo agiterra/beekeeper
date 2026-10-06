@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:buzz/shared/relay/nostr_models.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
 
 void main() {
   _projectTagTests();

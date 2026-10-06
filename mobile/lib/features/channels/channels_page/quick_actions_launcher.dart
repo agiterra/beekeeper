@@ -85,7 +85,7 @@ class ChannelQuickActionsLauncher extends HookConsumerWidget {
 
       switch (action) {
         case _QuickAction.createChannel:
-          final created = await showBuzzModalBottomSheet<Channel>(
+          final created = await showBeekeeperModalBottomSheet<Channel>(
             context: context,
             title: 'Create a new channel',
             constraints: _quickActionSheetConstraints(context),
@@ -97,7 +97,7 @@ class ChannelQuickActionsLauncher extends HookConsumerWidget {
             await openChannel(created);
           }
         case _QuickAction.newDm:
-          final opened = await showBuzzModalBottomSheet<Channel>(
+          final opened = await showBeekeeperModalBottomSheet<Channel>(
             context: context,
             title: 'New message',
             constraints: _quickActionSheetConstraints(context),

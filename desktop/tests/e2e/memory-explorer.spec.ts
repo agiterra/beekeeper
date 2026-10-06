@@ -78,24 +78,25 @@ async function setup(
       );
       (
         window as unknown as Record<string, unknown>
-      ).__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = events;
-      (window as unknown as Record<string, unknown>).__BUZZ_E2E_AGENTS_REPO__ =
-        {
-          listing: {
-            repo,
-            branch: "main",
-            commit: fullSha,
-            syncedAt: "2026-10-06T00:00:00Z",
-            entries: Object.entries(files).map(([path, text]) => ({
-              path,
-              blob: "a".repeat(40),
-              size: new TextEncoder().encode(text).length,
-              kind: "other",
-            })),
-          },
-          files,
-          commitResults: [],
-        };
+      ).__BEEKEEPER_E2E_EXTRA_PROJECT_EVENTS__ = events;
+      (
+        window as unknown as Record<string, unknown>
+      ).__BEEKEEPER_E2E_AGENTS_REPO__ = {
+        listing: {
+          repo,
+          branch: "main",
+          commit: fullSha,
+          syncedAt: "2026-10-06T00:00:00Z",
+          entries: Object.entries(files).map(([path, text]) => ({
+            path,
+            blob: "a".repeat(40),
+            size: new TextEncoder().encode(text).length,
+            kind: "other",
+          })),
+        },
+        files,
+        commitResults: [],
+      };
     },
     { events, files, enabled, repo, fullSha },
   );
@@ -268,7 +269,7 @@ test("flag off during a pending mock read unmounts and ignores its late result",
 }) => {
   await setup(page, { "README.md": "# Pending old project\n" });
   await page.evaluate(() => {
-    const seed = window.__BUZZ_E2E_AGENTS_REPO__;
+    const seed = window.__BEEKEEPER_E2E_AGENTS_REPO__;
     if (seed) seed.explorerReadDelayMs = 800;
   });
   await page.getByRole("button", { name: "Explore", exact: true }).click();
@@ -295,13 +296,13 @@ test("unavailable source and over-limit blob disclose failure", async ({
 }) => {
   await setup(page, { "README.md": "# Not a successful read\n" });
   await page.evaluate(() => {
-    const seed = window.__BUZZ_E2E_AGENTS_REPO__;
+    const seed = window.__BEEKEEPER_E2E_AGENTS_REPO__;
     if (seed) seed.explorerError = "Repository unavailable";
   });
   await page.getByRole("button", { name: "Explore", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Repository unavailable");
   await page.evaluate(() => {
-    const seed = window.__BUZZ_E2E_AGENTS_REPO__;
+    const seed = window.__BEEKEEPER_E2E_AGENTS_REPO__;
     if (seed) {
       delete seed.explorerError;
       seed.listing.entries[0].size = 4 * 1024 * 1024 + 1;

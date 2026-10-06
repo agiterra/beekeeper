@@ -150,7 +150,7 @@ export function MarkdownTable({
     >
       <div
         ref={tableBlockRef}
-        className="buzz-code-scrollbar min-w-0 max-w-full overflow-x-auto"
+        className="beekeeper-code-scrollbar min-w-0 max-w-full overflow-x-auto"
         data-overflow={hasHiddenOverflow ? "true" : "false"}
         data-table-block=""
         onScroll={measureOverflow}

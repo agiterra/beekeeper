@@ -94,7 +94,7 @@ function signed(
 async function seed(page: Page, events: RelayEvent[]): Promise<void> {
   await page.evaluate(
     ({ channelName, signedEvents }) => {
-      const hook = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      const hook = window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!hook) throw new Error("signed-event seeding hook is missing");
       for (const event of signedEvents) hook({ channelName, event });
     },
@@ -543,8 +543,8 @@ test("SV-22, SV-41: Landing shows a gate running; a decision.request turns Agent
     ({ storageKey, identity }) => {
       window.localStorage.setItem(storageKey, JSON.stringify(identity));
       (
-        window as Window & { __BUZZ_E2E_WAVE_B_BADGES_FOLDS__?: boolean }
-      ).__BUZZ_E2E_WAVE_B_BADGES_FOLDS__ = true;
+        window as Window & { __BEEKEEPER_E2E_WAVE_B_BADGES_FOLDS__?: boolean }
+      ).__BEEKEEPER_E2E_WAVE_B_BADGES_FOLDS__ = true;
     },
     {
       storageKey: E2E_IDENTITY_OVERRIDE_STORAGE_KEY,
@@ -604,7 +604,7 @@ test("SV-22, SV-41: Landing shows a gate running; a decision.request turns Agent
       () =>
         page.evaluate(
           ({ channelName, kind }) =>
-            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+            window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
               channelName,
               kind,
             }) ?? false,

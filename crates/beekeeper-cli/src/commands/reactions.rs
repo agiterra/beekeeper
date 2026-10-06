@@ -2,12 +2,12 @@ use std::collections::HashMap;
 
 use nostr::EventId;
 
-use crate::client::{normalize_write_response, BuzzClient};
+use crate::client::{normalize_write_response, BeekeeperClient};
 use crate::error::CliError;
 use crate::validate::validate_hex64;
 
 pub async fn cmd_add_reaction(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     event_id: &str,
     emoji: &str,
     emoji_url: Option<&str>,
@@ -32,7 +32,7 @@ pub async fn cmd_add_reaction(
 }
 
 pub async fn cmd_remove_reaction(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     event_id: &str,
     emoji: &str,
 ) -> Result<(), CliError> {
@@ -77,7 +77,7 @@ pub async fn cmd_remove_reaction(
     Ok(())
 }
 
-pub async fn cmd_get_reactions(client: &BuzzClient, event_id: &str) -> Result<(), CliError> {
+pub async fn cmd_get_reactions(client: &BeekeeperClient, event_id: &str) -> Result<(), CliError> {
     validate_hex64(event_id)?;
     let filter = serde_json::json!({
         "kinds": [7],
@@ -124,7 +124,7 @@ pub async fn cmd_get_reactions(client: &BuzzClient, event_id: &str) -> Result<()
     Ok(())
 }
 
-pub async fn dispatch(cmd: crate::ReactionsCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(cmd: crate::ReactionsCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     use crate::ReactionsCmd;
     match cmd {
         ReactionsCmd::Add {

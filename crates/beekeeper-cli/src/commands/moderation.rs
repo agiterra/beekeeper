@@ -16,7 +16,7 @@
 
 use nostr::Timestamp;
 
-use crate::client::{normalize_write_response, BuzzClient};
+use crate::client::{normalize_write_response, BeekeeperClient};
 use crate::error::CliError;
 use crate::validate::validate_hex64;
 use crate::{ModerationCmd, OutputFormat};
@@ -32,7 +32,7 @@ fn resolve_expiry(expires_in: Option<u64>, expires_at: Option<u64>) -> Option<u6
 }
 
 async fn cmd_ban(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     pubkey: &str,
     expires_in: Option<u64>,
     expires_at: Option<u64>,
@@ -48,7 +48,7 @@ async fn cmd_ban(
     Ok(())
 }
 
-async fn cmd_unban(client: &BuzzClient, pubkey: &str) -> Result<(), CliError> {
+async fn cmd_unban(client: &BeekeeperClient, pubkey: &str) -> Result<(), CliError> {
     validate_hex64(pubkey)?;
     let builder = beekeeper_sdk::build_moderation_unban(pubkey)
         .map_err(|e| CliError::Usage(format!("invalid unban: {e}")))?;
@@ -59,7 +59,7 @@ async fn cmd_unban(client: &BuzzClient, pubkey: &str) -> Result<(), CliError> {
 }
 
 async fn cmd_timeout(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     pubkey: &str,
     expires_in: Option<u64>,
     expires_at: Option<u64>,
@@ -76,7 +76,7 @@ async fn cmd_timeout(
     Ok(())
 }
 
-async fn cmd_untimeout(client: &BuzzClient, pubkey: &str) -> Result<(), CliError> {
+async fn cmd_untimeout(client: &BeekeeperClient, pubkey: &str) -> Result<(), CliError> {
     validate_hex64(pubkey)?;
     let builder = beekeeper_sdk::build_moderation_untimeout(pubkey)
         .map_err(|e| CliError::Usage(format!("invalid untimeout: {e}")))?;
@@ -87,7 +87,7 @@ async fn cmd_untimeout(client: &BuzzClient, pubkey: &str) -> Result<(), CliError
 }
 
 async fn cmd_resolve(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     report: &str,
     status: &str,
     action: &str,
@@ -103,7 +103,7 @@ async fn cmd_resolve(
 }
 
 async fn cmd_reports(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     status: Option<&str>,
     limit: i64,
 ) -> Result<(), CliError> {
@@ -116,13 +116,13 @@ async fn cmd_reports(
     Ok(())
 }
 
-async fn cmd_restricted(client: &BuzzClient) -> Result<(), CliError> {
+async fn cmd_restricted(client: &BeekeeperClient) -> Result<(), CliError> {
     let resp = client.get_authed("/moderation/restricted").await?;
     println!("{resp}");
     Ok(())
 }
 
-async fn cmd_audit(client: &BuzzClient, limit: i64) -> Result<(), CliError> {
+async fn cmd_audit(client: &BeekeeperClient, limit: i64) -> Result<(), CliError> {
     let resp = client
         .get_authed(&format!("/moderation/audit?limit={limit}"))
         .await?;
@@ -132,7 +132,7 @@ async fn cmd_audit(client: &BuzzClient, limit: i64) -> Result<(), CliError> {
 
 pub async fn dispatch(
     cmd: ModerationCmd,
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     _format: &OutputFormat,
 ) -> Result<(), CliError> {
     match cmd {

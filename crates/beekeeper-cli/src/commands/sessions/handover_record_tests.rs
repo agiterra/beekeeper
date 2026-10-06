@@ -29,8 +29,8 @@ fn hex64(byte: &str) -> String {
 
 // ── the record's envelope ────────────────────────────────────────────────
 
-fn test_client() -> BuzzClient {
-    BuzzClient::new(
+fn test_client() -> BeekeeperClient {
+    BeekeeperClient::new(
         "https://relay.invalid".to_owned(),
         Keys::generate(),
         None,

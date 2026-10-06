@@ -20,12 +20,14 @@
 
 /*
  * The second selector outranks Buzz Dark's own content-surface repaint
- * (`:root[data-buzz-sidebar].dark [data-buzz-content-surface]`, which also
+ * (`:root[data-beekeeper-sidebar].dark [data-beekeeper-content-surface]`, which also
  * re-points `--background` — the mix picks that up, so the tint sits over
  * the actual dark canvas).
  */
-[data-project-tint] [data-buzz-content-surface],
-:root[data-buzz-sidebar].dark [data-project-tint] [data-buzz-content-surface] {
+[data-project-tint] [data-beekeeper-content-surface],
+:root[data-beekeeper-sidebar].dark
+  [data-project-tint]
+  [data-beekeeper-content-surface] {
   background-color: color-mix(
     in srgb,
     var(--project-tint) 8%,

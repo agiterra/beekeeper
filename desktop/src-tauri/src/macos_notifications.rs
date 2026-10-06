@@ -64,7 +64,7 @@ define_class!(
     // Sync. Apple does not guarantee a queue for notification delegate calls;
     // both Tauri operations used by the callbacks are thread-safe.
     #[unsafe(super(NSObject))]
-    #[name = "BuzzNotificationCenterDelegate"]
+    #[name = "BeekeeperNotificationCenterDelegate"]
     #[thread_kind = AnyThread]
     #[ivars = NotificationDelegateIvars]
     struct NotificationDelegate;

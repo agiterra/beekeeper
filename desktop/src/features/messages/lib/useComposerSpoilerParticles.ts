@@ -9,7 +9,7 @@ type ComposerSpoilerMount = {
   cleanup: () => void;
 };
 
-const SPOILER_SELECTOR = ".buzz-spoiler[data-spoiler]";
+const SPOILER_SELECTOR = ".beekeeper-spoiler[data-spoiler]";
 
 export function useComposerSpoilerParticles(
   editor: Editor | null,
@@ -59,7 +59,7 @@ function mountComposerSpoilerParticles(
 ): () => void {
   const document = editorRoot.ownerDocument;
   const overlayRoot = document.createElement("div");
-  overlayRoot.className = "buzz-spoiler-composer-particles";
+  overlayRoot.className = "beekeeper-spoiler-composer-particles";
   scrollRoot.appendChild(overlayRoot);
 
   const mounts = new Map<HTMLElement, ComposerSpoilerMount>();

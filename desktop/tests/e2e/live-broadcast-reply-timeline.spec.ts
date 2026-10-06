@@ -146,7 +146,7 @@ async function emit(
 ) {
   const event = await page.evaluate(
     (payload) =>
-      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+      window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?.({
         channelName: payload.channel,
         content: payload.content,
         parentEventId: payload.parentEventId,
@@ -167,7 +167,7 @@ async function emit(
 
 async function liveOverlayContents(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
-    const qc = window.__BUZZ_E2E_QUERY_CLIENT__ as unknown as {
+    const qc = window.__BEEKEEPER_E2E_QUERY_CLIENT__ as unknown as {
       getQueriesData: (f: unknown) => Array<[readonly unknown[], unknown]>;
     };
     const win = qc
@@ -186,7 +186,7 @@ test("a live broadcast depth-1 reply enters the authoritative channel window sto
   await installMockBridge(page);
   await page.goto("/");
   await page.waitForFunction(
-    () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
+    () => typeof window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__ === "function",
   );
 
   // Seed a top-level root into the cold window before opening the channel, so
@@ -240,7 +240,7 @@ test("a broadcast received before the channel window subscribes is recovered by 
   await installMockBridge(page);
   await page.goto("/");
   await page.waitForFunction(
-    () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
+    () => typeof window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__ === "function",
   );
   const root = await emit(page, { content: "catch-up root" });
   await observeChannelWindowSubscription(page, true);
@@ -275,7 +275,7 @@ test("a broadcast received before the channel window subscribes is recovered by 
   // Verify the ordinary reply still stays out of the channel's top-level rows.
   const pageContents = () =>
     page.evaluate(() => {
-      const client = window.__BUZZ_E2E_QUERY_CLIENT__ as unknown as {
+      const client = window.__BEEKEEPER_E2E_QUERY_CLIENT__ as unknown as {
         getQueriesData: (
           filter: unknown,
         ) => Array<[readonly unknown[], unknown]>;

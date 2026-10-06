@@ -36,7 +36,7 @@ use nostr::Event;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::error::CliError;
 use crate::validate::{sdk_err, validate_lower_hex64};
 use crate::HandoverClaimArgs;
@@ -128,7 +128,7 @@ pub(super) struct ClaimOutcome {
 
 /// `bee sessions handover claim`.
 pub(super) async fn cmd_claim(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     args: HandoverClaimArgs,
 ) -> Result<(), CliError> {
     let wait_secs = bounded_wait(args.wait_secs)?;
@@ -194,7 +194,7 @@ pub(super) async fn cmd_claim(
 /// relay did not answer" and "nothing is running there" send a person to two
 /// different places, and only one of them is true at a time.
 async fn read_body_liveness(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     session_ref: &str,
     body_pubkey: &str,
@@ -255,7 +255,7 @@ pub(super) fn refuse_unverifiable_genesis(state: &HandoverState) -> Result<(), C
 
 /// Resolve `bodyPubkey` from `--body`, or from the wire with `--body-self`.
 pub(super) async fn resolve_body(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     state: &HandoverState,
     body: Option<&str>,
     body_self: bool,
@@ -286,7 +286,10 @@ pub(super) async fn resolve_body(
 /// machine. More than one distinct answer is refused by name rather than
 /// resolved by recency — "the newest one" is not a fact about which provider
 /// the caller means to run on.
-async fn resolve_self_body(client: &BuzzClient, state: &HandoverState) -> Result<String, CliError> {
+async fn resolve_self_body(
+    client: &BeekeeperClient,
+    state: &HandoverState,
+) -> Result<String, CliError> {
     let caller = client.keys().public_key().to_hex();
     let events = super::fetch_channel_events(
         client,
@@ -342,7 +345,7 @@ async fn resolve_self_body(client: &BuzzClient, state: &HandoverState) -> Result
 /// Shared by `handover claim` and by `handover continue` step 3, so both
 /// produce the same link, the same race behaviour and the same exit code.
 pub(super) async fn claim_session(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     state: &HandoverState,
     body_pubkey: &str,
     wait_secs: u64,
@@ -429,7 +432,7 @@ pub(super) async fn claim_session(
 }
 
 /// Re-read the chain once and name the claimant who actually won.
-async fn lost_race(client: &BuzzClient, state: &HandoverState, message: &str) -> CliError {
+async fn lost_race(client: &BeekeeperClient, state: &HandoverState, message: &str) -> CliError {
     let reread = load_handover_state(
         client,
         &state.channel,
@@ -469,7 +472,7 @@ async fn lost_race(client: &BuzzClient, state: &HandoverState, message: &str) ->
 /// the envelope, the schema and the claimant/self check cannot drift between
 /// what this command mints and what the relay will take.
 fn sign_takeover(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     genesis: &str,
     prev_accepted: Option<String>,
@@ -487,7 +490,7 @@ fn sign_takeover(
 
 /// Wait, bounded, for the relay-signed receipt naming `accepted_event_id`.
 async fn await_claim_receipt(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     channel: &str,
     accepted_event_id: &str,
     since: i64,

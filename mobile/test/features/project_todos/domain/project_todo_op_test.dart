@@ -1,8 +1,8 @@
 import 'dart:convert';
 
-import 'package:buzz/features/project_todos/domain/project_todo_op.dart';
-import 'package:buzz/shared/relay/nostr_models.dart';
-import 'package:buzz/shared/relay/project_coordinate.dart';
+import 'package:beekeeper/features/project_todos/domain/project_todo_op.dart';
+import 'package:beekeeper/shared/relay/nostr_models.dart';
+import 'package:beekeeper/shared/relay/project_coordinate.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const owner =

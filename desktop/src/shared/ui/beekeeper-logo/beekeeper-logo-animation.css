@@ -1,16 +1,16 @@
-.buzz-logo {
+.beekeeper-logo {
   display: grid;
   place-items: center;
   inline-size: fit-content;
 }
 
-.buzz-logo--screen {
+.beekeeper-logo--screen {
   min-block-size: 100vh;
   inline-size: 100%;
   overflow: hidden;
 }
 
-.buzz-logo--background {
+.beekeeper-logo--background {
   background-color: #d7d72e;
   background-image: radial-gradient(
     circle,
@@ -28,11 +28,11 @@
   overflow: visible;
 }
 
-.buzz-logo--compact {
+.beekeeper-logo--compact {
   inline-size: 1.5rem;
 }
 
-.buzz-logo--compact .buzz-logo__mark {
+.beekeeper-logo--compact .buzz-logo__mark {
   inline-size: 100%;
   block-size: auto;
   max-inline-size: 100%;
@@ -52,16 +52,16 @@
   }
 }
 
-.buzz-logo--pulse .buzz-logo__mark {
+.beekeeper-logo--pulse .buzz-logo__mark {
   animation: buzz-logo-pulse 1.8s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .buzz-logo animate {
+  .beekeeper-logo animate {
     display: none;
   }
 
-  .buzz-logo--pulse .buzz-logo__mark {
+  .beekeeper-logo--pulse .buzz-logo__mark {
     animation: none;
     opacity: 0.8;
   }

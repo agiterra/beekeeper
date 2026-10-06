@@ -1110,7 +1110,7 @@ test("bare Buzz permalinks render cohesive icon-prefixed chips", () => {
     ),
   );
 
-  assert.equal((html.match(/data-buzz-link=""/g) ?? []).length, 6);
+  assert.equal((html.match(/data-beekeeper-link=""/g) ?? []).length, 6);
   assert.equal((html.match(/inline-chip-icon-message/g) ?? []).length, 2);
   assert.equal((html.match(/>engineering · c3b589fa</g) ?? []).length, 2);
   assert.equal((html.match(/data-message-link=""/g) ?? []).length, 2);
@@ -1153,7 +1153,7 @@ test("authored Buzz permalink labels remain ordinary links", () => {
     ),
   );
 
-  assert.equal((html.match(/data-buzz-link=""/g) ?? []).length, 0);
+  assert.equal((html.match(/data-beekeeper-link=""/g) ?? []).length, 0);
   assert.match(html, />the message</);
   assert.match(html, />the compatibility message</);
   assert.match(html, /aria-label="Open message: the compatibility message"/);
@@ -1296,7 +1296,7 @@ test("renderEntityLinkAnchor renders Buzz entity links as chips", () => {
     relayOrigin: null,
   });
   const html = renderToStaticMarkup(el);
-  assert.match(html, /data-buzz-link=""/);
+  assert.match(html, /data-beekeeper-link=""/);
   assert.match(html, /<button/);
   assert.doesNotMatch(html, /<a/);
 });
@@ -1311,7 +1311,7 @@ test("renderEntityLinkAnchor keeps chip styling when interaction is disabled", (
     relayOrigin: null,
   });
   const html = renderToStaticMarkup(el);
-  assert.match(html, /data-buzz-link=""/);
+  assert.match(html, /data-beekeeper-link=""/);
   assert.match(html, /<span/);
   assert.match(html, /class="mention-chip\s/);
   assert.doesNotMatch(html, /<button/);

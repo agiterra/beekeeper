@@ -6,7 +6,7 @@ import 'app_colors.dart';
 /// Name of the first-party Buzz theme. Buzz reuses the GitHub Light palette for
 /// every base color; the one thing that sets it apart is a branded gradient
 /// painted across the app's top section. Mirrors desktop, where the same
-/// gradient fills the sidebar canvas — see `data-buzz-sidebar` in
+/// gradient fills the sidebar canvas — see `data-beekeeper-sidebar` in
 /// `desktop/src/shared/styles/globals/theme.css`.
 const buzzThemeName = 'buzz';
 
@@ -17,11 +17,11 @@ const buzzDarkThemeName = 'buzz-dark';
 
 /// Whether [themeName] is either half of the Buzz pair. Both halves enable the
 /// gradient so System mode keeps it on across an OS light/dark switch.
-bool isBuzzTheme(String themeName) =>
+bool isBeekeeperTheme(String themeName) =>
     themeName == buzzThemeName || themeName == buzzDarkThemeName;
 
 /// Whether the current widget tree is using the first-party Buzz treatment.
-bool isBuzzThemeContext(BuildContext context) =>
+bool isBeekeeperThemeContext(BuildContext context) =>
     Theme.of(context).extension<AppColors>()?.topSectionGradient != null;
 
 /// Primary foreground for the mobile top navigation.
@@ -31,14 +31,14 @@ bool isBuzzThemeContext(BuildContext context) =>
 /// rather than the accent-derived color scheme foreground.
 Color navigationPrimaryForeground(BuildContext context) {
   final scheme = Theme.of(context).colorScheme;
-  if (!isBuzzThemeContext(context)) return scheme.onSurface;
+  if (!isBeekeeperThemeContext(context)) return scheme.onSurface;
   return scheme.brightness == Brightness.dark ? Colors.white : Colors.black;
 }
 
 /// Secondary label and placeholder foreground for the mobile top navigation.
 Color navigationSecondaryForeground(BuildContext context) {
   final scheme = Theme.of(context).colorScheme;
-  if (!isBuzzThemeContext(context)) return scheme.onSurfaceVariant;
+  if (!isBeekeeperThemeContext(context)) return scheme.onSurfaceVariant;
   return navigationPrimaryForeground(context).withValues(alpha: 0.4);
 }
 
@@ -49,14 +49,14 @@ Color navigationSecondaryForeground(BuildContext context) {
 /// established secondary foreground token.
 Color navigationSectionForeground(BuildContext context) {
   final scheme = Theme.of(context).colorScheme;
-  if (!isBuzzThemeContext(context)) return scheme.onSurfaceVariant;
+  if (!isBeekeeperThemeContext(context)) return scheme.onSurfaceVariant;
   return navigationPrimaryForeground(context).withValues(alpha: 0.8);
 }
 
 /// Search-field surface for the mobile top navigation.
 Color navigationSearchSurface(BuildContext context) {
   final scheme = Theme.of(context).colorScheme;
-  if (!isBuzzThemeContext(context)) return scheme.surfaceContainerHighest;
+  if (!isBeekeeperThemeContext(context)) return scheme.surfaceContainerHighest;
   return navigationPrimaryForeground(context).withValues(alpha: 0.04);
 }
 
@@ -67,11 +67,11 @@ Color navigationDivider(BuildContext context, double opacity) =>
 /// Buzz renders with its fixed neutral foreground while preserving the stored
 /// wire accent so the user's choice returns on another theme.
 int effectiveAccentIndex(String themeName, String storedAccent) {
-  if (isBuzzTheme(themeName)) return neutralAccentIndex;
+  if (isBeekeeperTheme(themeName)) return neutralAccentIndex;
   return accentIndexForWireValue(storedAccent) ?? defaultAccentIndex;
 }
 
-/// Gradient stops, matching desktop's `--buzz-gradient-*` custom properties.
+/// Gradient stops, matching desktop's `--beekeeper-gradient-*` custom properties.
 const _lightTop = Color(0xFFE6E6B6);
 const _lightBottom = Color(0xFFC4D0DA);
 const _darkTop = Color(0xFF4A4616);
@@ -89,7 +89,7 @@ LinearGradient? buzzTopSectionGradient(
   String themeName,
   Brightness brightness,
 ) {
-  if (!isBuzzTheme(themeName)) return null;
+  if (!isBeekeeperTheme(themeName)) return null;
 
   final isDark = brightness == Brightness.dark;
   return LinearGradient(

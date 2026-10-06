@@ -33,8 +33,8 @@ import {
   isCodingSessionTurnReceipt,
   lifecycleReceiptSemanticKey,
   MAX_RETAINED_RAW_EVENTS_PER_GENERATION,
-  parseBuzzCodingSessionMetadata,
-  parseBuzzCodingSessionTranscript,
+  parseBeekeeperCodingSessionMetadata,
+  parseBeekeeperCodingSessionTranscript,
   parseCodingSessionLifecycleReceipt,
   TrustedCodingSessionIngressStore,
 } from "./codingSessionTrustedIngress.ts";
@@ -248,11 +248,11 @@ test("strict codecs enforce exact receipt invariants and metadata shape", () => 
   }
 
   assert.deepEqual(
-    parseBuzzCodingSessionMetadata(JSON.stringify(metadata())),
+    parseBeekeeperCodingSessionMetadata(JSON.stringify(metadata())),
     metadata(),
   );
   assert.equal(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       JSON.stringify({
         ...metadata(),
         capabilities: { ...metadata().capabilities, terminal: true },
@@ -264,14 +264,14 @@ test("strict codecs enforce exact receipt invariants and metadata shape", () => 
 
 test("a standalone session's null projectRef decodes; a missing key does not", () => {
   assert.equal(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       JSON.stringify(metadata({ projectRef: null })),
     )?.projectRef,
     null,
   );
   const { projectRef: _dropped, ...withoutKey } = metadata();
   assert.equal(
-    parseBuzzCodingSessionMetadata(JSON.stringify(withoutKey)),
+    parseBeekeeperCodingSessionMetadata(JSON.stringify(withoutKey)),
     null,
   );
 });
@@ -281,7 +281,7 @@ test("capabilities from a provider predating promptImage still decode", () => {
   // execution can do nothing" — that would withdraw every control it does
   // have, which is a far worse lie than a missing attach button.
   const { promptImage: _absent, ...older } = metadata().capabilities;
-  const decoded = parseBuzzCodingSessionMetadata(
+  const decoded = parseBeekeeperCodingSessionMetadata(
     JSON.stringify(metadata({ capabilities: older })),
   );
   assert.equal(decoded?.capabilities?.promptImage, false);
@@ -289,7 +289,7 @@ test("capabilities from a provider predating promptImage still decode", () => {
 
   // Present and true is carried through — that is what enables the control.
   assert.equal(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       JSON.stringify(
         metadata({ capabilities: { ...older, promptImage: true } }),
       ),
@@ -299,7 +299,7 @@ test("capabilities from a provider predating promptImage still decode", () => {
 
   // Present but not a boolean is a malformed vector, not a soft default.
   assert.equal(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       JSON.stringify(
         metadata({ capabilities: { ...older, promptImage: "yes" } }),
       ),
@@ -310,7 +310,7 @@ test("capabilities from a provider predating promptImage still decode", () => {
 
 test("CST codec accepts only the exact provider-neutral transcript envelope", () => {
   assert.deepEqual(
-    parseBuzzCodingSessionTranscript(JSON.stringify(transcript())),
+    parseBeekeeperCodingSessionTranscript(JSON.stringify(transcript())),
     transcript(),
   );
   for (const invalid of [
@@ -322,7 +322,7 @@ test("CST codec accepts only the exact provider-neutral transcript envelope", ()
     { ...transcript(), session: { ...OTHER_TARGET, provider: "claude" } },
   ]) {
     assert.equal(
-      parseBuzzCodingSessionTranscript(JSON.stringify(invalid)),
+      parseBeekeeperCodingSessionTranscript(JSON.stringify(invalid)),
       null,
     );
   }
@@ -344,8 +344,9 @@ test("the fork's amended item kinds decode through the CST codec", () => {
     },
   ]) {
     assert.deepEqual(
-      parseBuzzCodingSessionTranscript(JSON.stringify(transcript({ item })))
-        ?.item,
+      parseBeekeeperCodingSessionTranscript(
+        JSON.stringify(transcript({ item })),
+      )?.item,
       item,
     );
   }
@@ -368,7 +369,7 @@ test("receipt command ids and metadata identities use the provider's exact UTF-8
 
   const identityAtLimit = "é".repeat(256);
   assert.notEqual(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       JSON.stringify(
         metadata({
           session: { ...TARGET, driver: identityAtLimit },
@@ -379,7 +380,7 @@ test("receipt command ids and metadata identities use the provider's exact UTF-8
     null,
   );
   assert.equal(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       JSON.stringify(
         metadata({ session: { ...TARGET, driver: `${identityAtLimit}a` } }),
       ),
@@ -387,7 +388,7 @@ test("receipt command ids and metadata identities use the provider's exact UTF-8
     null,
   );
   assert.equal(
-    parseBuzzCodingSessionMetadata(
+    parseBeekeeperCodingSessionMetadata(
       JSON.stringify(metadata({ projectRef: `${"é".repeat(1024)}a` })),
     ),
     null,
@@ -1206,12 +1207,15 @@ test("a rejected or unverifiable event is never retained", () => {
 test("metadata accepts an optional canonical sessionRef and rejects every other shape", () => {
   const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
   // Absent key: the pre-umbrella form decodes with no sessionRef property.
-  const withoutKey = parseBuzzCodingSessionMetadata(JSON.stringify(metadata()));
+  const withoutKey = parseBeekeeperCodingSessionMetadata(
+    JSON.stringify(metadata()),
+  );
   assert.equal("sessionRef" in withoutKey, false);
   // Present key: echoed only when the create claimed one.
   assert.equal(
-    parseBuzzCodingSessionMetadata(JSON.stringify(metadata({ sessionRef })))
-      ?.sessionRef,
+    parseBeekeeperCodingSessionMetadata(
+      JSON.stringify(metadata({ sessionRef })),
+    )?.sessionRef,
     sessionRef,
   );
   // The echo is never an explicit null and never a looser string.
@@ -1224,7 +1228,7 @@ test("metadata accepts an optional canonical sessionRef and rejects every other 
     42,
   ]) {
     assert.equal(
-      parseBuzzCodingSessionMetadata(
+      parseBeekeeperCodingSessionMetadata(
         JSON.stringify(metadata({ sessionRef: invalid })),
       ),
       null,
@@ -1303,10 +1307,10 @@ test("metadata accepts exactly the four amendment dialects the provider emits", 
     metadata({ sessionRef, ...FACTS }),
     metadata({ ...NULL_FACTS }),
   ]) {
-    const parsed = parseBuzzCodingSessionMetadata(JSON.stringify(shape));
+    const parsed = parseBeekeeperCodingSessionMetadata(JSON.stringify(shape));
     assert.notEqual(parsed, null, JSON.stringify(shape));
   }
-  const parsed = parseBuzzCodingSessionMetadata(
+  const parsed = parseBeekeeperCodingSessionMetadata(
     JSON.stringify(metadata({ ...FACTS })),
   );
   assert.equal(parsed.observedCommit, FACTS.observedCommit);
@@ -1321,14 +1325,16 @@ test("a partial fact subset is corruption, not a dialect", () => {
     const partial = { ...FACTS };
     delete partial[keys[drop]];
     assert.equal(
-      parseBuzzCodingSessionMetadata(JSON.stringify(metadata(partial))),
+      parseBeekeeperCodingSessionMetadata(JSON.stringify(metadata(partial))),
       null,
       `dropping ${keys[drop]} must reject`,
     );
   }
   // A single stray fact key is equally partial.
   assert.equal(
-    parseBuzzCodingSessionMetadata(JSON.stringify(metadata({ dirty: false }))),
+    parseBeekeeperCodingSessionMetadata(
+      JSON.stringify(metadata({ dirty: false })),
+    ),
     null,
   );
 });
@@ -1345,7 +1351,7 @@ test("fact fields are typed and verifiedAt travels with relayReachable", () => {
     { ...FACTS, verifiedAt: null },
   ]) {
     assert.equal(
-      parseBuzzCodingSessionMetadata(JSON.stringify(metadata(bad))),
+      parseBeekeeperCodingSessionMetadata(JSON.stringify(metadata(bad))),
       null,
       JSON.stringify(bad),
     );

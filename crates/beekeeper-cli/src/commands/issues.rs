@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::client::BuzzClient;
+use crate::client::BeekeeperClient;
 use crate::commands::with_git_provenance;
 use crate::error::CliError;
 use crate::validate::{read_or_stdin, sdk_err, validate_hex64, validate_repo_id};
@@ -229,7 +229,7 @@ impl IssueAssignmentOperation {
 }
 
 pub async fn cmd_create_issue(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_owner: &str,
     repo_id: &str,
     subject: &str,
@@ -269,7 +269,7 @@ pub async fn cmd_create_issue(
 /// Desktop app writes). Clients trust it when signed by the issue author
 /// or repo owner, or when it is a self-assignment.
 pub async fn cmd_assign_issue(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     issue: &str,
     repo_owner: &str,
     repo_id: &str,
@@ -290,7 +290,7 @@ pub async fn cmd_assign_issue(
 
 /// Publish an issue unassignment with the same trust rules as assignment.
 pub async fn cmd_unassign_issue(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     issue: &str,
     repo_owner: &str,
     repo_id: &str,
@@ -311,7 +311,7 @@ pub async fn cmd_unassign_issue(
 
 #[allow(clippy::too_many_arguments)]
 async fn publish_issue_assignment_operation(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     issue: &str,
     repo_owner: &str,
     repo_id: &str,
@@ -371,7 +371,7 @@ async fn publish_issue_assignment_operation(
 }
 
 async fn issue_assignment_context(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     issue: &str,
     repo: &GitRepoCoord,
     signer: &str,
@@ -443,7 +443,7 @@ async fn issue_assignment_context(
     Ok(IssueAssignmentContext { created_at, prior })
 }
 
-pub async fn cmd_get_issue(client: &BuzzClient, event: &str) -> Result<(), CliError> {
+pub async fn cmd_get_issue(client: &BeekeeperClient, event: &str) -> Result<(), CliError> {
     validate_hex64(event)?;
     let filter = serde_json::json!({
         "kinds": [1621],
@@ -455,7 +455,7 @@ pub async fn cmd_get_issue(client: &BuzzClient, event: &str) -> Result<(), CliEr
 }
 
 pub async fn cmd_list_issues(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     repo_owner: &str,
     repo_id: &str,
     author: Option<&str>,
@@ -489,7 +489,7 @@ pub async fn cmd_list_issues(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_issue_status(
-    client: &BuzzClient,
+    client: &BeekeeperClient,
     issue: &str,
     status: &str,
     content: Option<&str>,
@@ -556,7 +556,7 @@ pub async fn cmd_issue_status(
     Ok(())
 }
 
-pub async fn dispatch(cmd: crate::IssuesCmd, client: &BuzzClient) -> Result<(), CliError> {
+pub async fn dispatch(cmd: crate::IssuesCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     use crate::IssuesCmd;
     match cmd {
         IssuesCmd::Create {

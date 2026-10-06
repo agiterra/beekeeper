@@ -660,7 +660,7 @@ function VirtualizedTimelineRows({
     const scroller = hostRef.current?.firstElementChild;
     const element = scroller instanceof HTMLDivElement ? scroller : null;
     if (element) {
-      element.dataset.buzzConversationScroll = "true";
+      element.dataset.beekeeperConversationScroll = "true";
       element.dataset.testid = "message-timeline";
       element.dataset.virtuaEstimateCallCount = String(
         estimateCallCountRef.current,

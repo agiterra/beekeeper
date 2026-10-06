@@ -112,8 +112,10 @@ test("MEASURE: scroll-back pagination latency in target channel", async ({
         `${welcomePrefix}${encodeURIComponent(relayUrl)}:${ident.pubkey}`,
         "true",
       );
-      const w = window as unknown as { __BUZZ_E2E__?: Record<string, unknown> };
-      w.__BUZZ_E2E__ = { ...(w.__BUZZ_E2E__ ?? {}), identity: ident };
+      const w = window as unknown as {
+        __BEEKEEPER_E2E__?: Record<string, unknown>;
+      };
+      w.__BEEKEEPER_E2E__ = { ...(w.__BEEKEEPER_E2E__ ?? {}), identity: ident };
     },
     {
       ident: identity,

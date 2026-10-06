@@ -4,13 +4,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:local_auth/local_auth.dart';
-import 'package:buzz/features/pairing/pairing_page.dart';
-import 'package:buzz/features/pairing/pairing_provider.dart';
-import 'package:buzz/shared/community/community.dart';
-import 'package:buzz/shared/security/sensitive_action_authorizer.dart';
-import 'package:buzz/shared/theme/theme.dart';
-import 'package:buzz/shared/widgets/buzz_loading_indicator.dart';
-import 'package:buzz/shared/widgets/tappable_flapping_bee.dart';
+import 'package:beekeeper/features/pairing/pairing_page.dart';
+import 'package:beekeeper/features/pairing/pairing_provider.dart';
+import 'package:beekeeper/shared/community/community.dart';
+import 'package:beekeeper/shared/security/sensitive_action_authorizer.dart';
+import 'package:beekeeper/shared/theme/theme.dart';
+import 'package:beekeeper/shared/widgets/beekeeper_loading_indicator.dart';
+import 'package:beekeeper/shared/widgets/tappable_flapping_bee.dart';
 
 import '../../helpers/widget_helpers.dart';
 
@@ -159,7 +159,7 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.byType(BuzzLoadingIndicator), findsOneWidget);
+      expect(find.byType(BeekeeperLoadingIndicator), findsOneWidget);
       // Connect text should be replaced by spinner.
       expect(find.text('Connect'), findsNothing);
     });

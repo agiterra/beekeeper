@@ -22,7 +22,7 @@ async function waitForMockLiveSubscription(
       () =>
         page.evaluate(
           ({ channelName, kind }) =>
-            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+            window.__BEEKEEPER_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
               channelName,
               kind,
             }) ?? false,
@@ -40,7 +40,7 @@ async function emit(
 ) {
   const event = await page.evaluate(
     (payload) =>
-      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+      window.__BEEKEEPER_E2E_EMIT_MOCK_MESSAGE__?.({
         channelName: payload.channel,
         content: payload.content,
         parentEventId: payload.parentEventId,
@@ -147,7 +147,7 @@ test.describe("composer overlays mask scrolled content", () => {
     // Scroll the conversation up so trailing rows sit behind the overlay.
     await page.evaluate(() => {
       const scroller = document.querySelector<HTMLElement>(
-        '[data-buzz-conversation-scroll="true"]',
+        '[data-beekeeper-conversation-scroll="true"]',
       );
       if (!scroller) throw new Error("Missing conversation scroll container");
       scroller.scrollTop = Math.max(
@@ -184,7 +184,7 @@ test.describe("composer overlays mask scrolled content", () => {
     const quiet = await composerDockGeometry(overlay);
 
     await page.evaluate((channelName) => {
-      window.__BUZZ_E2E_EMIT_MOCK_TYPING__?.({ channelName });
+      window.__BEEKEEPER_E2E_EMIT_MOCK_TYPING__?.({ channelName });
     }, CHANNEL);
     await expect(
       overlay.getByTestId("channel-composer-activity-row"),
@@ -230,7 +230,7 @@ test.describe("composer overlays mask scrolled content", () => {
     await page.waitForTimeout(300);
     await page.evaluate(() => {
       const scroller = document.querySelector<HTMLElement>(
-        '[data-buzz-conversation-scroll="true"]',
+        '[data-beekeeper-conversation-scroll="true"]',
       );
       if (!scroller) throw new Error("Missing conversation scroll container");
       scroller.scrollTop = scroller.scrollHeight;
@@ -331,7 +331,7 @@ test.describe("composer overlays mask scrolled content", () => {
     await waitForMockLiveSubscription(page, CHANNEL, TYPING_KIND);
     await page.evaluate(
       ({ channelName, createdAt, pubkey, threadHeadId }) => {
-        window.__BUZZ_E2E_EMIT_MOCK_TYPING__?.({
+        window.__BEEKEEPER_E2E_EMIT_MOCK_TYPING__?.({
           channelName,
           createdAt,
           pubkey,

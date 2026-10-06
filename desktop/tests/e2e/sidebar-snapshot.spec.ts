@@ -174,7 +174,7 @@ async function seedCommunities(page: Page, communityPubkey = OWNER_PUBKEY) {
 
 async function getChannelsPayloads(page: Page) {
   return page.evaluate(() =>
-    (window.__BUZZ_E2E_COMMAND_LOG__ ?? [])
+    (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? [])
       .filter((entry) => entry.command === "get_channels")
       .map((entry) => entry.payload as { knownHash?: unknown }),
   );
@@ -182,7 +182,7 @@ async function getChannelsPayloads(page: Page) {
 
 async function mutateDisplayedChannels(page: Page, channelName: string) {
   await page.evaluate((name) => {
-    const queryClient = window.__BUZZ_E2E_QUERY_CLIENT__ as
+    const queryClient = window.__BEEKEEPER_E2E_QUERY_CLIENT__ as
       | {
           setQueryData: (
             queryKey: readonly string[],
@@ -223,10 +223,10 @@ async function readPersistedSnapshot(page: Page) {
 async function trackSnapshotRows(page: Page) {
   await page.addInitScript(() => {
     const testWindow = window as Window & {
-      __BUZZ_E2E_SNAPSHOT_ROWS_SEEN__?: string[];
+      __BEEKEEPER_E2E_SNAPSHOT_ROWS_SEEN__?: string[];
     };
     const seen: string[] = [];
-    testWindow.__BUZZ_E2E_SNAPSHOT_ROWS_SEEN__ = seen;
+    testWindow.__BEEKEEPER_E2E_SNAPSHOT_ROWS_SEEN__ = seen;
     const record = (node: Node) => {
       if (!(node instanceof Element)) return;
       const rows = node.matches('[data-channel-id^="snapshot-"]')
@@ -250,9 +250,9 @@ async function getTrackedSnapshotRows(page: Page) {
     () =>
       (
         window as Window & {
-          __BUZZ_E2E_SNAPSHOT_ROWS_SEEN__?: string[];
+          __BEEKEEPER_E2E_SNAPSHOT_ROWS_SEEN__?: string[];
         }
-      ).__BUZZ_E2E_SNAPSHOT_ROWS_SEEN__ ?? [],
+      ).__BEEKEEPER_E2E_SNAPSHOT_ROWS_SEEN__ ?? [],
   );
 }
 

@@ -42,7 +42,9 @@ class _AppearanceSection extends ConsumerWidget {
             MaterialPageRoute<void>(builder: (_) => const ThemePickerPage()),
           ),
         ),
-        if (!isBuzzTheme(effectiveTheme(schemeName, mode)?.name ?? schemeName))
+        if (!isBeekeeperTheme(
+          effectiveTheme(schemeName, mode)?.name ?? schemeName,
+        ))
           AppListRow(
             icon: LucideIcons.droplet,
             title: 'Accent color',
@@ -59,7 +61,7 @@ class _AppearanceSection extends ConsumerWidget {
 }
 
 void _showAppearanceModeSheet(BuildContext context) {
-  showBuzzModalBottomSheet<void>(
+  showBeekeeperModalBottomSheet<void>(
     context: context,
     title: 'Appearance',
     showDragHandle: true,

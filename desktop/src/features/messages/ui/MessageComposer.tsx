@@ -39,7 +39,7 @@ import {
 import { useLinkEditor } from "@/features/messages/lib/useLinkEditor";
 import { useComposerSpoilerParticles } from "@/features/messages/lib/useComposerSpoilerParticles";
 import { useTypingBroadcast } from "@/features/messages/useTypingBroadcast";
-import { getBuzzCodeBlockClipboardText } from "@/shared/lib/codeBlockClipboard";
+import { getBeekeeperCodeBlockClipboardText } from "@/shared/lib/codeBlockClipboard";
 import { cn } from "@/shared/lib/cn";
 import { ChannelAutocomplete } from "./ChannelAutocomplete";
 import { ComposerReplyEditBanner } from "./ComposerReplyEditBanner";
@@ -757,7 +757,7 @@ function MessageComposerImpl({
           // The code block copy button writes a small Buzz marker alongside
           // plain text. Use it to paste back as a literal code block so Markdown
           // parsing cannot reshape indentation, fence markers, or headings.
-          const codeBlockText = getBuzzCodeBlockClipboardText(
+          const codeBlockText = getBeekeeperCodeBlockClipboardText(
             event.clipboardData,
           );
           if (codeBlockText !== null) {

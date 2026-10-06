@@ -8,7 +8,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../shared/clipboard_utils.dart';
 import '../../shared/mentions/agent_identity_provider.dart';
 import '../../shared/theme/theme.dart';
-import '../../shared/widgets/buzz_loading_indicator.dart';
+import '../../shared/widgets/beekeeper_loading_indicator.dart';
 import '../../shared/widgets/modal_presentation.dart';
 import '../../shared/widgets/sheet_divider.dart';
 import '../coding_sessions/ui/coding_sessions_page.dart';
@@ -30,7 +30,7 @@ Future<bool?> showChannelActionsSheet({
   required bool isUnread,
   VoidCallback? onMarkRead,
   String? sectionId,
-}) => showBuzzModalBottomSheet<bool>(
+}) => showBeekeeperModalBottomSheet<bool>(
   context: context,
   isScrollControlled: true,
   showDragHandle: true,
@@ -216,17 +216,18 @@ class ChannelActionsSheet extends ConsumerWidget {
                   leading: const Icon(LucideIcons.settings),
                   title: const Text('Manage channel'),
                   onTap: () async {
-                    final shouldClose = await showBuzzModalBottomSheet<bool>(
-                      context: context,
-                      title: 'Manage channel',
-                      isScrollControlled: true,
-                      showDragHandle: true,
-                      constraints: BoxConstraints(
-                        maxWidth: 640,
-                        maxHeight: MediaQuery.sizeOf(context).height * 0.9,
-                      ),
-                      builder: (_) => ManageChannelSheet(channel: channel),
-                    );
+                    final shouldClose =
+                        await showBeekeeperModalBottomSheet<bool>(
+                          context: context,
+                          title: 'Manage channel',
+                          isScrollControlled: true,
+                          showDragHandle: true,
+                          constraints: BoxConstraints(
+                            maxWidth: 640,
+                            maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+                          ),
+                          builder: (_) => ManageChannelSheet(channel: channel),
+                        );
                     if (shouldClose == true && context.mounted) {
                       Navigator.of(context).pop(true);
                     }
@@ -279,7 +280,7 @@ class ChannelActionsSheet extends ConsumerWidget {
                 if (lifecycleCapabilitiesLoading)
                   const ListTile(
                     enabled: false,
-                    leading: BuzzLoadingIndicator(
+                    leading: BeekeeperLoadingIndicator(
                       size: 20,
                       semanticLabel: 'Loading channel actions',
                     ),
@@ -470,7 +471,7 @@ Future<void> _confirmAndRun(
   required Future<void> Function() action,
 }) async {
   final pageContext = Navigator.of(sheetContext, rootNavigator: true).context;
-  final confirmed = await showBuzzDialog<bool>(
+  final confirmed = await showBeekeeperDialog<bool>(
     context: pageContext,
     builder: (dialogContext) => AlertDialog(
       title: Text(title),
@@ -511,7 +512,7 @@ Future<void> _showMoveSectionSheet(
 }) async {
   final sections = [...ref.read(channelSectionsProvider).store.sections]
     ..sort((a, b) => a.order.compareTo(b.order));
-  await showBuzzModalBottomSheet<void>(
+  await showBeekeeperModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
     builder: (sheetContext) => SafeArea(
@@ -585,7 +586,7 @@ Future<void> _showMoveSectionSheet(
 
 Future<String?> _showSectionNameDialog(BuildContext context) async {
   final controller = TextEditingController();
-  final result = await showBuzzDialog<String>(
+  final result = await showBeekeeperDialog<String>(
     context: context,
     builder: (dialogContext) => AlertDialog(
       title: const Text('New Section'),
