@@ -147,7 +147,9 @@ test("keeps the drawer open until the huddle is expanded", async ({ page }) => {
   const huddleShell = page.locator(".beekeeper-huddle-shell");
   await expect(huddleShell).toHaveAttribute("data-huddle-open", "true");
   const huddleBackdrop = page.locator(".beekeeper-huddle-drawer-backdrop");
-  await expect(huddleBackdrop).toHaveClass(/buzz-huddle-drawer-backdrop-open/);
+  await expect(huddleBackdrop).toHaveClass(
+    /beekeeper-huddle-drawer-backdrop-open/,
+  );
   const [huddleBackdropColor, huddleDrawerColor] = await Promise.all([
     huddleBackdrop.evaluate(
       (element) => getComputedStyle(element).backgroundColor,

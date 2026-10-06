@@ -833,7 +833,7 @@ test("renders emoji avatars with a static background layer", async ({
     "background-color",
     "rgb(255, 231, 92)",
   );
-  await expect(avatarPreview).not.toHaveClass(/buzz-avatar-squish/);
+  await expect(avatarPreview).not.toHaveClass(/beekeeper-avatar-squish/);
   await expect(page.getByTestId("profile-avatar-preview-emoji")).toHaveText(
     "😀",
   );
