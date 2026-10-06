@@ -147,7 +147,7 @@ pub fn app_checkout_dir() -> Option<PathBuf> {
     resolve_app_checkout(&cwd, dirs::home_dir().as_deref())
 }
 
-/// Build the child's Buzz-owned environment.
+/// Build the child's Beekeeper-owned environment.
 ///
 /// Only variables the host is authoritative for are set. The ACP command is
 /// included only after the desktop resolves the provider's default binary to

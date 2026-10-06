@@ -243,7 +243,7 @@ pub async fn handle_side_effects(
         // NIP-34: Git repo announcement → reserve name + seed manifest pointer.
         KIND_GIT_REPO_ANNOUNCEMENT => handle_git_repo_announcement(tenant, event, state).await,
         KIND_AGENT_PROFILE => handle_agent_profile(tenant, event, state).await,
-        // NIP-MP Buzz access extension: project the head's access level and
+        // NIP-MP Beekeeper access extension: project the head's access level and
         // invited-member `p` tags into `project_acl` (store+project) so the
         // accessible-channels query can gate private-project channels in SQL.
         KIND_PROJECT => handle_project_acl_projection(tenant, event, state).await,
@@ -579,7 +579,7 @@ pub enum DeletionShape {
 
 /// Validate a standard NIP-09 deletion event before it is stored.
 ///
-/// Buzz accepts standard deletions for self-authored events, plus the owning
+/// Beekeeper accepts standard deletions for self-authored events, plus the owning
 /// human deleting their agent's events (mirrors `validate_edit_ownership`),
 /// plus — on the addressable `a`-tag path only — an Owner of the project that
 /// contains the target (see [`project_owner_admits_deletion`]).
@@ -1821,7 +1821,7 @@ pub async fn emit_group_discovery_events(
                 tags.push(Tag::parse(["p", &pubkey_hex])?);
             }
         }
-        // Buzz channels always require explicit membership
+        // Beekeeper channels always require explicit membership
         tags.push(Tag::parse(["closed"])?);
         // Channel type tag so clients can distinguish stream/forum/dm without inference
         tags.push(Tag::parse(["t", &channel.channel_type])?);
@@ -2851,7 +2851,7 @@ async fn handle_leave_request(
 
 /// Handle NIP-09 deletion via `a` tag (addressable/parameterized-replaceable events).
 /// Parses "kind:pubkey:d-tag" and deletes the corresponding DB record.
-/// Handle a kind:30621 project head (NIP-MP Buzz access extension).
+/// Handle a kind:30621 project head (NIP-MP Beekeeper access extension).
 ///
 /// Projects the head's `buzz-access` level and invited-member `p` tags into
 /// `project_acl` / `project_acl_members`. The event stays authoritative
@@ -4270,7 +4270,7 @@ async fn ensure_manifest_pointer(
 ///
 /// The seeded empty manifest is the source of truth; this event is the
 /// derived notification. Fires once per announce, signed by the relay,
-/// carrying the announcer's pubkey in the `p` tag (buzz extension).
+/// carrying the announcer's pubkey in the `p` tag (Beekeeper extension).
 async fn emit_initial_ref_state(
     tenant: &TenantContext,
     state: &Arc<AppState>,

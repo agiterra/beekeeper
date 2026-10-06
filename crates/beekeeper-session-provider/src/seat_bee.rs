@@ -144,7 +144,7 @@ pub fn resolve_seat_bee(
 
 /// [`resolve_seat_bee`] against this process's own executable and environment.
 ///
-/// The provider is itself resolved the way every other Buzz binary is — a
+/// The provider is itself resolved the way every other Beekeeper binary is — a
 /// bundled sidecar beside the app in a packaged build, `target/{debug,release}`
 /// in a development one — so its own parent directory is exactly where the
 /// `bee` this build produced sits, in both cases.

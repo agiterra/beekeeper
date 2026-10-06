@@ -1,6 +1,6 @@
-//! Harness-side Buzz relay client.
+//! Harness-side Beekeeper relay client.
 //!
-//! Connects to the Buzz relay via NIP-01 WebSocket, authenticates via NIP-42,
+//! Connects to the Beekeeper relay via NIP-01 WebSocket, authenticates via NIP-42,
 //! discovers channels via REST API, and streams events back to the harness main
 //! loop. Also publishes ephemeral events (typing indicators) via the same
 //! WebSocket connection.
@@ -569,7 +569,7 @@ impl RestClient {
     ///
     /// This is the documented trust root for relay-signed events: NIP-11
     /// defines `self` as the relay's identity key, NIP-29/NIP-43 direct
-    /// clients to verify relay-authored events against it, and Buzz serves
+    /// clients to verify relay-authored events against it, and Beekeeper serves
     /// it from the same origin the caller already trusts for its entire
     /// authenticated command stream. `Ok(None)` means the relay advertises
     /// no stable signing key — callers must then treat every relay-signed
@@ -955,7 +955,7 @@ type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Harness-side relay client.
 ///
-/// Connects to the Buzz relay, authenticates via NIP-42, and streams
+/// Connects to the Beekeeper relay, authenticates via NIP-42, and streams
 /// matching events for subscribed channels.
 ///
 /// A background tokio task owns the WebSocket connection and responds to

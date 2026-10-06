@@ -1,4 +1,4 @@
-//! The local **session broker** (buzz ↔ agent access to sessions).
+//! The local **session broker** (Beekeeper ↔ agent access to sessions).
 //!
 //! The `bee session` CLI calls this owner-only Unix-socket broker inside the
 //! desktop app, which is the single authority: before any write reaches a

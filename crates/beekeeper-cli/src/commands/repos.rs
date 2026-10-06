@@ -358,7 +358,7 @@ pub(crate) fn build_create_announcement(
         let coordinate = validate_project_coordinate(project)?;
         builder = builder.tag(Tag::parse(["project", &coordinate]).map_err(tag_error)?);
     }
-    // Co-founders, in the standard NIP-34 tag. Buzz's announcement builder
+    // Co-founders, in the standard NIP-34 tag. Beekeeper's announcement builder
     // never emitted one before finding 33, so every repository announced
     // before this had exactly one founder whether or not it had one owner.
     if let Some(tag) = build_maintainers_tag(maintainers)? {

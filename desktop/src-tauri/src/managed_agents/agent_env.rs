@@ -85,7 +85,9 @@ fn build_env_map(
     // otherwise win over the gate Desktop just set.
     map.retain(|key, _| {
         if super::env_vars::is_reserved_env_key(key) {
-            eprintln!("buzz-desktop: ignoring reserved env var `{key}` from the baked build env");
+            eprintln!(
+                "beekeeper-desktop: ignoring reserved env var `{key}` from the baked build env"
+            );
             return false;
         }
         true
@@ -392,7 +394,7 @@ mod tests {
     // ── baked reserved-key filtering ──────────────────────────────────────
     //
     // The baked map is written into a spawned agent's environment LAST (see
-    // `managed_agents/runtime.rs`), after Buzz sets the access gates. If a
+    // `managed_agents/runtime.rs`), after Beekeeper sets the access gates. If a
     // baked reserved key survived here, an internal build packaged with
     // `BUZZ_ACP_RESPOND_TO=anyone` would answer anyone while the UI shows
     // "Only me". `build.rs` rejects such a key at build time; these tests pin

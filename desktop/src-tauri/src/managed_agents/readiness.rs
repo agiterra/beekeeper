@@ -254,7 +254,7 @@ fn resolve_effective_agent_env_with_def(
     );
     env.extend(user_env);
 
-    // Buzz shared compute is a native Buzz provider. Translate it to buzz-agent's
+    // Beekeeper shared compute is a native Beekeeper provider. Translate it to buzz-agent's
     // OpenAI-compatible transport only in the effective runtime environment.
     #[cfg(feature = "mesh-llm")]
     super::apply_relay_mesh_env(
@@ -381,7 +381,7 @@ impl AgentReadiness {
 /// * **unknown / custom command**: always `Ready` (no requirements known).
 ///
 /// Databricks note: `DATABRICKS_TOKEN` is `.unwrap_or_default()` in
-/// `buzz-agent/src/config.rs:143` — it is an escape hatch for static tokens
+/// `beekeeper-agent/src/config.rs:143` — it is an escape hatch for static tokens
 /// but the normal path is OAuth PKCE.  We intentionally do NOT mark the
 /// token as required to avoid a false NotReady for users on OAuth.
 pub(crate) fn agent_readiness(effective: &EffectiveAgentEnv) -> AgentReadiness {
@@ -503,7 +503,7 @@ fn buzz_agent_requirements(effective: &EffectiveAgentEnv) -> Vec<Requirement> {
             }
         Some("databricks") | Some("databricks_v2") | Some("databricks-v2")
             // DATABRICKS_HOST is hard-required; DATABRICKS_TOKEN is optional
-            // (OAuth PKCE is the normal path — see buzz-agent/src/config.rs:143).
+            // (OAuth PKCE is the normal path — see beekeeper-agent/src/config.rs:143).
             if env_key_missing("DATABRICKS_HOST") => {
                 missing.push(Requirement::EnvKey {
                     key: "DATABRICKS_HOST".to_string(),
@@ -530,7 +530,7 @@ fn buzz_agent_requirements(effective: &EffectiveAgentEnv) -> Vec<Requirement> {
 ///
 /// File-config tier: goose reads `~/.config/goose/config.yaml` at startup.
 /// Requirements already satisfied there are silenced — we don't need to
-/// require them from Buzz's env layer.  The file layer only *silences*
+/// require them from Beekeeper's env layer.  The file layer only *silences*
 /// requirements; it never injects values into the spawn env.
 ///
 /// `file_cfg` is injected by the caller (read once at `collect_missing_requirements`)

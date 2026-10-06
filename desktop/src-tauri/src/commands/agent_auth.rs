@@ -24,7 +24,7 @@ pub struct AcpAuthMethod {
     pub method_type: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
-    /// Full terminal command advertised by the adapter. Buzz never guesses
+    /// Full terminal command advertised by the adapter. Beekeeper never guesses
     /// vendor login commands; when present, this argv is the source of truth.
     #[serde(default)]
     pub command: Vec<String>,
@@ -139,7 +139,7 @@ fn run_buzz_acp_auth_command<const N: usize>(
 /// PATH for the buzz-acp auth helper child process.
 ///
 /// Uses the augmented agent PATH so `#!/usr/bin/env node` adapter shims
-/// resolve the Buzz-managed Node runtime — the same PATH normal agent
+/// resolve the Beekeeper-managed Node runtime — the same PATH normal agent
 /// launches and readiness probes use.
 fn auth_command_path() -> Option<String> {
     crate::managed_agents::readiness::cli_probe::augmented_path_with_inherited()

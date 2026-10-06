@@ -1,4 +1,4 @@
-//! Detached PTY host for Buzz built-in shell sessions.
+//! Detached PTY host for Beekeeper built-in shell sessions.
 //!
 //! This crate ships two things: the `buzz-shell-host` binary (a dtach-style
 //! process that owns a shell in a PTY and outlives the desktop app), and the

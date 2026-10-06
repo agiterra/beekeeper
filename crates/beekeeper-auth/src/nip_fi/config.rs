@@ -6,7 +6,7 @@
 //! exact `iss` value returned by JWT decoding; a single-issuer deployment is
 //! just a registry of length one.
 //!
-//! Buzz ships the generic OSS contract only: issuer URLs and audiences are
+//! Beekeeper ships the generic OSS contract only: issuer URLs and audiences are
 //! deployment configuration. The identity claim names are fixed — `sub` is the
 //! subject coordinate and `nostr_pubkey` the bound key — so no deployment can
 //! promote a mutable attribute into identity.
@@ -302,7 +302,7 @@ pub enum TokenClass {
         /// The mutually exclusive resource-owner/client-subject contract.
         subject_class: SubjectClassContract,
     },
-    /// A dedicated Buzz assertion: protected `typ` is exactly `nip-fi+jwt`.
+    /// A dedicated Beekeeper assertion: protected `typ` is exactly `nip-fi+jwt`.
     DedicatedNipFi,
 }
 

@@ -87,7 +87,7 @@ pub(crate) fn restage_if_needed(app: &AppHandle, state_dir: &Path, live_pid: Opt
             Ok(report) => {
                 if report.requested > 0 {
                     eprintln!(
-                        "buzz-desktop: agent-host: re-staged {} of {} agent seats for provider \
+                        "beekeeper-desktop: agent-host: re-staged {} of {} agent seats for provider \
                          pid {pid}",
                         report.staged, report.requested
                     );
@@ -95,7 +95,7 @@ pub(crate) fn restage_if_needed(app: &AppHandle, state_dir: &Path, live_pid: Opt
             }
             Err(error) => {
                 eprintln!(
-                    "buzz-desktop: agent-host: agent seat re-stage failed for provider pid \
+                    "beekeeper-desktop: agent-host: agent seat re-stage failed for provider pid \
                      {pid}: {error}"
                 );
                 // Release the claim so a later poll retries. A permanent

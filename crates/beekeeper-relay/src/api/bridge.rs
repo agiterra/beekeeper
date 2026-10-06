@@ -509,7 +509,7 @@ async fn handle_channel_window_filter(
     // published with an `h` tag, a viewer-private snapshot, an author-only
     // kind) would otherwise be served verbatim. Skipping before the id is
     // collected also keeps it out of the aux closure below. `next_cursor` and
-    // `has_more` come from the raw page (`buzz-db/src/thread.rs`), so skipped
+    // `has_more` come from the raw page (`beekeeper-db/src/thread.rs`), so skipped
     // rows cannot stall pagination.
     let mut row_ids_hex = Vec::with_capacity(window.rows.len());
     for row in &window.rows {
@@ -3058,7 +3058,7 @@ mod tests {
     /// reject the request, never admit it. The shared seen-set is the
     /// freshness fence; degrading to "best effort, allow on error" forfeits
     /// the proof (per the `Nip98ReplayGuard` trait contract,
-    /// `buzz-auth/src/nip98_replay.rs:70-73`).
+    /// `beekeeper-auth/src/nip98_replay.rs:70-73`).
     ///
     /// This test does not require Redis — it injects a guard that always
     /// returns `Err`, exercising the `Err =>` arm in

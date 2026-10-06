@@ -38,7 +38,7 @@ const MENUBAR_RELATIVE_PATH: &str = "../Library/LoginItems/Beekeeper Menu Bar.ap
 
 /// The host binary this build should register.
 ///
-/// Resolved through the same discovery order every other Buzz-spawned binary
+/// Resolved through the same discovery order every other Beekeeper-spawned binary
 /// uses, so a bundled app registers the `beekeeper-host` inside its own bundle and
 /// a dev build registers the one in `target/`. Never a bare name: launchd and
 /// systemd run with a minimal `PATH` and neither will look one up.
@@ -159,7 +159,7 @@ pub(crate) fn repair_at_launch(app: &AppHandle) {
             return;
         }
         for warning in &ensure_registered(&app, Probe::both()).warnings {
-            eprintln!("buzz-desktop: agent-host: {warning}");
+            eprintln!("beekeeper-desktop: agent-host: {warning}");
         }
     });
 }
@@ -221,7 +221,7 @@ pub(crate) fn ensure_registered(_app: &AppHandle, probe: Probe) -> Registration 
         if let Err(error) =
             ensure_service(Service::MenuBar, &home, instance, &menubar, probe.menubar)
         {
-            eprintln!("buzz-desktop: agent-host: menu bar app not registered: {error}");
+            eprintln!("beekeeper-desktop: agent-host: menu bar app not registered: {error}");
         }
     }
 

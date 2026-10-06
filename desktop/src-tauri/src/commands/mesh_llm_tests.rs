@@ -333,7 +333,7 @@ async fn cold_client_preflight_requires_explicit_target() {
 ///
 /// Before this change, `ensure_client_node_for_model` hard-errored whenever
 /// the running runtime was in `Serve` mode ("stop sharing before using
-/// Buzz shared compute as a client"). That forbade exactly what a user should be
+/// Beekeeper shared compute as a client"). That forbade exactly what a user should be
 /// able to do: host model A while pointing an agent at a different model B
 /// through the same `9337` ingress.
 ///
@@ -344,7 +344,7 @@ async fn cold_client_preflight_requires_explicit_target() {
 /// frontend selected earlier.
 ///
 /// Hardware-gated (`#[ignore]`): loads a real model. Run with:
-///   cargo test -p buzz-desktop --features mesh-llm \
+///   cargo test -p beekeeper-desktop --features mesh-llm \
 ///     ensure_serve_runtime_serves_other_model -- --ignored --nocapture
 #[test]
 #[ignore = "loads a real model; run manually with --ignored"]

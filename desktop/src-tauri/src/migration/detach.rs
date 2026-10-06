@@ -125,7 +125,7 @@ pub(super) fn detach_directory_backed_teams_in_dir(base_dir: &Path) -> Result<us
                         }
                     }
                     Err(e) => eprintln!(
-                        "buzz-desktop: detach-dir-teams: team {}: \
+                        "beekeeper-desktop: detach-dir-teams: team {}: \
                          failed to read instructions.md (preserving existing value): {e}",
                         team.id
                     ),

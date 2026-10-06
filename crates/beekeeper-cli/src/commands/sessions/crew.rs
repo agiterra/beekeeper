@@ -169,7 +169,7 @@ impl CrewExecution {
     }
 }
 
-/// First eight hex characters of a pubkey, the form every Buzz surface uses.
+/// First eight hex characters of a pubkey, the form every Beekeeper surface uses.
 pub fn short_pubkey(pubkey: &str) -> String {
     pubkey.chars().take(8).collect()
 }

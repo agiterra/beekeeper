@@ -103,7 +103,7 @@ pub struct AgentModelCapabilities {
 pub struct ChannelDeliveryState {
     /// Whether a legacy user message has successfully carried standing context.
     pub standing_context_sent: bool,
-    /// Buzz event IDs already delivered to this ACP session, either as trigger
+    /// Beekeeper event IDs already delivered to this ACP session, either as trigger
     /// events or conversation context.
     pub delivered_event_ids: HashSet<String>,
 }
@@ -2336,7 +2336,7 @@ pub async fn run_prompt_task(
     // When the batch is a single slash-command message (e.g. "@Eva /goal …"),
     // `slash_command` holds the bare command. It is sent as the FIRST prompt
     // content block so ACP connectors' slash-command detection
-    // (`prompt[0].text.startsWith("/")`) fires; the wrapped Buzz context
+    // (`prompt[0].text.startsWith("/")`) fires; the wrapped Beekeeper context
     // follows as a second block.
     let mut slash_command: Option<String> = None;
     // Event IDs represented by this prompt. Commit only after ACP reports a
@@ -3278,7 +3278,7 @@ fn conversation_context_event_ids(context: Option<&ConversationContext>) -> Hash
 
 /// Remove events already delivered to this live ACP session. Triggering events
 /// are also excluded because they are rendered separately in `[Event]`.
-/// IDs are compared in Buzz's canonical 64-character lowercase hex form: relay
+/// IDs are compared in Beekeeper's canonical 64-character lowercase hex form: relay
 /// context JSON supplies the same form emitted by `EventId::to_hex()`. A
 /// non-canonical or missing ID deliberately fails open and may be re-sent.
 fn conversation_context_delta(

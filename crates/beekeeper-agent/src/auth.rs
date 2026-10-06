@@ -693,8 +693,8 @@ fn callback_outcome(
             .unwrap_or_else(|| "missing code".into())),
     };
     let page = match result {
-        Ok(_) => "<h2>Buzz: signed in</h2><p>You can close this window.</p>",
-        Err(_) => "<h2>Buzz auth failed</h2><p>You can close this window and try again.</p>",
+        Ok(_) => "<h2>Beekeeper: signed in</h2><p>You can close this window.</p>",
+        Err(_) => "<h2>Beekeeper auth failed</h2><p>You can close this window and try again.</p>",
     }
     .to_string();
     (result, page)

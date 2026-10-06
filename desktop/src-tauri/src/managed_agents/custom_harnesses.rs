@@ -57,7 +57,7 @@ pub(crate) struct HarnessDefinition {
     #[serde(default)]
     pub args: Vec<String>,
     /// Environment variables injected at spawn time. Definition env is applied
-    /// first and LOSES on conflict with Buzz-injected vars — `BUZZ_MANAGED_AGENT`
+    /// first and LOSES on conflict with Beekeeper-injected vars — `BUZZ_MANAGED_AGENT`
     /// is always authoritative and cannot be overridden here.
     #[serde(default)]
     pub env: BTreeMap<String, String>,

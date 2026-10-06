@@ -14,9 +14,9 @@ fn test_rewrite_npm_install_uses_private_prefix() {
     assert_eq!(
         rewrite_npm_global_install(
             "npm install -g @agentclientprotocol/codex-acp",
-            "'/tmp/Buzz Node'"
+            "'/tmp/Beekeeper Node'"
         ),
-        "npm install --global --prefix '/tmp/Buzz Node' @agentclientprotocol/codex-acp"
+        "npm install --global --prefix '/tmp/Beekeeper Node' @agentclientprotocol/codex-acp"
     );
 }
 
@@ -47,8 +47,8 @@ fn test_rewrite_ignores_non_global_command() {
 #[test]
 fn test_shell_quote_escapes_single_quotes() {
     assert_eq!(
-        shell_quote(std::path::Path::new("/tmp/Buzz's Node")),
-        "'/tmp/Buzz'\\''s Node'"
+        shell_quote(std::path::Path::new("/tmp/Beekeeper's Node")),
+        "'/tmp/Beekeeper'\\''s Node'"
     );
 }
 

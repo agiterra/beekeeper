@@ -453,7 +453,7 @@ pub fn spawn_agent_child(
             Some(path) => Some(path),
             None => {
                 eprintln!(
-                    "buzz-desktop: mcp_command {effective_mcp_command:?} not found, skipping"
+                    "beekeeper-desktop: mcp_command {effective_mcp_command:?} not found, skipping"
                 );
                 None
             }
@@ -610,7 +610,7 @@ pub fn spawn_agent_child(
                     Ok(json) => Some(json),
                     Err(e) => {
                         eprintln!(
-                            "buzz-desktop: failed to serialize setup payload for {}: {e}",
+                            "beekeeper-desktop: failed to serialize setup payload for {}: {e}",
                             record.name
                         );
                         None
@@ -638,7 +638,7 @@ pub fn spawn_agent_child(
         if let Some(json) = setup_payload_json {
             command.env("BUZZ_ACP_SETUP_PAYLOAD", json);
             eprintln!(
-                "buzz-desktop: agent {} not ready — spawning in setup-listener mode",
+                "beekeeper-desktop: agent {} not ready — spawning in setup-listener mode",
                 record.name
             );
         }
@@ -754,9 +754,9 @@ pub fn spawn_agent_child(
 
     command.env("BUZZ_ACP_RELAY_OBSERVER", "true");
 
-    // ── Git credential helper for Buzz relay ──────────────────────────
+    // ── Git credential helper for Beekeeper relay ──────────────────────────
     //
-    // Agents need to clone/push repos hosted on the Buzz relay's git
+    // Agents need to clone/push repos hosted on the Beekeeper relay's git
     // server, which authenticates via NIP-98. The `git-credential-nostr`
     // binary signs auth events using the agent's nostr key.
     //
@@ -784,7 +784,7 @@ pub fn spawn_agent_child(
         command.env("GIT_CONFIG_VALUE_1", "true");
     } else {
         eprintln!(
-            "buzz-desktop: git-credential-nostr not found — agent {} will not have automatic Buzz git auth",
+            "beekeeper-desktop: git-credential-nostr not found — agent {} will not have automatic Beekeeper git auth",
             record.name,
         );
     }
@@ -794,7 +794,7 @@ pub fn spawn_agent_child(
     // `descriptor.env` is the fully-layered result from `resolve_effective_harness_descriptor`:
     // baked floor → runtime metadata → definition env (harness author defaults) →
     // global → live persona → per-agent, with reserved-key and malformed-key filtering
-    // applied. Writing it last lets user-provided values win over every Buzz-set env
+    // applied. Writing it last lets user-provided values win over every Beekeeper-set env
     // written above — reserved keys were already stripped from descriptor.env so they
     // cannot clobber BUZZ_PRIVATE_KEY, NOSTR_PRIVATE_KEY, etc.
     for (key, value) in &descriptor.env {
@@ -809,7 +809,7 @@ pub fn spawn_agent_child(
     apply_replay_floor_env(&mut command, replay_floor_unix);
     configure_runtime_cli(&mut command, runtime_meta);
 
-    // Buzz shared compute is stored as a native provider; derive the OpenAI-compatible
+    // Beekeeper shared compute is stored as a native provider; derive the OpenAI-compatible
     // transport at spawn time and scrub any unrelated ambient OpenAI key.
     // Gate on `mesh_model_id` (derived from `effective_cfg.relay_mesh_model_id()`
     // above) — not on `effective_provider` directly — so the mesh gate here

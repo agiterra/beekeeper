@@ -351,7 +351,7 @@ fn broker_call_with_timeout(
     let path = broker_socket_path()?;
     let mut stream = UnixStream::connect(&path).map_err(|e| {
         CliError::Other(format!(
-            "cannot reach the buzz desktop app (session broker at {}): {e}. \
+            "cannot reach the Beekeeper desktop app (session broker at {}): {e}. \
              Is the desktop app running?",
             path.display()
         ))

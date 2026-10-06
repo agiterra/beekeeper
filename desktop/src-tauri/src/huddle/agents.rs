@@ -125,7 +125,7 @@ pub async fn add_agent_to_huddle(
                 if active_after_error {
                     (true, None)
                 } else {
-                    eprintln!("buzz-desktop: add agent to parent channel failed: {e}");
+                    eprintln!("beekeeper-desktop: add agent to parent channel failed: {e}");
                     (false, Some(e))
                 }
             }

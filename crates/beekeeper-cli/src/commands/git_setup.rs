@@ -2324,7 +2324,7 @@ fn relay_commit_from_doc(doc: Option<&serde_json::Value>) -> &str {
 }
 
 /// Whether `value` is a full, lowercase-hex commit object name — the same
-/// contract `buzz-relay/src/build_provenance.rs::is_full_sha` advertises
+/// contract `beekeeper-relay/src/build_provenance.rs::is_full_sha` advertises
 /// under, checked independently here because a malformed or malicious NIP-11
 /// document must not be trusted just because it parses as JSON.
 fn is_full_hex_sha(value: &str) -> bool {

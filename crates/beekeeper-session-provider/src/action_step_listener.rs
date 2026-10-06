@@ -36,7 +36,7 @@
 //! # Liveness
 //!
 //! A relay heartbeat is not evidence that a subscription still delivers. The
-//! relay pings every 30 s (`buzz-relay/src/connection.rs` `heartbeat_loop`),
+//! relay pings every 30 s (`beekeeper-relay/src/connection.rs` `heartbeat_loop`),
 //! so a connection whose subscription has silently stopped feeding this task
 //! still looks busy at the socket. This task therefore measures liveness at
 //! the application layer: every [`LISTENER_PROBE_INTERVAL`] it closes its

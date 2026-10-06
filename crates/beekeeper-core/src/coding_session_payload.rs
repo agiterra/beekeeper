@@ -1096,7 +1096,7 @@ pub struct SessionMetadata {
     /// The agent seat this execution runs as, lowercase 64-hex, or `null`.
     ///
     /// `null` is still the answer for every human-created execution: that work
-    /// is supervised by the provider, not performed by a Buzz participant
+    /// is supervised by the provider, not performed by a Beekeeper participant
     /// acting as itself. A non-null value is the seat named by the create's
     /// `actor` (plan D1) and is the *only* thing about that seat that is
     /// published — its key material is resolved host-locally and never

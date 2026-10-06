@@ -44,7 +44,7 @@ pub(super) struct AuthorityAcceptanceReceipt {
     ///
     /// **Absent here is what broke every chain read after the first
     /// takeover.** The relay stamps `bodyPubkey` onto takeover/transfer
-    /// receipts (`buzz-relay/src/handlers/side_effects.rs`), and this struct
+    /// receipts (`beekeeper-relay/src/handlers/side_effects.rs`), and this struct
     /// is `deny_unknown_fields`, so the first accepted claim made every
     /// subsequent projection fail with "unknown field `bodyPubkey`" — which
     /// is to say all four handover verbs stopped working the moment one of
@@ -56,7 +56,7 @@ pub(super) struct AuthorityAcceptanceReceipt {
     ///
     /// **Absent here broke every team session a project owner founded with
     /// "Use roles" on.** Lane 186 taught the relay to echo `projectRef`
-    /// (`buzz-relay/src/handlers/side_effects.rs`) without teaching this
+    /// (`beekeeper-relay/src/handlers/side_effects.rs`) without teaching this
     /// `deny_unknown_fields` struct to read it, so from the moment the
     /// desktop signed that delegation at launch, every read of the chain —
     /// `sessions hire`, `seat-repair`, `report`, `operation get`, `pulse
@@ -409,7 +409,7 @@ pub(super) fn project_receipt_backed_authority_chain(
             // and there must be a claim in force to transfer.
             //
             // Both halves, spelled the same way the relay spells them
-            // (`buzz-db/src/event.rs`, `NoActiveClaim` before
+            // (`beekeeper-db/src/event.rs`, `NoActiveClaim` before
             // `SignerNotAuthorized`): the way back from a voided claim is a
             // fresh takeover, never a transfer, so a founder-signed transfer
             // from `NoClaim` or `Voided` is refused here exactly as the relay

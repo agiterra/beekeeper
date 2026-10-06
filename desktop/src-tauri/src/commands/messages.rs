@@ -940,7 +940,7 @@ pub async fn edit_message(
 }
 
 /// Delete a message. `moderator` selects the authority, and with it the wire
-/// kind: `false` is the author's silent NIP-09 kind:5, `true` the Buzz-native
+/// kind: `false` is the author's silent NIP-09 kind:5, `true` the Beekeeper-native
 /// kind:9005 that owners/admins may also publish and that the relay answers
 /// with a channel `message_deleted` tombstone. See [`events::DeleteAuthority`];
 /// callers must not set it for DMs or other non-channel messages.

@@ -21,14 +21,14 @@ pub(crate) fn augmented_path() -> Option<String> {
     )
 }
 
-/// PATH for Buzz-spawned native children whose own descendants include
+/// PATH for Beekeeper-spawned native children whose own descendants include
 /// `#!/usr/bin/env node` adapter shims — the auth helper and the
 /// coding-session provider.
 ///
 /// On Unix the augmented PATH already ends with the login-shell PATH (or the
 /// inherited PATH as its fallback), so it is returned as-is. On Windows,
 /// `login_shell_path()` is intentionally `None`, so the augmented PATH
-/// contains only Buzz-managed directories and the exe parent. Buzz does not
+/// contains only Beekeeper-managed directories and the exe parent. Beekeeper does not
 /// ship a managed Node runtime on Windows, and npm `.cmd` adapters need the
 /// user's normal PATH to find `node` (and often `claude`/`codex`), so the
 /// inherited process PATH is appended there instead of being replaced.
@@ -140,7 +140,7 @@ pub(crate) fn classify_probe_output(stderr_bytes: &[u8], exit_success: bool) -> 
 mod tests {
     use super::{append_inherited_path, ProbeOutcome, CONFIG_PARSE_SIGNALS};
 
-    /// Windows regression: the augmented PATH there holds only Buzz-managed
+    /// Windows regression: the augmented PATH there holds only Beekeeper-managed
     /// dirs and the exe parent (no login-shell PATH, no managed Node), so the
     /// user's inherited PATH must be appended for npm `.cmd` adapters to find
     /// `node`/`claude`/`codex`.

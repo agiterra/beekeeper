@@ -19,7 +19,7 @@
 //!   t_first_audio  tts_active rising edge = first player.append accepted
 //!
 //! Run:
-//!   BUZZ_BENCH_WAV=<48k f32 mono wav> cargo test --release -p buzz-desktop \
+//!   BUZZ_BENCH_WAV=<48k f32 mono wav> cargo test --release -p beekeeper-desktop \
 //!     --lib huddle::latency_bench -- --ignored --nocapture
 
 use std::sync::{

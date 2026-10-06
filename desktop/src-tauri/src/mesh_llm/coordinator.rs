@@ -1,9 +1,9 @@
 //! Runtime-owned shared-compute coordinator.
 //!
-//! Buzz publishes a client-signed, replaceable discovery note containing the
+//! Beekeeper publishes a client-signed, replaceable discovery note containing the
 //! member's MeshLLM owner identity and current iroh endpoint. MeshLLM itself
 //! performs transport (direct QUIC or its encrypted iroh relays) and admission.
-//! The Buzz relay is only a generic Nostr store for membership and discovery;
+//! The Beekeeper relay is only a generic Nostr store for membership and discovery;
 //! it does not coordinate connections or require mesh-specific handlers.
 
 use std::time::Duration;
@@ -14,7 +14,7 @@ use tauri::{AppHandle, Manager};
 use crate::app_state::AppState;
 
 /// Client-owned parameterized-replaceable discovery note. We use the standard
-/// NIP-51 bookmark-set kind with a reserved d-tag so existing Buzz relays accept
+/// NIP-51 bookmark-set kind with a reserved d-tag so existing Beekeeper relays accept
 /// and store it through their generic user-state path. The relay needs no mesh
 /// handler or kind-registry change.
 pub const KIND_BUZZ_MESH_MEMBER_STATUS: u16 = beekeeper_core_pkg::kind::KIND_BOOKMARK_SET as u16;
@@ -28,7 +28,7 @@ const STATUS_PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 const INGRESS_WATCHDOG_BASE: Duration = Duration::from_secs(15);
 const INGRESS_WATCHDOG_MAX: Duration = Duration::from_secs(120);
 /// A Share Compute node may start before another member's signed status reaches
-/// the relay. Recheck promptly so simultaneous starts converge into one Buzz
+/// the relay. Recheck promptly so simultaneous starts converge into one Beekeeper
 /// mesh instead of remaining independent islands.
 const MESH_JOIN_POLL_INTERVAL: Duration = Duration::from_secs(15);
 const MESH_JOIN_RETRY_MAX: Duration = Duration::from_secs(120);
@@ -69,7 +69,7 @@ pub async fn start_coordinator(app: AppHandle) {
         loop {
             tokio::time::sleep(ROSTER_POLL_INTERVAL).await;
             if let Err(error) = reconcile_roster(&roster_app, &mut pending_shrink).await {
-                eprintln!("buzz-mesh: roster reconcile failed: {error}");
+                eprintln!("beekeeper-mesh: roster reconcile failed: {error}");
             }
         }
     });
@@ -81,7 +81,7 @@ pub async fn start_coordinator(app: AppHandle) {
             match reconcile_buzz_mesh_join(&join_app).await {
                 Ok(()) => sleep_for = MESH_JOIN_POLL_INTERVAL,
                 Err(error) => {
-                    eprintln!("buzz-mesh: community mesh join reconcile failed: {error}");
+                    eprintln!("beekeeper-mesh: community mesh join reconcile failed: {error}");
                     sleep_for = (sleep_for * 2).min(MESH_JOIN_RETRY_MAX);
                 }
             }
@@ -103,7 +103,7 @@ pub async fn start_coordinator(app: AppHandle) {
                     sleep_for = INGRESS_WATCHDOG_BASE;
                 }
                 Err(error) => {
-                    eprintln!("buzz-mesh: ingress re-arm watchdog: {error}");
+                    eprintln!("beekeeper-mesh: ingress re-arm watchdog: {error}");
                     sleep_for = (sleep_for * 2).min(INGRESS_WATCHDOG_MAX);
                 }
             }
@@ -127,7 +127,7 @@ pub async fn start_coordinator(app: AppHandle) {
     }
 }
 
-/// Join an isolated runtime to the existing Buzz community mesh. The relay is
+/// Join an isolated runtime to the existing Beekeeper community mesh. The relay is
 /// discovery only: the selected endpoint is member-signed and validated, then
 /// MeshLLM establishes the encrypted peer transport itself.
 async fn reconcile_buzz_mesh_join(app: &AppHandle) -> Result<(), String> {
@@ -207,10 +207,10 @@ fn target_is_visible(target: &crate::mesh_llm::MeshServeTarget, peer_ids: &[Stri
 enum RosterReconcileAction {
     /// Keep the running allowlist untouched (no-op, or a failure we ride out).
     Keep,
-    /// Restart Buzz so MeshLLM is rebuilt with a freshly resolved roster.
+    /// Restart Beekeeper so MeshLLM is rebuilt with a freshly resolved roster.
     ///
     /// MeshLLM's native listeners are process-owned in practice: stopping and
-    /// starting the embedded runtime in one process can terminate Buzz or race
+    /// starting the embedded runtime in one process can terminate Beekeeper or race
     /// ports 9337/3131. The process boundary is therefore part of the safety
     /// contract, not an implementation detail.
     RestartProcess,
@@ -246,7 +246,7 @@ fn roster_reconcile_action(
     let fresh = match query {
         Err(error) => {
             eprintln!(
-                "buzz-mesh: roster reconcile query failed; keeping current allowlist: {error}"
+                "beekeeper-mesh: roster reconcile query failed; keeping current allowlist: {error}"
             );
             return RosterReconcileAction::Keep;
         }
@@ -306,7 +306,9 @@ async fn reconcile_roster(
             return Ok(());
         }
         RosterReconcileAction::AwaitConfirm(reduced) => {
-            eprintln!("buzz-mesh: roster shrink observed; awaiting confirmation before restart");
+            eprintln!(
+                "beekeeper-mesh: roster shrink observed; awaiting confirmation before restart"
+            );
             *pending_shrink = Some(reduced);
             return Ok(());
         }
@@ -322,7 +324,7 @@ async fn reconcile_roster(
     };
     if startup_pending {
         eprintln!(
-            "buzz-mesh: membership roster changed while client management startup is pending; deferring restart"
+            "beekeeper-mesh: membership roster changed while client management startup is pending; deferring restart"
         );
         return Ok(());
     }
@@ -341,7 +343,7 @@ async fn reconcile_roster(
     }
     drop(guard);
     eprintln!(
-        "buzz-mesh: membership roster changed; restarting Buzz to rebuild MeshLLM with the fresh community allowlist"
+        "beekeeper-mesh: membership roster changed; restarting Beekeeper to rebuild MeshLLM with the fresh community allowlist"
     );
     app.request_restart();
     Ok(())
@@ -356,8 +358,8 @@ pub(crate) async fn publish_current_status_once(app: &AppHandle, reason: &str) {
     .await
     {
         Ok(Ok(())) => {}
-        Ok(Err(error)) => eprintln!("buzz-mesh: status report after {reason} failed: {error}"),
-        Err(_) => eprintln!("buzz-mesh: status report after {reason} timed out"),
+        Ok(Err(error)) => eprintln!("beekeeper-mesh: status report after {reason} failed: {error}"),
+        Err(_) => eprintln!("beekeeper-mesh: status report after {reason} timed out"),
     }
 }
 
@@ -375,9 +377,9 @@ pub(crate) async fn publish_stopped_status_once_at(
     {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
-            eprintln!("buzz-mesh: stopped status report after {reason} failed: {error}");
+            eprintln!("beekeeper-mesh: stopped status report after {reason} failed: {error}");
         }
-        Err(_) => eprintln!("buzz-mesh: stopped status report after {reason} timed out"),
+        Err(_) => eprintln!("beekeeper-mesh: stopped status report after {reason} timed out"),
     }
 }
 

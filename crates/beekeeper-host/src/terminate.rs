@@ -8,7 +8,7 @@
 //! catches adapters the provider failed to reap.
 //!
 //! No `unsafe`: `nix`'s safe wrappers, as every other root-workspace crate
-//! that sends a signal uses (`buzz-session-provider/src/session.rs`,
+//! that sends a signal uses (`beekeeper-session-provider/src/session.rs`,
 //! `buzz-acp`).
 
 use std::time::Duration;

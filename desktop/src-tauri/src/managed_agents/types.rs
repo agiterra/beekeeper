@@ -21,12 +21,12 @@ pub struct AgentDefinition {
     pub avatar_url: Option<String>,
     pub system_prompt: String,
     /// Preferred ACP runtime ID (e.g., 'goose', 'claude', 'codex'). Determines which agent binary
-    /// Buzz spawns. When deploying from this persona, this runtime is pre-selected in the UI.
+    /// Beekeeper spawns. When deploying from this persona, this runtime is pre-selected in the UI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<String>,
     /// Opaque, harness-specific model identifier string. Format depends on the runtime and its LLM
     /// provider (e.g., 'goose-claude-4-6-opus' for Databricks, 'claude-opus-4-7' for Anthropic
-    /// direct). Buzz stores and passes through without interpretation.
+    /// direct). Beekeeper stores and passes through without interpretation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// LLM inference provider (e.g., 'databricks', 'anthropic', 'openai'). Optional — when set,
@@ -74,7 +74,7 @@ pub struct AgentDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub catalog_source: Option<CatalogSource>,
     /// Harness-level configuration passed to the agent subprocess as environment variables.
-    /// Opaque to Buzz — keys and values are runtime-specific.
+    /// Opaque to Beekeeper — keys and values are runtime-specific.
     ///
     /// Stored as a BTreeMap for deterministic on-disk ordering.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -495,7 +495,7 @@ pub struct ManagedAgentRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition_parallelism: Option<u32>,
     /// Typed marker for relay-mesh agents. `Some(_)` means this agent runs its
-    /// inference through Buzz's relay-mesh local endpoint; the `model_ref` is
+    /// inference through Beekeeper's relay-mesh local endpoint; the `model_ref` is
     /// the served model id to route to. `None` is a normal agent.
     ///
     /// Not the source of truth. `provider == "relay-mesh"` is, resolved through
@@ -778,7 +778,7 @@ impl RespondTo {
 
 /// Validate and normalize a respond-to allowlist.
 ///
-/// Rules mirror `buzz-acp/src/config.rs::validate_allowlist`:
+/// Rules mirror `beekeeper-acp/src/config.rs::validate_allowlist`:
 /// - Each entry is exactly 64 hex chars (any case in, lowercase out).
 /// - Duplicates removed, insertion order preserved.
 ///

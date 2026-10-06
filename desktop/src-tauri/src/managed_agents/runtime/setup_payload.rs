@@ -90,7 +90,7 @@ pub(super) fn apply_setup_payload_env(
                 Ok(json) => Some(json),
                 Err(e) => {
                     eprintln!(
-                        "buzz-desktop: failed to serialize setup payload for {}: {e}",
+                        "beekeeper-desktop: failed to serialize setup payload for {}: {e}",
                         record.name
                     );
                     None
@@ -118,7 +118,7 @@ pub(super) fn apply_setup_payload_env(
     };
     command.env("BUZZ_ACP_SETUP_PAYLOAD", json);
     eprintln!(
-        "buzz-desktop: agent {} not ready — spawning in setup-listener mode",
+        "beekeeper-desktop: agent {} not ready — spawning in setup-listener mode",
         record.name
     );
     true

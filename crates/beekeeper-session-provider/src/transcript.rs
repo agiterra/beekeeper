@@ -916,7 +916,7 @@ impl TranscriptTranslator {
             return Vec::new();
         };
         if let Some(parent) = subagent_parent(update) {
-            // Buzz declares the `subagent-transcript` client capability, so
+            // Beekeeper declares the `subagent-transcript` client capability, so
             // claude-agent-acp stops stripping a subagent's prose and thinking
             // and sends those frames stamped with the Task/Agent call that owns
             // them. They are published, attributed, rather than dropped

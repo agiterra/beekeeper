@@ -113,7 +113,7 @@ impl SessionScope {
     ///    tag scopes to that canonical root; a top-level mention (no thread
     ///    tags) opens a new thread rooted at the triggering event id.
     ///
-    /// Thread roots follow Buzz's marker-based NIP-10 rules: malformed marker
+    /// Thread roots follow Beekeeper's marker-based NIP-10 rules: malformed marker
     /// IDs are ignored, a lone `root` marker is top-level, a lone `reply`
     /// marker is a direct reply to its root, and nested replies use `root`.
     ///

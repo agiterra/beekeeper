@@ -3587,7 +3587,7 @@ mod tests {
         let channel_id = fixture.input.channel_id;
         let brief = (0..140)
             .map(|index| {
-                format!("/Users/brian/Projects/beekeeper/beekeeper/crates/beekeeper-session-provider/src/file{index}.rs")
+                format!("/Users/brian/Projects/beekeeper/beekeeper/crates/buzz-session-provider/src/file{index}.rs")
             })
             .collect::<Vec<_>>()
             .join(" ");

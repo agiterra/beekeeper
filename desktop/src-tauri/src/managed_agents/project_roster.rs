@@ -318,7 +318,7 @@ pub(crate) async fn ensure_host_serving_project(
     relay_url: &str,
 ) -> Result<bool, String> {
     if let Err(error) = host.start().await {
-        eprintln!("buzz-desktop: agent-host: could not start the provider: {error}");
+        eprintln!("beekeeper-desktop: agent-host: could not start the provider: {error}");
     }
     crate::managed_agents::project_admission::admit_host_for_session(
         app,

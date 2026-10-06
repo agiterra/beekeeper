@@ -172,7 +172,7 @@ fn receipt_value(transition: &Event) -> Value {
         object.insert("bodyPubkey".into(), Value::String(body_pubkey));
     }
     // The relay echoes the delegation's scope onto its receipt
-    // (`buzz-relay/src/handlers/side_effects.rs`). A fixture that omitted it
+    // (`beekeeper-relay/src/handlers/side_effects.rs`). A fixture that omitted it
     // would test a wire nobody serves — which is precisely how ledger 204's
     // regression reached an installed build with every gate green.
     if let (Some(object), Some(project_ref)) = (content.as_object_mut(), payload.project_ref) {

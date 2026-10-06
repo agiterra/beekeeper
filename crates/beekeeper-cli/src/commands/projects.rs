@@ -30,9 +30,9 @@ use crate::commands::parse_write_response;
 use crate::commands::projects_cascade;
 use crate::error::CliError;
 
-// ── Buzz repo-ID grammar (bare --repo shorthand) ─────────────────────────────
+// ── Beekeeper repo-ID grammar (bare --repo shorthand) ─────────────────────────────
 
-/// Pattern for a Buzz-hosted repo identifier (bare `--repo` shorthand).
+/// Pattern for a Beekeeper-hosted repo identifier (bare `--repo` shorthand).
 /// `[a-zA-Z0-9._-]{1,64}` — no colons, so guaranteed collision-free with
 /// `30617:<owner>:<d>` full coordinates.
 fn is_bare_repo_id(s: &str) -> bool {
@@ -1268,7 +1268,7 @@ pub(crate) async fn project_roster(
 // ── Validation helpers ────────────────────────────────────────────────────────
 
 /// Validate a project slug: non-empty, ≤1024 bytes, verbatim.
-/// Does NOT impose the Buzz repo-ID grammar — project slugs are more permissive.
+/// Does NOT impose the Beekeeper repo-ID grammar — project slugs are more permissive.
 pub(crate) fn validate_project_slug(slug: &str) -> Result<(), CliError> {
     if slug.is_empty() {
         return Err(CliError::Usage("project slug must not be empty".into()));

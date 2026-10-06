@@ -1,6 +1,6 @@
 use super::*;
 
-/// Binary name fragments for all known agent/harness processes that Buzz
+/// Binary name fragments for all known agent/harness processes that Beekeeper
 /// may spawn. Used by `process_belongs_to_us()` and the orphan sweep to
 /// identify processes we should clean up. Both hyphenated and underscored
 /// variants are listed because macOS `proc_name()` and Linux `/proc/comm`
@@ -202,7 +202,7 @@ fn process_env_block(_pid: u32) -> Option<Vec<u8>> {
 /// Check if a running process is one of *our* managed agents: it must carry
 /// `BUZZ_MANAGED_AGENT=<instance_id>` in its environment, where `instance_id`
 /// is this desktop instance's id. A process stamped with a *different*
-/// instance id belongs to another live Buzz app and must never be reaped here.
+/// instance id belongs to another live Beekeeper app and must never be reaped here.
 pub(crate) fn process_has_buzz_marker(pid: u32, instance_id: &str) -> bool {
     let marker = buzz_marker_entry(instance_id);
     let Some(block) = process_env_block(pid) else {
@@ -378,7 +378,7 @@ pub(super) fn resolve_pgids_and_kill(candidate_pids: &[i32]) {
     });
     if pgids.is_empty() && candidate_groups > 0 {
         eprintln!(
-            "buzz-desktop: orphan sweep: skipped all {candidate_groups} candidate group(s) (live foreign group leader or candidate already exited); nothing signalled"
+            "beekeeper-desktop: orphan sweep: skipped all {candidate_groups} candidate group(s) (live foreign group leader or candidate already exited); nothing signalled"
         );
     }
     let unique: Vec<i32> = pgids.into_iter().collect();
@@ -412,7 +412,7 @@ pub(super) fn resolve_pgids_and_kill(candidate_pids: &[i32]) {
     });
     if pgids.is_empty() && candidate_groups > 0 {
         eprintln!(
-            "buzz-desktop: orphan sweep: skipped all {candidate_groups} candidate group(s) (live foreign group leader or candidate already exited); nothing signalled"
+            "beekeeper-desktop: orphan sweep: skipped all {candidate_groups} candidate group(s) (live foreign group leader or candidate already exited); nothing signalled"
         );
     }
     let unique: Vec<i32> = pgids.into_iter().collect();
@@ -454,7 +454,7 @@ pub(crate) fn valid_agent_runtime_receipt_with(
         && receipt.desktop_instance_id == instance_id
         && is_running(receipt.pid)
         // Receipts are written by THIS instance at spawn time, so they are
-        // Buzz-owned by construction. Marker-only ownership: custom-harness
+        // Beekeeper-owned by construction. Marker-only ownership: custom-harness
         // binaries (not in KNOWN_AGENT_BINARIES) must not be rejected by a
         // name gate — see the sweep ownership rule in runtime/orphan_sweep.rs.
         && has_marker(receipt.pid, &receipt.desktop_instance_id)

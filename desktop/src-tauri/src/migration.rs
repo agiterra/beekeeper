@@ -1,4 +1,4 @@
-//! Worktree data sync and on-launch reconciliation for the Buzz desktop app.
+//! Worktree data sync and on-launch reconciliation for the Beekeeper desktop app.
 //!
 //! **Worktree sync** (`sync_shared_agent_data`): Per-launch symlink creation
 //! from the current worktree data directory to the canonical dev data
@@ -206,7 +206,7 @@ fn migrate_legacy_nest_at(legacy: &Path, current: &Path) -> bool {
     // behind a reassuring "migrated X to X" log line. Refuse loudly instead.
     if legacy == current {
         eprintln!(
-            "buzz-desktop: nest-migration: legacy and current nest are the same path ({}); \
+            "beekeeper-desktop: nest-migration: legacy and current nest are the same path ({}); \
              skipping",
             current.display()
         );
@@ -242,12 +242,12 @@ fn migrate_legacy_nest_at(legacy: &Path, current: &Path) -> bool {
         };
         match result {
             Ok(()) => eprintln!(
-                "buzz-desktop: nest-migration: migrated {} to {}",
+                "beekeeper-desktop: nest-migration: migrated {} to {}",
                 src.display(),
                 dst.display()
             ),
             Err(error) => eprintln!(
-                "buzz-desktop: nest-migration: failed to migrate {} to {}: {error}",
+                "beekeeper-desktop: nest-migration: failed to migrate {} to {}: {error}",
                 src.display(),
                 dst.display()
             ),
@@ -294,17 +294,17 @@ pub(crate) fn migrate_dev_repos_dir_at(home: &Path, dev_nest: &Path) {
     // ensure_nest() in the boot sequence, so the directory may not yet exist.
     if let Err(e) = std::fs::create_dir_all(dev_nest) {
         eprintln!(
-            "buzz-desktop: dev-nest-migration: failed to create dev nest {}: {e}",
+            "beekeeper-desktop: dev-nest-migration: failed to create dev nest {}: {e}",
             dev_nest.display()
         );
         return;
     }
     match std::fs::copy(&src, &dst) {
         Ok(_) => eprintln!(
-            "buzz-desktop: dev-nest-migration: migrated .repos-dir to {}",
+            "beekeeper-desktop: dev-nest-migration: migrated .repos-dir to {}",
             dst.display()
         ),
-        Err(e) => eprintln!("buzz-desktop: dev-nest-migration: failed to migrate .repos-dir: {e}"),
+        Err(e) => eprintln!("beekeeper-desktop: dev-nest-migration: .repos-dir failed: {e}"),
     }
 }
 
@@ -344,7 +344,7 @@ pub(crate) fn maybe_migrate_dev_repos_dir(
 /// contents were copied (useful for a one-time log message, not required).
 pub fn migrate_dev_nest() -> bool {
     let Some(home) = dirs::home_dir() else {
-        eprintln!("buzz-desktop: dev-nest-migration: cannot resolve home directory");
+        eprintln!("beekeeper-desktop: dev-nest-migration: cannot resolve home directory");
         return false;
     };
     let legacy = home.join(".beekeeper");
@@ -364,7 +364,7 @@ pub fn migrate_dev_nest() -> bool {
         let sentinel = current.join(DEV_NEST_MIGRATED_SENTINEL);
         if let Err(e) = std::fs::write(&sentinel, "") {
             eprintln!(
-                "buzz-desktop: dev-nest-migration: failed to write sentinel {}: {e}",
+                "beekeeper-desktop: dev-nest-migration: failed to write sentinel {}: {e}",
                 sentinel.display()
             );
         }
@@ -422,7 +422,7 @@ fn patch_json_records(
     };
     let Ok(mut records) = serde_json::from_str::<Vec<serde_json::Value>>(&content) else {
         eprintln!(
-            "buzz-desktop: patch-json-records: failed to parse {}",
+            "beekeeper-desktop: patch-json-records: failed to parse {}",
             path.display()
         );
         return;
@@ -436,7 +436,7 @@ fn patch_json_records(
     if changed {
         if let Ok(bytes) = serde_json::to_vec_pretty(&records) {
             if let Err(e) = crate::managed_agents::atomic_write_json_restricted(path, &bytes) {
-                eprintln!("buzz-desktop: patch-json-records: {e}");
+                eprintln!("beekeeper-desktop: patch-json-records: {e}");
             }
         }
     }
@@ -465,14 +465,14 @@ pub fn sync_shared_agent_data(app: &tauri::AppHandle) {
         .and_then(|k| k.parse::<nostr::Keys>().ok())
         .is_some();
     if !has_valid_key {
-        eprintln!("buzz-desktop: shared-agent-sync: BUZZ_PRIVATE_KEY missing or invalid, skipping");
+        eprintln!("beekeeper-desktop: shared-agent-sync: BUZZ_PRIVATE_KEY invalid, skipping");
         return;
     }
 
     let current_dir = match app.path().app_data_dir() {
         Ok(dir) => dir,
         Err(e) => {
-            eprintln!("buzz-desktop: shared-agent-sync: cannot resolve app data dir: {e}");
+            eprintln!("beekeeper-desktop: shared-agent-sync: cannot resolve app data dir: {e}");
             return;
         }
     };
@@ -488,7 +488,7 @@ pub fn sync_shared_agent_data(app: &tauri::AppHandle) {
         .is_some_and(is_dev_data_dir_name);
     if !is_dev {
         eprintln!(
-            "buzz-desktop: shared-agent-sync: skipping — data dir is not a dev dir ({})",
+            "beekeeper-desktop: shared-agent-sync: skipping — data dir is not a dev dir ({})",
             current_dir.display()
         );
         return;
@@ -497,7 +497,7 @@ pub fn sync_shared_agent_data(app: &tauri::AppHandle) {
     let canonical_dir = match canonical_dev_data_dir(&current_dir) {
         Some(dir) => dir,
         None => {
-            eprintln!("buzz-desktop: shared-agent-sync: cannot compute canonical dir (no parent)");
+            eprintln!("beekeeper-desktop: shared-agent-sync: no canonical dir (no parent)");
             return;
         }
     };
@@ -515,7 +515,7 @@ pub fn sync_shared_agent_data(app: &tauri::AppHandle) {
     // Guard: skip if canonical dir doesn't exist.
     if !canonical_dir.exists() {
         eprintln!(
-            "buzz-desktop: shared-agent-sync: canonical dir does not exist: {}",
+            "beekeeper-desktop: shared-agent-sync: canonical dir does not exist: {}",
             canonical_dir.display()
         );
         return;
@@ -547,7 +547,7 @@ pub fn sync_shared_agent_data(app: &tauri::AppHandle) {
                 if let Some(file_parent) = canonical_file.parent() {
                     if let Err(e) = std::fs::create_dir_all(file_parent) {
                         eprintln!(
-                            "buzz-desktop: shared-agent-sync: failed to create {}: {e}",
+                            "beekeeper-desktop: shared-agent-sync: failed to create {}: {e}",
                             file_parent.display()
                         );
                         break;
@@ -555,7 +555,7 @@ pub fn sync_shared_agent_data(app: &tauri::AppHandle) {
                 }
                 let _ = std::fs::rename(&sibling_file, &canonical_file);
                 eprintln!(
-                    "buzz-desktop: shared-agent-sync: seeded {rel} from {}",
+                    "beekeeper-desktop: shared-agent-sync: seeded {rel} from {}",
                     sibling.display()
                 );
                 break;
@@ -575,7 +575,7 @@ pub fn sync_shared_agent_data(app: &tauri::AppHandle) {
         if let Some(parent) = dst.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 eprintln!(
-                    "buzz-desktop: shared-agent-sync: failed to create {}: {e}",
+                    "beekeeper-desktop: shared-agent-sync: failed to create {}: {e}",
                     parent.display()
                 );
                 continue;
@@ -593,7 +593,7 @@ pub fn sync_shared_agent_data(app: &tauri::AppHandle) {
         if !canonical_target.exists() {
             if let Err(e) = std::fs::create_dir_all(&canonical_target) {
                 eprintln!(
-                    "buzz-desktop: shared-agent-sync: failed to create {}: {e}",
+                    "beekeeper-desktop: shared-agent-sync: failed to create {}: {e}",
                     canonical_target.display()
                 );
             }
@@ -619,7 +619,7 @@ pub fn sync_shared_agent_data(app: &tauri::AppHandle) {
                             // replace_with_symlink backs up any leftover real content.
                             replace_with_symlink(&canonical_target, &sibling_dir);
                             eprintln!(
-                                "buzz-desktop: shared-agent-sync: migrated {rel} from {}",
+                                "beekeeper-desktop: shared-agent-sync: migrated {rel} from {}",
                                 sibling.display()
                             );
                             break;
@@ -641,7 +641,7 @@ pub fn sync_shared_agent_data(app: &tauri::AppHandle) {
         if let Some(parent) = dst.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 eprintln!(
-                    "buzz-desktop: shared-agent-sync: failed to create {}: {e}",
+                    "beekeeper-desktop: shared-agent-sync: failed to create {}: {e}",
                     parent.display()
                 );
                 continue;
@@ -653,7 +653,7 @@ pub fn sync_shared_agent_data(app: &tauri::AppHandle) {
 
     if synced > 0 {
         eprintln!(
-            "buzz-desktop: shared-agent-sync: {synced} item(s) linked to {}",
+            "beekeeper-desktop: shared-agent-sync: {synced} item(s) linked to {}",
             canonical_dir.display()
         );
     }
@@ -701,7 +701,7 @@ fn reconcile_mcp_commands_in_file(path: &Path) {
             return false;
         }
         eprintln!(
-            "buzz-desktop: runtime-reconcile: {:?} ({:?}): mcp_command {:?} → {:?}",
+            "beekeeper-desktop: runtime-reconcile: {:?} ({:?}): mcp_command {:?} → {:?}",
             obj.get("name").and_then(|v| v.as_str()).unwrap_or("?"),
             effective_command,
             current,
@@ -727,7 +727,7 @@ fn replace_command_field(
         return false;
     }
     eprintln!(
-        "buzz-desktop: command-rename-reconcile: {:?}: {field} {:?} → {:?}",
+        "beekeeper-desktop: command-rename-reconcile: {:?}: {field} {:?} → {:?}",
         obj.get("name").and_then(|v| v.as_str()).unwrap_or("?"),
         current,
         replacement,
@@ -795,7 +795,7 @@ fn reconcile_legacy_persona_runtimes_in_file(path: &Path) {
             return false;
         }
         eprintln!(
-            "buzz-desktop: command-rename-reconcile: persona {:?}: runtime {:?} → {:?}",
+            "beekeeper-desktop: command-rename-reconcile: persona {:?}: runtime {:?} → {:?}",
             obj.get("display_name")
                 .or_else(|| obj.get("displayName"))
                 .and_then(|v| v.as_str())
@@ -858,13 +858,13 @@ fn reconcile_legacy_team_persona_runtime_files(dir: &Path) {
         match std::fs::write(&path, updated) {
             Ok(()) => {
                 eprintln!(
-                    "buzz-desktop: command-rename-reconcile: updated {}",
+                    "beekeeper-desktop: command-rename-reconcile: updated {}",
                     path.display()
                 );
             }
             Err(error) => {
                 eprintln!(
-                    "buzz-desktop: command-rename-reconcile: failed to update {}: {error}",
+                    "beekeeper-desktop: command-rename-reconcile: failed to update {}: {error}",
                     path.display()
                 );
             }
@@ -939,7 +939,7 @@ fn reconcile_databricks_v1_to_v2_in_file(path: &Path, rewrite_v1_provider: bool)
                 .unwrap_or("?")
                 .to_string();
             eprintln!(
-                "buzz-desktop: databricks-v1-to-v2: {name:?}: provider \"databricks\" → \"databricks_v2\"",
+                "beekeeper-desktop: databricks-v1-to-v2: {name:?}: provider \"databricks\" → \"databricks_v2\"",
             );
             obj.insert(
                 "provider".to_string(),
@@ -951,7 +951,7 @@ fn reconcile_databricks_v1_to_v2_in_file(path: &Path, rewrite_v1_provider: bool)
             // buzz-agent config.rs). Clearing it lets the baked V2 default win.
             if obj.remove("model").is_some() {
                 eprintln!(
-                    "buzz-desktop: databricks-v1-to-v2: {name:?}: cleared stale V1 model field",
+                    "beekeeper-desktop: databricks-v1-to-v2: {name:?}: cleared stale V1 model field",
                 );
             }
             changed = true;
@@ -973,7 +973,7 @@ fn reconcile_databricks_v1_to_v2_in_file(path: &Path, rewrite_v1_provider: bool)
                 .collect();
             for key in stale_keys {
                 env_vars.remove(key.as_str());
-                eprintln!("buzz-desktop: databricks-v1-to-v2: removed stale env_vars[\"{key}\"]",);
+                eprintln!("beekeeper-desktop: databricks-v1-to-v2: removed env_vars[\"{key}\"]");
                 changed = true;
             }
         }

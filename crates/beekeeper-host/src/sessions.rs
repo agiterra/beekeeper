@@ -3,7 +3,7 @@
 //! The provider persists its session map in `state.json` inside its state
 //! directory, and that file is **replaced atomically** — written to a temp
 //! file, fsynced, renamed — so "a torn write can therefore never produce a
-//! half-updated" record (`buzz-session-provider/src/state.rs`). That property
+//! half-updated" record (`beekeeper-session-provider/src/state.rs`). That property
 //! is what makes this safe: the host opens the file read-only, with no lock, no
 //! new channel into the provider, and no race.
 //!

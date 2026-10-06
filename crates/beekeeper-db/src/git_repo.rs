@@ -181,7 +181,7 @@ pub async fn count_repos_for_owner(
 }
 
 /// Project the repo → project link of a freshly-ingested 30617 head
-/// (NIP-MP Buzz access extension, phase 2).
+/// (NIP-MP Beekeeper access extension, phase 2).
 ///
 /// `project_ref` is the head's normalized `["project", …]` coordinate
 /// (`30621:<owner-hex>:<dtag>`), or `None` when the head carries no valid

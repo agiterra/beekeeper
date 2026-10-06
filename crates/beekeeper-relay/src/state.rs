@@ -692,7 +692,7 @@ pub struct AppState {
     /// Per-community channel visibility string, used to gate the private-channel fan-out
     /// access check so open channels stay zero-cost. Invalidated on a flip.
     pub channel_visibility_cache: Arc<moka::sync::Cache<(CommunityId, Uuid), String>>,
-    /// Per-channel private-project gate (NIP-MP Buzz access extension):
+    /// Per-channel private-project gate (NIP-MP Beekeeper access extension):
     /// (community_id, channel_id) → the project's owner + invited members when
     /// the channel's `project_ref` resolves to a private project, else `None`
     /// ("no gate"). Lets live fan-out and the ingest open-channel fallback

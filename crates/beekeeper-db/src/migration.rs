@@ -1,4 +1,4 @@
-//! Embedded SQLx migrations for Buzz.
+//! Embedded SQLx migrations for Beekeeper.
 //!
 //! Fresh deployments apply the checked-in SQL files under `migrations/`. The
 //! multi-tenant rewrite owns a clean consolidated `0001`; legacy single-tenant
@@ -13,7 +13,7 @@ use crate::Result;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
-/// Run all pending Buzz database migrations.
+/// Run all pending Beekeeper database migrations.
 ///
 /// The entire run holds the exclusive [`SCHEMA_DESTRUCTION_LOCK_KEY`] session
 /// lock, serializing schema changes against destructive deletion transactions
@@ -1066,7 +1066,7 @@ mod tests {
         assert!(project_ref.contains("ALTER TABLE channels ADD COLUMN project_ref"));
         assert!(!migrations[0].sql.as_str().contains("project_ref"));
 
-        // Project ACL projection (NIP-MP Buzz access extension): additive
+        // Project ACL projection (NIP-MP Beekeeper access extension): additive
         // migration, its own version — same brownfield checksum rule. The
         // LWW guard and the members CASCADE are load-bearing for the private-
         // project read gate, so their shapes are pinned here.
@@ -1411,8 +1411,8 @@ mod tests {
         // never holds relay tenant tables, so it is exempt from the relay
         // schema/destruction lock. The community_id check below keeps that
         // exemption honest.
-        let push_gateway_exception = crates_dir.join("buzz-push-gateway/src/postgres.rs");
-        let push_gateway_migrations = crates_dir.join("buzz-push-gateway/migrations");
+        let push_gateway_exception = crates_dir.join("beekeeper-push-gateway/src/postgres.rs");
+        let push_gateway_migrations = crates_dir.join("beekeeper-push-gateway/migrations");
         for entry in
             std::fs::read_dir(&push_gateway_migrations).expect("read push gateway migrations")
         {

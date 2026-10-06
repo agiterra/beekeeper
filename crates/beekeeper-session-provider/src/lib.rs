@@ -1,7 +1,7 @@
 //! Coding-session provider adapter.
 //!
 //! Consumes signed operator intent — kind 44221 `session.create` and kind 44220
-//! turn commands — from Buzz channels, drives Claude Code over ACP, and
+//! turn commands — from Beekeeper channels, drives Claude Code over ACP, and
 //! publishes the four provider-authored facts a consumer projects: the provider
 //! catalog (44222), per-generation metadata (44223), lifecycle receipts (44224),
 //! and transcript items (44225).

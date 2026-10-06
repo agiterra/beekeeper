@@ -9,7 +9,7 @@ pub const RELAY_MESH_AUTO_MODEL_ID: &str = "auto";
 /// (`moa_gateway::degrade_to_single_model`). That degradation is a pre-flight
 /// capacity decision, so a committee that forms and *then* loses a worker still
 /// surfaces as a failed turn — MoA repairs partial results internally
-/// (`repair_tool_result_answer`) before it gets that far. Buzz translates the
+/// (`repair_tool_result_answer`) before it gets that far. Beekeeper translates the
 /// stored `auto` here rather than teaching buzz-agent anything about meshes.
 #[cfg(feature = "mesh-llm")]
 pub const RELAY_MESH_VIRTUAL_MODEL_ID: &str = "mesh";
@@ -29,7 +29,7 @@ pub fn relay_mesh_wire_model(stored: &str) -> &str {
     }
 }
 
-/// Translate the native Buzz shared compute provider into the OpenAI-compatible
+/// Translate the native Beekeeper shared compute provider into the OpenAI-compatible
 /// transport understood by buzz-agent. These are derived runtime details, not
 /// user-owned agent configuration.
 #[cfg(feature = "mesh-llm")]

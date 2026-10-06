@@ -222,7 +222,7 @@ pub(crate) async fn provider_status(
     // that is one poll behind.
     if let Some(pubkey) = &status.provider_pubkey {
         if let Err(error) = crate::session_provider::trust::seed_provider_trust(app, pubkey) {
-            eprintln!("buzz-desktop: session-provider: failed to seed bridge trust: {error}");
+            eprintln!("beekeeper-desktop: session-provider: failed to seed bridge trust: {error}");
         }
     }
 

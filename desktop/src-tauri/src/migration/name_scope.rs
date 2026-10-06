@@ -67,16 +67,16 @@ pub fn scope_agent_names_to_projects(app: &tauri::AppHandle) {
     match scope_agent_names_to_projects_in_dir(&base_dir) {
         Ok(outcome) => {
             for (_, old, new) in &outcome.renamed {
-                eprintln!("buzz-desktop: name-scope: renamed {old:?} to {new:?}");
+                eprintln!("beekeeper-desktop: name-scope: renamed {old:?} to {new:?}");
             }
             for kept in &outcome.kept {
                 eprintln!(
-                    "buzz-desktop: name-scope: kept {:?} as it is — {}",
+                    "beekeeper-desktop: name-scope: kept {:?} as it is — {}",
                     kept.name, kept.reason
                 );
             }
         }
-        Err(e) => eprintln!("buzz-desktop: name-scope: {e}"),
+        Err(e) => eprintln!("beekeeper-desktop: name-scope: {e}"),
     }
 }
 

@@ -2,7 +2,7 @@
 name = "beekeeper-persona"
 version = "0.1.0"
 edition = "2021"
-description = "Parser and loader for Buzz persona pack files (.persona.md)"
+description = "Parser and loader for Beekeeper persona pack files (.persona.md)"
 license = "Apache-2.0"
 repository.workspace = true
 

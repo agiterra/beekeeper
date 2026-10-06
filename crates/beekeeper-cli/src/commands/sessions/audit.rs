@@ -661,7 +661,7 @@ fn sum_reported(rows: &[&Value], field: &str) -> Option<u64> {
 /// Sum the published costs, or `None` when no turn published one.
 ///
 /// There is no pricing identity on the wire — `TurnUsageReport`
-/// (`buzz-core/src/coding_session_payload.rs`) is `deny_unknown_fields` over
+/// (`beekeeper-core/src/coding_session_payload.rs`) is `deny_unknown_fields` over
 /// six token fields — so the only honest source is the item's own
 /// `costUsd`/`cost_usd`. A turn that published none contributes nothing, and
 /// a session where none did reports `None`, never `0.0`.

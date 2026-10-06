@@ -1,4 +1,4 @@
-//! Send an @mention event to a Buzz channel targeting a specific pubkey.
+//! Send an @mention event to a Beekeeper channel targeting a specific pubkey.
 //! Usage: mention <channel_uuid> <target_pubkey_hex> <message>
 
 use beekeeper_test_client::BeekeeperTestClient;

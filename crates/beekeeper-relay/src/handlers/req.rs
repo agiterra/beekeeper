@@ -1174,7 +1174,7 @@ fn filter_to_query_params(
             // We use Some(vec![]) which the DB layer treats as "no matching kinds".
             vec![]
         } else {
-            // Cast to i32 for Postgres INT column; safe because all Buzz kinds fit in i32.
+            // Cast to i32 for Postgres INT column; safe because all Beekeeper kinds fit in i32.
             ks.iter().map(|k| k.as_u16() as i32).collect()
         }
     });
@@ -2524,7 +2524,7 @@ mod tests {
         // Case 2: kindless {ids:[...]} — the existing ids exemption applies
         // at this filter-authorization gate (consistent with other p-gated kinds).
         // The kindless path is closed at the result level by
-        // `reader_authorized_for_event` (buzz-core/src/filter.rs), which gates
+        // `reader_authorized_for_event` (beekeeper-core/src/filter.rs), which gates
         // kind:44200 delivery to the #p owner across all pull paths (WS historical,
         // HTTP bridge) and live fan-out. Pass-through here is correct; the
         // result-level gate is the enforcement point for this path.

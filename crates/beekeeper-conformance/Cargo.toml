@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Runtime trace schema + independent replay checker for MultiTenantRelay.tla"
 
 # Independence rule (skill: skill-runtime-formal-compliance):
-# - Depend on NO production buzz crate. The schema carries its own opaque
+# - Depend on NO production Beekeeper crate. The schema carries its own opaque
 #   `CommunityLabel` UUID newtype rather than reusing `beekeeper_core::CommunityId`
 #   so the checker cannot inherit a bug from production type machinery, AND so
 #   buzz-core's deliberate "no Serde, no From<Uuid>" fence on `CommunityId`

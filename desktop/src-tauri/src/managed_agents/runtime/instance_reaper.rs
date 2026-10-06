@@ -122,7 +122,7 @@ fn extract_buzz_marker_value(_pid: u32) -> Option<String> {
     None
 }
 
-/// Check if a Buzz desktop process is still alive for the given instance ID.
+/// Check if a Beekeeper desktop process is still alive for the given instance ID.
 /// Scans all user-owned processes named "buzz-desktop" and checks
 /// whether any has the identifier in its command-line args (KERN_PROCARGS2 buffer
 /// includes both argv and environ — the `--config` JSON from `tauri dev` contains
@@ -239,11 +239,11 @@ fn desktop_is_alive_for_instance(_instance_id: &str) -> bool {
     false
 }
 
-/// Reap agent processes belonging to dead Buzz desktop instances.
+/// Reap agent processes belonging to dead Beekeeper desktop instances.
 ///
 /// Scans all user processes for `BUZZ_MANAGED_AGENT=*`, groups them by
 /// instance ID, and for each foreign instance (≠ `our_instance_id`) checks
-/// whether a Buzz desktop binary is still alive for that instance. If not,
+/// whether a Beekeeper desktop binary is still alive for that instance. If not,
 /// all agents from that dead instance are reaped.
 #[cfg(target_os = "macos")]
 pub(crate) fn reap_dead_instance_agents(our_instance_id: &str, skip_pids: &[u32]) {
@@ -307,7 +307,7 @@ pub(crate) fn reap_dead_instance_agents(our_instance_id: &str, skip_pids: &[u32]
             continue;
         }
         eprintln!(
-            "buzz-desktop: reaping {} orphaned agent(s) from dead instance '{instance_id}'",
+            "beekeeper-desktop: reaping {} orphaned agent(s) from dead instance '{instance_id}'",
             agent_pids.len()
         );
         resolve_pgids_and_kill(agent_pids);
@@ -365,7 +365,7 @@ pub(crate) fn reap_dead_instance_agents(our_instance_id: &str, skip_pids: &[u32]
             continue;
         }
         eprintln!(
-            "buzz-desktop: reaping {} orphaned agent(s) from dead instance '{instance_id}'",
+            "beekeeper-desktop: reaping {} orphaned agent(s) from dead instance '{instance_id}'",
             agent_pids.len()
         );
         resolve_pgids_and_kill(agent_pids);

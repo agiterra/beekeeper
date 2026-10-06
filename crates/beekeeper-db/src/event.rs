@@ -148,7 +148,7 @@ pub struct EventQuery {
     /// SQL pushdown is sound.  Keeping `event_visible_to_reader` as post-filter
     /// defense-in-depth catches any residual mismatch.
     pub shared_gated_reader: Option<Vec<u8>>,
-    /// Private-project visibility pushdown (NIP-MP Buzz access extension).
+    /// Private-project visibility pushdown (NIP-MP Beekeeper access extension).
     ///
     /// When set, `query_events` appends a pre-`LIMIT` clause excluding
     /// kind:30621 heads that carry `["buzz-access","private"]` unless the
@@ -409,7 +409,7 @@ pub async fn insert_event(
     let pubkey_bytes = event.pubkey.to_bytes();
     let sig_bytes = event.sig.serialize();
     let tags_json = serde_json::to_value(&event.tags)?;
-    // Cast chain: nostr Kind (u16) → i32 (Postgres INT column). Safe: all Buzz kinds fit in i32.
+    // Cast chain: nostr Kind (u16) → i32 (Postgres INT column). Safe: all Beekeeper kinds fit in i32.
     let kind_i32 = event_kind_i32(event);
     let created_at_secs = event.created_at.as_secs() as i64;
     let created_at = DateTime::from_timestamp(created_at_secs, 0)

@@ -37,7 +37,7 @@ pub fn ref_state_filter(repo_id: &str) -> Value {
 
 /// Decode one signature-stripped 30618 event into its refs.
 ///
-/// Every `refs/heads/*` tag is a ref and its commit; the buzz `p` tag is the
+/// Every `refs/heads/*` tag is a ref and its commit; the Beekeeper `p` tag is the
 /// pusher. A tag that is not a `refs/heads/*` pair is skipped rather than
 /// guessed at — `HEAD` is symbolic and `refs/tags/*` is not a branch.
 pub fn decode_ref_state(event: &Value) -> Vec<PulseRefState> {

@@ -54,7 +54,7 @@ pub(super) fn checkpoint_body_after(
             "ref": "refs/heads/wip/builder/1f2e3d4c",
             "sha": "2b".repeat(20)
         }],
-        "tests": [{ "name": "core", "command": "cargo test -p beekeeper-core", "outcome": "failed" }],
+        "tests": [{ "name": "core", "command": "cargo test -p buzz-core", "outcome": "failed" }],
         "unresolved": ["Whether a voided claim fences sibling executions"],
         "nextAction": next_action,
         "missing": ["uncommitted changes in target/, above the patch bound"]

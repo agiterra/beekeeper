@@ -184,7 +184,7 @@ fn decide_authority(
     // So the carve-out is by channel type, ahead of every role — a channel
     // owner/admin of a DM would be refused too. That case is not reachable
     // through the product (DM participants are inserted with `role = 'member'`,
-    // `buzz-db/src/dm.rs`), and were it ever minted by a migration or a direct
+    // `beekeeper-db/src/dm.rs`), and were it ever minted by a migration or a direct
     // write it would still be the wrong grant.
     //
     // What this does NOT touch: a participant deleting their own DM message.

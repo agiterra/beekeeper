@@ -217,7 +217,7 @@ pub(super) fn managed_node_orphaned() -> bool {
 
 /// Returns `true` when an adapter at `resolved` should be invalidated.
 ///
-/// Only a Buzz-managed shim (path under `managed_prefix`) with an orphaned
+/// Only a Beekeeper-managed shim (path under `managed_prefix`) with an orphaned
 /// runtime is invalidated; external adapters are always preserved.
 pub(super) fn should_invalidate_adapter(
     resolved: &std::path::Path,
@@ -595,7 +595,7 @@ fn verify_node_tree(dir: &std::path::Path) -> Result<(), String> {
 
 // ── managed npm adapter installs ──────────────────────────────────────────────
 
-/// Guidance text shown when the Buzz-private npm prefix is not available.
+/// Guidance text shown when the Beekeeper-private npm prefix is not available.
 fn managed_npm_prefix_hint() -> String {
     "Beekeeper could not create its private Node tools directory. Check app-data directory permissions, restart Beekeeper, then click Install again.".to_string()
 }

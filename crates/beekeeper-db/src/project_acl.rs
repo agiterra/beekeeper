@@ -1,4 +1,4 @@
-//! Project access-control projection (NIP-MP Buzz access extension).
+//! Project access-control projection (NIP-MP Beekeeper access extension).
 //!
 //! Store+project projection of `kind:30621` project heads, keyed by
 //! `(community_id, owner, dtag)` — the same store+project pattern as reactions.

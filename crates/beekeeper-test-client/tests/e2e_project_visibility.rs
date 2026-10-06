@@ -1,4 +1,4 @@
-//! End-to-end tests for project visibility levels (NIP-MP Buzz access
+//! End-to-end tests for project visibility levels (NIP-MP Beekeeper access
 //! extension, kind:30621 + `["buzz-access","private"]` + invited-member `p`
 //! tags).
 //!
@@ -102,7 +102,7 @@ fn project_event(
     .unwrap()
 }
 
-/// Build a kind:9010 put-member op — the roster write every Buzz client
+/// Build a kind:9010 put-member op — the roster write every Beekeeper client
 /// actually makes when a member is added after creation. It cannot touch the
 /// creator-signed head, so the roster it grows is invisible to any gate that
 /// reads `p` tags.
@@ -521,7 +521,7 @@ async fn test_roster_op_member_receives_live_fanout() {
 /// surface — the head names nobody, so a `p`-tag gate would show this project
 /// to its creator alone.
 ///
-/// This is the shape every Buzz client produces: `ProjectMembersManager` and
+/// This is the shape every Beekeeper client produces: `ProjectMembersManager` and
 /// `bee projects members put` publish a 9010, and nothing republishes the
 /// creator-signed head afterwards (nor could a co-owner sign one).
 #[tokio::test]

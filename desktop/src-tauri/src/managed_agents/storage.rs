@@ -208,7 +208,7 @@ fn migrate_inline_key(store: &impl KeyStore, record: &ManagedAgentRecord) -> Key
                 Ok(()) => KeyMigration::Persisted,
                 Err(e) => {
                     eprintln!(
-                        "buzz-desktop: keyring write for agent {} failed ({e}), keeping inline",
+                        "beekeeper-desktop: keyring write for agent {} failed ({e}), keeping inline",
                         record.pubkey
                     );
                     KeyMigration::KeptInline
@@ -306,7 +306,7 @@ pub(crate) fn backup_invalid_store(path: &Path) {
     let backup = path.with_extension("json.invalid");
     if let Err(e) = fs::copy(path, &backup) {
         eprintln!(
-            "buzz-desktop: failed to preserve malformed store {} as {}: {e}",
+            "beekeeper-desktop: failed to preserve malformed store {} as {}: {e}",
             path.display(),
             backup.display()
         );
@@ -361,12 +361,12 @@ fn keyring_read_failure_note(pubkey: &str, error: &str) -> String {
         .any(|marker| lower.contains(marker))
     {
         return format!(
-            "buzz-desktop: agent {pubkey} has no key in the keyring ({error}); \
+            "beekeeper-desktop: agent {pubkey} has no key in the keyring ({error}); \
              it cannot start until the key is restored"
         );
     }
     format!(
-        "buzz-desktop: agent {pubkey} key not read this boot — transient keyring failure \
+        "beekeeper-desktop: agent {pubkey} key not read this boot — transient keyring failure \
          ({error}); the key is left alone and the read is retried on the next start. \
          This agent is refused until then."
     )
@@ -392,7 +392,7 @@ fn hydrate_keys_with(store: &impl KeyStore, records: &mut [ManagedAgentRecord]) 
                 Ok(Some(nsec)) => record.private_key_nsec = nsec,
                 Ok(None) => {
                     eprintln!(
-                        "buzz-desktop: agent {} has no key in JSON or keyring",
+                        "beekeeper-desktop: agent {} has no key in JSON or keyring",
                         record.pubkey
                     );
                 }
@@ -525,7 +525,7 @@ pub fn migrate_agent_keys_to_dev_service(app: &tauri::AppHandle) {
     let records = match load_agent_store(app) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("buzz-desktop: keyring-dev-migration: cannot read agent store: {e}");
+            eprintln!("beekeeper-desktop: keyring-dev-migration: cannot read agent store: {e}");
             return;
         }
     };
@@ -579,7 +579,7 @@ fn copy_agent_keys_between_stores(pubkeys: &[String], src: &impl KeyStore, dst: 
         Ok(Some(map)) => map,
         Ok(None) => HashMap::new(),
         Err(e) => {
-            eprintln!("buzz-desktop: keyring-dev-migration: cannot read dev keyring: {e}");
+            eprintln!("beekeeper-desktop: keyring-dev-migration: cannot read dev keyring: {e}");
             return;
         }
     };
@@ -594,7 +594,9 @@ fn copy_agent_keys_between_stores(pubkeys: &[String], src: &impl KeyStore, dst: 
             Ok(Some(map)) => map,
             Ok(None) => HashMap::new(), // prod has no blob yet — nothing to copy
             Err(e) => {
-                eprintln!("buzz-desktop: keyring-dev-migration: cannot read prod keyring: {e}");
+                eprintln!(
+                    "beekeeper-desktop: keyring-dev-migration: cannot read prod keyring: {e}"
+                );
                 return;
             }
         }
@@ -621,13 +623,13 @@ fn copy_agent_keys_between_stores(pubkeys: &[String], src: &impl KeyStore, dst: 
     to_write.insert(DEV_MIGRATION_MARKER.to_string(), "done".to_string());
 
     if let Err(e) = dst.store_all(&to_write) {
-        eprintln!("buzz-desktop: keyring-dev-migration: cannot write to dev keyring: {e}");
+        eprintln!("beekeeper-desktop: keyring-dev-migration: cannot write to dev keyring: {e}");
         return;
     }
 
     if copied > 0 {
         eprintln!(
-            "buzz-desktop: keyring-dev-migration: copied {copied} agent key(s) from buzz-desktop"
+            "beekeeper-desktop: keyring-dev-migration: copied {copied} agent key(s) from buzz-desktop"
         );
     }
 }
@@ -648,7 +650,7 @@ pub(crate) fn try_delete_agent_key(pubkey: &str) -> Result<(), String> {
 /// is deleted so its secret does not linger in the OS store.
 pub fn delete_agent_key(pubkey: &str) {
     if let Err(e) = try_delete_agent_key(pubkey) {
-        eprintln!("buzz-desktop: failed to delete agent {pubkey} key from keyring: {e}");
+        eprintln!("beekeeper-desktop: failed to delete agent {pubkey} key from keyring: {e}");
     }
 }
 
