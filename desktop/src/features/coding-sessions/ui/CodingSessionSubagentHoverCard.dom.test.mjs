@@ -41,9 +41,10 @@ const { deriveCodingSessionSubagentCard } = await import(
 const { CodingSessionSubagentEntry, CodingSessionSubagentLink } = await import(
   "./CodingSessionSubagentEntry.tsx"
 );
-const { CodingSessionSubagentHoverCardContent } = await import(
-  "./CodingSessionSubagentHoverCard.tsx"
-);
+const {
+  CodingSessionSubagentHoverCardContent,
+  codingSessionSubagentStatusDotClass,
+} = await import("./CodingSessionSubagentHoverCard.tsx");
 const { CodingSessionTurnSettlementContext } = await import(
   "./CodingSessionTranscriptItem.tsx"
 );
@@ -377,7 +378,8 @@ test("the hover card says model, time, status, tokens, tools and the result", as
   );
   try {
     const text = view.container.textContent;
-    assert.match(text, /claude-sonnet-4-5/);
+    // One human name for the model on every subagent surface (SV-98).
+    assert.match(text, /ModelClaude Sonnet 4\.5/);
     assert.match(text, /1m 2s/);
     assert.match(text, /Finished/);
     assert.match(text, /48\.2k tok/);
@@ -406,5 +408,19 @@ test("the hover card says model, time, status, tokens, tools and the result", as
     assert.doesNotMatch(text, /Result:/);
   } finally {
     await quiet.unmount();
+  }
+});
+
+test("SV-98: a finished subagent's dot is the success colour everywhere", () => {
+  // One mapping for the stream card, the hover card and the Agents panel.
+  assert.match(codingSessionSubagentStatusDotClass("done"), /bg-emerald-500/);
+  assert.match(codingSessionSubagentStatusDotClass("failed"), /bg-destructive/);
+  // Only running pulses, and never under reduced motion.
+  assert.match(
+    codingSessionSubagentStatusDotClass("running"),
+    /animate-pulse.*motion-reduce:animate-none/,
+  );
+  for (const status of ["done", "failed", "stopped", "unknown"]) {
+    assert.doesNotMatch(codingSessionSubagentStatusDotClass(status), /pulse/);
   }
 });

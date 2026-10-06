@@ -35,7 +35,7 @@ function render(content) {
 test("a marker in a lane message renders as a pill", () => {
   const markup = render(`log at ${MARKER} now`);
   assert.match(markup, /data-redaction-pill=""/);
-  assert.match(markup, /redacted 31 B/);
+  assert.match(markup, />hidden</);
   // The digest still rides along as a data attribute — that is the copy
   // affordance. What must be gone is the marker as *readable text*.
   assert.doesNotMatch(markup, /elided private context/);

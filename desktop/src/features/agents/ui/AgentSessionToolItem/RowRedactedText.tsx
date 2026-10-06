@@ -3,13 +3,12 @@ import * as React from "react";
 
 import { cn } from "@/shared/lib/cn";
 import {
-  parseRedactionMarkers,
-  type RedactionSegment,
-} from "@/shared/lib/redactionMarker";
-import {
-  ElisionPill,
-  REVEALED_REDACTION_LABEL,
-} from "@/shared/ui/RedactedPill";
+  annotateHiddenContext,
+  type HiddenContextSegment,
+} from "@/shared/lib/hiddenContext";
+import { parseRedactionMarkers } from "@/shared/lib/redactionMarker";
+import { HiddenContextChip } from "@/shared/ui/HiddenContextChip";
+import { REVEALED_REDACTION_LABEL } from "@/shared/ui/RedactedPill";
 import {
   RedactionDictionaryContext,
   type ResolvedRedaction,
@@ -30,8 +29,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
  */
 export function RowRedactedText({ text }: { text: string }) {
   const dictionary = React.useContext(RedactionDictionaryContext);
-  const segments = React.useMemo<RedactionSegment[]>(
-    () => parseRedactionMarkers(text),
+  const segments = React.useMemo<HiddenContextSegment[]>(
+    () => annotateHiddenContext(parseRedactionMarkers(text)),
     [text],
   );
   if (segments.length === 1 && segments[0].kind === "text") {
@@ -58,12 +57,11 @@ export function RowRedactedText({ text }: { text: string }) {
           );
         }
         return (
-          <ElisionPill
-            bytes={segment.bytes}
-            cause="redaction"
-            digest={segment.digest}
+          <HiddenContextChip
             // biome-ignore lint/suspicious/noArrayIndexKey: positional segments of one immutable string
             key={index}
+            marker={segment}
+            pathShaped={segment.pathShaped}
           />
         );
       })}

@@ -37,7 +37,13 @@ import type {
 } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import { cn } from "@/shared/lib/cn";
 import { RedactedText } from "@/shared/ui/RedactedPill";
+import { parseRedactionMarkers } from "@/shared/lib/redactionMarker";
 import { useCodingSessionDisclosure } from "./CodingSessionTranscriptDisclosure";
+import { CodingSessionLastTranscriptEventContext } from "./CodingSessionTranscriptWorking";
+import {
+  CodingSessionLiveShimmerText,
+  useCodingSessionLiveShimmer,
+} from "./CodingSessionTranscriptWorkingShimmer";
 
 /**
  * The leaf presentation pieces of the coding-session transcript.
@@ -83,6 +89,16 @@ export function CodingSessionActiveTool({
         : "Running";
   const hasDetails =
     Object.keys(item.args).length > 0 || item.result.trim().length > 0;
+  // SV-104: a call the provider still runs, in a live turn, shimmers while
+  // the provider is fresh. A label carrying a redaction marker never does:
+  // the shimmer's overlay copies the text, and a marker is not text.
+  const lastEventAt = React.useContext(CodingSessionLastTranscriptEventContext);
+  const shimmer = useCodingSessionLiveShimmer(
+    settlement === "live" &&
+      item.status === "executing" &&
+      isPlainCodingSessionToolLabel(label),
+    lastEventAt,
+  );
   const summary = (
     <>
       {unfinished ? (
@@ -106,7 +122,11 @@ export function CodingSessionActiveTool({
         />
       )}
       <span className={ACTIVITY_ROW_LABEL_CLASS}>
-        <RowRedactedText text={label} />
+        {shimmer ? (
+          <CodingSessionLiveShimmerText active text={label} />
+        ) : (
+          <RowRedactedText text={label} />
+        )}
       </span>
       <RevealedRedactionsMarker texts={[label]} />
       <span className="ml-auto shrink-0 text-xs text-muted-foreground">
@@ -474,6 +494,12 @@ export function CodingSessionDiagnosticRows({
       ))}
     </div>
   );
+}
+
+/** True when `label` holds no redaction marker: plain text the shimmer may copy. */
+export function isPlainCodingSessionToolLabel(label: string): boolean {
+  const segments = parseRedactionMarkers(label);
+  return segments.every((segment) => segment.kind === "text");
 }
 
 function formatActiveToolLabel(

@@ -14,9 +14,16 @@ import {
   type CodingSessionSettledSubagentStatus,
   type CodingSessionSubagentPanel,
   type CodingSessionSubagentRow,
+  codingSessionSubagentModelName,
   formatCodingSessionSubagentTokens,
+  withoutCodingSessionSubagentEchoedReport,
 } from "./codingSessionSubagents";
 import type { CodingSessionTurnRestingStatus } from "./codingSessionTranscriptModelTypes";
+import type {
+  CodingSessionCatalogRecord,
+  CodingSessionExecution,
+  CodingSessionWorkspaceStatus,
+} from "./codingSessionTypes";
 
 type ToolTranscriptItem = Extract<TranscriptItem, { type: "tool" }>;
 
@@ -136,16 +143,97 @@ export function resolveCodingSessionSubagentPage(input: {
     };
   }
   const toolCallId = row.spawn.call.toolCallId;
+  const items = toolCallId
+    ? selectCodingSessionSubagentItems(transcript, toolCallId)
+    : [];
   return {
     kind: "spawn",
     parentToolId,
     row,
-    items: toolCallId
-      ? selectCodingSessionSubagentItems(transcript, toolCallId)
-      : [],
+    // SV-97: the page shows what the subagent returned below its steps, so
+    // the same prose published as its last message is not shown twice.
+    items: [
+      ...withoutCodingSessionSubagentEchoedReport(
+        items,
+        codingSessionSubagentPageReport(row),
+      ),
+    ],
     prompt: readCodingSessionSubagentPrompt(row.spawn.call),
     unattributed: !toolCallId,
   };
+}
+
+/**
+ * What the page shows as returned to the parent: the call's result once the
+ * subagent finished or failed, and nothing before (a running, stopped or
+ * unknown spawn has no result to show).
+ */
+export function codingSessionSubagentPageReport(
+  row: CodingSessionSubagentRow,
+): string {
+  return row.status === "done" || row.status === "failed"
+    ? row.spawn.call.result.trim()
+    : "";
+}
+
+// ---------------------------------------------------------------------------
+// Lineage (SV-98)
+// ---------------------------------------------------------------------------
+
+/**
+ * Who the subagent answers to: the execution whose transcript holds its call,
+ * with that execution's title and the status the workspace shows for it (the
+ * signed status corrected by reachability, never a guess). `status` is `null`
+ * when no execution in view can be named, and the page then says only the
+ * session's title.
+ */
+export type CodingSessionSubagentLineage = {
+  title: string;
+  status: CodingSessionWorkspaceStatus | null;
+  /** The generation whose transcript holds the call, when one does. */
+  generationId: string | null;
+};
+
+export function resolveCodingSessionSubagentLineage(input: {
+  /** The Task call's item id, or `null` when the call is not in view. */
+  callId: string | null;
+  layout: "single" | "umbrella";
+  sessionTitle: string;
+  focusedExecution: CodingSessionExecution | null;
+  focusedRecord: CodingSessionCatalogRecord | null;
+  executions: readonly {
+    execution: CodingSessionExecution;
+    status: CodingSessionWorkspaceStatus;
+  }[];
+}): CodingSessionSubagentLineage {
+  const statusOf = (execution: CodingSessionExecution | null) =>
+    execution === null
+      ? null
+      : (input.executions.find(
+          (entry) => entry.execution.executionKey === execution.executionKey,
+        )?.status ?? null);
+  const focused: CodingSessionSubagentLineage = {
+    title: input.sessionTitle,
+    status: statusOf(input.focusedExecution),
+    generationId: input.focusedRecord?.generationId ?? null,
+  };
+  if (input.layout === "single" || input.callId === null) return focused;
+  for (const entry of input.executions) {
+    const { execution } = entry;
+    for (const record of [
+      ...execution.priorGenerations,
+      execution.activeGeneration,
+    ]) {
+      if (record.transcript.some((item) => item.id === input.callId)) {
+        return {
+          title: execution.activeGeneration.title.trim() || input.sessionTitle,
+          status: entry.status,
+          generationId: record.generationId,
+        };
+      }
+    }
+  }
+  return focused;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +243,10 @@ export function resolveCodingSessionSubagentPage(input: {
 export type CodingSessionSubagentBarModel = {
   title: string;
   type: string | null;
+  /** The raw model id the producer reported. */
   model: string | null;
+  /** Its display name (`codingSessionSubagentModelName`); `null` with it. */
+  modelName: string | null;
   status: CodingSessionSettledSubagentStatus;
   statusLabel: string;
   /** Ticks against the clock: only a subagent still running. */
@@ -186,6 +277,7 @@ export function deriveCodingSessionSubagentBar(
     title: row.title,
     type: row.type,
     model: row.model,
+    modelName: codingSessionSubagentModelName(row.model),
     status: row.status,
     statusLabel: STATUS_LABELS[row.status],
     live,

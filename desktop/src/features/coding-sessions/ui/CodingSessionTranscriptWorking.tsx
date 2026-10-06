@@ -1,6 +1,17 @@
+import type { CSSProperties } from "react";
 import * as React from "react";
 
 import { formatCodingSessionDuration } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import {
+  CODING_SESSION_QUIET_AFTER_MS,
+  codingSessionQuietMs,
+} from "@/features/coding-sessions/lib/codingSessionWaitingLiveness";
+import {
+  CodingSessionLiveShimmerText,
+  useCodingSessionLiveShimmer,
+} from "./CodingSessionTranscriptWorkingShimmer";
+
+export { CODING_SESSION_QUIET_AFTER_MS, codingSessionQuietMs };
 
 /**
  * The live turn's "Working for …" line and its Thinking shimmer.
@@ -21,6 +32,11 @@ import { formatCodingSessionDuration } from "@/features/coding-sessions/lib/codi
  * "· no update for Nm" (`data-quiet="true"`), measured from the newest
  * transcript event's own time — never from when this view mounted. It
  * clears with the next event.
+ *
+ * SV-104: the live text shimmers (the shared `Shimmer`) only while the
+ * provider is fresh — "Thinking" when it is shown, the working label when it
+ * is not, never both — and stops at "no update for Nm", when the turn
+ * settles (this line unmounts) and under reduced motion.
  */
 export function CodingSessionWorking({
   showThinking = false,
@@ -33,38 +49,38 @@ export function CodingSessionWorking({
 }) {
   const ref = React.useRef<HTMLDivElement>(null);
   usePauseAnimationsOffscreen(ref);
+  const lastEventAt = React.useContext(CodingSessionLastTranscriptEventContext);
+  // This line is mounted only while its turn is working: live by construction.
+  const shimmer = useCodingSessionLiveShimmer(true, lastEventAt);
   return (
     <div
       className="px-0.5 pt-1 text-sm text-muted-foreground tabular-nums"
       data-testid="coding-session-working"
       ref={ref}
     >
-      <CodingSessionWorkingTimer startedAt={startedAt} />
+      <CodingSessionWorkingTimer
+        shimmer={shimmer && !showThinking}
+        startedAt={startedAt}
+      />
       {stepLabel ? (
         <span className="ml-2 text-muted-foreground/60">· {stepLabel}</span>
       ) : null}
-      {showThinking ? <CodingSessionThinking /> : null}
+      {showThinking ? <CodingSessionThinking shimmer={shimmer} /> : null}
     </div>
   );
 }
 
-function CodingSessionThinking() {
+function CodingSessionThinking({ shimmer }: { shimmer: boolean }) {
   return (
     <div
-      className="relative mt-1 min-h-6 w-fit max-w-full overflow-hidden rounded-md text-sm leading-relaxed"
+      className="mt-1 min-h-6 w-fit max-w-full text-sm leading-relaxed"
       data-testid="coding-session-thinking"
     >
-      <span className="block py-0.5 text-muted-foreground/65">Thinking</span>
-      <span
-        aria-hidden
-        className="coding-session-live-activity-focus pointer-events-none absolute inset-y-0 select-none"
-      >
-        <span className="coding-session-live-activity-counter block">
-          <span className="coding-session-live-activity-aligned block py-0.5 text-foreground">
-            Thinking
-          </span>
-        </span>
-      </span>
+      <CodingSessionLiveShimmerText
+        active={shimmer}
+        className="block py-0.5 text-muted-foreground/65"
+        text="Thinking"
+      />
     </div>
   );
 }
@@ -80,28 +96,6 @@ function CodingSessionThinking() {
 export const CodingSessionLastTranscriptEventContext = React.createContext<
   number | null
 >(null);
-
-/**
- * How long a working session may publish nothing before the working line says
- * so. Past this, "Working for 5m" over a provider that has been silent for
- * four of them is a comfortable guess, not a fact (2026-10-05).
- */
-export const CODING_SESSION_QUIET_AFTER_MS = 60_000;
-
-/**
- * How long the provider has been silent at `now`, floored to whole minutes,
- * or `null` while it is not past {@link CODING_SESSION_QUIET_AFTER_MS} — or
- * when no last event time is known, which is no reason to claim silence.
- */
-export function codingSessionQuietMs(
-  lastEventAt: number | null,
-  now: number,
-): number | null {
-  if (lastEventAt === null || !Number.isFinite(lastEventAt)) return null;
-  const quiet = now - lastEventAt;
-  if (quiet <= CODING_SESSION_QUIET_AFTER_MS) return null;
-  return Math.floor(quiet / 60_000) * 60_000;
-}
 
 /**
  * Text of the working line at `now`; "Working…" until a start is known.
@@ -131,8 +125,15 @@ export function formatCodingSessionWorkingLabel(
 const TEXT_NODE = 3;
 
 function CodingSessionWorkingTimer({
+  shimmer = false,
   startedAt,
 }: {
+  /**
+   * Draw the shared `Shimmer` (its `buzz-shimmer` classes, so its
+   * reduced-motion guard applies) over the label. The label is rewritten
+   * once a second outside React, so the overlay's copy is rewritten with it.
+   */
+  shimmer?: boolean;
   startedAt: string | null;
 }) {
   const ref = React.useRef<HTMLSpanElement>(null);
@@ -164,15 +165,47 @@ function CodingSessionWorkingTimer({
       } else {
         element.textContent = text;
       }
+      const overlay = element.querySelector<HTMLElement>(
+        ".buzz-shimmer-overlay",
+      );
+      // Same for the overlay: keep React's text node, rewrite its value.
+      const overlayNode = overlay?.firstChild;
+      if (overlayNode && overlayNode.nodeType === TEXT_NODE) {
+        if (overlayNode.nodeValue !== text) overlayNode.nodeValue = text;
+      } else if (overlay && overlay.textContent !== text) {
+        overlay.textContent = text;
+      }
     };
     update();
     const interval = window.setInterval(update, 1_000);
     return () => window.clearInterval(interval);
   }, [lastEventAt, startedAt]);
 
+  if (!shimmer) {
+    return (
+      <span data-live-shimmer="off" data-quiet={String(initialQuiet)} ref={ref}>
+        {initial}
+      </span>
+    );
+  }
   return (
-    <span data-quiet={String(initialQuiet)} ref={ref}>
+    <span
+      className="buzz-shimmer"
+      data-live-shimmer="on"
+      data-quiet={String(initialQuiet)}
+      ref={ref}
+      style={
+        {
+          "--buzz-shimmer-spread": `${initial.length * 2}px`,
+        } as CSSProperties
+      }
+    >
       {initial}
+      {/* Visual-only highlight copy, as `Shimmer` draws it; the text node
+          above is the sole accessible content. */}
+      <span aria-hidden="true" className="buzz-shimmer-overlay">
+        {initial}
+      </span>
     </span>
   );
 }

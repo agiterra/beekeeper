@@ -12,6 +12,8 @@ import {
   settleCodingSessionSubagentSpawns,
   settleCodingSessionSubagentStatus,
   summarizeCodingSessionSubagentStatuses,
+  codingSessionSubagentModelName,
+  withoutCodingSessionSubagentEchoedReport,
 } from "./codingSessionSubagents.ts";
 import { deriveCodingSessionTaskModel } from "./codingSessionTaskModel.ts";
 import { deriveCodingSessionTranscriptModel } from "./codingSessionTranscriptModel.ts";
@@ -223,8 +225,10 @@ test("panel rows report status, counts and only the facts that were sent", () =>
   assert.equal(row.latest, "▸ Read");
   assert.equal(
     formatCodingSessionSubagentMeta(row),
-    "claude-haiku-4-5 · 48.2k tok · 1 tool",
+    "Claude Haiku 4.5 · 48.2k tok · 1 tool",
   );
+  // The raw id stays on the row: only the shown name is derived.
+  assert.equal(row.model, "claude-haiku-4-5");
 
   const bare = deriveCodingSessionSubagentPanel([
     project([
@@ -500,4 +504,51 @@ test("the status line counts every spawn once, live work first (SV-06)", () => {
     "1 done · 1 stopped",
   );
   assert.equal(summarizeCodingSessionSubagentStatuses([]), "");
+});
+
+test("SV-97: only a final assistant message that repeats the report is dropped", () => {
+  const msg = (id, text, role = "assistant") => ({
+    id,
+    type: "message",
+    role,
+    text,
+  });
+  const tool = { id: "t", type: "tool" };
+  const children = [msg("a", "Looking"), tool, msg("b", " Done: 3 sites. ")];
+  assert.deepEqual(
+    withoutCodingSessionSubagentEchoedReport(children, "Done: 3 sites.").map(
+      (c) => c.id,
+    ),
+    ["a", "t"],
+  );
+  // A later tool after the prose does not hide that the prose is the echo.
+  assert.deepEqual(
+    withoutCodingSessionSubagentEchoedReport(
+      [msg("b", "Done"), tool],
+      "Done",
+    ).map((c) => c.id),
+    ["t"],
+  );
+  // An earlier identical message is not the final one: nothing is dropped.
+  const earlier = [msg("a", "Done"), msg("b", "Then more")];
+  assert.equal(
+    withoutCodingSessionSubagentEchoedReport(earlier, "Done"),
+    earlier,
+  );
+  // No report shown, nothing dropped; a user message is never the echo.
+  assert.equal(
+    withoutCodingSessionSubagentEchoedReport(children, "  "),
+    children,
+  );
+  const user = [msg("u", "Done", "user")];
+  assert.equal(withoutCodingSessionSubagentEchoedReport(user, "Done"), user);
+});
+
+test("SV-98: a subagent's model reads by one human name, and unknown stays unknown", () => {
+  assert.equal(
+    codingSessionSubagentModelName("claude-opus-5-5"),
+    "Claude Opus 5.5",
+  );
+  assert.equal(codingSessionSubagentModelName("opus"), "Opus");
+  assert.equal(codingSessionSubagentModelName(null), null);
 });

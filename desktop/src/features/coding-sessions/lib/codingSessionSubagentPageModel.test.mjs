@@ -6,6 +6,7 @@ import {
   codingSessionSubagentPageRestingStatus,
   deriveCodingSessionSubagentBar,
   readCodingSessionSubagentPrompt,
+  resolveCodingSessionSubagentLineage,
   resolveCodingSessionSubagentPage,
   selectCodingSessionSubagentItems,
 } from "./codingSessionSubagentPageModel.ts";
@@ -173,6 +174,7 @@ test("a finished spawn's bar is settled: its reported duration, tokens and tools
   assert.equal(bar.statusLabel, "Completed");
   assert.equal(bar.live, false);
   assert.equal(bar.model, "claude-haiku");
+  assert.equal(bar.modelName, "Claude Haiku");
   assert.equal(bar.tokens, "48.2k tok");
   assert.equal(bar.tools, "1 tool");
   assert.equal(codingSessionSubagentBarElapsedMs(bar, Date.now() + 1e9), 9_000);
@@ -234,4 +236,93 @@ test("the page's transcript reads unended steps through the subagent's status", 
   assert.equal(codingSessionSubagentPageRestingStatus("failed"), "stopped");
   assert.equal(codingSessionSubagentPageRestingStatus("unknown"), "unknown");
   assert.equal(codingSessionSubagentPageRestingStatus(null), "unknown");
+});
+
+test("SV-97: the page drops the subagent's last prose when it is the returned result", () => {
+  const transcript = project([
+    { kind: "user_prompt", content: "Investigate" },
+    taskCall("task-1", INPUT),
+    { kind: "assistant_text", text: "Reading a.rs", parentToolId: "task-1" },
+    {
+      kind: "assistant_text",
+      text: "Found three call sites.",
+      parentToolId: "task-1",
+    },
+    {
+      kind: "tool_result",
+      toolId: "task-1",
+      toolName: "Task",
+      content: "Found three call sites.",
+      isError: false,
+    },
+  ]);
+  const page = resolveCodingSessionSubagentPage({
+    parentToolId: "task-1",
+    panel: deriveCodingSessionSubagentPanel([transcript]),
+    transcript,
+  });
+  assert.equal(page.kind, "spawn");
+  assert.deepEqual(
+    page.items.map((item) => item.text),
+    ["Reading a.rs"],
+  );
+});
+
+test("SV-98: the lineage names the execution holding the call, with its shown status", () => {
+  const record = (generationId, title, ids) => ({
+    generationId,
+    title,
+    transcript: ids.map((id) => ({ id })),
+  });
+  const lead = {
+    executionKey: "lead",
+    priorGenerations: [],
+    activeGeneration: record("g-lead", "Lead seat", ["x"]),
+  };
+  const seat = {
+    executionKey: "seat",
+    priorGenerations: [record("g-seat-1", "Old", ["call-1"])],
+    activeGeneration: record("g-seat-2", "Reviewer seat", []),
+  };
+  const working = { kind: "working", label: "Working" };
+  const idle = { kind: "idle", label: "Idle" };
+  const executions = [
+    { execution: lead, status: idle },
+    { execution: seat, status: working },
+  ];
+  const base = {
+    layout: "umbrella",
+    sessionTitle: "Session title",
+    focusedExecution: lead,
+    focusedRecord: lead.activeGeneration,
+    executions,
+  };
+  assert.deepEqual(
+    resolveCodingSessionSubagentLineage({ ...base, callId: "call-1" }),
+    { title: "Reviewer seat", status: working, generationId: "g-seat-1" },
+  );
+  // A call no execution holds falls back to the focused one; so does the
+  // single layout, which titles the parent by the session.
+  assert.deepEqual(
+    resolveCodingSessionSubagentLineage({ ...base, callId: "nope" }),
+    { title: "Session title", status: idle, generationId: "g-lead" },
+  );
+  assert.deepEqual(
+    resolveCodingSessionSubagentLineage({
+      ...base,
+      layout: "single",
+      callId: "call-1",
+    }),
+    { title: "Session title", status: idle, generationId: "g-lead" },
+  );
+  // Nothing in view to name: no status, never a guessed one.
+  assert.equal(
+    resolveCodingSessionSubagentLineage({
+      ...base,
+      focusedExecution: null,
+      focusedRecord: null,
+      callId: null,
+    }).status,
+    null,
+  );
 });

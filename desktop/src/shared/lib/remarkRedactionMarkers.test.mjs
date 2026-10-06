@@ -99,3 +99,14 @@ test("plugin instances do not share regex state", () => {
     assert.equal(tree.children[0].children[0].type, "redaction");
   }
 });
+
+test("a marker touching a path separator is flagged as a path", () => {
+  const children = paragraph(`Edited ${MARKER}/src/main.rs today.`);
+  assert.equal(children[1].type, "redaction");
+  assert.equal(children[1].data.hProperties["data-redaction-path"], "true");
+});
+
+test("a marker in ordinary prose is not flagged as a path", () => {
+  const children = paragraph(`The result was ${MARKER}, so I stopped.`);
+  assert.equal(children[1].data.hProperties["data-redaction-path"], undefined);
+});

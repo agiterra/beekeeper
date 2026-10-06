@@ -185,6 +185,13 @@ const LOCAL_VAULT = {
   // back — the pill stays.
 };
 
+/** The hidden-context chip standing for the `bytes`-byte marker. */
+function chip(page: import("@playwright/test").Page, bytes: number) {
+  return page.locator(
+    `[data-hidden-context-chip][aria-label^="Hidden before publishing — ${bytes} bytes,"]`,
+  );
+}
+
 async function openSeededSession(
   page: import("@playwright/test").Page,
   seeded: RelayEvent[],
@@ -240,17 +247,12 @@ test("a redaction reads as a pill and the raw marker never reaches prose", async
   const pills = page.locator("[data-redaction-pill]");
   await expect(pills.first()).toBeVisible({ timeout: 15_000 });
 
-  // The host path appears twice — once in prose, once inside the fence.
-  await expect(
-    page.locator('[data-elision-cause="redaction"]', {
-      hasText: "redacted 148 B",
-    }),
-  ).toHaveCount(2);
-  await expect(
-    page.locator('[data-elision-cause="redaction"]', {
-      hasText: "redacted 42 B",
-    }),
-  ).toHaveCount(1);
+  // The host path appears twice — once in prose, once inside the fence. Each
+  // reads as a quiet `hidden` chip; nothing around either says "path", so
+  // neither claims to be one.
+  await expect(chip(page, 148)).toHaveCount(2);
+  await expect(chip(page, 148).first()).toHaveText("hidden");
+  await expect(chip(page, 42)).toHaveCount(1);
 
   // The Codex argv case: `toolName` is prose, so a redacted interpreter path
   // lands mid-label on a failed tool row — a different renderer from prose,
@@ -269,7 +271,7 @@ test("a redaction reads as a pill and the raw marker never reaches prose", async
 
   const inlineCode = page
     .locator("code")
-    .filter({ hasText: "redacted 31 B" })
+    .filter({ has: chip(page, 31) })
     .first();
   await expect(inlineCode).toBeVisible();
   await expect(inlineCode).not.toContainText("elided private context");
@@ -308,16 +310,15 @@ test("hovering a pill reveals the digest it stands for", async ({ page }) => {
   // hidden value, so it has to stay reachable — behind the pill, not gone.
   await openSeededSession(page, elisionEvents());
 
-  const pill = page
-    .locator('[data-elision-cause="redaction"]')
-    .filter({ hasText: "redacted 148 B" })
-    .first();
+  const pill = chip(page, 148).first();
   await expect(pill).toBeVisible({ timeout: 15_000 });
   await pill.hover();
 
   const tooltip = page.getByRole("tooltip").first();
+  await expect(tooltip).toContainText(
+    `Hidden before publishing — 148 bytes, sha256 ${HOME_DIGEST.slice(0, 12)}…`,
+  );
   await expect(tooltip).toContainText(`sha256:${HOME_DIGEST}`);
-  await expect(tooltip).toContainText("148 B serialized");
 
   await waitForAnimations(page);
   await page.screenshot({
@@ -365,11 +366,7 @@ test("on the machine that redacted it, the operator sees the value and a badge",
 
   // The credential was redacted identically and never recorded, so even here
   // it stays a pill. This is the leak direction, in the UI.
-  await expect(
-    page.locator('[data-elision-cause="redaction"]', {
-      hasText: "redacted 42 B",
-    }),
-  ).toHaveCount(1);
+  await expect(chip(page, 42)).toHaveCount(1);
   await expect(page.locator("body")).not.toContainText("ghp_");
 
   await waitForAnimations(page);
@@ -406,4 +403,89 @@ test("with no vault at all, every marker stays a pill", async ({ page }) => {
   });
   await expect(page.locator("[data-redaction-revealed]")).toHaveCount(0);
   await expect(page.getByText("expired", { exact: false })).toHaveCount(0);
+});
+
+/**
+ * Tool output, not prose: a `pwd` whose whole answer was a hidden path used to
+ * print ninety characters of hash under the command. It reads `hidden path`
+ * now — `pwd` prints nothing but a path, and a `cd` target is one too — while
+ * the digest stays on the chip for whoever needs to verify it.
+ */
+function shellOutputEvents(): RelayEvent[] {
+  return [
+    metadata(),
+    transcript(1, { kind: "user_prompt", content: "Where are you?" }),
+    transcript(2, {
+      kind: "tool_call",
+      tool: { toolName: "Bash", toolId: "pwd-1", input: { command: "pwd" } },
+    }),
+    transcript(3, {
+      kind: "tool_result",
+      toolId: "pwd-1",
+      toolName: "Bash",
+      content: `${marker(41, HOME_DIGEST)}\n`,
+      isError: false,
+    }),
+    transcript(4, {
+      kind: "tool_call",
+      tool: {
+        toolName: "Bash",
+        toolId: "cd-1",
+        input: { command: `cd ${marker(41, HOME_DIGEST)} && ls` },
+      },
+    }),
+    transcript(5, {
+      kind: "tool_result",
+      toolId: "cd-1",
+      toolName: "Bash",
+      content: "Cargo.toml\nsrc",
+      isError: false,
+    }),
+    transcript(6, { kind: "assistant_text", text: "In the project root." }),
+    transcript(7, {
+      kind: "result",
+      subtype: "success",
+      isError: false,
+      durationMs: 2_000,
+      result: "In the project root.",
+    }),
+  ];
+}
+
+test("a hidden path in shell output reads as a chip, not a hash", async ({
+  page,
+}) => {
+  const workspace = await openSeededSession(page, shellOutputEvents());
+  await expect(workspace).toContainText("In the project root.", {
+    timeout: 15_000,
+  });
+  const fold = page.getByTestId("coding-session-worked-fold");
+  if ((await fold.count()) > 0) await fold.first().click();
+  // Adjacent commands read as one "Ran 2 commands" row; open it.
+  const group = page.getByTestId("coding-session-tool-group");
+  if ((await group.count()) > 0) {
+    await group.first().getByRole("button").first().click();
+  }
+
+  const row = page
+    .getByTestId("transcript-tool-item")
+    .filter({ hasText: "pwd" })
+    .first();
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  await row.locator("summary").first().click();
+  const block = row.getByTestId("transcript-shell-command");
+  await expect(block).toBeVisible();
+  await expect(block).not.toContainText("elided private context");
+  await expect(block).not.toContainText(HOME_DIGEST);
+  await expect(block.locator("[data-hidden-context-chip]")).toHaveText(
+    "hidden path",
+  );
+  await expect(block.locator("[data-hidden-context-chip]")).toHaveAttribute(
+    "data-redaction-digest",
+    HOME_DIGEST,
+  );
+
+  await page.mouse.move(2, 2);
+  await waitForAnimations(page);
+  await row.screenshot({ path: `${SHOTS}/05-pwd-hidden-path.png` });
 });

@@ -12,6 +12,8 @@ import {
 } from "./CodingSessionColumn";
 import { CodingSessionLiveActivityBar } from "./CodingSessionLiveActivityBar";
 import { CodingSessionTaskRail } from "./CodingSessionTaskRail";
+import { CodingSessionUmbrellaWaitingStrip } from "./CodingSessionWaitingStrip";
+import type { CodingSessionSurfaceObservations } from "./surfaces/codingSessionSurfaceContext";
 import {
   CodingSessionUmbrellaComposer,
   type CodingSessionUmbrellaComposerPrefill,
@@ -49,6 +51,7 @@ export function CodingSessionUmbrellaDock({
   isNarrow,
   mission,
   narrativeExpanded,
+  observations,
   onAddProvider,
   onFocusExecution,
   onSelectedParticipantChange,
@@ -73,6 +76,8 @@ export function CodingSessionUmbrellaDock({
   isNarrow: boolean;
   mission: boolean;
   narrativeExpanded: boolean;
+  /** The session's observation read, for the waiting strip's running gates (SV-99). */
+  observations?: CodingSessionSurfaceObservations;
   onAddProvider?: () => void;
   onFocusExecution: (executionKey: string | null) => void;
   onSelectedParticipantChange: (key: string | null) => void;
@@ -124,6 +129,11 @@ export function CodingSessionUmbrellaDock({
             />
           </div>
         ) : null}
+        <CodingSessionUmbrellaWaitingStrip
+          observations={observations}
+          participants={streamPresence.participants}
+          umbrella={umbrella}
+        />
         <CodingSessionUmbrellaComposer
           actorNames={actorNames}
           acceptedOperators={acceptedOperators}

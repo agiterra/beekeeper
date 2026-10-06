@@ -21,6 +21,23 @@ test("ids become names without a hand-written table", () => {
   assert.equal(codingSessionModelDisplayName("opus[1m]"), "Opus");
 });
 
+test("a hyphen-spelled version reads as the vendor writes it", () => {
+  assert.equal(
+    codingSessionModelDisplayName("claude-opus-5-5"),
+    "Claude Opus 5.5",
+  );
+  assert.equal(
+    codingSessionModelDisplayName("claude-haiku-4-5"),
+    "Claude Haiku 4.5",
+  );
+  // A date stamp is no version part: it keeps its space.
+  assert.equal(
+    codingSessionModelDisplayName("claude-sonnet-4-5-20250929"),
+    "Claude Sonnet 4.5 20250929",
+  );
+  assert.equal(codingSessionModelDisplayName("gpt-5-mini"), "GPT-5 mini");
+});
+
 test("a model nobody here has heard of still gets a readable name", () => {
   // The transform is total on purpose — a lookup table would have to guess.
   assert.equal(
@@ -66,6 +83,8 @@ test("traits summarise the way people write them, or not at all", () => {
 
 // "Claude Fable 5 1" was the derived name for `claude-fable-5-1`; the runtime
 // calls it "Fable 5.1", and when its catalog row says so that is the title.
+// (The derived fallback now reads "Claude Fable 5.1": short version parts
+// join with a dot.)
 test("the runtime's own name wins, and the derived name is only the fallback", () => {
   assert.equal(
     codingSessionModelTitle("claude-fable-5-1", "Fable 5.1"),
@@ -77,7 +96,7 @@ test("the runtime's own name wins, and the derived name is only the fallback", (
   );
   assert.equal(
     codingSessionModelTitle("claude-fable-5-1", null),
-    "Claude Fable 5 1",
+    "Claude Fable 5.1",
   );
   assert.equal(codingSessionModelTitle("gpt-5.6-terra", "  "), "GPT-5.6 Terra");
 });

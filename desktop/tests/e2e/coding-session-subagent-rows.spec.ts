@@ -30,7 +30,10 @@ import { installMockBridge } from "../helpers/bridge";
 // the Agents surface's Direct spawns open the subagent's own page; the card
 // carries a hover card (also on keyboard focus) with model, time, status,
 // tokens, tools and the result; a finished subagent draws its finish card
-// after the group, frozen at its outcome and duration.
+// after the group, frozen at its outcome and duration. SV-98: its dot is the
+// same success colour as the Direct spawns row's, and its model reads by one
+// human name. SV-97: expanded in place, its final answer shows once, as the
+// report.
 
 const SHOTS = "test-results/subagent-rows";
 const secret = generateSecretKey();
@@ -45,6 +48,7 @@ const session = {
 };
 const targetKey = buildCodingSessionTargetKey(session);
 const ANSWER = "The backoff now has an upper bound of thirty seconds.";
+const REPORT = "The backoff has no upper bound.\nSee src/retry.ts.";
 
 function signed(kind: number, seq: number, content: unknown, tags: string[][]) {
   return finalizeEvent(
@@ -162,11 +166,18 @@ function events(): RelayEvent[] {
       content: "export const MAX_BACKOFF = Infinity;",
       isError: false,
     }),
+    // SV-97: the subagent's last prose, which the provider also publishes
+    // as the call's result.
+    transcript(seq++, turn, {
+      kind: "assistant_text",
+      text: REPORT,
+      parentToolId: "task-1",
+    }),
     transcript(seq++, turn, {
       kind: "tool_result",
       toolId: "task-1",
       toolName: "Task",
-      content: "The backoff has no upper bound.\nSee src/retry.ts.",
+      content: REPORT,
       isError: false,
       subagent: {
         type: "Explore",
@@ -247,9 +258,10 @@ test("subagent cards open the page, carry a hover card and freeze when finished"
   const clock = finish.getByTestId("coding-session-subagent-elapsed");
   await expect(clock).toHaveAttribute("data-live", "false");
   await expect(clock).toHaveText("1m 2s");
-  await expect(
-    finish.getByTestId("coding-session-subagent-status-dot"),
-  ).toHaveAttribute("data-status", "done");
+  const finishDot = finish.getByTestId("coding-session-subagent-status-dot");
+  await expect(finishDot).toHaveAttribute("data-status", "done");
+  // SV-98: finished successfully reads green here, as in Direct spawns.
+  await expect(finishDot).toHaveClass(/bg-emerald-500/);
   await expect(block.getByTestId("coding-session-subagent-link")).toHaveCount(
     0,
   );
@@ -260,7 +272,8 @@ test("subagent cards open the page, carry a hover card and freeze when finished"
   await finish.hover();
   const hover = page.getByTestId("coding-session-subagent-hover-card");
   await expect(hover).toBeVisible();
-  await expect(hover).toContainText("claude-sonnet-4-5");
+  // SV-98: the model by its one human name.
+  await expect(hover).toContainText("Claude Sonnet 4.5");
   await expect(hover).toContainText("1m 2s");
   await expect(hover).toContainText("Finished");
   await expect(hover).toContainText("48.2k tok");
@@ -273,6 +286,20 @@ test("subagent cards open the page, carry a hover card and freeze when finished"
     page.getByTestId("coding-session-subagent-hover-card"),
   ).toBeVisible();
   await page.keyboard.press("Escape");
+
+  // SV-97: expanded in place, the final answer shows once — as the report,
+  // not also as the subagent's last message above it.
+  await block.getByTestId("coding-session-subagents-inline-toggle").click();
+  const detail = block.getByTestId("coding-session-subagent-spawn");
+  await expect(detail).toBeVisible();
+  await expect(
+    detail.getByTestId("coding-session-subagent-report"),
+  ).toContainText("The backoff has no upper bound.");
+  await expect(detail.getByText("The backoff has no upper bound.")).toHaveCount(
+    1,
+  );
+  await block.getByTestId("coding-session-subagents-inline-toggle").click();
+  await expect(detail).toHaveCount(0);
 
   // SV-80: the card's primary click opens the subagent's page.
   await finish.click();
@@ -293,6 +320,10 @@ test("subagent cards open the page, carry a hover card and freeze when finished"
   await expect(row).toHaveCount(1);
   await expect(row).toHaveAttribute("data-parent-tool-id", "task-1");
   await expect(row).toHaveAttribute("data-status", "done");
+  // SV-98: the same success dot as the transcript's finish card.
+  await expect(row.locator("span.rounded-full").first()).toHaveClass(
+    /bg-emerald-500/,
+  );
   await rest();
   await shoot("SV80-direct-spawn-row", row);
   await row.click();

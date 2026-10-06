@@ -23,6 +23,7 @@ import {
   MAX_METADATA_FIELD_LENGTH,
   safeString,
 } from "./codingSessionDefensive";
+import { codingSessionModelDisplayName } from "./codingSessionModelDisplay";
 import type { CodingSessionTurnSettlement } from "./codingSessionTranscriptModelTypes";
 
 type ToolTranscriptItem = Extract<TranscriptItem, { type: "tool" }>;
@@ -632,12 +633,48 @@ export function formatCodingSessionSubagentFooter(
     .join(" · ");
 }
 
+/**
+ * The one name a subagent's model goes by on every subagent surface (card,
+ * hover card, page bar, Agents panel): the session's derived display name
+ * (`claude-opus-5-5` → `Claude Opus 5.5`), so the same model never reads as a
+ * slug in one place and a name in another. `null` stays `null`: a model the
+ * producer did not report is never given a name. Surfaces keep the raw id on
+ * a `title` beside it.
+ */
+export function codingSessionSubagentModelName(
+  model: string | null,
+): string | null {
+  return model === null ? null : codingSessionModelDisplayName(model);
+}
+
+/**
+ * SV-97: a subagent's children without the prose that only repeats its
+ * report. The provider publishes the subagent's last answer twice — as an
+ * `assistant_text` item attributed to the call, then as the call's result —
+ * and a surface that shows the report would otherwise print it twice. Only
+ * the *final* assistant message is dropped, and only when its trimmed text is
+ * the report's; an empty report (none shown) drops nothing.
+ */
+export function withoutCodingSessionSubagentEchoedReport<
+  T extends TranscriptItem,
+>(children: readonly T[], report: string): readonly T[] {
+  const shown = report.trim();
+  if (!shown) return children;
+  for (let index = children.length - 1; index >= 0; index -= 1) {
+    const child = children[index];
+    if (child.type !== "message" || child.role !== "assistant") continue;
+    if (child.text.trim() !== shown) return children;
+    return [...children.slice(0, index), ...children.slice(index + 1)];
+  }
+  return children;
+}
+
 /** `<model> · <tokens> tok · <N> tools`, each part only when known. */
 export function formatCodingSessionSubagentMeta(
   row: CodingSessionSubagentRow,
 ): string {
   return [
-    row.model,
+    codingSessionSubagentModelName(row.model),
     row.totalTokens !== null
       ? `${formatCodingSessionSubagentTokens(row.totalTokens)} tok`
       : null,

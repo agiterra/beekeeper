@@ -34,6 +34,9 @@ const CASED_TOKENS = new Map<string, string>([
 /** Families whose version follows a hyphen rather than a space. */
 const HYPHENATES_VERSION = new Set(["GPT"]);
 
+/** A version part, as opposed to a date stamp or a model size. */
+const SHORT_NUMBER = /^\d{1,2}$/;
+
 function titleToken(token: string): string {
   const lowered = token.toLowerCase();
   const known = CASED_TOKENS.get(lowered);
@@ -76,6 +79,13 @@ export function codingSessionModelDisplayName(model: string): string {
     // One conventional exception, and it is the vendor's own spelling: OpenAI
     // writes "GPT-5.6", Anthropic writes "Claude Opus 5". Everything else is a
     // space, so an unrecognised family reads as words rather than a slug.
+    // A version the id spells with hyphens (`claude-opus-5-5`) is the
+    // vendor's dotted one (`Claude Opus 5.5`): two short numbers in a row
+    // join with a dot. A date stamp (`20250219`) is not short and keeps its
+    // space, so `claude-sonnet-4-5-20250929` reads `Claude Sonnet 4.5 20250929`.
+    if (SHORT_NUMBER.test(named[index - 1]) && SHORT_NUMBER.test(token)) {
+      return `${rendered}.${token}`;
+    }
     const separator =
       HYPHENATES_VERSION.has(named[index - 1]) && /^\d/.test(token) ? "-" : " ";
     return `${rendered}${separator}${token}`;

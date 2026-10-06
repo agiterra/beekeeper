@@ -395,15 +395,26 @@ test("shows errors and a streaming working affordance in the primary turn", asyn
 });
 
 test("a signed running turn animates Thinking only before visible work begins", async () => {
+  // SV-104: the shared Shimmer, and only while the provider is fresh.
   const markup = await renderTranscript({
     generationId: "generation-1",
     isWorking: true,
     items: [message("prompt", "user", "Inspect the session")],
+    lastTranscriptEventAt: Date.now(),
   });
 
   assert.match(markup, /data-testid="coding-session-thinking"/);
-  assert.match(markup, /coding-session-live-activity-focus/);
+  assert.match(markup, /buzz-shimmer-overlay/);
   assert.match(markup, />Thinking</);
+
+  // No known last event time is no evidence the provider is still going.
+  const unknown = await renderTranscript({
+    generationId: "generation-1",
+    isWorking: true,
+    items: [message("prompt", "user", "Inspect the session")],
+  });
+  assert.match(unknown, />Thinking</);
+  assert.doesNotMatch(unknown, /buzz-shimmer/);
 });
 
 test("a live run of tools reads as one sentence row that opens in place", async () => {

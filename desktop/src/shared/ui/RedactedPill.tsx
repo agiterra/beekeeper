@@ -4,13 +4,17 @@ import * as React from "react";
 import { copyTextToClipboard } from "@/shared/lib/clipboard";
 import { cn } from "@/shared/lib/cn";
 import {
+  annotateHiddenContext,
+  type HiddenContextSegment,
+} from "@/shared/lib/hiddenContext";
+import {
   type ElisionCause,
   formatElisionLabel,
   formatRedactedBytes,
   parseRedactionMarkers,
   type RedactionMarker,
-  type RedactionSegment,
 } from "@/shared/lib/redactionMarker";
+import { HiddenContextChip } from "@/shared/ui/HiddenContextChip";
 import {
   type ResolvedRedaction,
   useResolvedRedaction,
@@ -123,10 +127,13 @@ export function RedactedPill({
   className,
   interactive = true,
   marker,
+  pathShaped = false,
 }: {
   className?: string;
   interactive?: boolean;
   marker: RedactionMarker;
+  /** The text around the marker says it stood for a path (`hiddenContext`). */
+  pathShaped?: boolean;
 }) {
   const resolved = useResolvedRedaction(marker.digest);
   if (resolved) {
@@ -140,12 +147,11 @@ export function RedactedPill({
     );
   }
   return (
-    <ElisionPill
-      bytes={marker.bytes}
-      cause="redaction"
+    <HiddenContextChip
       className={className}
-      digest={marker.digest}
       interactive={interactive}
+      marker={marker}
+      pathShaped={pathShaped}
     />
   );
 }
@@ -269,13 +275,22 @@ function ElisionPillTooltipBody({
 export function RedactedText({
   interactive = true,
   text,
+  wholeLinesArePaths = false,
 }: {
   interactive?: boolean;
   text: string;
+  /**
+   * Every line of `text` is a path (the output of `pwd`), so a marker alone
+   * on its line reads `hidden path` rather than `hidden`.
+   */
+  wholeLinesArePaths?: boolean;
 }) {
-  const segments = React.useMemo<RedactionSegment[]>(
-    () => parseRedactionMarkers(text),
-    [text],
+  const segments = React.useMemo<HiddenContextSegment[]>(
+    () =>
+      annotateHiddenContext(parseRedactionMarkers(text), {
+        wholeLinesArePaths,
+      }),
+    [text, wholeLinesArePaths],
   );
   if (segments.length === 1 && segments[0].kind === "text") {
     return <>{text}</>;
@@ -292,6 +307,7 @@ export function RedactedText({
             // biome-ignore lint/suspicious/noArrayIndexKey: positional segments of one immutable string
             key={index}
             marker={segment}
+            pathShaped={segment.pathShaped}
           />
         ),
       )}

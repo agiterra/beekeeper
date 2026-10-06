@@ -18,6 +18,7 @@ import {
   formatCodingSessionSubagentGroupLabel,
   settleCodingSessionSubagentSpawns,
   summarizeCodingSessionSubagentStatuses,
+  withoutCodingSessionSubagentEchoedReport,
 } from "@/features/coding-sessions/lib/codingSessionSubagents";
 import {
   useCanOpenCodingSessionSubagent,
@@ -411,6 +412,12 @@ export function CodingSessionSubagentSpawnDetail({
     status === "running" || status === "stopped" || status === "unknown"
       ? ""
       : spawn.call.result.trim();
+  // SV-97: the report box below is the answer; the same prose published as
+  // the subagent's last message is not shown a second time above it.
+  const children = withoutCodingSessionSubagentEchoedReport(
+    spawn.children,
+    report,
+  );
   return (
     <div
       className="flex min-w-0 flex-col gap-1"
@@ -427,7 +434,7 @@ export function CodingSessionSubagentSpawnDetail({
       ) : null}
       {spawn.children.length > 0 ? (
         <div className="flex min-w-0 flex-col gap-1">
-          {spawn.children.map((child) => (
+          {children.map((child) => (
             <div className="min-w-0" key={child.id}>
               {renderChild(child)}
             </div>

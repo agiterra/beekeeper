@@ -1,4 +1,5 @@
 import { cn } from "@/shared/lib/cn";
+import { RedactedText } from "@/shared/ui/RedactedPill";
 import type { FileEditDiff } from "../agentSessionFileEditDiff";
 import type { FileReadContent } from "../agentSessionFileRead";
 import { FileContentBlock } from "../FileContentBlock";
@@ -48,7 +49,7 @@ export function ToolDetailBlocks({
     <div className="space-y-3 px-1 pt-1 pb-2 text-popover-foreground outline-hidden">
       {description ? (
         <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
-          {description}
+          <RedactedText text={description} />
         </p>
       ) : null}
       {imagePreview?.src ? (
@@ -123,7 +124,7 @@ function ToolCodeBlock({
             : "bg-muted/50 text-foreground",
         )}
       >
-        {formatCodeValue(value)}
+        <RedactedText text={formatCodeValue(value)} />
       </pre>
     </div>
   );

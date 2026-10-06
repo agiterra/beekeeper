@@ -911,6 +911,7 @@ export function UmbrellaCodingSessionWorkspace({
                         isNarrow={isNarrow}
                         mission={mission}
                         narrativeExpanded={narrativeExpanded}
+                        observations={missionSurfaceResult.observationRead}
                         onAddProvider={onAddProvider}
                         onFocusExecution={handleFocusExecution}
                         onSelectedParticipantChange={setComposerParticipantKey}

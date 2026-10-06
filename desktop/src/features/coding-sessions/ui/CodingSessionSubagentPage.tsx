@@ -11,6 +11,7 @@ import {
   type CodingSessionSubagentPage as PageReading,
   codingSessionSubagentPageRestingStatus,
   deriveCodingSessionSubagentBar,
+  resolveCodingSessionSubagentLineage,
   resolveCodingSessionSubagentPage,
 } from "@/features/coding-sessions/lib/codingSessionSubagentPageModel";
 import {
@@ -21,6 +22,7 @@ import { acquireEscapeSurface } from "@/shared/hooks/escapeSurfaces";
 import { Markdown } from "@/shared/ui/markdown";
 import { CodingSessionColumn } from "./CodingSessionColumn";
 import { CodingSessionSubagentBar } from "./CodingSessionSubagentBar";
+import { CodingSessionSubagentPageLineage } from "./CodingSessionSubagentPageLineage";
 import { CodingSessionSubagentPromptBlock } from "./CodingSessionSubagentPagePrompt";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import { revealCodingSessionSubagentRow } from "./CodingSessionSubagentPageReveal";
@@ -39,6 +41,10 @@ import {
  * it exactly where it was and then scrolls to the subagent's row. The page
  * covers the composer too: a subagent takes no prompts, and a composer over
  * its page would address the lead while reading as if it addressed the page.
+ *
+ * SV-98 (T3's subagent page): a "Subagent of · <parent>" divider with the
+ * parent's live status heads the transcript, and the facts bar is docked
+ * where the composer was, saying in that spot that nobody types to it.
  */
 export function CodingSessionSubagentPage() {
   const ctx = useCodingSessionSurfaceCtx();
@@ -97,7 +103,9 @@ function OpenSubagentPage({
     () => onClose(returnTo),
     [onClose, returnTo],
   );
-  const generationId = useGenerationOf(ctx, page);
+  const lineage = useLineageOf(ctx, page);
+  const generationId =
+    lineage.generationId ?? ctx.focusedRecord?.generationId ?? "subagent";
   const rootRef = React.useRef<HTMLElement>(null);
 
   // Focus the page so Escape and the keyboard land here, not on the
@@ -132,15 +140,16 @@ function OpenSubagentPage({
       ref={rootRef}
       tabIndex={-1}
     >
-      <CodingSessionSubagentBar bar={bar} onOpenParent={openParent} />
       <div
         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4"
         data-testid="coding-session-subagent-page-scroll"
       >
-        <CodingSessionColumn
-          className="flex flex-col gap-5 pt-6 pb-10"
-          expanded
-        >
+        <CodingSessionColumn className="flex flex-col gap-5 pt-6 pb-6" expanded>
+          <CodingSessionSubagentPageLineage
+            lineage={lineage}
+            onOpenParent={openParent}
+            sessionClosed={ctx.sessionClosed}
+          />
           {page.kind === "missing-call" ? (
             <PageNotice testId="coding-session-subagent-page-missing-call">
               The call that started this subagent is not in this transcript
@@ -169,31 +178,50 @@ function OpenSubagentPage({
           {page.kind === "spawn" ? <ReturnedResult page={page} /> : null}
         </CodingSessionColumn>
       </div>
+      <div
+        className="shrink-0 bg-background px-4 pt-2 pb-4"
+        data-testid="coding-session-subagent-bar-dock"
+      >
+        <CodingSessionColumn expanded>
+          <CodingSessionSubagentBar
+            bar={bar}
+            onOpenParent={openParent}
+            parentStatusLabel={
+              lineage.status
+                ? ctx.sessionClosed
+                  ? "Closed"
+                  : lineage.status.label
+                : null
+            }
+          />
+        </CodingSessionColumn>
+      </div>
     </section>
   );
 }
 
-/** The generation whose transcript holds the call; the focused one failing that. */
-function useGenerationOf(
-  ctx: CodingSessionSurfaceCtx,
-  page: PageReading,
-): string {
-  return React.useMemo(() => {
-    const fallback = ctx.focusedRecord?.generationId ?? "subagent";
-    if (page.kind !== "spawn" || ctx.layout === "single") return fallback;
-    const callId = page.row.spawn.call.id;
-    for (const execution of ctx.umbrella.executions) {
-      for (const record of [
-        ...execution.priorGenerations,
-        execution.activeGeneration,
-      ]) {
-        if (record.transcript.some((item) => item.id === callId)) {
-          return record.generationId;
-        }
-      }
-    }
-    return fallback;
-  }, [ctx.focusedRecord, ctx.layout, ctx.umbrella.executions, page]);
+/** Whose subagent this is: the execution holding the call (SV-98). */
+function useLineageOf(ctx: CodingSessionSurfaceCtx, page: PageReading) {
+  const callId = page.kind === "spawn" ? page.row.spawn.call.id : null;
+  return React.useMemo(
+    () =>
+      resolveCodingSessionSubagentLineage({
+        callId,
+        layout: ctx.layout,
+        sessionTitle: ctx.umbrella.title,
+        focusedExecution: ctx.focusedExecution,
+        focusedRecord: ctx.focusedRecord,
+        executions: ctx.executions,
+      }),
+    [
+      callId,
+      ctx.executions,
+      ctx.focusedExecution,
+      ctx.focusedRecord,
+      ctx.layout,
+      ctx.umbrella.title,
+    ],
+  );
 }
 
 /** Escape inside a field, a dialog or a menu is that control's to handle. */

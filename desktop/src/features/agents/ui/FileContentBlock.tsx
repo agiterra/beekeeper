@@ -1,6 +1,7 @@
 import type * as React from "react";
 
 import { cn } from "@/shared/lib/cn";
+import { RedactedText } from "@/shared/ui/RedactedPill";
 
 export type FileContentLineKind = "add" | "remove" | "context" | "meta";
 
@@ -101,7 +102,7 @@ function FileContentLineView({ line }: { line: FileContentLine }) {
         line.kind === "meta" && "text-muted-foreground/70",
       )}
     >
-      {line.text || " "}
+      {line.text ? <RedactedText text={line.text} /> : " "}
     </span>
   );
 }

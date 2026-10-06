@@ -86,6 +86,7 @@ import {
   CodingSessionTaskRail,
   CodingSessionTaskRailSheet,
 } from "./CodingSessionTaskRail";
+import { CodingSessionSingleWaitingStrip } from "./CodingSessionWaitingStrip";
 import { useCodingSessionTaskDock } from "./useCodingSessionTaskDock";
 import { buildCodingSessionPromptHistory } from "@/features/coding-sessions/lib/codingSessionPromptHistory";
 import {
@@ -876,6 +877,11 @@ function ReadyCodingSessionWorkspace({
                         />
                       </div>
                     ) : null}
+                    <CodingSessionSingleWaitingStrip
+                      observations={teamRead.observations}
+                      session={session}
+                      status={status}
+                    />
                     <div className="relative z-10">
                       <CodingSessionComposer
                         authorityReason={composerAuthority.reason}

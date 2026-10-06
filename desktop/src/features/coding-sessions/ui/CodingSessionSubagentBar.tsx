@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot } from "lucide-react";
+import { ArrowUpLeft, Bot } from "lucide-react";
 
 import {
   type CodingSessionSubagentBarModel,
@@ -10,38 +10,46 @@ import { useNow } from "@/shared/lib/useNow";
 import { CodingSessionSubagentStatusIcon } from "./CodingSessionSubagentEntry";
 
 /**
- * The subagent page's header (SV-79; T3 `ProviderSubagentBar`): what the
- * subagent is, its settled status with a live timer while it runs, what it
- * reported spending, that it runs on its own, and the way back to its parent.
+ * The subagent page's facts bar (SV-79, SV-98; T3 `ProviderSubagentBar`).
+ *
+ * It sits where the composer sits — docked at the bottom of the page, in the
+ * composer's measure — because that is the place a person looks to talk to
+ * the agent on screen, and a subagent takes no prompts: the bar says so
+ * ("Runs on its own") in the spot the composer would have been. It carries
+ * what the subagent is, its settled status with a live timer only while it
+ * runs, what it reported spending, and the way back to its parent.
  */
 export function CodingSessionSubagentBar({
   bar,
   onOpenParent,
+  parentStatusLabel = null,
 }: {
   /** `null` when the owning call is not in this view. */
   bar: CodingSessionSubagentBarModel | null;
   onOpenParent: () => void;
+  /** The parent's status as the workspace shows it, for the button's hint. */
+  parentStatusLabel?: string | null;
 }) {
+  const meta = bar
+    ? [bar.modelName, bar.tokens, bar.tools].filter(Boolean).join(" · ")
+    : "";
   return (
     <div
-      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/60 bg-background px-4 py-2 text-xs"
+      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-sm shadow-sm"
       data-status={bar?.status ?? "missing"}
       data-testid="coding-session-subagent-bar"
     >
-      <button
-        className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
-        data-testid="coding-session-subagent-open-parent"
-        onClick={onOpenParent}
-        title="Back to the parent conversation (Esc)"
-        type="button"
-      >
-        <ArrowLeft aria-hidden className="size-3.5" />
-        Open parent
-      </button>
       <span className="flex min-w-0 items-center gap-1.5">
-        <Bot aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        {bar ? (
+          <CodingSessionSubagentStatusIcon status={bar.status} />
+        ) : (
+          <Bot
+            aria-hidden
+            className="size-3.5 shrink-0 text-muted-foreground"
+          />
+        )}
         <span
-          className="min-w-0 truncate font-semibold"
+          className="min-w-0 truncate font-medium"
           data-testid="coding-session-subagent-bar-title"
         >
           {bar?.title ?? "Subagent"}
@@ -53,39 +61,56 @@ export function CodingSessionSubagentBar({
         ) : null}
       </span>
       {bar ? (
-        <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
-          <CodingSessionSubagentStatusIcon status={bar.status} />
+        <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
           <span data-testid="coding-session-subagent-bar-status">
             {bar.statusLabel}
           </span>
           {bar.live ? (
             <LiveElapsed bar={bar} />
           ) : bar.durationMs !== null ? (
-            <span
-              className="font-mono text-2xs tabular-nums"
-              data-testid="coding-session-subagent-bar-elapsed"
-            >
-              {formatCodingSessionDuration(bar.durationMs)}
-            </span>
+            <>
+              {/* Spaced text, so it reads "Completed in 9.0s" as one phrase. */}
+              {" in "}
+              <span
+                className="tabular-nums"
+                data-testid="coding-session-subagent-bar-elapsed"
+              >
+                {formatCodingSessionDuration(bar.durationMs)}
+              </span>
+            </>
           ) : null}
         </span>
       ) : null}
-      {bar ? (
+      {meta ? (
         <span
-          className="flex min-w-0 items-center gap-1.5 truncate font-mono text-2xs text-muted-foreground"
+          className="min-w-0 truncate text-xs text-muted-foreground"
           data-testid="coding-session-subagent-bar-meta"
+          title={bar?.model ?? undefined}
         >
-          {[bar.model, bar.tokens, bar.tools].filter(Boolean).join(" · ")}
+          {meta}
         </span>
       ) : null}
-      <span
-        className={cn(
-          "ms-auto shrink-0 text-2xs text-muted-foreground/80",
-          !bar && "hidden",
-        )}
-        title="A subagent works on its own task and reports back to the agent that started it; it takes no prompts from here."
-      >
-        Runs on its own
+      <span className="ms-auto flex shrink-0 items-center gap-3">
+        <span
+          className={cn("text-xs text-muted-foreground", !bar && "hidden")}
+          title="A subagent works on its own task and reports back to the agent that started it; it takes no prompts from here."
+        >
+          Runs on its own
+        </span>
+        <button
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-foreground transition-colors hover:bg-accent/60"
+          data-testid="coding-session-subagent-open-parent"
+          onClick={onOpenParent}
+          title={
+            parentStatusLabel
+              ? `Back to the parent conversation — ${parentStatusLabel} (Esc)`
+              : "Back to the parent conversation (Esc)"
+          }
+          type="button"
+        >
+          <ArrowUpLeft aria-hidden className="size-3.5" />
+          Open parent
+        </button>
       </span>
     </div>
   );
@@ -98,7 +123,7 @@ function LiveElapsed({ bar }: { bar: CodingSessionSubagentBarModel }) {
   if (elapsed === null) return null;
   return (
     <span
-      className="font-mono text-2xs tabular-nums"
+      className="tabular-nums"
       data-live="true"
       data-testid="coding-session-subagent-bar-elapsed"
     >

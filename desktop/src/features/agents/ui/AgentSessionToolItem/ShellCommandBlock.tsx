@@ -1,6 +1,7 @@
 import { Terminal } from "lucide-react";
 
 import { cn } from "@/shared/lib/cn";
+import { RedactedText } from "@/shared/ui/RedactedPill";
 import { ScrollFadeMonoPanel } from "../FileContentBlock";
 import type { TranscriptToolOutputGap } from "../agentSessionTypes";
 import {
@@ -42,6 +43,19 @@ export function shellBlockOutput(
     .trimEnd();
 }
 
+/**
+ * Does this command print only paths, one per line (`pwd`, `realpath x`,
+ * `git rev-parse --show-toplevel`)? Then a redaction marker alone on an
+ * output line stood for a path, and its chip can say so.
+ *
+ * Exported for testing.
+ */
+export function shellOutputIsPathPerLine(command: string): boolean {
+  return /^\s*(?:pwd|realpath|readlink(?:\s+-f)?|dirname|git\s+rev-parse\s+--show-toplevel)(?:\s[^|;&]*)?\s*$/.test(
+    command,
+  );
+}
+
 export function ShellCommandBlock({
   command,
   isError,
@@ -71,7 +85,7 @@ export function ShellCommandBlock({
       >
         <p className="whitespace-pre-wrap wrap-break-word text-muted-foreground/70">
           <Terminal className="mr-2 inline h-3.5 w-3.5 align-[-0.1875rem] text-primary" />
-          {command}
+          <RedactedText text={command} />
         </p>
       </ScrollFadeMonoPanel>
       {outputGap ? (
@@ -91,7 +105,10 @@ export function ShellCommandBlock({
               isError ? "text-destructive" : "text-foreground",
             )}
           >
-            {shellOutput}
+            <RedactedText
+              text={shellOutput}
+              wholeLinesArePaths={shellOutputIsPathPerLine(command)}
+            />
           </pre>
         </ScrollFadeMonoPanel>
       ) : null}

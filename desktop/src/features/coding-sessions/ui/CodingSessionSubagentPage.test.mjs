@@ -66,6 +66,12 @@ function project(items) {
   );
 }
 
+const FOCUSED = {
+  executionKey: "execution-1",
+  priorGenerations: [],
+  activeGeneration: { generationId: "generation-1", transcript: [] },
+};
+
 function ctxFor(transcript, settlementOf) {
   return {
     layout: "single",
@@ -73,7 +79,12 @@ function ctxFor(transcript, settlementOf) {
     channelId: "channel-1",
     sessionKey: "session-1",
     focusedRecord: { generationId: "generation-1" },
-    umbrella: { executions: [] },
+    focusedExecution: FOCUSED,
+    executions: [
+      { execution: FOCUSED, status: { kind: "working", label: "Working" } },
+    ],
+    sessionClosed: false,
+    umbrella: { executions: [FOCUSED], title: "Parent session" },
     transcript,
     subagents: deriveCodingSessionSubagentPanel([transcript], settlementOf),
     currentUserPubkey: null,
@@ -209,5 +220,55 @@ test("Open parent and Escape both close the page", async () => {
   });
   assert.equal(readCodingSessionSubagentPage(scope), null);
   await act(async () => new Promise((resolve) => setTimeout(resolve, 5)));
+  await act(async () => root.unmount());
+});
+
+test("SV-98: a lineage divider heads the page and the facts bar sits where the composer is", async () => {
+  // Kept to a spawn with no published items: rendering items or a result
+  // needs the app router (Markdown). The SV-97 de-duplication of the page's
+  // items is pinned in codingSessionSubagentPageModel.test.mjs.
+  const transcript = project([{ kind: "user_prompt", content: "Go" }, TASK]);
+  const ctx = ctxFor(transcript);
+  openCodingSessionSubagentPage(codingSessionSubagentScopeOf(ctx), "task-1");
+  const { container, root } = await render(ctx);
+  const q = (id) => container.querySelector(`[data-testid="${id}"]`);
+  const page = q("coding-session-subagent-page");
+  const lineage = q("coding-session-subagent-page-lineage");
+  assert.match(lineage.textContent, /Subagent of·Parent session/);
+  assert.equal(
+    q("coding-session-subagent-page-parent-status").dataset.parentStatus,
+    "working",
+  );
+  assert.match(lineage.textContent, /Working/);
+  // The divider heads the transcript column; the prompt follows it.
+  const scroll = q("coding-session-subagent-page-scroll");
+  assert.equal(
+    scroll.firstElementChild.firstElementChild.dataset.testid,
+    "coding-session-subagent-page-lineage",
+  );
+  // The bar is docked after the scroller, at the bottom of the page.
+  assert.equal(
+    page.lastElementChild.dataset.testid,
+    "coding-session-subagent-bar-dock",
+  );
+  assert.ok(page.lastElementChild.contains(q("coding-session-subagent-bar")));
+  assert.match(
+    q("coding-session-subagent-open-parent").title,
+    /Working/,
+    "the way back says what the parent is doing",
+  );
+  await act(async () => root.unmount());
+});
+
+test("SV-98: a closed session's parent reads Closed, never Working", async () => {
+  const transcript = project([{ kind: "user_prompt", content: "Go" }, TASK]);
+  const ctx = { ...ctxFor(transcript), sessionClosed: true };
+  openCodingSessionSubagentPage(codingSessionSubagentScopeOf(ctx), "task-1");
+  const { container, root } = await render(ctx);
+  const status = container.querySelector(
+    '[data-testid="coding-session-subagent-page-parent-status"]',
+  );
+  assert.equal(status.textContent, "Closed");
+  assert.doesNotMatch(status.innerHTML, /animate-pulse/);
   await act(async () => root.unmount());
 });

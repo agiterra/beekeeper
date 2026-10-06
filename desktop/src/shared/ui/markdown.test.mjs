@@ -1340,7 +1340,11 @@ function renderCode(children, className) {
 test("a marker inside inline code renders as a pill, not as a hash", () => {
   const html = renderCode(CODE_MARKER, undefined);
   assert.match(html, /data-redaction-pill=""/);
-  assert.match(html, /redacted 31 B/);
+  assert.match(html, />hidden</);
+  assert.match(
+    html,
+    /Hidden before publishing — 31 bytes, sha256 01de6a4ef05f…/,
+  );
   assert.doesNotMatch(html, new RegExp(DIGEST));
 });
 

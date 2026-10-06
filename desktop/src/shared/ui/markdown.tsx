@@ -1373,12 +1373,11 @@ export function createMarkdownComponents(
   }
 
   return {
-    // A value the coding-session provider redacted before signing. The marker
-    // is split out of the text by `remarkRedactionMarkers`; the byte count and
-    // digest ride across the HAST boundary as data attributes.
+    // A provider-redacted value, split out by `remarkRedactionMarkers` (data attrs carry bytes/digest/path).
     redaction: (props: {
       "data-redaction-bytes"?: string;
       "data-redaction-digest"?: string;
+      "data-redaction-path"?: string;
     }) => (
       <RedactedPill
         interactive={interactive}
@@ -1387,6 +1386,7 @@ export function createMarkdownComponents(
           digest: props["data-redaction-digest"] ?? "",
           raw: "",
         }}
+        pathShaped={props["data-redaction-path"] === "true"}
       />
     ),
     spoiler: ({

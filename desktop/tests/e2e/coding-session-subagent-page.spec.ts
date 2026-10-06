@@ -26,10 +26,13 @@ import type { RelayEvent } from "@/shared/api/types";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
 
-// SV-79/SV-82: a subagent opens as its own page in the transcript pane — its
-// own items only, headed by a bar (title, type, status, duration, model,
-// tokens, tools, "Runs on its own", Open parent) and the prompt it was given —
-// and Open parent (or Escape) returns to the parent transcript at its row.
+// SV-79/SV-82/SV-98: a subagent opens as its own page in the transcript pane —
+// a "Subagent of · <parent>" divider with the parent's live status heads its
+// own items and the prompt it was given, and a facts bar (title, type, status,
+// duration, model by name, tokens, tools, "Runs on its own", Open parent) is
+// docked at the bottom where the composer sits — and Open parent (or Escape)
+// returns to the parent transcript at its row. SV-97: its final answer shows
+// once, as what it returned, not also as its last message.
 //
 // Opening goes through the rows lane's spawn card (SV-80), which calls
 // `useOpenCodingSessionSubagent()` with the Task call's toolCallId. Scoped shots, gated on distinct hashes.
@@ -48,6 +51,7 @@ const session = {
 const targetKey = buildCodingSessionTargetKey(session);
 const SUBAGENT_STEP = "Reading crates/buzz-session-provider/src/transcript.rs";
 const LEAD_ANSWER = "fit_item has three callers; all bound before publishing.";
+const SUBAGENT_ANSWER = "Three callers, all bounded.";
 const PROMPT =
   "Find every caller of fit_item and say whether it bounds input first.";
 
@@ -162,11 +166,18 @@ function spawnTurn(): RelayEvent[] {
       content: "pub fn fit_item(item: Value) -> Value { … }",
       parentToolId: "task-sv79",
     }),
+    // SV-97: the provider publishes the subagent's last prose, then the same
+    // string as the call's result. The page shows it once.
     transcript(6, turn, {
+      kind: "assistant_text",
+      text: SUBAGENT_ANSWER,
+      parentToolId: "task-sv79",
+    }),
+    transcript(7, turn, {
       kind: "tool_result",
       toolId: "task-sv79",
       toolName: "Task",
-      content: "Three callers, all bounded.",
+      content: SUBAGENT_ANSWER,
       isError: false,
       subagent: {
         type: "Explore",
@@ -176,8 +187,8 @@ function spawnTurn(): RelayEvent[] {
         toolUseCount: 1,
       },
     }),
-    transcript(7, turn, { kind: "assistant_text", text: LEAD_ANSWER }),
-    transcript(8, turn, {
+    transcript(8, turn, { kind: "assistant_text", text: LEAD_ANSWER }),
+    transcript(9, turn, {
       kind: "result",
       subtype: "success",
       isError: false,
@@ -185,7 +196,7 @@ function spawnTurn(): RelayEvent[] {
       result: "",
       costUsd: 0.02,
     }),
-    metadata("idle", 9),
+    metadata("idle", 10),
   ];
 }
 
@@ -266,8 +277,37 @@ test("SV-79/SV-82: a subagent opens as its own page and Open parent returns", as
   const subagentPage = workspace.getByTestId("coding-session-subagent-page");
   await expect(subagentPage).toBeVisible();
 
-  // The bar: what it is, how it ended, what it spent, and the way back.
+  // SV-98: the divider heads the transcript and names the parent and its
+  // status as the workspace shows it (the seeded session rests Idle).
+  const lineage = subagentPage.getByTestId(
+    "coding-session-subagent-page-lineage",
+  );
+  await expect(lineage).toContainText("Subagent of");
+  await expect(
+    lineage.getByTestId("coding-session-subagent-page-parent-title"),
+  ).toHaveText("Audit: subagent page");
+  await expect(
+    lineage.getByTestId("coding-session-subagent-page-parent-status"),
+  ).toHaveText("Idle");
+
+  // The bar: what it is, how it ended, what it spent, and the way back —
+  // docked at the bottom, where the composer would be.
   const bar = subagentPage.getByTestId("coding-session-subagent-bar");
+  const dock = subagentPage.getByTestId("coding-session-subagent-bar-dock");
+  await expect(dock).toContainText("Runs on its own");
+  const promptBox = await subagentPage
+    .getByTestId("coding-session-subagent-page-prompt")
+    .boundingBox();
+  const barBox = await bar.boundingBox();
+  const pageBox = await subagentPage.boundingBox();
+  expect(promptBox && barBox && pageBox).toBeTruthy();
+  if (promptBox && barBox && pageBox) {
+    expect(barBox.y).toBeGreaterThan(promptBox.y);
+    // Within the page's bottom edge, in the composer's place.
+    expect(
+      pageBox.y + pageBox.height - (barBox.y + barBox.height),
+    ).toBeLessThan(48);
+  }
   await expect(bar).toHaveAttribute("data-status", "done");
   await expect(bar.getByTestId("coding-session-subagent-bar-title")).toHaveText(
     "Map the call sites",
@@ -279,9 +319,14 @@ test("SV-79/SV-82: a subagent opens as its own page and Open parent returns", as
   await expect(
     bar.getByTestId("coding-session-subagent-bar-elapsed"),
   ).toHaveText("9.0s");
+  // One human name for the model (SV-98), the raw id on hover.
   await expect(bar.getByTestId("coding-session-subagent-bar-meta")).toHaveText(
-    "claude-haiku-4-5 · 48.2k tok · 1 tool",
+    "Claude Haiku 4.5 · 48.2k tok · 1 tool",
   );
+  await expect(
+    bar.getByTestId("coding-session-subagent-bar-meta"),
+  ).toHaveAttribute("title", "claude-haiku-4-5");
+  await expect(bar).toContainText("Completed in 9.0s");
   await expect(bar).toContainText("Runs on its own");
 
   // SV-82: the prompt it was given comes first.
@@ -298,7 +343,9 @@ test("SV-79/SV-82: a subagent opens as its own page and Open parent returns", as
   await expect(subagentPage).not.toContainText(LEAD_ANSWER);
   await expect(
     subagentPage.getByTestId("coding-session-subagent-page-result"),
-  ).toContainText("Three callers, all bounded.");
+  ).toContainText(SUBAGENT_ANSWER);
+  // SV-97: once, not also as the subagent's last message.
+  await expect(subagentPage.getByText(SUBAGENT_ANSWER)).toHaveCount(1);
   await rest();
   await shoot("SV-79-subagent-page", pane);
 

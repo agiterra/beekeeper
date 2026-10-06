@@ -2,7 +2,10 @@ import * as React from "react";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 
 import type { CodingSessionSettledSubagentStatus } from "@/features/coding-sessions/lib/codingSessionSubagents";
-import { formatCodingSessionSubagentTokens } from "@/features/coding-sessions/lib/codingSessionSubagents";
+import {
+  codingSessionSubagentModelName,
+  formatCodingSessionSubagentTokens,
+} from "@/features/coding-sessions/lib/codingSessionSubagents";
 import {
   type CodingSessionSubagentCard,
   codingSessionSubagentLiveElapsedMs,
@@ -24,6 +27,31 @@ import {
  * never gets a blue dot or a ticking clock here.
  */
 
+/**
+ * The dot's colour for a settled status — the one mapping every subagent
+ * surface uses (stream card, hover card, Agents panel rows, the orchestration
+ * view's Direct spawns), so a subagent that finished reads green everywhere
+ * rather than grey in one list and green in the next. Only a *running*
+ * status (already read through the turn's settlement) pulses, and never under
+ * reduced motion; unknown is a hollow ring, no colour claim.
+ */
+export function codingSessionSubagentStatusDotClass(
+  status: CodingSessionSettledSubagentStatus,
+): string {
+  switch (status) {
+    case "running":
+      return "animate-pulse bg-blue-500 motion-reduce:animate-none";
+    case "done":
+      return "bg-emerald-500";
+    case "failed":
+      return "bg-destructive";
+    case "stopped":
+      return "bg-muted-foreground/40";
+    default:
+      return "border border-muted-foreground/60";
+  }
+}
+
 /** A coloured dot for a settled status; hollow for unknown (no claim). */
 export function CodingSessionSubagentStatusDot({
   className,
@@ -37,13 +65,7 @@ export function CodingSessionSubagentStatusDot({
       aria-hidden="true"
       className={cn(
         "size-1.5 shrink-0 rounded-full",
-        status === "running" &&
-          "animate-pulse bg-blue-500 motion-reduce:animate-none",
-        status === "done" && "bg-muted-foreground/60",
-        status === "stopped" && "bg-muted-foreground/30",
-        status === "failed" && "bg-destructive",
-        // Neither live nor settled: a hollow dot, no colour claim.
-        status === "unknown" && "border border-muted-foreground/60",
+        codingSessionSubagentStatusDotClass(status),
         className,
       )}
       data-status={status}
@@ -164,7 +186,15 @@ export function CodingSessionSubagentHoverCardContent({
             {card.outcomeLabel}
           </span>
         </Fact>
-        <Fact label="Model">{card.model ?? NOT_REPORTED}</Fact>
+        <Fact label="Model">
+          {card.model !== null ? (
+            <span title={card.model}>
+              {codingSessionSubagentModelName(card.model)}
+            </span>
+          ) : (
+            NOT_REPORTED
+          )}
+        </Fact>
         <Fact label={timeLabel}>{time}</Fact>
         <Fact label="Tokens">
           {card.totalTokens !== null
