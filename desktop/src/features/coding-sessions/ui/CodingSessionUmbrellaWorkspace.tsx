@@ -57,6 +57,7 @@ import {
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 import { CodingSessionNarrativeJumpPill } from "./CodingSessionWorkspaceJumpPill";
 import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
+import { CodingSessionSubagentPage } from "./CodingSessionSubagentPage";
 import { CodingSessionTaskRailSheet } from "./CodingSessionTaskRail";
 import { CodingSessionUmbrellaDock } from "./CodingSessionUmbrellaDock";
 import { useCodingSessionTaskDock } from "./useCodingSessionTaskDock";
@@ -771,6 +772,7 @@ export function UmbrellaCodingSessionWorkspace({
                     data-testid="coding-session-narrative-region"
                   >
                     <CodingSessionMinimapSlot slotRef={shell.minimapSlotRef} />
+                    <CodingSessionSubagentPage />
                     <div className={cn(gutter, "pb-2")}>
                       {/* Mission's goal lives in the header subtitle (read) and the
                 Inspector's Current goal section (edit). Conversation keeps

@@ -429,12 +429,32 @@ export type CodingSessionSubagentPanel = {
   totalTokens: number | null;
 };
 
-function firstLine(text: string): string | null {
+/** The first non-blank line of `text`, bounded; `null` when there is none. */
+export function codingSessionSubagentFirstLine(text: string): string | null {
   const line = text.split("\n").find((candidate) => candidate.trim());
   return line ? safeString(line.trim(), MAX_METADATA_FIELD_LENGTH) : null;
 }
 
-function latestActivity(spawn: CodingSessionSubagentSpawn): string | null {
+const firstLine = codingSessionSubagentFirstLine;
+
+/**
+ * The latest thing a subagent said or ran, first line only. The call's result
+ * stands in only once the spawn has one: a spawn that is running, stopped or
+ * of unknown status has no result to quote.
+ */
+export function codingSessionSubagentLatestActivity(spawn: {
+  call: ToolTranscriptItem;
+  children: readonly TranscriptItem[];
+  status: CodingSessionSettledSubagentStatus;
+}): string | null {
+  return latestActivity(spawn);
+}
+
+function latestActivity(spawn: {
+  call: ToolTranscriptItem;
+  children: readonly TranscriptItem[];
+  status: CodingSessionSettledSubagentStatus;
+}): string | null {
   for (let index = spawn.children.length - 1; index >= 0; index -= 1) {
     const child = spawn.children[index];
     if (child.type === "message" && child.role === "assistant") {
@@ -443,9 +463,16 @@ function latestActivity(spawn: CodingSessionSubagentSpawn): string | null {
     }
     if (child.type === "tool") return `▸ ${child.title || child.toolName}`;
   }
-  return spawn.status === "running" || spawn.status === "stopped"
-    ? null
-    : firstLine(spawn.call.result);
+  return spawn.status === "done" || spawn.status === "failed"
+    ? firstLine(spawn.call.result)
+    : null;
+}
+
+/** Start to result, from the call's own timestamps; `null` until it has one. */
+export function codingSessionSubagentElapsedMs(
+  call: ToolTranscriptItem,
+): number | null {
+  return elapsedMs(call);
 }
 
 function elapsedMs(call: ToolTranscriptItem): number | null {

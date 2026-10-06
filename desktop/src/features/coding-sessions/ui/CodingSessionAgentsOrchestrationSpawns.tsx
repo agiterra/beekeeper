@@ -1,9 +1,14 @@
 import * as React from "react";
+import { ChevronRight } from "lucide-react";
 
 import {
   type CodingSessionOrchestrationSpawn,
   formatCodingSessionSpawnMeta,
 } from "@/features/coding-sessions/lib/codingSessionAgentsOrchestrationModel";
+import {
+  useCanOpenCodingSessionSubagent,
+  useOpenCodingSessionSubagent,
+} from "@/features/coding-sessions/lib/codingSessionSubagentNavigation";
 import { formatCodingSessionDuration } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { cn } from "@/shared/lib/cn";
 
@@ -42,18 +47,33 @@ export function CodingSessionAgentsOrchestrationSpawns({
 
 function SpawnRow({ spawn }: { spawn: CodingSessionOrchestrationSpawn }) {
   const [notInView, setNotInView] = React.useState(false);
+  // SV-80: the row opens the subagent's own page. Without one (outside a
+  // session workspace, or no call id from the producer) it reveals the
+  // spawn in the conversation, as it always did.
+  const canOpenPage = useCanOpenCodingSessionSubagent();
+  const openPage = useOpenCodingSessionSubagent();
+  const parentToolId = spawn.parentToolId;
+  const opensPage = canOpenPage && parentToolId !== null;
   return (
     <button
-      className="flex w-full min-w-0 flex-col gap-0.5 rounded-md px-1.5 py-1 text-left hover:bg-accent/40"
+      aria-label={opensPage ? `Open ${spawn.title}` : undefined}
+      className="group/spawn flex w-full min-w-0 flex-col gap-0.5 rounded-md px-1.5 py-1 text-left hover:bg-accent/40"
+      data-parent-tool-id={parentToolId ?? undefined}
       data-status={spawn.status}
       data-testid="coding-session-agents-spawn-row"
-      onClick={() =>
-        setNotInView(!revealCodingSessionSubagentInStream(spawn.id))
-      }
+      onClick={() => {
+        if (opensPage) {
+          openPage(parentToolId);
+          return;
+        }
+        setNotInView(!revealCodingSessionSubagentInStream(spawn.id));
+      }}
       title={
-        notInView
-          ? "Not on screen in the conversation — scroll to its turn"
-          : "Show in conversation"
+        opensPage
+          ? "Open this subagent"
+          : notInView
+            ? "Not on screen in the conversation — scroll to its turn"
+            : "Show in conversation"
       }
       type="button"
     >
@@ -89,6 +109,12 @@ function SpawnRow({ spawn }: { spawn: CodingSessionOrchestrationSpawn }) {
             <span>duration not reported</span>
           )}
           <CodingSessionSubagentStatusIcon status={spawn.status} />
+          {opensPage ? (
+            <ChevronRight
+              aria-hidden
+              className="size-3.5 shrink-0 text-muted-foreground/60 transition-colors group-hover/spawn:text-foreground"
+            />
+          ) : null}
         </span>
       </span>
       {spawn.preview ? (

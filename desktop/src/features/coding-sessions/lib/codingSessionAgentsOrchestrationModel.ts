@@ -194,6 +194,12 @@ export type CodingSessionOrchestrationCard = {
 
 export type CodingSessionOrchestrationSpawn = {
   id: string;
+  /**
+   * The call's `toolCallId`, which its subagent's items name as their
+   * `parentToolId`: the key its own page opens by (SV-80). `null` when the
+   * producer sent none, and then no page can open.
+   */
+  parentToolId: string | null;
   title: string;
   type: string | null;
   /** The panel row's status, read through the spawn's turn settlement. */
@@ -513,6 +519,7 @@ export function deriveCodingSessionOrchestrationSpawn(
     : null;
   return {
     id: row.id,
+    parentToolId: row.spawn.call.toolCallId ?? null,
     title: row.title,
     type: row.type,
     status: row.status,

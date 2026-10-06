@@ -81,6 +81,7 @@ import {
 } from "./CodingSessionWorkspaceDerivations";
 import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { useCodingSessionExport } from "./useCodingSessionExport";
+import { CodingSessionSubagentPage } from "./CodingSessionSubagentPage";
 import {
   CodingSessionTaskRail,
   CodingSessionTaskRailSheet,
@@ -785,6 +786,7 @@ function ReadyCodingSessionWorkspace({
               data-testid="coding-session-transcript-region"
             >
               <CodingSessionMinimapSlot slotRef={shell.minimapSlotRef} />
+              <CodingSessionSubagentPage />
               <div
                 className={cn(gutter, "pb-2")}
                 data-testid="coding-session-goal-slot"

@@ -3,6 +3,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronRight,
   CircleStop,
   LoaderCircle,
   ShieldQuestion,
@@ -18,6 +19,14 @@ import {
   settleCodingSessionSubagentSpawns,
   summarizeCodingSessionSubagentStatuses,
 } from "@/features/coding-sessions/lib/codingSessionSubagents";
+import {
+  useCanOpenCodingSessionSubagent,
+  useOpenCodingSessionSubagent,
+} from "@/features/coding-sessions/lib/codingSessionSubagentNavigation";
+import {
+  type CodingSessionSubagentCard,
+  deriveCodingSessionSubagentCard,
+} from "@/features/coding-sessions/lib/codingSessionSubagentsCard";
 import type { CodingSessionTranscriptEntry } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import {
   ACTIVITY_ROW_DETAIL_INSET_CLASS,
@@ -27,6 +36,11 @@ import {
 } from "@/features/agents/ui/AgentSessionToolItem/ToolItemRowClasses";
 import { cn } from "@/shared/lib/cn";
 import { Markdown } from "@/shared/ui/markdown";
+import {
+  CodingSessionSubagentElapsed,
+  CodingSessionSubagentHoverCard,
+  CodingSessionSubagentStatusDot,
+} from "./CodingSessionSubagentHoverCard";
 import { CodingSessionTurnSettlementContext } from "./CodingSessionTranscriptItem";
 import { requestCodingSessionUmbrellaItemReveal } from "./CodingSessionUmbrellaTimelineWindow";
 
@@ -156,94 +170,226 @@ export function CodingSessionSubagentEntry({
   // along — always as the row's description, and visibly until every spawn
   // is done ("2 working · 1 done", "1 done · 1 failed").
   const statusSummary = summarizeCodingSessionSubagentStatuses(spawns);
+  // SV-80: each spawn is its own card under the group row, and the card is
+  // what opens the subagent's page. Outside a session workspace there is no
+  // page, and the card stays a plain row rather than a button doing nothing.
+  const canOpenPage = useCanOpenCodingSessionSubagent();
+  const openPage = useOpenCodingSessionSubagent();
+  const cards = React.useMemo(
+    () => spawns.map((spawn) => deriveCodingSessionSubagentCard(spawn)),
+    [spawns],
+  );
   return (
-    <details
-      className="group/subagents"
-      // Named on the row itself because the spawns below are built only while
-      // it is open; `revealCodingSessionSubagentInStream` finds it by these.
-      data-subagent-call-ids={spawns.map((spawn) => spawn.call.id).join(" ")}
-      data-opens-surface={opensSurface ? "agents" : undefined}
-      data-status={status}
-      data-testid="coding-session-subagents"
-      onToggle={(event) => onOpenChange(disclosureId, event.currentTarget.open)}
-      open={open}
+    <div
+      className="flex min-w-0 flex-col"
+      data-testid="coding-session-subagents-block"
     >
-      {/* SV-01/SV-06: the activity-row pattern — full width, a soft fill on
+      <details
+        className="group/subagents"
+        // Named on the row itself because the spawns below are built only while
+        // it is open; `revealCodingSessionSubagentInStream` finds it by these.
+        data-subagent-call-ids={spawns.map((spawn) => spawn.call.id).join(" ")}
+        data-opens-surface={opensSurface ? "agents" : undefined}
+        data-status={status}
+        data-testid="coding-session-subagents"
+        onToggle={(event) =>
+          onOpenChange(disclosureId, event.currentTarget.open)
+        }
+        open={open}
+      >
+        {/* SV-01/SV-06: the activity-row pattern — full width, a soft fill on
           hover, a 16px muted robot and a dimmed label. The group's status
           icon stays on the row in every state; a failure keeps its colour. */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: a <summary> is natively interactive (Enter/Space activate it as a click); the handler only redirects that activation to the Agents surface. */}
-      <summary
-        aria-description={statusSummary || undefined}
-        aria-label={opensSurface ? `${label} — open in Agents` : label}
-        className={cn(
-          "group/row cursor-pointer list-none",
-          ACTIVITY_ROW_LINE_CLASS,
-        )}
-        onClick={
-          opensSurface
-            ? (event) => {
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: a <summary> is natively interactive (Enter/Space activate it as a click); the handler only redirects that activation to the Agents surface. */}
+        <summary
+          aria-description={statusSummary || undefined}
+          aria-label={opensSurface ? `${label} — open in Agents` : label}
+          className={cn(
+            "group/row cursor-pointer list-none",
+            ACTIVITY_ROW_LINE_CLASS,
+          )}
+          onClick={
+            opensSurface
+              ? (event) => {
+                  event.preventDefault();
+                  onOpenAgentsSurface?.();
+                }
+              : undefined
+          }
+          title={spawnTitles || undefined}
+        >
+          <Bot aria-hidden className={ACTIVITY_ROW_ICON_CLASS} />
+          <span className={ACTIVITY_ROW_LABEL_CLASS}>{label}</span>
+          {status !== "done" && statusSummary ? (
+            <span
+              className="shrink-0 text-muted-foreground/70"
+              data-testid="coding-session-subagents-status-summary"
+            >
+              · {statusSummary}
+            </span>
+          ) : null}
+          <CodingSessionSubagentStatusIcon status={status} />
+          {opensSurface ? (
+            <button
+              aria-expanded={open}
+              aria-label={open ? "Hide steps here" : "Show steps here"}
+              className="ms-auto inline-flex shrink-0 cursor-pointer items-center rounded-sm p-0.5 text-muted-foreground/0 transition hover:bg-accent/60 focus-visible:text-muted-foreground/70 group-hover/row:text-muted-foreground/70 group-open/subagents:text-muted-foreground/70"
+              data-testid="coding-session-subagents-inline-toggle"
+              onClick={(event) => {
+                // The row opens the surface; this alone toggles in place.
                 event.preventDefault();
-                onOpenAgentsSurface?.();
-              }
-            : undefined
-        }
-        title={spawnTitles || undefined}
-      >
-        <Bot aria-hidden className={ACTIVITY_ROW_ICON_CLASS} />
-        <span className={ACTIVITY_ROW_LABEL_CLASS}>{label}</span>
-        {status !== "done" && statusSummary ? (
-          <span
-            className="shrink-0 text-muted-foreground/70"
-            data-testid="coding-session-subagents-status-summary"
+                event.stopPropagation();
+                onOpenChange(disclosureId, !open);
+              }}
+              title={open ? "Hide steps here" : "Show steps here"}
+              type="button"
+            >
+              <ChevronDown
+                aria-hidden
+                className="size-3.5 transition group-open/subagents:rotate-180"
+              />
+            </button>
+          ) : (
+            <ChevronDown className="ms-auto size-3.5 shrink-0 text-muted-foreground/0 transition group-hover/row:text-muted-foreground/70 group-open/subagents:rotate-180 group-open/subagents:text-muted-foreground/70" />
+          )}
+        </summary>
+        {open ? (
+          // T3's inline subagent detail sits under the label, not in a rail.
+          <div
+            className={cn(
+              ACTIVITY_ROW_DETAIL_INSET_CLASS,
+              "mt-1 flex flex-col gap-3",
+            )}
           >
-            · {statusSummary}
+            {spawns.map((spawn) => (
+              <CodingSessionSubagentSpawnDetail
+                key={spawn.call.id}
+                renderChild={renderChild}
+                // Always named: "Ran 1 subagent" says how many, not which.
+                showHeader
+                spawn={spawn}
+              />
+            ))}
+          </div>
+        ) : null}
+      </details>
+      {/* SV-81: the card sits after the group, which is where the calls'
+          results land in the lead's reading order — a Task call blocks the
+          lead until it returns, and its own items are nested under it, so
+          the next thing the lead publishes comes after the result. Live, it
+          ticks; settled, it is the finish card, frozen at its outcome. */}
+      <div
+        className="flex min-w-0 flex-col"
+        data-testid="coding-session-subagent-cards"
+      >
+        {cards.map((card) => (
+          <CodingSessionSubagentLink
+            card={card}
+            key={card.callItemId}
+            onOpen={canOpenPage ? openPage : null}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One subagent as a card (T3 Code's `SubagentTimelineLink`): status dot,
+ * title, the outcome once settled, its latest line, a clock and a chevron.
+ * Live, the clock ticks; settled, it is the finish card — the same card
+ * frozen at its outcome and duration. A button when a page can open
+ * (`onOpen` and a call id); otherwise a plain row that does not pretend to.
+ */
+export function CodingSessionSubagentLink({
+  card,
+  onOpen,
+}: {
+  card: CodingSessionSubagentCard;
+  /** Opens the subagent page by its `parentToolId`; `null` when none can. */
+  onOpen: ((parentToolId: string) => void) | null;
+}) {
+  const parentToolId = card.parentToolId;
+  const canOpen = onOpen !== null && parentToolId !== null;
+  const finished = card.phase === "finished";
+  const failed = card.status === "failed";
+  const content = (
+    <>
+      <CodingSessionSubagentStatusDot className="size-2" status={card.status} />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="min-w-0 truncate text-xs font-medium text-foreground">
+            {card.title}
+          </span>
+          {card.phase !== "live" ? (
+            <span
+              className={cn(
+                "shrink-0 text-3xs",
+                failed ? "text-destructive" : "text-muted-foreground",
+              )}
+              data-testid="coding-session-subagent-outcome"
+            >
+              {card.outcomeLabel}
+            </span>
+          ) : null}
+        </span>
+        {card.detail ? (
+          <span
+            className={cn(
+              "block truncate text-2xs",
+              failed ? "text-destructive/80" : "text-muted-foreground",
+            )}
+          >
+            {card.detail}
           </span>
         ) : null}
-        <CodingSessionSubagentStatusIcon status={status} />
-        {opensSurface ? (
-          <button
-            aria-expanded={open}
-            aria-label={open ? "Hide steps here" : "Show steps here"}
-            className="ms-auto inline-flex shrink-0 cursor-pointer items-center rounded-sm p-0.5 text-muted-foreground/0 transition hover:bg-accent/60 focus-visible:text-muted-foreground/70 group-hover/row:text-muted-foreground/70 group-open/subagents:text-muted-foreground/70"
-            data-testid="coding-session-subagents-inline-toggle"
-            onClick={(event) => {
-              // The row opens the surface; this alone toggles in place.
-              event.preventDefault();
-              event.stopPropagation();
-              onOpenChange(disclosureId, !open);
-            }}
-            title={open ? "Hide steps here" : "Show steps here"}
-            type="button"
-          >
-            <ChevronDown
-              aria-hidden
-              className="size-3.5 transition group-open/subagents:rotate-180"
-            />
-          </button>
-        ) : (
-          <ChevronDown className="ms-auto size-3.5 shrink-0 text-muted-foreground/0 transition group-hover/row:text-muted-foreground/70 group-open/subagents:rotate-180 group-open/subagents:text-muted-foreground/70" />
-        )}
-      </summary>
-      {open ? (
-        // T3's inline subagent detail sits under the label, not in a rail.
-        <div
-          className={cn(
-            ACTIVITY_ROW_DETAIL_INSET_CLASS,
-            "mt-1 flex flex-col gap-3",
-          )}
-        >
-          {spawns.map((spawn) => (
-            <CodingSessionSubagentSpawnDetail
-              key={spawn.call.id}
-              renderChild={renderChild}
-              // Always named: "Ran 1 subagent" says how many, not which.
-              showHeader
-              spawn={spawn}
-            />
-          ))}
-        </div>
+      </span>
+      <CodingSessionSubagentElapsed
+        card={card}
+        className="shrink-0 font-mono text-3xs text-muted-foreground/80"
+      />
+      {canOpen ? (
+        <ChevronRight
+          aria-hidden
+          className="size-3.5 shrink-0 text-muted-foreground/60 transition-colors group-hover/subagent:text-foreground"
+        />
       ) : null}
-    </details>
+    </>
+  );
+  const shared = {
+    "aria-description": card.outcomeLabel,
+    className: cn(
+      "group/subagent flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left",
+      canOpen &&
+        "cursor-pointer transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+    ),
+    "data-parent-tool-id": parentToolId ?? undefined,
+    "data-phase": card.phase,
+    "data-status": card.status,
+    "data-subagent-call-id": card.callItemId,
+    "data-testid": finished
+      ? "coding-session-subagent-finish"
+      : "coding-session-subagent-link",
+  } as const;
+  return (
+    <CodingSessionSubagentHoverCard card={card}>
+      {canOpen ? (
+        <button
+          {...shared}
+          aria-label={`Open ${card.title}`}
+          onClick={() => onOpen(parentToolId)}
+          type="button"
+        >
+          {content}
+        </button>
+      ) : (
+        // Focusable so the hover card is reachable from the keyboard too.
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a status row whose only interaction is its hover card.
+        <div {...shared} tabIndex={0}>
+          {content}
+        </div>
+      )}
+    </CodingSessionSubagentHoverCard>
   );
 }
 
