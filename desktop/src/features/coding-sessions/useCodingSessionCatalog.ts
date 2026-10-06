@@ -133,6 +133,7 @@ type TrustedIngressSlice = Pick<
   | "metadata"
   | "transcripts"
   | "isLoading"
+  | "historyCompleteness"
   | "errorMessage"
   | "authorityErrorMessage"
   | "rejectedAuthorCount"
@@ -165,6 +166,7 @@ export function composeCodingSessionCatalogSnapshot(
     geneses: createObservations.geneses,
     foundingIsLoading: createObservations.isLoading,
     isLoading: trustedIngress.isLoading,
+    historyCompleteness: trustedIngress.historyCompleteness,
     errorMessage: trustedIngress.errorMessage,
     authorityErrorMessage: trustedIngress.authorityErrorMessage,
     rejectedAuthorCount: trustedIngress.rejectedAuthorCount,

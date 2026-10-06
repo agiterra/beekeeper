@@ -49,6 +49,7 @@ import { AddCodingSessionProviderDialog } from "./AddCodingSessionProviderDialog
 import { CodingSessionComposer } from "./CodingSessionComposer";
 import { CodingSessionPeoplePopover } from "./CodingSessionPeoplePopover";
 import { CodingSessionHeader } from "./CodingSessionHeader";
+import { CodingSessionHistoryDisclosure } from "./CodingSessionHistoryDisclosure";
 import { codingSessionHeaderRepoName } from "./CodingSessionHeaderDetails";
 import { useCodingSessionFullAccess } from "./useCodingSessionFullAccess";
 import { CodingSessionWorkspaceState } from "./CodingSessionWorkspaceState";
@@ -326,6 +327,15 @@ export function CodingSessionWorkspace({
           umbrella={umbrella}
         />
       </div>
+      {/* Above both branches: a transcript still paging back, or one that
+          stopped short, must not read as the whole session (SV-116). */}
+      {catalog.historyCompleteness ? (
+        <div className="shrink-0">
+          <CodingSessionHistoryDisclosure
+            completeness={catalog.historyCompleteness}
+          />
+        </div>
+      ) : null}
       {/* The umbrella surface is a render branch, not a mode: an umbrella with
           no collapsed history falls through to exactly today's single-session
           tree. Routing on collapsed history rather than execution count is
