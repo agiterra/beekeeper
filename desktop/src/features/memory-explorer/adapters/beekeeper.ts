@@ -52,6 +52,10 @@ export function enrichBeekeeper(
           first,
           end,
         );
+        // The shared renderer restarts ordered lists at 1. The finding's true
+        // number is already in its title; read its prose without that marker.
+        // Exact source retains the original numbered bytes.
+        n.readText = n.text.replace(/^\d+\.\s+/, "");
         nodes.push(n);
         // Paragraph positions exclude fenced examples from subitem recognition.
         const subitems: { label: string; line: number }[] = [];

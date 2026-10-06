@@ -38,6 +38,16 @@ test("Beekeeper enrichment retains literal claims, exact findings and candidate 
     true,
   );
   assert.equal(ledger.nodes.find((n) => n.fragment === "ledger-336").start, 3);
+  assert(
+    ledger.nodes
+      .find((n) => n.fragment === "ledger-336")
+      .text.startsWith("336."),
+  );
+  assert(
+    ledger.nodes
+      .find((n) => n.fragment === "ledger-336")
+      .readText.startsWith("**Old observation"),
+  );
   assert(!ledger.nodes.some((n) => n.fragment === "ledger-999"));
   assert.equal(
     plan.nodes.find((n) => n.fragment === "SV-77").claim,
