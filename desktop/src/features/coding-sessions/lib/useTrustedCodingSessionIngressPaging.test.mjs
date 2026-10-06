@@ -67,6 +67,11 @@ const TARGET = {
 };
 const TRANSCRIPT_COUNT = 1_150;
 const PAGE_CEILING = 1_000;
+// A wall-clock bound, not a round count: every event here is checked by the
+// JavaScript verifier (no native side under node), ~1.5 ms each locally and
+// several times that on a loaded CI runner. A 400-round bound used 158 rounds
+// on an idle laptop and ran out in the gate (pipeline 278).
+const SETTLE_DEADLINE_MS = 60_000;
 
 async function signedTranscripts(count) {
   const { KIND_CODING_SESSION_TRANSCRIPT } = await import(
@@ -160,7 +165,8 @@ test("a session longer than one page renders its newest page, discloses the rest
   const wrapper = ({ children }) =>
     React.createElement(QueryClientProvider, { client: queryClient }, children);
   const settleUntil = async (predicate, what) => {
-    for (let round = 0; round < 400; round += 1) {
+    const deadline = Date.now() + SETTLE_DEADLINE_MS;
+    while (Date.now() < deadline) {
       if (predicate()) return;
       await act(async () => {
         await new Promise((resolve) => nodeSetTimeout(resolve, 2));
@@ -254,7 +260,8 @@ test("a forged event in an older page is still refused — paging grants nothing
       ),
     { wrapper },
   );
-  for (let round = 0; round < 400; round += 1) {
+  const deadline = Date.now() + SETTLE_DEADLINE_MS;
+  while (Date.now() < deadline) {
     if (result.current.historyCompleteness.state === "complete") break;
     await act(async () => {
       await new Promise((resolve) => nodeSetTimeout(resolve, 2));
