@@ -1,5 +1,11 @@
+import {
+  type NativeSignatureVerdict,
+  type NativeSignatureVerifier,
+  nativeSignatureVerifier,
+  type SignedEventFields,
+} from "@/shared/api/eventSignatures";
 import { normalizePubkey } from "@/shared/lib/pubkey";
-import { getEventHash, verifyEvent } from "nostr-tools/pure";
+import { getEventHash, validateEvent, verifyEvent } from "nostr-tools/pure";
 
 const PUBKEY_HEX_RE = /^[0-9a-f]{64}$/i;
 
@@ -83,15 +89,7 @@ export function clearSignatureCheckCache() {
  */
 export function hasValidSignature(event: AuthorResolutionEvent) {
   try {
-    const projected = {
-      id: event.id,
-      pubkey: event.pubkey,
-      created_at: event.created_at,
-      kind: event.kind,
-      tags: event.tags,
-      content: event.content,
-      sig: event.sig,
-    };
+    const projected = projectSignedFields(event);
     // Cheap (one sha256): binds the cache key to these exact signed bytes.
     if (getEventHash(projected) !== projected.id) return false;
     const key = `${projected.id}:${projected.sig}`;
@@ -108,6 +106,140 @@ export function hasValidSignature(event: AuthorResolutionEvent) {
   } catch {
     return false;
   }
+}
+
+function projectSignedFields(event: AuthorResolutionEvent): SignedEventFields {
+  return {
+    id: event.id,
+    pubkey: event.pubkey,
+    created_at: event.created_at,
+    kind: event.kind,
+    tags: event.tags,
+    content: event.content,
+    sig: event.sig,
+  };
+}
+
+/**
+ * Events per native call (the command refuses more than 20,000). Small enough
+ * that preparing and serialising one chunk stays well under a frame budget's
+ * worth of main-thread time; large enough that IPC overhead is noise.
+ */
+const NATIVE_BATCH_SIZE = 500;
+/** JavaScript fallback: verify for at most this long before yielding. */
+const FALLBACK_SLICE_MS = 8;
+
+// Only events the JavaScript check could itself accept go to the native
+// verifier — the same shape rules (`validateEvent`: lower-case hex pubkey,
+// string tags, numeric kind and time), so the two paths cannot disagree about
+// what is acceptable, only about how fast they answer. A string with an
+// unpaired surrogate cannot cross the IPC boundary (serde rejects the escape
+// and the whole call would fail), so those go to the JavaScript check too.
+const LONE_SURROGATE_RE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+function suitsNativeCheck(event: SignedEventFields) {
+  if (!validateEvent(event)) return false;
+  if (LONE_SURROGATE_RE.test(event.content)) return false;
+  return event.tags.every((tag) =>
+    tag.every((value) => !LONE_SURROGATE_RE.test(value)),
+  );
+}
+
+function yieldToEventLoop() {
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * Verify a batch of events off the main thread and remember the verdicts, so
+ * the synchronous {@link hasValidSignature} calls that follow are cache hits.
+ *
+ * Returns one verdict per event, in input order, about each event's signed
+ * fields *as they were when sent for checking*. A later
+ * {@link hasValidSignature} re-hashes whatever it is handed, so mutating an
+ * event afterwards cannot inherit this verdict.
+ *
+ * Inside the packaged app the batch goes to the native verifier
+ * (`verify_event_signatures`), which recomputes every id from the fields it
+ * received and checks the Schnorr signature in libsecp256k1 across cores.
+ * Only two of its answers are remembered, both stable facts about an
+ * `(id, sig)` pair whose id was proven to hash the signed fields: `valid`, and
+ * `invalid-signature`. `unchecked` — an id that does not hash its fields — is
+ * never cached, because a forger can pair a real id and signature with any
+ * content, and caching that refusal would let them knock out the real event.
+ * Anything the native path did not settle (unchecked, an IPC failure, or no
+ * Tauri at all) is checked in JavaScript, in slices that yield to the event
+ * loop between them.
+ *
+ * The trust rule is unchanged: an event is only ever reported valid after its
+ * id was recomputed from its signed fields and its signature verified.
+ */
+export async function verifyEventSignatures(
+  events: readonly AuthorResolutionEvent[],
+  options: { verifier?: NativeSignatureVerifier | null } = {},
+): Promise<boolean[]> {
+  const verifier =
+    options.verifier === undefined
+      ? nativeSignatureVerifier()
+      : options.verifier;
+  const verdicts: Array<boolean | undefined> = new Array(events.length);
+
+  if (verifier) {
+    // Prepared and sent a chunk at a time, so the main thread's share — the
+    // projection, the shape checks and the IPC serialisation — comes in
+    // short stretches with the event loop free in between.
+    const pendingKeys = new Set<string>();
+    let chunk: Array<{ index: number; fields: SignedEventFields }> = [];
+    const flush = async () => {
+      const sent = chunk;
+      chunk = [];
+      if (sent.length === 0) return;
+      let answers: NativeSignatureVerdict[];
+      try {
+        answers = await verifier(sent.map((entry) => entry.fields));
+      } catch {
+        return;
+      }
+      if (!Array.isArray(answers) || answers.length !== sent.length) return;
+      sent.forEach((entry, offset) => {
+        const answer = answers[offset];
+        if (answer !== "valid" && answer !== "invalid-signature") return;
+        const valid = answer === "valid";
+        rememberSignatureCheck(`${entry.fields.id}:${entry.fields.sig}`, valid);
+        verdicts[entry.index] = valid;
+      });
+    };
+    for (let index = 0; index < events.length; index += 1) {
+      const event = events[index];
+      if (!event) continue;
+      const fields = projectSignedFields(event);
+      const key = `${fields.id}:${fields.sig}`;
+      if (signatureChecks.has(key) || pendingKeys.has(key)) continue;
+      if (!suitsNativeCheck(fields)) continue;
+      // Snapshot the signed fields now: the verdict describes these bytes.
+      chunk.push({
+        index,
+        fields: { ...fields, tags: fields.tags.map((tag) => [...tag]) },
+      });
+      pendingKeys.add(key);
+      if (chunk.length >= NATIVE_BATCH_SIZE) await flush();
+    }
+    await flush();
+  }
+
+  // Everything else: cache hits re-hash and return at once; the rest run the
+  // JavaScript check, a slice at a time.
+  let sliceStart = performance.now();
+  for (let index = 0; index < events.length; index += 1) {
+    if (verdicts[index] !== undefined) continue;
+    const event = events[index];
+    verdicts[index] = event ? hasValidSignature(event) : false;
+    if (performance.now() - sliceStart >= FALLBACK_SLICE_MS) {
+      await yieldToEventLoop();
+      sliceStart = performance.now();
+    }
+  }
+  return verdicts.map((verdict) => verdict === true);
 }
 
 export function resolveEventAuthorPubkey(input: {

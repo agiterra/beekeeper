@@ -129,6 +129,7 @@ export default defineConfig({
         // Native steering: turn_injected / turn_delivery_unknown on the row.
         "**/coding-session-native-steer.spec.ts",
         "**/coding-session-short-window.spec.ts",
+        "**/coding-session-paging.spec.ts",
         "**/coding-session-width.spec.ts",
         "**/coding-session-worktree-source.spec.ts",
         // Lane V — "New session in this workspace": reuse, refusal, no memory.

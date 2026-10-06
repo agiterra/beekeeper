@@ -9,6 +9,7 @@ import {
   KIND_CODING_SESSION_METADATA,
   KIND_CODING_SESSION_TRANSCRIPT,
 } from "@/shared/constants/kinds";
+import { verifyEventSignatures } from "@/shared/lib/authors";
 import {
   armCodingSessionDiscoveryOnConnect,
   type CodingSessionDiscoveryArmingClient,
@@ -40,6 +41,14 @@ import {
   peekCodingSessionIngressStore,
 } from "./codingSessionIngressStoreCache";
 import {
+  acquireCodingSessionHistoryBackfill,
+  CODING_SESSION_HISTORY_PAGE_LIMIT,
+  CodingSessionHistoryBackfill,
+  type CodingSessionHistoryCompleteness,
+  PENDING_CODING_SESSION_HISTORY,
+  peekCodingSessionHistoryBackfill,
+} from "./codingSessionTrustedIngressPaging";
+import {
   fanOutObservedCodingSessionEvents,
   subscribeToObservedCodingSessionEvents,
 } from "./codingSessionObservedEvents";
@@ -48,7 +57,12 @@ import {
   reuseCodingSessionIngressSnapshotArrays,
 } from "./useTrustedCodingSessionIngressPublish";
 
-const TRUSTED_INGRESS_HISTORY_LIMIT = 1000;
+/**
+ * The newest page of each kind. It is the relay's page ceiling, so a full page
+ * means older history exists — which a single-session scope then pages back
+ * through (`codingSessionTrustedIngressPaging.ts`, SV-116).
+ */
+const TRUSTED_INGRESS_HISTORY_LIMIT = CODING_SESSION_HISTORY_PAGE_LIMIT;
 
 /** The three signed kinds this consumer reads. */
 export const TRUSTED_CODING_SESSION_INGRESS_KINDS = [
@@ -71,6 +85,14 @@ export type TrustedCodingSessionIngressHookSnapshot =
     authorityIdentity: string | null;
     scopeIdentity: string;
     isLoading: boolean;
+    /**
+     * Whether the history behind this snapshot is whole. `isLoading` only
+     * covers the newest page — a session renders as soon as it lands — so a
+     * transcript must read this before it may look complete: older pages may
+     * still be arriving (`loading-earlier`) or may have stopped short
+     * (`incomplete`).
+     */
+    historyCompleteness: CodingSessionHistoryCompleteness;
     errorMessage: string | null;
     authorityErrorMessage: string | null;
     lifecycle: CodingSessionLifecycleResolution | null;
@@ -205,6 +227,7 @@ function emptySnapshot(
     rejectedAuthorCount: 0,
     invalidSignatureCount: 0,
     isLoading: false,
+    historyCompleteness: PENDING_CODING_SESSION_HISTORY,
     errorMessage: null,
     authorityErrorMessage: null,
     lifecycle,
@@ -487,6 +510,19 @@ export function useTrustedCodingSessionIngress(
       }, 1_000);
     };
 
+    // Older history pages behind the newest one. Only a single-channel display
+    // scope pages: it is the one that renders a transcript. A multi-channel
+    // catalog would page every session's whole transcript to list them, and a
+    // command scope waits on one recent command — both keep the single newest
+    // page and say so (`not-paged`) when that page was full. The backfill rides
+    // on the retained store, so every hook sharing the store shares one pass
+    // and a remount resumes it instead of starting over.
+    const pagedHistory = retainStore && stableChannelIds.length === 1;
+    const backfill = retainStore
+      ? acquireCodingSessionHistoryBackfill(store, pagedHistory)
+      : new CodingSessionHistoryBackfill(false);
+    const detachBackfill = backfill.attach();
+
     // Stores are retained and shared between mounted catalogs. Another
     // listener can ingest a batch first; duplicate ingestion is only a no-op
     // for this reader after it has published that shared store revision.
@@ -505,6 +541,7 @@ export function useTrustedCodingSessionIngress(
         scopeIdentity: requestIdentity,
         ...stored,
         isLoading: historyLoading,
+        historyCompleteness: backfill.completeness(),
         errorMessage:
           historyError && liveError
             ? `${historyError}\n${liveError}`
@@ -548,27 +585,66 @@ export function useTrustedCodingSessionIngress(
     const unsubscribeObserved = subscribeToObservedCodingSessionEvents(
       receiveObservedEvents,
     );
+    // Older pages go straight into the shared store — not fanned out to other
+    // scopes, which would verify a whole transcript again into a catalog that
+    // only lists sessions. Every hook on this store hears the backfill change
+    // and publishes on its next frame, so a long backfill paints once per
+    // frame, not once per page.
+    const unsubscribeBackfill = backfill.subscribe(() => {
+      if (!cancelled) coalescer.schedule();
+    });
+    const startBackfill = () => {
+      if (cancelled) return;
+      void backfill
+        .run({
+          // Warm the signature cache off the main thread before the page is
+          // ingested (SV-117): the store's synchronous checks then only
+          // re-hash. Trust is unchanged — an event is valid only once its id
+          // was recomputed and its signature verified.
+          fetchPage: async (filter) => {
+            const page = await client.fetchEvents(filter);
+            await verifyEventSignatures(page);
+            return page;
+          },
+          ingest: (events) =>
+            store.ingestRelayEvents(events, stableChannelIds, authority),
+        })
+        .catch((error: unknown) => {
+          console.error("Coding-session history backfill failed", error);
+        });
+    };
 
     const historyController = createCodingSessionDiscoveryController({
       async load() {
         const errors: string[] = [];
         // The per-kind pages are independent: fetch them together so history
         // costs one round trip, then ingest in filter order.
+        const filters = buildTrustedCodingSessionIngressHistoryFilters(
+          stableChannelIds,
+          authority,
+          TRUSTED_INGRESS_HISTORY_LIMIT,
+        );
         const pages = await Promise.allSettled(
-          buildTrustedCodingSessionIngressHistoryFilters(
-            stableChannelIds,
-            authority,
-            TRUSTED_INGRESS_HISTORY_LIMIT,
-          ).map((filter) => client.fetchEvents(filter)),
+          filters.map((filter) => client.fetchEvents(filter)),
         );
         if (cancelled) return;
-        for (const page of pages) {
+        // Verify the newest pages in batches off the main thread first, so
+        // the synchronous checks inside the store are cache hits (SV-117).
+        await verifyEventSignatures(
+          pages.flatMap((page) =>
+            page.status === "fulfilled" ? page.value : [],
+          ),
+        );
+        if (cancelled) return;
+        pages.forEach((page, index) => {
+          const filter = filters[index];
           if (page.status === "fulfilled") {
             store.ingestRelayEvents(page.value, stableChannelIds, authority);
             fanOutObservedCodingSessionEvents(
               page.value,
               receiveObservedEvents,
             );
+            backfill.noteNewestPage(filter.kinds[0], filter, page.value);
           } else {
             errors.push(
               page.reason instanceof Error
@@ -576,7 +652,11 @@ export function useTrustedCodingSessionIngress(
                 : "Failed to load coding-session lifecycle history.",
             );
           }
-        }
+        });
+        // The newest pages are in: page back behind them for any kind whose
+        // page came back full — even if another kind failed, so one bad kind
+        // cannot leave the others claiming "loading earlier" forever.
+        startBackfill();
         if (errors.length > 0) {
           throw new Error([...new Set(errors)].join("\n"));
         }
@@ -652,6 +732,8 @@ export function useTrustedCodingSessionIngress(
     return () => {
       cancelled = true;
       coalescer.cancel();
+      unsubscribeBackfill();
+      detachBackfill();
       historyController.cancel();
       unsubscribeLive?.();
       disarm();
@@ -708,6 +790,9 @@ function retainedIngressSnapshot(
   if (!store || channelIds.length === 0) return {};
   return {
     ...store.snapshot(channelIds),
+    historyCompleteness:
+      peekCodingSessionHistoryBackfill(store)?.completeness() ??
+      PENDING_CODING_SESSION_HISTORY,
     retainedRawEvents: (scope) => store.retainedRawEvents(scope),
     lifecycleFor: (forChannelId, forCommandId, forAuthorityPubkey) =>
       isExactProviderAuthorityPubkey(forAuthorityPubkey)

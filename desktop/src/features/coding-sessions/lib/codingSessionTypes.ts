@@ -1,3 +1,4 @@
+import type { CodingSessionHistoryCompleteness } from "./codingSessionTrustedIngressPaging";
 import type { CodingSessionRoutingRecord } from "./codingSessionRouting";
 import type { CodingSessionTurnBudget } from "./codingSessionIngressPayloads";
 import type { ComposeRef, PackRef } from "./codingSessionPackRef";
@@ -242,6 +243,11 @@ export type CodingSessionCatalogSnapshot = {
    */
   creates?: readonly CodingSessionUmbrellaCreateObservation[];
   isLoading: boolean;
+  /**
+   * Whether the session history behind `entries` is whole (SV-116). Optional:
+   * a fixture or a surface without a paged read omits it and claims nothing.
+   */
+  historyCompleteness?: CodingSessionHistoryCompleteness;
   errorMessage: string | null;
   authorityErrorMessage: string | null;
   rejectedAuthorCount: number;

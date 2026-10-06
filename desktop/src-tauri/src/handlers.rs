@@ -201,6 +201,7 @@ pub(crate) fn invoke_handler(
         get_relay_build_identity,
         get_relay_system_health,
         get_app_build_identity,
+        verify_event_signatures,
         get_git_capability,
         resolve_oa_owner,
         list_relay_agents,
