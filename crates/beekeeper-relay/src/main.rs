@@ -132,11 +132,15 @@ async fn main() -> anyhow::Result<()> {
             fmt::layer()
                 .json()
                 .event_format(trace_context_lookup.json_formatter(otel_enabled))
-                .with_filter(log_env_filter(std::env::var("RUST_LOG").ok().as_deref())),
+                .with_filter(log_env_filter(
+                    beekeeper_core::log_targets::read_filter_var("RUST_LOG", "buzz-relay")
+                        .as_deref(),
+                )),
         )
         .with(otel_layer.map(|layer| {
             layer.with_filter(telemetry::otel_env_filter(
-                std::env::var("BUZZ_OTEL_FILTER").ok().as_deref(),
+                beekeeper_core::log_targets::read_filter_var("BUZZ_OTEL_FILTER", "buzz-relay")
+                    .as_deref(),
             ))
         }))
         .with(trace_context_lookup_layer)

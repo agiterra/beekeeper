@@ -65,6 +65,22 @@ cache, which had grown to ~94 GB on hive and ~197 GB on the buzz instance by
 cache with `docker builder prune --keep-storage $KEEP_BUILD_CACHE` (default
 `10GB`, so the next build stays incremental).
 
+## It edits the live `.env` in two places
+
+Besides flipping `BUZZ_IMAGE`, every deploy rewrites pre-rename tracing
+targets in `RUST_LOG` and `BUZZ_OTEL_FILTER`: `buzz_relay` becomes
+`beekeeper_relay`, and so on for every crate renamed in ledger 354. Without it,
+an old `.env` filters for crate names that no longer exist, and the relay logs
+only `tower_http`. Both edits happen in the one command that first copies
+`.env` to `.env.bak-pre-<sha>`, so a rollback restores them together. Only the
+two filter variables are touched; every `BUZZ_*` name, and every other line,
+is left byte for byte.
+
+This runs only from the **installed** copy, so reinstall the script (below)
+before the first deploy of the renamed crates. Until then nothing is lost:
+the binaries themselves read old targets as new ones and say so on stderr
+(`beekeeper_core::log_targets`). The file fix just stops that warning.
+
 ## Configuration
 
 `/etc/default/<unit>` is parsed by **systemd, not a shell**: plain `KEY=value`,

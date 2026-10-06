@@ -48,6 +48,7 @@ case "$args" in
       # tell "unreadable instance" from "no BUZZ_IMAGE line".
       if [[ "${STUB_ENV_READABLE-1}" == "1" ]]; then
         echo "BUZZ_IMAGE=${STUB_IMAGE_NAME-test-relay}:${STUB_CURRENT-}"
+        [[ -z "${STUB_RUST_LOG-}" ]] || echo "RUST_LOG=$STUB_RUST_LOG"
       else
         exit 1
       fi ;;
@@ -199,5 +200,49 @@ run STUB_PIPELINE_ROW="success 9999999999999999999999999999999999999999" STUB_CU
 [[ $rc -ne 0 ]]                             || fail "an unhealthy relay must not report success"
 grep -q "ROLLING BACK" <<<"$out"            || fail "should roll back on an unhealthy relay"
 [[ ! -e "$tmp/cache-pruned" ]]              || fail "a failed deploy must not prune the build cache"
+
+# ── 9. pre-rename log targets in .env are rewritten with the image flip ──────
+# The crates became beekeeper-* (ledger 354), so a deployed
+# RUST_LOG=buzz_relay=info matches nothing. The rewrite rides the BUZZ_IMAGE
+# flip, so the .env backup a rollback restores covers it too.
+run STUB_PIPELINE_ROW="success aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" STUB_CURRENT=999999999 \
+    STUB_RUST_LOG="buzz_relay=info,buzz_db=info,tower_http=info"
+[[ $rc -eq 0 ]]                                      || fail "legacy RUST_LOG deploy should exit 0, got $rc"
+grep -q "rewriting pre-rename buzz_\* log targets" <<<"$out" \
+                                                      || fail "a legacy RUST_LOG must be reported when it is rewritten"
+grep -q "sed -i -E '/^(RUST_LOG|BUZZ_OTEL_FILTER)=/" "$INCUS_LOG" \
+                                                      || fail "the image flip must also rewrite the filter variables"
+run STUB_PIPELINE_ROW="success bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" STUB_CURRENT=999999999 \
+    STUB_RUST_LOG="beekeeper_relay=info,tower_http=info"
+grep -q "rewriting pre-rename" <<<"$out"             && fail "a current RUST_LOG must not be reported as rewritten"
+
+# The program itself, run here exactly as the script defines it. Plain
+# `sed -E` (no -i) so it runs on GNU and BSD sed alike.
+eval "$(sed -n '/^# >>> log-target-sed$/,/^# <<< log-target-sed$/p' "$script")"
+[[ -n "${LOG_TARGET_SED-}" ]]                        || fail "could not extract LOG_TARGET_SED from the script"
+check_rewrite() {  # check_rewrite <input line> <expected line>
+  local got
+  got=$(printf '%s\n' "$1" | sed -E "$LOG_TARGET_SED")
+  [[ "$got" == "$2" ]] || { out="input:    $1"$'\n'"expected: $2"$'\n'"got:      $got"; fail "log-target rewrite"; }
+}
+check_rewrite 'RUST_LOG=buzz_relay=info,buzz_db=info,buzz_auth=info,buzz_pubsub=info,tower_http=info' \
+              'RUST_LOG=beekeeper_relay=info,beekeeper_db=info,beekeeper_auth=info,beekeeper_pubsub=info,tower_http=info'
+check_rewrite 'BUZZ_OTEL_FILTER=buzz_relay=info,buzz_datastore=info' \
+              'BUZZ_OTEL_FILTER=beekeeper_relay=info,beekeeper_datastore=info'
+check_rewrite 'RUST_LOG="info, buzz_relay::api=trace,buzz_db[query]=debug,buzz_relay_mesh"' \
+              'RUST_LOG="info, beekeeper_relay::api=trace,beekeeper_db[query]=debug,beekeeper_relay_mesh"'
+# Byte for byte: current names, other crates, a prefix that is not a crate,
+# and every other variable — BUZZ_* names are protected wire/env identifiers.
+for unchanged in 'RUST_LOG=beekeeper_relay=debug,tower_http=info' 'RUST_LOG=buzz_something_else=debug' \
+                 'BUZZ_IMAGE=beekeeper-relay:abc' 'POSTGRES_USER=buzz' 'OTHER=buzz_relay=info'; do
+  check_rewrite "$unchanged" "$unchanged"
+done
+
+# The list must be the Rust one, or the file and the binaries disagree.
+rust_list=$(sed -n '/^const RENAMED: &\[&str\] = &\[$/,/^\];$/p' "$repo_root/crates/beekeeper-core/src/log_targets.rs" \
+  | grep -oE '"[a-z_]+"' | tr -d '"' | sort | paste -sd'|' -)
+script_list=$(tr '|' '\n' <<<"$LEGACY_LOG_TARGETS" | sort | paste -sd'|' -)
+[[ -n "$rust_list" && "$rust_list" == "$script_list" ]] \
+  || { out="rust:   $rust_list"$'\n'"script: $script_list"; fail "LEGACY_LOG_TARGETS has drifted from beekeeper_core::log_targets::RENAMED"; }
 
 echo "autodeploy behavior tests passed"

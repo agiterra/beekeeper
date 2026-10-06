@@ -120,8 +120,9 @@ pub fn install() {
         return;
     }
 
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER));
+    let filter = beekeeper_core_pkg::log_targets::read_filter_var("RUST_LOG", "beekeeper")
+        .and_then(|filter| EnvFilter::try_new(filter).ok())
+        .unwrap_or_else(|| EnvFilter::new(DEFAULT_FILTER));
 
     let installed = tracing_subscriber::registry()
         .with(

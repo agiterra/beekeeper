@@ -34,8 +34,8 @@ use nostr::{Filter, Keys};
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "beekeeper_test_client=debug".to_string())
+            beekeeper_core::log_targets::read_filter_var("RUST_LOG", "buzz-test-cli")
+                .unwrap_or_else(|| "beekeeper_test_client=debug".to_string())
                 .as_str(),
         )
         .init();

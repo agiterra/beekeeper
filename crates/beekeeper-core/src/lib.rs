@@ -111,6 +111,8 @@ pub mod host_step;
 pub mod invite;
 /// Beekeeper kind number registry — custom event type constants.
 pub mod kind;
+/// Reading a `RUST_LOG`-style filter written against the pre-rename `buzz_*` crate names.
+pub mod log_targets;
 /// Where the model registry is looked for, in order, and which copy answered:
 /// the project's agents repository, then its code checkout.
 pub mod model_registry_source;

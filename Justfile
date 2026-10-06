@@ -238,6 +238,24 @@ autodeploy-test:
     ./deploy/autodeploy/tests/autodeploy-behavior.sh
     ./scripts/test-woodpecker-path-filter.sh
 
+# Rewrite pre-rename `buzz_*` tracing targets in a local .env (RUST_LOG,
+# BUZZ_OTEL_FILTER) to their `beekeeper_*` names, keeping a .env.bak. Uses the
+# exact program the relay deployer applies to the live .env, read out of
+# deploy/autodeploy/autodeploy, so the two cannot disagree. Binaries already
+# read the old names and warn on stderr; this makes the warning go away.
+env-log-targets file=".env":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(sed -n '/^# >>> log-target-sed$/,/^# <<< log-target-sed$/p' deploy/autodeploy/autodeploy)"
+    [[ -f "{{file}}" ]] || { echo "no {{file}} here; nothing to do"; exit 0; }
+    if ! grep -qE "$LOG_TARGET_LEGACY_RE" "{{file}}"; then
+        echo "{{file}}: log targets already current"; exit 0
+    fi
+    cp "{{file}}" "{{file}}.bak"
+    sed -E "$LOG_TARGET_SED" "{{file}}.bak" > "{{file}}"
+    echo "{{file}}: rewrote pre-rename log targets (was saved to {{file}}.bak):"
+    diff "{{file}}.bak" "{{file}}" || true
+
 # A sibling, not a directory inside this checkout: the whole point of moving
 # those documents out was that an agent working on the code should not trip
 # over the plans, and a path under this tree would put them straight back.

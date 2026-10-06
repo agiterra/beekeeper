@@ -156,8 +156,8 @@ pub fn main() -> std::process::ExitCode {
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
     const OWN_DIRECTIVE: &str = "beekeeper_host=info";
-    let filter = match std::env::var("RUST_LOG") {
-        Ok(value) if !value.trim().is_empty() => {
+    let filter = match beekeeper_core::log_targets::read_filter_var("RUST_LOG", "beekeeper-host") {
+        Some(value) => {
             let mut filter = EnvFilter::new(value.clone());
             if !value.contains("beekeeper_host") {
                 match OWN_DIRECTIVE.parse() {
@@ -169,7 +169,7 @@ fn init_tracing() {
             }
             filter
         }
-        _ => EnvFilter::new(format!("info,{OWN_DIRECTIVE}")),
+        None => EnvFilter::new(format!("info,{OWN_DIRECTIVE}")),
     };
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)

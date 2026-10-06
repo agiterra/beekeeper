@@ -2004,8 +2004,9 @@ async fn tokio_main() -> Result<()> {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("beekeeper_acp=info")),
+            beekeeper_core::log_targets::read_filter_var("RUST_LOG", "buzz-acp")
+                .and_then(|filter| EnvFilter::try_new(filter).ok())
+                .unwrap_or_else(|| EnvFilter::new("beekeeper_acp=info")),
         )
         .compact()
         .init();
