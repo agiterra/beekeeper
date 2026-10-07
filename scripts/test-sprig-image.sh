@@ -12,8 +12,9 @@ assert_run() {
 
 assert_run '
   command -v bash git update-ca-certificates >/dev/null
-  test "$(readlink /usr/local/bin/beekeeper-acp)" = sprig
-  for name in buzz-agent beekeeper-dev-mcp rg tree buzz git-credential-nostr git-sign-nostr; do
+  for name in beekeeper-acp beekeeper-agent beekeeper-dev-mcp \
+              buzz-acp buzz-agent buzz-dev-mcp \
+              rg tree bee buzz git-credential-nostr git-sign-nostr; do
     test "$(readlink "/usr/local/bin/$name")" = sprig
   done
   test "$(git config --system gpg.x509.program)" = /usr/local/bin/git-sign-nostr
@@ -27,8 +28,11 @@ assert_run '
   ! grep -Eq "^[[:space:]]*(beekeeper-acp|bash -c .*beekeeper-acp)" /usr/local/bin/sprig-entrypoint
 '
 
+# Both spellings of the relay URL: a backend built before the rename sends
+# BUZZ_RELAY_URL.
+for relay_var in BEEKEEPER_RELAY_URL BUZZ_RELAY_URL; do
 docker run --rm --entrypoint /bin/bash \
-  -e BEEKEEPER_RELAY_URL=wss://relay.example.test/ "$IMAGE" -ceu '
+  -e "$relay_var=wss://relay.example.test/" "$IMAGE" -ceu '
     /usr/local/bin/sprig-entrypoint --help >/dev/null 2>&1 & pid=$!
     for _ in 1 2 3 4 5; do
       git config --global --get credential.https://relay.example.test/git.helper >/dev/null 2>&1 && break
@@ -39,5 +43,6 @@ docker run --rm --entrypoint /bin/bash \
     ! git config --global --get-all credential.helper
     wait "$pid" || true
   '
+done
 
 echo "PASS: Sprig image runtime contract ($IMAGE)"

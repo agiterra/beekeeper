@@ -1,0 +1,16 @@
+{
+  "op": "deploy",
+  "request_id": "req-legacy-no-presence",
+  "agent": {
+    "relay_url": "wss://relay.example",
+    "private_key_nsec": "nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5",
+    "auth_tag": "tag-1",
+    "launch": {
+      "command": "buzz-agent",
+      "env": {},
+      "policy_env": {"BUZZ_ACP_NO_PRESENCE": "1"},
+      "owner_pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "provider_config": {"namespace": "buzz-agents-test", "image": "registry.example.com/beekeeper-sprig@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+}

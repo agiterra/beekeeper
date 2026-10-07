@@ -31,9 +31,16 @@ RUN apk add --no-cache bash ca-certificates curl git \
 
 COPY --from=builder --chmod=0755 /build/target/sprig/sprig /usr/local/bin/sprig
 COPY --chmod=0755 scripts/sprig-entrypoint.sh /usr/local/bin/sprig-entrypoint
+# Both name sets. The Kubernetes backend sends pods the buzz-* names, because
+# images are digest-pinned and every image built before the rename has only
+# those (crates/beekeeper-backend-kubernetes/src/env.rs, POD_COMMAND_NAMES).
+# Drop the buzz-* links once no supported backend sends them. `bee` is the
+# CLI personality beekeeper-dev-mcp dispatches; `buzz` is kept for anything
+# that already invokes it.
 RUN for name in \
-      beekeeper-acp buzz-agent beekeeper-dev-mcp rg tree buzz \
-      git-credential-nostr git-sign-nostr; do \
+      beekeeper-acp beekeeper-agent beekeeper-dev-mcp \
+      buzz-acp buzz-agent buzz-dev-mcp \
+      rg tree bee buzz git-credential-nostr git-sign-nostr; do \
         ln -s sprig "/usr/local/bin/$name"; \
     done
 

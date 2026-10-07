@@ -11,6 +11,8 @@ name = "beekeeper-backend-kubernetes"
 path = "src/main.rs"
 
 [dependencies]
+# env_compat only: the BUZZ_* / BEEKEEPER_* spellings of the pod env.
+beekeeper-core = { workspace = true }
 kube = { workspace = true }
 k8s-openapi = { workspace = true }
 nostr = { workspace = true }

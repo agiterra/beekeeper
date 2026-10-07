@@ -4,9 +4,12 @@
 #
 #   sprig            implementation binary
 #   beekeeper-acp       link to sprig (ACP harness)
-#   buzz-agent     link to sprig (ACP-compliant agent)
+#   beekeeper-agent     link to sprig (ACP-compliant agent)
 #   beekeeper-dev-mcp   link to sprig (developer MCP server; also dispatches
-#                    rg/tree/buzz/git-credential-nostr/git-sign-nostr)
+#                       rg/tree/bee/git-credential-nostr/git-sign-nostr)
+#   buzz-acp, buzz-agent, buzz-dev-mcp
+#                       the same links under their pre-rename names, for
+#                       configurations that still name them
 #
 # Usage:
 #   ./scripts/build-sprig.sh [version] [target]
@@ -32,9 +35,8 @@
 #
 # The tarball contains:
 #   sprig
-#   beekeeper-acp
-#   buzz-agent
-#   beekeeper-dev-mcp
+#   beekeeper-acp, beekeeper-agent, beekeeper-dev-mcp
+#   buzz-acp, buzz-agent, buzz-dev-mcp
 #   README.md
 #   sprig.json        { version, git_sha, target, binaries: [{name, sha256, size}] }
 
@@ -59,7 +61,8 @@ else
 fi
 
 BUNDLE_BIN="sprig"
-COMMANDS=(beekeeper-acp buzz-agent beekeeper-dev-mcp)
+# The buzz-* links are the pre-rename names; sprig dispatches both spellings.
+COMMANDS=(beekeeper-acp beekeeper-agent beekeeper-dev-mcp buzz-acp buzz-agent buzz-dev-mcp)
 
 echo "==> Building Sprig v${VERSION} for ${TARGET}"
 echo "    git_sha=${GIT_SHA}"
@@ -142,10 +145,13 @@ Commands:
 - `sprig` — prints usage/version. Invoke a personality by one of the links below.
 - `beekeeper-acp` — ACP harness that bridges Beekeeper channel events to an
   ACP-compliant agent over stdio.
-- `buzz-agent` — ACP-compliant agent (spawns MCP servers, calls LLMs).
+- `beekeeper-agent` — ACP-compliant agent (spawns MCP servers, calls LLMs).
 - `beekeeper-dev-mcp` — Developer MCP server (shell, str_replace, todo) and
-  multicall entrypoint for `rg`, `tree`, `buzz`, `git-credential-nostr`,
+  multicall entrypoint for `rg`, `tree`, `bee`, `git-credential-nostr`,
   `git-sign-nostr`.
+- `buzz-acp`, `buzz-agent`, `buzz-dev-mcp` — the same three under their names
+  from before the Beekeeper rename. `BUZZ_*` environment variables are still
+  read too, as the `BEEKEEPER_*` names they became.
 
 See `sprig.json` for SHA-256s, sizes, target, and source git SHA.
 
@@ -164,7 +170,7 @@ export BEEKEEPER_AGENT_PROVIDER=anthropic            # or openai
 export ANTHROPIC_API_KEY=sk-...
 export ANTHROPIC_MODEL=claude-sonnet-4-20250514
 
-# Nostr identity (shared by beekeeper-acp, git auth, signing, and buzz CLI)
+# Nostr identity (shared by beekeeper-acp, git auth, signing, and the bee CLI)
 export NOSTR_PRIVATE_KEY=nsec1...
 export BEEKEEPER_PRIVATE_KEY="$NOSTR_PRIVATE_KEY"
 export BEEKEEPER_RELAY_URL=https://your-relay.example.com

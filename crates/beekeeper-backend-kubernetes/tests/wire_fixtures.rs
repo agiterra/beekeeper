@@ -53,6 +53,7 @@ fn responses_match_their_fixtures() {
         "deploy-relay-mesh-padded",
         "deploy-tag-image",
         "deploy-no-owner",
+        "deploy-legacy-no-presence",
     ];
     // The list must cover every response fixture on disk. A literal array is
     // never empty, so `!is_empty()` would assert nothing; what can actually go
@@ -138,6 +139,24 @@ fn the_full_desktop_payload_is_accepted() {
     assert!(
         error.contains("kubeconfig"),
         "the full payload was rejected before reaching the cluster: {error}"
+    );
+}
+
+/// The same payload as recorded from a desktop built before the
+/// `BUZZ_*` → `BEEKEEPER_*` rename (its `policy_env` keys are all `BUZZ_ACP_*`).
+/// Such a desktop is still in the field, so its payload must be accepted
+/// exactly as the current one is; `env.rs`
+/// `the_pre_rename_fixture_builds_the_same_pod_env` proves it also resolves to
+/// the same pod environment.
+#[test]
+fn a_pre_rename_desktop_payload_is_accepted() {
+    let (stdout, code) = run(&read("deploy-legacy-launch.request.json"));
+    assert_eq!(code, 0);
+    let response: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let error = response["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("kubeconfig"),
+        "the pre-rename payload was rejected before reaching the cluster: {error}"
     );
 }
 

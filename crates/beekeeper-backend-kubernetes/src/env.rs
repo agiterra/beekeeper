@@ -5,7 +5,24 @@
 //! two tiers supplied the same key, whichever entry landed in the map would
 //! win silently. Resolving in-provider makes later-wins explicit and testable.
 
+//!
+//! # Two spellings, one pod ABI
+//!
+//! Pod images are digest-pinned, so a pod may run a sprig image built before
+//! the `BUZZ_*` → `BEEKEEPER_*` rename: it reads only `BUZZ_*` env and has only
+//! the `buzz-*` executables. Three rules keep both generations of image
+//! working:
+//!
+//! * received maps (`launch.policy_env`, `launch.env`, `env_vars`) are
+//!   normalized to the `BEEKEEPER_*` spelling first, so an older desktop's
+//!   `BUZZ_*` keys mean the same thing and every guard below sees one spelling;
+//! * the finished env carries **both** spellings of every name
+//!   ([`with_legacy_mirrors`](beekeeper_core::env_compat::with_legacy_mirrors));
+//! * the agent and MCP commands are sent under the `buzz-*` names every image
+//!   has ([`pod_command_name`]).
+
 use crate::wire::{AgentPayload, LaunchBlock};
+use beekeeper_core::env_compat::{both_spellings, mirror_map, normalize_env_keys};
 use std::collections::BTreeMap;
 
 /// Keys the authoritative tier owns.
@@ -34,6 +51,46 @@ const AUTHORITATIVE_KEYS: &[&str] = &[
     "BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY",
     START_NONCE_KEY,
 ];
+
+/// Command names as the pod image knows them: `(name the desktop sends, name
+/// every image ships)`.
+///
+/// The desktop now names the bundled agent `beekeeper-agent` and the MCP server
+/// `beekeeper-dev-mcp`, but a digest-pinned sprig image built before the rename
+/// has only the `buzz-*` links, while every image — old or new — has those
+/// (`Dockerfile.sprig` installs both sets). So the pod is always told the
+/// `buzz-*` name.
+///
+/// Retire this table once every supported sprig image ships the `beekeeper-*`
+/// names; until then sending a `beekeeper-*` name to a pod can launch nothing.
+const POD_COMMAND_NAMES: &[(&str, &str)] = &[
+    ("beekeeper-acp", "buzz-acp"),
+    ("beekeeper-agent", "buzz-agent"),
+    ("beekeeper-dev-mcp", "buzz-dev-mcp"),
+];
+
+/// The name to send a pod for `command`: the `buzz-*` spelling of a bundled
+/// binary (see [`POD_COMMAND_NAMES`]), anything else unchanged. Only an exact
+/// bare name is mapped; a path or another runtime (`goose`, `claude-agent-acp`)
+/// passes through.
+pub fn pod_command_name(command: &str) -> &str {
+    POD_COMMAND_NAMES
+        .iter()
+        .find(|(current, _)| *current == command)
+        .map_or(command, |(_, pod)| pod)
+}
+
+/// Write the attempt's generation under [`START_NONCE_KEY`] and, when the
+/// env already carries legacy mirrors, under its `BUZZ_*` twin too — an old
+/// image's harness reports the twin, and a stale one would correlate its logs
+/// to a different Secret.
+pub fn stamp_generation(env: &mut BTreeMap<String, String>, generation: &str) {
+    for key in both_spellings(START_NONCE_KEY) {
+        if key == START_NONCE_KEY || env.contains_key(&key) {
+            env.insert(key, generation.to_string());
+        }
+    }
+}
 
 /// The attempt's generation, as the harness sees it. Also the Secret's name
 /// suffix — one generation, one identity — so the reconciler restamps this on
@@ -172,8 +229,10 @@ pub fn build_env(
 
     let mut env: BTreeMap<String, String> = BTreeMap::new();
 
-    // Tier 1 — overridable behavior defaults.
-    env.extend(launch.policy_env.clone());
+    // Tier 1 — overridable behavior defaults. Each received map is
+    // normalized to the current spelling on its own, so a tier-2 `BUZZ_X`
+    // from an older desktop still overrides a tier-1 `BEEKEEPER_X`.
+    env.extend(normalize_env_keys(launch.policy_env.clone()));
 
     // Tier 2 — user/layered env. The descriptor already merged
     // global < persona < agent, so `agent.env_vars` is NOT re-merged on top
@@ -181,9 +240,9 @@ pub fn build_env(
     // already resolved. When the desktop predates the `launch` block we fall
     // back to the legacy field, which is the only case it is the truth.
     if agent.launch.is_some() {
-        env.extend(launch.env.clone());
+        env.extend(normalize_env_keys(launch.env.clone()));
     } else {
-        env.extend(agent.env_vars.clone());
+        env.extend(normalize_env_keys(agent.env_vars.clone()));
     }
 
     // Validate what the lower tiers contributed, before the authoritative
@@ -200,10 +259,17 @@ pub fn build_env(
                  inconsistently across cluster versions"
             ));
         }
-        if key.eq_ignore_ascii_case(FORBIDDEN_KEY) {
+        // Both spellings, though normalization already folded an exact
+        // `BUZZ_ACP_NO_PRESENCE` in: the comparison ignores case and the
+        // normalizer does not, so `buzz_acp_no_presence` reaches here as-is.
+        if both_spellings(FORBIDDEN_KEY)
+            .iter()
+            .any(|forbidden| key.eq_ignore_ascii_case(forbidden))
+        {
             return Err(format!(
-                "{FORBIDDEN_KEY} must not be set on a remote agent: presence \
-                 is the only signal that a remote agent is alive"
+                "{FORBIDDEN_KEY} (or its legacy spelling) must not be set on a \
+                 remote agent: presence is the only signal that a remote agent \
+                 is alive"
             ));
         }
     }
@@ -211,8 +277,12 @@ pub fn build_env(
     // Tier 3 — authoritative. Every key it owns is cleared first, then the
     // values it has are written, so it wins at a key whether or not it has a
     // value there (see [`AUTHORITATIVE_KEYS`]).
-    for key in AUTHORITATIVE_KEYS {
-        env.remove(*key);
+    // Both spellings: the legacy one is what an old image would read.
+    for key in AUTHORITATIVE_KEYS
+        .iter()
+        .flat_map(|key| both_spellings(key))
+    {
+        env.remove(&key);
     }
     // Identity comes from top-level payload fields, never from `env_vars`
     // (§Reserved-key rule). All three components must be nonempty: an agent
@@ -258,7 +328,10 @@ pub fn build_env(
     // A host path forwarded from the desktop is guaranteed absent in the
     // container (§Launch data, host-resolved values).
     if let Some(command) = launch.command.as_deref().filter(|c| !c.is_empty()) {
-        env.insert("BEEKEEPER_ACP_AGENT_COMMAND".into(), command.to_string());
+        env.insert(
+            "BEEKEEPER_ACP_AGENT_COMMAND".into(),
+            pod_command_name(command).to_string(),
+        );
     }
     if !launch.args.is_empty() {
         // Comma-joined because that is what the harness's CLI parser decodes,
@@ -269,7 +342,7 @@ pub fn build_env(
     }
     env.insert(
         "BEEKEEPER_ACP_MCP_COMMAND".into(),
-        "beekeeper-dev-mcp".into(),
+        pod_command_name("beekeeper-dev-mcp").to_string(),
     );
 
     if let Some(respond_to) = agent.respond_to.as_deref().filter(|s| !s.is_empty()) {
@@ -293,6 +366,11 @@ pub fn build_env(
     // The generation token doubles as the lifecycle-frame correlator, so pod
     // logs and observer frames share one identity (§K8s Secrets).
     env.insert(START_NONCE_KEY.into(), auth.generation.to_string());
+
+    // Dual-write last, so every name above — authoritative or not — reaches
+    // an old image under the spelling it reads. The size cap is checked on
+    // what the Secret will actually hold.
+    let env = mirror_map(env);
 
     let total: usize = env.values().map(String::len).sum();
     if total > MAX_SECRET_BYTES {
@@ -376,7 +454,7 @@ mod tests {
         assert_eq!(env["BEEKEEPER_AUTH_TAG"], "tag-1");
         assert_eq!(env["BEEKEEPER_ACP_AGENT_OWNER"], "beef");
         assert_eq!(env["BEEKEEPER_ACP_AGENT_COMMAND"], "goose");
-        assert_eq!(env["BEEKEEPER_ACP_MCP_COMMAND"], "beekeeper-dev-mcp");
+        assert_eq!(env["BEEKEEPER_ACP_MCP_COMMAND"], "buzz-dev-mcp");
         assert_eq!(env["BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY"], "7200");
         assert_eq!(env["BEEKEEPER_MANAGED_AGENT_START_NONCE"], "gen0001");
     }
@@ -577,9 +655,12 @@ mod tests {
     /// spoofed value in place.
     #[test]
     fn no_authoritative_key_retains_a_lower_tier_value() {
+        // Both spellings: an old image reads the legacy one, so a spoof there
+        // is as live as a spoof of the current name.
         let spoofed: serde_json::Map<String, serde_json::Value> = AUTHORITATIVE_KEYS
             .iter()
-            .map(|k| ((*k).to_string(), serde_json::json!("SPOOFED")))
+            .flat_map(|k| both_spellings(k))
+            .map(|k| (k, serde_json::json!("SPOOFED")))
             .collect();
         // Split across both lower tiers: policy_env and env are separate
         // insertion points, and a fix that only cleared one would pass a
@@ -593,9 +674,9 @@ mod tests {
             }
         }));
         let env = build(&agent).unwrap();
-        for key in AUTHORITATIVE_KEYS {
+        for key in AUTHORITATIVE_KEYS.iter().flat_map(|k| both_spellings(k)) {
             assert_ne!(
-                env.get(*key).map(String::as_str),
+                env.get(&key).map(String::as_str),
                 Some("SPOOFED"),
                 "{key} kept its lower-tier value"
             );
@@ -606,8 +687,11 @@ mod tests {
             "BEEKEEPER_ACP_AGENT_ARGS",
             "BEEKEEPER_ACP_RESPOND_TO",
             "BEEKEEPER_ACP_RESPOND_TO_ALLOWLIST",
-        ] {
-            assert!(!env.contains_key(absent), "{absent} survived the clear");
+        ]
+        .into_iter()
+        .flat_map(both_spellings)
+        {
+            assert!(!env.contains_key(&absent), "{absent} survived the clear");
         }
     }
 
@@ -739,5 +823,173 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{mode} is valid at the harness but was refused: {e}"));
             assert_eq!(env["BEEKEEPER_ACP_RESPOND_TO"], mode);
         }
+    }
+
+    // ---- the two spellings ------------------------------------------------
+
+    /// An older desktop sends `BUZZ_*` keys. They must mean exactly what the
+    /// current spelling means — including the tier order, which is applied
+    /// after normalization so a legacy tier-2 key still beats a current
+    /// tier-1 default.
+    #[test]
+    fn legacy_keys_from_an_older_desktop_mean_the_same_thing() {
+        let agent = payload_json(serde_json::json!({
+            "launch": {
+                "policy_env": {"BUZZ_ACP_MODEL": "sonnet", "BEEKEEPER_ACP_AGENTS": "4"},
+                "env": {"BUZZ_ACP_AGENTS": "8"},
+                "owner_pubkey": "beef"
+            }
+        }));
+        let env = build(&agent).unwrap();
+        assert_eq!(env["BEEKEEPER_ACP_MODEL"], "sonnet");
+        assert_eq!(env["BEEKEEPER_ACP_AGENTS"], "8", "tier 2 lost to tier 1");
+        assert_eq!(env["BUZZ_ACP_AGENTS"], "8", "the mirror disagrees");
+    }
+
+    /// Within one received map, the current spelling wins a collision.
+    #[test]
+    fn the_current_spelling_wins_inside_one_received_map() {
+        let agent = payload_json(serde_json::json!({
+            "launch": {
+                "env": {"BUZZ_ACP_MODEL": "stale", "BEEKEEPER_ACP_MODEL": "current"},
+                "owner_pubkey": "beef"
+            }
+        }));
+        let env = build(&agent).unwrap();
+        assert_eq!(env["BEEKEEPER_ACP_MODEL"], "current");
+        assert_eq!(env["BUZZ_ACP_MODEL"], "current");
+    }
+
+    /// A desktop predating the `launch` block, with legacy keys, still works.
+    #[test]
+    fn legacy_env_vars_with_legacy_keys_are_normalized() {
+        let agent = payload_json(serde_json::json!({"env_vars": {"BUZZ_ACP_MODEL": "m"}}));
+        let env = build(&agent).unwrap();
+        assert_eq!(env["BEEKEEPER_ACP_MODEL"], "m");
+    }
+
+    /// A digest-pinned image built before the rename reads only `BUZZ_*`, so
+    /// every current name must arrive under both spellings with one value.
+    #[test]
+    fn the_pod_env_carries_both_spellings_of_every_name() {
+        let agent = payload_json(serde_json::json!({
+            "launch": {
+                "command": "goose",
+                "args": ["acp"],
+                "policy_env": {"BEEKEEPER_ACP_MODEL": "sonnet", "GOOSE_MODE": "auto"},
+                "owner_pubkey": "beef"
+            }
+        }));
+        let env = build(&agent).unwrap();
+        let current: Vec<&String> = env.keys().filter(|k| k.starts_with("BEEKEEPER_")).collect();
+        assert!(
+            current.len() >= 8,
+            "too few names to mean anything: {current:?}"
+        );
+        for key in current {
+            let twin = beekeeper_core::env_compat::legacy_twin(key).unwrap();
+            assert_eq!(
+                env.get(&twin),
+                Some(&env[key]),
+                "{twin} missing or different"
+            );
+        }
+        assert!(env.contains_key("NOSTR_PRIVATE_KEY"));
+        assert!(!env
+            .keys()
+            .any(|k| k == "BUZZ_NOSTR_PRIVATE_KEY" || k == "BUZZ_GOOSE_MODE"));
+    }
+
+    /// The presence refusal cannot be dodged by the legacy spelling, in any
+    /// case.
+    #[test]
+    fn refuses_presence_suppression_under_either_spelling() {
+        for key in [
+            "BUZZ_ACP_NO_PRESENCE",
+            "buzz_acp_no_presence",
+            "beekeeper_acp_no_presence",
+        ] {
+            for tier in ["env", "policy_env"] {
+                let agent = payload_json(serde_json::json!({
+                    "launch": {tier: {key: "1"}, "owner_pubkey": "beef"}
+                }));
+                let err = build(&agent).unwrap_err();
+                assert!(
+                    err.contains("BEEKEEPER_ACP_NO_PRESENCE"),
+                    "{key} in {tier}: {err}"
+                );
+            }
+        }
+    }
+
+    /// The pod ABI: the bundled agent and MCP server reach the pod under the
+    /// `buzz-*` names every image ships, whichever name the desktop sent.
+    #[test]
+    fn bundled_commands_reach_the_pod_under_the_names_every_image_ships() {
+        for (sent, expected) in [
+            ("beekeeper-agent", "buzz-agent"),
+            ("buzz-agent", "buzz-agent"),
+            ("goose", "goose"),
+            ("/opt/bin/beekeeper-agent", "/opt/bin/beekeeper-agent"),
+        ] {
+            let agent = payload_json(serde_json::json!({
+                "launch": {"command": sent, "owner_pubkey": "beef"}
+            }));
+            let env = build(&agent).unwrap();
+            assert_eq!(env["BEEKEEPER_ACP_AGENT_COMMAND"], expected, "{sent}");
+            assert_eq!(env["BUZZ_ACP_AGENT_COMMAND"], expected, "{sent}");
+            assert_eq!(env["BEEKEEPER_ACP_MCP_COMMAND"], "buzz-dev-mcp");
+            assert_eq!(env["BUZZ_ACP_MCP_COMMAND"], "buzz-dev-mcp");
+        }
+        assert_eq!(pod_command_name("beekeeper-acp"), "buzz-acp");
+        assert_eq!(pod_command_name("beekeeper-dev-mcp"), "buzz-dev-mcp");
+    }
+
+    /// The reconciler's per-attempt restamp must move both spellings, or an
+    /// old image's harness reports the first attempt's generation forever.
+    #[test]
+    fn restamping_the_generation_moves_both_spellings() {
+        let mut env = build(&payload_json(serde_json::json!({}))).unwrap();
+        assert_eq!(env["BUZZ_MANAGED_AGENT_START_NONCE"], "gen0001");
+        stamp_generation(&mut env, "gen0002");
+        assert_eq!(env[START_NONCE_KEY], "gen0002");
+        assert_eq!(env["BUZZ_MANAGED_AGENT_START_NONCE"], "gen0002");
+
+        // Without mirrors, the restamp does not invent one.
+        let mut bare = BTreeMap::new();
+        stamp_generation(&mut bare, "g");
+        assert_eq!(bare.len(), 1);
+        assert_eq!(bare[START_NONCE_KEY], "g");
+    }
+
+    /// The pre-rename fixture is the full desktop payload as an older desktop
+    /// recorded it, `BUZZ_ACP_*` keys and all. It must resolve to exactly the
+    /// pod environment the current payload does.
+    #[test]
+    fn the_pre_rename_fixture_builds_the_same_pod_env() {
+        let agent_of = |raw: &str| -> AgentPayload {
+            let request: crate::wire::DeployRequest = serde_json::from_str(raw).unwrap();
+            request.agent
+        };
+        let current = agent_of(include_str!(
+            "../tests/fixtures/provider-wire/deploy-full-launch.request.json"
+        ));
+        let legacy = agent_of(include_str!(
+            "../tests/fixtures/provider-wire/deploy-legacy-launch.request.json"
+        ));
+        assert!(
+            legacy
+                .launch
+                .as_ref()
+                .unwrap()
+                .policy_env
+                .keys()
+                .any(|k| k.starts_with("BUZZ_")),
+            "the legacy fixture no longer carries legacy keys"
+        );
+        let built = build(&legacy).unwrap();
+        assert_eq!(built, build(&current).unwrap());
+        assert_eq!(built["BEEKEEPER_ACP_MODEL"], "gpt-5");
+        assert_eq!(built["BUZZ_ACP_MODEL"], "gpt-5");
     }
 }

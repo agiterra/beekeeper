@@ -37,3 +37,11 @@ Three rules keep these useful rather than decorative:
 `deploy-*` fixtures cover only responses reachable without a cluster —
 refusals and malformed input. A successful deploy needs an apiserver and is
 covered by the conformance suite, not by a static fixture.
+
+`deploy-legacy-*` fixtures stand for **old data on purpose** and keep the
+`BUZZ_*` spelling: `deploy-legacy-launch.request.json` is
+`deploy-full-launch.request.json` exactly as a desktop built before the
+`BUZZ_*` → `BEEKEEPER_*` rename recorded it, and
+`deploy-legacy-no-presence.request.json` proves the presence refusal holds
+under the legacy spelling. Do not rename their keys; a test asserts they still
+carry legacy ones.

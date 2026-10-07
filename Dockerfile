@@ -3,7 +3,7 @@
 # Beekeeper relay image. The relay host builds it from this file with a plain
 # `docker build` (deploy/autodeploy); it is not published to a registry.
 #
-# Builds the `beekeeper-relay` binary (Rust 1.95) and the `buzz-web` static bundle
+# Builds the `beekeeper-relay` binary (Rust 1.95) and the web static bundles
 # (pnpm + vite), then assembles them into a small debian-slim runtime with
 # `git` available (the relay shells out to git for repo hydrate / receive-pack
 # / upload-pack — see crates/beekeeper-relay/src/api/git).
@@ -69,17 +69,27 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 # Compile immutable artifact identity into the relay. Defaults preserve local
 # and third-party builds that do not run in provenance-aware CI.
-ARG BEEKEEPER_SOURCE_SHA=unknown
+#
+# Each value is accepted under both names: BEEKEEPER_<X> is current, and
+# BUZZ_<X> is what a deployer installed before the rename still passes
+# (`--build-arg BUZZ_SOURCE_SHA=...`). The BEEKEEPER_ name wins when both are
+# set and non-empty; the defaults sit on the BUZZ_ ARGs so either name alone
+# overrides them.
+ARG BEEKEEPER_SOURCE_SHA=
+ARG BUZZ_SOURCE_SHA=unknown
 # Empty, not `unknown`: the count is numeric, and empty is the value
 # `parse_commit_count` refuses to a disclosed `null`. Must describe the same
 # commit as BEEKEEPER_SOURCE_SHA — build.rs pairs them or drops the count.
 ARG BEEKEEPER_SOURCE_COMMIT_COUNT=
-ARG BEEKEEPER_BUILD_ID=local
-ARG BEEKEEPER_BUILD_URL=unknown
-ENV BEEKEEPER_SOURCE_SHA=${BEEKEEPER_SOURCE_SHA} \
-    BEEKEEPER_SOURCE_COMMIT_COUNT=${BEEKEEPER_SOURCE_COMMIT_COUNT} \
-    BEEKEEPER_BUILD_ID=${BEEKEEPER_BUILD_ID} \
-    BEEKEEPER_BUILD_URL=${BEEKEEPER_BUILD_URL}
+ARG BUZZ_SOURCE_COMMIT_COUNT=
+ARG BEEKEEPER_BUILD_ID=
+ARG BUZZ_BUILD_ID=local
+ARG BEEKEEPER_BUILD_URL=
+ARG BUZZ_BUILD_URL=unknown
+ENV BEEKEEPER_SOURCE_SHA=${BEEKEEPER_SOURCE_SHA:-$BUZZ_SOURCE_SHA} \
+    BEEKEEPER_SOURCE_COMMIT_COUNT=${BEEKEEPER_SOURCE_COMMIT_COUNT:-$BUZZ_SOURCE_COMMIT_COUNT} \
+    BEEKEEPER_BUILD_ID=${BEEKEEPER_BUILD_ID:-$BUZZ_BUILD_ID} \
+    BEEKEEPER_BUILD_URL=${BEEKEEPER_BUILD_URL:-$BUZZ_BUILD_URL}
 RUN cargo build --release --locked -p beekeeper-relay --bin beekeeper-relay \
                                    -p beekeeper-admin --bin beekeeper-admin \
                                    -p beekeeper-pair-relay --bin beekeeper-pair-relay
@@ -160,8 +170,15 @@ COPY --from=web-builder /build/admin-web/dist           /srv/buzz/admin-web
 # The invite landing page is always served from the bundled web UI. Repository
 # browser routes require the separate BEEKEEPER_SERVE_GIT_WEB_GUI=true opt-in. The
 # admin bundle is inert until BEEKEEPER_ADMIN_HOST is configured.
-ENV BEEKEEPER_WEB_DIR=/srv/buzz/web \
-    BEEKEEPER_ADMIN_WEB_DIR=/srv/buzz/admin-web
+#
+# These two defaults are spelled BUZZ_* on purpose, for the transition: an image
+# default is the weakest value, and under the new spelling it would shadow an
+# operator's legacy BUZZ_WEB_DIR / BUZZ_ADMIN_WEB_DIR from .env (the relay
+# prefers a set BEEKEEPER_* name). Spelled this way, an operator's value of
+# either spelling still wins, and the relay adopts this default as
+# BEEKEEPER_WEB_DIR when nothing else is set.
+ENV BUZZ_WEB_DIR=/srv/buzz/web \
+    BUZZ_ADMIN_WEB_DIR=/srv/buzz/admin-web
 
 # 3000: app (WS + REST)  ·  8080: /_liveness, /_readiness  ·  9102: /metrics
 EXPOSE 3000 8080 9102
@@ -171,6 +188,14 @@ RUN mkdir -p /data/git && chown buzz:buzz /data/git
 
 USER buzz:buzz
 WORKDIR /var/lib/buzz
+
+# The pre-rename names, as links to the current binaries. Hand-managed scripts
+# on deployed hosts call them (hive's run.sh calls /usr/local/bin/buzz-admin),
+# and a compose file may name buzz-relay as its command. Remove once no
+# deployment does.
+RUN ln -s beekeeper-relay /usr/local/bin/buzz-relay \
+    && ln -s beekeeper-admin /usr/local/bin/buzz-admin \
+    && ln -s beekeeper-pair-relay /usr/local/bin/buzz-pair-relay
 
 ENTRYPOINT ["/usr/local/bin/beekeeper-relay"]
 

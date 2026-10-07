@@ -38,7 +38,8 @@ cleanup() {
         return 1
     fi
     foreign="$(kubectl --context "$CONTEXT" --namespace "$NAMESPACE" get pods -o json \
-        | jq '[.items[] | select(.metadata.labels["app.kubernetes.io/managed-by"] != "beekeeper-backend-kubernetes" or .metadata.labels["beekeeper.agiterra.io/binding-version"] != "v1")] | length')"
+        | jq --arg managed "$MANAGED_BY" --arg binding "$BINDING_VERSION" \
+            '[.items[] | select(.metadata.labels["app.kubernetes.io/managed-by"] != $managed or .metadata.labels["beekeeper.agiterra.io/binding-version"] != $binding)] | length')"
     if [[ "$foreign" != 0 ]]; then
         echo "REFUSING cleanup: namespace contains an unowned pod: $NAMESPACE" >&2
         return 1
@@ -77,7 +78,9 @@ spec:
       imagePullPolicy: $PULL_POLICY
       command: [/bin/bash, -ceu]
       args:
-        - 'test "\$(readlink /usr/local/bin/beekeeper-acp)" = sprig; echo DIGEST_ABI_OK'
+        # The names the backend sends a pod (env.rs POD_COMMAND_NAMES), which
+        # every image has, old or new.
+        - 'for n in buzz-agent buzz-dev-mcp; do test "\$(readlink /usr/local/bin/\$n)" = sprig; done; echo DIGEST_ABI_OK'
 YAML
 
 if ! kubectl --context "$CONTEXT" --namespace "$NAMESPACE" wait \

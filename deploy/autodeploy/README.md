@@ -81,6 +81,22 @@ before the first deploy of the renamed crates. Until then nothing is lost:
 the binaries themselves read old targets as new ones and say so on stderr
 (`beekeeper_core::log_targets`). The file fix just stops that warning.
 
+## Build-arg names after the `BUZZ_*` → `BEEKEEPER_*` rename
+
+The repository copy passes `--build-arg BEEKEEPER_SOURCE_SHA` and
+`BEEKEEPER_SOURCE_COMMIT_COUNT`. Reinstalling the installed copy for this is
+**optional**: the relay `Dockerfile` declares both spellings and uses
+`BEEKEEPER_<X>` when it is set, `BUZZ_<X>` otherwise, so a deployer installed
+before the rename still builds an image that discloses its commit. Reinstall
+when convenient, so the host stops depending on that fallback.
+
+What does not change: `BUZZ_IMAGE` (and the other names Compose interpolates,
+listed in `deploy/compose/README.md`) keeps its name in `.env`, and the
+`RELAY_CONTAINER` / `PG_CONTAINER` defaults stay `buzz-prod-*`, because they
+come from `name: buzz-prod` in compose.yml. The relay itself reads the
+`BEEKEEPER_*` names that compose.yml now sets, and still reads any `BUZZ_*`
+name in `.env` whose new twin is unset.
+
 ## Configuration
 
 `/etc/default/<unit>` is parsed by **systemd, not a shell**: plain `KEY=value`,
@@ -159,13 +175,15 @@ curl -s https://hive.agiterra.org/health
 
 An `unknown` `software_commit` on hive (as opposed to a third-party
 build of this image, where it is legitimate) means the deployed image predates
-this lane's `--build-arg BUZZ_SOURCE_SHA=$sha` in step 3 of `autodeploy` below
+this lane's `--build-arg BEEKEEPER_SOURCE_SHA=$sha` (`BUZZ_SOURCE_SHA` in a
+deployer installed before the rename) in step 3 of `autodeploy` below
 — check that the build-arg is actually present in the deployer script running
 on the host, not just in this checkout.
 
 A `null` `software_commit_count` beside a *known* `software_commit` is the
 same signal one level down: the deployed image predates
-`--build-arg BUZZ_SOURCE_COMMIT_COUNT=$count`, or the mirror could not answer
+`--build-arg BEEKEEPER_SOURCE_COMMIT_COUNT=$count` (or its `BUZZ_` spelling),
+or the mirror could not answer
 `rev-list --count` for that commit. It is never a fault in the relay, and it
 is never guessed — the pair is resolved together in `build.rs`, so a missing
 count is disclosed rather than filled in from whatever history happened to be
