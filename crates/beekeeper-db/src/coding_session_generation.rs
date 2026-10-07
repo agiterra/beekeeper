@@ -39,7 +39,7 @@ pub struct GenerationAuthorityProof {
 /// Fail-closed generation-authority resolution outcome.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum GenerationAuthorityError {
-    /// No strictly valid create/resume command matched the complete tuple.
+    /// No strictly valid create/resume/restart command matched the complete tuple.
     #[error("generation authority command not found")]
     MissingCommand,
     /// More than one strictly valid command matched, so authority is ambiguous.
@@ -214,7 +214,14 @@ fn valid_command(
             provider_authority_pubkey,
             ..
         } if target.generation == 1 => (provider_authority_pubkey, MintAction::Create),
+        // A restart is a resume of a live execution (spec § 4.9): the
+        // provider mints generation N+1 under the restart command's id and
+        // answers with a `Resumed` receipt, so it proves the lease the same way.
         CodingSessionLifecycleAction::SessionResume {
+            session,
+            provider_authority_pubkey,
+        }
+        | CodingSessionLifecycleAction::SessionRestart {
             session,
             provider_authority_pubkey,
         } if same_execution_next_generation(&session, target) => {
@@ -348,11 +355,24 @@ mod tests {
         id: &str,
         previous: &CodingSessionTarget,
     ) -> Event {
+        next_generation_command(keys, provider, channel, id, previous, "session.resume")
+    }
+
+    /// A resume-shaped command; `session.restart` mints the next generation
+    /// exactly like `session.resume` does.
+    fn next_generation_command(
+        keys: &Keys,
+        provider: &PublicKey,
+        channel: Uuid,
+        id: &str,
+        previous: &CodingSessionTarget,
+        action_type: &str,
+    ) -> Event {
         let content = serde_json::json!({
             "schema": "buzz-coding-session-lifecycle-command/v1",
             "commandId": id,
             "action": {
-                "type": "session.resume",
+                "type": action_type,
                 "session": previous,
                 "providerAuthorityPubkey": provider.to_hex()
             }
@@ -672,6 +692,63 @@ mod tests {
                 &provider.public_key(),
             ),
             Err(GenerationAuthorityError::MissingReceipt)
+        ));
+    }
+
+    #[test]
+    fn restart_command_mints_the_next_generation_like_resume() {
+        let operator = Keys::generate();
+        let provider = Keys::generate();
+        let channel = Uuid::new_v4();
+        let command = next_generation_command(
+            &operator,
+            &provider.public_key(),
+            channel,
+            "restart-1",
+            &target(1),
+            "session.restart",
+        );
+        let receipt = receipt_with_status(
+            &provider,
+            channel,
+            "restart-1",
+            &target(2),
+            ReceiptStatus::Resumed,
+        );
+        let proof = select_unique_generation_authority(
+            vec![command.clone()],
+            vec![receipt.clone()],
+            channel,
+            "restart-1",
+            &target(2),
+            &provider.public_key(),
+        )
+        .unwrap();
+        assert_eq!(proof.command_event_id, command.id);
+        assert_eq!(proof.receipt_event_id, receipt.id);
+        // Same fences as resume: a skipped generation and a stranger's lease
+        // are still refused.
+        assert!(matches!(
+            select_unique_generation_authority(
+                vec![command.clone()],
+                vec![receipt.clone()],
+                channel,
+                "restart-1",
+                &target(3),
+                &provider.public_key(),
+            ),
+            Err(GenerationAuthorityError::MissingCommand)
+        ));
+        assert!(matches!(
+            select_unique_generation_authority(
+                vec![command],
+                vec![receipt],
+                channel,
+                "restart-1",
+                &target(2),
+                &Keys::generate().public_key(),
+            ),
+            Err(GenerationAuthorityError::AuthorityMismatch)
         ));
     }
 

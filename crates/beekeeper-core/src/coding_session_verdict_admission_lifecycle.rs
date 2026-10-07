@@ -64,8 +64,9 @@ struct LifecyclePair<'a> {
 ///   name this mission (the provider's own context projector requires both)
 ///   and its receipt reports `created` or `created_with_failed_initial_turn`
 ///   with a generation-1 target;
-/// * a `session.resume` counts when it targets an execution an accepted
-///   create (or an accepted earlier resume) of this mission produced, at
+/// * a `session.resume` or `session.restart` counts when it targets an
+///   execution an accepted create (or an accepted earlier resume or
+///   restart) of this mission produced, at
 ///   exactly that execution's accepted generation, and its receipt reports
 ///   `resumed` or `resumed_without_context` for the next generation;
 /// * a `session.hire` names no provider and contributes no provider authority;
@@ -158,10 +159,15 @@ pub fn mission_provider_pubkeys_from_lifecycle(
     while changed {
         changed = false;
         for pair in &pairs {
-            let CodingSessionLifecycleAction::SessionResume {
+            // A restart mints the next generation exactly as a resume does.
+            let (CodingSessionLifecycleAction::SessionResume {
                 session: previous,
                 provider_authority_pubkey,
-            } = &pair.action
+            }
+            | CodingSessionLifecycleAction::SessionRestart {
+                session: previous,
+                provider_authority_pubkey,
+            }) = &pair.action
             else {
                 continue;
             };

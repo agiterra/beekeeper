@@ -10,9 +10,9 @@
  *   the receipt's status is a success for that action. Two commands, two
  *   receipts, or a receipt from anyone else proves nothing.
  * - **Generations.** `session.create` opens generation 1; each `session.resume`
- *   extends the chain by exactly one, against the same execution key, from an
- *   already-accepted predecessor. An execution may span several resumed
- *   generations; `executionKey` is the identity callers count.
+ *   or `session.restart` (one step here) extends the chain by exactly one,
+ *   against the same execution key, from an accepted predecessor. An execution
+ *   may span several generations; `executionKey` is the identity callers count.
  * - **Leases.** Reachability comes from kind 24223 and from nothing else. The
  *   winning lease is the unique event at the highest sequence for that exact
  *   target, signed by the same provider authority, under the same command id.
@@ -323,7 +323,7 @@ function readLifecycleCommand(
       hireRef: nullableString(action.hireRef),
     };
   }
-  if (action.type === "session.resume") {
+  if (action.type === "session.resume" || action.type === "session.restart") {
     const previousTarget = readCodingSessionTarget(action.session);
     if (!previousTarget) return null;
     return {

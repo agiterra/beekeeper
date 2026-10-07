@@ -1020,9 +1020,13 @@ fn group_executions(
         loop {
             let mut established_resumes = Vec::new();
             for (resume_event, resume) in commands.iter().filter(|(_, command)| {
+                // A restart mints the next generation exactly as a resume does.
                 matches!(
                     &command.action,
                     CodingSessionLifecycleAction::SessionResume {
+                        session,
+                        provider_authority_pubkey: authority,
+                    } | CodingSessionLifecycleAction::SessionRestart {
                         session,
                         provider_authority_pubkey: authority,
                     } if session == &current && authority == provider_authority_pubkey
@@ -2405,6 +2409,10 @@ fn verify_generation(
                 CodingSessionLifecycleAction::SessionResume {
                     session,
                     provider_authority_pubkey,
+                }
+                | CodingSessionLifecycleAction::SessionRestart {
+                    session,
+                    provider_authority_pubkey,
                 },
                 Some(previous),
             ) => {
@@ -2430,8 +2438,9 @@ fn verify_generation(
             }
             _ => {
                 return Err(ContextProjectionError::InvalidFact(
-                    "first generation must be create and later generations must be resume".into(),
-                ));
+                "first generation must be create and later generations must be resume or restart"
+                    .into(),
+            ));
             }
         };
 
@@ -2549,7 +2558,8 @@ fn verify_receipt(
             ReceiptStatus::Created | ReceiptStatus::CreatedWithFailedInitialTurn,
             None,
         ) | (
-            CodingSessionLifecycleAction::SessionResume { .. },
+            CodingSessionLifecycleAction::SessionResume { .. }
+                | CodingSessionLifecycleAction::SessionRestart { .. },
             ReceiptStatus::Resumed | ReceiptStatus::ResumedWithoutContext,
             Some(_),
         )
@@ -3883,6 +3893,96 @@ mod tests {
         assert!(package.provenance.complete);
         assert_eq!(package.provenance.total_history_items, Some(4));
         assert_eq!(package.provenance.source_event_count, 8);
+    }
+
+    /// A `session.restart` mints generation 2 exactly as a resume does
+    /// (spec § 4.9): the chain walks through it, so the restarted
+    /// generation's history and seat are in the package rather than the
+    /// projection stopping at the generation the restart detached.
+    #[test]
+    fn a_restart_generation_is_grouped_and_verified_like_a_resume() {
+        let fixture = fixture(2);
+        let channel_id = fixture.input.channel_id;
+        let generation = &fixture.input.executions[0].generations[0];
+        let next = CodingSessionTarget {
+            generation: 2,
+            ..fixture.target.clone()
+        };
+        let restart = CodingSessionLifecycleCommandPayload {
+            schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.into(),
+            command_id: "restart-1".into(),
+            action: CodingSessionLifecycleAction::SessionRestart {
+                session: fixture.target.clone(),
+                provider_authority_pubkey: fixture.provider.public_key().to_hex(),
+            },
+        };
+        let restart_event = build_coding_session_lifecycle_command(channel_id, &restart)
+            .unwrap()
+            .sign_with_keys(&fixture.founder)
+            .unwrap();
+        let receipt = LifecycleReceipt::resumed("restart-1", &next);
+        let receipt_event = build_coding_session_lifecycle_receipt(
+            channel_id,
+            "restart-1",
+            &serde_json::to_string(&receipt).unwrap(),
+        )
+        .unwrap()
+        .sign_with_keys(&fixture.provider)
+        .unwrap();
+        let mut metadata: SessionMetadata =
+            serde_json::from_str(&generation.metadata.content).unwrap();
+        metadata.session = next.clone();
+        let metadata_event = build_coding_session_metadata(
+            channel_id,
+            &next,
+            &serde_json::to_string(&metadata).unwrap(),
+        )
+        .unwrap()
+        .sign_with_keys(&fixture.provider)
+        .unwrap();
+        let envelope = TranscriptEnvelope::new(
+            &next,
+            1,
+            9_000,
+            Some("turn-2"),
+            serde_json::json!({"kind": "assistant_text", "text": "after restart"}),
+        );
+        let transcript_event = build_coding_session_transcript_item(
+            channel_id,
+            &next,
+            1,
+            &serde_json::to_string(&envelope).unwrap(),
+        )
+        .unwrap()
+        .custom_created_at(Timestamp::from(9))
+        .sign_with_keys(&fixture.provider)
+        .unwrap();
+        let mut events = vec![
+            fixture.input.genesis.clone(),
+            generation.lifecycle_command.clone(),
+            generation.receipt.clone(),
+            generation.metadata.clone(),
+            restart_event,
+            receipt_event,
+            metadata_event,
+            transcript_event,
+        ];
+        events.extend(generation.transcript.iter().cloned());
+        let request = ContextProjectionRequest {
+            allow_no_executions: false,
+            channel_id,
+            session_ref: fixture.input.session_ref.clone(),
+            genesis_ref: fixture.input.genesis_ref.clone(),
+            relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
+            generated_at: fixture.input.generated_at,
+            limits: ContextProjectionLimits::default(),
+        };
+
+        let package = project_session_context_events(&request, &events).unwrap();
+
+        assert_eq!(package.history.len(), 3);
+        assert!(package.history.iter().any(|item| item.target == next));
+        assert!(package.roster.iter().any(|seat| seat.target == next));
     }
 
     /// A create with a first turn now publishes turn receipts under the

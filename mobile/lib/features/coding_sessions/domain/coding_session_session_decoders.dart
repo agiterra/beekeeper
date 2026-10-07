@@ -207,7 +207,7 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
   );
 }
 
-/// Decode a 44221 `session.resume`.
+/// Decode a 44221 `session.resume` or `session.restart`.
 ///
 /// Read for authority only: the resume names the provider that may answer it,
 /// and that provider's lifecycle receipt names the generation the resume
@@ -255,7 +255,10 @@ CodingSessionDecoded<CodingSessionResume> decodeCodingSessionResume(
     );
   }
   final action = payload['action']! as Map<String, dynamic>;
-  if (action['type'] != 'session.resume') {
+  // A restart is a resume of a live execution: same shape, same authority,
+  // and its receipt mints the next generation the same way.
+  if (action['type'] != 'session.resume' &&
+      action['type'] != 'session.restart') {
     return const CodingSessionDecoded.failed(
       CodingSessionDecodeReason.wrongKind,
     );

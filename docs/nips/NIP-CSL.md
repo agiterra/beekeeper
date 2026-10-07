@@ -28,8 +28,8 @@ Provider-neutral rendering after creation uses the signed
 >    client-minted UUID added after v1 shipped. Authority-aware creates also
 >    carry `genesisRef`, the exact founder event id. The action has exactly the
 >    historical 8-key, 9-key `sessionRef`, or 10-key linked form. See below.
-> 5. **Continuation is generation-fenced.** `session.resume` and
->    `session.stop` address an exact published `cs-target`. Resume never carries
+> 5. **Continuation is generation-fenced.** `session.resume`, `session.restart`
+>    and `session.stop` address an exact published `cs-target`. Resume never carries
 >    the provider's opaque ACP cursor; that cursor remains host-private. A
 >    successful reattachment publishes a new generation, while stop is durable
 >    intent that survives provider restart.
@@ -89,8 +89,8 @@ The same v1 envelope also admits exactly these two lifecycle action shapes
 }
 ```
 
-`session.stop` has the identical three-key action with `type` set to
-`session.stop`. Adding a discriminated action is an additive v1 evolution:
+`session.stop` and `session.restart` have the identical three-key action with
+`type` set to `session.stop` or `session.restart`. Adding a discriminated action is an additive v1 evolution:
 older consumers reject an unknown action and therefore fail closed; they must
 not reinterpret it as `session.create`. That fail-closed rule is what makes
 `session.hire` (fork amendment below) safe to add and what obliges a publisher
@@ -131,6 +131,18 @@ field remain readable but MUST be described as having an unknown legacy
 watermark. `sourceEventCount` counts the complete verification proof graph
 (identity, authority, lifecycle, metadata, and transcript), while
 `totalHistoryItems` counts transcript items only.
+
+`session.restart` addresses the exact **current** generation and is a resume
+of a live execution ("Restart with current definition"): the provider detaches
+the live child, then reattaches through the resume path, so generation `N+1` is
+minted under the restart's `commandId`, answered with a `resumed` or
+`resumed_without_context` receipt, and admitted by the same rule as a resume
+(the founder or a granted operator). Every reader that walks the generation
+chain — relay lease authority, coordination folds, the context projector —
+MUST treat a successful restart exactly as a successful resume; a reader that
+does not stops the chain at the detached generation, whose last metadata is
+`disconnected`, and reports a healthy session as gone. A provider refuses a
+restart while a turn is open (`SESSION_BUSY`).
 
 `session.stop` addresses the exact current generation. Once consumed, the
 provider records the execution as closed before releasing its process. Restart
@@ -1097,8 +1109,8 @@ eligible `live` actors every 60 seconds and publish a higher-sequence
 
 Lease signing authority comes from the accepted lifecycle chain, never from
 metadata authorship. For the tagged channel, `csl-command`, and `cs-target`, the
-relay requires exactly one strictly valid accepted kind-44221 create/resume
-command and exactly one successful kind-44224 receipt. The receipt target must
+relay requires exactly one strictly valid accepted kind-44221 create, resume,
+or restart command and exactly one successful kind-44224 receipt. The receipt target must
 equal the lease target, and both the receipt signer and lease signer must equal
 the command's `providerAuthorityPubkey`. Missing, conflicting, stop-minted, or
 otherwise ambiguous evidence fails closed.

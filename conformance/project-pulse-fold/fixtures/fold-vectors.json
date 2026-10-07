@@ -1844,6 +1844,200 @@
       }
     },
     {
+      "name": "restart-generation-isolation-and-continuity",
+      "description": "A restart mints the next generation exactly like a resume: a successful +1 restart stays in one umbrella and becomes current, the predecessor lease cannot make it reachable, and a skipped generation receipt is rejected.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785600000,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000002f0",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599608,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "create-resume"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-resume\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000002f1",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599609,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "create-resume"],
+              [
+                "csl-key",
+                "coding-session-lifecycle-receipt/v1|13:create-resume"
+              ]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-resume\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"resume\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000002f2",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599990,
+            "kind": 24223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslease-v", "cslease1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-16:resume1:1"],
+              ["csl-command", "create-resume"],
+              ["cslease-seq", "1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"resume\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":1}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000002f3",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599611,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "resume-two"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"resume-two\",\"action\":{\"type\":\"session.restart\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"resume\",\"generation\":1},\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\"}}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000002f4",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599612,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "resume-two"],
+              ["csl-key", "coding-session-lifecycle-receipt/v1|10:resume-two"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"resume-two\",\"status\":\"resumed\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"resume\",\"generation\":2},\"error\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000002f5",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599613,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "resume-four"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"resume-four\",\"action\":{\"type\":\"session.restart\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"resume\",\"generation\":2},\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\"}}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000002f6",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599614,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "resume-four"],
+              ["csl-key", "coding-session-lifecycle-receipt/v1|11:resume-four"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"resume-four\",\"status\":\"resumed\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"resume\",\"generation\":4},\"error\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785600000,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "sessionKey": "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64",
+            "sessionRef": "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64",
+            "name": null,
+            "goal": null,
+            "lifecycle": "open",
+            "coordinationState": "open_unverified",
+            "latestObservationAt": null,
+            "observedAgeSeconds": null,
+            "generations": [
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-16:resume1:2",
+                "executionKey": "coding-execution/v1|3:acp6:inst-16:resume",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "unverified",
+                "status": null,
+                "statusAt": null,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": null,
+                "leaseIssuedAt": null,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": null,
+                "leaseSigner": null,
+                "leaseSourceEventId": null,
+                "leaseSequence": null,
+                "lifecycleCommandEventId": "00000000000000000000000000000000000000000000000000000000000002f3",
+                "lifecycleReceiptEventId": "00000000000000000000000000000000000000000000000000000000000002f4",
+                "sourceEventIds": [
+                  "00000000000000000000000000000000000000000000000000000000000002f3",
+                  "00000000000000000000000000000000000000000000000000000000000002f4"
+                ]
+              },
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-16:resume1:1",
+                "executionKey": "coding-execution/v1|3:acp6:inst-16:resume",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": false,
+                "reachability": "unverified",
+                "status": null,
+                "statusAt": null,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": "live",
+                "leaseIssuedAt": 1785599990,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": 1785600140,
+                "leaseSigner": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "leaseSourceEventId": "00000000000000000000000000000000000000000000000000000000000002f2",
+                "leaseSequence": 1,
+                "lifecycleCommandEventId": "00000000000000000000000000000000000000000000000000000000000002f0",
+                "lifecycleReceiptEventId": "00000000000000000000000000000000000000000000000000000000000002f1",
+                "sourceEventIds": [
+                  "00000000000000000000000000000000000000000000000000000000000002f0",
+                  "00000000000000000000000000000000000000000000000000000000000002f1",
+                  "00000000000000000000000000000000000000000000000000000000000002f2"
+                ]
+              }
+            ],
+            "sourceEventIds": [
+              "00000000000000000000000000000000000000000000000000000000000002f0",
+              "00000000000000000000000000000000000000000000000000000000000002f1",
+              "00000000000000000000000000000000000000000000000000000000000002f2",
+              "00000000000000000000000000000000000000000000000000000000000002f3",
+              "00000000000000000000000000000000000000000000000000000000000002f4"
+            ]
+          }
+        ],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": ["8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64"],
+        "closedSessions": [],
+        "entries": [],
+        "errors": []
+      }
+    },
+    {
       "name": "closure-outranks-live-generation",
       "description": "A durable umbrella closure places the session in closedSessions even while its current generation still has live lease evidence.",
       "input": {

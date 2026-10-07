@@ -282,7 +282,10 @@ type ChainWalk =
     }
   | { ok: false; state: RolePackProvenanceState; reason: string };
 
-/** The resume action's previous target, read off the raw 44221. */
+/**
+ * The previous target of a resume or restart (which mints the next generation
+ * the same way), read off the raw 44221.
+ */
 function readResumePreviousTarget(event: RelayEvent): unknown {
   let content: unknown;
   try {
@@ -294,7 +297,9 @@ function readResumePreviousTarget(event: RelayEvent): unknown {
   const action = (content as { action?: unknown }).action;
   if (typeof action !== "object" || action === null) return null;
   const typed = action as { type?: unknown; session?: unknown };
-  if (typed.type !== "session.resume") return null;
+  if (typed.type !== "session.resume" && typed.type !== "session.restart") {
+    return null;
+  }
   return typed.session ?? null;
 }
 

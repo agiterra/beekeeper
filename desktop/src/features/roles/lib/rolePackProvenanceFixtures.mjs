@@ -11,6 +11,7 @@ import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/c
 import {
   buildCodingSessionCreateEvent,
   buildCodingSessionResumeEvent,
+  buildCodingSessionRestartEvent,
 } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand.ts";
 import {
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
@@ -105,8 +106,12 @@ function resumeEvent({
   previous,
   provider = PROVIDER,
   createdAt = 1_800_000_100,
+  restart = false,
 }) {
-  const built = buildCodingSessionResumeEvent({
+  const build = restart
+    ? buildCodingSessionRestartEvent
+    : buildCodingSessionResumeEvent;
+  const built = build({
     channelId,
     commandId,
     target: previous,

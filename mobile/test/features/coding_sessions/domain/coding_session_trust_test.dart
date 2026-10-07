@@ -273,6 +273,33 @@ void main() {
       expect(facts.counts.rejectedAuthor, 1);
     });
 
+    test('a restart vouches for the generation it mints, like a resume', () {
+      final restarted = target(generation: 2);
+      final facts = _gate([
+        resumeEvent(commandId: 'cmd-2', type: 'session.restart'),
+        // A stranger's metadata first: without the restart it would become
+        // the fallback authority for the restarted generation.
+        metadataEvent(
+          forTarget: restarted,
+          status: 'running',
+          pubkey: otherProviderPubkey,
+          createdAt: 800,
+        ),
+        receiptEvent(
+          commandId: 'cmd-2',
+          status: 'resumed',
+          forTarget: restarted,
+          createdAt: 900,
+        ),
+        metadataEvent(forTarget: restarted, status: 'idle', createdAt: 1000),
+      ]);
+      final authority = facts.authorityByTarget[restarted.key]!;
+      expect(authority.pubkey, providerPubkey);
+      expect(authority.verified, isTrue);
+      expect(facts.targetKeyByCommandId['cmd-2'], restarted.key);
+      expect(facts.counts.rejectedAuthor, 1);
+    });
+
     test('two creates disagreeing about the provider bind nothing', () {
       final facts = _gate([
         createEvent(commandId: 'cmd-1', authority: providerPubkey),

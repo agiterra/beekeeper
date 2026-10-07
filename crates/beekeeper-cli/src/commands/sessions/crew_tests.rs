@@ -2000,6 +2000,44 @@ fn seated_create_event(
     })
 }
 
+/// A `session.restart` mints the next generation like a resume does, so its
+/// signer is who last resumed the execution; a stop resumes nothing.
+#[test]
+fn a_restart_is_a_resume_record_and_a_stop_is_not() {
+    let event = |id: &str, action_type: &str, created_at: i64| {
+        let content = json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": id,
+            "action": {
+                "type": action_type,
+                "session": target("s-1", 1),
+                "providerAuthorityPubkey": pk(PROVIDER),
+            },
+        });
+        json!({
+            "id": id,
+            "pubkey": pk(BOB),
+            "kind": KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+            "created_at": created_at,
+            "sig": "0".repeat(128),
+            "tags": [["h", CHANNEL], ["csl-v", "csl1-1"], ["csl-command", id]],
+            "content": content.to_string(),
+        })
+    };
+    let records = decode_resumes(&[
+        event("restart-1", "session.restart", 1_500),
+        event("stop-1", "session.stop", 1_600),
+    ]);
+    assert_eq!(
+        records,
+        vec![ResumeRecord {
+            signer: pk(BOB),
+            created_at: 1_500,
+            previous: target("s-1", 1),
+        }]
+    );
+}
+
 /// A host's seated create for this role in this umbrella, published after the
 /// hire went out, is the hire's answer — and one published before it, or for
 /// another role or umbrella, is not.

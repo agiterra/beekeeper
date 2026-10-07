@@ -88,6 +88,34 @@ test("a founder-signed resume commissions generation 2 on its own proof", () => 
   assert.equal(resumed.founderPubkey, FOUNDER);
 });
 
+test("a founder-signed restart commissions generation 2 like a resume", () => {
+  // "Restart with current definition" is how a seat picks up a new pack, so
+  // the restarted generation's report is the one provenance matters most for.
+  const base = commissionedFixture();
+  const restart = resumeEvent({
+    commandId: "csl-restart-2",
+    previous: T1,
+    restart: true,
+  });
+  const receipt = receiptEvent({
+    commandId: "csl-restart-2",
+    minted: T2,
+    status: "resumed",
+    createdAt: 1_800_000_105,
+  });
+  const report = metadataEvent({ reported: T2, createdAt: 1_800_000_110 });
+  const row = rowFromMetadata(report);
+  const result = dispose({
+    events: [...base.events, restart, receipt, report],
+    rows: [base.row, row],
+  });
+
+  const restarted = verdict(result, row);
+  assert.equal(restarted.state, "commissioned", restarted.reason);
+  assert.equal(restarted.founderPubkey, FOUNDER);
+  assert.equal(restarted.commandEventId, restart.id);
+});
+
 test("a report for a generation with no lifecycle pair inherits nothing", () => {
   const fixture = resumedFixture();
   const orphan = metadataEvent({ reported: T3, createdAt: 1_800_000_210 });

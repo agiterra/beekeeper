@@ -880,10 +880,15 @@ fn fold_sessions(project: &str, now: i64, events: &[Value]) -> Vec<PulseDigestSe
         let mut resume_candidates: HashMap<(String, String), Vec<AcceptedGenerationRow>> =
             HashMap::new();
         for (command, receipt) in &pairs {
-            let CodingSessionLifecycleAction::SessionResume {
+            // A restart mints the next generation exactly as a resume does.
+            let (CodingSessionLifecycleAction::SessionResume {
                 session,
                 provider_authority_pubkey,
-            } = &command.payload.action
+            }
+            | CodingSessionLifecycleAction::SessionRestart {
+                session,
+                provider_authority_pubkey,
+            }) = &command.payload.action
             else {
                 continue;
             };

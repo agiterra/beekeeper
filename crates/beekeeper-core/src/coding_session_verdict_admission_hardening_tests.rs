@@ -138,11 +138,31 @@ fn resume(
     provider: &Keys,
     keys: &Keys,
 ) -> Event {
+    next_generation(
+        "session.resume",
+        command_id,
+        session_id,
+        generation,
+        provider,
+        keys,
+    )
+}
+
+/// A resume-shaped command of `action_type` (`session.resume` or
+/// `session.restart`, which mint the next generation alike).
+fn next_generation(
+    action_type: &str,
+    command_id: &str,
+    session_id: &str,
+    generation: u64,
+    provider: &Keys,
+    keys: &Keys,
+) -> Event {
     let content = json!({
         "schema": CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
         "commandId": command_id,
         "action": {
-            "type": "session.resume",
+            "type": action_type,
             "session": target(session_id, generation),
             "providerAuthorityPubkey": provider.public_key().to_hex(),
         },
@@ -694,6 +714,59 @@ fn f90_a_resume_extends_the_provider_set_only_along_the_accepted_chain() {
         vec![
             watched.provider.public_key().to_hex(),
             second.public_key().to_hex()
+        ]
+    );
+}
+
+/// A `session.restart` mints the next generation exactly as a resume does,
+/// so the chain walks through it: a resume of the restarted generation 2
+/// still extends the set. A restart from a key that may not steer adds
+/// nobody, the same commissioning rule a resume follows.
+#[test]
+fn a_restart_extends_the_provider_set_like_a_resume() {
+    let watched = watched();
+    let second = Keys::generate();
+    let third = Keys::generate();
+    let stranger = Keys::generate();
+    let commands = vec![
+        create("create-1", GENESIS, &watched.provider, &watched.founder),
+        next_generation(
+            "session.restart",
+            "restart-1",
+            "session-1",
+            1,
+            &second,
+            &watched.founder,
+        ),
+        resume("resume-2", "session-1", 2, &third, &watched.founder),
+        next_generation(
+            "session.restart",
+            "restart-x",
+            "session-1",
+            3,
+            &stranger,
+            &stranger,
+        ),
+    ];
+    let receipts = vec![
+        receipt("create-1", "created", "session-1", 1, &watched.provider),
+        receipt("restart-1", "resumed", "session-1", 2, &second),
+        receipt("resume-2", "resumed", "session-1", 3, &third),
+        receipt("restart-x", "resumed", "session-1", 4, &stranger),
+    ];
+    let providers = mission_provider_pubkeys_from_lifecycle(
+        SESSION,
+        GENESIS,
+        &watched.commissioners(),
+        &commands,
+        &receipts,
+    );
+    assert_eq!(
+        providers,
+        vec![
+            watched.provider.public_key().to_hex(),
+            second.public_key().to_hex(),
+            third.public_key().to_hex(),
         ]
     );
 }

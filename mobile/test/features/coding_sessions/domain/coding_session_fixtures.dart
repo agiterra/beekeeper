@@ -250,10 +250,11 @@ NostrEvent createEvent({
   );
 }
 
-/// A signed 44221 `session.resume` event.
+/// A signed 44221 `session.resume` event, or a `session.restart` via [type].
 ///
 /// A resume names the generation it is reattaching to and the provider that
-/// may answer it; the provider's receipt mints the next generation.
+/// may answer it; the provider's receipt mints the next generation. A restart
+/// has the same shape and mints the same way.
 NostrEvent resumeEvent({
   required String commandId,
   CodingSessionTarget? forTarget,
@@ -261,6 +262,7 @@ NostrEvent resumeEvent({
   String authority = providerPubkey,
   int createdAt = 800,
   String? id,
+  String type = 'session.resume',
 }) {
   final resolved = forTarget ?? target();
   return event(
@@ -277,7 +279,7 @@ NostrEvent resumeEvent({
       'schema': 'buzz-coding-session-lifecycle-command/v1',
       'commandId': commandId,
       'action': {
-        'type': 'session.resume',
+        'type': type,
         'session': resolved.toJson(),
         'providerAuthorityPubkey': authority,
       },
