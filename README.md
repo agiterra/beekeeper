@@ -219,7 +219,7 @@ A Rust workspace of focused crates. Single source of truth: the relay. See [ARCH
 
 **Services** — `beekeeper-db` (Postgres) · `beekeeper-auth` (NIP-42/98 Schnorr auth, rate limiting) · `beekeeper-pubsub` (Redis, presence, typing) · `beekeeper-search` (Postgres FTS) · `beekeeper-audit` (hash-chain log). Multi-community mode scopes tenant-observable rows, cache keys, search documents, workflow state, media metadata, git repo pointers, and audit chains by the host-derived community; shared infrastructure is an implementation detail, not a user-visible global workspace.
 
-**Agent surface** — `beekeeper-cli` (agent-first CLI, JSON in / JSON out) · `beekeeper-acp` (ACP harness for Goose/Codex/Claude Code) · `buzz-agent` (ACP agent — see [VISION_AGENT.md](VISION_AGENT.md)) · `beekeeper-dev-mcp` (shell + file-edit tools) · `beekeeper-workflow` (YAML automation) · `beekeeper-persona` (agent persona packs)
+**Agent surface** — `beekeeper-cli` (agent-first CLI, JSON in / JSON out) · `beekeeper-acp` (ACP harness for Goose/Codex/Claude Code) · `beekeeper-agent` (ACP agent — see [VISION_AGENT.md](VISION_AGENT.md)) · `beekeeper-dev-mcp` (shell + file-edit tools) · `beekeeper-workflow` (YAML automation) · `beekeeper-persona` (agent persona packs)
 
 **Git & pairing** — `git-sign-nostr` / `git-credential-nostr` (nostr-signed git) · `beekeeper-pair-relay` / `beekeeper-pairing-cli` (relay pairing)
 
@@ -243,6 +243,11 @@ A Rust workspace of focused crates. Single source of truth: the relay. See [ARCH
 <summary><strong>Configuration</strong> (env vars, defaults work for local dev)</summary>
 
 All defaults work out of the box. Override via `.env`. Full reference in [`.env.example`](.env.example).
+
+Variables are named `BEEKEEPER_*`. An older `.env` that still says `BUZZ_*` keeps
+working (each binary prints one line naming the legacy names it read);
+`just env-migrate` renames them in place and keeps `.env.bak`. See
+[docs/INTEGRATION.md § Environment variable names](docs/INTEGRATION.md#environment-variable-names-beekeeper_-and-the-legacy-buzz_).
 
 </details>
 

@@ -11,6 +11,9 @@ if [[ -f ".env" ]]; then
   # shellcheck disable=SC1091
   source .env
   set +o allexport
+  # shellcheck source=lib/env-compat.sh
+  source "${REPO_ROOT}/scripts/lib/env-compat.sh"
+  beekeeper_adopt_legacy_env seed-admin-dashboard
 fi
 
 export PGHOST="${PGHOST:-localhost}"
@@ -76,7 +79,7 @@ upload_fixture() {
     "local/${BEEKEEPER_S3_BUCKET:-buzz-media}/_meta/${community_id}/${hash}.json"
 }
 
-fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/buzz-admin-feedback.XXXXXX")"
+fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/beekeeper-admin-feedback.XXXXXX")"
 search_image="${REPO_ROOT}/docs/assets/screenshots/media-comments.png"
 workspace_image="${REPO_ROOT}/docs/assets/screenshots/channel-thread.png"
 quality_image="${REPO_ROOT}/docs/assets/screenshots/channel-agents.png"

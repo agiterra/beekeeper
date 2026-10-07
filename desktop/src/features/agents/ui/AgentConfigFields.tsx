@@ -269,11 +269,7 @@ export function AgentConfigFields({
     ...numericDescriptors,
   ]);
   const bakedEnvMap = Object.fromEntries(bakedEnv.map((e) => [e.key, e.value]));
-  const bakedProvider = React.useMemo(
-    () =>
-      bakedEnv.find((e) => e.key === "BEEKEEPER_AGENT_PROVIDER")?.value ?? null,
-    [bakedEnv],
-  );
+  const bakedProvider = bakedEnvMap.BEEKEEPER_AGENT_PROVIDER ?? null;
   const selectedRuntimeId = selectedRuntime?.id ?? "";
   const providerFieldVisible = hasRenderableAgentConfigField(
     fieldModel,
@@ -296,12 +292,7 @@ export function AgentConfigFields({
     modelIsOptional ||
     (config.model?.trim().length ?? 0) > 0 ||
     fallbackModel !== null;
-  const bakedEffort = React.useMemo(
-    () =>
-      bakedEnv.find((e) => e.key === BEEKEEPER_AGENT_THINKING_EFFORT)?.value ??
-      null,
-    [bakedEnv],
-  );
+  const bakedEffort = bakedEnvMap[BEEKEEPER_AGENT_THINKING_EFFORT] ?? null;
   const bakedGenericRows = React.useMemo<readonly InheritedEnvRow[]>(
     () =>
       filterBakedGenericRows(bakedEnv, [

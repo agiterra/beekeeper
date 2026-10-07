@@ -8,12 +8,15 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   exit 1
 fi
 
+# A pre-rename .env carries the key as BUZZ_RELAY_PRIVATE_KEY, which the relay
+# still reads (env_compat). Treat it as present: generating a second key under
+# the new name would win over it and silently change the relay's identity.
 existing_key="$({
-  unset BEEKEEPER_RELAY_PRIVATE_KEY
+  unset BEEKEEPER_RELAY_PRIVATE_KEY BUZZ_RELAY_PRIVATE_KEY
   set +u
   # shellcheck disable=SC1090
   source "${ENV_FILE}" || exit 1
-  printf '%s' "${BEEKEEPER_RELAY_PRIVATE_KEY:-}"
+  printf '%s' "${BEEKEEPER_RELAY_PRIVATE_KEY:-${BUZZ_RELAY_PRIVATE_KEY:-}}"
 })"
 
 if [[ -n "${existing_key}" ]]; then

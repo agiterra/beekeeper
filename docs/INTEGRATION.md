@@ -368,7 +368,7 @@ dev machines; an upstream-issue candidate):
   test self-skips on redis-less dev machines anyway).
 Re-check if the runner topology changes.
 
-The `buzz-agent` `fake_llm` steer/cancel tests were excluded here for a while
+The `beekeeper-agent` `fake_llm` steer/cancel tests were excluded here for a while
 and are **no longer** — they were test-design races, not runner limits, and
 are fixed. Both had to act on a turn that was still in flight while the fake
 provider answered in ~1ms: `steer_folds_into_active_turn_without_cancelling`
@@ -495,6 +495,25 @@ file-size ratchet (`just file-size-check`) does **not** run in the gate
 pre-push instead, where it resolves its base from `origin/main` directly. If it
 is ever added to the gate, raise the clone depth so that merge-base is
 reachable.
+
+## Environment variable names: `BEEKEEPER_*` and the legacy `BUZZ_*`
+
+Every variable the binaries, scripts and recipes read is named `BEEKEEPER_<X>`;
+before 2026-10 it was `BUZZ_<X>`. The old names are still read: each binary
+(and `scripts/lib/env-compat.sh`, which the recipes and scripts that read
+variables themselves source) adopts a `BUZZ_<X>` whose `BEEKEEPER_<X>` is
+unset, and `BEEKEEPER_<X>` always wins when both are set. A binary that adopted
+anything prints one stderr line at startup naming the legacy variables it read
+(names only, never values), so an old `.env` or CI secret shows up rather than
+silently working. `just env-migrate [file]` rewrites a local `.env` in place
+(idempotent, the original kept as `.env.bak`, log targets rewritten in the
+same pass). It leaves alone the names Docker Compose interpolates itself —
+`BUZZ_IMAGE`, `BUZZ_DOMAIN`, `BUZZ_COMPOSE_TLS`, `BUZZ_COMPOSE_DEV`,
+`BUZZ_HTTP_PORT`, and any `${BUZZ_*}` a compose file beside the `.env` reads —
+because `deploy/compose` still spells those `BUZZ_*`, and renaming one would
+make Compose substitute an empty string. Clear lists, the agent credential
+fence and the reserved-key lists name both spellings, so an inherited
+`BUZZ_AUTH_TAG` cannot slip past a clear and be adopted under the new name.
 
 ## Seeding a sandbox — `sandbox.yml`
 

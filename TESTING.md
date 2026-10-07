@@ -328,7 +328,7 @@ header fallback. There is no REST API for fetching message threads — use
 ## ACP Harness (optional, end-to-end with a real agent)
 
 `beekeeper-acp` connects an ACP-speaking agent (goose, codex, claude code,
-buzz-agent) to the relay. The harness listens for events, drives the
+beekeeper-agent) to the relay. The harness listens for events, drives the
 agent over stdio, and the agent replies through MCP tools.
 
 Minimum recipe — assumes the relay from step 3 is running and the channel
@@ -370,7 +370,7 @@ beekeeper-acp                                    # foreground; logs to stdout (r
 
 > **Using a different ACP agent?** The default recipe assumes `goose` is on
 > `$PATH` and configured (`goose --version` should print). For codex / claude
-> code / buzz-agent, set `BEEKEEPER_ACP_AGENT_COMMAND` and `BEEKEEPER_ACP_AGENT_ARGS`
+> code / beekeeper-agent, set `BEEKEEPER_ACP_AGENT_COMMAND` and `BEEKEEPER_ACP_AGENT_ARGS`
 > accordingly — see `crates/beekeeper-acp/README.md`. Without these, beekeeper-acp
 > will fail to spawn the agent subprocess on startup.
 

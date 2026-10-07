@@ -156,7 +156,7 @@ function formatDatabricksAuthStatus(
   if (message.includes("Databricks sign-in is required")) {
     return {
       message:
-        "Databricks sign-in is required. Open the model picker to sign in, or run `buzz-agent auth databricks` in a terminal.",
+        "Databricks sign-in is required. Open the model picker to sign in, or run `beekeeper-agent auth databricks` in a terminal.",
       tone: "muted",
     };
   }
@@ -167,7 +167,7 @@ function formatDatabricksAuthStatus(
   ) {
     return {
       message:
-        "Databricks sign-in didn't complete. Open the model picker to retry, or run `buzz-agent auth databricks` in a terminal.",
+        "Databricks sign-in didn't complete. Open the model picker to retry, or run `beekeeper-agent auth databricks` in a terminal.",
       tone: "warning",
     };
   }

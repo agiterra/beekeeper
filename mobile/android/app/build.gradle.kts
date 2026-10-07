@@ -7,10 +7,17 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val uploadKeystorePath = providers.environmentVariable("BEEKEEPER_ANDROID_UPLOAD_KEYSTORE_PATH").orNull
-val uploadKeystorePassword = providers.environmentVariable("BEEKEEPER_ANDROID_UPLOAD_KEYSTORE_PASSWORD").orNull
-val uploadKeyAlias = providers.environmentVariable("BEEKEEPER_ANDROID_UPLOAD_KEY_ALIAS").orNull
-val uploadKeyPassword = providers.environmentVariable("BEEKEEPER_ANDROID_UPLOAD_KEY_PASSWORD").orNull
+// Reads `BEEKEEPER_<suffix>`, falling back to the pre-rename `BUZZ_<suffix>`
+// so a CI job or shell that still exports the old names keeps signing. The new
+// name wins when both are set.
+fun envCompat(suffix: String): String? =
+    providers.environmentVariable("BEEKEEPER_$suffix").orNull
+        ?: providers.environmentVariable("BUZZ_$suffix").orNull
+
+val uploadKeystorePath = envCompat("ANDROID_UPLOAD_KEYSTORE_PATH")
+val uploadKeystorePassword = envCompat("ANDROID_UPLOAD_KEYSTORE_PASSWORD")
+val uploadKeyAlias = envCompat("ANDROID_UPLOAD_KEY_ALIAS")
+val uploadKeyPassword = envCompat("ANDROID_UPLOAD_KEY_PASSWORD")
 val uploadSigningValues =
     mapOf(
         "BEEKEEPER_ANDROID_UPLOAD_KEYSTORE_PATH" to uploadKeystorePath,
@@ -53,7 +60,7 @@ if (worktreeIdSuffix != null && !worktreeIdSuffix.matches(Regex("""\.[a-z][a-z0-
 //     pipeline that signs through the central APK Signer service (Cashkite,
 //     BOT-1234). No keystore material may be present in this mode.
 val releaseSigningMode =
-    providers.environmentVariable("BEEKEEPER_ANDROID_RELEASE_SIGNING").orNull ?: "upload-keystore"
+    envCompat("ANDROID_RELEASE_SIGNING") ?: "upload-keystore"
 val externalReleaseSigning = releaseSigningMode == "external"
 if (releaseSigningMode !in setOf("upload-keystore", "external")) {
     throw GradleException(

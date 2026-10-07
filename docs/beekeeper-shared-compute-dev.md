@@ -2,7 +2,7 @@
 
 This runbook verifies the actual desktop path used by the built-in **Fizz** agent:
 
-`Beekeeper Desktop → beekeeper-acp → buzz-agent → MeshLLM SDK → local/remote compute`
+`Beekeeper Desktop → beekeeper-acp → beekeeper-agent → MeshLLM SDK → local/remote compute`
 
 It does not use a substitute agent harness.
 
@@ -88,7 +88,7 @@ current hardware; avoid entering a model the card marks too large.
 4. Click **Save defaults** and wait for **Saved**.
 
 Fizz has no pinned runtime/provider/model, so it inherits these defaults and
-resolves to the bundled `buzz-agent`. No API key is required.
+resolves to the bundled `beekeeper-agent` (runtime id `buzz-agent`). No API key is required.
 
 ## 4. Start the real Fizz path
 

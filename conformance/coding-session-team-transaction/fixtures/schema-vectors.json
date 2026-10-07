@@ -125,7 +125,7 @@
           "requestRef": "2222222222222222222222222222222222222222222222222222222222222222",
           "choice": 0,
           "note": null,
-          "condition": "any SHA whose beekeeper-acp diff against origin/main is empty"
+          "condition": "any SHA whose buzz-acp diff against origin/main is empty"
         }
       }
     },

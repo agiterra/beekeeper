@@ -1,4 +1,4 @@
-# Vision: buzz-agent + beekeeper-dev-mcp
+# Vision: beekeeper-agent + beekeeper-dev-mcp
 
 ## The Problem
 
@@ -10,7 +10,7 @@ We wanted something we could read in an afternoon and audit with confidence.
 
 Two binaries, two protocols, no coupling between them.
 
-**buzz-agent** is an ACP agent. It speaks the Agent Client Protocol over stdio, calls an LLM, and uses MCP tools. Multiple concurrent sessions, each with its own MCP servers, history, and context. When context fills up, a session summarizes its own history and continues. It works with Zed, JetBrains, beekeeper-acp, or anything else that speaks ACP.
+**beekeeper-agent** is an ACP agent. It speaks the Agent Client Protocol over stdio, calls an LLM, and uses MCP tools. Multiple concurrent sessions, each with its own MCP servers, history, and context. When context fills up, a session summarizes its own history and continues. It works with Zed, JetBrains, beekeeper-acp, or anything else that speaks ACP.
 
 **beekeeper-dev-mcp** is an MCP server. It gives any agent a shell and a file editor. Ephemeral processes with process-group kill on every exit path. Bounded output. File edits resolve against the working directory. It works with any agent or client that speaks MCP.
 
@@ -29,7 +29,7 @@ inherited across hosts.
 
 **Correctness at the boundary.** ACP compliance is not a checkbox. We report a concrete protocol version. We emit every required notification. We handle cancellation on every path. We kill process trees on timeout. Key safety properties have regression tests that lock them down.
 
-**Composability through standards.** The agent does not know what MCP server it talks to. The MCP server does not know what agent is calling it. They compose through protocols, not imports. Run ten agents behind Beekeeper with different MCP configurations. Swap the LLM provider with one environment variable. Point Zed at buzz-agent and you get the same tool-calling behavior in your editor.
+**Composability through standards.** The agent does not know what MCP server it talks to. The MCP server does not know what agent is calling it. They compose through protocols, not imports. Run ten agents behind Beekeeper with different MCP configurations. Swap the LLM provider with one environment variable. Point Zed at beekeeper-agent and you get the same tool-calling behavior in your editor.
 
 ## The Architecture
 
@@ -38,7 +38,7 @@ Any ACP client (Zed, JetBrains, beekeeper-acp, custom)
         |
         | stdio ACP (JSON-RPC 2.0)
         v
-  buzz-agent (up to 8 concurrent sessions)
+  beekeeper-agent (up to 8 concurrent sessions)
         |
         | stdio MCP (JSON-RPC 2.0) — one per session
         v

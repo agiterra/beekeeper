@@ -59,7 +59,7 @@ SCHEMA_SQL = PACKAGE_ROOT / "testbed" / "sql" / "benchmark_schema.sql"
 # Linux builds of the production agent stack, uploaded into each task
 # container per trial. Built once in a rust:alpine container (musl → fully
 # static, runs on any Linux task image of the same architecture) and cached.
-AGENT_BINARIES = ("beekeeper-acp", "buzz-agent", "beekeeper-dev-mcp")
+AGENT_BINARIES = ("beekeeper-acp", "beekeeper-agent", "beekeeper-dev-mcp")
 # Std-only loopback forwarder (not a workspace crate): agents dial the
 # relay's canonical localhost address inside the task container and the
 # forwarder bridges to the Docker host gateway. Compiled with plain rustc
@@ -203,10 +203,16 @@ def print_user_identity(state: dict[str, str]) -> None:
 
 
 def write_env_file(state: dict[str, str]) -> Path:
-    """Compose interpolation env — regenerated from state on every run."""
+    """Compose interpolation env — regenerated from state on every run.
+
+    The names deploy/compose/compose.yml interpolates itself (``${BUZZ_*}``)
+    keep their ``BUZZ_`` spelling until that file is renamed in a coordinated
+    ops step; everything else reaches the relay through ``env_file`` and uses
+    the canonical ``BEEKEEPER_`` names.
+    """
     env_path = STATE_DIR / ".env"
     lines = {
-        "BEEKEEPER_DOMAIN": "localhost",
+        "BUZZ_DOMAIN": "localhost",
         "RELAY_URL": f"ws://localhost:{RELAY_HTTP_PORT}",
         "BEEKEEPER_MEDIA_BASE_URL": f"http://localhost:{RELAY_HTTP_PORT}/media",
         "BEEKEEPER_MEDIA_SERVER_DOMAIN": "localhost",
@@ -214,8 +220,8 @@ def write_env_file(state: dict[str, str]) -> Path:
         "BEEKEEPER_REQUIRE_AUTH_TOKEN": "true",
         "BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP": "true",
         "BEEKEEPER_ALLOW_NIP_OA_AUTH": "true",
-        "BEEKEEPER_AUTO_MIGRATE": "true",
-        "BEEKEEPER_GIT_CONFORMANCE_PROBE": "true",
+        "BUZZ_AUTO_MIGRATE": "true",
+        "BUZZ_GIT_CONFORMANCE_PROBE": "true",
         "RUST_LOG": "beekeeper_relay=info,beekeeper_db=info,beekeeper_auth=info",
         "RELAY_OWNER_PUBKEY": state["owner_pubkey"],
         "BEEKEEPER_RELAY_PRIVATE_KEY": state["relay_private_key"],
@@ -224,18 +230,18 @@ def write_env_file(state: dict[str, str]) -> Path:
         "POSTGRES_USER": "buzz",
         "POSTGRES_PASSWORD": state["postgres_password"],
         "REDIS_PASSWORD": state["redis_password"],
-        "BEEKEEPER_S3_ACCESS_KEY": state["s3_access_key"],
-        "BEEKEEPER_S3_SECRET_KEY": state["s3_secret_key"],
-        "BEEKEEPER_S3_BUCKET": "buzz-media",
-        "BEEKEEPER_HTTP_PORT": str(RELAY_HTTP_PORT),
+        "BUZZ_S3_ACCESS_KEY": state["s3_access_key"],
+        "BUZZ_S3_SECRET_KEY": state["s3_secret_key"],
+        "BUZZ_S3_BUCKET": "buzz-media",
+        "BUZZ_HTTP_PORT": str(RELAY_HTTP_PORT),
         "BEEKEEPER_PG_HOST_PORT": str(PG_HOST_PORT),
         "BEEKEEPER_METRICS_HOST_PORT": str(METRICS_HOST_PORT),
     }
     # No published relay image to default to: unset, compose falls back to the
     # locally built image named in deploy/compose/compose.yml. Check it exists
     # now, or compose would try to pull it from Docker Hub and fail obscurely.
-    if image := os.environ.get("BEEKEEPER_IMAGE"):
-        lines["BEEKEEPER_IMAGE"] = image
+    if image := os.environ.get("BEEKEEPER_IMAGE") or os.environ.get("BUZZ_IMAGE"):
+        lines["BUZZ_IMAGE"] = image
     elif (
         subprocess.run(
             ["docker", "image", "inspect", "beekeeper-relay:latest"],
@@ -415,7 +421,7 @@ def ensure_agent_binaries() -> Path:
     """Cross-build the static Linux agent stack once, cached in .benchmark/.
 
     The agents run *inside* each Harbor task container as the real
-    beekeeper-acp → buzz-agent → beekeeper-dev-mcp stack, so the binaries must be
+    beekeeper-acp → beekeeper-agent → beekeeper-dev-mcp stack, so the binaries must be
     Linux ELF for the task image architecture. musl-static means they run
     on any Linux base image (glibc or not). The relay loopback forwarder
     is compiled in the same step with plain rustc (std-only, no deps).
@@ -431,12 +437,8 @@ def ensure_agent_binaries() -> Path:
     )
     LINUX_TARGET_DIR.mkdir(parents=True, exist_ok=True)
     (STATE_DIR / "cargo-registry").mkdir(exist_ok=True)
-    # Each `beekeeper-*` package builds the `buzz-*` binary of the same suffix.
-    packages = [
-        arg
-        for name in AGENT_BINARIES
-        for arg in ("-p", name.replace("buzz-", "beekeeper-", 1))
-    ]
+    # Each `beekeeper-*` package builds the binary of the same name.
+    packages = [arg for name in AGENT_BINARIES for arg in ("-p", name)]
     forwarder_src = FORWARDER_SOURCE.relative_to(REPO_ROOT)
     subprocess.run(
         [
@@ -514,7 +516,7 @@ def launch_gui(state: dict[str, str]) -> subprocess.Popen:
     binaries = ensure_binaries()
     for name in (
         "beekeeper-acp",
-        "buzz-agent",
+        "beekeeper-agent",
         "beekeeper-dev-mcp",
         "git-credential-nostr",
         "bee",

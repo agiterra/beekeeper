@@ -9,6 +9,12 @@
 
 WORKTREE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
+# `just` loads .env, and an older one still spells these BUZZ_*. Adopt those
+# first, so a BUZZ_RELAY_URL there is honoured below rather than defaulted over.
+# shellcheck source=lib/env-compat.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/env-compat.sh"
+beekeeper_adopt_legacy_env instance-env
+
 # Derive a stable base port from the worktree root so the same worktree always
 # gets the same ports. This keeps the Tauri dev config stable between runs and
 # preserves Cargo's build cache.

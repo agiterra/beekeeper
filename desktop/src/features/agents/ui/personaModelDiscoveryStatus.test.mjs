@@ -91,7 +91,7 @@ test("Databricks sign-in-required is a muted note pointing at the picker and CLI
 
   assert.equal(status?.tone, "muted");
   assert.match(status?.message ?? "", /model picker/);
-  assert.match(status?.message ?? "", /buzz-agent auth databricks/);
+  assert.match(status?.message ?? "", /beekeeper-agent auth databricks/);
 });
 
 test("Databricks sign-in failure warns and points at the explicit retry", () => {
@@ -108,14 +108,14 @@ test("Databricks sign-in failure warns and points at the explicit retry", () => 
 test("Databricks sign-in timeout warns and points at the explicit retry", () => {
   const status = formatModelDiscoveryErrorStatus(
     new Error(
-      "Databricks sign-in timed out; open the model picker to retry, or run `buzz-agent auth databricks`",
+      "Databricks sign-in timed out; open the model picker to retry, or run `beekeeper-agent auth databricks`",
     ),
     "databricks_v2",
   );
 
   assert.equal(status?.tone, "warning");
   assert.match(status?.message ?? "", /didn't complete/);
-  assert.match(status?.message ?? "", /buzz-agent auth databricks/);
+  assert.match(status?.message ?? "", /beekeeper-agent auth databricks/);
 });
 
 test("other Databricks discovery failures fall through to the generic notice", () => {
@@ -133,7 +133,7 @@ test("auth-required errors name the agent and ask for sign-in", () => {
   // cursor-agent is signed out (spec ErrorCode::AuthRequired text).
   const status = formatModelDiscoveryErrorStatus(
     new Error(
-      "beekeeper-acp models failed (exit 1): agent communication failed: Agent reported error (code -32000): Authentication required",
+      "buzz-acp models failed (exit 1): agent communication failed: Agent reported error (code -32000): Authentication required",
     ),
     "",
     "Cursor",

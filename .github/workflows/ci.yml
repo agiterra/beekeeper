@@ -996,7 +996,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p desktop/src-tauri/binaries
-          for bin in beekeeper-acp buzz-agent beekeeper-dev-mcp git-credential-nostr bee; do
+          for bin in beekeeper-acp beekeeper-agent beekeeper-dev-mcp git-credential-nostr bee; do
             touch "desktop/src-tauri/binaries/${bin}-${TARGET}.exe"
           done
       - name: Clippy (workspace)
@@ -1068,12 +1068,14 @@ jobs:
         run: |
           TARGET=$(rustc -vV | sed -n 's|host: ||p')
           mkdir -p desktop/src-tauri/binaries
-          touch "desktop/src-tauri/binaries/buzz-acp-$TARGET"
-          touch "desktop/src-tauri/binaries/buzz-agent-$TARGET"
-          touch "desktop/src-tauri/binaries/buzz-backend-kubernetes-$TARGET"
-          touch "desktop/src-tauri/binaries/buzz-dev-mcp-$TARGET"
+          touch "desktop/src-tauri/binaries/beekeeper-acp-$TARGET"
+          touch "desktop/src-tauri/binaries/beekeeper-agent-$TARGET"
+          touch "desktop/src-tauri/binaries/beekeeper-backend-kubernetes-$TARGET"
+          touch "desktop/src-tauri/binaries/beekeeper-dev-mcp-$TARGET"
           touch "desktop/src-tauri/binaries/git-credential-nostr-$TARGET"
-          touch "desktop/src-tauri/binaries/buzz-$TARGET"
+          touch "desktop/src-tauri/binaries/bee-$TARGET"
+          touch "desktop/src-tauri/binaries/beekeeper-shell-host-$TARGET"
+          touch "desktop/src-tauri/binaries/beekeeper-host-$TARGET"
       # Mesh rev is derived from Cargo.lock so a dependency bump needs no
       # lockstep edit here; the cache key tracks it automatically.
       - name: Resolve mesh-llm rev

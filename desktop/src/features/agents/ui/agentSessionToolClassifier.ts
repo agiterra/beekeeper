@@ -151,6 +151,19 @@ function shellDescriptor(
   };
 }
 
+/**
+ * MCP server names as they appear in a normalized tool name. Each server was
+ * renamed from `buzz-*` to `beekeeper-*`, but persisted transcripts still carry
+ * the old names (`mcp__buzz-dev-mcp__shell`), so both are recognised. Keep the
+ * legacy spellings for as long as old transcripts can be opened.
+ */
+const DEV_MCP_SERVER_NAMES = ["beekeeper_dev_mcp", "buzz_dev_mcp"] as const;
+const DEV_MCP_SERVER_PREFIX = /^(?:beekeeper|buzz)_dev_mcp_/;
+const SESSION_CONTEXT_SERVER_PREFIXES = [
+  "beekeeper_session_context_",
+  "buzz_session_context_",
+] as const;
+
 function classifySessionContextTool(
   input: ToolClassificationInput,
 ): AgentActivityDescriptor | null {
@@ -162,7 +175,9 @@ function classifySessionContextTool(
         (candidate) =>
           value === candidate ||
           value.endsWith(`_${candidate}`) ||
-          value.includes(`buzz_session_context_${candidate}`),
+          SESSION_CONTEXT_SERVER_PREFIXES.some((prefix) =>
+            value.includes(`${prefix}${candidate}`),
+          ),
       ),
     );
   if (!operation) return null;
@@ -416,7 +431,7 @@ function classifyDeveloperToolName(value: string | null | undefined) {
   if (!value) return null;
 
   const normalized = normalizeToolNameText(value);
-  const base = normalized.replace(/^buzz_dev_mcp_/, "");
+  const base = normalized.replace(DEV_MCP_SERVER_PREFIX, "");
 
   if (base === "shell" || normalized.endsWith("_shell")) return "shell";
   if (base === "read_file" || normalized.endsWith("_read_file"))
@@ -428,7 +443,10 @@ function classifyDeveloperToolName(value: string | null | undefined) {
   if (base === "todo") return "todo";
   if (base === "stop") return "stop_hook";
   if (base === "postcompact") return "post_compact_hook";
-  if (DEVELOPER_TOOL_BASES.has(base) || normalized.includes("buzz_dev_mcp")) {
+  if (
+    DEVELOPER_TOOL_BASES.has(base) ||
+    DEV_MCP_SERVER_NAMES.some((name) => normalized.includes(name))
+  ) {
     return "dev_mcp";
   }
   return null;

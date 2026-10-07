@@ -212,7 +212,10 @@ export function normalizeToolName(title: string): string {
   const knownName = findBeekeeperToolName(title, true);
   if (knownName) return knownName;
 
-  const normalized = normalizeToolNameText(title).replace(/^buzz_/, "");
+  const normalized = normalizeToolNameText(title).replace(
+    /^(?:beekeeper|buzz)_/,
+    "",
+  );
   return normalized.match(/[a-z][a-z0-9_]+/)?.[0] ?? normalized;
 }
 

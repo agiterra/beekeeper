@@ -65,10 +65,16 @@ class RelayConfig {
 ///   flutter run --dart-define=BEEKEEPER_RELAY_URL=http://localhost:3000
 ///
 /// Or create a `.env.json` and use --dart-define-from-file=.env.json
+///
+/// The pre-rename `BUZZ_RELAY_URL` define is still read when
+/// `BEEKEEPER_RELAY_URL` is not given, so an old `.env.json` keeps working.
 class Env {
   static const relayUrl = String.fromEnvironment(
     'BEEKEEPER_RELAY_URL',
-    defaultValue: 'http://localhost:3000',
+    defaultValue: String.fromEnvironment(
+      'BUZZ_RELAY_URL',
+      defaultValue: 'http://localhost:3000',
+    ),
   );
 }
 

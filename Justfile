@@ -20,7 +20,7 @@ fresh := ""
 # dev binaries never trigger macOS keychain password prompts. Opt in per shell
 # (`just nokeyring=1 desktop-standalone`) or permanently via
 # `export BEEKEEPER_DESKTOP_NOKEYRING=1` in your shell profile.
-nokeyring := env_var_or_default("BEEKEEPER_DESKTOP_NOKEYRING", "")
+nokeyring := env_var_or_default("BEEKEEPER_DESKTOP_NOKEYRING", env_var_or_default("BUZZ_DESKTOP_NOKEYRING", ""))
 
 # List all available tasks
 default:
@@ -238,8 +238,8 @@ autodeploy-test:
     ./deploy/autodeploy/tests/autodeploy-behavior.sh
     ./scripts/test-woodpecker-path-filter.sh
 
-# Rewrite pre-rename `buzz_*` tracing targets in a local .env (RUST_LOG,
-# BEEKEEPER_OTEL_FILTER) to their `beekeeper_*` names, keeping a .env.bak. Uses the
+# Rewrite pre-rename `buzz_*` tracing targets in a local .env (RUST_LOG and
+# the OTEL filter variable) to their `beekeeper_*` names, keeping a .env.bak. Uses the
 # exact program the relay deployer applies to the live .env, read out of
 # deploy/autodeploy/autodeploy, so the two cannot disagree. Binaries already
 # read the old names and warn on stderr; this makes the warning go away.
@@ -255,6 +255,17 @@ env-log-targets file=".env":
     sed -E "$LOG_TARGET_SED" "{{file}}.bak" > "{{file}}"
     echo "{{file}}: rewrote pre-rename log targets (was saved to {{file}}.bak):"
     diff "{{file}}.bak" "{{file}}" || true
+
+# Rewrites pre-rename log targets in the same pass (the program
+# `env-log-targets` runs, so there is one .bak, holding the original). Names
+# Compose interpolates itself stay BUZZ_*: BUZZ_IMAGE, BUZZ_DOMAIN,
+# BUZZ_COMPOSE_TLS, BUZZ_COMPOSE_DEV, BUZZ_HTTP_PORT, and any ${BUZZ_*} a
+# compose file beside the .env reads. Idempotent. Binaries already read the old
+# names and print one stderr line naming them; this makes that line go away.
+#
+# Rename BUZZ_<X>= keys in a local .env to BEEKEEPER_<X>= (keeps .env.bak)
+env-migrate file=".env":
+    ./scripts/env-migrate.sh "{{file}}"
 
 # A sibling, not a directory inside this checkout: the whole point of moving
 # those documents out was that an agent working on the code should not trip
@@ -375,7 +386,7 @@ _ensure-sidecar-stubs:
     set -euo pipefail
     TARGET=$(rustc -vV | sed -n 's|host: ||p')
     mkdir -p desktop/src-tauri/binaries
-    SIDECARS=(beekeeper-acp buzz-agent beekeeper-dev-mcp git-credential-nostr bee)
+    SIDECARS=(beekeeper-acp beekeeper-agent beekeeper-dev-mcp git-credential-nostr bee)
     if [[ "$TARGET" != *windows* ]]; then
         SIDECARS+=(beekeeper-backend-kubernetes beekeeper-shell-host beekeeper-host)
     fi
@@ -445,13 +456,13 @@ desktop-tauri-test-compiled-flags: _ensure-sidecar-stubs
     set -euo pipefail
     cd desktop/src-tauri
     echo "=== Clean build (no flag) → expect false ==="
-    env -u BEEKEEPER_BUILD_AUTO_CONNECT_DEFAULT_RELAY \
+    env -u BEEKEEPER_BUILD_AUTO_CONNECT_DEFAULT_RELAY -u BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY \
       BEEKEEPER_TEST_EXPECTED_AUTO_CONNECT_DEFAULT_RELAY=false \
       cargo test compiled_flag_matches_expected -- --ignored --nocapture
-    env -u BEEKEEPER_BUILD_AGENT_ACCESS_OWNER_ONLY \
+    env -u BEEKEEPER_BUILD_AGENT_ACCESS_OWNER_ONLY -u BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY \
       BEEKEEPER_TEST_EXPECTED_AGENT_ACCESS_OWNER_ONLY=false \
       cargo test --lib
-    env -u BEEKEEPER_BUILD_AGENT_ACCESS_OWNER_ONLY \
+    env -u BEEKEEPER_BUILD_AGENT_ACCESS_OWNER_ONLY -u BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY \
       BEEKEEPER_TEST_EXPECTED_AGENT_ACCESS_OWNER_ONLY=false \
       cargo test compiled_policy_matches_expected -- --ignored --nocapture
     echo "=== Internal build (flags set) → expect true ==="
@@ -474,16 +485,16 @@ desktop-release-build target="aarch64-apple-darwin":
     set -euo pipefail
     TARGET={{target}}
     mkdir -p desktop/src-tauri/binaries
-    touch "desktop/src-tauri/binaries/buzz-acp-$TARGET"
-    touch "desktop/src-tauri/binaries/buzz-agent-$TARGET"
+    touch "desktop/src-tauri/binaries/beekeeper-acp-$TARGET"
+    touch "desktop/src-tauri/binaries/beekeeper-agent-$TARGET"
     if [[ "$TARGET" != *windows* ]]; then
-        touch "desktop/src-tauri/binaries/buzz-backend-kubernetes-$TARGET"
+        touch "desktop/src-tauri/binaries/beekeeper-backend-kubernetes-$TARGET"
     fi
-    touch "desktop/src-tauri/binaries/buzz-dev-mcp-$TARGET"
+    touch "desktop/src-tauri/binaries/beekeeper-dev-mcp-$TARGET"
     touch "desktop/src-tauri/binaries/git-credential-nostr-$TARGET"
     touch "desktop/src-tauri/binaries/bee-$TARGET"
     if [[ "$TARGET" != *windows* ]]; then
-        touch "desktop/src-tauri/binaries/buzz-shell-host-$TARGET"
+        touch "desktop/src-tauri/binaries/beekeeper-shell-host-$TARGET"
         touch "desktop/src-tauri/binaries/beekeeper-host-$TARGET"
     fi
     pnpm install
@@ -770,6 +781,8 @@ test-unit:
     # beekeeper-cli, beekeeper-push-gateway and beekeeper-backend-kubernetes carry infra-free
     # coverage in tests/ that --lib would drop.
     ./scripts/test-ensure-local-relay-key.sh
+    ./scripts/test-env-migrate.sh
+    ./scripts/test-env-compat.sh
     if command -v cargo-nextest &>/dev/null; then
         cargo nextest run --workspace
         # beekeeper-auth NIP-FI verifier doctests. The sealed-authority
@@ -788,7 +801,7 @@ test-integration:
 
 # Regenerate the model-capability normative corpus from the production Rust
 # resolver. The corpus is a golden snapshot, never hand-edited: this runs the
-# `#[ignore]`d writer test in buzz-agent, which serializes `resolve()` over the
+# `#[ignore]`d writer test in beekeeper-agent, which serializes `resolve()` over the
 # inputs-only question table to scripts/normative-corpus.json. Run this after
 # any model-capabilities.json edit, then commit the regenerated file. The
 # `corpus_matches_generated_snapshot` gate fails CI if the committed file drifts.
@@ -855,7 +868,7 @@ desktop-screenshot *ARGS:
         trap "kill $! 2>/dev/null || true" EXIT
         for i in $(seq 1 20); do curl -sf "http://127.0.0.1:$port/" >/dev/null && break; sleep 0.5; done
     fi
-    BEEKEEPER_SCREENSHOT_BASE_URL="${BEEKEEPER_SCREENSHOT_BASE_URL:-http://127.0.0.1:$port}" node tests/helpers/screenshot.mjs {{ARGS}}
+    BEEKEEPER_SCREENSHOT_BASE_URL="${BEEKEEPER_SCREENSHOT_BASE_URL:-${BUZZ_SCREENSHOT_BASE_URL:-http://127.0.0.1:$port}}" node tests/helpers/screenshot.mjs {{ARGS}}
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
 
@@ -867,6 +880,7 @@ relay: bootstrap _ensure-migrations
     set -o allexport
     source .env
     set +o allexport
+    source "{{justfile_directory()}}/scripts/lib/env-compat.sh"; beekeeper_adopt_legacy_env just
     cargo run -p beekeeper-relay
 
 # Start the relay with the built web UI served from it
@@ -877,6 +891,7 @@ relay-web: bootstrap _ensure-migrations
     set -o allexport
     source .env
     set +o allexport
+    source "{{justfile_directory()}}/scripts/lib/env-compat.sh"; beekeeper_adopt_legacy_env just
     [[ -d node_modules ]] || pnpm install
     pnpm -C web build
     BEEKEEPER_WEB_DIR=./web/dist cargo run -p beekeeper-relay
@@ -889,6 +904,7 @@ admin: bootstrap _ensure-migrations
     set -o allexport
     source .env
     set +o allexport
+    source "{{justfile_directory()}}/scripts/lib/env-compat.sh"; beekeeper_adopt_legacy_env just
     [[ -d node_modules ]] || pnpm install
     pnpm -C admin-web build
     export BEEKEEPER_ADMIN_HOST="${BEEKEEPER_ADMIN_HOST:-admin.localhost:3000}"
@@ -915,6 +931,7 @@ relay-release: bootstrap _ensure-migrations
     set -o allexport
     source .env
     set +o allexport
+    source "{{justfile_directory()}}/scripts/lib/env-compat.sh"; beekeeper_adopt_legacy_env just
     cargo run -p beekeeper-relay --release
 
 
@@ -926,6 +943,7 @@ dev *ARGS: bootstrap _ensure-sidecar-stubs _ensure-migrations
     set -o allexport
     source .env
     set +o allexport
+    source "{{justfile_directory()}}/scripts/lib/env-compat.sh"; beekeeper_adopt_legacy_env just
     bind_addr="${BEEKEEPER_BIND_ADDR:-0.0.0.0:3000}"
     relay_port="${bind_addr##*:}"; [[ -n "$relay_port" ]] || relay_port=3000
     health_port="${BEEKEEPER_HEALTH_PORT:-8080}"
@@ -988,13 +1006,14 @@ desktop-standalone *ARGS: _ensure-sidecar-stubs
     cargo build -p beekeeper-acp -p beekeeper-agent -p beekeeper-backend-kubernetes -p beekeeper-dev-mcp -p beekeeper-cli -p git-credential-nostr -p beekeeper-shell-host -p beekeeper-host -p beekeeper-session-provider
     TARGET=$(rustc -vV | sed -n 's|host: ||p')
     TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).target_directory")
-    for bin in beekeeper-acp buzz-agent beekeeper-backend-kubernetes beekeeper-dev-mcp git-credential-nostr bee beekeeper-shell-host beekeeper-host; do
+    for bin in beekeeper-acp beekeeper-agent beekeeper-backend-kubernetes beekeeper-dev-mcp git-credential-nostr bee beekeeper-shell-host beekeeper-host; do
         cp "${TARGET_DIR}/debug/${bin}" "desktop/src-tauri/binaries/${bin}-${TARGET}"
         chmod +x "desktop/src-tauri/binaries/${bin}-${TARGET}"
     done
     cd {{desktop_dir}}
     [[ -d node_modules ]] || pnpm install
-    unset BEEKEEPER_PRIVATE_KEY BEEKEEPER_SHARE_IDENTITY
+    # Both spellings: the binaries adopt a legacy BUZZ_* name when the new one is unset.
+    unset BEEKEEPER_PRIVATE_KEY BEEKEEPER_SHARE_IDENTITY BUZZ_PRIVATE_KEY BUZZ_SHARE_IDENTITY
     if [[ -n "{{fresh}}" ]]; then
         export BEEKEEPER_RESET_WEBVIEW_STATE=1
     fi
@@ -1457,7 +1476,7 @@ sandbox-seed TREE *ARGS:
     export PATH="{{justfile_directory()}}/bin:$PATH"
     # A fresh worktree has nothing built, so look for a usable `bee` rather than
     # assuming this checkout has one.
-    BEE="${BEEKEEPER_BEE:-$(command -v bee 2>/dev/null || true)}"
+    BEE="${BEEKEEPER_BEE:-${BUZZ_BEE:-$(command -v bee 2>/dev/null || true)}}"
     for candidate in \
         "{{justfile_directory()}}/target/release/bee" \
         "{{justfile_directory()}}/target/debug/bee" \
@@ -1477,7 +1496,7 @@ sandbox-plan *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
-    BEE="${BEEKEEPER_BEE:-$(command -v bee 2>/dev/null || true)}"
+    BEE="${BEEKEEPER_BEE:-${BUZZ_BEE:-$(command -v bee 2>/dev/null || true)}}"
     [[ -n "$BEE" && -x "$BEE" ]] || BEE="{{justfile_directory()}}/target/debug/bee"
     [[ -x "$BEE" ]] || { echo "no 'bee' found; run 'cargo build -p beekeeper-cli'" >&2; exit 1; }
     "$BEE" sandbox plan {{ARGS}}

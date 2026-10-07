@@ -279,3 +279,80 @@ test("a Bash call that runs bee still reads as its relay operation", () => {
   });
   assert.equal(descriptor.renderClass, "message");
 });
+
+// The MCP servers were renamed buzz-* -> beekeeper-* (2026-10). Persisted
+// transcripts still carry the old server names, so each case below is run with
+// BOTH: the `buzz-*` fixtures are old data on purpose and must stay old.
+const DEV_MCP_SERVERS = ["buzz-dev-mcp", "beekeeper-dev-mcp"];
+const SESSION_CONTEXT_SERVERS = [
+  "buzz-session-context",
+  "beekeeper-session-context",
+];
+
+for (const server of DEV_MCP_SERVERS) {
+  test(`classifyTool reads ${server}__todo as a todo update`, () => {
+    const descriptor = classifyTool({
+      title: `${server}__todo`,
+      toolName: `${server}__todo`,
+      buzzToolName: null,
+      args: {},
+      result: "",
+      isError: false,
+    });
+    assert.equal(descriptor.renderClass, "plan");
+    assert.equal(descriptor.groupKey, "plan:todo");
+  });
+
+  test(`classifyTool reads ${server}__stop as the suppressed stop hook`, () => {
+    const descriptor = classifyTool({
+      title: `${server}__stop`,
+      toolName: `${server}__stop`,
+      buzzToolName: null,
+      args: {},
+      result: "",
+      isError: false,
+    });
+    assert.equal(descriptor.renderClass, "suppressed");
+    assert.equal(descriptor.groupKey, "suppressed:stop-hook");
+  });
+
+  test(`classifyTool attributes an unknown ${server} tool to the harness`, () => {
+    const descriptor = classifyTool({
+      title: `mcp__${server}__brand_new_tool`,
+      toolName: `mcp__${server}__brand_new_tool`,
+      buzzToolName: null,
+      args: {},
+      result: "",
+      isError: false,
+    });
+    assert.equal(descriptor.source, "harness");
+    assert.equal(descriptor.groupKey, "generic:dev-mcp");
+  });
+
+  test(`classifyTool reads mcp__${server}__shell as a command`, () => {
+    const descriptor = classifyTool({
+      title: `mcp__${server}__shell`,
+      toolName: `mcp__${server}__shell`,
+      buzzToolName: null,
+      args: { command: "ls -la" },
+      result: "",
+      isError: false,
+    });
+    assert.equal(descriptor.renderClass, "shell");
+  });
+}
+
+for (const server of SESSION_CONTEXT_SERVERS) {
+  test(`classifyTool humanizes ${server} session overview`, () => {
+    const descriptor = classifyTool({
+      title: `mcp__${server}__session_overview`,
+      toolName: `mcp__${server}__session_overview`,
+      buzzToolName: null,
+      args: {},
+      result: "",
+      isError: false,
+    });
+    assert.equal(descriptor.label, "Session overview");
+    assert.equal(descriptor.source, "mcp");
+  });
+}

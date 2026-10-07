@@ -118,8 +118,8 @@ cargo build --release -p beekeeper-acp -p beekeeper-agent -p beekeeper-backend-k
   -p beekeeper-dev-mcp -p beekeeper-cli -p git-credential-nostr -p beekeeper-session-provider \
   -p beekeeper-shell-host -p beekeeper-host
 ./scripts/bundle-sidecars.sh
-cp target/release/beekeeper-session-provider "desktop/src-tauri/binaries/buzz-session-provider-$TARGET"
-chmod 755 "desktop/src-tauri/binaries/buzz-session-provider-$TARGET"
+cp target/release/beekeeper-session-provider "desktop/src-tauri/binaries/beekeeper-session-provider-$TARGET"
+chmod 755 "desktop/src-tauri/binaries/beekeeper-session-provider-$TARGET"
 
 # ── bundle ───────────────────────────────────────────────────────────────────
 pnpm install

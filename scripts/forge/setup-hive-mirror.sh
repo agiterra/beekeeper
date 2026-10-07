@@ -80,6 +80,9 @@ if [[ "${1:-}" == "--remote" ]]; then
         install -m755 /tmp/bridge-build/target/release/git-credential-nostr /usr/local/bin/
         install -m755 /tmp/bridge-build/target/release/examples/pubkey /usr/local/bin/nostr-keyfile-pubkey
         install -m755 /tmp/bridge-build/target/release/beekeeper-mirror-bridge /usr/local/bin/
+        # A forge set up before the 2026-10 rename also has the old
+        # /usr/local/bin/buzz-mirror-bridge. Nothing runs it once the unit below
+        # is rewritten; it is left in place, not deleted, for a manual rollback.
         rm -rf /tmp/bridge-build
     fi
     echo "helper: $(ls -l /usr/local/bin/git-credential-nostr | awk '{print $NF}')"

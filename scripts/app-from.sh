@@ -41,13 +41,13 @@ SIDECAR_PACKAGES=(
   beekeeper-acp beekeeper-agent beekeeper-backend-kubernetes beekeeper-dev-mcp
   beekeeper-cli git-credential-nostr beekeeper-shell-host beekeeper-host beekeeper-session-provider
 )
-# The binaries those packages produce. Every `beekeeper-*` package still builds
-# its `buzz-*` binary, and `beekeeper-cli` builds `bee`. This is the
+# The binaries those packages produce. Every `beekeeper-*` package builds the
+# binary of the same name, except `beekeeper-cli`, which builds `bee`. This is the
 # set `desktop/scripts/check-sidecar-parity.mjs` compares against
 # `tauri.conf.json`'s `externalBin` plus the provider; a name added in one
 # place and not the other fails that check rather than a morning.
 SIDECAR_BINARIES=(
-  beekeeper-acp buzz-agent beekeeper-backend-kubernetes beekeeper-dev-mcp
+  beekeeper-acp beekeeper-agent beekeeper-backend-kubernetes beekeeper-dev-mcp
   bee git-credential-nostr beekeeper-shell-host beekeeper-host beekeeper-session-provider
 )
 

@@ -1290,7 +1290,7 @@ step_3() {
   local links_before links_after probe_exit
   links_before="$(authority_link_count "${G1}")"
   set +e
-  env -u BEEKEEPER_CSP_PROJECTS_FILE \
+  env -u BEEKEEPER_CSP_PROJECTS_FILE -u BUZZ_CSP_PROJECTS_FILE \
     BEEKEEPER_PRIVATE_KEY="${B_KEY}" NOSTR_PRIVATE_KEY="${B_KEY}" "${BEE_BIN}" \
     sessions handover continue --channel "${CHANNEL}" --session-ref "${S1}" \
     --genesis "${G1}" --cwd "${CHECKOUT_B}" --body "${PROVIDER_B_HEX}" \

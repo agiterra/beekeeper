@@ -17,7 +17,7 @@ importable:
         --manifest benchmarks/harbor-beekeeper-orchestra/manifests/<TEAM>.yaml \
         --endpoint-config benchmarks/harbor-beekeeper-orchestra/testbed/endpoints/<ENDPOINTS>.json \
         --provisioner-config <PROVISIONER.json> \
-        --agent-bin-dir <DIR with Linux beekeeper-acp/buzz-agent/beekeeper-dev-mcp>
+        --agent-bin-dir <DIR with Linux beekeeper-acp/beekeeper-agent/beekeeper-dev-mcp>
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ PROVISIONER_FACTORY = "harbor_beekeeper_testbed:provisioner_from_dict"
 BINARIES = ("bee",)
 # Container-side: the production stack uploaded into each task container.
 # These must be Linux builds matching the task image architecture.
-AGENT_BINARIES = ("beekeeper-acp", "buzz-agent", "beekeeper-dev-mcp")
+AGENT_BINARIES = ("beekeeper-acp", "beekeeper-agent", "beekeeper-dev-mcp")
 # Uploaded alongside the stack when --relay-gateway is set: bridges the
 # agents' canonical relay address to the host gateway (the relay is
 # host-header tenant-bound, so agents must present its canonical Host).
@@ -112,7 +112,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--agent-bin-dir",
         type=Path,
         required=True,
-        help="Directory with Linux builds of beekeeper-acp/buzz-agent/beekeeper-dev-mcp "
+        help="Directory with Linux builds of beekeeper-acp/beekeeper-agent/beekeeper-dev-mcp "
         "to upload into each task container",
     )
     parser.add_argument(
@@ -215,7 +215,7 @@ def build_command(
         "artifact_root": PACKAGE_ROOT,
         "endpoint_config": args.endpoint_config,
         "buzz_acp_binary": agent_binaries["beekeeper-acp"],
-        "buzz_agent_binary": agent_binaries["buzz-agent"],
+        "buzz_agent_binary": agent_binaries["beekeeper-agent"],
         "buzz_dev_mcp_binary": agent_binaries["beekeeper-dev-mcp"],
         "buzz_cli_binary": binaries["bee"],
         "run_id": args.job_name,
