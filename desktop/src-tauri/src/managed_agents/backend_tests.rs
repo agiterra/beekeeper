@@ -419,6 +419,47 @@ fn provider_filename_strips_the_windows_extension() {
         Some("my-provider")
     );
     assert_eq!(provider_id_from_filename("other"), None);
+    assert_eq!(provider_id_from_filename("buzz-backend-"), None);
+}
+
+#[test]
+fn provider_discovery_accepts_both_prefixes_and_prefers_the_current_one() {
+    use std::path::PathBuf;
+    let entries = vec![
+        // A pre-rename install found first on PATH...
+        (
+            "buzz-backend-kubernetes".to_string(),
+            PathBuf::from("/home/u/.local/bin/buzz-backend-kubernetes"),
+        ),
+        // ...a legacy-only provider...
+        (
+            "buzz-backend-mine".to_string(),
+            PathBuf::from("/home/u/.local/bin/buzz-backend-mine"),
+        ),
+        // ...and the current one later in the search order.
+        (
+            "beekeeper-backend-kubernetes".to_string(),
+            PathBuf::from("/app/beekeeper-backend-kubernetes"),
+        ),
+        (
+            "beekeeper-backend-kubernetes".to_string(),
+            PathBuf::from("/later/beekeeper-backend-kubernetes"),
+        ),
+        ("unrelated".to_string(), PathBuf::from("/bin/unrelated")),
+    ];
+    assert_eq!(
+        super::select_provider_candidates(entries),
+        vec![
+            (
+                "kubernetes".to_string(),
+                PathBuf::from("/app/beekeeper-backend-kubernetes")
+            ),
+            (
+                "mine".to_string(),
+                PathBuf::from("/home/u/.local/bin/buzz-backend-mine")
+            ),
+        ]
+    );
 }
 
 #[test]

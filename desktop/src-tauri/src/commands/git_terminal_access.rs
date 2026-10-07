@@ -207,6 +207,7 @@ pub fn enable_git_terminal_access(
     command.args(["setup", "--write-key", "--helper"]);
     command.arg(&helper);
     command.env("BEEKEEPER_PRIVATE_KEY", &nsec);
+    crate::managed_agents::apply_legacy_env_names(&mut command);
     run_bee(command)?;
 
     git_terminal_access_status(app, state)

@@ -215,11 +215,20 @@ fn env_candidates<'a>(
     global_env: &'a std::collections::BTreeMap<String, String>,
     definition_env: &'a std::collections::BTreeMap<String, String>,
 ) -> [Option<&'a str>; 4] {
+    // Each tier is read under the current name first and then under its
+    // pre-rename `BUZZ_*` spelling, which a map that never went through a
+    // normalizing load may still carry.
+    let legacy = beekeeper_core_pkg::env_compat::legacy_twin(env_key);
+    let get = |env: &'a std::collections::BTreeMap<String, String>| {
+        env.get(env_key)
+            .or_else(|| legacy.as_deref().and_then(|key| env.get(key)))
+            .map(String::as_str)
+    };
     [
-        record_env.get(env_key).map(String::as_str),
-        persona_env.get(env_key).map(String::as_str),
-        global_env.get(env_key).map(String::as_str),
-        definition_env.get(env_key).map(String::as_str),
+        get(record_env),
+        get(persona_env),
+        get(global_env),
+        get(definition_env),
     ]
 }
 

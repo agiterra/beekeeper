@@ -59,7 +59,7 @@ pub(crate) struct HarnessDefinition {
     /// Environment variables injected at spawn time. Definition env is applied
     /// first and LOSES on conflict with Beekeeper-injected vars — `BEEKEEPER_MANAGED_AGENT`
     /// is always authoritative and cannot be overridden here.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::env_vars::deserialize_env_vars")]
     pub env: BTreeMap<String, String>,
     /// Link to external docs for manual install/setup instructions.
     #[serde(default)]

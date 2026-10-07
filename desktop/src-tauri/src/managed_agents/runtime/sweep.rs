@@ -431,8 +431,8 @@ fn collect_process_snapshots(harness_name: &str) -> Vec<ProcessSnapshot> {
             continue;
         }
         let upid = pid as u32;
-        // Cheap name pre-filter via /proc/<pid>/comm (15-char truncated, but
-        // "beekeeper-acp" is 8 chars so it's always preserved).
+        // Cheap name pre-filter via /proc/<pid>/comm (15-byte truncated, but
+        // "beekeeper-acp" is 13 bytes and "buzz-acp" 8, so both survive).
         let Ok(comm) = std::fs::read_to_string(format!("/proc/{upid}/comm")) else {
             continue;
         };
@@ -486,17 +486,23 @@ fn collect_process_snapshots(harness_name: &str) -> Vec<ProcessSnapshot> {
 /// the same app (different bundle path, e.g. a prior DMG) will not match
 /// this path — that class is handled by `sweep_system_agent_processes`, which
 /// scopes by `BEEKEEPER_MANAGED_AGENT` instance ID rather than exe path.
-pub fn expected_harness_exe_path() -> Option<PathBuf> {
+///
+/// `name` is one of [`HARNESS_BINARY_NAMES`].
+fn expected_harness_exe_path(name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    let raw = dir.join("beekeeper-acp");
+    let raw = dir.join(name);
     // Canonicalize if possible; fall back to the raw path on failure.
     Some(std::fs::canonicalize(&raw).unwrap_or(raw))
 }
 
-/// The basename of the harness binary — used for the cheap name pre-filter in
-/// `collect_process_snapshots` before the expensive exe-path lookup.
-const HARNESS_BINARY_NAME: &str = "beekeeper-acp";
+/// The basenames of the harness binary — used for the cheap name pre-filter
+/// in `collect_process_snapshots` before the expensive exe-path lookup. The
+/// current name first, then the pre-rename `buzz-acp`: after an update, a
+/// harness the old bundle started still runs from `<bundle>/buzz-acp` (on
+/// Linux, `buzz-acp (deleted)`), and it is as much this bundle's orphan as a
+/// current one. Both fit in Linux's 15-byte `comm`.
+const HARNESS_BINARY_NAMES: [&str; 2] = ["beekeeper-acp", "buzz-acp"];
 
 // ── sweep_untracked_bundle_harnesses ─────────────────────────────────────
 
@@ -522,10 +528,17 @@ const HARNESS_BINARY_NAME: &str = "beekeeper-acp";
 /// when `resolve_pgids_and_kill` signals the PGID.
 #[cfg(unix)]
 pub(crate) fn sweep_untracked_bundle_harnesses(skip_pids: &[u32]) {
-    let Some(harness_exe) = expected_harness_exe_path() else {
+    for name in HARNESS_BINARY_NAMES {
+        sweep_untracked_bundle_harnesses_named(name, skip_pids);
+    }
+}
+
+#[cfg(unix)]
+fn sweep_untracked_bundle_harnesses_named(name: &str, skip_pids: &[u32]) {
+    let Some(harness_exe) = expected_harness_exe_path(name) else {
         return;
     };
-    let snapshots = collect_process_snapshots(HARNESS_BINARY_NAME);
+    let snapshots = collect_process_snapshots(name);
     let to_kill = select_untracked_bundle_harnesses(&snapshots, &harness_exe, skip_pids, |pid| {
         super::process::process_has_env_key(pid, HOST_OWNED_CHILD_VAR)
     });
@@ -648,6 +661,38 @@ mod tests {
             HOST_OWNED_CHILD_VAR,
             beekeeper_host_core::layout::CHILD_MARKER_VAR
         );
+    }
+
+    /// After an update, a harness the previous bundle started runs from the
+    /// pre-rename path. The sweep looks for that name too, at this bundle's
+    /// own directory, and still spares a different bundle's.
+    #[test]
+    fn a_pre_rename_harness_in_this_bundle_is_reaped() {
+        assert_eq!(HARNESS_BINARY_NAMES, ["beekeeper-acp", "buzz-acp"]);
+        for name in HARNESS_BINARY_NAMES {
+            assert!(
+                name.len() <= 15,
+                "{name} must survive /proc/comm truncation"
+            );
+        }
+        let legacy = expected_harness_exe_path("buzz-acp").expect("current exe");
+        assert_eq!(
+            legacy.file_name().and_then(|n| n.to_str()),
+            Some("buzz-acp")
+        );
+
+        const OLD_BUNDLE_HARNESS: &str = "/Applications/Beekeeper.app/Contents/MacOS/buzz-acp";
+        let snapshots = vec![
+            snap(3001, OLD_BUNDLE_HARNESS),
+            snap(3002, "/Users/dev/old/target/debug/buzz-acp"),
+        ];
+        let result = select_untracked_bundle_harnesses(
+            &snapshots,
+            &PathBuf::from(OLD_BUNDLE_HARNESS),
+            &[],
+            |_| false,
+        );
+        assert_eq!(result, vec![3001]);
     }
 
     #[test]

@@ -40,8 +40,8 @@ pub(super) fn idle_pool_sleep_env(lazy: bool) -> &'static str {
 /// map — a safe no-op.
 pub(crate) fn baked_build_env() -> BTreeMap<String, String> {
     build_env_map(
-        option_env!("BEEKEEPER_DESKTOP_BUILD_BUZZ_AGENT_PROVIDER"),
-        option_env!("BEEKEEPER_DESKTOP_BUILD_BUZZ_AGENT_MODEL"),
+        option_env!("BEEKEEPER_DESKTOP_BUILD_BEEKEEPER_AGENT_PROVIDER"),
+        option_env!("BEEKEEPER_DESKTOP_BUILD_BEEKEEPER_AGENT_MODEL"),
         option_env!("BEEKEEPER_DESKTOP_BUILD_AGENT_ENV"),
     )
 }
@@ -77,6 +77,8 @@ fn build_env_map(
             }
         }
     }
+    // A release script written before the rename may bake `BUZZ_*` keys.
+    let mut map = beekeeper_core_pkg::env_compat::normalize_env_keys(map);
     // Defense in depth. `build.rs` already refuses to bake a reserved key, so
     // reaching this filter means the binary was produced by a build that
     // skipped that check. Drop the key rather than let it override the access
@@ -148,7 +150,7 @@ mod tests {
 
     #[test]
     fn buzz_agent_provider_defaults_empty_in_oss_build() {
-        // OSS (and normal test) builds set neither BEEKEEPER_BUILD_BUZZ_AGENT_*,
+        // OSS (and normal test) builds set neither BEEKEEPER_BUILD_BEEKEEPER_AGENT_*,
         // so nothing is baked in and no BEEKEEPER_AGENT_* is injected on spawn.
         let mut cmd = std::process::Command::new("env");
         cmd.env_clear();
@@ -420,6 +422,30 @@ mod tests {
             map.get("DATABRICKS_MODEL").map(String::as_str),
             Some("goose-claude-opus-4-8"),
             "non-reserved baked keys must still pass through"
+        );
+    }
+
+    #[test]
+    fn build_env_map_reads_legacy_baked_keys_under_the_new_name() {
+        use base64::Engine as _;
+        let raw =
+            "BUZZ_AGENT_THINKING_EFFORT=high\nBUZZ_AGENT_MODEL=old\nBUZZ_PRIVATE_KEY=nsec1fake";
+        let blob = base64::engine::general_purpose::STANDARD.encode(raw.as_bytes());
+        let map = build_env_map(None, Some("structured"), Some(&blob));
+        assert_eq!(
+            map.get("BEEKEEPER_AGENT_THINKING_EFFORT")
+                .map(String::as_str),
+            Some("high")
+        );
+        // A legacy blob key never overrides a value baked under the new name.
+        assert_eq!(
+            map.get("BEEKEEPER_AGENT_MODEL").map(String::as_str),
+            Some("structured")
+        );
+        assert!(!map.keys().any(|key| key.starts_with("BUZZ_")), "{map:?}");
+        assert!(
+            !map.contains_key("BEEKEEPER_PRIVATE_KEY"),
+            "reserved either way"
         );
     }
 

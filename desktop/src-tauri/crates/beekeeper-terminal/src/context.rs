@@ -102,5 +102,29 @@ pub fn context_vars(context: &GuiContext) -> Vec<(&'static str, String)> {
     if let Some(thread_id) = &context.thread_id {
         vars.push(("BEEKEEPER_THREAD_ID", thread_id.clone()));
     }
+    let legacy: Vec<_> = vars
+        .iter()
+        .filter_map(|(name, value)| Some((legacy_name(name)?, value.clone())))
+        .collect();
+    vars.extend(legacy);
     vars
+}
+
+/// The pre-rename `BUZZ_*` spelling of a context variable.
+///
+/// Every context variable also goes out under its old name for the
+/// transition, so a prompt or script reading `$BUZZ_CHANNEL`, or an older
+/// `bee` reading `BUZZ_RELAY_URL`, keeps working. Spelled out rather than
+/// derived, because the names must be `'static` for the PTY builder.
+fn legacy_name(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "BEEKEEPER_CHANNEL_ID" => "BUZZ_CHANNEL_ID",
+        "BEEKEEPER_CHANNEL" => "BUZZ_CHANNEL",
+        "BEEKEEPER_NPUB" => "BUZZ_NPUB",
+        "BEEKEEPER_RELAY_URL" => "BUZZ_RELAY_URL",
+        "BEEKEEPER_TERM_SESSION" => "BUZZ_TERM_SESSION",
+        "BEEKEEPER_TERM_VERSION" => "BUZZ_TERM_VERSION",
+        "BEEKEEPER_THREAD_ID" => "BUZZ_THREAD_ID",
+        _ => return None,
+    })
 }

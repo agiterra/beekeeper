@@ -77,7 +77,11 @@ pub struct AgentDefinition {
     /// Opaque to Beekeeper — keys and values are runtime-specific.
     ///
     /// Stored as a BTreeMap for deterministic on-disk ordering.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "super::env_vars::deserialize_env_vars"
+    )]
     pub env_vars: BTreeMap<String, String>,
     /// NIP-AP behavioral defaults, stored in WIRE shape (kebab-case string,
     /// not the `RespondTo` enum) so `persona_event_content` is a verbatim
@@ -324,7 +328,11 @@ pub struct ManagedAgentRecord {
     /// parent env < persona `env_vars` < this agent's `env_vars` (last wins).
     ///
     /// To "override" a persona env var: set the same key here.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "super::env_vars::deserialize_env_vars"
+    )]
     pub env_vars: BTreeMap<String, String>,
     #[serde(default = "default_start_on_app_launch")]
     pub start_on_app_launch: bool,

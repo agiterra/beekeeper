@@ -31,6 +31,10 @@ pub(crate) const DERIVED_PROVIDER_MODEL_ENV_KEYS: &[&str] = &[
     "GOOSE_PROVIDER",
     "BEEKEEPER_AGENT_MODEL",
     "BEEKEEPER_AGENT_PROVIDER",
+    // Pre-rename spellings: a pack or record written before the rename
+    // carries these, and they would shadow the structured fields just the same.
+    "BUZZ_AGENT_MODEL",
+    "BUZZ_AGENT_PROVIDER",
 ];
 
 /// Returns `true` if `key` is a derived provider/model env key that should be
@@ -181,6 +185,9 @@ pub fn validate_user_env_keys(env_vars: &BTreeMap<String, String>) -> Result<(),
 /// - `BEEKEEPER_AGENT_THINKING_EFFORT` — non-secret enum (none/minimal/low/medium/high/xhigh/max)
 /// - `BEEKEEPER_AGENT_THINKING_SUMMARY` — non-secret enum (auto/concise/detailed)
 /// - `DATABRICKS_HOST`, `DATABRICKS_MODEL` — Block non-secret defaults
+///
+/// Each `BEEKEEPER_*` entry also covers its pre-rename `BUZZ_*` spelling,
+/// which older records and baked builds still carry.
 pub(crate) fn is_safe_to_reveal(key: &str) -> bool {
     const SAFE_KEYS: &[&str] = &[
         "BEEKEEPER_AGENT_PROVIDER",
@@ -191,6 +198,7 @@ pub(crate) fn is_safe_to_reveal(key: &str) -> bool {
         "DATABRICKS_MODEL",
     ];
     let upper = key.to_ascii_uppercase();
+    let upper = beekeeper_core_pkg::env_compat::canonical_name(&upper).unwrap_or(upper);
     SAFE_KEYS.iter().any(|safe| upper == *safe)
 }
 
@@ -220,9 +228,15 @@ pub(crate) fn merged_user_env(
     persona_env: &BTreeMap<String, String>,
     agent_env: &BTreeMap<String, String>,
 ) -> BTreeMap<String, String> {
-    let mut merged = persona_env.clone();
-    for (k, v) in agent_env {
-        merged.insert(k.clone(), v.clone());
+    // Records written before the `BUZZ_*` → `BEEKEEPER_*` rename may still
+    // carry legacy keys in memory (an IPC caller, a record that has not been
+    // re-saved). Normalize each layer first so a persona's
+    // `BUZZ_AGENT_MODEL` and an agent's `BEEKEEPER_AGENT_MODEL` are the same
+    // key and the agent's still wins.
+    use beekeeper_core_pkg::env_compat::normalize_env_keys;
+    let mut merged = normalize_env_keys(persona_env.clone());
+    for (k, v) in normalize_env_keys(agent_env.clone()) {
+        merged.insert(k, v);
     }
     merged.retain(|k, v| {
         if is_reserved_env_key(k) {
@@ -261,6 +275,24 @@ pub(crate) fn merged_user_env(
         true
     });
     merged
+}
+
+/// `serde` deserializer for a stored `env_vars` map: rewrites keys written
+/// before the `BUZZ_*` → `BEEKEEPER_*` rename to their current spelling, the
+/// current one winning when a map carries both
+/// (`beekeeper_core::env_compat::normalize_env_keys`).
+///
+/// It sits on the field, not on a store's load function, so every path that
+/// reads a record, a definition or a persona from disk is covered, and the
+/// next save writes the new names.
+pub(crate) fn deserialize_env_vars<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let map = <BTreeMap<String, String> as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(beekeeper_core_pkg::env_compat::normalize_env_keys(map))
 }
 
 /// Look up the live env map of `persona_id` within an already-loaded persona

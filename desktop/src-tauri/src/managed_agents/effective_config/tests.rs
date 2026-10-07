@@ -988,3 +988,6 @@ fn linked_blank_record_value_falls_back_to_definition() {
     assert_eq!(cfg.runtime.value.as_deref(), Some("goose"));
     assert_eq!(cfg.runtime.source, ConfigSource::Definition);
 }
+
+#[path = "legacy_provider_key_tests.rs"]
+mod legacy_provider_key;

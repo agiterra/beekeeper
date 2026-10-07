@@ -932,3 +932,32 @@ fn openclaw_cap_crossing_parallelism_snapshots_differ() {
         "parallelism 8 (clamps to 5) and 3 (runs as 3) must produce different snapshots"
     );
 }
+
+/// The boot migration rewrites `buzz-acp` → `beekeeper-acp` and
+/// `buzz-agent` → `beekeeper-agent` in a stored record. A process stamped
+/// under the old names must not then read as needing a restart.
+#[test]
+fn migrating_a_command_name_does_not_change_the_snapshot() {
+    let personas = [];
+    let global = GlobalAgentConfig::default();
+    let mut old = record();
+    old.acp_command = "buzz-acp".into();
+    old.agent_command = "buzz-agent".into();
+    let mut new = record();
+    new.acp_command = "beekeeper-acp".into();
+    new.agent_command = "beekeeper-agent".into();
+    assert_eq!(
+        snapshot(&old, &personas, &[], "ws://relay", &global),
+        snapshot(&new, &personas, &[], "ws://relay", &global),
+    );
+
+    // A real change of harness still shows.
+    let mut other = record();
+    other.acp_command = "/opt/custom/acp".into();
+    assert_ne!(
+        snapshot(&old, &personas, &[], "ws://relay", &global),
+        snapshot(&other, &personas, &[], "ws://relay", &global),
+    );
+    assert_eq!(comparable_command_name("buzz-acp"), "beekeeper-acp");
+    assert_eq!(comparable_command_name("/opt/buzz-acp"), "/opt/buzz-acp");
+}

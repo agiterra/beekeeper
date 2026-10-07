@@ -505,24 +505,17 @@ pub fn spawn_agent_child(
     command.env("RUST_LOG", child_rust_log_filter());
     command.env("BEEKEEPER_PRIVATE_KEY", &record.private_key_nsec);
     command.env("BEEKEEPER_RELAY_URL", &effective_relay_url);
-    command.env(
-        "BEEKEEPER_ACP_LAZY_POOL",
-        if lazy { "true" } else { "false" },
-    );
+    command.env("BEEKEEPER_ACP_LAZY_POOL", lazy.to_string());
     command.env("BEEKEEPER_ACP_IDLE_POOL_SLEEP", idle_pool_sleep_env(lazy));
     // A floor belongs only to a publish-first invocation. Clear any inherited
     // parent value before descriptor env is applied below.
     command.env_remove(REPLAY_FLOOR_ENV_VAR);
     command.env("BEEKEEPER_ACP_AGENT_COMMAND", &resolved_agent_command);
     command.env("BEEKEEPER_ACP_AGENT_ARGS", agent_args.join(","));
-    match &resolved_mcp_command {
-        Some(mcp_cmd) => {
-            command.env("BEEKEEPER_ACP_MCP_COMMAND", mcp_cmd);
-        }
-        None => {
-            command.env("BEEKEEPER_ACP_MCP_COMMAND", "");
-        }
-    }
+    let mcp_cmd = resolved_mcp_command
+        .as_deref()
+        .unwrap_or(std::path::Path::new(""));
+    command.env("BEEKEEPER_ACP_MCP_COMMAND", mcp_cmd);
     // Enable MCP hook tools (_Stop, _PostCompact) for agents that need them.
     // Uses "*" because build_mcp_servers() hard-codes the server name to "buzz-mcp".
     let runtime_meta = known_acp_runtime(effective_command);
@@ -826,11 +819,13 @@ pub fn spawn_agent_child(
         }
     }
 
-    // Stamp desktop ownership and an unpredictable harness-generation identity.
+    // Stamp desktop ownership and an unpredictable harness-generation identity,
+    // then give every BEEKEEPER_* set or cleared above its BUZZ_* twin (last).
     let start_nonce = uuid::Uuid::new_v4().simple().to_string();
     command
         .env("BEEKEEPER_MANAGED_AGENT", current_instance_id(app))
         .env("BEEKEEPER_MANAGED_AGENT_START_NONCE", &start_nonce);
+    super::apply_legacy_env_names(&mut command);
 
     // Stamp the effective spawn config from the values that populated the
     // `Command` above, BEFORE spawning. Re-resolving after `spawn()` would let

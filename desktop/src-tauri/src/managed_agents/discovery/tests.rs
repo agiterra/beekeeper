@@ -50,8 +50,8 @@ fn returns_none_for_unknown_commands() {
 
 #[test]
 fn default_agent_command_resolves_bundled_buzz_agent() {
-    // The default must be bundled buzz-agent, never bare `goose` on a stock Windows install.
-    assert_eq!(default_agent_command(), "buzz-agent");
+    // The bundled binary of the `buzz-agent` runtime, never bare `goose`.
+    assert_eq!(default_agent_command(), "beekeeper-agent");
     assert_eq!(
         normalize_agent_args(&default_agent_command(), vec!["acp".into()]),
         Vec::<String>::new()

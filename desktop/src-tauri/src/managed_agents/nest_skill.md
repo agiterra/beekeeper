@@ -15,6 +15,8 @@ version: 1
 
 `BEEKEEPER_RELAY_URL` defaults to `http://localhost:3000`. In development, the user may need to set this to a staging or production relay URL.
 
+These variables were named `BUZZ_*` before (`BUZZ_PRIVATE_KEY`, …). An older setup may still set only the old names; `bee` reads either, the `BEEKEEPER_*` name winning when both are set. Check both before reporting one missing.
+
 `BEEKEEPER_AUTH_TAG` is required for `bee agents draft-create` and `bee agents draft-update` because those commands send owner-reviewed Desktop drafts. If missing, explain that this managed agent cannot open owner-reviewed agent drafts from chat.
 
 Run the bundled CLI with `--help` and `<command> <subcommand> --help` to discover all flags, arguments, and usage. This skill documents only what `--help` cannot tell you.

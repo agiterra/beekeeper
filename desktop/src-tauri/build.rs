@@ -152,40 +152,70 @@ fn expose_source_revision() {
     }
 }
 
+/// The value of a build input, read under its current name and then under the
+/// names it carried before the `BUZZ_*` → `BEEKEEPER_*` rename, so a release
+/// script or CI job that still exports the old name keeps working. The current
+/// name wins. Cargo is told to rerun when any of the names changes.
+fn build_input(names: &[&str]) -> Option<String> {
+    for name in names {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
+    names.iter().find_map(|name| std::env::var(name).ok())
+}
+
+/// `[BEEKEEPER_<X>, BUZZ_<X>]` for the common case where the rename only
+/// changed the prefix.
+fn input_names(rest: &str) -> [String; 2] {
+    [format!("BEEKEEPER_{rest}"), format!("BUZZ_{rest}")]
+}
+
+fn prefixed_input(rest: &str) -> Option<String> {
+    let names = input_names(rest);
+    build_input(&[names[0].as_str(), names[1].as_str()])
+}
+
 fn main() {
     expose_source_revision();
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_RELAY_URL");
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_RELAY_HTTP");
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_UPDATER_PUBLIC_KEY");
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_UPDATER_ENDPOINT");
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_BUILD_BUZZ_AGENT_PROVIDER");
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_BUILD_BUZZ_AGENT_MODEL");
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_BUILD_AGENT_ENV");
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_BUILD_RELAY_RECONNECT_CMD");
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_BUILD_AGENT_ACCESS_OWNER_ONLY");
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_BUILD_AUTO_CONNECT_DEFAULT_RELAY");
+    let relay_url = prefixed_input("RELAY_URL");
+    let relay_http = prefixed_input("RELAY_HTTP");
+    let updater_public_key = prefixed_input("UPDATER_PUBLIC_KEY");
+    let updater_endpoint = prefixed_input("UPDATER_ENDPOINT");
+    // Before the rename this input was `BUZZ_BUILD_BUZZ_AGENT_*`: both of its
+    // prefixes changed, so it gets its own list of names.
+    let agent_provider = build_input(&[
+        "BEEKEEPER_BUILD_BEEKEEPER_AGENT_PROVIDER",
+        "BUZZ_BUILD_BUZZ_AGENT_PROVIDER",
+    ]);
+    let agent_model = build_input(&[
+        "BEEKEEPER_BUILD_BEEKEEPER_AGENT_MODEL",
+        "BUZZ_BUILD_BUZZ_AGENT_MODEL",
+    ]);
+    let agent_env = prefixed_input("BUILD_AGENT_ENV");
+    let reconnect_cmd = prefixed_input("BUILD_RELAY_RECONNECT_CMD");
+    let agent_access_owner_only = prefixed_input("BUILD_AGENT_ACCESS_OWNER_ONLY");
+    let auto_connect_default_relay = prefixed_input("BUILD_AUTO_CONNECT_DEFAULT_RELAY");
     println!("cargo:rustc-check-cfg=cfg(buzz_updater_enabled)");
 
     // Explicit owner-only agent-access capability. Release packaging sets this
     // presence-only marker; OSS/custom builds leave agent access configurable.
-    if std::env::var("BEEKEEPER_BUILD_AGENT_ACCESS_OWNER_ONLY").is_ok() {
+    if agent_access_owner_only.is_some() {
         println!("cargo:rustc-env=BEEKEEPER_DESKTOP_BUILD_AGENT_ACCESS_OWNER_ONLY=1");
     }
 
-    if let Ok(relay_url) = std::env::var("BEEKEEPER_RELAY_URL") {
+    if let Some(relay_url) = relay_url {
         println!("cargo:rustc-env=BEEKEEPER_DESKTOP_BUILD_RELAY_URL={relay_url}");
     }
 
-    if let Ok(relay_http) = std::env::var("BEEKEEPER_RELAY_HTTP") {
+    if let Some(relay_http) = relay_http {
         println!("cargo:rustc-env=BEEKEEPER_DESKTOP_BUILD_RELAY_HTTP={relay_http}");
     }
 
-    if let Ok(provider) = std::env::var("BEEKEEPER_BUILD_BUZZ_AGENT_PROVIDER") {
-        println!("cargo:rustc-env=BEEKEEPER_DESKTOP_BUILD_BUZZ_AGENT_PROVIDER={provider}");
+    if let Some(provider) = agent_provider {
+        println!("cargo:rustc-env=BEEKEEPER_DESKTOP_BUILD_BEEKEEPER_AGENT_PROVIDER={provider}");
     }
 
-    if let Ok(model) = std::env::var("BEEKEEPER_BUILD_BUZZ_AGENT_MODEL") {
-        println!("cargo:rustc-env=BEEKEEPER_DESKTOP_BUILD_BUZZ_AGENT_MODEL={model}");
+    if let Some(model) = agent_model {
+        println!("cargo:rustc-env=BEEKEEPER_DESKTOP_BUILD_BEEKEEPER_AGENT_MODEL={model}");
     }
 
     // Generic KEY=VALUE pairs to inject into every spawned agent process.
@@ -194,7 +224,7 @@ fn main() {
     // The validated value is base64-encoded before emitting so the single-line
     // Cargo build-script output carries all pairs (Cargo output is line-oriented;
     // a raw multiline value would be silently truncated to the first line).
-    if let Ok(raw) = std::env::var("BEEKEEPER_BUILD_AGENT_ENV") {
+    if let Some(raw) = agent_env {
         for (line_no, line) in raw.lines().enumerate() {
             let line = line.trim();
             if line.is_empty() {
@@ -234,7 +264,7 @@ fn main() {
         println!("cargo:rustc-env=BEEKEEPER_DESKTOP_BUILD_AGENT_ENV={encoded}");
     }
 
-    if let Ok(val) = std::env::var("BEEKEEPER_BUILD_RELAY_RECONNECT_CMD") {
+    if let Some(val) = reconnect_cmd {
         let parsed: serde_json::Value = serde_json::from_str(&val).unwrap_or_else(|e| {
             panic!("BEEKEEPER_BUILD_RELAY_RECONNECT_CMD is not valid JSON: {e}")
         });
@@ -247,16 +277,14 @@ fn main() {
     // Presence-only release capability: internal desktop builds opt into
     // auto-connecting their configured default relay on first run. OSS builds
     // leave this unset and retain explicit community selection.
-    if std::env::var("BEEKEEPER_BUILD_AUTO_CONNECT_DEFAULT_RELAY").is_ok() {
+    if auto_connect_default_relay.is_some() {
         println!("cargo:rustc-env=BEEKEEPER_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY=1");
     }
 
-    let updater_public_key = std::env::var("BEEKEEPER_UPDATER_PUBLIC_KEY")
-        .ok()
+    let updater_public_key = updater_public_key
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let updater_endpoint = std::env::var("BEEKEEPER_UPDATER_ENDPOINT")
-        .ok()
+    let updater_endpoint = updater_endpoint
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 

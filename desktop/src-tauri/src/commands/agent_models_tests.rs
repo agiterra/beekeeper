@@ -607,7 +607,7 @@ fn databricks_interactive_auth_launches_only_without_a_static_token() {
 fn databricks_passive_auth_error_has_reachable_create_flow_guidance() {
     let error = databricks_sign_in_required_error();
     assert!(error.contains("save this agent, then open its model picker"));
-    assert!(error.contains("buzz-agent auth databricks"));
+    assert!(error.contains("beekeeper-agent auth databricks"));
 }
 
 #[test]

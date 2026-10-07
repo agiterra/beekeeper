@@ -1099,6 +1099,7 @@ dependencies = [
 name = "beekeeper-persona"
 version = "0.1.0"
 dependencies = [
+ "beekeeper-core",
  "chrono",
  "hex",
  "semver",

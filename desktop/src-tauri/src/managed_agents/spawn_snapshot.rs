@@ -149,8 +149,8 @@ impl SpawnConfigSnapshot {
         let (respond_to, respond_to_allowlist) =
             super::projected_access_with_policy(record, enforced_owner_only);
         Self {
-            acp_command: record.acp_command.clone(),
-            command: descriptor.command.clone(),
+            acp_command: comparable_command_name(&record.acp_command),
+            command: comparable_command_name(&descriptor.command),
             args: descriptor.args.clone(),
             mcp_command: known_acp_runtime(&descriptor.command)
                 .and_then(|runtime| runtime.mcp_command)
@@ -162,9 +162,11 @@ impl SpawnConfigSnapshot {
             system_prompt: system_prompt.map(str::to_string),
             model: model.map(str::to_string),
             provider: provider.map(str::to_string),
-            session_title: (!descriptor.env.contains_key(SESSION_TITLE_ENV_VAR))
-                .then(|| resolve_session_title(record.display_name.as_deref(), &record.name))
-                .flatten(),
+            session_title: (!beekeeper_core_pkg::env_compat::both_spellings(SESSION_TITLE_ENV_VAR)
+                .iter()
+                .any(|key| descriptor.env.contains_key(key)))
+            .then(|| resolve_session_title(record.display_name.as_deref(), &record.name))
+            .flatten(),
             auth_tag: record.auth_tag.clone(),
             respond_to: respond_to.as_str().to_string(),
             respond_to_allowlist: (respond_to == super::types::RespondTo::Allowlist).then(|| {
@@ -198,6 +200,15 @@ impl SpawnConfigSnapshot {
     pub(crate) fn canonical(&self) -> serde_json::Value {
         serde_json::to_value(self).expect("SpawnConfigSnapshot serializes infallibly")
     }
+}
+
+/// A command name as the restart comparison sees it: a bare pre-rename
+/// `buzz-<x>` reads as `beekeeper-<x>`, which is what `resolve_command` falls
+/// back to. Without this, the boot migration rewriting a stored
+/// `buzz-acp` to `beekeeper-acp` would light "restart required" on an agent
+/// whose launch would not change.
+pub(crate) fn comparable_command_name(command: &str) -> String {
+    super::renamed_bundled_command(command).unwrap_or_else(|| command.to_string())
 }
 
 impl std::fmt::Debug for SpawnConfigSnapshot {

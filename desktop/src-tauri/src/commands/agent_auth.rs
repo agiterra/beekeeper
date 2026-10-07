@@ -166,6 +166,7 @@ fn run_buzz_acp_auth_command_with_paths<const N: usize>(
     if let Some(path) = augmented_path {
         command.env("PATH", path);
     }
+    crate::managed_agents::apply_legacy_env_names(&mut command);
     crate::util::configure_no_window(&mut command);
 
     command
