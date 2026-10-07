@@ -9,9 +9,9 @@ import {
 import { CodingSessionSurfaceSubheader } from "./CodingSessionChangesRailSubheader";
 
 /**
- * The Diff surface's subheader sentence. Diff is the label T3 Code uses; what
- * this surface shows is narrower than a git diff, so the first line it shows
- * says so (a git-backed Diff is SV-30).
+ * The observed rail's subheader sentence. What it shows is narrower than a
+ * git diff, so the first line it shows says so — also when it sits inside
+ * the git-backed Diff (SV-30) as its "Observed" view.
  */
 export const CODING_SESSION_DIFF_PROVENANCE =
   "Edits observed in this session's transcript, not a git diff of the worktree.";
@@ -33,9 +33,15 @@ export const CODING_SESSION_DIFF_PROVENANCE =
  */
 export function CodingSessionChangesRail({
   files,
+  gitBacked = false,
   unreportedEditCount = 0,
 }: {
   files: CodingSessionChangedFile[];
+  /**
+   * The rail is the "Observed" view of a git-backed Diff, so its subheader
+   * reads "Observed edits" rather than a second "Diff".
+   */
+  gitBacked?: boolean;
   unreportedEditCount?: number;
 }) {
   const additions = sumKnown(files, "additions");
@@ -58,7 +64,7 @@ export function CodingSessionChangesRail({
               : "observed edits · not a git diff"}
           </span>
         }
-        title="Diff"
+        title={gitBacked ? "Observed edits" : "Diff"}
       />
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {files.length === 0 ? (

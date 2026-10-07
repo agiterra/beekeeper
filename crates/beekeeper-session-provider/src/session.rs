@@ -772,6 +772,38 @@ pub enum SessionEvent {
         /// items — a truncated or elided item is still a call that ran.
         tool_calls: u64,
     },
+    /// A turn's opening items are queued and its prompt is not yet sent: the
+    /// provider captures the baseline tree off its loop (NIP-CSCK) and sends
+    /// it on `reply`; a dropped `reply` means none. The actor waits at most
+    /// [`crate::turn_checkpoint::BASELINE_WAIT`], and less when the request
+    /// is not taken up or a command arrives.
+    TurnBaselineRequested {
+        /// Which session.
+        session_id: String,
+        /// The turn about to be prompted.
+        turn_id: String,
+        /// Where the capture stands; a dropped sender is "no baseline".
+        reply: watch::Sender<crate::turn_checkpoint::BaselineAnswer>,
+    },
+    /// The actor stopped waiting for the baseline and sends the prompt next;
+    /// `base_tree` is the baseline it received, or `None` for none. Sent for
+    /// every baseline request, so the provider knows when the next turn's
+    /// edits can begin (an end capture still running then is overlapped).
+    BaselineSettled {
+        /// Which session.
+        session_id: String,
+        /// The turn it is the baseline of.
+        turn_id: String,
+        /// The captured tree's object id, when one arrived in time.
+        base_tree: Option<String>,
+    },
+    /// A turn-end capture finished off the provider loop.
+    CheckpointCaptured {
+        /// Which session.
+        session_id: String,
+        /// What was captured, ready to be mapped onto a 44231.
+        capture: Box<crate::turn_checkpoint::TurnCheckpointCapture>,
+    },
     /// Projected transcript items, in the order they were produced.
     ///
     /// Sent from the actor's own task, interleaved with `TurnStarted` and
@@ -1308,6 +1340,7 @@ impl SessionManager {
             late_steers: late_rx,
             late_sink_closed: false,
             steer_commands: HashMap::new(),
+            cwd: request.cwd.clone(),
         };
         let task = tokio::spawn(actor.run(rx, shutdown_rx));
         Ok(StartedSession {
@@ -2942,6 +2975,9 @@ struct SessionActor {
     /// unknown stay until a late acknowledgement settles them; everything
     /// else is removed when its outcome is reported.
     steer_commands: HashMap<String, String>,
+    /// The working directory, so a turn outside any repository asks for no
+    /// checkpoint baseline (SV-28).
+    cwd: std::path::PathBuf,
 }
 
 /// What the actor keeps about one dispatched steer while its answer is
@@ -3567,6 +3603,13 @@ impl SessionActor {
             attachment_blocks.len(),
         );
         emit_items(&self.events, &self.session_id, &turn_id, opening).await;
+        // SV-28: the baseline tree, before the prompt; bounded, never fatal.
+        let baseline = crate::turn_checkpoint::BaselineRequest {
+            cwd: &self.cwd,
+            session_id: &self.session_id,
+            turn_id: &turn_id,
+        };
+        crate::turn_checkpoint::await_baseline(&self.events, shutdown, rx, baseline).await;
 
         // The signed echo above carries the sender's words; what the adapter
         // is handed additionally says who sent them and how to answer. A
@@ -5073,7 +5116,10 @@ done
     async fn next_lifecycle_event(rx: &mut mpsc::Receiver<SessionEvent>) -> SessionEvent {
         loop {
             match next_event(rx).await {
-                SessionEvent::TranscriptItems { .. } => continue,
+                // A dropped baseline request is "no baseline" (SV-28).
+                SessionEvent::TranscriptItems { .. }
+                | SessionEvent::TurnBaselineRequested { .. }
+                | SessionEvent::BaselineSettled { .. } => continue,
                 other => return other,
             }
         }

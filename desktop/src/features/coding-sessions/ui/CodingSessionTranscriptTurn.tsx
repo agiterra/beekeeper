@@ -3,7 +3,6 @@ import * as React from "react";
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import {
   codingSessionTranscriptEntryKey,
-  type CodingSessionChangedFile,
   type CodingSessionTranscriptEntry,
   type CodingSessionTranscriptTurn,
   type CodingSessionTurnRestingStatus,
@@ -13,6 +12,11 @@ import {
   resolveCodingSessionTurnSettlement,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
+import {
+  type CodingSessionTurnChanges,
+  deriveCodingSessionTurnChanges,
+} from "@/features/coding-sessions/lib/codingSessionCheckpointChanges";
+import { useCodingSessionTurnCheckpoint } from "./CodingSessionCheckpointsContext";
 import { CompactToolFailureToneContext } from "@/features/agents/ui/AgentSessionToolItem/CompactToolFailureToneContext";
 import { compactToolGroupIcon } from "@/features/agents/ui/AgentSessionToolItem/ToolItemRowIcon";
 import { buildCompactToolSummary } from "@/features/agents/ui/agentSessionToolSummary";
@@ -107,6 +111,10 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
 }) {
   const [foldOpen, setFoldOpen] = useCodingSessionDisclosure(`fold:${turn.id}`);
   const policy = React.useContext(CodingSessionTranscriptTurnPolicyContext);
+  const generationId = React.useContext(
+    CodingSessionTranscriptGenerationContext,
+  );
+  const checkpoint = useCodingSessionTurnCheckpoint(generationId, turn.id);
   const settlement = resolveCodingSessionTurnSettlement(
     turn,
     policy.restingStatus,
@@ -220,6 +228,15 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
   }
 
   const tail = turn.isWorking ? lead : answerBlock;
+  // SV-28: from git when the turn's checkpoint says, else observed (labelled).
+  const changes = React.useMemo(
+    () =>
+      deriveCodingSessionTurnChanges({
+        checkpoint,
+        observedFiles: turn.changedFiles,
+      }),
+    [checkpoint, turn.changedFiles],
+  );
   if (turn.isWorking && policy.showWorkingRow) {
     tail.push(
       <div
@@ -236,7 +253,7 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
       </div>,
     );
   }
-  if (turn.changedFiles.length > 0) {
+  if (changes !== null) {
     tail.push(
       <div
         className={
@@ -245,10 +262,7 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
         }
         key="changed-files"
       >
-        <CodingSessionTurnChangedFiles
-          files={turn.changedFiles}
-          turnId={turn.id}
-        />
+        <CodingSessionTurnChangedFiles changes={changes} turnId={turn.id} />
       </div>,
     );
   }
@@ -304,14 +318,14 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
 });
 
 function CodingSessionTurnChangedFiles({
-  files,
+  changes,
   turnId,
 }: {
-  files: CodingSessionChangedFile[];
+  changes: CodingSessionTurnChanges;
   turnId: string;
 }) {
   const disclosure = useCodingSessionDisclosureProps(`changed-files:${turnId}`);
-  return <CodingSessionChangedFilesCard {...disclosure} files={files} />;
+  return <CodingSessionChangedFilesCard {...disclosure} changes={changes} />;
 }
 
 /** One entry: an item, a sentence row of tool calls, or a subagent batch. */

@@ -305,6 +305,8 @@ export const CODING_SESSION_EVENT_KINDS = [
   // Read by `useCodingSessionNames` (a bounded query plus a live REQ) in the
   // same change that added it here, so the mock relay serves it too.
   KIND_CODING_SESSION_GENERATED_TITLE,
+  // Read by useCodingSessionCheckpoints (bounded query + live REQ), SV-28/30.
+  KIND_CODING_SESSION_CHECKPOINT,
 ] as const;
 
 // Human-visible "new content" message kinds. Used as the unread trigger set

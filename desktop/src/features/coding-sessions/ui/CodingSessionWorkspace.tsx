@@ -76,6 +76,7 @@ import {
 import { CodingSessionWorkspaceGoalRow } from "./CodingSessionWorkspaceGoalRow";
 import { useCodingSessionWorkspaceSessionFacts } from "./CodingSessionWorkspaceSessionFacts";
 import { CodingSessionWorkspaceSandboxFooter } from "./CodingSessionWorkspaceSandboxFooter";
+import { CodingSessionCheckpointedSurfaceCtx } from "./CodingSessionCheckpointsContext";
 import { CodingSessionDetailsContinuityProvider } from "./CodingSessionHeaderDetailsContinuity";
 import {
   useCodingSessionSettledSubagents,
@@ -101,10 +102,7 @@ import {
 } from "./CodingSessionPendingTurns";
 import { CodingSessionSurfaceHost } from "./CodingSessionSurfaceHost";
 import { CodingSessionSurfaceDrawerHost } from "./CodingSessionSurfaceDrawerHost";
-import {
-  CodingSessionMinimapSlot,
-  CodingSessionSurfaceCtxProvider,
-} from "./surfaces/codingSessionSurfaceContext";
+import { CodingSessionMinimapSlot } from "./surfaces/codingSessionSurfaceContext";
 import { isTranscriptHiddenByPanel } from "./surfaces/useCodingSessionSurfacePanels";
 import { useCodingSessionSurfaceShell } from "./surfaces/useCodingSessionSurfacePanelsShell";
 import { useCodingSessionSurfaceTeamRead } from "./surfaces/useCodingSessionSurfaceTeamRead";
@@ -789,7 +787,11 @@ function ReadyCodingSessionWorkspace({
           sessionRef={sessionRef}
         />
       ) : null}
-      <CodingSessionSurfaceCtxProvider value={shell.ctx}>
+      <CodingSessionCheckpointedSurfaceCtx
+        channelId={channelId}
+        ctx={shell.ctx}
+        umbrella={umbrella}
+      >
         <div className="flex min-h-0 flex-1" data-testid="coding-session-body">
           <section
             aria-label="Session transcript"
@@ -979,7 +981,7 @@ function ReadyCodingSessionWorkspace({
             />
           ) : null}
         </div>
-      </CodingSessionSurfaceCtxProvider>
+      </CodingSessionCheckpointedSurfaceCtx>
       {isNarrow ? <CodingSessionTaskRailSheet dock={taskDock} /> : null}
     </main>
   );

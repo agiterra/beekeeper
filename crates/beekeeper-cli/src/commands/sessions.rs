@@ -68,6 +68,8 @@ mod audit_tests;
 // them by writing to a live relay again.
 pub mod body_schema;
 pub mod catalog;
+// SV-28/SV-30: turn checkpoints (kind 44231) and their git diff.
+pub mod checkpoints;
 // A deletion is not a closure (ledger 135(f)): closing from a terminal needs
 // its own verb, and it is the desktop dialog's event, built by the same SDK
 // builder.
@@ -2706,6 +2708,45 @@ pub async fn dispatch(
                 target.as_deref(),
                 session.as_deref(),
                 &transcript_format,
+            )
+            .await
+        }
+        SessionsCmd::Checkpoints {
+            channel,
+            target,
+            session,
+            commit,
+        } => {
+            checkpoints::cmd_checkpoints(
+                client,
+                &channel,
+                target.as_deref(),
+                session.as_deref(),
+                commit.as_deref(),
+                format,
+            )
+            .await
+        }
+        SessionsCmd::Diff {
+            channel,
+            target,
+            session,
+            turn,
+            checkpoint,
+            scope,
+            checkout,
+            store,
+        } => {
+            checkpoints::cmd_diff(
+                client,
+                &channel,
+                target.as_deref(),
+                session.as_deref(),
+                turn.as_deref(),
+                checkpoint.as_deref(),
+                scope,
+                checkout.as_deref(),
+                store.as_deref(),
             )
             .await
         }

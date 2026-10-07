@@ -100,6 +100,7 @@ pub mod state;
 mod team_wake;
 mod team_wake_fetch;
 pub mod transcript;
+pub mod turn_checkpoint;
 mod turn_checkpoint_git;
 pub mod verification_input;
 pub mod wake_relevance;
@@ -732,6 +733,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 provider.publish_due_gate_starts();
                 provider.sync_project_deletion_listener();
                 while provider.git_probe_tasks.try_join_next().is_some() {}
+                provider.turn_checkpoints.reap();
                 // A tick body that outlived RUNTIME_TICK leaves the interval
                 // already due, and this arm sits above the publish arm in the
                 // biased select — so a run of slow ticks would starve
@@ -768,6 +770,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     if let Some(listener) = provider.project_deletion_listener.take() {
         listener.shutdown();
     }
+    provider.drain_turn_checkpoints().await;
     if let Err(error) = provider.queue_live_releases() {
         tracing::warn!(target: "csp::lease", "clean-shutdown release construction failed: {error}");
     }
@@ -932,6 +935,9 @@ pub struct Provider {
     /// they finish and can be awaited — their host Git preparation runs on
     /// the blocking pool and outlives nothing that owns it.
     git_probe_tasks: tokio::task::JoinSet<()>,
+    /// Turn-checkpoint captures in flight (SV-28), off the loop like the
+    /// probes above.
+    turn_checkpoints: turn_checkpoint::TurnCheckpoints,
     /// Last relay-confirmed reachability fact per session id, keyed and
     /// applied under the exact same generation fence as `git_probes` — see
     /// [`session::SessionEvent::WorktreeObserved`]. Absent, like a `None`
@@ -1308,6 +1314,7 @@ impl Provider {
             git_probes: HashMap::new(),
             git_probe_generation: HashMap::new(),
             git_probe_tasks: tokio::task::JoinSet::new(),
+            turn_checkpoints: turn_checkpoint::TurnCheckpoints::default(),
             git_reachability: HashMap::new(),
             recorded_redactions: HashMap::new(),
             rest_client: None,
@@ -10159,6 +10166,27 @@ impl Provider {
             } => {
                 self.admit_wake_turn(&session_id, &command_id, &text, decision);
             }
+            SessionEvent::TurnBaselineRequested {
+                session_id,
+                turn_id,
+                reply,
+            } => self.start_turn_baseline(&session_id, &turn_id, reply),
+            SessionEvent::BaselineSettled {
+                session_id,
+                turn_id,
+                base_tree,
+            } => {
+                // SV-28: the prompt goes out next. An end capture of this
+                // session still running may now measure this turn's edits.
+                self.turn_checkpoints.next_turn_started(&session_id);
+                if let Some(base_tree) = base_tree {
+                    self.note_turn_baseline(&session_id, &turn_id, base_tree);
+                }
+            }
+            SessionEvent::CheckpointCaptured {
+                session_id,
+                capture,
+            } => self.publish_turn_checkpoint(&session_id, *capture)?,
             SessionEvent::CiTurnAdmissionRequested {
                 session_id,
                 command_id,
@@ -10282,7 +10310,10 @@ impl Provider {
                 // SV-77: the agent is working with nobody's command behind
                 // it. Its own open turn, so the status reads working and the
                 // turn's end publishes the same terminal a prompted one does;
-                // no command is consumed, charged or receipted.
+                // no command is consumed, charged or receipted. The agent is
+                // already editing, so an end capture still running for this
+                // session may include this turn's edits (SV-28).
+                self.turn_checkpoints.next_turn_started(&session_id);
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     return Ok(());
                 };
@@ -10398,6 +10429,16 @@ impl Provider {
                     item,
                     Priority::High,
                 )?;
+                if let Some((through_seq, _)) = terminal.as_ref() {
+                    // SV-28: spawned, so the terminal and status above wait on no Git.
+                    self.start_turn_checkpoint(
+                        &session_id,
+                        channel_id,
+                        &target,
+                        &turn_id,
+                        *through_seq,
+                    );
+                }
                 if let (
                     Some((_, terminal_event_id)),
                     Some((scope, actor, role, caused_by_command_id, source_target, prompt_at_ms)),
@@ -10473,13 +10514,15 @@ impl Provider {
                     for close in gate_start_closes {
                         self.publish_gate_start(&session_id, channel_id, close);
                     }
-                    self.enqueue_transcript(
+                    let coverage = turn_checkpoint::CoverageItem::of(&item);
+                    let seq = self.enqueue_transcript(
                         channel_id,
                         &target,
                         Some(&turn_id),
                         item,
                         Priority::Normal,
                     )?;
+                    self.note_checkpoint_coverage(&session_id, &turn_id, coverage, seq);
                 }
             }
             SessionEvent::GateObserved {
@@ -12753,6 +12796,9 @@ mod tests {
     mod team_wake_relevance_tests;
     #[path = "tick_off_loop_tests.rs"]
     mod tick_off_loop_tests;
+    // SV-28 turn checkpoints through the real provider.
+    #[path = "turn_checkpoint_tests.rs"]
+    mod turn_checkpoint_tests;
     #[path = "verification_input_tests.rs"]
     mod verification_input_tests;
     // Stops are shown by process groups disappearing: Unix only.
@@ -18570,7 +18616,8 @@ mod tests {
     async fn no_published_event_ever_carries_the_host_working_directory() {
         let dir = tempfile::tempdir().expect("tempdir");
         let cwd = dir.path().join("secret-checkout-path");
-        std::fs::create_dir_all(&cwd).expect("mkdir");
+        // A repository, so a turn's checkpoint (44231) carries git facts.
+        turn_checkpoint_tests::init_repo(&cwd);
         let channel_id = Uuid::new_v4();
         let projects = write_projects(dir.path(), channel_id, &cwd);
         let mut provider = provider(&dir.path().join("state"), Some(&projects));
@@ -18594,9 +18641,22 @@ mod tests {
                 Priority::Normal,
             )
             .expect("transcript");
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("turn");
+        pump_until_turn_finished(&mut provider).await;
+        provider.turn_checkpoints.settle().await;
+        pump_until(&mut provider, |event| {
+            matches!(event, SessionEvent::CheckpointCaptured { .. })
+        })
+        .await;
 
         let sink = CollectingSink::new();
         provider.flush(&sink).await.expect("flush");
+        let checkpoints = sink.contents_of(beekeeper_core::kind::KIND_CODING_SESSION_CHECKPOINT);
+        assert_eq!(checkpoints.len(), 1, "the guard covers a 44231");
+        assert!(checkpoints[0]["git"]["tree"].is_string());
         let needle = cwd.to_string_lossy().to_string();
         assert!(!needle.is_empty());
         for event in sink.all() {

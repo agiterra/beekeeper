@@ -91,10 +91,6 @@
 //! that executes no project code, exactly like the host's write to
 //! `info/exclude` in `git_exclude.rs`. The boundary's grants are unchanged.
 
-// Stage 1 builds this plumbing alone; Stage 2's `turn_checkpoint.rs` is its
-// first caller. Until it lands, only the tests below reach these items.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -113,20 +109,14 @@ mod pin;
 #[path = "turn_checkpoint_git_run.rs"]
 mod run;
 
-// Stage 2 is the first caller outside this module (see the note above).
-#[cfg_attr(not(test), allow(unused_imports))]
-pub(crate) use diff::{diff_tree_files, ChangedFile, FileChange};
-// Stage 2 names it when it adds `not_listed` to the wire's `filesNotListed`;
-// the tests read its fields without naming it.
 use blocking::{off_runtime, Deadline};
-#[allow(unused_imports)]
 pub(crate) use diff::DiffResult;
+pub(crate) use diff::{diff_tree_files, ChangedFile, FileChange};
 #[cfg(test)]
 use diff::{merge_diff, parse_name_status, parse_numstat};
 #[cfg(test)]
 use omit::{exclusion_pathspecs, normalize_omitted, Exclusion};
 use omit::{recovery_exclusions, scan_untracked, stage, ReportedOmissions};
-#[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use pin::PinnedCheckpoint;
 use run::{Git, StepError};
 
@@ -234,6 +224,8 @@ pub(crate) enum RefLeaf<'a> {
     /// command, so a second rewind attempt of the same generation — after the
     /// first restored some files and failed — cannot overwrite the capture
     /// that holds the state before either touched anything.
+    // SV-29's `session.rewind` is the first production caller.
+    #[cfg_attr(not(test), allow(dead_code))]
     PreRewind {
         /// The last transcript seq the rewound generation wrote.
         through_seq: u64,

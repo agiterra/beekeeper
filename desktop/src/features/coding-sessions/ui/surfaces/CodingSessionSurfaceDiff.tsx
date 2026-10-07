@@ -1,6 +1,10 @@
 import { FileDiff } from "lucide-react";
 
 import { CodingSessionChangesRail } from "../CodingSessionChangesRail";
+import {
+  CodingSessionDiffSurface,
+  useCodingSessionDiffGeneration,
+} from "../CodingSessionDiffSurface";
 import type {
   CodingSessionSurfaceAvailability,
   CodingSessionSurfaceCtx,
@@ -19,9 +23,10 @@ export function codingSessionSurfaceDiffAvailability(
 }
 
 /**
- * The Diff surface: the observed-changes rail, labelled Diff as in T3 Code.
- * It keeps its disclosure that it shows **observed** edits plus the
- * unreported remainder; a git-backed Diff is SV-30.
+ * The Diff surface (SV-30): git-backed from the session's signed turn
+ * checkpoints when it has any, with the observed-edits rail one click away;
+ * the observed rail alone, still saying it is not a git diff, when it has
+ * none.
  */
 export function CodingSessionSurfaceDiffPanel({
   ctx,
@@ -39,16 +44,38 @@ export function CodingSessionSurfaceDiffPanel({
       />
     );
   }
+  return <CodingSessionSurfaceDiffContent ctx={ctx} />;
+}
+
+function CodingSessionSurfaceDiffContent({
+  ctx,
+}: {
+  ctx: CodingSessionSurfaceCtx;
+}) {
+  const generation = useCodingSessionDiffGeneration(ctx);
+  const observed = (
+    <CodingSessionChangesRail
+      files={[...ctx.observedChanges.files]}
+      gitBacked={generation !== null}
+      unreportedEditCount={ctx.observedChanges.unreportedEditCount}
+    />
+  );
   return (
     <div
       className="flex min-h-0 flex-1 flex-col"
       data-available="true"
+      data-source={generation ? "git" : "observed"}
       data-testid="coding-session-surface-panel-diff"
     >
-      <CodingSessionChangesRail
-        files={[...ctx.observedChanges.files]}
-        unreportedEditCount={ctx.observedChanges.unreportedEditCount}
-      />
+      {generation ? (
+        <CodingSessionDiffSurface
+          ctx={ctx}
+          generation={generation}
+          observed={observed}
+        />
+      ) : (
+        observed
+      )}
     </div>
   );
 }

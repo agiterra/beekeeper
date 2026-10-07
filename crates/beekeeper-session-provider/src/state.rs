@@ -539,6 +539,44 @@ pub struct OpenTurn {
     pub operator_pubkey: Option<String>,
 }
 
+/// One generation's turn-checkpoint chain on this host: which end capture
+/// was started last, and what each recent one recorded, so the next
+/// checkpoint can say whether files changed between turns (`outsideTurn`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointChain {
+    /// The generation this chain belongs to; a new generation starts a new one.
+    pub generation: u64,
+    /// `throughSeq` of the end capture started most recently.
+    #[serde(default)]
+    pub last_started: Option<u64>,
+    /// Recent checkpoints by `throughSeq`: the tree published, or `None` when
+    /// the checkpoint was published as unavailable. Bounded.
+    #[serde(default)]
+    pub recorded: BTreeMap<u64, Option<String>>,
+    /// The open turn's coverage start and baseline, once known.
+    #[serde(default)]
+    pub open: Option<CheckpointTurn>,
+}
+
+/// What a turn's checkpoint knows before the turn ends.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointTurn {
+    /// The turn.
+    pub turn_id: String,
+    /// The `eventSeq` its coverage starts at: its non-steered `user_prompt`,
+    /// or an autonomous turn's first item.
+    pub first_seq: u64,
+    /// The baseline tree written before the prompt was sent, when it was
+    /// captured in time.
+    #[serde(default)]
+    pub base_tree: Option<String>,
+}
+
+/// How many recorded checkpoints a [`CheckpointChain`] keeps.
+const CHECKPOINT_CHAIN_KEEP: usize = 8;
+
 /// Persisted catalog advertisement state.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -585,6 +623,9 @@ struct Snapshot {
     /// session record instead.
     #[serde(default)]
     umbrella_founders: BTreeMap<String, String>,
+    /// Turn-checkpoint chains by session id (NIP-CSCK `outsideTurn`).
+    #[serde(default)]
+    checkpoint_chains: BTreeMap<String, CheckpointChain>,
 }
 
 impl Default for Snapshot {
@@ -597,6 +638,7 @@ impl Default for Snapshot {
             catalog: CatalogState::default(),
             turn_budget_used: BTreeMap::new(),
             umbrella_founders: BTreeMap::new(),
+            checkpoint_chains: BTreeMap::new(),
         }
     }
 }
@@ -1233,6 +1275,64 @@ impl StateStore {
         let used = *entry;
         self.persist_or_restore(previous)?;
         Ok(used)
+    }
+
+    /// This session's checkpoint chain, when it belongs to `generation`.
+    pub fn checkpoint_chain(&self, session_id: &str, generation: u64) -> Option<&CheckpointChain> {
+        self.snapshot
+            .checkpoint_chains
+            .get(session_id)
+            .filter(|chain| chain.generation == generation)
+    }
+
+    /// Mutate this session's checkpoint chain for `generation` (a chain of
+    /// another generation is replaced by an empty one) and persist it.
+    pub fn update_checkpoint_chain<R>(
+        &mut self,
+        session_id: &str,
+        generation: u64,
+        mutate: impl FnOnce(&mut CheckpointChain) -> R,
+    ) -> io::Result<R> {
+        let previous = self.snapshot.clone();
+        let chain = self
+            .snapshot
+            .checkpoint_chains
+            .entry(session_id.to_owned())
+            .or_default();
+        if chain.generation != generation {
+            *chain = CheckpointChain {
+                generation,
+                ..CheckpointChain::default()
+            };
+        }
+        let result = mutate(chain);
+        self.persist_or_restore(previous)?;
+        Ok(result)
+    }
+
+    /// Record what the checkpoint through `through_seq` published: its tree,
+    /// or `None` when it was unavailable.
+    pub fn record_checkpoint(
+        &mut self,
+        session_id: &str,
+        generation: u64,
+        through_seq: u64,
+        tree: Option<String>,
+    ) -> io::Result<()> {
+        let previous = self.snapshot.clone();
+        let Some(chain) = self
+            .snapshot
+            .checkpoint_chains
+            .get_mut(session_id)
+            .filter(|chain| chain.generation == generation)
+        else {
+            return Ok(());
+        };
+        chain.recorded.insert(through_seq, tree);
+        while chain.recorded.len() > CHECKPOINT_CHAIN_KEEP {
+            chain.recorded.pop_first();
+        }
+        self.persist_or_restore(previous)
     }
 
     /// Number of sessions still accepting turns.

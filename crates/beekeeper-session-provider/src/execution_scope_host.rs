@@ -25,6 +25,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use beekeeper_acp::acp::BoundedLaunch;
 use beekeeper_acp::exec_env::EnvSource;
@@ -244,7 +245,17 @@ pub fn prepare_host_command(
             message: "the command's working directory is outside its tree".to_owned(),
         });
     }
-    match prepare(&inputs) {
+    // One preparation per scope directory at a time: two at once collide in
+    // its self-test (`.boundary-probe: File exists`), which would refuse a
+    // tree that can be bounded.
+    let scope_lock = scope_dir_lock(scope.state_dir, &owner);
+    let _serialized = scope_lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let prepared = prepare(&inputs);
+    drop(_serialized);
+    release_scope_dir_lock(scope.state_dir, &owner, scope_lock);
+    match prepared {
         Ok(ExecutionPlan::Prepared(prepared)) => Ok(HostLaunchPlan::Bounded(prepared.launch)),
         Ok(ExecutionPlan::Legacy { reason }) => Ok(HostLaunchPlan::Unenforced { reason }),
         Err(failure) => Err(PrepareRefusal {
@@ -256,6 +267,43 @@ pub fn prepare_host_command(
             .to_owned(),
             message: failure.message,
         }),
+    }
+}
+
+type ScopeDirKey = (PathBuf, String);
+type ScopeDirLocks = BTreeMap<ScopeDirKey, Arc<Mutex<()>>>;
+
+/// Per-process locks serializing [`prepare`] for one scope directory, keyed
+/// by the state dir and the scope's owner (which together name the
+/// directory). An entry lives only while some preparation holds it.
+fn scope_dir_locks() -> &'static Mutex<ScopeDirLocks> {
+    static LOCKS: OnceLock<Mutex<ScopeDirLocks>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn scope_dir_lock(state_dir: &Path, owner: &str) -> Arc<Mutex<()>> {
+    let mut locks = scope_dir_locks()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Arc::clone(
+        locks
+            .entry((state_dir.to_path_buf(), owner.to_owned()))
+            .or_default(),
+    )
+}
+
+/// Drop this caller's handle, and the map's entry when no one else holds it.
+fn release_scope_dir_lock(state_dir: &Path, owner: &str, lock: Arc<Mutex<()>>) {
+    let mut locks = scope_dir_locks()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    drop(lock);
+    let key = (state_dir.to_path_buf(), owner.to_owned());
+    if locks
+        .get(&key)
+        .is_some_and(|held| Arc::strong_count(held) == 1)
+    {
+        locks.remove(&key);
     }
 }
 

@@ -821,3 +821,38 @@ mod launched {
         );
     }
 }
+
+/// Concurrent host-Git preparations for one tree share one scope directory;
+/// before they were serialized, the second collided in the boundary's
+/// self-test (`.boundary-probe: File exists`) and was refused (C2, lane P).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_host_git_prepares_for_one_tree_all_succeed() {
+    let fx = fixture();
+    let request = HostGitRequest {
+        state_dir: fx.state_dir.clone(),
+        project_ref: Some(PROJECT.to_owned()),
+        checkout: Some(fx.checkout.clone()),
+        tree: fx.checkout.clone(),
+        association: WorkspaceAssociation::Unbound,
+    };
+    for round in 0..3 {
+        let plans =
+            futures_util::future::join_all((0..4).map(|_| tokio::spawn(request.clone().prepare())))
+                .await;
+        for (index, plan) in plans.into_iter().enumerate() {
+            assert!(
+                matches!(plan.expect("joined"), Some(HostLaunchPlan::Bounded(_))),
+                "round {round}, prepare {index} was refused"
+            );
+        }
+    }
+    let locks = scope_dir_locks()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert!(
+        !locks
+            .keys()
+            .any(|(state_dir, _)| state_dir == &fx.state_dir),
+        "a finished preparation leaves no lock entry behind"
+    );
+}

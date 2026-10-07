@@ -27,10 +27,11 @@ import {
   RevealedRedactionsMarker,
   RowRedactedText,
 } from "@/features/agents/ui/AgentSessionToolItem/RowRedactedText";
+import type { CodingSessionTurnSettlement } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import type {
-  CodingSessionChangedFile,
-  CodingSessionTurnSettlement,
-} from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+  CodingSessionTurnChangeFile,
+  CodingSessionTurnChanges,
+} from "@/features/coding-sessions/lib/codingSessionCheckpointChanges";
 import type {
   CodingSessionTask,
   CodingSessionTaskModel,
@@ -302,45 +303,97 @@ function CodingSessionInlinePlanStep({ task }: { task: CodingSessionTask }) {
   );
 }
 
+/**
+ * A turn's changed files, saying where the list came from (SV-28): from git
+ * (the turn's signed checkpoint), observed in the transcript (and so possibly
+ * incomplete), or why there is no checkpoint. Its disclosures — files changed
+ * outside a turn, files not captured, a missing baseline — are on the summary
+ * line, so they are read without opening anything.
+ */
 export function CodingSessionChangedFilesCard({
+  changes,
   disclosureId,
-  files,
   onOpenChange,
   open,
 }: {
+  changes: CodingSessionTurnChanges;
   disclosureId: string;
-  files: CodingSessionChangedFile[];
   onOpenChange: (id: string, open: boolean) => void;
   open: boolean;
 }) {
-  if (files.length === 0) return null;
-
-  const completeStats = files.every(
-    (file) => file.additions !== null && file.deletions !== null,
-  );
-  const additions = completeStats
+  const { files } = changes;
+  const additions = changes.showTotals
     ? files.reduce((total, file) => total + (file.additions ?? 0), 0)
     : null;
-  const deletions = completeStats
+  const deletions = changes.showTotals
     ? files.reduce((total, file) => total + (file.deletions ?? 0), 0)
     : null;
+  const summary = (
+    <>
+      <span
+        className="font-medium"
+        data-testid="coding-session-changed-files-headline"
+      >
+        {changes.headline}
+      </span>
+      {changes.sourceLabel ? (
+        <span
+          className="text-muted-foreground"
+          data-testid="coding-session-changed-files-source"
+        >
+          · {changes.sourceLabel}
+        </span>
+      ) : null}
+      {additions !== null && deletions !== null ? (
+        <CodingSessionDiffStats additions={additions} deletions={deletions} />
+      ) : null}
+    </>
+  );
+  const notes =
+    changes.notes.length > 0 || changes.unavailable ? (
+      <div
+        className="flex flex-col gap-0.5 px-2 pb-1 text-2xs text-muted-foreground"
+        data-testid="coding-session-changed-files-notes"
+      >
+        {changes.unavailable ? (
+          <span title={changes.unavailable.sentence}>
+            {changes.unavailable.sentence}
+          </span>
+        ) : null}
+        {changes.notes.map((note) => (
+          <span key={note}>{note}</span>
+        ))}
+      </div>
+    ) : null;
+  const card = {
+    className: "group/changed-files mt-1 rounded-2xl bg-muted/20 p-2",
+    "data-source": changes.source,
+    "data-testid": "coding-session-changed-files",
+  } as const;
+
+  if (files.length === 0) {
+    return (
+      <div {...card}>
+        <div className="flex min-h-8 items-center gap-2 rounded-xl px-2 text-xs">
+          <FileDiff className="size-3.5 shrink-0 text-muted-foreground" />
+          {summary}
+        </div>
+        {notes}
+      </div>
+    );
+  }
 
   return (
     <details
-      className="group/changed-files mt-1 rounded-2xl bg-muted/20 p-2"
-      data-testid="coding-session-changed-files"
+      {...card}
       onToggle={(event) => onOpenChange(disclosureId, event.currentTarget.open)}
       open={open}
     >
       <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-xl px-2 text-xs transition-colors hover:bg-muted/40">
         <ChevronDown className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/changed-files:rotate-180" />
-        <span className="font-medium">
-          {files.length} changed {files.length === 1 ? "file" : "files"}
-        </span>
-        {additions !== null && deletions !== null ? (
-          <CodingSessionDiffStats additions={additions} deletions={deletions} />
-        ) : null}
+        {summary}
       </summary>
+      {notes}
       {open ? (
         <div className="mt-1 flex flex-col gap-1">
           {files.map((file) => (
@@ -356,23 +409,37 @@ export function CodingSessionChangedFilesCard({
   );
 }
 
+const CHECKPOINT_STATUS_LETTER: Record<
+  NonNullable<CodingSessionTurnChangeFile["status"]>,
+  string
+> = { added: "A", modified: "M", deleted: "D", renamed: "R" };
+
 function CodingSessionChangedFileRow({
   disclosureId,
   file,
 }: {
   disclosureId: string;
-  file: CodingSessionChangedFile;
+  file: CodingSessionTurnChangeFile;
 }) {
   const [open, setOpen] = useCodingSessionDisclosure(disclosureId);
   const inlineDiffs = file.diffs.filter(hasFileEditLineDiff);
   const label = (
     <>
       <FileDiff className="size-3.5 shrink-0 text-muted-foreground" />
+      {file.status ? (
+        <span
+          className="shrink-0 font-mono text-2xs text-muted-foreground"
+          data-status={file.status}
+          title={file.status}
+        >
+          {CHECKPOINT_STATUS_LETTER[file.status]}
+        </span>
+      ) : null}
       <span
         className="min-w-0 flex-1 truncate font-mono text-xs"
-        title={file.path}
+        title={file.from ? `${file.from} → ${file.path}` : file.path}
       >
-        {file.path}
+        {file.from ? `${file.from} → ${file.path}` : file.path}
       </span>
       {file.additions !== null && file.deletions !== null ? (
         <CodingSessionDiffStats

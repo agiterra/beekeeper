@@ -2870,6 +2870,71 @@ pub enum SessionsCmd {
         #[arg(long, value_enum, default_value = "md")]
         format: TranscriptFormat,
     },
+    /// List one generation's turn checkpoints (kind 44231): the files each
+    /// turn changed, measured from git, and the trees it ran between.
+    ///
+    /// One row per turn (highest `throughSeq` wins), plus any `pre_rewind`
+    /// checkpoints. A checkpoint that does not decode, does not verify, or is
+    /// not signed by the key that signs the same generation's transcript is
+    /// listed under `refused` with the reason (on stderr in compact format),
+    /// never dropped silently. `--commit` finds the session that produced a
+    /// commit through `git.head`, across every target when none is given.
+    #[command(
+        after_help = "Examples:\n  bee sessions checkpoints --channel <uuid> --session <session-id>\n  bee sessions checkpoints --channel <uuid> --commit <sha>\n  bee --format compact sessions checkpoints --channel <uuid> --target '<cs-target>'\n\nRecipe:\n  bee sessions checkpoints --channel <uuid> --session <session-id>"
+    )]
+    Checkpoints {
+        /// Channel UUID the session was published into
+        #[arg(long)]
+        channel: String,
+        /// Exact `cs-target` key (from `sessions list`)
+        #[arg(long, conflicts_with = "session")]
+        target: Option<String>,
+        /// Provider-minted session id; resolved through `sessions list`
+        #[arg(long)]
+        session: Option<String>,
+        /// Keep checkpoints whose `git.head` starts with this commit (7 to 64
+        /// hex digits)
+        #[arg(long)]
+        commit: Option<String>,
+    },
+    /// Print the git diff of one turn checkpoint, or of a whole generation.
+    ///
+    /// Reads the two tree ids from the checkout this computer records for the
+    /// session (or `--checkout`), read-only: hooks off, no external diff, no
+    /// textconv. When there is no checkout, or it does not hold the trees,
+    /// the answer is the checkpoint's own file list plus a `diffUnavailable`
+    /// reason — never an empty diff.
+    #[command(
+        after_help = "Examples:\n  bee sessions diff --channel <uuid> --session <session-id>\n  bee sessions diff --channel <uuid> --session <session-id> --turn <turn-id>\n  bee sessions diff --channel <uuid> --target '<cs-target>' --scope session\n  bee sessions diff --channel <uuid> --session <session-id> --checkout ~/src/repo\n\nRecipe:\n  bee sessions checkpoints --channel <uuid> --session <session-id>\n  bee sessions diff --channel <uuid> --session <session-id> --checkpoint <event-id>"
+    )]
+    Diff {
+        /// Channel UUID the session was published into
+        #[arg(long)]
+        channel: String,
+        /// Exact `cs-target` key (from `sessions list`)
+        #[arg(long, conflicts_with = "session", required_unless_present = "session")]
+        target: Option<String>,
+        /// Provider-minted session id; resolved through `sessions list`
+        #[arg(long)]
+        session: Option<String>,
+        /// The turn to diff (default: the latest checkpointed turn)
+        #[arg(long, conflicts_with = "checkpoint")]
+        turn: Option<String>,
+        /// The checkpoint event id to diff
+        #[arg(long)]
+        checkpoint: Option<String>,
+        /// turn (default): one turn's baseline to its tree; session: the first
+        /// captured baseline to the latest tree
+        #[arg(long, value_enum, default_value = "turn")]
+        scope: commands::sessions::checkpoints::DiffScope,
+        /// Read the trees from this directory instead of the host's record
+        #[arg(long)]
+        checkout: Option<std::path::PathBuf>,
+        /// Path to the host's `coding-session-workdirs.json` (default: the
+        /// desktop app's)
+        #[arg(long)]
+        store: Option<std::path::PathBuf>,
+    },
     /// Close, archive or reopen a coding session (kind 44230).
     ///
     /// Publishes exactly the closure revision the desktop's closure dialog
@@ -6881,11 +6946,13 @@ mod tests {
                 "audit",
                 "block",
                 "catalog",
+                "checkpoints",
                 "close",
                 "complete",
                 "create",
                 "decide",
                 "delete",
+                "diff",
                 "doctor",
                 "explain",
                 "export",
@@ -7117,7 +7184,7 @@ mod tests {
             // appended here and two of them independently wrote 35 (item 108's
             // exact-count trap); the finalizer set it once, after every lane,
             // and both tests re-run green.
-            ("sessions", 42),
+            ("sessions", 44),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

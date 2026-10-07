@@ -71,11 +71,9 @@ import { useCodingSessionStopAll } from "./useCodingSessionStopAll";
 import type { CodingSessionActiveWorkAgent } from "./CodingSessionActiveWorkDock";
 import { CodingSessionSurfaceHost } from "./CodingSessionSurfaceHost";
 import { CodingSessionSurfaceDrawerHost } from "./CodingSessionSurfaceDrawerHost";
+import { CodingSessionCheckpointedSurfaceCtx } from "./CodingSessionCheckpointsContext";
 import { CodingSessionOpenAgentsSurfaceContext } from "./CodingSessionTranscriptAgentsSurface";
-import {
-  CodingSessionMinimapSlot,
-  CodingSessionSurfaceCtxProvider,
-} from "./surfaces/codingSessionSurfaceContext";
+import { CodingSessionMinimapSlot } from "./surfaces/codingSessionSurfaceContext";
 import { isTranscriptHiddenByPanel } from "./surfaces/useCodingSessionSurfacePanels";
 import { useCodingSessionSurfaceShell } from "./surfaces/useCodingSessionSurfacePanelsShell";
 import {
@@ -732,7 +730,11 @@ export function UmbrellaCodingSessionWorkspace({
           <CodingSessionComposerRecipientContext.Provider
             value={composerParticipant?.label ?? null}
           >
-            <CodingSessionSurfaceCtxProvider value={shell.ctx}>
+            <CodingSessionCheckpointedSurfaceCtx
+              channelId={channelId}
+              ctx={shell.ctx}
+              umbrella={umbrella}
+            >
               <div className="flex min-h-0 flex-1" ref={workspaceBodyRef}>
                 {/* §9.2: Mission only — the map when 224 px fit beside the
                   column, else the 40 px scrubber. */}
@@ -951,7 +953,7 @@ export function UmbrellaCodingSessionWorkspace({
                   />
                 ) : null}
               </div>
-            </CodingSessionSurfaceCtxProvider>
+            </CodingSessionCheckpointedSurfaceCtx>
           </CodingSessionComposerRecipientContext.Provider>
         </CodingSessionOpenHoldsContext.Provider>
       </CodingSessionMissionLensContext.Provider>

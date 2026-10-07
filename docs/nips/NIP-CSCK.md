@@ -146,7 +146,12 @@ At most 32 KiB of strict JSON:
   `git.omittedNotListed` (a non-negative safe integer, never `null`) rather
   than dropped silently, so `omitted.length + omittedNotListed` is the true
   number of paths left out. When `omitted` names any path or
-  `omittedNotListed` is above 0, `git.complete` MUST be `false`.
+  `omittedNotListed` is above 0, `git.complete` MUST be `false`. A producer
+  also writes `false` with nothing omitted when it cannot vouch that `tree` is
+  this turn's end alone — for example the session's next turn was prompted
+  before this capture finished, so `tree` and `files` may include that turn's
+  edits. A reader MUST NOT present a `complete: false` checkpoint as a complete
+  measurement, whether or not it names an omission.
 - `files` lists at most 256 changes from `baseTree` to `tree`, each path at
   most once, with `status` `added`, `modified`, `deleted` or `renamed`. `from`
   is non-null exactly when `status` is `renamed`, and differs from `path`.
@@ -154,6 +159,11 @@ At most 32 KiB of strict JSON:
   cannot count lines (a binary file) — never a guessed zero. Changes beyond
   256, and changes whose path this NIP refuses, are counted in
   `filesNotListed` rather than dropped silently.
+- When `git.baseTree` is `null` there is nothing to compare `tree` against, so
+  `files` MUST be `[]` and `filesNotListed` 0. That empty list means "not
+  known", never "nothing changed": a reader MUST say the baseline was not
+  captured (for example "Baseline not captured") and MUST NOT render it as
+  "0 files changed".
 - `restorable` is `false` until a provider implements `session.rewind`
   (SV-29). It is per-checkpoint truth: a reader offers a rewind only from a
   checkpoint whose provider said it can perform one.
@@ -223,11 +233,15 @@ worktree. Retention in v1 is partial, and this is the whole of it:
   worktree;
 - refs of a seat worktree whose record names no session stay after the
   worktree is pruned, because the pruner will not guess whose they were;
-- deleting a project does not yet delete any ref: it stops the project's
-  executions only, until the provider's checkpoint writer also retires what it
-  wrote;
+- deleting a project retires the refs of every session the deleting host
+  recorded under that project, open or closed, from each repository those
+  sessions ran in (SV-55, `crates/beekeeper-session-provider/src/project_deletion.rs`);
+  it cannot reach a session whose working directory is already gone, a
+  session another machine ran, or a deletion observed while the project had
+  no open execution;
 - refs of a session that ran in the project's own checkout, rather than in a
-  seat worktree, are never retired in v1.
+  seat worktree, are retired only by that project's deletion; nothing else
+  retires them in v1.
 
 A separate namespace (`refs/beekeeper/…`) is what lets
 them coexist with other tools' checkpoint refs (`refs/t3/…`, `refs/entire/…`)
@@ -277,6 +291,7 @@ reason rather than hiding it.
   from git. With `unavailable` set, say why: "No checkpoint · not a git
   repository". With `outsideTurn: true`, say that files also changed outside a
   turn. With `complete: false`, say how many files were not captured:
-  `omitted.length + omittedNotListed`, never `omitted.length` alone.
+  `omitted.length + omittedNotListed`, never `omitted.length` alone — and
+  when that is 0, say the capture is incomplete anyway.
 - Never render an empty diff for a checkpoint whose objects this machine does
   not hold; say which machine holds them.

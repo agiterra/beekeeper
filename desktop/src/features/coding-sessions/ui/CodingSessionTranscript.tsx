@@ -50,6 +50,7 @@ import { useCodingSessionTranscriptMinimapNavigation } from "./CodingSessionTran
 import { shouldClampCodingSessionUserMessage } from "./CodingSessionTranscriptUserMessage";
 import { CodingSessionLastTranscriptEventContext } from "./CodingSessionTranscriptWorking";
 import { useCodingSessionSurfaceCtx } from "./surfaces/codingSessionSurfaceContext";
+import { useCodingSessionGenerationCheckpoints } from "./CodingSessionCheckpointsContext";
 import {
   CodingSessionEntry,
   CodingSessionTranscriptTurnPolicyContext,
@@ -252,6 +253,7 @@ export function CodingSessionTranscript({
     () => buildCodingSessionTranscriptRows(model),
     [model],
   );
+  const checkpoints = useCodingSessionGenerationCheckpoints(generationId);
   const averageEstimatedRowSize = React.useMemo(
     () =>
       rows.length === 0
@@ -259,11 +261,15 @@ export function CodingSessionTranscript({
         : Math.round(
             rows.reduce(
               (total, row) =>
-                total + estimateCodingSessionTranscriptRowSize(row),
+                total +
+                estimateCodingSessionTranscriptRowSize(
+                  row,
+                  checkpoints?.byTurnId,
+                ),
               0,
             ) / rows.length,
           ),
-    [rows],
+    [checkpoints, rows],
   );
 
   const shouldVirtualize =
@@ -457,6 +463,8 @@ export function getCodingSessionTranscriptRowKey(
 
 export function estimateCodingSessionTranscriptRowSize(
   row: CodingSessionTranscriptRow,
+  /** Turns with a checkpoint show a changes card even with no observed edit. */
+  checkpointedTurns?: ReadonlyMap<string, unknown>,
 ): number {
   if (row.kind === "diagnostics") return 48;
   if (row.block.kind === "standalone") return 96;
@@ -491,7 +499,7 @@ export function estimateCodingSessionTranscriptRowSize(
   if (turn.isWorking) {
     height += codingSessionTurnTailGap(previous, "working").px + 28;
   }
-  if (turn.changedFiles.length > 0) {
+  if (turn.changedFiles.length > 0 || checkpointedTurns?.has(turn.id)) {
     height += codingSessionTurnTailGap(previous, "changed-files").px + 48;
   }
   if (!turn.isWorking && (turn.completion || turn.diagnostics.length > 0)) {

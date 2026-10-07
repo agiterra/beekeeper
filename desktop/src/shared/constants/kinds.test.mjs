@@ -136,7 +136,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       generatedTitle: 44252,
     },
   );
-  assert.equal(CODING_SESSION_EVENT_KINDS.length, 15);
+  assert.equal(CODING_SESSION_EVENT_KINDS.length, 16);
   assert.equal(
     KIND_CODING_SESSION_LEASE >= 20000 && KIND_CODING_SESSION_LEASE <= 29999,
     true,

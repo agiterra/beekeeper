@@ -287,6 +287,8 @@ export default defineConfig({
         // SV-36 S5 and SV-32 (session-view Wave C, C1).
         "**/coding-session-paragraph-streaming.spec.ts",
         "**/coding-session-file-chips.spec.ts",
+        // SV-28 and SV-30 (session-view Wave C, C2).
+        "**/coding-session-sv28-sv30-checkpoints.spec.ts",
       ],
       use: SMOKE_USE,
     },
@@ -395,6 +397,7 @@ export default defineConfig({
         "**/coding-session-worktree-closure.spec.ts",
         "**/coding-session-paragraph-streaming.spec.ts",
         "**/coding-session-file-chips.spec.ts",
+        "**/coding-session-sv28-sv30-checkpoints.spec.ts",
       ],
       use: { ...devices["Desktop Safari"] },
     },
