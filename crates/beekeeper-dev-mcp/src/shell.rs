@@ -39,7 +39,7 @@ pub struct SharedState {
 impl SharedState {
     pub fn new(cwd: PathBuf, shim: Shim) -> std::io::Result<Self> {
         let session_dir = tempfile::Builder::new()
-            .prefix("buzz-dev-mcp-session-")
+            .prefix("beekeeper-dev-mcp-session-")
             .tempdir()?;
         // Resolve the shell ONCE using the same PATH the spawn will use.
         // Both the bootstrap dialect hint and every run() call read this result,

@@ -60,6 +60,7 @@ struct Cli {
 
 #[cfg(unix)]
 fn main() {
+    beekeeper_shell_host::legacy_env::adopt_legacy_env("beekeeper-shell-host");
     let cli = Cli::parse();
     let code = host::run(HostOptions {
         id: cli.id,

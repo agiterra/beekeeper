@@ -3587,7 +3587,7 @@ mod tests {
         let channel_id = fixture.input.channel_id;
         let brief = (0..140)
             .map(|index| {
-                format!("/Users/brian/Projects/beekeeper/beekeeper/crates/beekeeper-session-provider/src/file{index}.rs")
+                format!("/Users/brian/Projects/beekeeper/crates/beekeeper-session-provider/src/file{index}.rs")
             })
             .collect::<Vec<_>>()
             .join(" ");
@@ -4637,7 +4637,7 @@ mod tests {
     /// the source-event ceiling means a channel that has run a few thousand
     /// turns projects nothing at all: `prepare_rehydration_context` reports
     /// unavailable and every create and resume in that channel silently loses
-    /// the buzz-session-context MCP. The bound belongs on the turn traffic
+    /// the beekeeper-session-context MCP. The bound belongs on the turn traffic
     /// itself, newest-first and disclosed.
     #[test]
     fn ordinary_turn_volume_does_not_deny_the_package_to_every_seat() {

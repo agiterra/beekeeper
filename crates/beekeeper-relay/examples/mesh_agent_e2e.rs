@@ -261,7 +261,7 @@ async fn agent_chat_in_isolated_home(
     prompt: &str,
     mcp_servers: &[(String, String)],
 ) -> (anyhow::Result<String>, std::path::PathBuf) {
-    let agent = match repo_bin("buzz-agent") {
+    let agent = match repo_bin("beekeeper-agent") {
         Ok(agent) => agent,
         Err(error) => return (Err(error), std::path::PathBuf::new()),
     };

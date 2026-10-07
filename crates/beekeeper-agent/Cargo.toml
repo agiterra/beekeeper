@@ -15,7 +15,7 @@ name = "beekeeper_agent"
 path = "src/lib.rs"
 
 [[bin]]
-name = "buzz-agent"
+name = "beekeeper-agent"
 path = "src/main.rs"
 
 # Test-only fake MCP server. Built unconditionally because cargo can't gate

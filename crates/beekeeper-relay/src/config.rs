@@ -588,7 +588,7 @@ impl Config {
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false);
 
-        // Note: intentionally not prefixed with BUZZ_ — this is a relay-identity
+        // Note: intentionally not prefixed with BEEKEEPER_ — this is a relay-identity
         // config that may be shared across multiple services (e.g., ACP agent).
         let relay_owner_pubkey = std::env::var("RELAY_OWNER_PUBKEY")
             .ok()
@@ -608,7 +608,7 @@ impl Config {
                 }
             });
 
-        // Note: intentionally not prefixed with BUZZ_ — same relay-identity
+        // Note: intentionally not prefixed with BEEKEEPER_ — same relay-identity
         // config family as RELAY_OWNER_PUBKEY. Comma-separated 64-char hex
         // pubkeys. Unlike RELAY_OWNER_PUBKEY (warn-and-ignore), an invalid
         // entry here is a hard config error: silently dropping an operator

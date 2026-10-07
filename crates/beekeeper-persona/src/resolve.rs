@@ -347,13 +347,21 @@ fn parse_mcp_server_config(name: &str, config: &serde_json::Value) -> Option<Res
                 .collect()
         })
         .unwrap_or_default();
+    // A persona written before the BUZZ_* → BEEKEEPER_* rename names its
+    // server's Beekeeper variables the old way. Read them as the current
+    // names (the current spelling wins when a file has both); whoever spawns
+    // the server writes the legacy twin back for an older binary.
     let env = config
         .get("env")
         .and_then(|v| v.as_object())
         .map(|obj| {
-            obj.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
-                .collect()
+            beekeeper_core::env_compat::normalize_env_keys(
+                obj.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
+                    .collect(),
+            )
+            .into_iter()
+            .collect()
         })
         .unwrap_or_default();
 
@@ -516,6 +524,31 @@ mod tests {
     fn mcp_merge_no_shared_no_persona() {
         let result = merge_mcp_servers(None, &[]);
         assert!(result.is_empty());
+    }
+
+    /// A persona's MCP env written before the rename still reads, under the
+    /// current names; when a file has both spellings the current one wins.
+    #[test]
+    fn mcp_env_legacy_buzz_keys_read_as_beekeeper_keys() {
+        let json = serde_json::json!({
+            "mcpServers": {
+                "srv": {
+                    "command": "beekeeper-dev-mcp",
+                    "env": {
+                        "BUZZ_RELAY_URL": "wss://old",
+                        "BUZZ_AUTH_TAG": "stale",
+                        "BEEKEEPER_AUTH_TAG": "current",
+                        "TOKEN": "abc"
+                    }
+                }
+            }
+        });
+        let result = merge_mcp_servers(Some(&json), &[]);
+        let env: HashMap<String, String> = result[0].env.iter().cloned().collect();
+        assert_eq!(env["BEEKEEPER_RELAY_URL"], "wss://old");
+        assert_eq!(env["BEEKEEPER_AUTH_TAG"], "current");
+        assert_eq!(env["TOKEN"], "abc");
+        assert!(env.keys().all(|key| !key.starts_with("BUZZ_")), "{env:?}");
     }
 
     #[test]

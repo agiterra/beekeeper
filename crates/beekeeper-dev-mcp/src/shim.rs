@@ -23,7 +23,9 @@ pub struct Shim {
 
 impl Shim {
     pub fn install() -> std::io::Result<Self> {
-        let dir = tempfile::Builder::new().prefix("buzz-dev-mcp-").tempdir()?;
+        let dir = tempfile::Builder::new()
+            .prefix("beekeeper-dev-mcp-")
+            .tempdir()?;
         set_owner_only(dir.path())?;
 
         let self_exe = std::env::current_exe()?;

@@ -130,7 +130,7 @@ async fn exchange(
                     "terminal": false,
                 },
                 "clientInfo": {
-                    "name": "buzz-session-provider-title",
+                    "name": "beekeeper-session-provider-title",
                     "version": env!("CARGO_PKG_VERSION"),
                 },
             }),

@@ -15265,7 +15265,7 @@ mod tests {
         provider_with_sidecar_path(
             state_dir,
             projects,
-            Some("/nonexistent/buzz-session-context"),
+            Some("/nonexistent/beekeeper-session-context"),
         )
     }
 
@@ -15328,7 +15328,7 @@ mod tests {
         let relative = provider_with_sidecar_path(
             &dir.path().join("relative"),
             None,
-            Some("relative/buzz-session-context"),
+            Some("relative/beekeeper-session-context"),
         );
         assert_eq!(
             relative

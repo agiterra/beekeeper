@@ -42,8 +42,12 @@ use std::process::Command;
 include!("src/build_info.rs");
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_SOURCE_SHA");
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_SOURCE_COMMIT_COUNT");
+    for name in build_input_names("SOURCE_SHA")
+        .into_iter()
+        .chain(build_input_names("SOURCE_COMMIT_COUNT"))
+    {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     println!("cargo:rerun-if-changed={manifest_dir}/src/build_info.rs");
     watch_git_refs(&manifest_dir);
@@ -71,9 +75,8 @@ fn main() {
 /// The commit this binary is stamped with, and that commit's ordinal —
 /// resolved **together**, never independently.
 fn resolve_stamp(manifest_dir: &str) -> (Option<String>, Option<u64>) {
-    if let Some(commit) = env_override("BEEKEEPER_SOURCE_SHA") {
-        let count = std::env::var("BEEKEEPER_SOURCE_COMMIT_COUNT")
-            .ok()
+    if let Some(commit) = env_override("SOURCE_SHA") {
+        let count = build_input("SOURCE_COMMIT_COUNT", |name| std::env::var(name).ok())
             .and_then(|value| parse_commit_count(&value));
         return (Some(commit), count);
     }
@@ -91,8 +94,8 @@ fn resolve_stamp(manifest_dir: &str) -> (Option<String>, Option<u64>) {
 
 /// `BEEKEEPER_SOURCE_SHA`, when it is plausibly a commit. Never echoed back
 /// unvalidated: an unset or malformed value falls through to the checkout.
-fn env_override(var: &str) -> Option<String> {
-    let value = std::env::var(var).ok()?;
+fn env_override(suffix: &str) -> Option<String> {
+    let value = build_input(suffix, |name| std::env::var(name).ok())?;
     let value = value.trim().to_ascii_lowercase();
     is_full_sha(&value).then_some(value)
 }

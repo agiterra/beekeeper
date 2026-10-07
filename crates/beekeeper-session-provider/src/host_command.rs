@@ -256,7 +256,7 @@ pub async fn spawn(
             let mut cmd = Command::new(program);
             cmd.args(args);
             cmd.current_dir(&prepared.cwd);
-            // Strip the provider's own credentials (`BUZZ_*` and the
+            // Strip the provider's own credentials (`BEEKEEPER_*`, `BUZZ_*` and the
             // enumerated keys) before the step's environment is layered on,
             // exactly as every adapter this sidecar spawns is stripped.
             for (key, _) in std::env::vars_os() {
@@ -1110,6 +1110,7 @@ mod tests {
         assert_eq!(refusal.code, ACTION_HOST_ENV_FENCED);
         assert!(FENCE.covers("BEEKEEPER_PRIVATE_KEY"));
         assert!(FENCE.covers("NOSTR_PRIVATE_KEY"));
+        assert!(FENCE.covers("BUZZ_PRIVATE_KEY"));
     }
 
     #[test]

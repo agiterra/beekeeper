@@ -17,8 +17,14 @@ use std::{
     },
 };
 use tracing_subscriber::EnvFilter;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Before clap, tokio or any thread: read BUZZ_* as BEEKEEPER_*.
+    beekeeper_push_gateway::legacy_env::adopt_legacy_env("beekeeper-push-gateway");
+    async_main()
+}
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(EnvFilter::from_default_env())

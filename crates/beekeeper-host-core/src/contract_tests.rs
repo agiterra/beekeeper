@@ -566,7 +566,7 @@ fn an_app_checkout_is_the_repository_the_process_is_running_inside() {
 
 /// An operator's ambient `BEE` must not survive into the provider child.
 ///
-/// `BEE` names the `bee` a seat runs. It sits outside the `BUZZ_` prefix, so
+/// `BEE` names the `bee` a seat runs. It sits outside the fenced prefixes, so
 /// the provider's own agent fence (`beekeeper_session_provider::agent_fence`) does
 /// not cover it and an inherited value would pass straight through to every
 /// seat this host starts — which is exactly the 2026-09-01 failure with the
@@ -594,8 +594,8 @@ fn an_ambient_bee_is_cleared_before_the_provider_child_starts() {
 ///
 /// The host resolves the provider key from [`PRIVATE_KEY_VAR`] or
 /// [`KEY_FILE_VAR`] and passes it on as `BEEKEEPER_PRIVATE_KEY`, which the agent
-/// fence strips. The `BEEKEEPER_HOST_*` names are outside that fence's `BUZZ_`
-/// prefix, so before this list named them a host launched with either one set
+/// fence strips. The `BEEKEEPER_HOST_*` names were outside that fence's
+/// `BUZZ_` prefix, so before this list named them a host launched with either one set
 /// handed the raw key to the provider and, through it, to every agent.
 #[test]
 fn the_host_key_variables_are_cleared_before_the_provider_child_starts() {
@@ -608,8 +608,59 @@ fn the_host_key_variables_are_cleared_before_the_provider_child_starts() {
     assert_eq!(
         (PRIVATE_KEY_VAR, KEY_FILE_VAR),
         ("BEEKEEPER_HOST_PRIVATE_KEY", "BEEKEEPER_HOST_KEY_FILE"),
-        "these names are kept byte-for-byte in step with buzz_session_provider::agent_fence::KEYS"
+        "these names are kept byte-for-byte in step with beekeeper_session_provider::agent_fence::KEYS"
     );
+}
+
+/// Every entry is cleared in both spellings: the provider adopts an inherited
+/// `BUZZ_<X>` as `BEEKEEPER_<X>`, so a list that named only one would let a
+/// stale legacy value come back under the new name.
+#[test]
+fn the_clear_list_names_both_spellings_of_every_beekeeper_name() {
+    for key in INHERITED_KEYS_TO_CLEAR {
+        for spelling in beekeeper_core::env_compat::both_spellings(key) {
+            assert!(
+                INHERITED_KEYS_TO_CLEAR.contains(&spelling.as_str()),
+                "{key} is cleared but {spelling} is not: {INHERITED_KEYS_TO_CLEAR:?}"
+            );
+        }
+    }
+    assert!(INHERITED_KEYS_TO_CLEAR.contains(&"BUZZ_AUTH_TAG"));
+}
+
+/// The child sees every name the host sets in both spellings, with the same
+/// value, so a provider built before the rename still starts; and nothing
+/// else is added.
+#[test]
+fn env_writes_every_beekeeper_name_in_its_legacy_spelling_too() {
+    let env = env_for(&sample_record());
+    let canonical: Vec<&String> = env
+        .keys()
+        .filter(|key| key.starts_with(beekeeper_core::env_compat::PREFIX))
+        .collect();
+    assert!(!canonical.is_empty());
+    for key in &canonical {
+        let twin = beekeeper_core::env_compat::legacy_twin(key).expect("a twin");
+        assert_eq!(
+            env.get(&twin),
+            env.get(*key),
+            "{twin} does not mirror {key}"
+        );
+    }
+    let legacy = env
+        .keys()
+        .filter(|key| key.starts_with(beekeeper_core::env_compat::LEGACY_PREFIX))
+        .count();
+    assert_eq!(
+        legacy,
+        canonical.len(),
+        "a legacy name with no current twin: {env:?}"
+    );
+    // Unattested: neither spelling, so an old child sees "absent" too.
+    let mut record = sample_record();
+    record.auth_tag = None;
+    let env = env_for(&record);
+    assert!(!env.contains_key("BEEKEEPER_AUTH_TAG") && !env.contains_key("BUZZ_AUTH_TAG"));
 }
 
 /// The desktop never *sets* `BEE`. Only the provider knows which directory its

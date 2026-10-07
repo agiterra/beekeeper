@@ -127,7 +127,7 @@ fn spawn_fake_provider() -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
 async fn openai_auto_upgrades_chat_to_responses_on_databricks_signal() {
     let (base_url, chat_hits, resp_hits) = spawn_fake_provider();
 
-    let bin = env!("CARGO_BIN_EXE_buzz-agent");
+    let bin = env!("CARGO_BIN_EXE_beekeeper-agent");
     let mut cmd = Command::new(bin);
     cmd.env("BEEKEEPER_AGENT_PROVIDER", "openai")
         .env("OPENAI_COMPAT_API_KEY", "test")
@@ -144,7 +144,7 @@ async fn openai_auto_upgrades_chat_to_responses_on_databricks_signal() {
         .stderr(Stdio::inherit())
         .kill_on_drop(true);
 
-    let mut child = cmd.spawn().expect("spawn buzz-agent");
+    let mut child = cmd.spawn().expect("spawn beekeeper-agent");
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
 

@@ -739,6 +739,7 @@ dependencies = [
 name = "beekeeper-backend-kubernetes"
 version = "0.1.0"
 dependencies = [
+ "beekeeper-core",
  "chrono",
  "hex",
  "http",
@@ -1030,6 +1031,7 @@ dependencies = [
 name = "beekeeper-persona"
 version = "0.1.0"
 dependencies = [
+ "beekeeper-core",
  "chrono",
  "hex",
  "semver",
@@ -9347,6 +9349,7 @@ version = "0.1.0"
 dependencies = [
  "beekeeper-acp",
  "beekeeper-agent",
+ "beekeeper-core",
  "beekeeper-dev-mcp",
 ]
 

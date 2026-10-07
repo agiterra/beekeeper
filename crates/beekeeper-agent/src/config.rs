@@ -412,7 +412,7 @@ pub const MAX_CONTEXT_RECOVERIES_PER_RUN: u32 = 3;
 pub const HANDOFF_MIN_PROMPT_BUDGET_BYTES: usize = 4 * 1024;
 
 const DEFAULT_SYSTEM_PROMPT: &str =
-    "You are buzz-agent. Use the provided tools to act. Tool calls are your only output.";
+    "You are beekeeper-agent. Use the provided tools to act. Tool calls are your only output.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Provider {

@@ -6,6 +6,7 @@
 //! it. Keeping the protocol here makes it the single source of truth for both
 //! sides of the socket.
 
+pub mod legacy_env;
 // The host process is Unix-only (PTY + Unix-socket + setsid detachment). The
 // protocol and receipt types are cross-platform so the desktop app can depend
 // on this crate everywhere, even where the shell feature itself is gated off.

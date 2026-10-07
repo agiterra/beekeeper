@@ -26,14 +26,17 @@ use std::process::Command;
 include!("src/build_provenance.rs");
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_CLI_GIT_SHA");
+    for name in build_input_names("CLI_GIT_SHA") {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     // A source edit is exactly the case `-dirty` exists to disclose, so the
     // stamp is retaken when this crate's own sources move.
     println!("cargo:rerun-if-changed={manifest_dir}/src");
     watch_git_refs(&manifest_dir);
 
-    let stamped = match std::env::var("BEEKEEPER_CLI_GIT_SHA") {
+    // `BUZZ_CLI_GIT_SHA` is still read, for a pipeline older than the rename.
+    let stamped = match build_input("CLI_GIT_SHA", |name| std::env::var(name).ok()).ok_or(()) {
         Ok(value) if is_plausible_stamp(value.trim()) => value.trim().to_owned(),
         Ok(value) if !value.trim().is_empty() => {
             println!(

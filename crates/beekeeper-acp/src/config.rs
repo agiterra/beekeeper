@@ -786,11 +786,31 @@ pub(crate) fn normalize_agent_command_identity(command: &str) -> String {
         .collect()
 }
 
+/// The harness identifier a turn metric (kind:44200) carries for `command`.
+///
+/// The normalized command identity, except that the in-house agent keeps the
+/// identifier it has always published, `buzz-agent`, after its binary was
+/// renamed `beekeeper-agent`. The metric's `harness` field is read back and
+/// grouped by consumers; renaming the binary must not split one harness into
+/// two in somebody's usage history.
+pub(crate) fn harness_identity(command: &str) -> String {
+    let identity = normalize_agent_command_identity(command);
+    if identity == "beekeeper-agent" {
+        "buzz-agent".to_owned()
+    } else {
+        identity
+    }
+}
+
 fn default_agent_args(command: &str) -> Option<Vec<String>> {
     match normalize_agent_command_identity(command).as_str() {
         "goose" => Some(vec!["acp".to_string()]),
         "codex" | "codex-acp" | "claude-agent-acp" | "claude-code-acp" | "claude-code"
-        | "claudecode" | "buzz-agent" => Some(Vec::new()),
+        | "claudecode"
+        // The in-house agent's binary: `beekeeper-agent` since the rename,
+        // `buzz-agent` in stored records and older installs.
+        | "beekeeper-agent"
+        | "buzz-agent" => Some(Vec::new()),
         _ => None,
     }
 }
@@ -903,17 +923,30 @@ pub fn normalize_agent_args(command: &str, agent_args: Vec<String>) -> Vec<Strin
 /// `#[tokio::main]` ensures worker threads are not yet alive.
 ///
 /// // Must be called before tokio runtime starts — see Rust 2024 edition safety.
+///
+/// Run it **after** `beekeeper_core::env_compat::adopt_legacy_env` (which
+/// `main` calls first). That shim turns `BUZZ_ACP_PRIVATE_KEY` into
+/// `BEEKEEPER_ACP_PRIVATE_KEY`; this then carries it to
+/// `BEEKEEPER_PRIVATE_KEY`, so the oldest spelling still reaches the key.
+/// The current names always win over every alias.
 pub fn propagate_legacy_env_vars() {
-    for (legacy, canonical) in [
+    for (canonical, value) in legacy_alias_plan(|name| std::env::var(name).ok()) {
+        std::env::set_var(canonical, value);
+    }
+}
+
+/// The `(canonical, value)` pairs [`propagate_legacy_env_vars`] would set,
+/// given a variable lookup. Pure, so it can be tested without touching the
+/// process environment.
+fn legacy_alias_plan(get: impl Fn(&str) -> Option<String>) -> Vec<(&'static str, String)> {
+    [
         ("BEEKEEPER_ACP_PRIVATE_KEY", "BEEKEEPER_PRIVATE_KEY"),
         ("BEEKEEPER_ACP_API_TOKEN", "BEEKEEPER_API_TOKEN"),
-    ] {
-        if std::env::var(canonical).is_err() {
-            if let Ok(val) = std::env::var(legacy) {
-                std::env::set_var(canonical, &val);
-            }
-        }
-    }
+    ]
+    .into_iter()
+    .filter(|(_, canonical)| get(canonical).is_none())
+    .filter_map(|(legacy, canonical)| get(legacy).map(|value| (canonical, value)))
+    .collect()
 }
 
 impl Config {
@@ -1526,6 +1559,60 @@ fn rule_applies_to_channel(rule: &SubscriptionRule, channel_id: Uuid) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// `BUZZ_ACP_PRIVATE_KEY` (the oldest spelling) reaches
+    /// `BEEKEEPER_PRIVATE_KEY`: the env_compat shim adopts it as
+    /// `BEEKEEPER_ACP_PRIVATE_KEY`, then the alias step carries it across.
+    /// Any current spelling of the key wins over it.
+    #[test]
+    fn oldest_acp_key_spelling_reaches_the_canonical_name_after_the_shim() {
+        use std::collections::BTreeMap;
+        let run = |pairs: &[(&str, &str)]| {
+            let raw: Vec<(String, String)> = pairs
+                .iter()
+                .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
+                .collect();
+            let mut env: BTreeMap<String, String> = raw.iter().cloned().collect();
+            for (name, value) in beekeeper_core::env_compat::plan_adoption(raw).set {
+                env.insert(name, value);
+            }
+            for (name, value) in super::legacy_alias_plan(|n| env.get(n).cloned()) {
+                env.insert(name.to_owned(), value);
+            }
+            env
+        };
+        let env = run(&[
+            ("BUZZ_ACP_PRIVATE_KEY", "oldest"),
+            ("BUZZ_ACP_API_TOKEN", "tok"),
+        ]);
+        assert_eq!(
+            env.get("BEEKEEPER_PRIVATE_KEY").map(String::as_str),
+            Some("oldest")
+        );
+        assert_eq!(
+            env.get("BEEKEEPER_API_TOKEN").map(String::as_str),
+            Some("tok")
+        );
+
+        let env = run(&[
+            ("BUZZ_ACP_PRIVATE_KEY", "oldest"),
+            ("BUZZ_PRIVATE_KEY", "legacy"),
+        ]);
+        assert_eq!(
+            env.get("BEEKEEPER_PRIVATE_KEY").map(String::as_str),
+            Some("legacy")
+        );
+
+        let env = run(&[
+            ("BUZZ_ACP_PRIVATE_KEY", "oldest"),
+            ("BUZZ_PRIVATE_KEY", "legacy"),
+            ("BEEKEEPER_PRIVATE_KEY", "current"),
+        ]);
+        assert_eq!(
+            env.get("BEEKEEPER_PRIVATE_KEY").map(String::as_str),
+            Some("current")
+        );
+    }
+
     use super::*;
     use crate::filter::{ChannelScope, SubscriptionRule};
     use clap::{Parser, ValueEnum};
@@ -1687,14 +1774,32 @@ mod tests {
 
     #[test]
     fn normalizes_buzz_agent_args_to_empty() {
-        assert_eq!(
-            normalize_agent_args("buzz-agent", Vec::new()),
-            Vec::<String>::new()
-        );
-        assert_eq!(
-            normalize_agent_args("buzz-agent", vec!["acp".into()]),
-            Vec::<String>::new()
-        );
+        // Both binary names: the current one, and the pre-rename one a stored
+        // record or an older install still names.
+        for command in [
+            "buzz-agent",
+            "beekeeper-agent",
+            "/Applications/Beekeeper.app/Contents/MacOS/beekeeper-agent",
+        ] {
+            assert_eq!(
+                normalize_agent_args(command, Vec::new()),
+                Vec::<String>::new(),
+                "{command}"
+            );
+            assert_eq!(
+                normalize_agent_args(command, vec!["acp".into()]),
+                Vec::<String>::new(),
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_in_house_agent_publishes_one_harness_identifier_under_either_binary_name() {
+        assert_eq!(harness_identity("buzz-agent"), "buzz-agent");
+        assert_eq!(harness_identity("beekeeper-agent"), "buzz-agent");
+        assert_eq!(harness_identity("/opt/bin/beekeeper-agent"), "buzz-agent");
+        assert_eq!(harness_identity("goose"), "goose");
     }
 
     #[test]
@@ -2052,7 +2157,7 @@ mod tests {
 
     #[test]
     fn test_load_rules_valid_toml() {
-        let dir = std::env::temp_dir().join("buzz-acp-test-valid");
+        let dir = std::env::temp_dir().join("beekeeper-acp-test-valid");
         let path = dir.join("rules.toml");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
@@ -2075,7 +2180,7 @@ require_mention = false
 
     #[test]
     fn test_load_rules_empty_name_rejected() {
-        let dir = std::env::temp_dir().join("buzz-acp-test-empty-name");
+        let dir = std::env::temp_dir().join("beekeeper-acp-test-empty-name");
         let path = dir.join("rules.toml");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
@@ -2095,7 +2200,7 @@ channels = "all"
 
     #[test]
     fn test_load_rules_duplicate_name_rejected() {
-        let dir = std::env::temp_dir().join("buzz-acp-test-dup-name");
+        let dir = std::env::temp_dir().join("beekeeper-acp-test-dup-name");
         let path = dir.join("rules.toml");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
@@ -2119,7 +2224,7 @@ channels = "all"
 
     #[test]
     fn test_load_rules_invalid_filter_rejected() {
-        let dir = std::env::temp_dir().join("buzz-acp-test-bad-filter");
+        let dir = std::env::temp_dir().join("beekeeper-acp-test-bad-filter");
         let path = dir.join("rules.toml");
         std::fs::create_dir_all(&dir).unwrap();
         // evalexpr rejects unbalanced parens at parse time.
@@ -2141,7 +2246,7 @@ filter = "((("
 
     #[test]
     fn test_load_rules_channel_scope_typo_rejected() {
-        let dir = std::env::temp_dir().join("buzz-acp-test-scope-typo");
+        let dir = std::env::temp_dir().join("beekeeper-acp-test-scope-typo");
         let path = dir.join("rules.toml");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
@@ -2161,7 +2266,7 @@ channels = "ALL"
 
     #[test]
     fn test_load_rules_too_many_rules_rejected() {
-        let dir = std::env::temp_dir().join("buzz-acp-test-too-many");
+        let dir = std::env::temp_dir().join("beekeeper-acp-test-too-many");
         let path = dir.join("rules.toml");
         std::fs::create_dir_all(&dir).unwrap();
         let mut toml = String::new();
@@ -2179,7 +2284,7 @@ channels = "ALL"
 
     #[test]
     fn test_load_rules_filter_too_long_rejected() {
-        let dir = std::env::temp_dir().join("buzz-acp-test-long-filter");
+        let dir = std::env::temp_dir().join("beekeeper-acp-test-long-filter");
         let path = dir.join("rules.toml");
         std::fs::create_dir_all(&dir).unwrap();
         let long_expr = format!("\"{}\"", "a".repeat(4097));

@@ -10,7 +10,10 @@ use uuid::Uuid;
 use crate::error::PubSubError;
 
 /// Redis key prefix for Beekeeper-scoped pub/sub topics and keys.
-pub const BEEKEEPER_PREFIX: &str = "buzz";
+///
+/// The value stays `buzz` across the rename: every relay replica must agree
+/// on it, and changing it is a coordinated Redis migration, not a rename.
+pub const REDIS_KEY_PREFIX: &str = "buzz";
 
 /// A tenant-local event routing scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,11 +47,11 @@ impl EventTopicKey {
         match self.topic {
             EventTopic::Channel(channel_id) => {
                 format!(
-                    "{BEEKEEPER_PREFIX}:{}:channel:{channel_id}",
+                    "{REDIS_KEY_PREFIX}:{}:channel:{channel_id}",
                     self.community_id
                 )
             }
-            EventTopic::Global => format!("{BEEKEEPER_PREFIX}:{}:global", self.community_id),
+            EventTopic::Global => format!("{REDIS_KEY_PREFIX}:{}:global", self.community_id),
         }
     }
 
@@ -58,7 +61,7 @@ impl EventTopicKey {
         let Some(prefix) = parts.next() else {
             return Err(PubSubError::InvalidChannelKey(channel.to_string()));
         };
-        if prefix != BEEKEEPER_PREFIX {
+        if prefix != REDIS_KEY_PREFIX {
             return Err(PubSubError::InvalidChannelKey(channel.to_string()));
         }
 

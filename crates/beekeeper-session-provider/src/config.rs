@@ -239,7 +239,8 @@ pub struct ModelControls {
 }
 
 impl Config {
-    /// Read and validate the full `BUZZ_*` environment surface.
+    /// Read and validate the full `BEEKEEPER_*` environment surface (a
+    /// pre-rename `BUZZ_*` spelling is adopted by `main` before this runs).
     pub fn from_env() -> Result<Self, ConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }

@@ -6,6 +6,7 @@ pub mod catalog;
 pub mod config;
 mod handoff;
 mod hints;
+pub mod legacy_env;
 mod llm;
 mod mcp;
 pub mod model_capabilities;
@@ -154,7 +155,7 @@ pub async fn authenticate_databricks(host: &str) -> Result<(), AgentError> {
         .await
 }
 
-/// `buzz-agent auth <provider>` — run the interactive auth flow for a
+/// `beekeeper-agent auth <provider>` — run the interactive auth flow for a
 /// provider and persist the result, then exit. Today this supports Databricks
 /// OAuth 2.0 PKCE. Reads `DATABRICKS_HOST` from env; needs a browser on the
 /// machine.
@@ -169,7 +170,7 @@ async fn auth_subcommand(args: &[String]) -> Result<(), Box<dyn std::error::Erro
             Ok(())
         }
         Some(other) => Err(format!("auth: unknown provider {other:?}").into()),
-        None => Err("auth: provider required (try: buzz-agent auth databricks)".into()),
+        None => Err("auth: provider required (try: beekeeper-agent auth databricks)".into()),
     }
 }
 
@@ -314,7 +315,7 @@ async fn initialize(id: Value, params: Value, wire_tx: &WireSender) {
                     "promptCapabilities": { "image": false, "audio": false, "embeddedContext": false },
                     "mcpCapabilities": { "http": false, "sse": false },
                 },
-                "agentInfo": { "name": "buzz-agent", "version": env!("CARGO_PKG_VERSION") },
+                "agentInfo": { "name": "beekeeper-agent", "version": env!("CARGO_PKG_VERSION") },
             }),
         ),
     )

@@ -71,6 +71,7 @@
 //!    process and git is the reader. Blocking on stdout would indicate git itself
 //!    is hung, which is outside our control.
 
+pub mod legacy_env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::mem::ManuallyDrop;

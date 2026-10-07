@@ -22,7 +22,9 @@
 //! from an eight-key allowlist, on the argument that a denylist is only as
 //! current as the last person who remembered to extend it. That argument is
 //! right, and it is why [`PREFIXES`] rather than a list of known-bad names
-//! carries the weight here: everything spelled `BUZZ_*` is fenced, including
+//! carries the weight here: everything spelled `BEEKEEPER_*` — or `BUZZ_*`, the
+//! spelling the same names carried before the rename and still carry in old
+//! `.env` files and from parents that dual-write them — is fenced, including
 //! keys invented after this was written.
 //!
 //! The allowlist *shape* does not transfer. A terminal needs eight variables;
@@ -54,9 +56,17 @@ use crate::git_exclude::ExcludeOutcome;
 /// Nothing under it is useful to an ACP adapter: the adapter learns what to run
 /// from argv and the additive per-runtime environment, and the `BEEKEEPER_CSP_*`
 /// surface configures the sidecar, not its children.
-const PREFIXES: &[&str] = &["BUZZ_"];
+///
+/// Both spellings: the sidecar adopts `BUZZ_<X>` as `BEEKEEPER_<X>` at startup
+/// but never removes the legacy variable, and its parent mirrors every name in
+/// the legacy spelling too (`beekeeper_core::env_compat`). Fencing only the
+/// new prefix would hand the provider's key to every adapter as `BUZZ_*`.
+const PREFIXES: &[&str] = &[
+    beekeeper_core::env_compat::PREFIX,
+    beekeeper_core::env_compat::LEGACY_PREFIX,
+];
 
-/// Secrets that reach the sidecar without the `BUZZ_` prefix.
+/// Secrets that reach the sidecar without a fenced prefix.
 ///
 /// These arrive from a developer's `.env` by way of the launching shell rather
 /// than from anything the desktop sets deliberately, and they authorize direct
@@ -79,10 +89,23 @@ const KEYS: &[&str] = &[
 
 /// Variables under a fenced prefix that are passed through anyway.
 ///
-/// Deliberately empty. It exists so that admitting a non-secret `BUZZ_*` the
-/// adapter genuinely needs is a one-line, reviewable exception rather than a
-/// reason to weaken [`PREFIXES`]. Do not add a credential here.
-const EXEMPT: &[&str] = &[];
+/// It exists so that admitting a non-secret variable the adapter genuinely
+/// needs is a one-line, reviewable exception rather than a reason to weaken
+/// [`PREFIXES`]. Do not add a credential here.
+///
+/// The three entries are the agent host's markers, kept byte-for-byte with
+/// `beekeeper_host_core::layout`. They were spelled `BEEKEEPER_HOST_*` before
+/// the `BUZZ_` → `BEEKEEPER_` rename, when the fence covered `BUZZ_` alone, so
+/// they have always reached adapters; widening [`PREFIXES`] must not quietly
+/// stop that. `BEEKEEPER_HOST_CHILD` in particular is how a host-owned child
+/// tells the desktop's untracked-harness sweep not to kill it. None is a
+/// credential: a pid, a socket path, an instance name. Their `BUZZ_HOST_*`
+/// twins never existed before the rename and stay fenced.
+const EXEMPT: &[&str] = &[
+    "BEEKEEPER_HOST_CHILD",
+    "BEEKEEPER_HOST_SOCK",
+    "BEEKEEPER_HOST_INSTANCE",
+];
 
 /// The tools a seated execution must not use, named in its own briefing.
 ///
@@ -154,14 +177,14 @@ pub(crate) const FENCE: EnvFence = EnvFence {
 /// The fenced briefing's first four paragraphs, shared by both runtimes' variants.
 macro_rules! fenced_session_briefing_body {
     () => {
-        "Beekeeper coding-session briefing: you are running inside a Beekeeper coding session, launched and supervised by the Beekeeper session provider.\n\nThe provider's Beekeeper identity is not yours. Every BUZZ_* variable is deliberately removed from this process's environment before you start, so the `bee` CLI cannot authenticate from your shell and this session holds no relay credentials. Do not run `bee` commands that talk to the relay, do not go looking for a key in .env, ~/.config/buzz/, or the environment, and do not report the missing key as a misconfiguration — the absence is the design, not a broken setup.\n\nYou do not need those credentials to be seen. The provider itself observes and publishes this session's state — branch, HEAD commit, dirty worktree, and verified liveness — so when this session's channel belongs to a project, that published state is what the project's Pulse and Beekeeper Desktop show for you. Routine progress needs no post from you.\n\nYou will not receive a Project Pulse digest in this session and you cannot read one from here. If you need to know what other sessions or people are working on before you touch shared code, say so and ask your operator in this conversation: they can see the Pulse and can post an entry on your behalf."
+        "Beekeeper coding-session briefing: you are running inside a Beekeeper coding session, launched and supervised by the Beekeeper session provider.\n\nThe provider's Beekeeper identity is not yours. Every BEEKEEPER_* and BUZZ_* variable is deliberately removed from this process's environment before you start (except the agent host's three BEEKEEPER_HOST_* markers, which name a process, a socket, and an instance and hold no credential), so the `bee` CLI cannot authenticate from your shell and this session holds no relay credentials. Do not run `bee` commands that talk to the relay, do not go looking for a key in .env, ~/.config/buzz/, or the environment, and do not report the missing key as a misconfiguration — the absence is the design, not a broken setup.\n\nYou do not need those credentials to be seen. The provider itself observes and publishes this session's state — branch, HEAD commit, dirty worktree, and verified liveness — so when this session's channel belongs to a project, that published state is what the project's Pulse and Beekeeper Desktop show for you. Routine progress needs no post from you.\n\nYou will not receive a Project Pulse digest in this session and you cannot read one from here. If you need to know what other sessions or people are working on before you touch shared code, say so and ask your operator in this conversation: they can see the Pulse and can post an entry on your behalf."
     };
 }
 
 /// What a fenced adapter is told about the consequence above, in its own words.
 ///
 /// The fence is invisible from inside the adapter: it sees an environment with
-/// no `BUZZ_*` in it and no explanation, so an operator who asks it about Beekeeper
+/// no `BEEKEEPER_*` or `BUZZ_*` in it and no explanation, so an operator who asks it about Beekeeper
 /// coordination gets "unavailable — nothing is configured", which reads as a
 /// broken install rather than a deliberate boundary. That is exactly what
 /// happened on 2026-08-21: a session asked to read its Project Pulse reported
@@ -218,7 +241,8 @@ pub(crate) fn fenced_session_briefing(driver: &str) -> &'static str {
 
 /// The same briefing, for an execution that **is** an agent seat.
 ///
-/// The fence still runs — every `BUZZ_*` the sidecar holds is still removed —
+/// The fence still runs — every `BEEKEEPER_*` and `BUZZ_*` the sidecar holds is
+/// still removed —
 /// and then exactly four variables are put back, all of them the *seat's* own
 /// ([`crate::actor_seats::ActorSeat::post_fence_env`]). So the unseated
 /// briefing above is now a lie for this process, in the specific way this
@@ -282,7 +306,7 @@ pub(crate) fn actor_seat_briefing(
         "Run long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes - only an addressed relay turn wakes you, and a background job finishing is not one, so whoever is waiting on you is left watching a seat that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go."
     };
     format!(
-        "Beekeeper coding-session briefing: you are running inside a Beekeeper coding session, launched and supervised by the Beekeeper session provider, and you are seated in it as a Beekeeper agent.\n\nYou hold your own Beekeeper identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. Run the `bee` CLI as `$BEE` - your host chose one binary, set $BEE to its absolute path, and put its directory first on your PATH, so `$BEE` and a bare `bee` are the same build. Never a path someone typed at you, and never a path from a transcript. It speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Beekeeper variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nThe relay is the only channel to other seats and to the operator. Cross-session tools - {out_of_bounds} - are out of bounds in this seat: they reach other sessions on this computer directly, and nothing said through them appears in the transcript this session publishes, so no one can read it, cite it, or replay it. Say it over the relay or it did not happen.\n\nSubagents (the Task/Agent tool) are allowed for quick research and side tasks inside this seat: they run in your working directory under your rules, and their work is published in this session's transcript under the call that spawned them. Hire a seat instead (`bee sessions hire`) when the work needs independent checking, a different model, its own sandbox, or long parallel work.\n\nWrite files only inside your working directory. Everything else on this computer - other projects, the operator's ~/.claude, ~/.codex, ~/.config, ~/.nostr and ~/.ssh, this app's own data, other seats' directories - is somebody else's, and the notes and memory files there are theirs, not a place to record your conclusions. Whether the host enforces that is stated separately in this briefing.\n\nAfter you dispatch work to another seat, end your turn. An addressed relay turn wakes you, so the reply arrives as a turn of its own; holding this turn open to wait for it only leaves the seat busy with nothing to say.\n\nReports arrive as turns. Do not poll `bee sessions inbox` inside a turn looking for one - you will read the same report the relay is about to hand you and count it twice.\n\n{background_work}"
+        "Beekeeper coding-session briefing: you are running inside a Beekeeper coding session, launched and supervised by the Beekeeper session provider, and you are seated in it as a Beekeeper agent.\n\nYou hold your own Beekeeper identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. Run the `bee` CLI as `$BEE` - your host chose one binary, set $BEE to its absolute path, and put its directory first on your PATH, so `$BEE` and a bare `bee` are the same build. Never a path someone typed at you, and never a path from a transcript. It speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Beekeeper variable is removed from this process's environment before you start, so anything under BEEKEEPER_* or BUZZ_* (the older spelling of the same names) that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nThe relay is the only channel to other seats and to the operator. Cross-session tools - {out_of_bounds} - are out of bounds in this seat: they reach other sessions on this computer directly, and nothing said through them appears in the transcript this session publishes, so no one can read it, cite it, or replay it. Say it over the relay or it did not happen.\n\nSubagents (the Task/Agent tool) are allowed for quick research and side tasks inside this seat: they run in your working directory under your rules, and their work is published in this session's transcript under the call that spawned them. Hire a seat instead (`bee sessions hire`) when the work needs independent checking, a different model, its own sandbox, or long parallel work.\n\nWrite files only inside your working directory. Everything else on this computer - other projects, the operator's ~/.claude, ~/.codex, ~/.config, ~/.nostr and ~/.ssh, this app's own data, other seats' directories - is somebody else's, and the notes and memory files there are theirs, not a place to record your conclusions. Whether the host enforces that is stated separately in this briefing.\n\nAfter you dispatch work to another seat, end your turn. An addressed relay turn wakes you, so the reply arrives as a turn of its own; holding this turn open to wait for it only leaves the seat busy with nothing to say.\n\nReports arrive as turns. Do not poll `bee sessions inbox` inside a turn looking for one - you will read the same report the relay is about to hand you and count it twice.\n\n{background_work}"
     )
 }
 
@@ -925,6 +949,35 @@ mod tests {
             "S3_SECRET_KEY",
         ] {
             assert!(FENCE.covers(key), "{key} escaped the fence");
+            // The pre-rename spelling of every one is fenced too: the sidecar
+            // adopts it but never removes it, so it is still in the
+            // environment an adapter would inherit.
+            for spelling in beekeeper_core::env_compat::both_spellings(key) {
+                assert!(FENCE.covers(&spelling), "{spelling} escaped the fence");
+            }
+        }
+        for legacy in ["BUZZ_PRIVATE_KEY", "BUZZ_ACP_PRIVATE_KEY", "BUZZ_AUTH_TAG"] {
+            assert!(FENCE.covers(legacy), "{legacy} escaped the fence");
+        }
+    }
+
+    /// The host's three markers reach adapters, as they did before the rename
+    /// widened the prefix; their never-used legacy twins and the host's key
+    /// variables do not.
+    #[test]
+    fn the_host_markers_are_exempt_and_nothing_else_under_the_prefixes_is() {
+        for marker in [
+            "BEEKEEPER_HOST_CHILD",
+            "BEEKEEPER_HOST_SOCK",
+            "BEEKEEPER_HOST_INSTANCE",
+        ] {
+            assert!(!FENCE.covers(marker), "{marker} no longer reaches adapters");
+            let twin = beekeeper_core::env_compat::legacy_twin(marker).expect("a twin");
+            assert!(FENCE.covers(&twin), "{twin} slipped through the exemption");
+        }
+        assert_eq!(EXEMPT.len(), 3, "an exemption was added: {EXEMPT:?}");
+        for key in ["BEEKEEPER_HOST_PRIVATE_KEY", "BEEKEEPER_HOST_KEY_FILE"] {
+            assert!(FENCE.covers(key), "{key} escaped the fence");
         }
     }
 
@@ -933,6 +986,7 @@ mod tests {
     #[test]
     fn an_unknown_buzz_variable_is_fenced_on_its_prefix_alone() {
         assert!(FENCE.covers("BEEKEEPER_SOME_FUTURE_CREDENTIAL"));
+        assert!(FENCE.covers("BUZZ_SOME_FUTURE_CREDENTIAL"));
     }
 
     /// The rule the 2026-08-21 finding cost us: never instruct an agent to do
@@ -1251,25 +1305,33 @@ mod tests {
         assert!(claude.starts_with(&FENCED_SESSION_BRIEFING[..split + 2]));
     }
 
-    /// The fence itself is unchanged by seating: `EXEMPT` stays empty, so a
-    /// seat's variables arrive by explicit post-fence injection and never by
-    /// weakening the namespace rule.
+    /// The fence itself is unchanged by seating: `EXEMPT` holds only the
+    /// host's markers, so a seat's variables arrive by explicit post-fence
+    /// injection and never by weakening the namespace rule.
     #[test]
     fn seating_an_agent_never_widens_the_fence() {
-        assert!(
-            EXEMPT.is_empty(),
+        assert_eq!(
+            EXEMPT,
+            &[
+                "BEEKEEPER_HOST_CHILD",
+                "BEEKEEPER_HOST_SOCK",
+                "BEEKEEPER_HOST_INSTANCE"
+            ],
             "an exemption was added instead of a post-fence injection"
         );
         for key in [
             "BEEKEEPER_PRIVATE_KEY",
             "BEEKEEPER_RELAY_URL",
             "BEEKEEPER_AUTH_TAG",
+            "BUZZ_PRIVATE_KEY",
+            "BUZZ_RELAY_URL",
+            "BUZZ_AUTH_TAG",
         ] {
             assert!(FENCE.covers(key), "{key} is no longer fenced");
         }
     }
 
-    /// `BEE` and `PATH` are outside the `BUZZ_` namespace on purpose, and the
+    /// `BEE` and `PATH` are outside the fenced namespaces on purpose, and the
     /// fence must not start covering either.
     ///
     /// Fencing `BEE` would strip the host's choice back out; fencing `PATH`

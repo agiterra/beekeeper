@@ -76,7 +76,7 @@ Four things about delivery, all of which are facts about the wire and not prefer
 
 When a turn was sent by someone other than the session's founder, the text you receive is prefixed with a `[Context]` block naming the sender, their role, the delivery class, and the exact `bee sessions send` command that replies to them. Use that reply target rather than assuming the founder sent it — in a crew, most of what arrives is from a sibling seat, and answering the wrong one strands the sender. The block is framing added for you; the signed record holds the sender's original words unchanged.
 
-Everything a seat can read about its siblings is in the `buzz-session-context` MCP server when it is attached: `session_overview` carries the umbrella's roster (target, actor, role, status, last signed activity) and `session_inbox` pages the turns addressed to *this* execution. Prefer them over re-querying the relay by hand, and never assume a sibling's private context — you see its signed transcript, nothing more.
+Everything a seat can read about its siblings is in the `beekeeper-session-context` MCP server when it is attached: `session_overview` carries the umbrella's roster (target, actor, role, status, last signed activity) and `session_inbox` pages the turns addressed to *this* execution. Prefer them over re-querying the relay by hand, and never assume a sibling's private context — you see its signed transcript, nothing more.
 
 ## Starting work from a channel
 

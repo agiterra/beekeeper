@@ -128,8 +128,14 @@ enum ProductFeedbackCommand {
     },
 }
 
+fn main() {
+    // Before clap, tokio or any thread: read BUZZ_* as BEEKEEPER_*.
+    beekeeper_core::env_compat::adopt_legacy_env("beekeeper-admin");
+    async_main()
+}
+
 #[tokio::main]
-async fn main() {
+async fn async_main() {
     // Install the ring CryptoProvider for rustls. The workspace redis TLS
     // feature compiles both aws-lc-rs and ring in transitively, so rustls can't
     // auto-select a provider and would panic on the first rediss:// (ElastiCache)

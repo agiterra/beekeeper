@@ -210,7 +210,7 @@ impl ActorSeat {
     /// *Identity on the relay*: the signing key, the relay it signs against,
     /// the owner attestation when one exists, and the `NOSTR_PRIVATE_KEY`
     /// mirror the `bee` CLI and the SDK also read. The fence's value is that
-    /// everything else in the `BUZZ_*` namespace stays removed, and an
+    /// everything else in the `BEEKEEPER_*`/`BUZZ_*` namespace stays removed, and an
     /// open-ended injection here would give it back one variable at a time.
     ///
     /// *Identity in the checkout*: the four `GIT_*` variables from
@@ -250,7 +250,11 @@ impl ActorSeat {
         if let Some(shell) = SEAT_SHELL {
             env.push(("SHELL".to_owned(), shell.to_owned()));
         }
-        env
+        // The fence removed both spellings; the seat's own identity goes back
+        // in both, so a `bee` built before the BUZZ_ → BEEKEEPER_ rename (an
+        // older one first on the seat's PATH) still authenticates as the seat.
+        // The twins follow the list above, in the same order.
+        beekeeper_core::env_compat::with_legacy_mirrors(env)
     }
 
     /// [`Self::post_fence_env`] plus the coordinate of the project this
@@ -265,7 +269,7 @@ impl ActorSeat {
     /// `BEEKEEPER_PULSE_PROJECT` is the variable `bee pulse` already reads for its
     /// `--project` flag (`beekeeper_cli::PulseCmd`), so passing it here targets the
     /// operator's project without teaching the seat a new flag. It rides the
-    /// post-fence list because the fence strips the whole `BUZZ_*` namespace;
+    /// post-fence list because the fence strips the whole `BEEKEEPER_*`/`BUZZ_*` namespace;
     /// an unseated execution never gets it, and neither does a seat whose
     /// umbrella has no project — an absent coordinate is absent, never
     /// guessed.
@@ -281,7 +285,10 @@ impl ActorSeat {
     ) -> Vec<(String, String)> {
         let mut env = self.post_fence_env(role);
         if let Some(project_ref) = project_ref.map(str::trim).filter(|it| !it.is_empty()) {
-            env.push((PULSE_PROJECT_ENV.to_owned(), project_ref.to_owned()));
+            env.extend(beekeeper_core::env_compat::with_legacy_mirrors([(
+                PULSE_PROJECT_ENV,
+                project_ref,
+            )]));
         }
         env
     }
@@ -532,10 +539,23 @@ mod tests {
                 "GIT_COMMITTER_EMAIL",
                 #[cfg(not(windows))]
                 "SHELL",
+                "BUZZ_PRIVATE_KEY",
+                "BUZZ_RELAY_URL",
+                "BUZZ_AUTH_TAG",
             ]
         );
         assert_eq!(env[0].1, NSEC);
         assert_eq!(env[1].1, NSEC, "the NOSTR_PRIVATE_KEY mirror");
+        // Each identity name in both spellings, with the same value.
+        for name in [
+            "BEEKEEPER_PRIVATE_KEY",
+            "BEEKEEPER_RELAY_URL",
+            "BEEKEEPER_AUTH_TAG",
+        ] {
+            let twin = beekeeper_core::env_compat::legacy_twin(name).expect("twin");
+            let value = |n: &str| env.iter().find(|(k, _)| k == n).map(|(_, v)| v.clone());
+            assert_eq!(value(name), value(&twin), "{twin} does not mirror {name}");
+        }
     }
 
     /// Ledger 173: a seat's Terminal ran in the operator's zsh, whose `=word`
@@ -717,9 +737,17 @@ mod tests {
             Some(coordinate.as_str()),
             "a seat in a project must be able to write that project's pulse"
         );
+        // The legacy spelling rides along for an older `bee`.
+        assert_eq!(
+            targeted
+                .iter()
+                .find(|(name, _)| name == "BUZZ_PULSE_PROJECT")
+                .map(|(_, value)| value.as_str()),
+            Some(coordinate.as_str()),
+        );
         // Everything the fence-era list carried is still there, in order.
         assert_eq!(
-            targeted[..targeted.len() - 1],
+            targeted[..targeted.len() - 2],
             seat.post_fence_env(Some("lead"))[..]
         );
 
@@ -751,13 +779,16 @@ mod tests {
             .expect("seat")
             .post_fence_env(Some("builder"));
         assert!(env.iter().all(|(name, _)| name != "BEEKEEPER_AUTH_TAG"));
-        assert_eq!(
-            env.iter()
-                .filter(|(name, _)| name.starts_with("BUZZ_"))
-                .count(),
-            2,
-            "only the key and the relay survive without an attestation"
-        );
+        assert!(env.iter().all(|(name, _)| name != "BUZZ_AUTH_TAG"));
+        for prefix in ["BEEKEEPER_", "BUZZ_"] {
+            assert_eq!(
+                env.iter()
+                    .filter(|(name, _)| name.starts_with(prefix))
+                    .count(),
+                2,
+                "only the key and the relay survive without an attestation ({prefix})"
+            );
+        }
     }
 
     /// The one-shot rule: after the create that used it, the entry is gone and

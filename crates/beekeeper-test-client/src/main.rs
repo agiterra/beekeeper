@@ -30,8 +30,14 @@ use std::time::Duration;
 use beekeeper_test_client::{BeekeeperTestClient, RelayMessage};
 use nostr::{Filter, Keys};
 
+fn main() {
+    // Before clap, tokio or any thread: read BUZZ_* as BEEKEEPER_*.
+    beekeeper_core::env_compat::adopt_legacy_env("beekeeper-test-cli");
+    async_main()
+}
+
 #[tokio::main]
-async fn main() {
+async fn async_main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             beekeeper_core::log_targets::read_filter_var("RUST_LOG", "beekeeper-test-cli")

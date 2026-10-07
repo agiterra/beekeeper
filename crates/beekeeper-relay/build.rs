@@ -33,8 +33,11 @@ use std::process::Command;
 include!("src/build_provenance.rs");
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_SOURCE_SHA");
-    println!("cargo:rerun-if-env-changed=BEEKEEPER_SOURCE_COMMIT_COUNT");
+    for suffix in ["SOURCE_SHA", "SOURCE_COMMIT_COUNT", "BUILD_ID", "BUILD_URL"] {
+        for name in build_input_names(suffix) {
+            println!("cargo:rerun-if-env-changed={name}");
+        }
+    }
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     println!("cargo:rerun-if-changed={manifest_dir}/src");
     watch_git_refs(&manifest_dir);
@@ -49,6 +52,14 @@ fn main() {
         "cargo:rustc-env=BEEKEEPER_RELAY_BUILD_TIME={}",
         rfc3339_utc_now()
     );
+    // `build_info.rs` reads these two with `option_env!`, which sees only the
+    // current spelling. Passing them through here lets a `BUZZ_BUILD_ID` from
+    // a pipeline older than the rename still land.
+    for suffix in ["BUILD_ID", "BUILD_URL"] {
+        if let Some(value) = build_input(suffix, |name| std::env::var(name).ok()) {
+            println!("cargo:rustc-env=BEEKEEPER_{suffix}={}", value.trim());
+        }
+    }
 }
 
 /// The commit this binary is stamped with, and that commit's ordinal —
@@ -68,9 +79,8 @@ fn main() {
 /// 2. This checkout's `HEAD`, paired with its own `rev-list --count`.
 /// 3. (`unknown`, `None`).
 fn resolve_stamp(manifest_dir: &str) -> (String, Option<u32>) {
-    if let Some(commit) = env_override("BEEKEEPER_SOURCE_SHA") {
-        let count = std::env::var("BEEKEEPER_SOURCE_COMMIT_COUNT")
-            .ok()
+    if let Some(commit) = env_override("SOURCE_SHA") {
+        let count = build_input("SOURCE_COMMIT_COUNT", |name| std::env::var(name).ok())
             .and_then(|value| parse_commit_count(&value));
         return (commit, count);
     }
@@ -100,11 +110,12 @@ fn git_commit_count(manifest_dir: &str) -> Option<u32> {
     parse_commit_count(&git_stdout(manifest_dir, &["rev-list", "--count", "HEAD"])?)
 }
 
-/// `BEEKEEPER_SOURCE_SHA` from the build environment, when it is plausibly a
+/// `BEEKEEPER_SOURCE_SHA` (or the pre-rename `BUZZ_SOURCE_SHA`) from the
+/// build environment, when it is plausibly a
 /// commit. Never invented: an unset or malformed value falls through to the
 /// checkout, then to `unknown` — it is never echoed back unvalidated.
-fn env_override(var: &str) -> Option<String> {
-    let value = std::env::var(var).ok()?;
+fn env_override(suffix: &str) -> Option<String> {
+    let value = build_input(suffix, |name| std::env::var(name).ok())?;
     let value = value.trim();
     is_full_sha(value).then(|| value.to_owned())
 }

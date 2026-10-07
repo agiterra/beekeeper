@@ -48,7 +48,7 @@ pub const BEE_BINARY: &str = "bee";
 ///
 /// Deliberately outside the `BUZZ_` prefix, because that is the name the packs
 /// and the seat briefing say (`$BEE`). It therefore sits **outside** the
-/// environment fence (`crate::agent_fence`), which covers `BUZZ_*` and would
+/// environment fence (`crate::agent_fence`), which covers `BEEKEEPER_*`/`BUZZ_*` and would
 /// otherwise strip it — and, for the same reason, an operator's ambient `BEE`
 /// would survive the fence untouched. That is why this is injected
 /// **post-fence**, in [`crate::actor_seats::ActorSeat::post_fence_env_with_bee`],
