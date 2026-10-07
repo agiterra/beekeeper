@@ -8,8 +8,8 @@
 //! - `bee mem patch <slug>`          — apply a unified diff to the current value
 //! - `bee mem rm <slug>`             — publish a tombstone
 //!
-//! By default, the caller's `BUZZ_PRIVATE_KEY` is the agent's nsec. The
-//! agent's owner pubkey is resolved from `BUZZ_AUTH_TAG` (NIP-OA attestation)
+//! By default, the caller's `BEEKEEPER_PRIVATE_KEY` is the agent's nsec. The
+//! agent's owner pubkey is resolved from `BEEKEEPER_AUTH_TAG` (NIP-OA attestation)
 //! or the `--owner` flag. Read commands also support owner-side recovery via
 //! `--agent <pubkey>`: the CLI identity is treated as the owner and decrypts
 //! the agent's engrams through the same agent↔owner NIP-44 conversation key.
@@ -40,7 +40,7 @@ fn resolve_owner(
     }
     let tag = client.auth_tag_owner_hex().ok_or_else(|| {
         CliError::Usage(
-            "owner pubkey required (set BUZZ_AUTH_TAG with a NIP-OA attestation or pass --owner)"
+            "owner pubkey required (set BEEKEEPER_AUTH_TAG with a NIP-OA attestation or pass --owner)"
                 .into(),
         )
     })?;
@@ -51,7 +51,7 @@ fn resolve_owner(
 /// Resolve the read perspective for `mem ls/get/hash`.
 ///
 /// Normal agent-side reads use the CLI identity as the agent and resolve the
-/// owner from `--owner` / BUZZ_AUTH_TAG. Owner-side recovery passes
+/// owner from `--owner` / BEEKEEPER_AUTH_TAG. Owner-side recovery passes
 /// `--agent <pubkey>`; the CLI identity is then the owner and the supplied
 /// pubkey is the agent author to query/decrypt.
 fn resolve_reader(

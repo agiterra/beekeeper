@@ -399,9 +399,9 @@ fn runtime_env_vars(persona: &LoadedPersona) -> Vec<(String, String)> {
 
         match runtime {
             Some("buzz-agent") => {
-                vars.push(("BUZZ_AGENT_MODEL".to_owned(), model_id.to_owned()));
+                vars.push(("BEEKEEPER_AGENT_MODEL".to_owned(), model_id.to_owned()));
                 if let Some(p) = provider {
-                    vars.push(("BUZZ_AGENT_PROVIDER".to_owned(), p.to_owned()));
+                    vars.push(("BEEKEEPER_AGENT_PROVIDER".to_owned(), p.to_owned()));
                 }
             }
             _ => {
@@ -609,8 +609,8 @@ mod tests {
         lp.runtime = Some("buzz-agent".to_owned());
         let vars = runtime_env_vars(&lp);
         let map: HashMap<&str, &str> = vars.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        assert_eq!(map["BUZZ_AGENT_MODEL"], "goose-claude-4-6-opus");
-        assert_eq!(map["BUZZ_AGENT_PROVIDER"], "databricks");
+        assert_eq!(map["BEEKEEPER_AGENT_MODEL"], "goose-claude-4-6-opus");
+        assert_eq!(map["BEEKEEPER_AGENT_PROVIDER"], "databricks");
         assert!(!map.contains_key("GOOSE_MODEL"));
         assert!(!map.contains_key("GOOSE_PROVIDER"));
     }
@@ -623,7 +623,7 @@ mod tests {
         let map: HashMap<&str, &str> = vars.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         assert_eq!(map["GOOSE_MODEL"], "goose-claude-4-6-opus");
         assert_eq!(map["GOOSE_PROVIDER"], "databricks");
-        assert!(!map.contains_key("BUZZ_AGENT_MODEL"));
+        assert!(!map.contains_key("BEEKEEPER_AGENT_MODEL"));
     }
 
     #[test]
@@ -641,8 +641,8 @@ mod tests {
         lp.runtime = Some("buzz-agent".to_owned());
         let vars = runtime_env_vars(&lp);
         let map: HashMap<&str, &str> = vars.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        assert_eq!(map["BUZZ_AGENT_MODEL"], "gpt-4o");
-        assert!(!map.contains_key("BUZZ_AGENT_PROVIDER"));
+        assert_eq!(map["BEEKEEPER_AGENT_MODEL"], "gpt-4o");
+        assert!(!map.contains_key("BEEKEEPER_AGENT_PROVIDER"));
     }
 
     #[test]

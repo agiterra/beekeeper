@@ -42,7 +42,7 @@
 //! - **It does not trigger the verify itself.** A kind:46020 is admitted for
 //!   the workflow's owner, a project Owner or Collaborator, or the holder of a
 //!   live `grant-project-actions` delegation who is the session's active lead
-//!   (`buzz-relay` `command_executor.rs` trigger admission,
+//!   (`beekeeper-relay` `command_executor.rs` trigger admission,
 //!   `project_action_grant.rs`). This provider is none of those, and the
 //!   host-result wake routes to the run's trigger author, so a run it
 //!   started would wake nobody. Nothing here widens either rule.

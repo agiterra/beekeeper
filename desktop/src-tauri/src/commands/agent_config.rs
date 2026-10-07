@@ -176,7 +176,7 @@ pub async fn get_runtime_file_config(
 /// Return the key names of all non-empty baked build env vars.
 ///
 /// Internal (Block) builds bake provider credentials and other env pairs into
-/// the binary at compile time via `BUZZ_BUILD_AGENT_ENV`. The backend readiness
+/// the binary at compile time via `BEEKEEPER_BUILD_AGENT_ENV`. The backend readiness
 /// gate already treats these keys as satisfying their requirements (Layer 1 of
 /// `resolve_effective_agent_env`). This command exposes the *key names only* —
 /// never the values — so the frontend dialogs can apply the same logic and avoid
@@ -212,7 +212,7 @@ pub struct BakedEnvEntry {
 /// Expose the baked build env to the frontend with values shown, but any
 /// key not in the safe-to-reveal allowlist has its value replaced by `••••••`.
 ///
-/// Provider and model arrive as `BUZZ_AGENT_PROVIDER` / `BUZZ_AGENT_MODEL`
+/// Provider and model arrive as `BEEKEEPER_AGENT_PROVIDER` / `BEEKEEPER_AGENT_MODEL`
 /// keys in `baked_build_env()` and are included in the returned list like any
 /// other key. Empty-value keys are filtered out (same as
 /// `get_baked_build_env_keys`).

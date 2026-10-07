@@ -1,11 +1,11 @@
-//! `buzz-pair` — NIP-AB device pairing interop testing CLI.
+//! `beekeeper-pair` — NIP-AB device pairing interop testing CLI.
 //!
 //! # Usage
 //!
 //! ```text
-//! buzz-pair source --relay wss://relay.example.com [--nsec nsec1...]
-//! buzz-pair target [--relay wss://relay.example.com]
-//! buzz-pair test-vectors
+//! beekeeper-pair source --relay wss://relay.example.com [--nsec nsec1...]
+//! beekeeper-pair target [--relay wss://relay.example.com]
+//! beekeeper-pair test-vectors
 //! ```
 //!
 //! The `source` subcommand acts as the secret-holding device; `target` acts
@@ -32,7 +32,7 @@ use zeroize::Zeroizing;
 
 #[derive(Parser)]
 #[command(
-    name = "buzz-pair",
+    name = "beekeeper-pair",
     about = "NIP-AB device pairing interop testing tool",
     long_about = "Test the NIP-AB device pairing protocol end-to-end.\n\
                   Run 'source' on one terminal and 'target' on another."

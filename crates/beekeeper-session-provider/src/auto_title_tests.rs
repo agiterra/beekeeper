@@ -697,12 +697,12 @@ fn test_provider(state_dir: &Path, auto_title: &str) -> crate::Provider {
     let state = state_dir.to_string_lossy().into_owned();
     let auto_title = auto_title.to_owned();
     let config = crate::config::Config::from_lookup(move |name| match name {
-        "BUZZ_PRIVATE_KEY" => {
+        "BEEKEEPER_PRIVATE_KEY" => {
             Some("0000000000000000000000000000000000000000000000000000000000000001".into())
         }
-        "BUZZ_RELAY_URL" => Some("ws://127.0.0.1:9".into()),
-        "BUZZ_CSP_STATE_DIR" => Some(state.clone()),
-        "BUZZ_CSP_AUTO_TITLE" => Some(auto_title.clone()),
+        "BEEKEEPER_RELAY_URL" => Some("ws://127.0.0.1:9".into()),
+        "BEEKEEPER_CSP_STATE_DIR" => Some(state.clone()),
+        "BEEKEEPER_CSP_AUTO_TITLE" => Some(auto_title.clone()),
         _ => None,
     })
     .expect("config");

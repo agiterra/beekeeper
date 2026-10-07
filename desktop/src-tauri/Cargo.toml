@@ -129,7 +129,7 @@ beekeeper-shell-host = { path = "../../crates/beekeeper-shell-host" }
 # the desktop must compile with the same compiler the relay admits with —
 # compiling the same file twice two ways is exactly how two surfaces come to
 # disagree about a criterion while both sound confident. Already in the tree
-# through buzz-session-provider, so this adds no transitive weight.
+# through beekeeper-session-provider, so this adds no transitive weight.
 beekeeper_workflow_pkg = { package = "beekeeper-workflow", path = "../../crates/beekeeper-workflow" }
 # Linked for its *configuration contract* only — the session ceiling's default
 # and the value that means unlimited. The desktop spawns the provider as a
@@ -188,7 +188,7 @@ audioadapter-buffers = "3.0"
 tempfile = "3"
 strip-ansi-escapes = "0.2"
 tracing = "0.1"
-# The desktop app embeds buzz-acp and buzz-session-provider, which carry ~440
+# The desktop app embeds beekeeper-acp and beekeeper-session-provider, which carry ~440
 # tracing call sites between them. Without a subscriber every one of those —
 # including the adapter stderr captured for exactly this purpose — is discarded.
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

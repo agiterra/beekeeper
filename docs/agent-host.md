@@ -15,7 +15,7 @@ login or boot (launchd/systemd)  login (launchd)
         │                  ▲
         │ child process    │ host.sock
         ▼                  │
-  buzz-session-provider ───┴────────  Beekeeper.app
+  beekeeper-session-provider ───┴────────  Beekeeper.app
         │                             (desktop client)
         │ one per coding session
         ▼                            All three also talk to
@@ -28,11 +28,11 @@ content from the relay as they always did.
 
 ## What it does and does not own
 
-**Owns:** the coding-session provider (`buzz-session-provider`) — spawning it,
+**Owns:** the coding-session provider (`beekeeper-session-provider`) — spawning it,
 restarting it on the backoff ladder, stopping it with SIGINT so its durable
 outbox flushes, and taking its state directory over from a stale owner.
 
-**Does not own:** managed agents (`buzz-acp`). Those are still the desktop
+**Does not own:** managed agents (`beekeeper-acp`). Those are still the desktop
 app's children and still end when it quits. That is a known limit of this
 landing, not an accident; the menu bar app shows them while Beekeeper is
 running by asking it, and says out loud when it cannot.
@@ -54,7 +54,7 @@ inherits the host's environment, so the switch is set where the host runs
 
 | variable | default | effect |
 | --- | --- | --- |
-| `BUZZ_CSP_AUTO_TITLE` | on | `off` stops this host generating titles; a runtime opts out alone with `"titleModel": null` in `BUZZ_CSP_RUNTIMES` |
+| `BEEKEEPER_CSP_AUTO_TITLE` | on | `off` stops this host generating titles; a runtime opts out alone with `"titleModel": null` in `BEEKEEPER_CSP_RUNTIMES` |
 
 The person's own choice (SV-56) is a file in the provider's state directory,
 `session-title-mode.json` — `{"version":1,"mode":"agent"|"my-model"|"off"}` —
@@ -70,7 +70,7 @@ is this computer's preference, so it never goes on the relay.
 - **Unreadable** (not JSON, another version, an unknown mode): treated as off,
   and the provider logs a warning naming the file and the reason. A person who
   asked for no title never gets one by accident.
-- **`BUZZ_CSP_AUTO_TITLE=off` wins** over every mode.
+- **`BEEKEEPER_CSP_AUTO_TITLE=off` wins** over every mode.
 
 The provider reads the file live — before a titling job starts and again just
 before it signs — so a change takes effect without a restart, and switching to

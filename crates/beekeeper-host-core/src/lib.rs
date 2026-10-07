@@ -1,6 +1,6 @@
 //! The contract between a coding-session provider's launcher and the app.
 //!
-//! `buzz-session-provider` takes its entire configuration from the
+//! `beekeeper-session-provider` takes its entire configuration from the
 //! environment, holds a lock on its state directory for the life of the
 //! process, and talks to the relay itself. That makes it launchable by
 //! anything — and since 2026-09 there is more than one launcher: the desktop

@@ -12,7 +12,7 @@
 //! By default the test regenerates the vectors in memory and **compares** them
 //! with the checked-in file, so a translator change that moves a cut, adds a
 //! field or reorders an item fails here before any reader silently disagrees.
-//! `BUZZ_REGEN_PROSE_JOIN_VECTORS=1` rewrites the file instead; review the diff
+//! `BEEKEEPER_REGEN_PROSE_JOIN_VECTORS=1` rewrites the file instead; review the diff
 //! and re-run every reader's binding test before committing it.
 //!
 //! Every expected message is checked twice: by the reference join below, and
@@ -45,7 +45,7 @@ use hand_written::{
     own_prose_around_subagent_prose, reasoning_joins_like_prose, sequence_gap, two_signers,
 };
 
-const REGEN_ENV: &str = "BUZZ_REGEN_PROSE_JOIN_VECTORS";
+const REGEN_ENV: &str = "BEEKEEPER_REGEN_PROSE_JOIN_VECTORS";
 const VECTOR_SCHEMA: &str = "buzz.conformance/transcript-prose-join@1";
 /// Synthetic signers. Ids and signers in the vectors are deterministic labels,
 /// not keys: a reader binds to them as opaque strings and never verifies them.

@@ -16,7 +16,7 @@ import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/co
 import {
   codingSessionMetadataSemanticKey,
   CODING_SESSION_METADATA_TAG_VERSION,
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   lifecycleReceiptSemanticKey,
@@ -268,7 +268,7 @@ function crewInvokeInitScript(input: {
       acp_command: "sprig",
       agent_command: "buzz-agent",
       agent_args: [],
-      mcp_command: "buzz-dev-mcp",
+      mcp_command: "beekeeper-dev-mcp",
       turn_timeout_seconds: 300,
       idle_timeout_seconds: null,
       max_turn_duration_seconds: null,
@@ -521,7 +521,7 @@ function metadataEvent(): RelayEvent {
         ["csm-key", codingSessionMetadataSemanticKey(TARGET)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: TARGET,
         projectRef: null,
         repoRef: null,

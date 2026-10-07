@@ -112,7 +112,7 @@ pub struct WorkflowEngine {
     /// The same TTL also bounds the same-pod look-aside race (a stale fill
     /// landing just after an invalidation). Workflow mutations are rare; the
     /// 10s window matches the relay's other moka caches (see `AppState` in
-    /// `buzz-relay`).
+    /// `beekeeper-relay`).
     pub(crate) workflow_cache:
         moka::sync::Cache<(CommunityId, Uuid), Arc<Vec<beekeeper_db::workflow::WorkflowRecord>>>,
 }
@@ -2058,7 +2058,7 @@ steps:
     // -- SEC-006: event-path regression (requires Postgres) ----------------
 
     pub(crate) async fn setup_db() -> beekeeper_db::Db {
-        let database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+        let database_url = std::env::var("BEEKEEPER_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_owned());
         beekeeper_db::Db::new(&beekeeper_db::DbConfig {

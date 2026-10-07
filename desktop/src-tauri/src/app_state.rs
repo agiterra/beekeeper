@@ -136,22 +136,22 @@ pub struct AppState {
     pub pending_owned_channels: Mutex<std::collections::HashSet<(String, String)>>,
 }
 
-/// Parse the `BUZZ_PRIVATE_KEY` env var into identity keys. `Some` means the
+/// Parse the `BEEKEEPER_PRIVATE_KEY` env var into identity keys. `Some` means the
 /// env var was present and valid and MUST win over any persisted/keyring key
 /// (the dev/CI/harness override). `None` means absent or malformed — callers
 /// fall through to persisted resolution. A malformed value is logged and
 /// treated as absent rather than left on an ephemeral identity.
 fn identity_from_env() -> Option<Keys> {
-    match std::env::var("BUZZ_PRIVATE_KEY") {
+    match std::env::var("BEEKEEPER_PRIVATE_KEY") {
         Ok(nsec) => match Keys::parse(nsec.trim()) {
             Ok(keys) => Some(keys),
             Err(error) => {
-                eprintln!("beekeeper-desktop: invalid BUZZ_PRIVATE_KEY: {error}");
+                eprintln!("beekeeper-desktop: invalid BEEKEEPER_PRIVATE_KEY: {error}");
                 None
             }
         },
         Err(std::env::VarError::NotUnicode(_)) => {
-            eprintln!("beekeeper-desktop: BUZZ_PRIVATE_KEY contains invalid UTF-8");
+            eprintln!("beekeeper-desktop: BEEKEEPER_PRIVATE_KEY contains invalid UTF-8");
             None
         }
         Err(std::env::VarError::NotPresent) => None,
@@ -343,7 +343,7 @@ impl AppState {
 /// Resolve the user's identity key from the app data directory and wire
 /// the resulting [`RecoveryState`] into `AppState`.
 ///
-/// Priority: `BUZZ_PRIVATE_KEY` env var (already handled in `build_app_state`)
+/// Priority: `BEEKEEPER_PRIVATE_KEY` env var (already handled in `build_app_state`)
 /// → keyring → `{app_data_dir}/identity.key` file → generate + save.
 ///
 /// On success, writes the resolved keys into `state.keys` (with the mutex)

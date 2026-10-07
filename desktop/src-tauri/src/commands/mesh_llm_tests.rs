@@ -363,7 +363,7 @@ fn ensure_serve_runtime_serves_other_model() {
                 const DEFAULT_HOSTED_MODEL: &str =
                     "jc-builds/SmolLM2-135M-Instruct-Q4_K_M-GGUF:Q4_K_M";
                 const OTHER_MODEL: &str = "some/other-model-not-hosted-locally:Q4_K_M";
-                let hosted_model = std::env::var("BUZZ_MESH_TEST_MODEL")
+                let hosted_model = std::env::var("BEEKEEPER_MESH_TEST_MODEL")
                     .unwrap_or_else(|_| DEFAULT_HOSTED_MODEL.to_string());
 
                 let state = build_app_state();
@@ -489,7 +489,7 @@ fn ensure_serve_runtime_serves_other_model() {
                             "model": "auto",
                             "messages": [{
                                 "role": "user",
-                                "content": "Reply with exactly BUZZ_SINGLE_SHARE_OK and nothing else."
+                                "content": "Reply with exactly BEEKEEPER_SINGLE_SHARE_OK and nothing else."
                             }],
                             "max_tokens": 512,
                             "temperature": 0

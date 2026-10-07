@@ -51,7 +51,7 @@ fn status_composes_the_cached_role_and_discloses_what_it_cannot() {
         .is_some_and(|d| d.starts_with("sha256:")));
     assert!(pack["note"]
         .as_str()
-        .is_some_and(|n| n.contains("BUZZ_TEMPLATES_DIR")));
+        .is_some_and(|n| n.contains("BEEKEEPER_TEMPLATES_DIR")));
 
     let flat = compose_status(&cache, "beekeeper", "lead", Some(&templates));
     assert_eq!(flat["ok"], true, "{flat}");
@@ -269,47 +269,47 @@ fn seeding_at_the_root_path_lands_the_files_at_the_top_of_the_tree() {
 
 // --- finding 135(e): the packs cache must name which fact resolved it ---
 
-/// Serializes tests that mutate `BUZZ_MANAGED_AGENT` — `std::env::set_var`
+/// Serializes tests that mutate `BEEKEEPER_MANAGED_AGENT` — `std::env::set_var`
 /// races across threads otherwise (this suite runs tests in parallel by
 /// default), and this env var is not touched by any other test in the crate.
 static MANAGED_AGENT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// No `BUZZ_MANAGED_AGENT`: the identifier is the hard-coded release guess,
+/// No `BEEKEEPER_MANAGED_AGENT`: the identifier is the hard-coded release guess,
 /// and the source is `Default` — never asserted silently as a confirmed path.
 #[test]
 fn no_env_marker_falls_back_to_the_release_identifier_and_says_so() {
     let _guard = MANAGED_AGENT_ENV_LOCK.lock().unwrap();
-    std::env::remove_var("BUZZ_MANAGED_AGENT");
+    std::env::remove_var("BEEKEEPER_MANAGED_AGENT");
     let (identifier, source) = resolve_app_identifier();
     assert_eq!(identifier, APP_IDENTIFIER);
     assert_eq!(source, CacheDirSource::Default);
     assert_eq!(source.as_str(), "default");
 }
 
-/// `BUZZ_MANAGED_AGENT` is the fact the desktop host stamps on every process
+/// `BEEKEEPER_MANAGED_AGENT` is the fact the desktop host stamps on every process
 /// it spawns for a seat (`current_instance_id`/`buzz_marker_entry` in
 /// `desktop/src-tauri/src/managed_agents/runtime/process.rs`); a dev bundle's
 /// value must be used verbatim, not folded into the release identifier.
 #[test]
 fn env_marker_names_the_running_instance_and_is_preferred_over_the_guess() {
     let _guard = MANAGED_AGENT_ENV_LOCK.lock().unwrap();
-    std::env::set_var("BUZZ_MANAGED_AGENT", "io.agiterra.beekeeper.app.dev");
+    std::env::set_var("BEEKEEPER_MANAGED_AGENT", "io.agiterra.beekeeper.app.dev");
     let (identifier, source) = resolve_app_identifier();
-    std::env::remove_var("BUZZ_MANAGED_AGENT");
+    std::env::remove_var("BEEKEEPER_MANAGED_AGENT");
     assert_eq!(identifier, "io.agiterra.beekeeper.app.dev");
     assert_eq!(source, CacheDirSource::Env);
     assert_eq!(source.as_str(), "env");
 }
 
-/// A blank `BUZZ_MANAGED_AGENT` (unset-but-exported, or explicitly cleared to
+/// A blank `BEEKEEPER_MANAGED_AGENT` (unset-but-exported, or explicitly cleared to
 /// empty) is not a fact either — treat it the same as absent rather than
 /// deriving a cache path from an empty directory name.
 #[test]
 fn a_blank_env_marker_is_not_treated_as_a_fact() {
     let _guard = MANAGED_AGENT_ENV_LOCK.lock().unwrap();
-    std::env::set_var("BUZZ_MANAGED_AGENT", "   ");
+    std::env::set_var("BEEKEEPER_MANAGED_AGENT", "   ");
     let (identifier, source) = resolve_app_identifier();
-    std::env::remove_var("BUZZ_MANAGED_AGENT");
+    std::env::remove_var("BEEKEEPER_MANAGED_AGENT");
     assert_eq!(identifier, APP_IDENTIFIER);
     assert_eq!(source, CacheDirSource::Default);
 }
@@ -320,9 +320,9 @@ fn a_blank_env_marker_is_not_treated_as_a_fact() {
 #[test]
 fn default_packs_dir_names_the_dev_cache_when_the_env_marker_says_so() {
     let _guard = MANAGED_AGENT_ENV_LOCK.lock().unwrap();
-    std::env::set_var("BUZZ_MANAGED_AGENT", "io.agiterra.beekeeper.app.dev");
+    std::env::set_var("BEEKEEPER_MANAGED_AGENT", "io.agiterra.beekeeper.app.dev");
     let (dir, source) = default_packs_dir().expect("HOME is set in this environment");
-    std::env::remove_var("BUZZ_MANAGED_AGENT");
+    std::env::remove_var("BEEKEEPER_MANAGED_AGENT");
     assert_eq!(source, CacheDirSource::Env);
     let dir_str = dir.display().to_string();
     assert!(

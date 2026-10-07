@@ -3,7 +3,7 @@
 # Beekeeper relay image. The relay host builds it from this file with a plain
 # `docker build` (deploy/autodeploy); it is not published to a registry.
 #
-# Builds the `buzz-relay` binary (Rust 1.95) and the `buzz-web` static bundle
+# Builds the `beekeeper-relay` binary (Rust 1.95) and the `buzz-web` static bundle
 # (pnpm + vite), then assembles them into a small debian-slim runtime with
 # `git` available (the relay shells out to git for repo hydrate / receive-pack
 # / upload-pack — see crates/beekeeper-relay/src/api/git).
@@ -69,27 +69,27 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 # Compile immutable artifact identity into the relay. Defaults preserve local
 # and third-party builds that do not run in provenance-aware CI.
-ARG BUZZ_SOURCE_SHA=unknown
+ARG BEEKEEPER_SOURCE_SHA=unknown
 # Empty, not `unknown`: the count is numeric, and empty is the value
 # `parse_commit_count` refuses to a disclosed `null`. Must describe the same
-# commit as BUZZ_SOURCE_SHA — build.rs pairs them or drops the count.
-ARG BUZZ_SOURCE_COMMIT_COUNT=
-ARG BUZZ_BUILD_ID=local
-ARG BUZZ_BUILD_URL=unknown
-ENV BUZZ_SOURCE_SHA=${BUZZ_SOURCE_SHA} \
-    BUZZ_SOURCE_COMMIT_COUNT=${BUZZ_SOURCE_COMMIT_COUNT} \
-    BUZZ_BUILD_ID=${BUZZ_BUILD_ID} \
-    BUZZ_BUILD_URL=${BUZZ_BUILD_URL}
-RUN cargo build --release --locked -p beekeeper-relay --bin buzz-relay \
-                                   -p beekeeper-admin --bin buzz-admin \
-                                   -p beekeeper-pair-relay --bin buzz-pair-relay
+# commit as BEEKEEPER_SOURCE_SHA — build.rs pairs them or drops the count.
+ARG BEEKEEPER_SOURCE_COMMIT_COUNT=
+ARG BEEKEEPER_BUILD_ID=local
+ARG BEEKEEPER_BUILD_URL=unknown
+ENV BEEKEEPER_SOURCE_SHA=${BEEKEEPER_SOURCE_SHA} \
+    BEEKEEPER_SOURCE_COMMIT_COUNT=${BEEKEEPER_SOURCE_COMMIT_COUNT} \
+    BEEKEEPER_BUILD_ID=${BEEKEEPER_BUILD_ID} \
+    BEEKEEPER_BUILD_URL=${BEEKEEPER_BUILD_URL}
+RUN cargo build --release --locked -p beekeeper-relay --bin beekeeper-relay \
+                                   -p beekeeper-admin --bin beekeeper-admin \
+                                   -p beekeeper-pair-relay --bin beekeeper-pair-relay
 
 # Derive the normal release binaries from the same optimized ELF files as the
 # debug image so the two variants cannot drift at code-generation time.
 FROM builder AS stripped-binaries
-RUN strip target/release/buzz-relay \
-    && strip target/release/buzz-admin \
-    && strip target/release/buzz-pair-relay
+RUN strip target/release/beekeeper-relay \
+    && strip target/release/beekeeper-admin \
+    && strip target/release/beekeeper-pair-relay
 
 # ─── Stage 4: web bundle (pnpm + vite) ──────────────────────────────────────
 # Independent of the Rust layers so a CSS change doesn't bust Rust cache and
@@ -158,10 +158,10 @@ COPY --from=web-builder /build/web/dist                 /srv/buzz/web
 COPY --from=web-builder /build/admin-web/dist           /srv/buzz/admin-web
 
 # The invite landing page is always served from the bundled web UI. Repository
-# browser routes require the separate BUZZ_SERVE_GIT_WEB_GUI=true opt-in. The
-# admin bundle is inert until BUZZ_ADMIN_HOST is configured.
-ENV BUZZ_WEB_DIR=/srv/buzz/web \
-    BUZZ_ADMIN_WEB_DIR=/srv/buzz/admin-web
+# browser routes require the separate BEEKEEPER_SERVE_GIT_WEB_GUI=true opt-in. The
+# admin bundle is inert until BEEKEEPER_ADMIN_HOST is configured.
+ENV BEEKEEPER_WEB_DIR=/srv/buzz/web \
+    BEEKEEPER_ADMIN_WEB_DIR=/srv/buzz/admin-web
 
 # 3000: app (WS + REST)  ·  8080: /_liveness, /_readiness  ·  9102: /metrics
 EXPOSE 3000 8080 9102
@@ -172,19 +172,19 @@ RUN mkdir -p /data/git && chown buzz:buzz /data/git
 USER buzz:buzz
 WORKDIR /var/lib/buzz
 
-ENTRYPOINT ["/usr/local/bin/buzz-relay"]
+ENTRYPOINT ["/usr/local/bin/beekeeper-relay"]
 
 # Optimized binaries with line-table debug information for native profiling.
 # Published under debug-* tags; runtime behavior otherwise matches the normal
 # image exactly.
 FROM runtime-base AS runtime-debug
-COPY --from=builder /build/target/release/buzz-relay /usr/local/bin/buzz-relay
-COPY --from=builder /build/target/release/buzz-admin /usr/local/bin/buzz-admin
-COPY --from=builder /build/target/release/buzz-pair-relay /usr/local/bin/buzz-pair-relay
+COPY --from=builder /build/target/release/beekeeper-relay /usr/local/bin/beekeeper-relay
+COPY --from=builder /build/target/release/beekeeper-admin /usr/local/bin/beekeeper-admin
+COPY --from=builder /build/target/release/beekeeper-pair-relay /usr/local/bin/beekeeper-pair-relay
 
 # Keep the stripped runtime as the final/default Dockerfile target so existing
 # `docker build .` callers and release tags retain their current behavior.
 FROM runtime-base AS runtime
-COPY --from=stripped-binaries /build/target/release/buzz-relay /usr/local/bin/buzz-relay
-COPY --from=stripped-binaries /build/target/release/buzz-admin /usr/local/bin/buzz-admin
-COPY --from=stripped-binaries /build/target/release/buzz-pair-relay /usr/local/bin/buzz-pair-relay
+COPY --from=stripped-binaries /build/target/release/beekeeper-relay /usr/local/bin/beekeeper-relay
+COPY --from=stripped-binaries /build/target/release/beekeeper-admin /usr/local/bin/beekeeper-admin
+COPY --from=stripped-binaries /build/target/release/beekeeper-pair-relay /usr/local/bin/beekeeper-pair-relay

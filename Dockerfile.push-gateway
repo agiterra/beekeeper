@@ -17,8 +17,8 @@ RUN apt-get update \
 COPY --from=planner /build/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --locked -p beekeeper-push-gateway --bin buzz-push-gateway \
-    && strip target/release/buzz-push-gateway
+RUN cargo build --release --locked -p beekeeper-push-gateway --bin beekeeper-push-gateway \
+    && strip target/release/beekeeper-push-gateway
 
 FROM debian:${DEBIAN_VERSION}-slim AS runtime
 LABEL org.opencontainers.image.title="Beekeeper Push Gateway" \
@@ -30,8 +30,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 1000 buzz \
     && useradd --system --uid 1000 --gid 1000 --home-dir /var/lib/buzz --create-home --shell /usr/sbin/nologin buzz
-COPY --from=builder /build/target/release/buzz-push-gateway /usr/local/bin/buzz-push-gateway
+COPY --from=builder /build/target/release/beekeeper-push-gateway /usr/local/bin/beekeeper-push-gateway
 EXPOSE 8080 8081
 USER buzz:buzz
 WORKDIR /var/lib/buzz
-ENTRYPOINT ["/usr/local/bin/buzz-push-gateway"]
+ENTRYPOINT ["/usr/local/bin/beekeeper-push-gateway"]

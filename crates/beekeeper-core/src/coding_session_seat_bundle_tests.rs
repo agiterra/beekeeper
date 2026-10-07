@@ -1,6 +1,6 @@
 //! The sanitizer's whole contract, owned here now that both sides share it.
 //!
-//! These moved from `buzz-session-provider`'s `session.rs` and the desktop's
+//! These moved from `beekeeper-session-provider`'s `session.rs` and the desktop's
 //! `coding_sessions/seat_bundle_tests.rs`. Each side keeps a test that the
 //! path *it* composes matches a literal, which is what proves the move changed
 //! no behaviour; the character-level rules live here once.

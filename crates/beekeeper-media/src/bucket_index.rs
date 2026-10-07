@@ -6,7 +6,7 @@
 //! caller-supplied page-fetching closure so the pagination/cap logic is
 //! testable against synthetic listings. The relay wires a real
 //! [`crate::storage::MediaStorage::list_page`] closure at the call site (see
-//! `buzz-relay`'s storage sweep task).
+//! `beekeeper-relay`'s storage sweep task).
 //!
 //! Five key classes (thumb matched first, everything unrecognized is
 //! `Unknown` — never silently folded into another class):

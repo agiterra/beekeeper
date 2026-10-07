@@ -5,7 +5,7 @@
 //! project coordinate in an `a` tag (`30621:<creator>:<dtag>`). The relay
 //! stores such a deletion only after admitting its signer — the creator, the
 //! creator's owner, or a roster Owner of the project
-//! (`buzz-relay` `validate_standard_deletion_event`) — and then stops serving
+//! (`beekeeper-relay` `validate_standard_deletion_event`) — and then stops serving
 //! the head it deleted. So a tombstone the relay serves carries the relay's
 //! own authority decision; what this module adds is whether that deletion is
 //! *applied to the head this host knows*:

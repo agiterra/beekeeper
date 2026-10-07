@@ -41,7 +41,7 @@ pub(crate) const AGENTS_MD: &str = include_str!("nest_agents.md");
 
 /// Default SKILL.md content for the buzz-cli skill.
 /// Written to ~/.beekeeper/.agents/skills/buzz-cli/SKILL.md on first init.
-const BUZZ_CLI_SKILL_MD: &str = include_str!("nest_skill.md");
+const BEEKEEPER_CLI_SKILL_MD: &str = include_str!("nest_skill.md");
 
 /// Template content version for AGENTS.md static content (above managed markers).
 /// Bump this when changing `nest_agents.md` to trigger refresh on existing installs.
@@ -203,7 +203,7 @@ pub fn ensure_nest_at(root: &Path) -> Result<(), String> {
     {
         Ok(mut file) => {
             use std::io::Write;
-            file.write_all(BUZZ_CLI_SKILL_MD.as_bytes())
+            file.write_all(BEEKEEPER_CLI_SKILL_MD.as_bytes())
                 .map_err(|e| format!("write {}: {e}", skill_md.display()))?;
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -466,9 +466,9 @@ fn refresh_skill_md_if_stale(root: &Path) -> Result<(), String> {
     let skill_content = if old_is_real_dir {
         // Preserve user-edited content during migration.
         fs::read_to_string(old_skill_dir.join("SKILL.md"))
-            .unwrap_or_else(|_| BUZZ_CLI_SKILL_MD.to_string())
+            .unwrap_or_else(|_| BEEKEEPER_CLI_SKILL_MD.to_string())
     } else {
-        BUZZ_CLI_SKILL_MD.to_string()
+        BEEKEEPER_CLI_SKILL_MD.to_string()
     };
 
     // Ensure the canonical .agents skill directory exists.
@@ -687,7 +687,7 @@ mod tests;
 /// cannot be read leaves it exactly as it has always been; refusing the spawn
 /// would break agents that work today. The operator asking "why doesn't it
 /// know its skill" finds the reason in the log they are already reading. (A
-/// crew seat in `buzz-session-provider` refuses instead: there the pack is the
+/// crew seat in `beekeeper-session-provider` refuses instead: there the pack is the
 /// point of the seat.)
 pub(crate) fn materialize_persona_skills_logged(
     record: &ManagedAgentRecord,

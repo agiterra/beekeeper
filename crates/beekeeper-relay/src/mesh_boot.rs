@@ -1,11 +1,11 @@
-//! Relay startup wiring for the inter-relay mesh (`BUZZ_MESH` seam).
+//! Relay startup wiring for the inter-relay mesh (`BEEKEEPER_MESH` seam).
 //!
 //! [`boot_mesh`] is the ONLY place the relay constructs mesh machinery. It
-//! returns `None` — and touches nothing — when `BUZZ_MESH=off`, so mesh-off
+//! returns `None` — and touches nothing — when `BEEKEEPER_MESH=off`, so mesh-off
 //! deployments stay byte-identical to a relay built before this module
 //! existed. When enabled, it:
 //!
-//! 1. binds the iroh endpoint on `BUZZ_MESH_BIND_ADDR` (boot-unique keypair =
+//! 1. binds the iroh endpoint on `BEEKEEPER_MESH_BIND_ADDR` (boot-unique keypair =
 //!    boot-unique `RuntimeId`),
 //! 2. publishes a relay-key-attested [`ReadyRecord`] to the Redis ready
 //!    registry and starts the readiness-gated heartbeat,
@@ -205,7 +205,7 @@ impl MeshHandle {
 /// - `HuddleControl` streams → [`HuddleControlAcceptor::accept_inbound`]
 ///   (owner-side register/unregister control loop).
 /// - `ReliableStream` streams → [`ReliableStreamRouter::accept_inbound`], then
-///   either the `BUZZ_MESH_DEMO_ECHO` consumer (testbed evidence runs: echo
+///   either the `BEEKEEPER_MESH_DEMO_ECHO` consumer (testbed evidence runs: echo
 ///   every validated `Data` frame back) or accept/log/close (default — no
 ///   product session consumer is wired yet).
 ///
@@ -298,7 +298,7 @@ pub fn wire_mesh_consumers(
     }));
 }
 
-/// `BUZZ_MESH_DEMO_ECHO` consumer: echo every validated `Data` frame back to
+/// `BEEKEEPER_MESH_DEMO_ECHO` consumer: echo every validated `Data` frame back to
 /// the sender. A transport/session-routing smoke for cross-pod evidence runs —
 /// each echoed frame proves fenced validation (Redis directory hit included)
 /// on the owner and delivery in both mesh directions. Not a product flow.
@@ -381,11 +381,11 @@ fn capabilities() -> Vec<String> {
 }
 
 /// Addresses peers should dial, in preference order:
-/// `BUZZ_MESH_ADVERTISE_ADDR` (explicit, classic-LB shapes) →
+/// `BEEKEEPER_MESH_ADVERTISE_ADDR` (explicit, classic-LB shapes) →
 /// `POD_IP` + actual bound port (k8s Downward API, zero RBAC) →
 /// every IP transport addr the endpoint reports (dev/local).
 fn advertise_addrs(endpoint: &MeshEndpoint) -> Vec<String> {
-    if let Ok(addr) = std::env::var("BUZZ_MESH_ADVERTISE_ADDR") {
+    if let Ok(addr) = std::env::var("BEEKEEPER_MESH_ADVERTISE_ADDR") {
         let addr = addr.trim().to_string();
         if !addr.is_empty() {
             return vec![addr];
@@ -405,11 +405,11 @@ fn advertise_addrs(endpoint: &MeshEndpoint) -> Vec<String> {
     ip_addrs.iter().map(|sock| sock.to_string()).collect()
 }
 
-/// Boot the mesh, or return `None` when `BUZZ_MESH=off`.
+/// Boot the mesh, or return `None` when `BEEKEEPER_MESH=off`.
 ///
 /// Never fatal to relay startup by policy? No — a *misconfigured* enabled mesh
 /// fails loudly (bind failure, Redis unreachable at publish). An operator who
-/// sets `BUZZ_MESH=on` wants the mesh or wants to know why not; silently
+/// sets `BEEKEEPER_MESH=on` wants the mesh or wants to know why not; silently
 /// booting meshless would be the same class of bug as silently dropping to a
 /// default tenant.
 pub async fn boot_mesh(
@@ -420,7 +420,7 @@ pub async fn boot_mesh(
     shutting_down: Arc<AtomicBool>,
 ) -> anyhow::Result<Option<MeshHandle>> {
     if !config.mesh.enabled {
-        tracing::info!("mesh disabled (BUZZ_MESH is not 'on') — single-instance behavior");
+        tracing::info!("mesh disabled (BEEKEEPER_MESH is not 'on') — single-instance behavior");
         return Ok(None);
     }
 
@@ -528,7 +528,7 @@ pub async fn boot_mesh(
 mod tests {
     use super::*;
 
-    /// BUZZ_MESH=off must be a hard no-op: no endpoint bind, no Redis write,
+    /// BEEKEEPER_MESH=off must be a hard no-op: no endpoint bind, no Redis write,
     /// no background task — `boot_mesh` returns `None` before touching
     /// anything. The Redis pool here points nowhere routable; if the off path
     /// ever reached Redis this test would hang/fail.
@@ -552,17 +552,20 @@ mod tests {
         assert!(handle.is_none());
     }
 
-    /// Blocker fix (Wren review of 8b077fdb): absent `BUZZ_MESH`, the mesh is
+    /// Blocker fix (Wren review of 8b077fdb): absent `BEEKEEPER_MESH`, the mesh is
     /// OFF — an env-untouched image upgrade must not bind or write Redis.
     #[test]
     fn mesh_defaults_off_when_env_absent() {
-        // `Config::from_env` in the test env has no BUZZ_MESH set unless a
+        // `Config::from_env` in the test env has no BEEKEEPER_MESH set unless a
         // caller exported it; assert the fail-safe reading.
-        if std::env::var("BUZZ_MESH").is_ok() {
+        if std::env::var("BEEKEEPER_MESH").is_ok() {
             return; // externally forced — skip rather than assert a lie
         }
         let config = crate::config::Config::from_env().expect("default config loads");
-        assert!(!config.mesh.enabled, "BUZZ_MESH absent must mean mesh off");
+        assert!(
+            !config.mesh.enabled,
+            "BEEKEEPER_MESH absent must mean mesh off"
+        );
     }
 
     use std::sync::Mutex;

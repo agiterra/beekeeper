@@ -91,7 +91,7 @@ export function parsePromptText(text: string): {
  *    Same two cases, same last-occurrence guard.
  *
  * 3. **Team Instructions** (`[Team Instructions]`): appended before core by
- *    `with_team()` in `buzz-acp/src/pool.rs`. Same two cases (start-of-string
+ *    `with_team()` in `beekeeper-acp/src/pool.rs`. Same two cases (start-of-string
  *    or `\n\n[Team Instructions]\n` inline), same last-occurrence guard. Output
  *    position: after System, before Core Memory.
  *
@@ -149,7 +149,7 @@ export function parseSystemPromptSections(
   }
 
   // ── 3. Extract [Team Instructions] (modern runtime framing) ─────────────
-  // with_team() in buzz-acp/src/pool.rs appends "\n\n[Team Instructions]\n{instructions}"
+  // with_team() in beekeeper-acp/src/pool.rs appends "\n\n[Team Instructions]\n{instructions}"
   // after [System] and before core/canvas. Same two cases as canvas/core:
   // start-of-string (team-only input) or the inline double-newline marker
   // (last occurrence guards against embedded lookalikes preceded by a single \n).

@@ -160,8 +160,8 @@ pub const SEAT_EMAIL_DOMAIN: &str = "agents.beekeeper";
 ///
 /// Named here rather than inlined because the seat side and the CLI side must
 /// agree exactly: `crates/beekeeper-cli/src/lib.rs` declares it as clap's
-/// `env = "BUZZ_PULSE_PROJECT"` on every `pulse` subcommand.
-pub const PULSE_PROJECT_ENV: &str = "BUZZ_PULSE_PROJECT";
+/// `env = "BEEKEEPER_PULSE_PROJECT"` on every `pulse` subcommand.
+pub const PULSE_PROJECT_ENV: &str = "BEEKEEPER_PULSE_PROJECT";
 
 /// How much of the seat's pubkey the address carries.
 ///
@@ -233,14 +233,14 @@ impl ActorSeat {
     /// when the launcher staged no display name.
     pub fn post_fence_env(&self, role: Option<&str>) -> Vec<(String, String)> {
         let mut env = vec![
-            ("BUZZ_PRIVATE_KEY".to_owned(), self.nsec.clone()),
+            ("BEEKEEPER_PRIVATE_KEY".to_owned(), self.nsec.clone()),
             ("NOSTR_PRIVATE_KEY".to_owned(), self.nsec.clone()),
-            ("BUZZ_RELAY_URL".to_owned(), self.relay_url.clone()),
+            ("BEEKEEPER_RELAY_URL".to_owned(), self.relay_url.clone()),
         ];
-        // Omitted, not emptied: an empty `BUZZ_AUTH_TAG` is a malformed tag,
+        // Omitted, not emptied: an empty `BEEKEEPER_AUTH_TAG` is a malformed tag,
         // and a seat with no attestation is a seat with no attestation.
         if let Some(auth_tag) = &self.auth_tag {
-            env.push(("BUZZ_AUTH_TAG".to_owned(), auth_tag.clone()));
+            env.push(("BEEKEEPER_AUTH_TAG".to_owned(), auth_tag.clone()));
         }
         let (name, email) = self.git_identity(role);
         env.push(("GIT_AUTHOR_NAME".to_owned(), name.clone()));
@@ -262,7 +262,7 @@ impl ActorSeat {
     /// status that reads Idle over a dead process — the writes appeared to
     /// land, and did, somewhere nobody was looking.
     ///
-    /// `BUZZ_PULSE_PROJECT` is the variable `bee pulse` already reads for its
+    /// `BEEKEEPER_PULSE_PROJECT` is the variable `bee pulse` already reads for its
     /// `--project` flag (`beekeeper_cli::PulseCmd`), so passing it here targets the
     /// operator's project without teaching the seat a new flag. It rides the
     /// post-fence list because the fence strips the whole `BUZZ_*` namespace;
@@ -271,7 +271,7 @@ impl ActorSeat {
     /// guessed.
     ///
     /// A blank or whitespace-only `project_ref` is treated as no project: an
-    /// empty `BUZZ_PULSE_PROJECT` would fill clap's `--project` with a
+    /// empty `BEEKEEPER_PULSE_PROJECT` would fill clap's `--project` with a
     /// coordinate that cannot resolve, which reads as a broken project rather
     /// than as no project at all.
     pub fn post_fence_env_in_project(
@@ -522,10 +522,10 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "BUZZ_PRIVATE_KEY",
+                "BEEKEEPER_PRIVATE_KEY",
                 "NOSTR_PRIVATE_KEY",
-                "BUZZ_RELAY_URL",
-                "BUZZ_AUTH_TAG",
+                "BEEKEEPER_RELAY_URL",
+                "BEEKEEPER_AUTH_TAG",
                 "GIT_AUTHOR_NAME",
                 "GIT_AUTHOR_EMAIL",
                 "GIT_COMMITTER_NAME",
@@ -734,7 +734,7 @@ mod tests {
     }
 
     /// A seat with no attestation omits the variable rather than exporting an
-    /// empty one — an empty `BUZZ_AUTH_TAG` is a malformed tag, not "no tag".
+    /// empty one — an empty `BEEKEEPER_AUTH_TAG` is a malformed tag, not "no tag".
     #[test]
     fn a_seat_without_an_attestation_omits_the_variable() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -750,7 +750,7 @@ mod tests {
             .seat("create-1")
             .expect("seat")
             .post_fence_env(Some("builder"));
-        assert!(env.iter().all(|(name, _)| name != "BUZZ_AUTH_TAG"));
+        assert!(env.iter().all(|(name, _)| name != "BEEKEEPER_AUTH_TAG"));
         assert_eq!(
             env.iter()
                 .filter(|(name, _)| name.starts_with("BUZZ_"))

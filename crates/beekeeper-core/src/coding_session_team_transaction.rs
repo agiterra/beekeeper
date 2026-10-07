@@ -486,7 +486,7 @@ pub struct CodingSessionTeamDecisionAnswer {
     /// question twice because the first answer had been given about one SHA
     /// and a second SHA needed the identical ruling. The honest fix is not a
     /// machine-checked condition — the fold cannot evaluate "any SHA whose
-    /// buzz-acp diff against main is empty" and must never pretend to — but a
+    /// beekeeper-acp diff against main is empty" and must never pretend to — but a
     /// place to write it down where the next asker reads it first.
     ///
     /// **Required on write, optional on read.** Serialization always emits the

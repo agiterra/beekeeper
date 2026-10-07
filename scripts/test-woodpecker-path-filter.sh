@@ -105,8 +105,8 @@ while IFS= read -r hit; do
 done < <(grep -rHo -E 'include_(str|bytes)!\("[^"]+"\)' --include='*.rs' crates/ 2>/dev/null || true)
 
 # ── 4. nothing excluded may live in a relay build input ──────────────────────
-# The relay image is `COPY . .` minus .dockerignore, built into buzz-relay,
-# buzz-admin and buzz-pair-relay plus the web/admin-web bundles. Anything under
+# The relay image is `COPY . .` minus .dockerignore, built into beekeeper-relay,
+# beekeeper-admin and beekeeper-pair-relay plus the web/admin-web bundles. Anything under
 # these paths can change the image and must never be excluded from the gate.
 while IFS= read -r f; do
   case "$f" in

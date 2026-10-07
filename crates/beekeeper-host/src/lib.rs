@@ -1,6 +1,6 @@
 //! The headless host for Beekeeper's background agents.
 //!
-//! `buzz-session-provider` answers coding-session commands on the relay and
+//! `beekeeper-session-provider` answers coding-session commands on the relay and
 //! publishes transcripts back. Until now its body was borrowed: it ran while a
 //! desktop app ran, on hardware that sleeps when a human does
 //! (`VISION_REMOTE_AGENTS.md`). This crate is the body it gets instead — a
@@ -29,7 +29,7 @@
 //! Unix only, and the crate says so rather than failing to compile: the
 //! control socket is an `AF_UNIX` socket and the login registrations are
 //! launchd and systemd. A Windows host needs named pipes and a different
-//! service manager, which is separate work. `buzz-shell-host` already has
+//! service manager, which is separate work. `beekeeper-shell-host` already has
 //! this shape, and `beekeeper-host` follows it — including being absent from
 //! `tauri.windows.conf.json`.
 

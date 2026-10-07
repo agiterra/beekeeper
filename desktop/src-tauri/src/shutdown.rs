@@ -30,7 +30,7 @@ pub(crate) fn shut_down_app(app: &tauri::AppHandle, shutdown_done: &std::sync::a
         // Stopping the provider is an explicit act now, over the host's
         // control socket.
         //
-        // Managed agents (`buzz-acp`) are still this app's children and still
+        // Managed agents (`beekeeper-acp`) are still this app's children and still
         // die with it. That is a known, deliberate limit of this landing; the
         // release notes say so.
         //
@@ -269,7 +269,7 @@ pub(crate) fn shutdown_managed_agents(app: &tauri::AppHandle) -> Result<(), Stri
     managed_agents::sweep_orphaned_agent_processes(app, &[]);
 
     // System-wide sweep: agent workers (goose, buzz-agent, etc.) are spawned
-    // in their own process groups by buzz-acp, so group-kills above only
+    // in their own process groups by beekeeper-acp, so group-kills above only
     // reach the harness, not the workers. Scan all user processes and kill any
     // known agent binaries that are still running.
     managed_agents::sweep_system_agent_processes(&managed_agents::current_instance_id(app), &[]);

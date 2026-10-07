@@ -308,19 +308,19 @@ fn a_preview_lists_what_a_conversion_would_convert_without_writing() {
     );
 }
 
-/// Convert a real pack tree named by `BUZZ_MIGRATE_FIXTURE` and prove every
+/// Convert a real pack tree named by `BEEKEEPER_MIGRATE_FIXTURE` and prove every
 /// role's prompt and skills survive it. Ignored by default: it needs a
 /// packs checkout this machine happens to have.
 ///
 /// ```text
-/// BUZZ_MIGRATE_FIXTURE="$HOME/Library/Application Support/io.agiterra.beekeeper.app/packs/3d3b7169-agiterra-packs/personas/roles" \
+/// BEEKEEPER_MIGRATE_FIXTURE="$HOME/Library/Application Support/io.agiterra.beekeeper.app/packs/3d3b7169-agiterra-packs/personas/roles" \
 ///   cargo test -p beekeeper-persona --lib migrate -- --ignored --nocapture
 /// ```
 #[test]
-#[ignore = "needs a real packs checkout named by BUZZ_MIGRATE_FIXTURE"]
+#[ignore = "needs a real packs checkout named by BEEKEEPER_MIGRATE_FIXTURE"]
 fn a_real_pack_tree_converts_with_every_prompt_and_skill_intact() {
-    let Ok(fixture) = std::env::var("BUZZ_MIGRATE_FIXTURE") else {
-        panic!("set BUZZ_MIGRATE_FIXTURE to a directory holding one pack per role");
+    let Ok(fixture) = std::env::var("BEEKEEPER_MIGRATE_FIXTURE") else {
+        panic!("set BEEKEEPER_MIGRATE_FIXTURE to a directory holding one pack per role");
     };
     let src = PathBuf::from(fixture);
     let dest = TempDir::new("real");

@@ -16,9 +16,9 @@ const exec = promisify(execFile);
 // op, the `#a` live fan-out reaching the tab, the client fold agreeing with
 // the CLI fold, and the UI's own writes landing on the relay.
 //
-// Requires: BUZZ_E2E_PROJECT_TODOS=1, BUZZ_E2E_CLI_BIN (a built `bee`), and
-// BUZZ_E2E_RELAY_URL pointing at a running relay (e.g. http://localhost:3010).
-const enabled = process.env.BUZZ_E2E_PROJECT_TODOS === "1";
+// Requires: BEEKEEPER_E2E_PROJECT_TODOS=1, BEEKEEPER_E2E_CLI_BIN (a built `bee`), and
+// BEEKEEPER_E2E_RELAY_URL pointing at a running relay (e.g. http://localhost:3010).
+const enabled = process.env.BEEKEEPER_E2E_PROJECT_TODOS === "1";
 
 function required(name: string, value: string | undefined): string {
   if (!value) throw new Error(`${name} is required for the live gate`);
@@ -26,18 +26,21 @@ function required(name: string, value: string | undefined): string {
 }
 
 async function runCli(args: string[], privateKey: string): Promise<string> {
-  const binary = required("BUZZ_E2E_CLI_BIN", process.env.BUZZ_E2E_CLI_BIN);
+  const binary = required(
+    "BEEKEEPER_E2E_CLI_BIN",
+    process.env.BEEKEEPER_E2E_CLI_BIN,
+  );
   const relayUrl = required(
-    "BUZZ_E2E_RELAY_URL",
-    process.env.BUZZ_E2E_RELAY_URL,
+    "BEEKEEPER_E2E_RELAY_URL",
+    process.env.BEEKEEPER_E2E_RELAY_URL,
   );
   const { stdout } = await exec(binary, args, {
     cwd: "..",
     env: {
       ...process.env,
-      BUZZ_AUTH_TAG: "",
-      BUZZ_PRIVATE_KEY: privateKey,
-      BUZZ_RELAY_URL: relayUrl,
+      BEEKEEPER_AUTH_TAG: "",
+      BEEKEEPER_PRIVATE_KEY: privateKey,
+      BEEKEEPER_RELAY_URL: relayUrl,
     },
   });
   return stdout;
@@ -104,7 +107,7 @@ async function openTab(page: Page, seed: Seed) {
 }
 
 test.describe("project to-do lists (live relay)", () => {
-  test.skip(!enabled, "set BUZZ_E2E_PROJECT_TODOS=1 to run the live gate");
+  test.skip(!enabled, "set BEEKEEPER_E2E_PROJECT_TODOS=1 to run the live gate");
   test.setTimeout(180_000);
 
   test("the tab writes to the relay and shows a collaborator's changes live", async ({

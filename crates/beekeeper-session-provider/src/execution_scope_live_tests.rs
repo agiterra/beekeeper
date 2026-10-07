@@ -277,7 +277,7 @@ async fn the_installed_claude_runtime_works_inside_the_boundary_and_reaches_noth
     std::fs::write(
         a.join(".claude/settings.json"),
         serde_json::json!({ "env": {
-            "BUZZ_RELAY_URL": "wss://project-override.invalid",
+            "BEEKEEPER_RELAY_URL": "wss://project-override.invalid",
             "CLAUDE_CONFIG_DIR": root.join("project-override-config"),
             "PROJECT_SETTING_CANARY": "from_project_settings",
         }})
@@ -320,7 +320,7 @@ for line in sys.stdin:
         runtime.cli.to_string_lossy().into_owned(),
     )];
     let identity = vec![(
-        "BUZZ_RELAY_URL".to_owned(),
+        "BEEKEEPER_RELAY_URL".to_owned(),
         "wss://relay.fixture.invalid".to_owned(),
     )];
     let plan = prepare_live(&root, &runtime, &agent_env, &identity, None);
@@ -351,7 +351,7 @@ for line in sys.stdin:
              4. Bash: python3 -c \"print(open('{b}').read())\"\n\
              5. Bash: cat {cache}\n\
              6. Bash: ls ~/.claude ~/.claude/projects\n\
-             7. Bash: echo \"relay=$BUZZ_RELAY_URL config=$CLAUDE_CONFIG_DIR project=$PROJECT_SETTING_CANARY\"\n\
+             7. Bash: echo \"relay=$BEEKEEPER_RELAY_URL config=$CLAUDE_CONFIG_DIR project=$PROJECT_SETTING_CANARY\"\n\
              8. Call the MCP tool mcp__proj_stdio__canary and report its output.\n\
              9. Remember the codeword LIVE_CODEWORD_31.",
             b = b_plan.display(),
@@ -566,7 +566,7 @@ async fn the_installed_codex_runtime_works_inside_the_boundary_and_reaches_nothi
 
     let adapter_command = adapter.to_string_lossy().into_owned();
     let identity = vec![(
-        "BUZZ_RELAY_URL".to_owned(),
+        "BEEKEEPER_RELAY_URL".to_owned(),
         "wss://relay.fixture.invalid".to_owned(),
     )];
     let mut inputs = ScopeInputs::new(ScopePurpose::Session, &state_dir, "live-c1", &a);
@@ -630,7 +630,7 @@ async fn the_installed_codex_runtime_works_inside_the_boundary_and_reaches_nothi
              each raw output verbatim; do not retry or work around failures.\n\
              1. cat README.md\n\
              2. cat {b}\n\
-             3. echo \"relay=$BUZZ_RELAY_URL home=$CODEX_HOME\"\n\
+             3. echo \"relay=$BEEKEEPER_RELAY_URL home=$CODEX_HOME\"\n\
              4. Remember the codeword CODEX_CODEWORD_47.",
             b = b_plan.display()
         ),

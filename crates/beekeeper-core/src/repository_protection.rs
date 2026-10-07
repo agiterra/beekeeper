@@ -23,7 +23,7 @@
 //! ```
 //!
 //! The relay admits one only from a founder of the repository its `d` names
-//! (`buzz-relay`'s `handlers::repo_protection`), so the record's authority is
+//! (`beekeeper-relay`'s `handlers::repo_protection`), so the record's authority is
 //! its **author**, checked at the write; nothing about its shape confers any.
 //!
 //! # The ruling this implements

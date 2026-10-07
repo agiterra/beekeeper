@@ -719,7 +719,7 @@ mod tests {
             config.allow_nip_oa_auth = true;
             config.pubkey_allowlist_enabled = false;
             config.redis_url = "redis://127.0.0.1:1".to_string();
-            config.database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+            config.database_url = std::env::var("BEEKEEPER_TEST_DATABASE_URL")
                 .or_else(|_| std::env::var("DATABASE_URL"))
                 .unwrap_or_else(|_| TEST_DB_URL.to_string());
             let pool = sqlx::PgPool::connect(&config.database_url)

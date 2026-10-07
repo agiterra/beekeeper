@@ -953,9 +953,9 @@ impl UsageTracker {
         }
     }
 
-    /// Seed a zero baseline for a session that buzz-acp just spawned.
+    /// Seed a zero baseline for a session that beekeeper-acp just spawned.
     ///
-    /// When buzz-acp creates a session itself via `session/new`, the session's
+    /// When beekeeper-acp creates a session itself via `session/new`, the session's
     /// prior token usage is zero by definition — no provider calls have been
     /// made yet.  Seeding a zero baseline here means the first usage
     /// notification for this session will see `current − 0 == cumulative` and

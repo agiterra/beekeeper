@@ -407,7 +407,7 @@ fn split_project_coordinate(coordinate: &str) -> Option<(&str, &str)> {
     (kind == "30621").then_some((owner, dtag))
 }
 
-/// Resolve `--project` / `BUZZ_PULSE_PROJECT` into a canonical coordinate.
+/// Resolve `--project` / `BEEKEEPER_PULSE_PROJECT` into a canonical coordinate.
 ///
 /// Precedence is the explicit flag, then the environment variable (clap
 /// applies it), then an actionable usage error. A value containing `:` must
@@ -435,7 +435,7 @@ fn direct_project_coordinate(project: Option<&str>) -> Result<Option<String>, Cl
     let Some(project) = project else {
         return Err(CliError::Usage(
             "--project is required: pass a `30621:<owner-hex>:<dtag>` coordinate or a project \
-             dtag, or set BUZZ_PULSE_PROJECT"
+             dtag, or set BEEKEEPER_PULSE_PROJECT"
                 .to_owned(),
         ));
     };
@@ -1679,7 +1679,7 @@ mod tests {
         let missing = direct_project_coordinate(None).expect_err("rejects");
         assert_eq!(exit_code(&missing), 1);
         assert!(
-            missing.to_string().contains("BUZZ_PULSE_PROJECT"),
+            missing.to_string().contains("BEEKEEPER_PULSE_PROJECT"),
             "the error must name the environment variable that supplies it"
         );
     }

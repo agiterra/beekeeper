@@ -3,7 +3,7 @@
 //!
 //! The producer cuts one answer into several signed kind:44225
 //! `assistant_text` items — at 24 KiB, at every tool call, and (with
-//! `BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH`) at paragraph boundaries. A reader
+//! `BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH`) at paragraph boundaries. A reader
 //! that heads every piece `**Assistant**` shows one answer as three. This
 //! module is NIP-CST amendment 3 **Join key**
 //! (`conformance/transcript-prose-join/CONTRACT.md`) for the CLI:

@@ -31,7 +31,7 @@ Beekeeper is a Rust monorepo, licensed Apache 2.0 under Block, Inc. and Agiterra
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         buzz-relay (Axum)                          │
+│                         beekeeper-relay (Axum)                          │
 │                                                                      │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────────────┐ │
 │  │ NIP-42   │  │  EVENT   │  │   REQ    │  │  HTTP bridge       │ │
@@ -94,7 +94,7 @@ beekeeper-admin       (operator CLI: relay membership + key generation)
 beekeeper-test-client (integration test harness + manual CLI)
 ```
 
-**Key architectural principle:** The relay is the single source of truth. `buzz-relay` orchestrates all subsystems by calling them directly — it imports `beekeeper-db`, `beekeeper-auth`, `beekeeper-pubsub`, `beekeeper-search`, `beekeeper-audit`, and `beekeeper-workflow`. However, those subsystems are isolated from each other: `beekeeper-workflow` never calls `beekeeper-pubsub`, `beekeeper-search` never calls `beekeeper-db`, etc. Cross-subsystem coordination happens only through the relay. In multi-community mode, the relay also owns propagation of `TenantContext`; service crates should receive community-scoped inputs rather than independently deriving tenancy from client-controlled event tags.
+**Key architectural principle:** The relay is the single source of truth. `beekeeper-relay` orchestrates all subsystems by calling them directly — it imports `beekeeper-db`, `beekeeper-auth`, `beekeeper-pubsub`, `beekeeper-search`, `beekeeper-audit`, and `beekeeper-workflow`. However, those subsystems are isolated from each other: `beekeeper-workflow` never calls `beekeeper-pubsub`, `beekeeper-search` never calls `beekeeper-db`, etc. Cross-subsystem coordination happens only through the relay. In multi-community mode, the relay also owns propagation of `TenantContext`; service crates should receive community-scoped inputs rather than independently deriving tenancy from client-controlled event tags.
 
 ---
 
@@ -559,7 +559,7 @@ Note: Both `TriggerDef` and `ActionDef` use serde internally-tagged enums. Trigg
 
 ### Huddle Audio — WebSocket Opus Relay
 
-Real-time voice lives inside `buzz-relay` (`src/audio/`), not a separate crate. A WebSocket endpoint (`wss://.../huddle/{channel_id}/audio`) authenticates each participant with a NIP-42 challenge, checks channel membership, admits them to an in-memory room, and forwards opaque Opus frames between peers. No external SFU.
+Real-time voice lives inside `beekeeper-relay` (`src/audio/`), not a separate crate. A WebSocket endpoint (`wss://.../huddle/{channel_id}/audio`) authenticates each participant with a NIP-42 challenge, checks channel membership, admits them to an in-memory room, and forwards opaque Opus frames between peers. No external SFU.
 
 **Frame protocol (v2):** 8-byte big-endian header (sequence `u16`, 48 kHz timestamp `u32`, level dBov `i8`, flags `u8`) followed by an opaque Opus payload. Invalid `level_dbov` values are clamped rather than dropped — losing a metric beats losing audio.
 
@@ -571,7 +571,7 @@ Real-time voice lives inside `buzz-relay` (`src/audio/`), not a separate crate. 
 
 ---
 
-### buzz-relay — The Server
+### beekeeper-relay — The Server
 
 Axum WebSocket server. Ties all other crates together. The only crate that imports and orchestrates all subsystems.
 
@@ -641,17 +641,17 @@ pub enum AuthState { Pending { challenge: String }, Authenticated(AuthContext), 
 
 ---
 
-### buzz-acp — Agent Communication Protocol Harness
+### beekeeper-acp — Agent Communication Protocol Harness
 
 Standalone binary that bridges Beekeeper relay events to AI agents via the [Agent Communication Protocol](https://agentclientprotocol.com/) (ACP).
 
 **Architecture:**
 
 ```
-Beekeeper Relay ──WS──→ buzz-acp ──stdio (ACP/JSON-RPC)──→ Agent (goose/codex/claude)
+Beekeeper Relay ──WS──→ beekeeper-acp ──stdio (ACP/JSON-RPC)──→ Agent (goose/codex/claude)
 ```
 
-`buzz-acp` spawns AI agent subprocesses (1–32, default 1), connects to the relay via WebSocket with NIP-42 auth, discovers channels via REST API, and queues `@mention` events per channel. At most one prompt is in-flight per channel. Queued events are batched into a single prompt sent via `session/prompt` over ACP.
+`beekeeper-acp` spawns AI agent subprocesses (1–32, default 1), connects to the relay via WebSocket with NIP-42 auth, discovers channels via REST API, and queues `@mention` events per channel. At most one prompt is in-flight per channel. Queued events are batched into a single prompt sent via `session/prompt` over ACP.
 
 **Key modules:**
 
@@ -675,7 +675,7 @@ Beekeeper Relay ──WS──→ buzz-acp ──stdio (ACP/JSON-RPC)──→ A
 
 ---
 
-### buzz-admin — Operator CLI
+### beekeeper-admin — Operator CLI
 
 Subcommands:
 
@@ -687,7 +687,7 @@ Subcommands:
 | `generate-key` | Generate a new Nostr keypair (for bootstrapping) |
 | `reconcile-channels` | Emit kind:39000/39002 discovery events for channels missing them (idempotent) |
 
-The `buzz-admin` binary is shipped in the relay Docker image (`/usr/local/bin/buzz-admin`) and is the recommended way to manage relay membership in production. Use `./run.sh add-member`, `./run.sh remove-member`, and `./run.sh list-members` in Docker Compose deployments.
+The `beekeeper-admin` binary is shipped in the relay Docker image (`/usr/local/bin/beekeeper-admin`) and is the recommended way to manage relay membership in production. Use `./run.sh add-member`, `./run.sh remove-member`, and `./run.sh list-members` in Docker Compose deployments.
 
 ---
 
@@ -706,7 +706,7 @@ The `buzz-admin` binary is shipped in the relay Docker image (`/usr/local/bin/bu
 
 All e2e tests are `#[ignore]` — require a running relay. Total: **134 e2e tests**.
 
-`src/main.rs` is a manual testing CLI (`buzz-test-cli`) with `--send`, `--subscribe`, `--channel`, `--url`, `--kind` flags.
+`src/main.rs` is a manual testing CLI (`beekeeper-test-cli`) with `--send`, `--subscribe`, `--channel`, `--url`, `--kind` flags.
 
 Defines `parse_relay_message`, `OkResponse`, `RelayMessage` directly in `src/lib.rs`.
 

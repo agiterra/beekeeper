@@ -56,7 +56,7 @@ use tauri::{AppHandle, State};
 
 /// Filename of the pending-seat map, a sibling of `projects.json` inside the
 /// provider's state dir. The provider discovers it exactly as it discovers the
-/// projects file (`BUZZ_CSP_ACTOR_SEATS`, defaulting to this name beside it).
+/// projects file (`BEEKEEPER_CSP_ACTOR_SEATS`, defaulting to this name beside it).
 pub(crate) const ACTOR_SEATS_FILE_NAME: &str = "actor-seats.json";
 
 /// Longest `commandId` this file will key an entry by. The 44221 command id is

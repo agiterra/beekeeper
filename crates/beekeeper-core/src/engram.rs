@@ -4,7 +4,7 @@
 //! not talk to relays or filesystems. Callers wire it to a transport and a
 //! key source.
 //!
-//! Shared by `buzz-cli` (`bee mem …`) and `buzz-acp` (core injection
+//! Shared by `buzz-cli` (`bee mem …`) and `beekeeper-acp` (core injection
 //! at session creation).
 
 use hmac::digest::KeyInit;

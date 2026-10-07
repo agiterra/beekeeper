@@ -2711,7 +2711,7 @@ fn validate_repo_announcement_project_tag(event: &Event) -> Result<Option<String
 /// decryption happen at the reader. The intent is to refuse obvious junk so a
 /// malformed event cannot win NIP-33 replacement against a valid head and then
 /// be silently skipped by `validate_and_decrypt`. Mirrors the validator in
-/// `buzz-pair-relay::validate_nip44_content`.
+/// `beekeeper-pair-relay::validate_nip44_content`.
 fn validate_engram_nip44_content(content: &str) -> Result<(), String> {
     if content.is_empty() {
         return Err("agent-engram content must not be empty (NIP-44 ciphertext)".to_string());
@@ -5469,7 +5469,7 @@ mod tests {
             DEFAULT_LEASE_DURATION,
         };
 
-        let url = std::env::var("BUZZ_TEST_DATABASE_URL")
+        let url = std::env::var("BEEKEEPER_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string()); // sadscan:disable np.postgres.1
         let pool = sqlx::PgPool::connect(&url).await.expect("connect test DB");

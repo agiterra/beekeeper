@@ -140,7 +140,7 @@ test("row 3: failed persona avatar upload never substitutes the runtime avatar",
 test("mapping carries the runtime and definition fields", async () => {
   const input = await buildInstanceInputForDefinition(persona(), gooseRuntime);
   assert.equal(input.name, "Test Agent");
-  assert.equal(input.acpCommand, "buzz-acp");
+  assert.equal(input.acpCommand, "beekeeper-acp");
   assert.equal(input.agentCommand, "goose-cmd");
   // B-5: agentArgs is intentionally empty at create time — spawn reads args
   // live from the definition on every start so definition edits take effect
@@ -168,7 +168,7 @@ test("no backend intent is byte-identical to the pre-intent mapping", async () =
     personaId: "p-1",
     systemPrompt: "prompt",
     avatarUrl: "https://example.com/a.png",
-    acpCommand: "buzz-acp",
+    acpCommand: "beekeeper-acp",
     agentCommand: "goose-cmd",
     agentArgs: [],
     mcpCommand: "goose-mcp",

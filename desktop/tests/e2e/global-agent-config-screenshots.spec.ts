@@ -71,7 +71,7 @@ const CATALOG_WITH_CLAUDE = [
     command: "buzz-agent",
     binary_path: "/usr/local/bin/buzz-agent",
     default_args: [],
-    mcp_command: "buzz-dev-mcp",
+    mcp_command: "beekeeper-dev-mcp",
     install_hint: "Ships with the Beekeeper desktop app.",
     install_instructions_url: "https://github.com/block/buzz",
     can_auto_install: false,
@@ -107,7 +107,7 @@ const CATALOG_WITH_CODEX = [
     command: "buzz-agent",
     binary_path: "/usr/local/bin/buzz-agent",
     default_args: [],
-    mcp_command: "buzz-dev-mcp",
+    mcp_command: "beekeeper-dev-mcp",
     install_hint: "Ships with the Beekeeper desktop app.",
     install_instructions_url: "https://github.com/block/buzz",
     can_auto_install: false,
@@ -142,7 +142,7 @@ const CATALOG_NONE_AVAILABLE = [
     command: "buzz-agent",
     binary_path: null,
     default_args: [],
-    mcp_command: "buzz-dev-mcp",
+    mcp_command: "beekeeper-dev-mcp",
     install_hint: "Ships with the Beekeeper desktop app.",
     install_instructions_url: "https://github.com/block/buzz",
     can_auto_install: false,
@@ -370,17 +370,17 @@ test.describe("global agent config screenshots", () => {
     await installMockBridge(page, {
       bakedBuildEnv: [
         {
-          key: "BUZZ_AGENT_PROVIDER",
+          key: "BEEKEEPER_AGENT_PROVIDER",
           value: "anthropic",
           masked: false,
         },
         {
-          key: "BUZZ_AGENT_MODEL",
+          key: "BEEKEEPER_AGENT_MODEL",
           value: "claude-opus-4-8",
           masked: false,
         },
         {
-          key: "BUZZ_AGENT_THINKING_EFFORT",
+          key: "BEEKEEPER_AGENT_THINKING_EFFORT",
           value: "high",
           masked: false,
         },
@@ -412,17 +412,17 @@ test.describe("global agent config screenshots", () => {
       globalAgentConfig: {
         provider: "anthropic",
         model: "claude-opus-4-5",
-        env_vars: { BUZZ_AGENT_THINKING_EFFORT: "low" },
+        env_vars: { BEEKEEPER_AGENT_THINKING_EFFORT: "low" },
       },
       bakedBuildEnv: [
         {
-          key: "BUZZ_AGENT_PROVIDER",
+          key: "BEEKEEPER_AGENT_PROVIDER",
           value: "databricks_v2",
           masked: false,
         },
-        { key: "BUZZ_AGENT_MODEL", value: "build-model", masked: false },
+        { key: "BEEKEEPER_AGENT_MODEL", value: "build-model", masked: false },
         {
-          key: "BUZZ_AGENT_THINKING_EFFORT",
+          key: "BEEKEEPER_AGENT_THINKING_EFFORT",
           value: "high",
           masked: false,
         },

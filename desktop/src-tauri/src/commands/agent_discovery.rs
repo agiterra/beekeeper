@@ -729,7 +729,7 @@ fn install_shell_args(
 /// and managed npm install path — keeping them in sync so the hermit-strip list
 /// can't drift between command execution paths.
 ///
-/// On Windows, resolves Git Bash via `resolve_bash_path` (skips `BUZZ_SHELL`
+/// On Windows, resolves Git Bash via `resolve_bash_path` (skips `BEEKEEPER_SHELL`
 /// since install commands require bash syntax). Returns `Err` when no shell
 /// can be found.
 fn install_shell_command(command: &str) -> Result<std::process::Command, String> {
@@ -809,8 +809,8 @@ fn install_shell_command(command: &str) -> Result<std::process::Command, String>
 /// Resolve the shell binary for install commands.
 ///
 /// Unix: `/bin/zsh` if present, else `/bin/bash`.
-/// Windows: Git Bash via `resolve_bash_path` — skips `BUZZ_SHELL` because install
-/// commands use bash-only `-l -c` syntax. A `BUZZ_SHELL=pwsh` user gets a green
+/// Windows: Git Bash via `resolve_bash_path` — skips `BEEKEEPER_SHELL` because install
+/// commands use bash-only `-l -c` syntax. A `BEEKEEPER_SHELL=pwsh` user gets a green
 /// Doctor prereq (their agents work) but installs use the Git Bash fallback chain.
 fn resolve_install_shell() -> Result<std::path::PathBuf, String> {
     #[cfg(not(windows))]

@@ -3,12 +3,12 @@ import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_METADATA_TAG_VERSION,
   codingSessionMetadataSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
   codingSessionTranscriptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -64,7 +64,7 @@ export function codingSessionStreamSigner(secret: Uint8Array) {
         KIND_CODING_SESSION_METADATA,
         createdAt,
         {
-          schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+          schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
           session,
           projectRef: null,
           repoRef: null,
@@ -103,7 +103,7 @@ export function codingSessionStreamSigner(secret: Uint8Array) {
         KIND_CODING_SESSION_TRANSCRIPT,
         createdAt,
         {
-          schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+          schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
           session,
           eventSeq: seq,
           timestamp: 1_800_600_000_000 + seq * 1_000,

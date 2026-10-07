@@ -46,7 +46,7 @@ pub const GATE_START_PHASE_PREFIX: &str = "gate:";
 /// How long an unclosed gate start may read as running.
 ///
 /// Thirty minutes: three times the longest call any harness here allows
-/// (Claude Code's Bash tool and `buzz-dev-mcp`'s shell both cap one at ten
+/// (Claude Code's Bash tool and `beekeeper-dev-mcp`'s shell both cap one at ten
 /// minutes, and a backgrounded command returns at once). Measured against the
 /// provider's own `startedAtMs`, and displayed as the provider's clock.
 pub const GATE_START_STALE_AFTER_MS: u64 = 30 * 60 * 1_000;

@@ -36,7 +36,7 @@ export function shortSha(commit: string | null | undefined): string {
  * The state clause, short enough to sit on the row.
  *
  * The relay case named in the P1 brief — hive answering `unknown` because
- * `/usr/local/sbin/autodeploy` on agincus predates the `BUZZ_SOURCE_SHA` fix
+ * `/usr/local/sbin/autodeploy` on agincus predates the `BEEKEEPER_SOURCE_SHA` fix
  * (Andy, 2ba548c9e) — gets its cause in the sentence rather than a bare
  * "unknown", because the bare form is what sends someone to ssh into the host.
  */

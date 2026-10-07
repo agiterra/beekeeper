@@ -42,7 +42,7 @@ const DIFF_ENTRIES = [
     field: "env.OPENAI_API_KEY",
     change: { kind: "masked" as const, before: "••••abc1", after: "••••xyz9" },
   },
-  { field: "env.BUZZ_LOG", change: { kind: "added" as const } },
+  { field: "env.BEEKEEPER_LOG", change: { kind: "added" as const } },
   {
     field: "relay_url",
     change: { kind: "masked" as const, before: "••••", after: "••••" },

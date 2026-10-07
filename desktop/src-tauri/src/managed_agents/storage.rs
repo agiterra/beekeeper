@@ -222,7 +222,7 @@ fn migrate_inline_key(store: &impl KeyStore, record: &ManagedAgentRecord) -> Key
 /// `Some(error)` when `private_key_nsec` is empty — after [`hydrate_keys`] an
 /// empty key means a keyring outage or a genuinely absent secret, NOT a
 /// deliberately keyless agent. Spawning anyway would inject an empty
-/// `BUZZ_PRIVATE_KEY`/`NOSTR_PRIVATE_KEY`, launching with no identity. Callers
+/// `BEEKEEPER_PRIVATE_KEY`/`NOSTR_PRIVATE_KEY`, launching with no identity. Callers
 /// (the spawn path) must fail closed (Wes storage.rs:158).
 pub(crate) fn spawn_key_refusal(record: &ManagedAgentRecord) -> Option<String> {
     record.private_key_nsec.is_empty().then(|| {
@@ -903,7 +903,7 @@ pub fn read_log_tail(path: &Path, max_lines: usize) -> Result<String, String> {
 
     // Strip ANSI escapes here (not in the harness) so the desktop log view
     // renders cleanly while terminals and other tools still get the colors
-    // buzz-acp emits.
+    // beekeeper-acp emits.
     let cleaned = strip_ansi_escapes::strip_str(String::from_utf8_lossy(&buf));
     let lines: Vec<&str> = cleaned.lines().collect();
     let start = lines.len().saturating_sub(max_lines);
@@ -937,7 +937,7 @@ pub fn meaningful_agent_error_from_log(path: &Path) -> Option<AgentLogError> {
                 });
             }
         }
-        // Legacy format (older buzz-acp builds): "Agent reported error: ..."
+        // Legacy format (older beekeeper-acp builds): "Agent reported error: ..."
         if line.starts_with("Agent reported error:") {
             return Some(AgentLogError {
                 message: line.to_string(),

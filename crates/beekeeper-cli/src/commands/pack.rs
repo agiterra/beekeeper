@@ -159,7 +159,7 @@ const SHIPPED_TEMPLATES_PATH: &str = "personas/templates";
 
 /// Where this process finds the shipped template catalog, in order:
 ///
-/// 1. `explicit` (`--templates`), then `$BUZZ_TEMPLATES_DIR` — overrides.
+/// 1. `explicit` (`--templates`), then `$BEEKEEPER_TEMPLATES_DIR` — overrides.
 /// 2. The templates this `bee`'s app bundle ships ([`app_bundle_contents`]). An
 ///    executable inside an app bundle uses its bundle's templates or none.
 /// 3. The checkout this binary was built from, **only** when the running
@@ -175,7 +175,7 @@ const SHIPPED_TEMPLATES_PATH: &str = "personas/templates";
 /// checkout, and a directory above it is another project's or the operator's,
 /// never this build's catalog.
 pub(crate) fn resolve_templates_dir(explicit: Option<&Path>) -> Option<PathBuf> {
-    let env = std::env::var_os("BUZZ_TEMPLATES_DIR").map(PathBuf::from);
+    let env = std::env::var_os("BEEKEEPER_TEMPLATES_DIR").map(PathBuf::from);
     let exe = std::env::current_exe().ok();
     let build = BuildProvenance {
         source_root: Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
@@ -271,7 +271,7 @@ pub(crate) fn no_templates_message() -> String {
         "no shipped templates found: {exe} is neither inside an app bundle shipping \
          Contents/Resources/{SHIPPED_TEMPLATES_PATH} nor where the build that made it put it \
          (its checkout or Cargo output directory); pass --templates <dir> or set \
-         BUZZ_TEMPLATES_DIR"
+         BEEKEEPER_TEMPLATES_DIR"
     )
 }
 

@@ -17,7 +17,7 @@ import {
 } from "./beekeeperAgentModelTuningFields";
 import {
   isBeekeeperAgentRuntime,
-  BUZZ_AGENT_THINKING_EFFORT,
+  BEEKEEPER_AGENT_THINKING_EFFORT,
 } from "./beekeeperAgentConfig";
 import {
   EDIT_AGENT_PARALLELISM_HELP,
@@ -124,7 +124,7 @@ export function EditAgentAdvancedFields({
     () => [
       ...hiddenEnvKeys,
       ...(isBeekeeperAgentRuntime(modelTuningRuntimeId)
-        ? [BUZZ_AGENT_THINKING_EFFORT]
+        ? [BEEKEEPER_AGENT_THINKING_EFFORT]
         : []),
       ...structuredEnvKeys(numericDescriptors),
     ],

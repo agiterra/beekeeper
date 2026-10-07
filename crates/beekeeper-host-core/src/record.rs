@@ -56,11 +56,11 @@ pub struct CodingSessionProviderRecord {
 
     /// Stable `cs-target` instance id. Derived from the pubkey prefix so it
     /// survives restarts with no extra persistence, and matches what the
-    /// provider computes for itself when `BUZZ_CSP_INSTANCE_ID` is unset.
+    /// provider computes for itself when `BEEKEEPER_CSP_INSTANCE_ID` is unset.
     pub instance_id: String,
 
     /// NIP-OA owner attestation, verbatim as minted: a JSON array of strings.
-    /// Handed to the child as `BUZZ_AUTH_TAG` without re-encoding.
+    /// Handed to the child as `BEEKEEPER_AUTH_TAG` without re-encoding.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_tag: Option<String>,
 
@@ -155,7 +155,7 @@ pub fn load_provider_store_from(path: &Path) -> Result<CodingSessionProviderStor
     }
 }
 
-/// The per-identity state directory handed to the child as `BUZZ_CSP_STATE_DIR`.
+/// The per-identity state directory handed to the child as `BEEKEEPER_CSP_STATE_DIR`.
 ///
 /// Keyed by **provider pubkey**, not by relay or by a fixed name. The
 /// provider's durable outbox stores pre-signed events; rows signed by a key

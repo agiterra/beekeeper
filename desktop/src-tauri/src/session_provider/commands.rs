@@ -37,7 +37,7 @@ static PROVISION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Number of hex characters of the provider pubkey used as the instance id.
 ///
 /// Must match `beekeeper_session_provider::config::INSTANCE_ID_PUBKEY_PREFIX_LEN`:
-/// the provider derives the same value when `BUZZ_CSP_INSTANCE_ID` is unset,
+/// the provider derives the same value when `BEEKEEPER_CSP_INSTANCE_ID` is unset,
 /// and a mismatch would silently split one provider across two `cs-target`
 /// identities.
 const INSTANCE_ID_PUBKEY_PREFIX_LEN: usize = 16;
@@ -256,8 +256,8 @@ pub async fn set_coding_session_turn_budget(
 /// Probe one runtime's model surface.
 ///
 /// Every runtime that opts into discovery is probed through **its own**
-/// adapter: the probe itself is driver-agnostic (`buzz-acp models --json`
-/// drives whatever `BUZZ_ACP_AGENT_COMMAND` names), and resolving
+/// adapter: the probe itself is driver-agnostic (`beekeeper-acp models --json`
+/// drives whatever `BEEKEEPER_ACP_AGENT_COMMAND` names), and resolving
 /// `claude-agent-acp` here regardless of the runtime asked about would report
 /// Claude's models under another runtime's label. Runtimes that do not opt in
 /// advertise the static `"default"` alias without spawning anything — their
@@ -282,8 +282,8 @@ pub async fn coding_session_provider_models(
         });
     }
 
-    let resolved_acp = crate::managed_agents::resolve_command("buzz-acp")
-        .ok_or_else(|| "buzz-acp was not found; rebuild the desktop sidecars".to_string())?;
+    let resolved_acp = crate::managed_agents::resolve_command("beekeeper-acp")
+        .ok_or_else(|| "beekeeper-acp was not found; rebuild the desktop sidecars".to_string())?;
     let probe = crate::session_provider::runtimes::runtime_probe_target(&instance_ref)?;
     let mut env = BTreeMap::new();
     if probe.needs_claude_executable {
@@ -544,7 +544,7 @@ pub(crate) fn mint_provider_record(
     // Empty conditions, matching every other Beekeeper-minted attestation: the tag
     // proves ownership, and the relay's own scope rules decide what the key may
     // write. `compute_auth_tag` already returns the JSON array of strings that
-    // `BUZZ_AUTH_TAG` carries, so it is stored verbatim.
+    // `BEEKEEPER_AUTH_TAG` carries, so it is stored verbatim.
     let auth_tag = beekeeper_sdk_pkg::nip_oa::compute_auth_tag(owner_keys, &keys.public_key(), "")
         .map_err(|error| format!("failed to compute NIP-OA auth tag: {error}"))?;
 

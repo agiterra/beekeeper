@@ -15,8 +15,8 @@
 //! it:
 //!
 //! ```text
-//! buzz-admin project-purge inventory --coordinate 30621:<owner>:<slug>
-//! buzz-admin project-purge run       --coordinate 30621:<owner>:<slug> \
+//! beekeeper-admin project-purge inventory --coordinate 30621:<owner>:<slug>
+//! beekeeper-admin project-purge run       --coordinate 30621:<owner>:<slug> \
 //!     --approved-digest <digest from the inventory> \
 //!     --purged-by <operator> --confirm
 //! ```
@@ -136,7 +136,7 @@ pub async fn run(command: Command) -> Result<i32> {
 
 /// Resolve the single community this invocation is fenced to.
 ///
-/// Same row-zero seam as `buzz-admin`'s other commands: the host is derived
+/// Same row-zero seam as `beekeeper-admin`'s other commands: the host is derived
 /// from `RELAY_URL` (or `--host`) and looked up in the durable `communities`
 /// map. An unmapped, archived, or already-deleted host fails closed — there
 /// is no cross-community sweep and no default tenant.

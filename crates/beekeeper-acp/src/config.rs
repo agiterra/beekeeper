@@ -1,4 +1,4 @@
-//! Configuration for the buzz-acp harness.
+//! Configuration for the beekeeper-acp harness.
 //!
 //! CLI-first: every option is a CLI flag with env var fallback.
 //! Config file (TOML) for complex subscription rules.
@@ -30,11 +30,11 @@ use crate::filter::SubscriptionRule;
 /// pass on the 2026-08-24 "project repo access" session before the ambiguity
 /// was even noticed. An off-round budget makes every future timeout name its
 /// own owner from the duration alone. Do not round it back.
-/// Override via `--idle-timeout` / `BUZZ_ACP_IDLE_TIMEOUT`.
+/// Override via `--idle-timeout` / `BEEKEEPER_ACP_IDLE_TIMEOUT`.
 pub(crate) const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 870;
 
 /// Default absolute wall-clock cap per agent turn (2 hours).
-/// Override via `--max-turn-duration` / `BUZZ_ACP_MAX_TURN_DURATION`.
+/// Override via `--max-turn-duration` / `BEEKEEPER_ACP_MAX_TURN_DURATION`.
 pub(crate) const DEFAULT_MAX_TURN_DURATION_SECS: u64 = 7200;
 
 /// Upper bound for `max_turn_duration` (7 days). Any higher is operationally
@@ -171,14 +171,14 @@ impl std::fmt::Display for PermissionMode {
     }
 }
 
-/// CLI args for `buzz-acp models` — query available models from an agent.
+/// CLI args for `beekeeper-acp models` — query available models from an agent.
 ///
 /// This is a standalone `Parser` (not a subcommand variant) because the
 /// `models` path must bypass `Config::from_cli()` entirely — no relay,
 /// no private key, no harness setup.
 #[derive(Debug, Parser)]
 #[command(
-    name = "buzz-acp models",
+    name = "beekeeper-acp models",
     about = "Query available models from the configured agent"
 )]
 pub struct ModelsArgs {
@@ -195,23 +195,23 @@ pub struct ModelsArgs {
 #[derive(Debug, Parser)]
 pub struct AuthAgentArgs {
     /// Agent binary to spawn (e.g. "goose", "claude-agent-acp", "codex-acp").
-    #[arg(long, env = "BUZZ_ACP_AGENT_COMMAND", default_value = "goose")]
+    #[arg(long, env = "BEEKEEPER_ACP_AGENT_COMMAND", default_value = "goose")]
     pub agent_command: String,
 
     /// Arguments passed to the agent binary.
     #[arg(
         long,
-        env = "BUZZ_ACP_AGENT_ARGS",
+        env = "BEEKEEPER_ACP_AGENT_ARGS",
         default_value = "acp",
         value_delimiter = ','
     )]
     pub agent_args: Vec<String>,
 }
 
-/// CLI args for `buzz-acp auth-methods` — query adapter-advertised login methods.
+/// CLI args for `beekeeper-acp auth-methods` — query adapter-advertised login methods.
 #[derive(Debug, Parser)]
 #[command(
-    name = "buzz-acp auth-methods",
+    name = "beekeeper-acp auth-methods",
     about = "Query adapter-advertised ACP authentication methods"
 )]
 pub struct AuthMethodsArgs {
@@ -223,10 +223,10 @@ pub struct AuthMethodsArgs {
     pub json: bool,
 }
 
-/// CLI args for `buzz-acp authenticate` — start an adapter-owned login flow.
+/// CLI args for `beekeeper-acp authenticate` — start an adapter-owned login flow.
 #[derive(Debug, Parser)]
 #[command(
-    name = "buzz-acp authenticate",
+    name = "beekeeper-acp authenticate",
     about = "Start an adapter-owned ACP authentication flow"
 )]
 pub struct AuthenticateArgs {
@@ -240,79 +240,83 @@ pub struct AuthenticateArgs {
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "buzz-acp",
+    name = "beekeeper-acp",
     about = "ACP harness that bridges Beekeeper events to AI agents"
 )]
 pub struct CliArgs {
-    #[arg(long, env = "BUZZ_RELAY_URL", default_value = "ws://localhost:3000")]
+    #[arg(
+        long,
+        env = "BEEKEEPER_RELAY_URL",
+        default_value = "ws://localhost:3000"
+    )]
     pub relay_url: String,
 
-    #[arg(long, env = "BUZZ_PRIVATE_KEY", hide_env_values = true)]
+    #[arg(long, env = "BEEKEEPER_PRIVATE_KEY", hide_env_values = true)]
     pub private_key: String,
 
     /// Agent owner pubkey (64-char hex). Used for --respond-to=owner-only gate.
-    #[arg(long, env = "BUZZ_ACP_AGENT_OWNER")]
+    #[arg(long, env = "BEEKEEPER_ACP_AGENT_OWNER")]
     pub agent_owner: Option<String>,
 
-    #[arg(long, env = "BUZZ_ACP_AGENT_COMMAND", default_value = "goose")]
+    #[arg(long, env = "BEEKEEPER_ACP_AGENT_COMMAND", default_value = "goose")]
     pub agent_command: String,
 
     #[arg(
         long,
-        env = "BUZZ_ACP_AGENT_ARGS",
+        env = "BEEKEEPER_ACP_AGENT_ARGS",
         default_value = "acp",
         value_delimiter = ','
     )]
     pub agent_args: Vec<String>,
 
-    #[arg(long, env = "BUZZ_ACP_MCP_COMMAND", default_value = "")]
+    #[arg(long, env = "BEEKEEPER_ACP_MCP_COMMAND", default_value = "")]
     pub mcp_command: String,
 
     /// Idle timeout: max seconds of silence before killing a turn.
     /// Resets on any agent stdout activity.
-    #[arg(long, env = "BUZZ_ACP_IDLE_TIMEOUT")]
+    #[arg(long, env = "BEEKEEPER_ACP_IDLE_TIMEOUT")]
     pub idle_timeout: Option<u64>,
 
     /// Absolute wall-clock cap per turn (safety valve).
-    #[arg(long, env = "BUZZ_ACP_MAX_TURN_DURATION", default_value_t = DEFAULT_MAX_TURN_DURATION_SECS)]
+    #[arg(long, env = "BEEKEEPER_ACP_MAX_TURN_DURATION", default_value_t = DEFAULT_MAX_TURN_DURATION_SECS)]
     pub max_turn_duration: u64,
 
     /// Deprecated: alias for --idle-timeout. If both set, --idle-timeout wins.
-    #[arg(long, env = "BUZZ_ACP_TURN_TIMEOUT", hide = true)]
+    #[arg(long, env = "BEEKEEPER_ACP_TURN_TIMEOUT", hide = true)]
     pub turn_timeout: Option<u64>,
 
     #[arg(
         long,
-        env = "BUZZ_ACP_SYSTEM_PROMPT",
+        env = "BEEKEEPER_ACP_SYSTEM_PROMPT",
         conflicts_with = "system_prompt_file"
     )]
     pub system_prompt: Option<String>,
 
     #[arg(
         long,
-        env = "BUZZ_ACP_SYSTEM_PROMPT_FILE",
+        env = "BEEKEEPER_ACP_SYSTEM_PROMPT_FILE",
         conflicts_with = "system_prompt"
     )]
     pub system_prompt_file: Option<PathBuf>,
 
     /// Number of parallel agent subprocesses.
-    #[arg(long, env = "BUZZ_ACP_AGENTS", default_value_t = 1,
+    #[arg(long, env = "BEEKEEPER_ACP_AGENTS", default_value_t = 1,
           value_parser = clap::value_parser!(u32).range(1..=32))]
     pub agents: u32,
 
     /// Seconds between heartbeat prompts. 0 = disabled.
-    #[arg(long, env = "BUZZ_ACP_HEARTBEAT_INTERVAL", default_value_t = 0)]
+    #[arg(long, env = "BEEKEEPER_ACP_HEARTBEAT_INTERVAL", default_value_t = 0)]
     pub heartbeat_interval: u64,
 
     /// Seconds between per-turn liveness pings (the crash backstop signal —
     /// distinct from heartbeat self-prompting). 0 = disabled.
-    #[arg(long, env = "BUZZ_ACP_TURN_LIVENESS_SECS", default_value_t = 10)]
+    #[arg(long, env = "BEEKEEPER_ACP_TURN_LIVENESS_SECS", default_value_t = 10)]
     pub turn_liveness_secs: u64,
 
     /// Heartbeat prompt text. Conflicts with --heartbeat-prompt-file.
     #[arg(
         long,
-        env = "BUZZ_ACP_HEARTBEAT_PROMPT",
+        env = "BEEKEEPER_ACP_HEARTBEAT_PROMPT",
         conflicts_with = "heartbeat_prompt_file"
     )]
     pub heartbeat_prompt: Option<String>,
@@ -320,35 +324,39 @@ pub struct CliArgs {
     /// Read heartbeat prompt from file.
     #[arg(
         long,
-        env = "BUZZ_ACP_HEARTBEAT_PROMPT_FILE",
+        env = "BEEKEEPER_ACP_HEARTBEAT_PROMPT_FILE",
         conflicts_with = "heartbeat_prompt"
     )]
     pub heartbeat_prompt_file: Option<PathBuf>,
 
-    #[arg(long, env = "BUZZ_ACP_INITIAL_MESSAGE")]
+    #[arg(long, env = "BEEKEEPER_ACP_INITIAL_MESSAGE")]
     pub initial_message: Option<String>,
 
     #[arg(
         long,
-        env = "BUZZ_ACP_SUBSCRIBE",
+        env = "BEEKEEPER_ACP_SUBSCRIBE",
         default_value = "mentions",
         value_enum
     )]
     pub subscribe: SubscribeMode,
 
-    #[arg(long, env = "BUZZ_ACP_KINDS", value_delimiter = ',')]
+    #[arg(long, env = "BEEKEEPER_ACP_KINDS", value_delimiter = ',')]
     pub kinds: Option<Vec<u32>>,
 
-    #[arg(long, env = "BUZZ_ACP_CHANNELS", value_delimiter = ',')]
+    #[arg(long, env = "BEEKEEPER_ACP_CHANNELS", value_delimiter = ',')]
     pub channels: Option<Vec<String>>,
 
-    #[arg(long, env = "BUZZ_ACP_NO_MENTION_FILTER")]
+    #[arg(long, env = "BEEKEEPER_ACP_NO_MENTION_FILTER")]
     pub no_mention_filter: bool,
 
-    #[arg(long, env = "BUZZ_ACP_CONFIG", default_value = "./buzz-acp.toml")]
+    #[arg(
+        long,
+        env = "BEEKEEPER_ACP_CONFIG",
+        default_value = "./beekeeper-acp.toml"
+    )]
     pub config: PathBuf,
 
-    #[arg(long, env = "BUZZ_ACP_DEDUP", default_value = "queue", value_enum)]
+    #[arg(long, env = "BEEKEEPER_ACP_DEDUP", default_value = "queue", value_enum)]
     pub dedup: DedupMode,
 
     /// How ACP provider sessions are scoped in channels.
@@ -358,7 +366,7 @@ pub struct CliArgs {
     /// so thread scoping can be canaried and rolled back without code changes.
     #[arg(
         long,
-        env = "BUZZ_ACP_SESSION_POLICY",
+        env = "BEEKEEPER_ACP_SESSION_POLICY",
         default_value = "channel",
         value_enum
     )]
@@ -372,33 +380,33 @@ pub struct CliArgs {
     /// owner-interrupt: interrupt only for the agent owner's mentions.
     #[arg(
         long,
-        env = "BUZZ_ACP_MULTIPLE_EVENT_HANDLING",
+        env = "BEEKEEPER_ACP_MULTIPLE_EVENT_HANDLING",
         default_value = "steer",
         value_enum
     )]
     pub multiple_event_handling: MultipleEventHandling,
 
-    #[arg(long, env = "BUZZ_ACP_NO_IGNORE_SELF")]
+    #[arg(long, env = "BEEKEEPER_ACP_NO_IGNORE_SELF")]
     pub no_ignore_self: bool,
 
     /// Maximum number of context messages to include for thread replies and DMs.
     /// Set to 0 to disable automatic context fetching. Max 100.
-    #[arg(long, env = "BUZZ_ACP_CONTEXT_MESSAGE_LIMIT", default_value_t = 12,
+    #[arg(long, env = "BEEKEEPER_ACP_CONTEXT_MESSAGE_LIMIT", default_value_t = 12,
           value_parser = clap::value_parser!(u32).range(0..=100))]
     pub context_message_limit: u32,
 
     /// Maximum turns per session before proactive rotation. 0 = disabled
     /// (rotate only on MaxTokens / MaxTurnRequests).
-    #[arg(long, env = "BUZZ_ACP_MAX_TURNS_PER_SESSION", default_value_t = 0,
+    #[arg(long, env = "BEEKEEPER_ACP_MAX_TURNS_PER_SESSION", default_value_t = 0,
           value_parser = clap::value_parser!(u32))]
     pub max_turns_per_session: u32,
 
     /// Disable automatic presence (online/offline) status.
-    #[arg(long, env = "BUZZ_ACP_NO_PRESENCE")]
+    #[arg(long, env = "BEEKEEPER_ACP_NO_PRESENCE")]
     pub no_presence: bool,
 
     /// Disable typing indicators while agent is processing.
-    #[arg(long, env = "BUZZ_ACP_NO_TYPING")]
+    #[arg(long, env = "BEEKEEPER_ACP_NO_TYPING")]
     pub no_typing: bool,
 
     /// Enable NIP-AE agent core memory injection.
@@ -409,10 +417,10 @@ pub struct CliArgs {
     /// when the relay confirms no core engram exists). The `bee mem` CLI
     /// and the relay's acceptance of kind:30174 engrams are unaffected — this
     /// flag controls prompt-time injection in the ACP harness only.
-    /// Pass `--no-memory` / `BUZZ_ACP_NO_MEMORY=true` to disable.
+    /// Pass `--no-memory` / `BEEKEEPER_ACP_NO_MEMORY=true` to disable.
     #[arg(
         long,
-        env = "BUZZ_ACP_MEMORY",
+        env = "BEEKEEPER_ACP_MEMORY",
         conflicts_with = "no_memory",
         default_value_t = true
     )]
@@ -421,32 +429,32 @@ pub struct CliArgs {
     /// Disable NIP-AE agent core memory injection.
     ///
     /// Memory injection is on by default; set this flag/env var to opt out.
-    #[arg(long, env = "BUZZ_ACP_NO_MEMORY", conflicts_with = "memory")]
+    #[arg(long, env = "BEEKEEPER_ACP_NO_MEMORY", conflicts_with = "memory")]
     pub no_memory: bool,
 
     /// Disable the [Base] platform-context section prepended to every prompt.
     /// When set, agents receive only the persona [System] prompt with no Beekeeper orientation.
-    #[arg(long, env = "BUZZ_ACP_NO_BASE_PROMPT")]
+    #[arg(long, env = "BEEKEEPER_ACP_NO_BASE_PROMPT")]
     pub no_base_prompt: bool,
 
     /// Path to a custom base prompt file. Overrides the compiled-in default.
     /// Mutually exclusive with --no-base-prompt.
     #[arg(
         long,
-        env = "BUZZ_ACP_BASE_PROMPT_FILE",
+        env = "BEEKEEPER_ACP_BASE_PROMPT_FILE",
         conflicts_with = "no_base_prompt"
     )]
     pub base_prompt_file: Option<PathBuf>,
 
     /// Desired LLM model ID. Applied to every new ACP session after creation.
-    /// Use `buzz-acp models` to discover available model IDs.
-    #[arg(long, env = "BUZZ_ACP_MODEL")]
+    /// Use `beekeeper-acp models` to discover available model IDs.
+    #[arg(long, env = "BEEKEEPER_ACP_MODEL")]
     pub model: Option<String>,
 
     /// Title for the agent's ACP sessions, passed out-of-band in `session/new`
     /// `_meta`. Adapters that recognize it name the session after this value;
     /// others ignore it. Never enters the prompt.
-    #[arg(long, env = "BUZZ_ACP_SESSION_TITLE")]
+    #[arg(long, env = "BEEKEEPER_ACP_SESSION_TITLE")]
     pub session_title: Option<String>,
 
     /// Permission mode for agents that support `session/set_config_option`
@@ -457,7 +465,7 @@ pub struct CliArgs {
     /// behaviour.
     #[arg(
         long,
-        env = "BUZZ_ACP_PERMISSION_MODE",
+        env = "BEEKEEPER_ACP_PERMISSION_MODE",
         default_value = "bypass-permissions",
         value_enum
     )]
@@ -467,7 +475,7 @@ pub struct CliArgs {
     /// Modes: owner-only (default), allowlist, anyone, nobody.
     #[arg(
         long,
-        env = "BUZZ_ACP_RESPOND_TO",
+        env = "BEEKEEPER_ACP_RESPOND_TO",
         default_value = "owner-only",
         value_enum
     )]
@@ -475,39 +483,43 @@ pub struct CliArgs {
 
     /// Comma-separated 64-char hex pubkeys for allowlist mode.
     /// Owner pubkey is always implicitly included.
-    #[arg(long, env = "BUZZ_ACP_RESPOND_TO_ALLOWLIST", value_delimiter = ',')]
+    #[arg(
+        long,
+        env = "BEEKEEPER_ACP_RESPOND_TO_ALLOWLIST",
+        value_delimiter = ','
+    )]
     pub respond_to_allowlist: Option<Vec<String>>,
 
     /// Comma-separated list of allowed `--respond-to` modes.
     /// When set, the harness rejects startup if `--respond-to` is not in this list.
     /// Modes: owner-only, allowlist, anyone, nobody.
     /// Default: empty (all modes allowed — no restriction).
-    /// Example: `BUZZ_ACP_ALLOWED_RESPOND_TO=owner-only,allowlist`
-    #[arg(long, env = "BUZZ_ACP_ALLOWED_RESPOND_TO", value_delimiter = ',')]
+    /// Example: `BEEKEEPER_ACP_ALLOWED_RESPOND_TO=owner-only,allowlist`
+    #[arg(long, env = "BEEKEEPER_ACP_ALLOWED_RESPOND_TO", value_delimiter = ',')]
     pub allowed_respond_to: Option<Vec<String>>,
 
     /// Team-owned instructions layered after `[System]` and before agent memory.
-    #[arg(long, env = "BUZZ_ACP_TEAM_INSTRUCTIONS")]
+    #[arg(long, env = "BEEKEEPER_ACP_TEAM_INSTRUCTIONS")]
     pub team_instructions: Option<String>,
 
     /// Publish encrypted ACP observer frames over the relay.
-    #[arg(long, env = "BUZZ_ACP_RELAY_OBSERVER", default_value_t = false)]
+    #[arg(long, env = "BEEKEEPER_ACP_RELAY_OBSERVER", default_value_t = false)]
     pub relay_observer: bool,
 
     /// Exit after this many seconds with no dispatched events and no turn in flight.
     /// 0 disables inactivity self-termination.
-    #[arg(long, env = "BUZZ_ACP_EXIT_AFTER_INACTIVITY", default_value_t = 0)]
+    #[arg(long, env = "BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY", default_value_t = 0)]
     pub exit_after_inactivity: u64,
 
     /// Connect and subscribe before starting the ACP/LLM subprocess pool.
-    #[arg(long, env = "BUZZ_ACP_LAZY_POOL", default_value_t = false)]
+    #[arg(long, env = "BEEKEEPER_ACP_LAZY_POOL", default_value_t = false)]
     pub lazy_pool: bool,
 
     /// Tear the woken pool back down to the lazy empty-slot state after this
     /// many seconds with no dispatched turn in flight and an empty queue,
     /// releasing worker subprocesses until the next accepted event re-wakes.
     /// Requires `--lazy-pool`; ignored otherwise. 0 disables idle re-sleep.
-    #[arg(long, env = "BUZZ_ACP_IDLE_POOL_SLEEP", default_value_t = 0)]
+    #[arg(long, env = "BEEKEEPER_ACP_IDLE_POOL_SLEEP", default_value_t = 0)]
     pub idle_pool_sleep: u64,
 
     /// Unix-seconds replay floor for the startup watermark. A publish-first
@@ -516,7 +528,7 @@ pub struct CliArgs {
     /// that message however long the spawn takes. Floors older than 15 minutes
     /// are clamped to 15 minutes before startup; floors in the future are
     /// ignored (the watermark stays at startup time).
-    #[arg(long, env = "BUZZ_ACP_REPLAY_FLOOR")]
+    #[arg(long, env = "BEEKEEPER_ACP_REPLAY_FLOOR")]
     pub replay_floor: Option<u64>,
 }
 
@@ -567,7 +579,7 @@ pub struct Config {
     /// Whether NIP-AE agent core memory injection is enabled. When false,
     /// the harness skips the per-session core engram fetch and renders no
     /// `[Agent Memory — core]` section. On by default; disabled via the
-    /// `--no-memory` / `BUZZ_ACP_NO_MEMORY` opt-out.
+    /// `--no-memory` / `BEEKEEPER_ACP_NO_MEMORY` opt-out.
     pub memory_enabled: bool,
     /// Desired LLM model ID. Applied after every `session_new_full()`.
     pub model: Option<String>,
@@ -582,7 +594,7 @@ pub struct Config {
     pub respond_to_allowlist: HashSet<String>,
     /// Allowed `respond_to` modes. Empty = all modes allowed.
     pub allowed_respond_to: Vec<String>,
-    /// Per-persona env vars to inject at agent spawn time (e.g., GOOSE_PROVIDER, GOOSE_MODEL, BUZZ_AGENT_MODEL).
+    /// Per-persona env vars to inject at agent spawn time (e.g., GOOSE_PROVIDER, GOOSE_MODEL, BEEKEEPER_AGENT_MODEL).
     /// Populated from persona pack resolution. Empty when no pack is configured.
     pub persona_env_vars: Vec<(String, String)>,
     /// Whether `codex_network_env()` successfully injected a `CODEX_CONFIG` entry into
@@ -602,7 +614,7 @@ pub struct Config {
     /// Only meaningful when `lazy_pool` is true.
     pub idle_pool_sleep_secs: u64,
     /// Optional unix-seconds replay floor for the startup watermark
-    /// (`--replay-floor` / `BUZZ_ACP_REPLAY_FLOOR`), set by a publish-first
+    /// (`--replay-floor` / `BEEKEEPER_ACP_REPLAY_FLOOR`), set by a publish-first
     /// mention send so the first REQ replays past the already-published
     /// triggering message. Clamped where consumed — see
     /// `startup_watermark_with_floor`.
@@ -893,8 +905,8 @@ pub fn normalize_agent_args(command: &str, agent_args: Vec<String>) -> Vec<Strin
 /// // Must be called before tokio runtime starts — see Rust 2024 edition safety.
 pub fn propagate_legacy_env_vars() {
     for (legacy, canonical) in [
-        ("BUZZ_ACP_PRIVATE_KEY", "BUZZ_PRIVATE_KEY"),
-        ("BUZZ_ACP_API_TOKEN", "BUZZ_API_TOKEN"),
+        ("BEEKEEPER_ACP_PRIVATE_KEY", "BEEKEEPER_PRIVATE_KEY"),
+        ("BEEKEEPER_ACP_API_TOKEN", "BEEKEEPER_API_TOKEN"),
     ] {
         if std::env::var(canonical).is_err() {
             if let Ok(val) = std::env::var(legacy) {
@@ -1029,16 +1041,16 @@ impl Config {
             let raw = match (args.idle_timeout, args.turn_timeout) {
                 (Some(idle), Some(_turn)) => {
                     tracing::warn!(
-                        "--turn-timeout / BUZZ_ACP_TURN_TIMEOUT is deprecated and ignored \
-                         when --idle-timeout / BUZZ_ACP_IDLE_TIMEOUT is also set"
+                        "--turn-timeout / BEEKEEPER_ACP_TURN_TIMEOUT is deprecated and ignored \
+                         when --idle-timeout / BEEKEEPER_ACP_IDLE_TIMEOUT is also set"
                     );
                     idle
                 }
                 (Some(idle), None) => idle,
                 (None, Some(turn)) => {
                     tracing::warn!(
-                        "--turn-timeout / BUZZ_ACP_TURN_TIMEOUT is deprecated; \
-                         use --idle-timeout / BUZZ_ACP_IDLE_TIMEOUT instead"
+                        "--turn-timeout / BEEKEEPER_ACP_TURN_TIMEOUT is deprecated; \
+                         use --idle-timeout / BEEKEEPER_ACP_IDLE_TIMEOUT instead"
                     );
                     turn
                 }
@@ -1100,7 +1112,7 @@ impl Config {
             for s in &raw {
                 RespondTo::from_str(s.trim(), true).map_err(|_| {
                     ConfigError::ConfigFile(format!(
-                        "invalid value in BUZZ_ACP_ALLOWED_RESPOND_TO: '{s}' \
+                        "invalid value in BEEKEEPER_ACP_ALLOWED_RESPOND_TO: '{s}' \
                          (valid values: owner-only, allowlist, anyone, nobody)"
                     ))
                 })?;
@@ -1109,7 +1121,7 @@ impl Config {
             if !allowed_modes.is_empty() && !allowed_modes.contains(&args.respond_to.to_string()) {
                 return Err(ConfigError::ConfigFile(format!(
                     "respond_to '{}' is not permitted on this deployment \
-                     (BUZZ_ACP_ALLOWED_RESPOND_TO={})",
+                     (BEEKEEPER_ACP_ALLOWED_RESPOND_TO={})",
                     args.respond_to,
                     raw.join(",")
                 )));
@@ -1543,7 +1555,7 @@ mod tests {
             kinds_override: None,
             channels_override: None,
             no_mention_filter: false,
-            config_path: PathBuf::from("./buzz-acp.toml"),
+            config_path: PathBuf::from("./beekeeper-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
             presence_enabled: true,
@@ -2263,11 +2275,11 @@ channels = "ALL"
     #[test]
     fn inactivity_exit_defaults_disabled_and_accepts_cli_value() {
         let key = "0".repeat(64);
-        let default = CliArgs::parse_from(["buzz-acp", "--private-key", &key]);
+        let default = CliArgs::parse_from(["beekeeper-acp", "--private-key", &key]);
         assert_eq!(default.exit_after_inactivity, 0);
 
         let configured = CliArgs::parse_from([
-            "buzz-acp",
+            "beekeeper-acp",
             "--private-key",
             &key,
             "--exit-after-inactivity",
@@ -2279,17 +2291,17 @@ channels = "ALL"
     #[test]
     fn lazy_pool_defaults_off() {
         let key = "0".repeat(64);
-        assert!(!CliArgs::parse_from(["buzz-acp", "--private-key", &key]).lazy_pool);
+        assert!(!CliArgs::parse_from(["beekeeper-acp", "--private-key", &key]).lazy_pool);
     }
 
     #[test]
     fn idle_pool_sleep_defaults_disabled_and_accepts_cli_value() {
         let key = "0".repeat(64);
-        let default = CliArgs::parse_from(["buzz-acp", "--private-key", &key]);
+        let default = CliArgs::parse_from(["beekeeper-acp", "--private-key", &key]);
         assert_eq!(default.idle_pool_sleep, 0);
 
         let configured = CliArgs::parse_from([
-            "buzz-acp",
+            "beekeeper-acp",
             "--private-key",
             &key,
             "--idle-pool-sleep",
@@ -2301,9 +2313,12 @@ channels = "ALL"
     #[test]
     fn lazy_pool_cli_flag_enables_deferred_startup() {
         let key = "0".repeat(64);
-        let args = CliArgs::try_parse_from(["buzz-acp", "--private-key", &key, "--lazy-pool=true"]);
+        let args =
+            CliArgs::try_parse_from(["beekeeper-acp", "--private-key", &key, "--lazy-pool=true"]);
         assert!(args.is_err(), "bool flags do not take an explicit value");
-        assert!(CliArgs::parse_from(["buzz-acp", "--private-key", &key, "--lazy-pool"]).lazy_pool);
+        assert!(
+            CliArgs::parse_from(["beekeeper-acp", "--private-key", &key, "--lazy-pool"]).lazy_pool
+        );
     }
 
     #[test]
@@ -2448,7 +2463,7 @@ channels = "ALL"
     #[test]
     fn test_permission_mode_value_enum_camel_case_aliases() {
         // Operators may set env vars using the camelCase wire-format strings
-        // (e.g. BUZZ_ACP_PERMISSION_MODE=bypassPermissions). The #[value(alias)]
+        // (e.g. BEEKEEPER_ACP_PERMISSION_MODE=bypassPermissions). The #[value(alias)]
         // attributes ensure these parse correctly.
         use clap::ValueEnum;
         let cases = [
@@ -2657,14 +2672,14 @@ channels = "ALL"
     fn test_session_policy_default_is_channel() {
         // Ships dark: the default must be `channel` so thread scoping is opt-in
         // and can be rolled back without code changes.
-        let args = CliArgs::parse_from(["buzz-acp", "--private-key", &"0".repeat(64)]);
+        let args = CliArgs::parse_from(["beekeeper-acp", "--private-key", &"0".repeat(64)]);
         assert_eq!(args.session_policy, crate::scope::SessionPolicy::Channel);
     }
 
     #[test]
     fn test_session_policy_thread_flag_parses() {
         let args = CliArgs::parse_from([
-            "buzz-acp",
+            "beekeeper-acp",
             "--private-key",
             &"0".repeat(64),
             "--session-policy",
@@ -2677,7 +2692,7 @@ channels = "ALL"
     fn test_session_policy_equals_flag_syntax_parses() {
         // Exercise Clap's equals-form flag syntax without mutating process env.
         let args = CliArgs::parse_from([
-            "buzz-acp",
+            "beekeeper-acp",
             "--private-key",
             &"0".repeat(64),
             "--session-policy=thread",
@@ -2692,7 +2707,7 @@ channels = "ALL"
     fn test_multiple_event_handling_default_is_steer() {
         // Parse a minimal arg set; the default for --multiple-event-handling
         // must be `steer` (steering is the default mid-turn delivery path).
-        let args = CliArgs::parse_from(["buzz-acp", "--private-key", &"0".repeat(64)]);
+        let args = CliArgs::parse_from(["beekeeper-acp", "--private-key", &"0".repeat(64)]);
         assert_eq!(args.multiple_event_handling, MultipleEventHandling::Steer);
         // Dedup default must remain `queue` so steering's requirement is met.
         assert!(matches!(args.dedup, DedupMode::Queue));
@@ -2770,14 +2785,14 @@ channels = "ALL"
         }
     }
 
-    // --- BUZZ_ACP_ALLOWED_RESPOND_TO gate ---
+    // --- BEEKEEPER_ACP_ALLOWED_RESPOND_TO gate ---
 
     fn parse_allowed_respond_to(raw: &[&str]) -> Result<HashSet<RespondTo>, ConfigError> {
         let mut set = HashSet::new();
         for s in raw {
             let mode = RespondTo::from_str(s.trim(), true).map_err(|_| {
                 ConfigError::ConfigFile(format!(
-                    "invalid value in BUZZ_ACP_ALLOWED_RESPOND_TO: '{s}' \
+                    "invalid value in BEEKEEPER_ACP_ALLOWED_RESPOND_TO: '{s}' \
                      (valid values: owner-only, allowlist, anyone, nobody)"
                 ))
             })?;
@@ -2794,7 +2809,7 @@ channels = "ALL"
         if !set.is_empty() && !set.contains(&respond_to) {
             return Err(ConfigError::ConfigFile(format!(
                 "respond_to '{}' is not permitted on this deployment \
-                 (BUZZ_ACP_ALLOWED_RESPOND_TO={})",
+                 (BEEKEEPER_ACP_ALLOWED_RESPOND_TO={})",
                 respond_to,
                 allowed_raw.join(",")
             )));
@@ -2838,7 +2853,7 @@ channels = "ALL"
         assert!(result.is_err(), "invalid mode string should be rejected");
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("invalid value in BUZZ_ACP_ALLOWED_RESPOND_TO"),
+            msg.contains("invalid value in BEEKEEPER_ACP_ALLOWED_RESPOND_TO"),
             "error should name the env var: {msg}"
         );
         assert!(
@@ -2870,7 +2885,7 @@ channels = "ALL"
 
     // --- Integration tests: full env-var → CliArgs → Config::from_args() path ---
     //
-    // These tests exercise the actual wiring: BUZZ_ACP_ALLOWED_RESPOND_TO in the
+    // These tests exercise the actual wiring: BEEKEEPER_ACP_ALLOWED_RESPOND_TO in the
     // environment causes clap to populate CliArgs::allowed_respond_to, which then
     // flows through Config::from_args() to produce a ConfigError. If the #[arg(env)]
     // attribute or field name were removed, these tests would fail.
@@ -2887,7 +2902,7 @@ channels = "ALL"
     fn allowed_respond_to_full_path_rejects_disallowed_mode() {
         // --allowed-respond-to=owner-only,allowlist + --respond-to=anyone → ConfigError
         let args = CliArgs::try_parse_from([
-            "buzz-acp",
+            "beekeeper-acp",
             "--private-key",
             TEST_PRIVATE_KEY,
             "--respond-to",
@@ -2917,7 +2932,7 @@ channels = "ALL"
     fn allowed_respond_to_full_path_accepts_allowed_mode() {
         // --allowed-respond-to=owner-only,allowlist + --respond-to=owner-only → Ok
         let args = CliArgs::try_parse_from([
-            "buzz-acp",
+            "beekeeper-acp",
             "--private-key",
             TEST_PRIVATE_KEY,
             "--respond-to",
@@ -2938,7 +2953,7 @@ channels = "ALL"
     fn allowed_respond_to_full_path_unset_allows_all() {
         // No --allowed-respond-to flag → anyone is accepted.
         let args = CliArgs::try_parse_from([
-            "buzz-acp",
+            "beekeeper-acp",
             "--private-key",
             TEST_PRIVATE_KEY,
             "--respond-to",
@@ -2958,7 +2973,7 @@ channels = "ALL"
     #[test]
     fn max_turn_duration_at_ceiling_is_accepted() {
         let args = CliArgs::try_parse_from([
-            "buzz-acp",
+            "beekeeper-acp",
             "--private-key",
             TEST_PRIVATE_KEY,
             "--max-turn-duration",
@@ -2977,7 +2992,7 @@ channels = "ALL"
     fn max_turn_duration_above_ceiling_is_rejected() {
         let over = MAX_TURN_DURATION_CEILING_SECS + 1;
         let args = CliArgs::try_parse_from([
-            "buzz-acp",
+            "beekeeper-acp",
             "--private-key",
             TEST_PRIVATE_KEY,
             "--max-turn-duration",

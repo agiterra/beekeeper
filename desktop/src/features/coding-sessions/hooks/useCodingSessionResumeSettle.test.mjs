@@ -302,7 +302,7 @@ async function metadataEvent(target) {
     "../lib/codingSessionCommand.ts"
   );
   const {
-    BUZZ_CODING_SESSION_METADATA_SCHEMA,
+    BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
     CODING_SESSION_METADATA_TAG_VERSION,
     codingSessionMetadataSemanticKey,
   } = await import("../lib/codingSessionTrustedIngress.ts");
@@ -317,7 +317,7 @@ async function metadataEvent(target) {
         ["csm-key", codingSessionMetadataSemanticKey(target)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: target,
         projectRef: null,
         repoRef: null,

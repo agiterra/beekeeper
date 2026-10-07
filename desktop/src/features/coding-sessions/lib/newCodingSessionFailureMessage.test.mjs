@@ -5,13 +5,13 @@ import { newCodingSessionFailureMessage } from "./newCodingSessionModel.ts";
 
 // Reported 2026-08-24: "I got an error saying there can only be 4 concurrent
 // Claude sessions?" It is Beekeeper's own per-computer cap on live agent
-// processes (`buzz-session-provider`'s `SESSION_LIMIT`), and nothing to do with
+// processes (`beekeeper-session-provider`'s `SESSION_LIMIT`), and nothing to do with
 // the model provider — but the copy left the reader to work that out.
 test("the session cap says whose cap it is", () => {
   const message = newCodingSessionFailureMessage({
     code: "SESSION_LIMIT",
     message:
-      "this provider already holds its maximum of 4 running agent process(es); stop an execution you are finished with to free a slot, or set BUZZ_CSP_MAX_SESSIONS to raise the cap",
+      "this provider already holds its maximum of 4 running agent process(es); stop an execution you are finished with to free a slot, or set BEEKEEPER_CSP_MAX_SESSIONS to raise the cap",
   });
   assert.match(message, /stop an execution you are finished with/);
   assert.match(message, /Beekeeper's own cap on this computer/);

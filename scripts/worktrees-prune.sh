@@ -183,11 +183,11 @@ fi
 # half-reclaim that prints a whole-reclaim summary is the failure this exists
 # to prevent.
 if [ "$DO_TARGETS" -eq 1 ]; then
-  BEE="${BUZZ_BEE:-$(command -v bee 2>/dev/null || true)}"
+  BEE="${BEEKEEPER_BEE:-$(command -v bee 2>/dev/null || true)}"
   if [ -z "$BEE" ] || [ ! -x "$BEE" ]; then
     echo "worktrees-prune: --targets needs 'bee' to read each tree's sandbox.yml," >&2
     echo "  which is what says any of this is build state. Build it with" >&2
-    echo "  'cargo build -p beekeeper-cli', install the app, or set BUZZ_BEE." >&2
+    echo "  'cargo build -p beekeeper-cli', install the app, or set BEEKEEPER_BEE." >&2
     echo "  Refusing rather than guessing at 'target/' alone." >&2
     exit 1
   fi

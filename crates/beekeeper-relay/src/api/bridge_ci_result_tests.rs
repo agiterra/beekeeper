@@ -327,12 +327,12 @@ fn bee_wait_command(
             "--timeout",
             "10",
         ])
-        .env("BUZZ_RELAY_URL", relay_url)
+        .env("BEEKEEPER_RELAY_URL", relay_url)
         .env(
-            "BUZZ_PRIVATE_KEY",
+            "BEEKEEPER_PRIVATE_KEY",
             fixture.owner.secret_key().to_secret_hex(),
         )
-        .env_remove("BUZZ_AUTH_TAG")
+        .env_remove("BEEKEEPER_AUTH_TAG")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -515,10 +515,10 @@ async fn ci_result_webhook_route_authenticates_executes_and_stores_relay_fact() 
 }
 
 #[tokio::test]
-#[ignore = "requires Postgres, Redis, and BUZZ_TEST_BEE_BIN"]
+#[ignore = "requires Postgres, Redis, and BEEKEEPER_TEST_BEE_BIN"]
 async fn ci_result_real_bee_wait_receives_live_then_replays_stored_result() {
-    let bee_bin = std::env::var("BUZZ_TEST_BEE_BIN")
-        .expect("BUZZ_TEST_BEE_BIN must name the explicitly built bee binary");
+    let bee_bin = std::env::var("BEEKEEPER_TEST_BEE_BIN")
+        .expect("BEEKEEPER_TEST_BEE_BIN must name the explicitly built bee binary");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind relay test listener");

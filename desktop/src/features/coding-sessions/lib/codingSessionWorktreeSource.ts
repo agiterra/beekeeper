@@ -152,7 +152,7 @@ export type SeatSigningSource =
  * 3. The seat process's own environment: the provider injects
  *    `NOSTR_PRIVATE_KEY` into it
  *    (`crates/beekeeper-session-provider/src/actor_seats.rs:179`), and
- *    `buzz-dev-mcp`'s shim copies that into a 0600 file inside a tempdir that
+ *    `beekeeper-dev-mcp`'s shim copies that into a 0600 file inside a tempdir that
  *    is destroyed when the process ends
  *    (`crates/beekeeper-dev-mcp/src/shim.rs:107`).
  *

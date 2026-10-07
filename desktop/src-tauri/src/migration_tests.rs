@@ -602,7 +602,7 @@ fn reconcile_mcp_commands_sets_canonical_for_buzz_agent() {
     );
     reconcile_mcp_commands_in_file(&dir.path().join("agents/managed-agents.json"));
     let records = read_agents_json(dir.path());
-    assert_eq!(records[0]["mcp_command"], "buzz-dev-mcp");
+    assert_eq!(records[0]["mcp_command"], "beekeeper-dev-mcp");
 }
 
 #[test]
@@ -670,12 +670,12 @@ fn reconcile_mcp_commands_handles_mixed_agents() {
     assert_eq!(records[0]["mcp_command"], "");
     assert_eq!(records[1]["mcp_command"], "");
     assert_eq!(records[2]["mcp_command"], "my-custom-mcp");
-    assert_eq!(records[3]["mcp_command"], "buzz-dev-mcp");
+    assert_eq!(records[3]["mcp_command"], "beekeeper-dev-mcp");
 }
 
 #[test]
 fn reconcile_mcp_commands_resolves_persona_runtime_over_stale_snapshot() {
-    // The frozen snapshot is buzz-agent (wants buzz-dev-mcp), but the linked
+    // The frozen snapshot is buzz-agent (wants beekeeper-dev-mcp), but the linked
     // persona's runtime is goose (wants no mcp). The reconcile must follow the
     // EFFECTIVE harness (persona-wins) and clear the stale buzz-mcp-server.
     let dir = tempfile::tempdir().unwrap();
@@ -739,7 +739,7 @@ fn reconcile_mcp_commands_sees_team_dir_runtime_edit_same_launch() {
     reconcile_mcp_commands_in_file(&dir.path().join("agents/managed-agents.json"));
     assert_eq!(
         read_agents_json(dir.path())[0]["mcp_command"],
-        "buzz-dev-mcp",
+        "beekeeper-dev-mcp",
         "writer-before-reader must surface the new runtime's mcp_command same launch"
     );
 }
@@ -766,7 +766,7 @@ fn reconcile_mcp_commands_honors_explicit_override_over_persona() {
     );
     reconcile_mcp_commands_in_file(&dir.path().join("agents/managed-agents.json"));
     let records = read_agents_json(dir.path());
-    assert_eq!(records[0]["mcp_command"], "buzz-dev-mcp");
+    assert_eq!(records[0]["mcp_command"], "beekeeper-dev-mcp");
 }
 
 #[test]

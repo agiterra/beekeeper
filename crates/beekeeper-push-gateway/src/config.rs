@@ -89,18 +89,18 @@ impl Config {
                 .filter(|v| !v.is_empty())
                 .ok_or(ConfigError::Missing(k))
         }
-        let grant_keys = parse_keyring(e, "BUZZ_PUSH_GRANT_KEYS")?;
-        let token_keys = parse_keyring(e, "BUZZ_PUSH_TOKEN_KEYS")?;
+        let grant_keys = parse_keyring(e, "BEEKEEPER_PUSH_GRANT_KEYS")?;
+        let token_keys = parse_keyring(e, "BEEKEEPER_PUSH_TOKEN_KEYS")?;
         if grant_keys.iter().any(|grant| {
             token_keys
                 .iter()
                 .any(|token| grant.id == token.id || grant.key == token.key)
         }) {
-            return Err(ConfigError::Invalid("BUZZ_PUSH_TOKEN_KEYS"));
+            return Err(ConfigError::Invalid("BEEKEEPER_PUSH_TOKEN_KEYS"));
         }
-        let public_delivery_url = req(e, "BUZZ_PUSH_PUBLIC_DELIVERY_URL")?
+        let public_delivery_url = req(e, "BEEKEEPER_PUSH_PUBLIC_DELIVERY_URL")?
             .parse::<url::Url>()
-            .map_err(|_| ConfigError::Invalid("BUZZ_PUSH_PUBLIC_DELIVERY_URL"))?;
+            .map_err(|_| ConfigError::Invalid("BEEKEEPER_PUSH_PUBLIC_DELIVERY_URL"))?;
         // No gateway host is built in: this was pinned to Block's `push.buzz.xyz`
         // while Beekeeper ran no gateway of its own. The operator names the
         // public URL; request audiences are derived from its origin (http.rs).
@@ -113,22 +113,24 @@ impl Config {
             || !public_delivery_url.username().is_empty()
             || public_delivery_url.password().is_some()
         {
-            return Err(ConfigError::Invalid("BUZZ_PUSH_PUBLIC_DELIVERY_URL"));
+            return Err(ConfigError::Invalid("BEEKEEPER_PUSH_PUBLIC_DELIVERY_URL"));
         }
-        let max_grant_lifetime_seconds = req(e, "BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS")?
+        let max_grant_lifetime_seconds = req(e, "BEEKEEPER_PUSH_MAX_GRANT_LIFETIME_SECONDS")?
             .parse::<i64>()
             .ok()
             .filter(|seconds| (1..=31_536_000).contains(seconds))
-            .ok_or(ConfigError::Invalid("BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS"))?;
+            .ok_or(ConfigError::Invalid(
+                "BEEKEEPER_PUSH_MAX_GRANT_LIFETIME_SECONDS",
+            ))?;
         let max_installation_lifetime_seconds = e
-            .get("BUZZ_PUSH_MAX_INSTALLATION_LIFETIME_SECONDS")
+            .get("BEEKEEPER_PUSH_MAX_INSTALLATION_LIFETIME_SECONDS")
             .map(String::as_str)
             .unwrap_or("7776000")
             .parse::<i64>()
             .ok()
             .filter(|seconds| (1..=31_536_000).contains(seconds))
             .ok_or(ConfigError::Invalid(
-                "BUZZ_PUSH_MAX_INSTALLATION_LIFETIME_SECONDS",
+                "BEEKEEPER_PUSH_MAX_INSTALLATION_LIFETIME_SECONDS",
             ))?;
         let bounded_positive = |key: &'static str, default: i64, max: i64| {
             e.get(key)
@@ -141,33 +143,33 @@ impl Config {
                 .ok_or(ConfigError::Invalid(key))
         };
         let endpoint_quota_window_seconds =
-            bounded_positive("BUZZ_PUSH_ENDPOINT_QUOTA_WINDOW_SECONDS", 10, 86_400)?;
+            bounded_positive("BEEKEEPER_PUSH_ENDPOINT_QUOTA_WINDOW_SECONDS", 10, 86_400)?;
         let endpoint_quota_max_deliveries =
-            bounded_positive("BUZZ_PUSH_ENDPOINT_QUOTA_MAX_DELIVERIES", 10, 10_000)?;
-        let enabled_profiles = req(e, "BUZZ_PUSH_ENABLED_PROFILES")?
+            bounded_positive("BEEKEEPER_PUSH_ENDPOINT_QUOTA_MAX_DELIVERIES", 10, 10_000)?;
+        let enabled_profiles = req(e, "BEEKEEPER_PUSH_ENABLED_PROFILES")?
             .split(',')
             .map(|profile| match profile {
                 "buzz-ios-production" => Ok(crate::model::AppProfile::BuzzIosProduction),
                 "buzz-ios-sandbox" => Ok(crate::model::AppProfile::BuzzIosSandbox),
-                _ => Err(ConfigError::Invalid("BUZZ_PUSH_ENABLED_PROFILES")),
+                _ => Err(ConfigError::Invalid("BEEKEEPER_PUSH_ENABLED_PROFILES")),
             })
             .collect::<Result<HashSet<_>, _>>()?;
         if enabled_profiles.is_empty() {
-            return Err(ConfigError::Invalid("BUZZ_PUSH_ENABLED_PROFILES"));
+            return Err(ConfigError::Invalid("BEEKEEPER_PUSH_ENABLED_PROFILES"));
         }
         Ok(Self {
             bind_addr: e
-                .get("BUZZ_PUSH_BIND_ADDR")
+                .get("BEEKEEPER_PUSH_BIND_ADDR")
                 .map(String::as_str)
                 .unwrap_or("0.0.0.0:8080")
                 .parse()
-                .map_err(|_| ConfigError::Invalid("BUZZ_PUSH_BIND_ADDR"))?,
+                .map_err(|_| ConfigError::Invalid("BEEKEEPER_PUSH_BIND_ADDR"))?,
             health_addr: e
-                .get("BUZZ_PUSH_HEALTH_ADDR")
+                .get("BEEKEEPER_PUSH_HEALTH_ADDR")
                 .map(String::as_str)
                 .unwrap_or("0.0.0.0:8081")
                 .parse()
-                .map_err(|_| ConfigError::Invalid("BUZZ_PUSH_HEALTH_ADDR"))?,
+                .map_err(|_| ConfigError::Invalid("BEEKEEPER_PUSH_HEALTH_ADDR"))?,
             public_delivery_url,
             max_grant_lifetime_seconds,
             max_installation_lifetime_seconds,
@@ -175,14 +177,14 @@ impl Config {
             endpoint_quota_max_deliveries,
             enabled_profiles,
             database_url: req(e, "DATABASE_URL")?.to_owned(),
-            app_attest_app_id: req(e, "BUZZ_PUSH_APP_ATTEST_APP_ID")?.to_owned(),
-            app_attest_root_cert_path: req(e, "BUZZ_PUSH_APP_ATTEST_ROOT_CERT_PATH")?.into(),
+            app_attest_app_id: req(e, "BEEKEEPER_PUSH_APP_ATTEST_APP_ID")?.to_owned(),
+            app_attest_root_cert_path: req(e, "BEEKEEPER_PUSH_APP_ATTEST_ROOT_CERT_PATH")?.into(),
             grant_keys,
             token_keys,
-            apns_key_path: req(e, "BUZZ_PUSH_APNS_KEY_PATH")?.into(),
-            apns_key_id: req(e, "BUZZ_PUSH_APNS_KEY_ID")?.to_owned(),
-            apns_team_id: req(e, "BUZZ_PUSH_APNS_TEAM_ID")?.to_owned(),
-            apns_topic: req(e, "BUZZ_PUSH_APNS_TOPIC")?.to_owned(),
+            apns_key_path: req(e, "BEEKEEPER_PUSH_APNS_KEY_PATH")?.into(),
+            apns_key_id: req(e, "BEEKEEPER_PUSH_APNS_KEY_ID")?.to_owned(),
+            apns_team_id: req(e, "BEEKEEPER_PUSH_APNS_TEAM_ID")?.to_owned(),
+            apns_topic: req(e, "BEEKEEPER_PUSH_APNS_TOPIC")?.to_owned(),
         })
     }
 }
@@ -194,7 +196,7 @@ mod tests {
     fn base() -> HashMap<String, String> {
         HashMap::from([
             (
-                "BUZZ_PUSH_GRANT_KEYS".into(),
+                "BEEKEEPER_PUSH_GRANT_KEYS".into(),
                 format!(
                     "current:{},old:{}",
                     STANDARD.encode([1; 32]),
@@ -202,7 +204,7 @@ mod tests {
                 ),
             ),
             (
-                "BUZZ_PUSH_TOKEN_KEYS".into(),
+                "BEEKEEPER_PUSH_TOKEN_KEYS".into(),
                 format!(
                     "current-token:{},old-token:{}",
                     STANDARD.encode([3; 32]),
@@ -210,30 +212,30 @@ mod tests {
                 ),
             ),
             (
-                "BUZZ_PUSH_PUBLIC_DELIVERY_URL".into(),
+                "BEEKEEPER_PUSH_PUBLIC_DELIVERY_URL".into(),
                 "https://push.example.com/v1/deliveries/apns".into(),
             ),
             (
-                "BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS".into(),
+                "BEEKEEPER_PUSH_MAX_GRANT_LIFETIME_SECONDS".into(),
                 "2592000".into(),
             ),
             (
-                "BUZZ_PUSH_ENABLED_PROFILES".into(),
+                "BEEKEEPER_PUSH_ENABLED_PROFILES".into(),
                 "buzz-ios-production".into(),
             ),
             (
                 "DATABASE_URL".into(),
                 "postgres://buzz:test@localhost/buzz".into(),
             ),
-            ("BUZZ_PUSH_APP_ATTEST_APP_ID".into(), "TEAM.app".into()),
+            ("BEEKEEPER_PUSH_APP_ATTEST_APP_ID".into(), "TEAM.app".into()),
             (
-                "BUZZ_PUSH_APP_ATTEST_ROOT_CERT_PATH".into(),
+                "BEEKEEPER_PUSH_APP_ATTEST_ROOT_CERT_PATH".into(),
                 "/apple-root.pem".into(),
             ),
-            ("BUZZ_PUSH_APNS_KEY_PATH".into(), "/key.p8".into()),
-            ("BUZZ_PUSH_APNS_KEY_ID".into(), "key".into()),
-            ("BUZZ_PUSH_APNS_TEAM_ID".into(), "team".into()),
-            ("BUZZ_PUSH_APNS_TOPIC".into(), "app".into()),
+            ("BEEKEEPER_PUSH_APNS_KEY_PATH".into(), "/key.p8".into()),
+            ("BEEKEEPER_PUSH_APNS_KEY_ID".into(), "key".into()),
+            ("BEEKEEPER_PUSH_APNS_TEAM_ID".into(), "team".into()),
+            ("BEEKEEPER_PUSH_APNS_TOPIC".into(), "app".into()),
         ])
     }
 
@@ -251,30 +253,30 @@ mod tests {
     fn malformed_security_configuration_fails_startup() {
         for (key, value) in [
             (
-                "BUZZ_PUSH_PUBLIC_DELIVERY_URL",
+                "BEEKEEPER_PUSH_PUBLIC_DELIVERY_URL",
                 "http://push.example/v1/deliveries/apns",
             ),
             (
-                "BUZZ_PUSH_PUBLIC_DELIVERY_URL",
+                "BEEKEEPER_PUSH_PUBLIC_DELIVERY_URL",
                 "https://push.example:8443/v1/deliveries/apns",
             ),
             (
-                "BUZZ_PUSH_PUBLIC_DELIVERY_URL",
+                "BEEKEEPER_PUSH_PUBLIC_DELIVERY_URL",
                 "https://push.example/v1/deliveries/other",
             ),
             (
-                "BUZZ_PUSH_PUBLIC_DELIVERY_URL",
+                "BEEKEEPER_PUSH_PUBLIC_DELIVERY_URL",
                 "https://push.example/v1/deliveries/apns?x=1",
             ),
             (
-                "BUZZ_PUSH_PUBLIC_DELIVERY_URL",
+                "BEEKEEPER_PUSH_PUBLIC_DELIVERY_URL",
                 "https://user@push.example/v1/deliveries/apns",
             ),
-            ("BUZZ_PUSH_APP_ATTEST_APP_ID", ""),
-            ("BUZZ_PUSH_ENABLED_PROFILES", "unknown-profile"),
-            ("BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS", "0"),
-            ("BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS", "31536001"),
-            ("BUZZ_PUSH_MAX_INSTALLATION_LIFETIME_SECONDS", "0"),
+            ("BEEKEEPER_PUSH_APP_ATTEST_APP_ID", ""),
+            ("BEEKEEPER_PUSH_ENABLED_PROFILES", "unknown-profile"),
+            ("BEEKEEPER_PUSH_MAX_GRANT_LIFETIME_SECONDS", "0"),
+            ("BEEKEEPER_PUSH_MAX_GRANT_LIFETIME_SECONDS", "31536001"),
+            ("BEEKEEPER_PUSH_MAX_INSTALLATION_LIFETIME_SECONDS", "0"),
         ] {
             let mut env = base();
             env.insert(key.into(), value.into());
@@ -288,7 +290,7 @@ mod tests {
     fn public_delivery_url_accepts_the_operator_host() {
         let mut env = base();
         env.insert(
-            "BUZZ_PUSH_PUBLIC_DELIVERY_URL".into(),
+            "BEEKEEPER_PUSH_PUBLIC_DELIVERY_URL".into(),
             "https://push.agiterra.example/v1/deliveries/apns".into(),
         );
         let config = Config::from_map(&env).unwrap();
@@ -305,7 +307,7 @@ mod tests {
             format!("other:{}", STANDARD.encode([1; 32])),
         ] {
             let mut env = base();
-            env.insert("BUZZ_PUSH_TOKEN_KEYS".into(), token_keys);
+            env.insert("BEEKEEPER_PUSH_TOKEN_KEYS".into(), token_keys);
             assert!(Config::from_map(&env).is_err());
         }
     }
@@ -313,12 +315,12 @@ mod tests {
     #[test]
     fn malformed_or_empty_keyrings_fail_startup() {
         for (variable, value) in [
-            ("BUZZ_PUSH_GRANT_KEYS", ""),
-            ("BUZZ_PUSH_GRANT_KEYS", "missing_separator"),
-            ("BUZZ_PUSH_GRANT_KEYS", "id:bad-base64"),
-            ("BUZZ_PUSH_TOKEN_KEYS", ""),
-            ("BUZZ_PUSH_TOKEN_KEYS", "missing_separator"),
-            ("BUZZ_PUSH_TOKEN_KEYS", "id:bad-base64"),
+            ("BEEKEEPER_PUSH_GRANT_KEYS", ""),
+            ("BEEKEEPER_PUSH_GRANT_KEYS", "missing_separator"),
+            ("BEEKEEPER_PUSH_GRANT_KEYS", "id:bad-base64"),
+            ("BEEKEEPER_PUSH_TOKEN_KEYS", ""),
+            ("BEEKEEPER_PUSH_TOKEN_KEYS", "missing_separator"),
+            ("BEEKEEPER_PUSH_TOKEN_KEYS", "id:bad-base64"),
         ] {
             let mut env = base();
             env.insert(variable.into(), value.into());

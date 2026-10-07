@@ -5,7 +5,7 @@
 //! real interface between host and provider. Building it as a plain
 //! `BTreeMap` rather than mutating a `Command` in place is what lets the tests
 //! assert the two properties that matter and cannot be checked by reading the
-//! spawn code: `BUZZ_AUTH_TAG` is a JSON array of strings, and the owner's
+//! spawn code: `BEEKEEPER_AUTH_TAG` is a JSON array of strings, and the owner's
 //! secret key appears nowhere in it.
 //!
 //! This lives in the shared crate because there is now more than one launcher:
@@ -42,7 +42,7 @@ pub const DEFAULT_RUST_LOG: &str = "info,beekeeper_session_provider=info";
 /// documented debug switch that works by accident is one `env_clear()` away
 /// from silently doing nothing, and the failure would look like the adapter
 /// ignoring the request.
-pub const EMIT_RAW_SDK_FRAMES_VAR: &str = "BUZZ_CSP_EMIT_RAW_SDK_FRAMES";
+pub const EMIT_RAW_SDK_FRAMES_VAR: &str = "BEEKEEPER_CSP_EMIT_RAW_SDK_FRAMES";
 
 /// Everything the env map is derived from.
 pub struct ProviderEnvInputs<'a> {
@@ -50,7 +50,7 @@ pub struct ProviderEnvInputs<'a> {
     pub record: &'a CodingSessionProviderRecord,
     /// Relay the child connects to.
     pub relay_url: &'a str,
-    /// `BUZZ_CSP_STATE_DIR`.
+    /// `BEEKEEPER_CSP_STATE_DIR`.
     pub state_dir: &'a Path,
     /// Resolved ACP adapter executable. The managed Node tools directory is not
     /// guaranteed to be on the desktop process's inherited PATH.
@@ -63,7 +63,7 @@ pub struct ProviderEnvInputs<'a> {
     /// managed agents use. `None` leaves the adapter's own PATH lookup in
     /// charge.
     pub claude_code_executable: Option<PathBuf>,
-    /// The full runtime list, exported as `BUZZ_CSP_RUNTIMES`. A newer sidecar
+    /// The full runtime list, exported as `BEEKEEPER_CSP_RUNTIMES`. A newer sidecar
     /// reads this as the complete offer; an older one ignores it and keeps
     /// using the legacy variables above, which stay exported alongside it.
     pub runtimes: Vec<RuntimeDescriptor>,
@@ -117,7 +117,7 @@ pub const BEE_VAR: &str = "BEE";
 /// Kept byte-for-byte in step with `SHARED_WORKDIRS_VAR` in
 /// `crates/beekeeper-session-provider/src/session.rs`; a drift here is a refusal
 /// that silently stops happening.
-pub const SHARED_WORKDIRS_VAR: &str = "BUZZ_CSP_SHARED_WORKDIRS";
+pub const SHARED_WORKDIRS_VAR: &str = "BEEKEEPER_CSP_SHARED_WORKDIRS";
 
 /// The repository `dir` sits inside, or `None`.
 ///
@@ -157,18 +157,21 @@ pub fn app_checkout_dir() -> Option<PathBuf> {
 pub fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.insert(
-        "BUZZ_PRIVATE_KEY".to_string(),
+        "BEEKEEPER_PRIVATE_KEY".to_string(),
         inputs.record.private_key_nsec.clone(),
     );
-    env.insert("BUZZ_RELAY_URL".to_string(), inputs.relay_url.to_string());
+    env.insert(
+        "BEEKEEPER_RELAY_URL".to_string(),
+        inputs.relay_url.to_string(),
+    );
     if let Some(auth_tag) = &inputs.record.auth_tag {
         // Verbatim: the value minted by `nip_oa::compute_auth_tag` already is
         // the JSON array of strings the provider parses. Re-encoding here is
         // how the tag stops verifying.
-        env.insert("BUZZ_AUTH_TAG".to_string(), auth_tag.clone());
+        env.insert("BEEKEEPER_AUTH_TAG".to_string(), auth_tag.clone());
     }
     env.insert(
-        "BUZZ_CSP_STATE_DIR".to_string(),
+        "BEEKEEPER_CSP_STATE_DIR".to_string(),
         inputs.state_dir.to_string_lossy().into_owned(),
     );
     if let Some(max_sessions) = inputs.max_sessions {
@@ -176,13 +179,13 @@ pub fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, St
         // only when a person actually chose a number — an unset ceiling and a
         // ceiling that happens to equal the default are different facts.
         env.insert(
-            "BUZZ_CSP_MAX_SESSIONS".to_string(),
+            "BEEKEEPER_CSP_MAX_SESSIONS".to_string(),
             max_sessions.to_string(),
         );
     }
     if let Some(idle_timeout) = inputs.turn_idle_timeout_secs {
         env.insert(
-            "BUZZ_CSP_IDLE_TIMEOUT".to_string(),
+            "BEEKEEPER_CSP_IDLE_TIMEOUT".to_string(),
             idle_timeout.to_string(),
         );
     }
@@ -190,10 +193,13 @@ pub fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, St
         // Same rule as the ceiling above: exported only when a person chose a
         // number, because "unset" and "happens to equal the default" are
         // different facts and the settings panel discloses which one is live.
-        env.insert("BUZZ_CSP_TURN_BUDGET".to_string(), turn_budget.to_string());
+        env.insert(
+            "BEEKEEPER_CSP_TURN_BUDGET".to_string(),
+            turn_budget.to_string(),
+        );
     }
     env.insert(
-        "BUZZ_CSP_PROJECTS_FILE".to_string(),
+        "BEEKEEPER_CSP_PROJECTS_FILE".to_string(),
         inputs
             .state_dir
             .join(PROJECTS_FILE_NAME)
@@ -201,18 +207,18 @@ pub fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, St
             .into_owned(),
     );
     env.insert(
-        "BUZZ_CSP_INSTANCE_ID".to_string(),
+        "BEEKEEPER_CSP_INSTANCE_ID".to_string(),
         inputs.record.instance_id.clone(),
     );
     if let Some(agent_command) = &inputs.agent_command {
         env.insert(
-            "BUZZ_CSP_AGENT_COMMAND".to_string(),
+            "BEEKEEPER_CSP_AGENT_COMMAND".to_string(),
             agent_command.to_string_lossy().into_owned(),
         );
     }
     if let Some(context_mcp_command) = &inputs.context_mcp_command {
         env.insert(
-            "BUZZ_CSP_CONTEXT_MCP_COMMAND".to_string(),
+            "BEEKEEPER_CSP_CONTEXT_MCP_COMMAND".to_string(),
             context_mcp_command.to_string_lossy().into_owned(),
         );
     }
@@ -249,7 +255,7 @@ pub fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, St
     if !inputs.runtimes.is_empty() {
         match serde_json::to_string(&inputs.runtimes) {
             Ok(json) => {
-                env.insert("BUZZ_CSP_RUNTIMES".to_string(), json);
+                env.insert("BEEKEEPER_CSP_RUNTIMES".to_string(), json);
             }
             Err(error) => {
                 // Unreachable for this shape; the legacy variables above keep a
@@ -265,7 +271,7 @@ pub fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, St
 /// the child, because a stale inherited value would be indistinguishable from
 /// a deliberate one.
 ///
-/// `BUZZ_AUTH_TAG` is the important case: when the record carries no
+/// `BEEKEEPER_AUTH_TAG` is the important case: when the record carries no
 /// attestation the child must present none, not whatever the developer had
 /// exported in their shell.
 ///
@@ -279,19 +285,19 @@ pub fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, St
 ///
 /// The host's own key variables are the third: a host launched with
 /// [`PRIVATE_KEY_VAR`] or [`KEY_FILE_VAR`] has already resolved the key and
-/// hands it to the provider as `BUZZ_PRIVATE_KEY`, which the agent fence then
+/// hands it to the provider as `BEEKEEPER_PRIVATE_KEY`, which the agent fence then
 /// removes. The `BEEKEEPER_HOST_*` names sit outside that fence's `BUZZ_`
 /// prefix, so without this entry the raw key would ride along to the provider
 /// and on to every agent it starts.
 pub const INHERITED_KEYS_TO_CLEAR: &[&str] = &[
-    "BUZZ_AUTH_TAG",
+    "BEEKEEPER_AUTH_TAG",
     PRIVATE_KEY_VAR,
     KEY_FILE_VAR,
     BEE_VAR,
     SHARED_WORKDIRS_VAR,
-    "BUZZ_ACP_PRIVATE_KEY",
-    "BUZZ_API_TOKEN",
-    "BUZZ_CSP_RUNTIMES",
-    "BUZZ_CSP_CONTEXT_MCP_COMMAND",
+    "BEEKEEPER_ACP_PRIVATE_KEY",
+    "BEEKEEPER_API_TOKEN",
+    "BEEKEEPER_CSP_RUNTIMES",
+    "BEEKEEPER_CSP_CONTEXT_MCP_COMMAND",
     "NOSTR_PRIVATE_KEY",
 ];

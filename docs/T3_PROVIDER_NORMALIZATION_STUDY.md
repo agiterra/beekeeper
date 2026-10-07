@@ -225,7 +225,7 @@ The SESSION_STATE §2 item 2 claim (`plans/SESSION_STATE.md:47-53`) is confirmed
 - Host paths do reach signed content: nothing between `on_update` and `sign_with_keys`
   inspects `toolName`, and the content sanitizer elides only secret-ish *keys*
   (`coding_session_context.rs:821-841`) — not `toolName`, `title`, `input`, or paths.
-- Per-adapter branching already exists in `buzz-acp` — but only for transport, env,
+- Per-adapter branching already exists in `beekeeper-acp` — but only for transport, env,
   capability, and token accounting (`acp.rs:585-591`, `config.rs:711-718`, `:759-763`,
   `acp.rs:2441-2475`, `usage.rs:325-334`). **`transcript.rs` has no idea which adapter
   produced the frame** — `TranscriptTranslator::new` takes only `include_thoughts`

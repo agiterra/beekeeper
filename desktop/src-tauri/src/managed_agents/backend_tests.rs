@@ -395,23 +395,23 @@ fn split_config_key_handles_all_styles() {
 #[test]
 fn provider_filename_strips_the_windows_extension() {
     assert_eq!(
-        provider_id_from_filename("buzz-backend-kubernetes"),
+        provider_id_from_filename("beekeeper-backend-kubernetes"),
         Some("kubernetes")
     );
     assert_eq!(
-        provider_id_from_filename("buzz-backend-kubernetes.exe"),
+        provider_id_from_filename("beekeeper-backend-kubernetes.exe"),
         Some("kubernetes")
     );
     assert_eq!(
-        provider_id_from_filename("buzz-backend-kubernetes.EXE"),
+        provider_id_from_filename("beekeeper-backend-kubernetes.EXE"),
         Some("kubernetes")
     );
     assert_eq!(
-        provider_id_from_filename("buzz-backend-kubernetes.bat"),
+        provider_id_from_filename("beekeeper-backend-kubernetes.bat"),
         Some("kubernetes")
     );
     assert_eq!(
-        provider_id_from_filename("buzz-backend-kubernetes.CMD"),
+        provider_id_from_filename("beekeeper-backend-kubernetes.CMD"),
         Some("kubernetes")
     );
     assert_eq!(

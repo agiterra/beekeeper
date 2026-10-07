@@ -14,7 +14,7 @@ import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/c
 import { buildCodingSessionGoalEvent } from "@/features/coding-sessions/lib/codingSessionGoal";
 import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
@@ -24,7 +24,7 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import { CODING_SESSION_TEAM_TRANSACTION_SCHEMA } from "@/features/coding-sessions/lib/codingSessionTeamTransactionWire";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
   codingSessionTranscriptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -736,7 +736,7 @@ function signedMetadata(input: {
         ["csm-key", codingSessionMetadataSemanticKey(input.target)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: input.target,
         projectRef: null,
         repoRef: null,
@@ -786,7 +786,7 @@ function signedTranscript(input: {
         ],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
         session: input.target,
         eventSeq: input.eventSeq,
         timestamp: input.createdAt * 1_000,

@@ -2,12 +2,12 @@
 
 set -euo pipefail
 
-DB_HOST="${BUZZ_DB_HOST:-127.0.0.1}"
-DB_PORT="${BUZZ_DB_PORT:-5432}"
-DB_USER="${BUZZ_DB_USER:-buzz}"
-DB_PASS="${BUZZ_DB_PASS:-buzz_dev}"
-DB_NAME="${BUZZ_DB_NAME:-buzz}"
-DB_DOCKER_CONTAINER="${BUZZ_DB_DOCKER_CONTAINER:-buzz-postgres}"
+DB_HOST="${BEEKEEPER_DB_HOST:-127.0.0.1}"
+DB_PORT="${BEEKEEPER_DB_PORT:-5432}"
+DB_USER="${BEEKEEPER_DB_USER:-buzz}"
+DB_PASS="${BEEKEEPER_DB_PASS:-buzz_dev}"
+DB_NAME="${BEEKEEPER_DB_NAME:-buzz}"
+DB_DOCKER_CONTAINER="${BEEKEEPER_DB_DOCKER_CONTAINER:-buzz-postgres}"
 
 SYSTEM_PUBKEY="0000000000000000000000000000000000000000000000000000000000000000"
 ALICE_PUBKEY="953d3363262e86b770419834c53d2446409db6d918a57f8f339d495d54ab001f"
@@ -54,7 +54,7 @@ run_sql "SELECT 1" >/dev/null
 # Host must match the relay's normalized bind host verbatim (non-default ports
 # are kept by normalize_host). Overridable so an isolated relay on an alternate
 # port can seed the same channels/members against its own tenant.
-COMMUNITY_HOST="${BUZZ_COMMUNITY_HOST:-localhost:3000}"
+COMMUNITY_HOST="${BEEKEEPER_COMMUNITY_HOST:-localhost:3000}"
 COMMUNITY_HOST_SQL="${COMMUNITY_HOST//\'/\'\'}"
 
 run_sql "

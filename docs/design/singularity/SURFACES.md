@@ -1491,7 +1491,7 @@ consults the classifier first, then a seat tool-name table, then ACP's own
 `toolKind`, then the classifier's label. A turn
 of `Bash`×4 `Read`×2 `Edit`×3 `Grep`×2 reads `Terminal 4 · Read 2 · Edit 3 ·
 Search 2`; on the live run the same turn read `Relay 1 · Tool 49`, because the
-classifier's harness rules are written for `buzz-dev-mcp` names and a Claude
+classifier's harness rules are written for `beekeeper-dev-mcp` names and a Claude
 Code seat calls none of them. A call nothing on the wire describes still reads
 `Tool`, the same word its expanded row uses.
 
@@ -1499,7 +1499,7 @@ Code seat calls none of them. A call nothing on the wire describes still reads
 call — a dev-MCP `shell` invocation of `bee`. A seat driven by Claude Code runs
 `bee` through `Bash`, which the classifier's buzz-CLI parser never sees
 (`agentSessionToolClassifier.ts` gates it on `shell`/`*_shell`/dev-MCP names,
-and `BUZZ_CLI_GROUPS` has no `sessions` entry), so that call reads `Terminal`
+and `BEEKEEPER_CLI_GROUPS` has no `sessions` entry), so that call reads `Terminal`
 here while the Audit tab counts it under "Downloads the room". Two names for
 one call; not introduced by this change — it read `Tool` before — and neither
 file is A3's. Recorded so the next reader does not have to rediscover it

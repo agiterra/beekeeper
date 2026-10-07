@@ -62,7 +62,7 @@ pub async fn cmd_get_workflow(client: &BeekeeperClient, workflow_id: &str) -> Re
 ///
 /// Runs, approvals and host steps are relay-owned database rows, never
 /// Nostr events: kinds 46001-46008 are declared in `buzz-core::kind` but
-/// nothing publishes them (`buzz-workflow` and `buzz-relay` only ever write
+/// nothing publishes them (`buzz-workflow` and `beekeeper-relay` only ever write
 /// the 46010-46032 range plus the `workflow_runs`/`workflow_host_steps`/
 /// `workflow_approvals` tables — see `crates/beekeeper-relay/src/api/workflows.rs`).
 /// Querying those dead kinds, as this command used to, returns `[]` for

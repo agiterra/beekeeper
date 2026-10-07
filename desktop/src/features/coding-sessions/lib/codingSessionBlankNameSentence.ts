@@ -16,7 +16,7 @@ import type { CodingSessionTitleMode } from "@/shared/api/tauriCodingSessionNami
  *
  * - `agent` (the default): the host may title it. Not guaranteed, and this
  *   desktop cannot see whether it will — the host may run
- *   `BUZZ_CSP_AUTO_TITLE=off`, the runtime may set `"titleModel": null`, the
+ *   `BEEKEEPER_CSP_AUTO_TITLE=off`, the runtime may set `"titleModel": null`, the
  *   host may predate generated titles, or the first message may carry no
  *   text — so the sentence leads with what is certain (untitled) and states
  *   the host title as a possibility.

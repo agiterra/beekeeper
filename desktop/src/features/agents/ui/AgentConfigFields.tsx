@@ -50,7 +50,7 @@ import { PersonaProviderApiKeyField } from "@/features/agents/ui/PersonaProvider
 import { usePersonaModelDiscovery } from "@/features/agents/ui/usePersonaModelDiscovery";
 import { resolveModelLabel } from "@/features/agents/lib/formatAgentModelLabel";
 import {
-  BUZZ_AGENT_THINKING_EFFORT,
+  BEEKEEPER_AGENT_THINKING_EFFORT,
   getProviderEffortConfig,
 } from "@/features/agents/ui/beekeeperAgentConfig";
 import {
@@ -73,9 +73,9 @@ export const EMPTY_GLOBAL_CONFIG: GlobalAgentConfig = {
 };
 
 const BAKED_STRUCTURED_KEYS = new Set([
-  "BUZZ_AGENT_PROVIDER",
-  "BUZZ_AGENT_MODEL",
-  BUZZ_AGENT_THINKING_EFFORT,
+  "BEEKEEPER_AGENT_PROVIDER",
+  "BEEKEEPER_AGENT_MODEL",
+  BEEKEEPER_AGENT_THINKING_EFFORT,
 ]);
 
 const PROGRESSIVE_FIELDS_TRANSITION = {
@@ -270,7 +270,8 @@ export function AgentConfigFields({
   ]);
   const bakedEnvMap = Object.fromEntries(bakedEnv.map((e) => [e.key, e.value]));
   const bakedProvider = React.useMemo(
-    () => bakedEnv.find((e) => e.key === "BUZZ_AGENT_PROVIDER")?.value ?? null,
+    () =>
+      bakedEnv.find((e) => e.key === "BEEKEEPER_AGENT_PROVIDER")?.value ?? null,
     [bakedEnv],
   );
   const selectedRuntimeId = selectedRuntime?.id ?? "";
@@ -297,7 +298,8 @@ export function AgentConfigFields({
     fallbackModel !== null;
   const bakedEffort = React.useMemo(
     () =>
-      bakedEnv.find((e) => e.key === BUZZ_AGENT_THINKING_EFFORT)?.value ?? null,
+      bakedEnv.find((e) => e.key === BEEKEEPER_AGENT_THINKING_EFFORT)?.value ??
+      null,
     [bakedEnv],
   );
   const bakedGenericRows = React.useMemo<readonly InheritedEnvRow[]>(
@@ -586,12 +588,12 @@ export function AgentConfigFields({
     onConfigChange({ ...config, env_vars: next });
   };
 
-  // On internal Block builds, BUZZ_AGENT_PROVIDER is baked in and a boot
+  // On internal Block builds, BEEKEEPER_AGENT_PROVIDER is baked in and a boot
   // migration rewrites v1→v2. Hide the legacy v1 option so it is not offered
   // for new selections; OSS builds show it.
   const hideProviderIds = React.useMemo(() => {
     const hidden = new Set<string>();
-    if (bakedEnvKeys.includes("BUZZ_AGENT_PROVIDER")) {
+    if (bakedEnvKeys.includes("BEEKEEPER_AGENT_PROVIDER")) {
       for (const providerId of BLOCK_BUILD_HIDDEN_PROVIDER_IDS) {
         hidden.add(providerId);
       }

@@ -316,7 +316,7 @@ pub enum Requirement {
         /// Shown verbatim in the nudge so the user can identify the problem.
         diagnostic: String,
     },
-    /// Git for Windows is missing, so buzz-agent cannot launch buzz-dev-mcp's
+    /// Git for Windows is missing, so buzz-agent cannot launch beekeeper-dev-mcp's
     /// Bash-based shell tool. Doctor owns installation and re-checking.
     GitBash,
     /// A custom harness command that cannot be resolved in the current PATH.
@@ -439,12 +439,12 @@ fn buzz_agent_requirements(effective: &EffectiveAgentEnv) -> Vec<Requirement> {
         missing.push(Requirement::GitBash);
     }
 
-    // Provider is required — maps to BUZZ_AGENT_PROVIDER in the effective env.
+    // Provider is required — maps to BEEKEEPER_AGENT_PROVIDER in the effective env.
     // An empty string is treated as absent: a key set to "" is not a valid
     // provider and must not pass the readiness gate.
     let provider = effective
         .env
-        .get("BUZZ_AGENT_PROVIDER")
+        .get("BEEKEEPER_AGENT_PROVIDER")
         .filter(|v| !v.is_empty())
         .map(String::as_str);
     if provider.is_none() {
@@ -453,12 +453,12 @@ fn buzz_agent_requirements(effective: &EffectiveAgentEnv) -> Vec<Requirement> {
         });
     }
 
-    // Model is required — maps to BUZZ_AGENT_MODEL in the effective env.
+    // Model is required — maps to BEEKEEPER_AGENT_MODEL in the effective env.
     // Same empty-string treatment as provider.
     // Also accept provider-specific model fallback keys, matching buzz-agent's
     // own config.rs `from_env()` resolution order (e.g. DATABRICKS_MODEL for
     // databricks/databricks_v2, ANTHROPIC_MODEL for anthropic, etc.). The
-    // baked buzz-releases env sets DATABRICKS_MODEL but not BUZZ_AGENT_MODEL,
+    // baked buzz-releases env sets DATABRICKS_MODEL but not BEEKEEPER_AGENT_MODEL,
     // so without this fallback agents baked from releases appear "not ready".
     let provider_model_key = match provider {
         Some("databricks") | Some("databricks_v2") | Some("databricks-v2") => {
@@ -471,7 +471,7 @@ fn buzz_agent_requirements(effective: &EffectiveAgentEnv) -> Vec<Requirement> {
     };
     let model_present = effective
         .env
-        .get("BUZZ_AGENT_MODEL")
+        .get("BEEKEEPER_AGENT_MODEL")
         .filter(|v| !v.is_empty())
         .is_some()
         || provider_model_key

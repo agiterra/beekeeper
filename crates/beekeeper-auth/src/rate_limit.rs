@@ -1,7 +1,7 @@
 //! Rate limiting types and interface.
 //!
 //! Defines the [`RateLimiter`] trait. The Redis-backed implementation lives in
-//! `buzz-relay` / `buzz-pubsub`. Fixed-window counter algorithm.
+//! `beekeeper-relay` / `buzz-pubsub`. Fixed-window counter algorithm.
 //!
 //! ⚠️ Fixed windows allow up to 2× burst at boundaries. Upgrade to sliding
 //! window or token bucket for strict limiting.
@@ -178,7 +178,7 @@ impl Default for RateLimitConfig {
 
 /// Async rate-limiting interface.
 ///
-/// The Redis-backed production implementation lives in `buzz-relay` / `buzz-pubsub`.
+/// The Redis-backed production implementation lives in `beekeeper-relay` / `buzz-pubsub`.
 /// A no-op `AlwaysAllowRateLimiter` is provided for unit tests.
 ///
 /// ## Tenant scoping

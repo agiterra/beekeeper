@@ -4,7 +4,7 @@
 //! and that was true: a founder could publish a budget and nothing counted it.
 //! Exactly one field is now enforced — `budget.turns`, at the provider's D9
 //! turn gate — and the refusal has to say *which* ceiling bound, because a
-//! reader who cannot tell the host's `BUZZ_CSP_TURN_BUDGET` from the session's
+//! reader who cannot tell the host's `BEEKEEPER_CSP_TURN_BUDGET` from the session's
 //! own published policy cannot tell which one to change.
 //!
 //! Everything else in a 44245 is read and shown, never enforced. These tests

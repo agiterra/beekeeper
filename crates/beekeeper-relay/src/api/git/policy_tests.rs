@@ -230,11 +230,11 @@ fn bash_hmac_matches_rust_hmac() {
     let bash_script = format!(
         r#"
 export LC_ALL=C
-BUZZ_REPO_ID="{repo_id}"
-BUZZ_REPO_OWNER="{repo_owner}"
-BUZZ_COMMUNITY_ID="{community_id}"
-BUZZ_PUSHER_PUBKEY="{pusher}"
-BUZZ_HOOK_SECRET="{secret}"
+BEEKEEPER_REPO_ID="{repo_id}"
+BEEKEEPER_REPO_OWNER="{repo_owner}"
+BEEKEEPER_COMMUNITY_ID="{community_id}"
+BEEKEEPER_PUSHER_PUBKEY="{pusher}"
+BEEKEEPER_HOOK_SECRET="{secret}"
 TIMESTAMP="{timestamp}"
 
 # Simulate the HMAC_FILE with two refs (unsorted, like the hook writes them)
@@ -247,8 +247,8 @@ echo "refs/heads/main {old1} {new1} 1" >> "$HMAC_FILE"
 echo "refs/heads/feature {old2} {new2} 0" >> "$HMAC_FILE"
 
 # Build HMAC input — exact logic from hook script
-REPO_ID_LEN=${{#BUZZ_REPO_ID}}
-HMAC_INPUT="${{REPO_ID_LEN}}:${{BUZZ_REPO_ID}}|${{BUZZ_REPO_OWNER}}|${{BUZZ_COMMUNITY_ID}}|${{BUZZ_PUSHER_PUBKEY}}|"
+REPO_ID_LEN=${{#BEEKEEPER_REPO_ID}}
+HMAC_INPUT="${{REPO_ID_LEN}}:${{BEEKEEPER_REPO_ID}}|${{BEEKEEPER_REPO_OWNER}}|${{BEEKEEPER_COMMUNITY_ID}}|${{BEEKEEPER_PUSHER_PUBKEY}}|"
 sort "$HMAC_FILE" | while IFS=' ' read -r ref_name old_oid new_oid is_anc; do
 REF_LEN=${{#ref_name}}
 printf '%s%s%s:%s%s' "$old_oid" "$new_oid" "$REF_LEN" "$ref_name" "$is_anc"
@@ -256,7 +256,7 @@ done > "$HMAC_FILE.concat"
 HMAC_INPUT="${{HMAC_INPUT}}$(cat "$HMAC_FILE.concat")|${{TIMESTAMP}}"
 
 # Compute HMAC-SHA256
-printf '%s' "$HMAC_INPUT" | openssl dgst -sha256 -hmac "$BUZZ_HOOK_SECRET" -hex 2>/dev/null | sed 's/.*= //'
+printf '%s' "$HMAC_INPUT" | openssl dgst -sha256 -hmac "$BEEKEEPER_HOOK_SECRET" -hex 2>/dev/null | sed 's/.*= //'
 "#,
         repo_id = repo_id,
         repo_owner = repo_owner,
@@ -325,9 +325,9 @@ WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 HMAC_FILE="$WORK_DIR/hmac"
 echo "refs/heads/main {old} {new} 1" >> "$HMAC_FILE"
-BUZZ_REPO_ID="{repo_id}"
-REPO_ID_LEN=${{#BUZZ_REPO_ID}}
-HMAC_INPUT="${{REPO_ID_LEN}}:${{BUZZ_REPO_ID}}|{owner}|{community_id}|{pusher}|"
+BEEKEEPER_REPO_ID="{repo_id}"
+REPO_ID_LEN=${{#BEEKEEPER_REPO_ID}}
+HMAC_INPUT="${{REPO_ID_LEN}}:${{BEEKEEPER_REPO_ID}}|{owner}|{community_id}|{pusher}|"
 sort "$HMAC_FILE" | while IFS=' ' read -r ref_name old_oid new_oid is_anc; do
 REF_LEN=${{#ref_name}}
 printf '%s%s%s:%s%s' "$old_oid" "$new_oid" "$REF_LEN" "$ref_name" "$is_anc"
@@ -372,7 +372,7 @@ pub(crate) async fn policy_test_state() -> Arc<AppState> {
     let mut config = crate::config::Config::from_env().expect("default config loads");
     config.require_relay_membership = false;
     config.redis_url = "redis://127.0.0.1:1".to_string();
-    config.database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+    config.database_url = std::env::var("BEEKEEPER_TEST_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
         .unwrap_or_else(|_| TEST_DB_URL.to_string());
     let pool = sqlx::PgPool::connect(&config.database_url)

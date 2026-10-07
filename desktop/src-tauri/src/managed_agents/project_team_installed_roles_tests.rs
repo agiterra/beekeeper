@@ -176,7 +176,7 @@ fn journal_agent(pubkey: &str, home_role: &str) -> crate::managed_agents::Manage
     let mut record: crate::managed_agents::ManagedAgentRecord =
         serde_json::from_value(serde_json::json!({
             "pubkey": pubkey, "name": home_role, "relay_url": RELAY,
-            "acp_command": "buzz-acp", "agent_command": "goose", "agent_args": [],
+            "acp_command": "beekeeper-acp", "agent_command": "goose", "agent_args": [],
             "mcp_command": "", "turn_timeout_seconds": 320, "system_prompt": null,
             "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
             "last_started_at": null, "last_stopped_at": null,

@@ -53,7 +53,7 @@ export function selectCodingSessionSubagentItems(
 /**
  * What the transcript kept of the Task call's input. `given` carries the
  * prompt as published; `truncated` is an input the provider bounded on the
- * way out (`bounded_input` in buzz-session-provider), so only a preview of
+ * way out (`bounded_input` in beekeeper-session-provider), so only a preview of
  * its serialized form survives; `absent` is a call whose input carries no
  * prompt at all.
  */

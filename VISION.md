@@ -126,7 +126,7 @@ One model. TLS in transit. At-rest encryption delegated to the storage layer (e.
 
 ## Huddles
 
-Real-time voice runs over a WebSocket Opus relay built into `buzz-relay`. Beekeeper authenticates participants (NIP-42), admits them to a room, and forwards Opus frames between peers — no external SFU.
+Real-time voice runs over a WebSocket Opus relay built into `beekeeper-relay`. Beekeeper authenticates participants (NIP-42), admits them to a room, and forwards Opus frames between peers — no external SFU.
 
 - Agents join the same audio relay as humans — they bring their own STT/TTS
 - Huddle lifecycle flows as Nostr events: started, joined, left, ended

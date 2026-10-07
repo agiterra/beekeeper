@@ -58,7 +58,8 @@ function read(operations) {
 }
 
 test("an answer that named a class reads the class it covers", () => {
-  const condition = "any SHA whose buzz-acp diff against origin/main is empty";
+  const condition =
+    "any SHA whose beekeeper-acp diff against origin/main is empty";
   assert.equal(
     read(index(condition)),
     `You answered decision 2099cdb3: push with --no-verify — condition: ${condition}`,

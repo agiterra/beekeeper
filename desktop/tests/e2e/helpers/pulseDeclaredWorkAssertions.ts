@@ -13,7 +13,7 @@ import {
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_METADATA_TAG_VERSION,
   codingSessionMetadataSemanticKey,
   lifecycleReceiptSemanticKey,
@@ -225,7 +225,7 @@ function sessionMetadataEvent(input: {
         ["csm-key", codingSessionMetadataSemanticKey(input.target)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: input.target,
         projectRef: PROJECT_COORDINATE,
         repoRef: null,

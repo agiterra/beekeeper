@@ -470,7 +470,7 @@ test("a burst of live events: one publish per event without frames, one per fram
     "./codingSessionCommand.ts"
   );
   const {
-    BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+    BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
     CODING_SESSION_TRANSCRIPT_TAG_VERSION,
     codingSessionTranscriptSemanticKey,
     TrustedCodingSessionIngressStore,
@@ -518,7 +518,7 @@ test("a burst of live events: one publish per event without frames, one per fram
             ["cst-key", codingSessionTranscriptSemanticKey(target, index + 1)],
           ],
           content: JSON.stringify({
-            schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+            schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
             session: target,
             eventSeq: index + 1,
             timestamp: 1_800_000_010_000 + index,

@@ -129,7 +129,7 @@ export function getLatestLiveSessionId(
 // `features/projects/projectOwnerControl.ts` (`publish_project_owner_
 // announcements`). This comment used to name the ModelPicker, which was
 // deleted in item 92 lane 2; the `switch_model` frames it sent are still
-// defined by the harness (`buzz-acp`) and folded by `lib/liveSwitchOutcome.ts`,
+// defined by the harness (`beekeeper-acp`) and folded by `lib/liveSwitchOutcome.ts`,
 // which currently has no caller.
 const controlResultListeners = new Map<
   string,

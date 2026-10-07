@@ -15,9 +15,9 @@ shared transcript.
 >    One fact, one event, one kind.
 > 2. **`reasoning` items are allowed and on by default.** The donor forbade
 >    them. Here they are a first-class item kind, gated by
->    `BUZZ_CSP_INCLUDE_THOUGHTS` (default on). See below.
+>    `BEEKEEPER_CSP_INCLUDE_THOUGHTS` (default on). See below.
 > 3. **Paragraph-boundary prose flushing is available and off by default.**
->    Gated by `BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` (default off). See below.
+>    Gated by `BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` (default off). See below.
 
 ## Wire contract
 
@@ -80,7 +80,7 @@ missing", "what was the chain of reasoning that produced this feature" — and a
 transcript with the reasoning stripped cannot answer the second question at
 all. Reasoning items are produced from the adapter's `thought` updates, take
 the same redaction, depth, and size bounds as every other item kind, and are
-controlled by `BUZZ_CSP_INCLUDE_THOUGHTS` on the producer (default on). A
+controlled by `BEEKEEPER_CSP_INCLUDE_THOUGHTS` on the producer (default on). A
 deployment that does not want them recorded turns the flag off; nothing
 downstream requires them to be present.
 
@@ -88,7 +88,7 @@ downstream requires them to be present.
 
 By default a turn's agent prose is coalesced into `assistant_text` items that
 flush only when the buffer fills or the prose ends (a tool call, a reasoning
-item, the turn's result). `BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` on the
+item, the turn's result). `BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` on the
 producer (default **off**) additionally flushes agent prose at paragraph
 boundaries, so an answer arrives paragraph by paragraph. It applies to the
 agent's own prose only, never a subagent's. A boundary flushes only when:

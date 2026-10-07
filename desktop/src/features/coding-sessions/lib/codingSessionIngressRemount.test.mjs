@@ -111,7 +111,7 @@ async function buildRelayHistory() {
     "./codingSessionLifecycleCommand.ts"
   );
   const {
-    BUZZ_CODING_SESSION_METADATA_SCHEMA,
+    BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
     CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
     CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
     CODING_SESSION_METADATA_TAG_VERSION,
@@ -171,7 +171,7 @@ async function buildRelayHistory() {
         ["csm-key", codingSessionMetadataSemanticKey(TARGET)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: TARGET,
         projectRef: null,
         repoRef: null,
@@ -338,7 +338,7 @@ test("both ingress subscriptions rebuild when the session view is re-entered", a
     "./codingSessionCommand.ts"
   );
   const {
-    BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+    BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
     CODING_SESSION_TRANSCRIPT_TAG_VERSION,
     codingSessionTranscriptSemanticKey,
   } = await import("./codingSessionTrustedIngress.ts");
@@ -354,7 +354,7 @@ test("both ingress subscriptions rebuild when the session view is re-entered", a
         ["cst-key", codingSessionTranscriptSemanticKey(TARGET, 1)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
         session: TARGET,
         eventSeq: 1,
         timestamp: 1_800_000_010_000,

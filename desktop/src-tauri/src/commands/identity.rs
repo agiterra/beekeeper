@@ -57,7 +57,7 @@ pub fn get_default_relay_url() -> String {
 
 #[tauri::command]
 pub fn auto_connect_default_relay_enabled() -> bool {
-    option_env!("BUZZ_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY").is_some()
+    option_env!("BEEKEEPER_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY").is_some()
 }
 
 #[cfg(test)]
@@ -67,7 +67,7 @@ mod auto_connect_default_relay_tests {
     #[test]
     #[ignore]
     fn compiled_flag_matches_expected() {
-        let expected = std::env::var("BUZZ_TEST_EXPECTED_AUTO_CONNECT_DEFAULT_RELAY")
+        let expected = std::env::var("BEEKEEPER_TEST_EXPECTED_AUTO_CONNECT_DEFAULT_RELAY")
             .expect("compiled-flag test requires an expected value");
         assert_eq!(
             auto_connect_default_relay_enabled(),
@@ -78,10 +78,10 @@ mod auto_connect_default_relay_tests {
 
 #[tauri::command]
 pub fn is_shared_identity() -> bool {
-    std::env::var("BUZZ_SHARE_IDENTITY")
+    std::env::var("BEEKEEPER_SHARE_IDENTITY")
         .map(|v| v == "1")
         .unwrap_or(false)
-        && std::env::var("BUZZ_PRIVATE_KEY")
+        && std::env::var("BEEKEEPER_PRIVATE_KEY")
             .ok()
             .and_then(|k| Keys::parse(k.trim()).ok())
             .is_some()
@@ -530,14 +530,14 @@ pub async fn persist_current_identity(
 /// restart is safe — the sentinel persists and the wipe completes on the next
 /// open.
 ///
-/// Not available in shared-identity mode (`BUZZ_SHARE_IDENTITY=1`): the key
+/// Not available in shared-identity mode (`BEEKEEPER_SHARE_IDENTITY=1`): the key
 /// comes from an env var, not the keychain, so wiping would have no effect and
 /// would be confusing.
 #[tauri::command]
 pub async fn sign_out(app: tauri::AppHandle) -> Result<(), String> {
     if is_shared_identity() {
         return Err(
-            "Sign out isn't available while BUZZ_SHARE_IDENTITY provides your identity. Unset BUZZ_SHARE_IDENTITY and BUZZ_PRIVATE_KEY, then relaunch to sign out."
+            "Sign out isn't available while BEEKEEPER_SHARE_IDENTITY provides your identity. Unset BEEKEEPER_SHARE_IDENTITY and BEEKEEPER_PRIVATE_KEY, then relaunch to sign out."
                 .to_string(),
         );
     }

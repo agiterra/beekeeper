@@ -451,7 +451,7 @@ fn a_command_that_only_mentions_bee_is_not_a_room_download() {
     let commands = [
         "echo bee sessions status --channel c",
         "grep -rn 'bee sessions inbox' docs",
-        "BUZZ_RELAY_URL=http://localhost:3000 bee sessions status --channel c",
+        "BEEKEEPER_RELAY_URL=http://localhost:3000 bee sessions status --channel c",
         "just ci && bee sessions inbox --channel c",
     ];
     let items: Vec<TranscriptRecord> = commands

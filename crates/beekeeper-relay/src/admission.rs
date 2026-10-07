@@ -336,51 +336,51 @@ pub(crate) fn positive_u64_from_env(name: &str, default: u64) -> Result<u64, Con
     }
 }
 
-/// Builds the rate-limit configuration from `BUZZ_RATE_LIMIT_*` and
-/// `BUZZ_MAX_WS_CONNECTIONS_PER_PUBKEY`, falling back to
+/// Builds the rate-limit configuration from `BEEKEEPER_RATE_LIMIT_*` and
+/// `BEEKEEPER_MAX_WS_CONNECTIONS_PER_PUBKEY`, falling back to
 /// [`beekeeper_auth::RateLimitConfig::default`] per field. Lives beside the
 /// budgets it configures; `Config::from_env` calls it.
 pub(crate) fn rate_limit_config_from_env() -> Result<beekeeper_auth::RateLimitConfig, ConfigError> {
     let defaults = beekeeper_auth::RateLimitConfig::default();
     Ok(beekeeper_auth::RateLimitConfig {
         human_messages_per_min: positive_u64_from_env(
-            "BUZZ_RATE_LIMIT_HUMAN_MESSAGES_PER_MIN",
+            "BEEKEEPER_RATE_LIMIT_HUMAN_MESSAGES_PER_MIN",
             defaults.human_messages_per_min,
         )?,
         human_api_calls_per_min: positive_u64_from_env(
-            "BUZZ_RATE_LIMIT_HUMAN_API_CALLS_PER_MIN",
+            "BEEKEEPER_RATE_LIMIT_HUMAN_API_CALLS_PER_MIN",
             defaults.human_api_calls_per_min,
         )?,
         human_ws_events_per_sec: positive_u64_from_env(
-            "BUZZ_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC",
+            "BEEKEEPER_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC",
             defaults.human_ws_events_per_sec,
         )?,
         ws_reads_per_sec: positive_u64_from_env(
-            "BUZZ_RATE_LIMIT_WS_READS_PER_SEC",
+            "BEEKEEPER_RATE_LIMIT_WS_READS_PER_SEC",
             defaults.ws_reads_per_sec,
         )?,
         ws_ephemeral_events_per_sec: positive_u64_from_env(
-            "BUZZ_RATE_LIMIT_WS_EPHEMERAL_PER_SEC",
+            "BEEKEEPER_RATE_LIMIT_WS_EPHEMERAL_PER_SEC",
             defaults.ws_ephemeral_events_per_sec,
         )?,
         max_ws_connections_per_pubkey: positive_u64_from_env(
-            "BUZZ_MAX_WS_CONNECTIONS_PER_PUBKEY",
+            "BEEKEEPER_MAX_WS_CONNECTIONS_PER_PUBKEY",
             defaults.max_ws_connections_per_pubkey,
         )?,
         agent_standard_messages_per_min: positive_u64_from_env(
-            "BUZZ_RATE_LIMIT_AGENT_STANDARD_MESSAGES_PER_MIN",
+            "BEEKEEPER_RATE_LIMIT_AGENT_STANDARD_MESSAGES_PER_MIN",
             defaults.agent_standard_messages_per_min,
         )?,
         agent_standard_api_calls_per_min: positive_u64_from_env(
-            "BUZZ_RATE_LIMIT_AGENT_STANDARD_API_CALLS_PER_MIN",
+            "BEEKEEPER_RATE_LIMIT_AGENT_STANDARD_API_CALLS_PER_MIN",
             defaults.agent_standard_api_calls_per_min,
         )?,
         agent_elevated_messages_per_min: positive_u64_from_env(
-            "BUZZ_RATE_LIMIT_AGENT_ELEVATED_MESSAGES_PER_MIN",
+            "BEEKEEPER_RATE_LIMIT_AGENT_ELEVATED_MESSAGES_PER_MIN",
             defaults.agent_elevated_messages_per_min,
         )?,
         agent_platform_messages_per_min: positive_u64_from_env(
-            "BUZZ_RATE_LIMIT_AGENT_PLATFORM_MESSAGES_PER_MIN",
+            "BEEKEEPER_RATE_LIMIT_AGENT_PLATFORM_MESSAGES_PER_MIN",
             defaults.agent_platform_messages_per_min,
         )?,
     })

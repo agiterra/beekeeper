@@ -1,4 +1,4 @@
-//! Event queue state machine for buzz-acp.
+//! Event queue state machine for beekeeper-acp.
 //!
 //! Manages per-channel event queues with per-channel in-flight tracking.
 //! When the harness is ready to prompt the agent, it flushes the channel with

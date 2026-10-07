@@ -122,7 +122,7 @@ export function createCodingSessionDiscoveryController<Result>({
  * Relay back-pressure: a "come back later", never a permanent failure.
  *
  * The relay closes a REQ with one of three distinct `rate-limited:` reasons
- * (`buzz-relay/src/connection.rs`):
+ * (`beekeeper-relay/src/connection.rs`):
  *
  * - `rate-limited: quota exceeded; retry in Ns` — the per-pubkey WebSocket
  *   admission budget (`human_ws_events_per_sec` × a 5s burst window, so 50

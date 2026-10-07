@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::app_state::AppState;
 
-pub(crate) const ACP_SESSION_POLICY_ENV_VAR: &str = "BUZZ_ACP_SESSION_POLICY";
+pub(crate) const ACP_SESSION_POLICY_ENV_VAR: &str = "BEEKEEPER_ACP_SESSION_POLICY";
 
 /// Desktop experiment state that influences managed-agent lifecycle behavior.
 pub struct ManagedAgentExperimentState {

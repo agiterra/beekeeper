@@ -18,7 +18,7 @@ fn installed_debug_bundle_uses_its_provider_over_both_source_checkouts() {
     let exe = temp
         .path()
         .join("Beekeeper Dev.app/Contents/MacOS/beekeeper-desktop");
-    let name = executable_basename("buzz-session-provider");
+    let name = executable_basename("beekeeper-session-provider");
     let bundled = exe.parent().expect("parent").join(&name);
     executable_file(&bundled);
     for root in [&workspace, &cwd] {
@@ -27,7 +27,12 @@ fn installed_debug_bundle_uses_its_provider_over_both_source_checkouts() {
         }
     }
     assert_eq!(
-        resolve_workspace_command("buzz-session-provider", &workspace, Some(&cwd), Some(&exe)),
+        resolve_workspace_command(
+            "beekeeper-session-provider",
+            &workspace,
+            Some(&cwd),
+            Some(&exe)
+        ),
         Some(bundled)
     );
 }
@@ -41,10 +46,10 @@ fn missing_bundle_sidecar_does_not_select_an_old_workspace_binary() {
     let stale = temp
         .path()
         .join("target/debug")
-        .join(executable_basename("buzz-session-provider"));
+        .join(executable_basename("beekeeper-session-provider"));
     executable_file(&stale);
     assert_eq!(
-        resolve_workspace_command("buzz-session-provider", temp.path(), None, Some(&exe)),
+        resolve_workspace_command("beekeeper-session-provider", temp.path(), None, Some(&exe)),
         None
     );
 }
@@ -52,7 +57,7 @@ fn missing_bundle_sidecar_does_not_select_an_old_workspace_binary() {
 #[test]
 fn unbundled_development_preserves_the_workspace_profile_preference() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let name = executable_basename("buzz-acp");
+    let name = executable_basename("beekeeper-acp");
     let debug = temp.path().join("target/debug").join(&name);
     let release = temp.path().join("target/release").join(&name);
     executable_file(&debug);
@@ -61,7 +66,7 @@ fn unbundled_development_preserves_the_workspace_profile_preference() {
         .path()
         .join("desktop/src-tauri/target/debug/beekeeper-desktop");
     assert_eq!(
-        resolve_workspace_command("buzz-acp", temp.path(), None, Some(&exe)),
+        resolve_workspace_command("beekeeper-acp", temp.path(), None, Some(&exe)),
         Some(if cfg!(debug_assertions) {
             debug
         } else {

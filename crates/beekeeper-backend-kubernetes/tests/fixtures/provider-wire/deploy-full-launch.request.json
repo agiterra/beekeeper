@@ -21,13 +21,13 @@
       },
       "owner_pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "policy_env": {
-        "BUZZ_ACP_AGENTS": "10",
-        "BUZZ_ACP_DISPLAY_NAME": "worker",
-        "BUZZ_ACP_LAZY_POOL": "true",
-        "BUZZ_ACP_MODEL": "gpt-5",
-        "BUZZ_ACP_RELAY_OBSERVER": "true",
-        "BUZZ_ACP_SESSION_POLICY": "channel",
-        "BUZZ_ACP_SESSION_TITLE": "worker",
+        "BEEKEEPER_ACP_AGENTS": "10",
+        "BEEKEEPER_ACP_DISPLAY_NAME": "worker",
+        "BEEKEEPER_ACP_LAZY_POOL": "true",
+        "BEEKEEPER_ACP_MODEL": "gpt-5",
+        "BEEKEEPER_ACP_RELAY_OBSERVER": "true",
+        "BEEKEEPER_ACP_SESSION_POLICY": "channel",
+        "BEEKEEPER_ACP_SESSION_TITLE": "worker",
         "GOOSE_MODE": "auto"
       }
     },

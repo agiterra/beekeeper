@@ -26,7 +26,7 @@ fn only_named_baseline_categories_survive_from_the_host() {
             ("PROJECT_A_ONLY", "canary-a"),
             ("DATABASE_URL", "postgres://a"),
             ("KETTLE_FILE", "/granted/a/data.json"),
-            ("BUZZ_PRIVATE_KEY", "nsec-provider"),
+            ("BEEKEEPER_PRIVATE_KEY", "nsec-provider"),
             ("NOSTR_PRIVATE_KEY", "nsec-provider"),
             ("HTTPS_PROXY", "http://proxy:3128"),
         ]),
@@ -41,7 +41,7 @@ fn only_named_baseline_categories_survive_from_the_host() {
         "PROJECT_A_ONLY",
         "DATABASE_URL",
         "KETTLE_FILE",
-        "BUZZ_PRIVATE_KEY",
+        "BEEKEEPER_PRIVATE_KEY",
         "NOSTR_PRIVATE_KEY",
     ] {
         assert_eq!(env.get(absent), None, "{absent} was inherited");
@@ -98,13 +98,13 @@ fn scope_values_are_protected_and_identity_is_last() {
         ResolvedEnv::baseline(ambient(&[("HOME", "/h")]), ModelAuth::None, &FENCE, &usable);
     assert_eq!(
         env.project(
-            "BUZZ_PRIVATE_KEY",
+            "BEEKEEPER_PRIVATE_KEY",
             "project-said",
             EnvSource::Project,
             &FENCE,
             &usable
         ),
-        Err(EnvRefusal::Fenced("BUZZ_PRIVATE_KEY".into()))
+        Err(EnvRefusal::Fenced("BEEKEEPER_PRIVATE_KEY".into()))
     );
     for owned in [
         "HOME",
@@ -139,8 +139,8 @@ fn scope_values_are_protected_and_identity_is_last() {
         "a scope value never silently replaces a project declaration"
     );
     env.scope("TMPDIR", "/exec/tmp/").expect("scope");
-    env.identity("BUZZ_PRIVATE_KEY", "seat-key", &usable);
-    assert_eq!(env.get("BUZZ_PRIVATE_KEY"), Some("seat-key"));
+    env.identity("BEEKEEPER_PRIVATE_KEY", "seat-key", &usable);
+    assert_eq!(env.get("BEEKEEPER_PRIVATE_KEY"), Some("seat-key"));
     assert_eq!(env.get("TMPDIR"), Some("/exec/tmp/"));
 }
 

@@ -13,7 +13,7 @@
 //! `beekeeper_host_core`:
 //!
 //! - [`beekeeper_host_core::command_paths::resolve_workspace_command`] runs
-//!   first, so an installed bundle prefers the `buzz-session-provider` shipped
+//!   first, so an installed bundle prefers the `beekeeper-session-provider` shipped
 //!   inside it over a stale `target/debug` — the stale-binary hazard that
 //!   function exists for.
 //! - [`beekeeper_host_core::managed_node`] names the app-private npm and

@@ -7,7 +7,7 @@ license.workspace = true
 description = "Kubernetes backend provider for Beekeeper remote agents (docs/remote-agents.md)"
 
 [[bin]]
-name = "buzz-backend-kubernetes"
+name = "beekeeper-backend-kubernetes"
 path = "src/main.rs"
 
 [dependencies]

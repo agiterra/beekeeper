@@ -320,7 +320,7 @@ impl RunCtx<'_> {
         *self.turn_pricing_identity = None;
         *self.turn_total_state = TurnTotalState::Unseen;
         // Per-turn handoff-attempt counter. Scoped here (not persisted in the
-        // session) so `BUZZ_AGENT_MAX_HANDOFFS` bounds compactions per
+        // session) so `BEEKEEPER_AGENT_MAX_HANDOFFS` bounds compactions per
         // `session/prompt` turn rather than per session lifetime. A
         // long-lived session legitimately needs unbounded handoffs across
         // prompts; the cap only exists to stop runaway within a single turn.
@@ -594,7 +594,7 @@ impl RunCtx<'_> {
                 // the loss to the single request in flight.
                 //
                 // Emitting more than one `usage_update` per turn is expected by
-                // the consumer: buzz-acp's UsageTracker advances its committed
+                // the consumer: beekeeper-acp's UsageTracker advances its committed
                 // baseline only when the turn's metric is published, so every
                 // notification within a turn measures from the same frozen
                 // baseline and the last one seen is the turn's true total.

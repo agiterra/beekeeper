@@ -7,7 +7,7 @@ import { invokeTauri } from "@/shared/api/tauri";
  * person's disk; publishing it into a channel would hand every member a
  * durable map of that machine for a value only that machine can use. The
  * desktop keeps them here and materializes the narrower view the provider
- * reads (`BUZZ_CSP_PROJECTS_FILE`) on every mutation.
+ * reads (`BEEKEEPER_CSP_PROJECTS_FILE`) on every mutation.
  *
  * Mirrors the Rust types in
  * `desktop/src-tauri/src/coding_sessions/workdir_store.rs`.

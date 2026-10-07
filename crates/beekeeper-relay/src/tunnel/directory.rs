@@ -684,14 +684,14 @@ mod tests {
     /// so the skip is announced on stderr and — where Redis is supposed to be
     /// present — turned into a failure.
     ///
-    /// Set `BUZZ_TEST_REQUIRE_REDIS=1` anywhere Redis is a declared service
+    /// Set `BEEKEEPER_TEST_REQUIRE_REDIS=1` anywhere Redis is a declared service
     /// (`.woodpecker/gate.yml` does) so a missing or broken service can never
     /// again be read as a green run.
     async fn redis_directory_if_available() -> Option<SessionDirectory> {
         fn unavailable(why: &str) -> Option<SessionDirectory> {
             assert!(
-                !std::env::var("BUZZ_TEST_REQUIRE_REDIS").is_ok_and(|v| v != "0"),
-                "BUZZ_TEST_REQUIRE_REDIS is set but Redis is unusable ({why}); \
+                !std::env::var("BEEKEEPER_TEST_REQUIRE_REDIS").is_ok_and(|v| v != "0"),
+                "BEEKEEPER_TEST_REQUIRE_REDIS is set but Redis is unusable ({why}); \
                  refusing to skip and report a pass"
             );
             eprintln!("SKIP: {} needs Redis ({why})", module_path!());

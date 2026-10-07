@@ -38,7 +38,7 @@ export const CODING_SESSION_TYPED_NAME_WINS =
   "A name someone types always wins, in every mode.";
 
 export const CODING_SESSION_AGENT_MODE_DISCLOSURE =
-  "The agent that runs the first turn titles the session on the computer it runs on, with the same account that already received the message; nothing new leaves this computer. Applies to sessions run by this computer's agent host; a session on another computer follows that computer's setting. A host started with BUZZ_CSP_AUTO_TITLE=off, or a runtime configured with no title model, titles nothing.";
+  "The agent that runs the first turn titles the session on the computer it runs on, with the same account that already received the message; nothing new leaves this computer. Applies to sessions run by this computer's agent host; a session on another computer follows that computer's setting. A host started with BEEKEEPER_CSP_AUTO_TITLE=off, or a runtime configured with no title model, titles nothing.";
 
 export const CODING_SESSION_MY_MODEL_AFTER_START =
   "Your model suggests a name in the Name field while you write; nothing is titled after Start.";

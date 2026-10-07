@@ -26,7 +26,7 @@
 //! # The channel between host and provider
 //!
 //! There is exactly one and it already exists: the file named by
-//! `BUZZ_CSP_PROJECTS_FILE` ([`crate::config::Config::projects_file`]), which
+//! `BEEKEEPER_CSP_PROJECTS_FILE` ([`crate::config::Config::projects_file`]), which
 //! the desktop host rewrites on every mutation of its own working-directory
 //! record (`desktop/src-tauri/src/coding_sessions/workdir_store.rs`,
 //! `save_workdir_store`). No new env var, no new command, no restart: a tree

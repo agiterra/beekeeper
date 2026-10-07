@@ -45,7 +45,7 @@ pub struct HostConfig {
     /// store and the per-identity state directories.
     pub session_provider_base_dir: PathBuf,
 
-    /// Absolute path of `BUZZ_CSP_STATE_DIR` for this identity.
+    /// Absolute path of `BEEKEEPER_CSP_STATE_DIR` for this identity.
     ///
     /// Written out in full rather than derived from the base directory and the
     /// pubkey: if the desktop ever changes that derivation, a host reading an
@@ -53,7 +53,7 @@ pub struct HostConfig {
     /// the outbox, not at a fresh empty one.
     pub provider_state_dir: PathBuf,
 
-    /// The runtime offer, as the desktop resolved it. `BUZZ_CSP_RUNTIMES` is
+    /// The runtime offer, as the desktop resolved it. `BEEKEEPER_CSP_RUNTIMES` is
     /// built from this.
     #[serde(default)]
     pub runtimes: Vec<RuntimeDescriptor>,
@@ -69,7 +69,7 @@ pub struct HostConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_budget: Option<u64>,
 
-    /// The `buzz-session-provider` binary to run, when the host must be told.
+    /// The `beekeeper-session-provider` binary to run, when the host must be told.
     ///
     /// `None` means "resolve it the usual way" — beside the host's own
     /// executable, then the workspace, then `PATH`. Set explicitly by an app

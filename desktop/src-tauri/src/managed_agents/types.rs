@@ -278,12 +278,12 @@ pub struct ManagedAgentRecord {
     /// (`known_acp_runtime`) — and no longer written by updates. Kept for
     /// serde compatibility with existing stores.
     pub mcp_command: String,
-    /// Deprecated: `BUZZ_ACP_TURN_TIMEOUT` is ignored by the harness and the
+    /// Deprecated: `BEEKEEPER_ACP_TURN_TIMEOUT` is ignored by the harness and the
     /// desktop no longer emits or edits it. Kept for serde compatibility with
     /// existing stores; use `idle_timeout_seconds` or
     /// `max_turn_duration_seconds` for turn-length control.
     pub turn_timeout_seconds: u64,
-    /// Idle timeout in seconds (`BUZZ_ACP_IDLE_TIMEOUT`): how long the agent
+    /// Idle timeout in seconds (`BEEKEEPER_ACP_IDLE_TIMEOUT`): how long the agent
     /// may stay silent on its ACP channel mid-turn before the harness times
     /// the turn out.
     #[serde(default)]
@@ -415,7 +415,7 @@ pub struct ManagedAgentRecord {
     pub last_error: Option<String>,
     #[serde(default)]
     pub last_error_code: Option<i64>,
-    /// Inbound author gate mode. Translates to `BUZZ_ACP_RESPOND_TO`.
+    /// Inbound author gate mode. Translates to `BEEKEEPER_ACP_RESPOND_TO`.
     #[serde(default)]
     pub respond_to: RespondTo,
     /// Allowlist used when `respond_to == Allowlist`. Stored normalized
@@ -540,7 +540,7 @@ pub struct ManagedAgentProcess {
     /// adopted via `runtime_pid` have none; their config is unknown.
     pub spawn_config: super::spawn_snapshot::SpawnConfigSnapshot,
     /// Whether this process was spawned in setup-listener mode (i.e.
-    /// `BUZZ_ACP_SETUP_PAYLOAD` was set at launch because the agent was
+    /// `BEEKEEPER_ACP_SETUP_PAYLOAD` was set at launch because the agent was
     /// `NotReady`). Runtime-only — never persisted. Used by
     /// `install_acp_runtime` to target only stuck agents for auto-restart,
     /// excluding healthy in-pool agents.
@@ -704,8 +704,8 @@ pub struct AgentModelInfo {
     pub description: Option<String>,
 }
 
-pub const DEFAULT_ACP_COMMAND: &str = "buzz-acp";
-/// ~5 min (320s) — matches the CLI harness default (BUZZ_ACP_IDLE_TIMEOUT).
+pub const DEFAULT_ACP_COMMAND: &str = "beekeeper-acp";
+/// ~5 min (320s) — matches the CLI harness default (BEEKEEPER_ACP_IDLE_TIMEOUT).
 pub const DEFAULT_AGENT_TURN_TIMEOUT_SECONDS: u64 = 320;
 pub const DEFAULT_AGENT_PARALLELISM: u32 = 10;
 
@@ -727,10 +727,10 @@ fn default_record_active() -> bool {
 
 // ── Inbound author gate ──────────────────────────────────────────────────────
 //
-// Mirrors `buzz-acp`'s `--respond-to` CLI flag and the related
+// Mirrors `beekeeper-acp`'s `--respond-to` CLI flag and the related
 // `--respond-to-allowlist` option. Persisted per agent so the desktop can
-// translate the user's choice into `BUZZ_ACP_RESPOND_TO` /
-// `BUZZ_ACP_RESPOND_TO_ALLOWLIST` env vars at spawn time.
+// translate the user's choice into `BEEKEEPER_ACP_RESPOND_TO` /
+// `BEEKEEPER_ACP_RESPOND_TO_ALLOWLIST` env vars at spawn time.
 //
 // Wire format is kebab-case (`owner-only`, `allowlist`, `anyone`) to match
 // the harness CLI vocabulary and the strings the GUI emits.
@@ -750,7 +750,7 @@ pub enum RespondTo {
 }
 
 impl RespondTo {
-    /// CLI/env wire string (matches `buzz-acp`'s `--respond-to`).
+    /// CLI/env wire string (matches `beekeeper-acp`'s `--respond-to`).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::OwnerOnly => "owner-only",

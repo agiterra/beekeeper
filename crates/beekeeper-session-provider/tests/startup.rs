@@ -11,11 +11,11 @@ fn startup_selects_a_rustls_crypto_provider() {
         .to_bech32()
         .expect("test nsec");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_buzz-session-provider"))
-        .env("BUZZ_PRIVATE_KEY", secret)
-        .env("BUZZ_RELAY_URL", "wss://127.0.0.1:9")
-        .env("BUZZ_CSP_STATE_DIR", temp.path())
-        .env("BUZZ_CSP_DEFAULT_MODEL", "default")
+    let output = Command::new(env!("CARGO_BIN_EXE_beekeeper-session-provider"))
+        .env("BEEKEEPER_PRIVATE_KEY", secret)
+        .env("BEEKEEPER_RELAY_URL", "wss://127.0.0.1:9")
+        .env("BEEKEEPER_CSP_STATE_DIR", temp.path())
+        .env("BEEKEEPER_CSP_DEFAULT_MODEL", "default")
         .output()
         .expect("run provider");
 
@@ -42,11 +42,11 @@ fn a_second_instance_on_the_same_state_dir_fails_fast() {
         .to_bech32()
         .expect("test nsec");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_buzz-session-provider"))
-        .env("BUZZ_PRIVATE_KEY", secret)
-        .env("BUZZ_RELAY_URL", "wss://127.0.0.1:9")
-        .env("BUZZ_CSP_STATE_DIR", temp.path())
-        .env("BUZZ_CSP_DEFAULT_MODEL", "default")
+    let output = Command::new(env!("CARGO_BIN_EXE_beekeeper-session-provider"))
+        .env("BEEKEEPER_PRIVATE_KEY", secret)
+        .env("BEEKEEPER_RELAY_URL", "wss://127.0.0.1:9")
+        .env("BEEKEEPER_CSP_STATE_DIR", temp.path())
+        .env("BEEKEEPER_CSP_DEFAULT_MODEL", "default")
         .output()
         .expect("run provider");
 

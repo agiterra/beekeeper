@@ -1,11 +1,11 @@
 //! Which of the sidecar's own environment variables never reach an adapter.
 //!
-//! The sidecar's environment is its identity. `BUZZ_PRIVATE_KEY` is the raw
+//! The sidecar's environment is its identity. `BEEKEEPER_PRIVATE_KEY` is the raw
 //! nsec the provider signs with, and a consumer *fail-closed trusts* that
 //! pubkey for the four provider-authored kinds — 44222 catalog, 44223
 //! metadata, 44224 receipts, 44225 transcript. Anything holding that key can
 //! mint transcript history the UI renders as genuine provider fact.
-//! `BUZZ_AUTH_TAG` is the NIP-OA owner attestation for the same key, so a
+//! `BEEKEEPER_AUTH_TAG` is the NIP-OA owner attestation for the same key, so a
 //! forgery carrying both also carries the human owner's delegated standing.
 //!
 //! A coding-session execution is explicitly **not** a managed agent: the
@@ -52,7 +52,7 @@ use crate::git_exclude::ExcludeOutcome;
 /// The namespace Beekeeper owns end to end.
 ///
 /// Nothing under it is useful to an ACP adapter: the adapter learns what to run
-/// from argv and the additive per-runtime environment, and the `BUZZ_CSP_*`
+/// from argv and the additive per-runtime environment, and the `BEEKEEPER_CSP_*`
 /// surface configures the sidecar, not its children.
 const PREFIXES: &[&str] = &["BUZZ_"];
 
@@ -181,7 +181,7 @@ macro_rules! fenced_session_briefing_body {
 ///   coding session never takes.
 ///
 /// Consequently this text must never instruct the adapter to run a relay
-/// command, and `buzz-acp`'s base prompt — written for the *unfenced* managed
+/// command, and `beekeeper-acp`'s base prompt — written for the *unfenced* managed
 /// agents, which do inherit the harness's credentials — must keep instructing
 /// exactly that. `the_fenced_briefing_never_tells_a_session_to_write_the_pulse`
 /// pins both halves.
@@ -348,7 +348,7 @@ pub(crate) const CLAUDE_DRIVER: &str = "claude-agent-acp";
 /// forwarded to the SDK's `settings` option (`dist/acp-agent.js:4829`,
 /// `:4839`, `:4871` in 0.70.0) — the flag-settings layer, which the seat cannot
 /// reach at all. That transport is measured working and is the better one, but
-/// `buzz-acp`'s `AcpClient` has no setter for it (only `set_disallowed_tools`),
+/// `beekeeper-acp`'s `AcpClient` has no setter for it (only `set_disallowed_tools`),
 /// and that crate is outside this change. The project-local settings file is
 /// the other way in: the adapter loads `settingSources: ["user", "project",
 /// "local"]` (`dist/acp-agent.js:4868`), the SDK reads `local` as
@@ -424,7 +424,7 @@ const AGENT_NESTS_DIR: &str = "agents/nests";
 const NEST_NAME_LEN: usize = 8;
 
 /// The state directory's parent, as the desktop lays it out:
-/// `<app data dir>/session-provider/<provider pubkey>` is `BUZZ_CSP_STATE_DIR`
+/// `<app data dir>/session-provider/<provider pubkey>` is `BEEKEEPER_CSP_STATE_DIR`
 /// (`desktop/src-tauri/src/session_provider/mod.rs`, "Layout on disk").
 pub(crate) const SESSION_PROVIDER_DIR: &str = "session-provider";
 
@@ -442,7 +442,7 @@ pub(crate) struct WriteFenceLayout {
     pub seat_tree: Option<PathBuf>,
     /// The operator's home.
     pub home: PathBuf,
-    /// `<app data dir>`, when `BUZZ_CSP_STATE_DIR` had the shape the desktop
+    /// `<app data dir>`, when `BEEKEEPER_CSP_STATE_DIR` had the shape the desktop
     /// gives it; `None` when the provider was launched some other way.
     pub app_data_dir: Option<PathBuf>,
     /// The seat's own nest, `<app data dir>/agents/nests/<first 8 hex>`. Never
@@ -451,7 +451,7 @@ pub(crate) struct WriteFenceLayout {
 }
 
 impl WriteFenceLayout {
-    /// The layout for this host: `HOME` and `BUZZ_CSP_STATE_DIR` from the
+    /// The layout for this host: `HOME` and `BEEKEEPER_CSP_STATE_DIR` from the
     /// environment, exactly the way [`crate::session::shared_workdir_roots`]
     /// reads the home.
     ///
@@ -469,7 +469,7 @@ impl WriteFenceLayout {
                     "HOME is not set, so the operator's directories cannot be named",
                 )
             })?;
-        let state_dir = std::env::var_os("BUZZ_CSP_STATE_DIR").map(PathBuf::from);
+        let state_dir = std::env::var_os("BEEKEEPER_CSP_STATE_DIR").map(PathBuf::from);
         Ok(Self::new(cwd, &home, state_dir.as_deref(), actor_pubkey))
     }
 
@@ -522,7 +522,7 @@ fn enclosing_git_tree(cwd: &Path, home: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// `<app data dir>` from `BUZZ_CSP_STATE_DIR`, or `None` when the directory
+/// `<app data dir>` from `BEEKEEPER_CSP_STATE_DIR`, or `None` when the directory
 /// is not shaped `<app data dir>/session-provider/<pubkey>`.
 ///
 /// Shared with [`crate::session::seat_bundle_dir`]: a seat's nest and a seat's
@@ -910,13 +910,13 @@ mod tests {
     #[test]
     fn the_provider_identity_and_infrastructure_secrets_are_fenced() {
         for key in [
-            "BUZZ_PRIVATE_KEY",
-            "BUZZ_ACP_PRIVATE_KEY",
-            "BUZZ_AUTH_TAG",
-            "BUZZ_API_TOKEN",
-            "BUZZ_S3_ACCESS_KEY",
-            "BUZZ_S3_SECRET_KEY",
-            "BUZZ_DEV_KEYRING_SERVICE",
+            "BEEKEEPER_PRIVATE_KEY",
+            "BEEKEEPER_ACP_PRIVATE_KEY",
+            "BEEKEEPER_AUTH_TAG",
+            "BEEKEEPER_API_TOKEN",
+            "BEEKEEPER_S3_ACCESS_KEY",
+            "BEEKEEPER_S3_SECRET_KEY",
+            "BEEKEEPER_DEV_KEYRING_SERVICE",
             "BEEKEEPER_HOST_PRIVATE_KEY",
             "BEEKEEPER_HOST_KEY_FILE",
             "NOSTR_PRIVATE_KEY",
@@ -932,7 +932,7 @@ mod tests {
     /// tomorrow is fenced for where it lives, not because someone listed it.
     #[test]
     fn an_unknown_buzz_variable_is_fenced_on_its_prefix_alone() {
-        assert!(FENCE.covers("BUZZ_SOME_FUTURE_CREDENTIAL"));
+        assert!(FENCE.covers("BEEKEEPER_SOME_FUTURE_CREDENTIAL"));
     }
 
     /// The rule the 2026-08-21 finding cost us: never instruct an agent to do
@@ -948,7 +948,7 @@ mod tests {
             "bee pulse digest",
             "bee pulse list",
             "bee pulse sessions",
-            "BUZZ_PULSE_PROJECT",
+            "BEEKEEPER_PULSE_PROJECT",
         ] {
             assert!(
                 !FENCED_SESSION_BRIEFING.contains(forbidden),
@@ -1260,7 +1260,11 @@ mod tests {
             EXEMPT.is_empty(),
             "an exemption was added instead of a post-fence injection"
         );
-        for key in ["BUZZ_PRIVATE_KEY", "BUZZ_RELAY_URL", "BUZZ_AUTH_TAG"] {
+        for key in [
+            "BEEKEEPER_PRIVATE_KEY",
+            "BEEKEEPER_RELAY_URL",
+            "BEEKEEPER_AUTH_TAG",
+        ] {
             assert!(FENCE.covers(key), "{key} is no longer fenced");
         }
     }
@@ -1813,11 +1817,11 @@ mod tests {
     /// Ignored, so it runs only when asked:
     ///
     /// ```text
-    /// FENCE_DEMO_CWD=/tmp/demo-worktree BUZZ_CSP_STATE_DIR=<app data>/session-provider/<pk> \
+    /// FENCE_DEMO_CWD=/tmp/demo-worktree BEEKEEPER_CSP_STATE_DIR=<app data>/session-provider/<pk> \
     ///   cargo test -p beekeeper-session-provider print_the_write_fence -- --ignored --nocapture
     /// ```
     ///
-    /// Prints the rules for the real `HOME` and `BUZZ_CSP_STATE_DIR`, with a
+    /// Prints the rules for the real `HOME` and `BEEKEEPER_CSP_STATE_DIR`, with a
     /// tempdir as the working directory. With `FENCE_DEMO_CWD` set it also
     /// installs the fence there, which is how the mechanism was proved against
     /// the real `claude` binary. Never writes anywhere else.

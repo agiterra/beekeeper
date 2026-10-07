@@ -10,7 +10,7 @@ import {
 import type { PersonaBehaviorDraft } from "./personaBehaviorDraft";
 import {
   isBeekeeperAgentRuntime,
-  BUZZ_AGENT_THINKING_EFFORT,
+  BEEKEEPER_AGENT_THINKING_EFFORT,
 } from "./beekeeperAgentConfig";
 import {
   AGENT_PARALLELISM_HELP,
@@ -109,7 +109,7 @@ export function PersonaAdvancedFields({
     () => [
       ...hiddenEnvKeys,
       ...(isBeekeeperAgentRuntime(modelTuningRuntimeId)
-        ? [BUZZ_AGENT_THINKING_EFFORT]
+        ? [BEEKEEPER_AGENT_THINKING_EFFORT]
         : []),
       ...structuredEnvKeys(numericDescriptors),
     ],

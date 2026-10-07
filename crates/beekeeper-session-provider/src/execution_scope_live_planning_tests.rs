@@ -133,10 +133,10 @@ async fn a_lead_drafts_commits_and_adopts_its_plan_through_bee_inside_the_bounda
     });
     // The lead's boundary, as production prepares it.
     let identity = vec![
-        ("BUZZ_RELAY_URL".to_owned(), relay.clone()),
-        ("BUZZ_PRIVATE_KEY".to_owned(), key.clone()),
+        ("BEEKEEPER_RELAY_URL".to_owned(), relay.clone()),
+        ("BEEKEEPER_PRIVATE_KEY".to_owned(), key.clone()),
         ("NOSTR_PRIVATE_KEY".to_owned(), key.clone()),
-        ("BUZZ_PULSE_PROJECT".to_owned(), project.clone()),
+        ("BEEKEEPER_PULSE_PROJECT".to_owned(), project.clone()),
     ];
     let mut inputs = ScopeInputs::new(ScopePurpose::Session, &state_dir, "lead", &worktree);
     inputs.project_ref = Some(&project);

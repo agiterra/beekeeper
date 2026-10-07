@@ -26,7 +26,7 @@ function sign(kind, content, tags, secret) {
 
 /**
  * The shared cross-reader vectors — the same file buzz-core, buzz-cli and
- * buzz-session-provider run (`conformance/authority-chain/README.md`).
+ * beekeeper-session-provider run (`conformance/authority-chain/README.md`).
  *
  * A future lane that adds a key to the 44228 content or the 40099 receipt
  * adds a vector here, and this test fails until this decoder has been taught

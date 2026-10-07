@@ -16,13 +16,13 @@ import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/co
 import {
   codingSessionMetadataSemanticKey,
   CODING_SESSION_METADATA_TAG_VERSION,
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   lifecycleReceiptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   codingSessionTranscriptSemanticKey,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -138,7 +138,7 @@ function metadataEvent(
   capabilityOverrides: Record<string, boolean> = {},
 ): RelayEvent {
   const payload = {
-    schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+    schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
     session: TARGET,
     projectRef: null,
     repoRef: null,
@@ -178,7 +178,7 @@ function metadataEvent(
 
 function transcriptEvent(eventSeq: number, item: unknown): RelayEvent {
   const payload = {
-    schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+    schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
     session: TARGET,
     eventSeq,
     timestamp: BASE_TIMESTAMP_MS + eventSeq * 1_000,
@@ -214,7 +214,7 @@ function reviewEvents(): RelayEvent[] {
         ["csm-key", codingSessionMetadataSemanticKey(REVIEW_TARGET)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: REVIEW_TARGET,
         projectRef: null,
         repoRef: null,
@@ -250,7 +250,7 @@ function reviewEvents(): RelayEvent[] {
         ["cst-key", codingSessionTranscriptSemanticKey(REVIEW_TARGET, 1)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
         session: REVIEW_TARGET,
         eventSeq: 1,
         timestamp: BASE_TIMESTAMP_MS + 21_000,
@@ -286,7 +286,7 @@ function resumedGenerationEvents(): RelayEvent[] {
         ["csm-key", codingSessionMetadataSemanticKey(RESUMED_TARGET)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: RESUMED_TARGET,
         projectRef: null,
         repoRef: null,
@@ -322,7 +322,7 @@ function resumedGenerationEvents(): RelayEvent[] {
         ["cst-key", codingSessionTranscriptSemanticKey(RESUMED_TARGET, 1)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
         session: RESUMED_TARGET,
         eventSeq: 1,
         timestamp: BASE_TIMESTAMP_MS + 31_000,

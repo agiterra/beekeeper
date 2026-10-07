@@ -4,7 +4,7 @@
  *
  * A coding-session answer reaches the wire as several immutable kind:44225
  * `assistant_text` items — cut at 24 KiB today, at every tool call, and at
- * paragraph boundaries once `BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` is on. The
+ * paragraph boundaries once `BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` is on. The
  * normative rule is NIP-CST amendment 3, paragraph **Join key**, restated with
  * executable vectors in `conformance/transcript-prose-join/CONTRACT.md`; this
  * module implements it and `transcriptProseJoin.test.mjs` binds every vector.

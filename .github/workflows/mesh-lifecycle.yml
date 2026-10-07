@@ -106,6 +106,6 @@ jobs:
         with:
           name: mesh-lifecycle-logs
           path: |
-            /tmp/buzz-relay.log
+            /tmp/beekeeper-relay.log
             /tmp/mesh-lifecycle-harness.log
           if-no-files-found: ignore

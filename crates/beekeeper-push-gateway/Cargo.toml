@@ -12,7 +12,7 @@ name = "beekeeper_push_gateway"
 path = "src/lib.rs"
 
 [[bin]]
-name = "buzz-push-gateway"
+name = "beekeeper-push-gateway"
 path = "src/main.rs"
 
 [dependencies]

@@ -27,10 +27,10 @@ The bot authenticates with its own key only.
 Use this when the bot should be admitted as its own independent relay identity.
 
 ```bash
-BUZZ_RELAY_URL=ws://localhost:3000 \
-BUZZ_CHANNEL_ID=<channel-uuid> \
-BUZZ_BOT_PRIVATE_KEY=<bot-nsec-or-hex-secret> \
-BUZZ_BOT_AUTH_MODE=standalone \
+BEEKEEPER_RELAY_URL=ws://localhost:3000 \
+BEEKEEPER_CHANNEL_ID=<channel-uuid> \
+BEEKEEPER_BOT_PRIVATE_KEY=<bot-nsec-or-hex-secret> \
+BEEKEEPER_BOT_AUTH_MODE=standalone \
 cargo run --manifest-path examples/countdown-bot/Cargo.toml
 ```
 
@@ -50,27 +50,27 @@ relay member.
 Generate the auth tag on the fly:
 
 ```bash
-BUZZ_RELAY_URL=ws://localhost:3000 \
-BUZZ_CHANNEL_ID=<channel-uuid> \
-BUZZ_BOT_PRIVATE_KEY=<bot-nsec-or-hex-secret> \
-BUZZ_OWNER_PRIVATE_KEY=<owner-or-agent-nsec-or-hex-secret> \
-BUZZ_BOT_AUTH_MODE=owner-attested \
+BEEKEEPER_RELAY_URL=ws://localhost:3000 \
+BEEKEEPER_CHANNEL_ID=<channel-uuid> \
+BEEKEEPER_BOT_PRIVATE_KEY=<bot-nsec-or-hex-secret> \
+BEEKEEPER_OWNER_PRIVATE_KEY=<owner-or-agent-nsec-or-hex-secret> \
+BEEKEEPER_BOT_AUTH_MODE=owner-attested \
 cargo run --manifest-path examples/countdown-bot/Cargo.toml
 ```
 
 Or precompute and pass the tag explicitly:
 
 ```bash
-BUZZ_AUTH_TAG='["auth","<owner-pubkey>","","<sig>"]' \
-BUZZ_BOT_AUTH_MODE=owner-attested \
-# plus BUZZ_RELAY_URL, BUZZ_CHANNEL_ID, BUZZ_BOT_PRIVATE_KEY
+BEEKEEPER_AUTH_TAG='["auth","<owner-pubkey>","","<sig>"]' \
+BEEKEEPER_BOT_AUTH_MODE=owner-attested \
+# plus BEEKEEPER_RELAY_URL, BEEKEEPER_CHANNEL_ID, BEEKEEPER_BOT_PRIVATE_KEY
 cargo run --manifest-path examples/countdown-bot/Cargo.toml
 ```
 
 Relay requirements for this path:
 
-- `BUZZ_REQUIRE_RELAY_MEMBERSHIP=true` on closed relays.
-- `BUZZ_ALLOW_NIP_OA_AUTH=true` so owner-attested non-member bot keys can be
+- `BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP=true` on closed relays.
+- `BEEKEEPER_ALLOW_NIP_OA_AUTH=true` so owner-attested non-member bot keys can be
   admitted.
 - The owner pubkey must be an active relay member.
 

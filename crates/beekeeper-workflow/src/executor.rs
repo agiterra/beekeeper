@@ -1257,8 +1257,8 @@ fn shared_http_client() -> &'static reqwest::Client {
 /// POST `{"emoji": emoji}` to `POST /api/messages/{message_id}/reactions`.
 #[cfg(feature = "reqwest")]
 async fn add_reaction_impl(message_id: &str, emoji: &str) -> Result<JsonValue, WorkflowError> {
-    let base_url =
-        std::env::var("BUZZ_RELAY_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_owned());
+    let base_url = std::env::var("BEEKEEPER_RELAY_BASE_URL")
+        .unwrap_or_else(|_| "http://localhost:3000".to_owned());
 
     let url = format!("{base_url}/api/messages/{message_id}/reactions");
 
@@ -1269,9 +1269,9 @@ async fn add_reaction_impl(message_id: &str, emoji: &str) -> Result<JsonValue, W
         .header("Content-Type", "application/json")
         .json(&serde_json::json!({ "emoji": emoji }));
 
-    if let Ok(token) = std::env::var("BUZZ_API_TOKEN") {
+    if let Ok(token) = std::env::var("BEEKEEPER_API_TOKEN") {
         req = req.header("Authorization", format!("Bearer {token}"));
-    } else if let Ok(pubkey) = std::env::var("BUZZ_RELAY_PUBKEY") {
+    } else if let Ok(pubkey) = std::env::var("BEEKEEPER_RELAY_PUBKEY") {
         req = req.header("X-Pubkey", pubkey);
     }
 

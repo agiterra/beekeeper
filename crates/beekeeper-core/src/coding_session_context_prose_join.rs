@@ -2,7 +2,7 @@
 //!
 //! A streamed answer reaches the wire as several kind-44225 `assistant_text`
 //! pieces (size cuts today, paragraph cuts with
-//! `BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH`). NIP-CST amendment 3, paragraph
+//! `BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH`). NIP-CST amendment 3, paragraph
 //! **Join key**, says every reader puts them back into the one message the
 //! agent wrote; `conformance/transcript-prose-join/CONTRACT.md` is that rule in
 //! executable form. The brief reads it to name a turn's latest own message by

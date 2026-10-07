@@ -11,48 +11,48 @@
 # "identity". The nsec is exported only into the child process environment —
 # never printed, never written to disk. First use may pop a macOS keychain
 # permission dialog: click "Allow".
-# Override points: BUZZ_RELAY_URL, BUZZ_PRIVATE_KEY, BUZZ_BIN.
+# Override points: BEEKEEPER_RELAY_URL, BEEKEEPER_PRIVATE_KEY, BEEKEEPER_BIN.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-export BUZZ_RELAY_URL="${BUZZ_RELAY_URL:-https://hive.agiterra.org}"
-BUZZ_BIN="${BUZZ_BIN:-$ROOT/target/release/bee}"
+export BEEKEEPER_RELAY_URL="${BEEKEEPER_RELAY_URL:-https://hive.agiterra.org}"
+BEEKEEPER_BIN="${BEEKEEPER_BIN:-$ROOT/target/release/bee}"
 
-[ -x "$BUZZ_BIN" ] || {
-  echo "error: bee CLI not found at $BUZZ_BIN — run: cargo build --release -p beekeeper-cli" >&2
+[ -x "$BEEKEEPER_BIN" ] || {
+  echo "error: bee CLI not found at $BEEKEEPER_BIN — run: cargo build --release -p beekeeper-cli" >&2
   exit 1
 }
 
-extract_identity() { # $1 = keychain service; prints nothing, sets BUZZ_PRIVATE_KEY
+extract_identity() { # $1 = keychain service; prints nothing, sets BEEKEEPER_PRIVATE_KEY
   local blob
   blob="$(security find-generic-password -s "$1" -a secrets -w 2>/dev/null)" || return 1
-  BUZZ_PRIVATE_KEY="$(printf '%s' "$blob" | python3 -c 'import json,sys
+  BEEKEEPER_PRIVATE_KEY="$(printf '%s' "$blob" | python3 -c 'import json,sys
 v = json.load(sys.stdin).get("identity", "")
 print(v, end="")' 2>/dev/null)" || return 1
-  [ -n "$BUZZ_PRIVATE_KEY" ]
+  [ -n "$BEEKEEPER_PRIVATE_KEY" ]
 }
 
 load_identity() {
-  if [ -n "${BUZZ_PRIVATE_KEY:-}" ]; then
-    export BUZZ_PRIVATE_KEY
+  if [ -n "${BEEKEEPER_PRIVATE_KEY:-}" ]; then
+    export BEEKEEPER_PRIVATE_KEY
     return 0
   fi
   local svc
   for svc in beekeeper-desktop beekeeper-desktop-dev; do
     if extract_identity "$svc"; then
-      export BUZZ_PRIVATE_KEY
+      export BEEKEEPER_PRIVATE_KEY
       # The relay is the arbiter of which identity is real: wrong key -> no
       # channels/auth failure -> try the next keychain service.
-      if "$BUZZ_BIN" --format compact channels list >/dev/null 2>&1; then
-        echo "p1: using '$svc' keychain identity — authorized on $BUZZ_RELAY_URL" >&2
+      if "$BEEKEEPER_BIN" --format compact channels list >/dev/null 2>&1; then
+        echo "p1: using '$svc' keychain identity — authorized on $BEEKEEPER_RELAY_URL" >&2
         return 0
       fi
-      echo "p1: '$svc' identity not authorized on $BUZZ_RELAY_URL, trying next" >&2
-      unset BUZZ_PRIVATE_KEY
+      echo "p1: '$svc' identity not authorized on $BEEKEEPER_RELAY_URL, trying next" >&2
+      unset BEEKEEPER_PRIVATE_KEY
     fi
   done
   echo "error: no authorized identity found (tried keychain services beekeeper-desktop, beekeeper-desktop-dev)" >&2
-  echo "hint: set BUZZ_PRIVATE_KEY explicitly, or check the desktop app is signed in" >&2
+  echo "hint: set BEEKEEPER_PRIVATE_KEY explicitly, or check the desktop app is signed in" >&2
   exit 3
 }
 
@@ -62,16 +62,16 @@ cmd="${1:-help}"
 case "$cmd" in
   check)
     load_identity
-    echo "relay: $BUZZ_RELAY_URL"
-    "$BUZZ_BIN" --format compact channels list
+    echo "relay: $BEEKEEPER_RELAY_URL"
+    "$BEEKEEPER_BIN" --format compact channels list
     ;;
   export)
     load_identity
-    exec "$BUZZ_BIN" sessions export "$@"
+    exec "$BEEKEEPER_BIN" sessions export "$@"
     ;;
   bee|buzz)
     load_identity
-    exec "$BUZZ_BIN" "$@"
+    exec "$BEEKEEPER_BIN" "$@"
     ;;
   help|*)
     sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'

@@ -8,13 +8,13 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 import { openDashboardTab } from "../helpers/dashboard";
 
 const BAKED_DEFAULTS = [
-  { key: "BUZZ_AGENT_PROVIDER", value: "anthropic", masked: false },
+  { key: "BEEKEEPER_AGENT_PROVIDER", value: "anthropic", masked: false },
   {
-    key: "BUZZ_AGENT_MODEL",
+    key: "BEEKEEPER_AGENT_MODEL",
     value: "claude-opus-4-8",
     masked: false,
   },
-  { key: "BUZZ_AGENT_THINKING_EFFORT", value: "high", masked: false },
+  { key: "BEEKEEPER_AGENT_THINKING_EFFORT", value: "high", masked: false },
   { key: "ANTHROPIC_API_KEY", value: "sk-ant-baked-test", masked: true },
 ];
 
@@ -325,7 +325,7 @@ test.describe("edit agent dialog", () => {
       globalAgentConfig: {
         provider: "anthropic",
         model: "claude-opus-4-5",
-        env_vars: { BUZZ_AGENT_THINKING_EFFORT: "low" },
+        env_vars: { BEEKEEPER_AGENT_THINKING_EFFORT: "low" },
       },
       managedAgents: [
         {

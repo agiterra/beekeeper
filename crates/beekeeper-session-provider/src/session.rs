@@ -211,7 +211,7 @@ pub use beekeeper_core::coding_session_seat_bundle::{SEAT_BUNDLES_DIR, SEAT_BUND
 /// more, so a seat run this way leaves an untracked directory in its worktree
 /// and its gate rows read dirty. That is part of what the comparison measures.
 /// Delete this switch once the comparison is done.
-pub const SEAT_SKILLS_IN_TREE_VAR: &str = "BUZZ_SEAT_SKILLS_IN_TREE";
+pub const SEAT_SKILLS_IN_TREE_VAR: &str = "BEEKEEPER_SEAT_SKILLS_IN_TREE";
 
 /// Where this execution's seat bundle lives.
 ///
@@ -521,7 +521,7 @@ impl TurnFraming {
     /// Render the adapter-facing prompt: a `[Context]` block, a blank line,
     /// then the sender's words verbatim.
     ///
-    /// Mirrors `buzz-acp`'s channel-agent framing
+    /// Mirrors `beekeeper-acp`'s channel-agent framing
     /// (`crates/beekeeper-acp/src/queue.rs` `format_prompt`) so one agent reads one
     /// shape whether it was addressed in a channel or in a coding session. The
     /// signed transcript keeps the unframed text: the frame is addressing
@@ -1635,7 +1635,7 @@ impl SharedWorkdirRoot {
 /// A platform path list (`:`-separated on unix), so a host with several — the
 /// checkout it runs from, a project checkout it manages — hands them all down
 /// without this crate learning the host's own vocabulary.
-pub const SHARED_WORKDIRS_VAR: &str = "BUZZ_CSP_SHARED_WORKDIRS";
+pub const SHARED_WORKDIRS_VAR: &str = "BEEKEEPER_CSP_SHARED_WORKDIRS";
 
 /// The directories on this computer that no single seat owns.
 ///
@@ -2212,7 +2212,7 @@ struct OpenedSession {
 /// The `session/new` system-prompt transport for this open, if the adapter has
 /// one.
 ///
-/// Delegates to the shared capability rules in `buzz-acp` rather than restating
+/// Delegates to the shared capability rules in `beekeeper-acp` rather than restating
 /// them: `None` means this adapter has no supported `session/new` transport (or
 /// is goose, whose own transport is a post-`session/new` request this provider
 /// does not speak), so the first-turn preamble is the only way in.
@@ -2736,11 +2736,11 @@ fn rehydration_mcp_servers(request: &CreateRequest) -> Result<Vec<McpServer>, Ac
         args: Vec::new(),
         env: vec![
             EnvVar {
-                name: "BUZZ_SESSION_CONTEXT_PACKAGE".into(),
+                name: "BEEKEEPER_SESSION_CONTEXT_PACKAGE".into(),
                 value: package_path.to_owned(),
             },
             EnvVar {
-                name: "BUZZ_SESSION_CONTEXT_PACKAGE_DIR".into(),
+                name: "BEEKEEPER_SESSION_CONTEXT_PACKAGE_DIR".into(),
                 value: package_dir.to_owned(),
             },
             // Which execution the sidecar is *serving*, so `session_inbox` can
@@ -2749,7 +2749,7 @@ fn rehydration_mcp_servers(request: &CreateRequest) -> Result<Vec<McpServer>, Ac
             // same `cs-target` key every one of this execution's events
             // already carries.
             EnvVar {
-                name: "BUZZ_SESSION_CONTEXT_SELF_TARGET".into(),
+                name: "BEEKEEPER_SESSION_CONTEXT_SELF_TARGET".into(),
                 value: coding_session_target_key(&request.target),
             },
         ],
@@ -4135,7 +4135,7 @@ fn translate_frame(
 
 /// Scripted stand-in agents, shared by this module's tests and the provider's.
 ///
-/// The technique is buzz-acp's own (`acp.rs` spawns shell scripts that emit
+/// The technique is beekeeper-acp's own (`acp.rs` spawns shell scripts that emit
 /// NDJSON): a real subprocess speaking real JSON-RPC over real pipes, so nothing
 /// about the transport is mocked away — only the model behind it.
 #[cfg(test)]
@@ -4388,7 +4388,7 @@ done
     /// Assert on names through [`dumped_env_names`], never by scanning the
     /// `env` dump's lines: a multi-line value (CI's `CI_COMMIT_MESSAGE` is the
     /// commit message) can put any text at the start of a dump line, and did —
-    /// a commit message line beginning `BUZZ_PUSH_…` read as a leaked variable.
+    /// a commit message line beginning `BEEKEEPER_PUSH_…` read as a leaked variable.
     pub(crate) fn env_dumping_agent(dump_path: &str) -> String {
         format!(
             r#"
@@ -4847,7 +4847,7 @@ mod tests {
     /// system-prompt transport the provider is allowed to use.
     const MCP_RECORDING_AGENT: &str = r#"
 while IFS= read -r line; do
-  if [ -n "${BUZZ_SESSION_CONTEXT_PACKAGE+x}" ]; then
+  if [ -n "${BEEKEEPER_SESSION_CONTEXT_PACKAGE+x}" ]; then
     exit 42
   fi
   printf '%s\n' "$line" >> "$MCP_TEST_LOG"
@@ -4986,15 +4986,15 @@ done
             server["env"],
             serde_json::json!([
                 {
-                    "name": "BUZZ_SESSION_CONTEXT_PACKAGE",
+                    "name": "BEEKEEPER_SESSION_CONTEXT_PACKAGE",
                     "value": package_path.to_string_lossy(),
                 },
                 {
-                    "name": "BUZZ_SESSION_CONTEXT_PACKAGE_DIR",
+                    "name": "BEEKEEPER_SESSION_CONTEXT_PACKAGE_DIR",
                     "value": package_dir.to_string_lossy(),
                 },
                 {
-                    "name": "BUZZ_SESSION_CONTEXT_SELF_TARGET",
+                    "name": "BEEKEEPER_SESSION_CONTEXT_SELF_TARGET",
                     "value": coding_session_target_key(&CodingSessionTarget {
                         driver: "claude-agent-acp".into(),
                         instance_id: "instance-1".into(),
@@ -5042,7 +5042,7 @@ done
     /// prove the property — the fence is applied after all injection and
     /// removes unconditionally, so a key it drops here is a key it drops
     /// whatever the source. That the removal also reaches *inherited* values
-    /// is asserted on the `Command` itself in `buzz-acp`.
+    /// is asserted on the `Command` itself in `beekeeper-acp`.
     #[tokio::test]
     async fn the_adapter_never_receives_the_providers_credentials() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -5057,9 +5057,9 @@ done
 
         let mut create = request(agent, dir.path());
         create.agent_env = vec![
-            ("BUZZ_PRIVATE_KEY".into(), "nsec1canary".into()),
-            ("BUZZ_AUTH_TAG".into(), "[\"canary\"]".into()),
-            ("BUZZ_S3_SECRET_KEY".into(), "canary".into()),
+            ("BEEKEEPER_PRIVATE_KEY".into(), "nsec1canary".into()),
+            ("BEEKEEPER_AUTH_TAG".into(), "[\"canary\"]".into()),
+            ("BEEKEEPER_S3_SECRET_KEY".into(), "canary".into()),
             ("TYPESENSE_API_KEY".into(), "canary".into()),
             ("CLAUDE_CODE_EXECUTABLE".into(), "/opt/claude".into()),
         ];
@@ -5068,9 +5068,9 @@ done
         let dumped = std::fs::read_to_string(&dump).expect("the agent dumped its environment");
         let names = dumped_env_names(&dump);
         for key in [
-            "BUZZ_PRIVATE_KEY",
-            "BUZZ_AUTH_TAG",
-            "BUZZ_S3_SECRET_KEY",
+            "BEEKEEPER_PRIVATE_KEY",
+            "BEEKEEPER_AUTH_TAG",
+            "BEEKEEPER_S3_SECRET_KEY",
             "TYPESENSE_API_KEY",
         ] {
             assert!(
@@ -5833,10 +5833,13 @@ done
 
         let mut create = request(agent, dir.path());
         create.agent_env = vec![
-            ("BUZZ_PRIVATE_KEY".into(), "nsec1provider".into()),
-            ("BUZZ_AUTH_TAG".into(), "[\"provider\"]".into()),
-            ("BUZZ_RELAY_URL".into(), "wss://provider.example".into()),
-            ("BUZZ_CSP_STATE_DIR".into(), "/provider/state".into()),
+            ("BEEKEEPER_PRIVATE_KEY".into(), "nsec1provider".into()),
+            ("BEEKEEPER_AUTH_TAG".into(), "[\"provider\"]".into()),
+            (
+                "BEEKEEPER_RELAY_URL".into(),
+                "wss://provider.example".into(),
+            ),
+            ("BEEKEEPER_CSP_STATE_DIR".into(), "/provider/state".into()),
             ("NOSTR_PRIVATE_KEY".into(), "nsec1provider".into()),
             ("CLAUDE_CODE_EXECUTABLE".into(), "/opt/claude".into()),
         ];
@@ -5865,10 +5868,10 @@ done
 
         // The seat's own identity arrived, past the fence.
         for expected in [
-            "BUZZ_PRIVATE_KEY=nsec1seat",
+            "BEEKEEPER_PRIVATE_KEY=nsec1seat",
             "NOSTR_PRIVATE_KEY=nsec1seat",
-            "BUZZ_RELAY_URL=wss://seat.example",
-            "BUZZ_AUTH_TAG=[\"seat\"]",
+            "BEEKEEPER_RELAY_URL=wss://seat.example",
+            "BEEKEEPER_AUTH_TAG=[\"seat\"]",
         ] {
             assert!(
                 dumped.contains(expected),
@@ -5894,7 +5897,11 @@ done
         sorted.sort_unstable();
         assert_eq!(
             sorted,
-            vec!["BUZZ_AUTH_TAG", "BUZZ_PRIVATE_KEY", "BUZZ_RELAY_URL"],
+            vec![
+                "BEEKEEPER_AUTH_TAG",
+                "BEEKEEPER_PRIVATE_KEY",
+                "BEEKEEPER_RELAY_URL"
+            ],
             "a seat received more than its own identity: {buzz_keys:?}"
         );
 
@@ -5937,8 +5944,11 @@ done
 
         let mut create = request(agent, dir.path());
         create.agent_env = vec![
-            ("BUZZ_PRIVATE_KEY".into(), "nsec1provider".into()),
-            ("BUZZ_RELAY_URL".into(), "wss://provider.example".into()),
+            ("BEEKEEPER_PRIVATE_KEY".into(), "nsec1provider".into()),
+            (
+                "BEEKEEPER_RELAY_URL".into(),
+                "wss://provider.example".into(),
+            ),
             ("NOSTR_PRIVATE_KEY".into(), "nsec1provider".into()),
             ("CLAUDE_CODE_EXECUTABLE".into(), "/opt/claude".into()),
         ];
@@ -5999,7 +6009,7 @@ done
             role: "lead".into(),
             relay_url: "wss://seat.example".into(),
         });
-        request.post_fence_env = vec![("BUZZ_PRIVATE_KEY".into(), "nsec1secret".into())];
+        request.post_fence_env = vec![("BEEKEEPER_PRIVATE_KEY".into(), "nsec1secret".into())];
 
         let rendered = format!("{request:?}");
         assert!(!rendered.contains("nsec1secret"), "{rendered}");
@@ -7157,18 +7167,18 @@ done
         assert_eq!(
             names,
             vec![
-                "BUZZ_SESSION_CONTEXT_PACKAGE",
-                "BUZZ_SESSION_CONTEXT_PACKAGE_DIR",
-                "BUZZ_SESSION_CONTEXT_SELF_TARGET"
+                "BEEKEEPER_SESSION_CONTEXT_PACKAGE",
+                "BEEKEEPER_SESSION_CONTEXT_PACKAGE_DIR",
+                "BEEKEEPER_SESSION_CONTEXT_SELF_TARGET"
             ]
         );
         assert_eq!(servers[0].env[1].value, "/private/packages/pkg");
         let rendered = serde_json::to_string(&servers).expect("encode mcp servers");
         for absent in [
             package_id.as_str(),
-            "BUZZ_PRIVATE_KEY",
-            "BUZZ_RELAY_URL",
-            "BUZZ_AUTH_TAG",
+            "BEEKEEPER_PRIVATE_KEY",
+            "BEEKEEPER_RELAY_URL",
+            "BEEKEEPER_AUTH_TAG",
         ] {
             assert!(
                 !rendered.contains(absent),

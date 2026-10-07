@@ -5,7 +5,7 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 import { openInboxTab } from "../helpers/dashboard";
 
 const DEFAULT_MOCK_PUBKEY = "deadbeef".repeat(8);
-const BUZZ_REPO_ADDRESS = `30617:${DEFAULT_MOCK_PUBKEY}:buzz`;
+const BEEKEEPER_REPO_ADDRESS = `30617:${DEFAULT_MOCK_PUBKEY}:buzz`;
 
 test("Buzz Git pull request renders and stays actionable in Inbox", async ({
   page,
@@ -63,7 +63,7 @@ test("Buzz Git pull request renders and stays actionable in Inbox", async ({
     {
       author: TEST_IDENTITIES.alice.pubkey,
       id: pullRequestId as string,
-      repoAddress: BUZZ_REPO_ADDRESS,
+      repoAddress: BEEKEEPER_REPO_ADDRESS,
       viewer: DEFAULT_MOCK_PUBKEY,
     },
   );

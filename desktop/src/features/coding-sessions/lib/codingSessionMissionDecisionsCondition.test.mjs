@@ -21,7 +21,8 @@ const LEAD = "e".repeat(64);
 const FOUNDER = "3".repeat(64);
 const ASKED_AT = 1_788_359_882;
 
-const CONDITION = "any SHA whose buzz-acp diff against origin/main is empty";
+const CONDITION =
+  "any SHA whose beekeeper-acp diff against origin/main is empty";
 
 function input({ condition, answered = true }) {
   return {

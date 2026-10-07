@@ -462,7 +462,10 @@ fn run_prune_with_bee(layout: &Layout, args: &[&str], bee: Option<&Path>) -> (bo
         .args(args)
         // Never the ambient PATH: see `stub_bee`.
         .env("PATH", "/usr/bin:/bin")
-        .env("BUZZ_BEE", bee.map(Path::as_os_str).unwrap_or_default())
+        .env(
+            "BEEKEEPER_BEE",
+            bee.map(Path::as_os_str).unwrap_or_default(),
+        )
         // The script measures "merged" against a real trunk, and the tests
         // build a repository with no remote, so a local `main` is the trunk.
         .env("GIT_CONFIG_GLOBAL", "/dev/null")

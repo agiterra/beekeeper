@@ -494,7 +494,7 @@ identity is settled by the event signature, never by a claimed field, so a
 different signer naming your entry in `supersedes` never revises it — it is
 recorded but not honored. The reference implementation of this fold is pinned
 by `conformance/project-pulse-fold/` — three implementations across two
-languages (Rust in `beekeeper-cli`, TypeScript in Desktop, Rust in `buzz-relay` for
+languages (Rust in `beekeeper-cli`, TypeScript in Desktop, Rust in `beekeeper-relay` for
 Slice 2; `conformance/project-pulse-fold/CONTRACT.md:8-10`);
 prefer it (or, once shipped, `bee pulse digest`) over reimplementing the fold
 in SQL:

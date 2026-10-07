@@ -800,7 +800,7 @@ pub fn decide_lifecycle(
             command_id: payload.command_id.clone(),
             code: SESSION_LIMIT,
             message: format!(
-                "this provider already holds its maximum of {} running agent process(es); stop an execution you are finished with to free a slot, or set BUZZ_CSP_MAX_SESSIONS to raise the cap",
+                "this provider already holds its maximum of {} running agent process(es); stop an execution you are finished with to free a slot, or set BEEKEEPER_CSP_MAX_SESSIONS to raise the cap",
                 context.max_sessions
             ),
         };
@@ -1662,7 +1662,7 @@ fn reserved_ci_turns(context: &CommandContext<'_>, record: &crate::state::Sessio
 /// neither sent every reader to the wrong knob.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnBudgetSource {
-    /// `BUZZ_CSP_TURN_BUDGET` on the host running this provider.
+    /// `BEEKEEPER_CSP_TURN_BUDGET` on the host running this provider.
     Environment,
     /// `budget.turns` in the umbrella's newest accepted kind-44245 policy.
     Policy,

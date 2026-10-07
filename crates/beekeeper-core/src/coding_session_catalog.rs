@@ -6,7 +6,7 @@
 //! something nobody is serving; the honest answer is to say so and refuse,
 //! never to translate the id onto a neighbouring one. That rule is why the
 //! schema lives here rather than inside the publisher: the provider
-//! (`buzz-session-provider`) writes these bytes, and `bee sessions catalog`,
+//! (`beekeeper-session-provider`) writes these bytes, and `bee sessions catalog`,
 //! `bee sessions registry check` and `bee sessions route` read them, and none
 //! of them may hold its own idea of what is on offer. The router in
 //! [`crate::coding_session_routing`] intersects the model registry with this

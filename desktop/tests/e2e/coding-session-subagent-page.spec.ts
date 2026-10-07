@@ -9,12 +9,12 @@ import {
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   codingSessionMetadataSemanticKey,
   CODING_SESSION_METADATA_TAG_VERSION,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   codingSessionTranscriptSemanticKey,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -73,7 +73,7 @@ function metadata(status: string, seq: number): RelayEvent {
     KIND_CODING_SESSION_METADATA,
     seq,
     {
-      schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
       session,
       projectRef: null,
       repoRef: null,
@@ -107,7 +107,7 @@ function transcript(seq: number, turnId: string, item: unknown): RelayEvent {
     KIND_CODING_SESSION_TRANSCRIPT,
     seq,
     {
-      schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
       session,
       eventSeq: seq,
       timestamp: 1_800_500_000_000 + seq * 1_000,

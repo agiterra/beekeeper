@@ -12,7 +12,7 @@ name = "beekeeper_acp"
 path = "src/lib.rs"
 
 [[bin]]
-name = "buzz-acp"
+name = "beekeeper-acp"
 path = "src/main.rs"
 
 [dependencies]
@@ -81,5 +81,5 @@ tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"
 httparse = "1"
 # The base prompt's `bee` command table is checked against the CLI's clap tree
-# (tests/base_prompt_command_table.rs). Test-only: buzz-acp never calls bee.
+# (tests/base_prompt_command_table.rs). Test-only: beekeeper-acp never calls bee.
 beekeeper-cli = { path = "../beekeeper-cli" }

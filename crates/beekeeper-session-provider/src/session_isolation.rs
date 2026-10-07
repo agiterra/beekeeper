@@ -5,14 +5,14 @@
 //! boundary every session already gets. Both are absent by default, and
 //! absent means today's behaviour exactly.
 //!
-//! * `BUZZ_CSP_SESSION_OPERATOR_GIT=withhold` — no session receives the
+//! * `BEEKEEPER_CSP_SESSION_OPERATOR_GIT=withhold` — no session receives the
 //!   operator's Git credentials: no `credential.*` helper is staged or
 //!   granted, the operator's `nostr.keyfile` is neither staged nor granted,
 //!   no keychain grant is made for a helper, and the ssh agent socket is
 //!   neither granted nor exported. `user.name`/`user.email` and filter
 //!   drivers (Git LFS) are still staged. `grant` (or unset) keeps the
 //!   default.
-//! * `BUZZ_CSP_SESSION_EGRESS_PROXY=<loopback ip>:<port>` — the session's
+//! * `BEEKEEPER_CSP_SESSION_EGRESS_PROXY=<loopback ip>:<port>` — the session's
 //!   boundary denies every outbound network operation (TCP, UDP and DNS,
 //!   Unix-domain connects) except TCP to that loopback port, and the session
 //!   environment points every proxy variable at it with `NO_PROXY` emptied.
@@ -33,10 +33,10 @@ use crate::config::ConfigError;
 
 /// Environment variable: `withhold` keeps the operator's Git credentials
 /// out of every coding session.
-pub const OPERATOR_GIT_ENV: &str = "BUZZ_CSP_SESSION_OPERATOR_GIT";
+pub const OPERATOR_GIT_ENV: &str = "BEEKEEPER_CSP_SESSION_OPERATOR_GIT";
 /// Environment variable: the loopback `ip:port` every coding session's
 /// outbound network is confined to.
-pub const EGRESS_PROXY_ENV: &str = "BUZZ_CSP_SESSION_EGRESS_PROXY";
+pub const EGRESS_PROXY_ENV: &str = "BEEKEEPER_CSP_SESSION_EGRESS_PROXY";
 
 /// Transcript status slug: this session holds none of the operator's Git
 /// credentials.

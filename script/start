@@ -17,10 +17,10 @@ rm -f "${LOCAL_SOCKET}"
 # Only start if SIDECAR_LISTENER_BIND is set (i.e., running in CAKE).
 if [ -n "${SIDECAR_LISTENER_BIND:-}" ]; then
     socat "ABSTRACT-LISTEN:${SIDECAR_SOCKET#@},fork" "UNIX-CONNECT:${LOCAL_SOCKET}" &
-    export BUZZ_UDS_PATH="${LOCAL_SOCKET}"
+    export BEEKEEPER_UDS_PATH="${LOCAL_SOCKET}"
 fi
 
-export BUZZ_HEALTH_PORT="${BUZZ_HEALTH_PORT:-8080}"
-export BUZZ_METRICS_PORT="${BUZZ_METRICS_PORT:-9102}"
+export BEEKEEPER_HEALTH_PORT="${BEEKEEPER_HEALTH_PORT:-8080}"
+export BEEKEEPER_METRICS_PORT="${BEEKEEPER_METRICS_PORT:-9102}"
 
-exec /code/buzz-relay
+exec /code/beekeeper-relay

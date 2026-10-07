@@ -602,7 +602,7 @@ export function useWelcomeKickoff(
         }
         const openerAlreadySent = await markerExists(channelId, openerMarker);
 
-        // Start before publishing the mention. buzz-acp replays events from its
+        // Start before publishing the mention. beekeeper-acp replays events from its
         // startup watermark, so no separate subscription-ready wait is needed.
         // On resume, restart unresolved teammates but never replay the opener.
         const agentsToStart = openerAlreadySent

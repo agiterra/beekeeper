@@ -58,11 +58,11 @@ pub(super) fn buffer_contains_identifier(buf: &[u8], id: &[u8]) -> bool {
     })
 }
 
-/// Extract the `BUZZ_MANAGED_AGENT` value from a process's environment.
+/// Extract the `BEEKEEPER_MANAGED_AGENT` value from a process's environment.
 /// Returns `None` if the process doesn't have the marker or can't be read.
 #[cfg(target_os = "macos")]
 fn extract_buzz_marker_value(pid: u32) -> Option<String> {
-    let prefix = b"BUZZ_MANAGED_AGENT=";
+    let prefix = b"BEEKEEPER_MANAGED_AGENT=";
     let buf = sweep::procargs2_buffer(pid)?;
 
     if buf.len() < std::mem::size_of::<libc::c_int>() {
@@ -107,7 +107,7 @@ fn extract_buzz_marker_value(pid: u32) -> Option<String> {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn extract_buzz_marker_value(pid: u32) -> Option<String> {
-    let prefix = b"BUZZ_MANAGED_AGENT=";
+    let prefix = b"BEEKEEPER_MANAGED_AGENT=";
     let data = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
     for entry in data.split(|&b| b == 0) {
         if entry.starts_with(prefix) {
@@ -241,7 +241,7 @@ fn desktop_is_alive_for_instance(_instance_id: &str) -> bool {
 
 /// Reap agent processes belonging to dead Beekeeper desktop instances.
 ///
-/// Scans all user processes for `BUZZ_MANAGED_AGENT=*`, groups them by
+/// Scans all user processes for `BEEKEEPER_MANAGED_AGENT=*`, groups them by
 /// instance ID, and for each foreign instance (≠ `our_instance_id`) checks
 /// whether a Beekeeper desktop binary is still alive for that instance. If not,
 /// all agents from that dead instance are reaped.
@@ -286,7 +286,7 @@ pub(crate) fn reap_dead_instance_agents(our_instance_id: &str, skip_pids: &[u32]
         }
         // Extract the instance ID from this agent's env.
         // Do NOT name-gate via process_belongs_to_us — custom harnesses use
-        // arbitrary binary names and BUZZ_MANAGED_AGENT is the authoritative
+        // arbitrary binary names and BEEKEEPER_MANAGED_AGENT is the authoritative
         // ownership proof.
         let Some(agent_instance_id) = extract_buzz_marker_value(upid) else {
             continue;
@@ -346,7 +346,7 @@ pub(crate) fn reap_dead_instance_agents(our_instance_id: &str, skip_pids: &[u32]
             continue;
         }
         // Do NOT name-gate via process_belongs_to_us — custom harnesses use
-        // arbitrary binary names and BUZZ_MANAGED_AGENT is the authoritative
+        // arbitrary binary names and BEEKEEPER_MANAGED_AGENT is the authoritative
         // ownership proof.
         let Some(agent_instance_id) = extract_buzz_marker_value(upid) else {
             continue;

@@ -7,7 +7,7 @@ import type { ChannelType } from "@/shared/api/types";
  * purpose: adding a member to the `ChannelType` union breaks this build until
  * someone classifies it, so a new channel type can never inherit moderation by
  * default. The relay enforces the same carve-out at the authorization seam
- * (`decide_authority` in `buzz-relay/src/handlers/moderation_authz.rs`) — this
+ * (`decide_authority` in `beekeeper-relay/src/handlers/moderation_authz.rs`) — this
  * table only decides whether the affordance is offered.
  */
 const MODERATABLE_CHANNEL_TYPE: Record<ChannelType, boolean> = {

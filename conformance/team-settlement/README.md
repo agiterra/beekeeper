@@ -56,7 +56,7 @@ resolves the symbols.
 | --- | --- |
 | `records[].type` | `assignment`, `report`, `disposition`, `acknowledgement`, `completion` |
 | `records[].supersedes` | the symbolic id this record corrects |
-| `records[].settlementFact` | what `buzz-session-provider`'s `settlement_fact` must answer for this record, or `null` |
+| `records[].settlementFact` | what `beekeeper-session-provider`'s `settlement_fact` must answer for this record, or `null` |
 | `expected.assignments[]` | `settled`, `settledBy`, `governedReport`, `disposition`, `acknowledgement`, `awaiting` |
 | `expected.terminal` | the symbolic id of the canonical terminal, or `null` |
 | `expected.pendingCompletion` | a held completion, its wire `code` and the assignments it names that are unsettled |
@@ -68,7 +68,7 @@ resolves the symbols.
 | --- | --- |
 | `beekeeper-core`'s fold — the rule itself | `crates/beekeeper-core/src/coding_session_team_transaction_fold_settlement_conformance_tests.rs` |
 | `beekeeper-cli`'s `fold` object (`bee sessions operation list\|get`, `sessions complete`) | `crates/beekeeper-cli/src/commands/sessions/operations_completion_tests.rs` |
-| `buzz-session-provider`'s settlement-fact classifier | `crates/beekeeper-session-provider/src/pending_completion_tests.rs` |
+| `beekeeper-session-provider`'s settlement-fact classifier | `crates/beekeeper-session-provider/src/pending_completion_tests.rs` |
 | The desktop's strict native-fold decoder and the Mission panel's Settlement section | `desktop/src/features/coding-sessions/lib/codingSessionTeamSettlementConformance.test.mjs` |
 
 The desktop reader also asserts the two failures ledger 204 is about: an

@@ -180,10 +180,10 @@ pub async fn restore_managed_agents_on_launch(
         // whose desktop process is no longer running and reap them.
         super::reap_dead_instance_agents(&super::current_instance_id(app), &tracked_pids);
 
-        // Exact-path sweep: kill any buzz-acp process whose executable path
+        // Exact-path sweep: kill any beekeeper-acp process whose executable path
         // matches this bundle's harness binary but is not in the tracked set.
         // Complements the env-var sweep above — catches orphans that predate
-        // BUZZ_MANAGED_AGENT injection or lost their PID-file receipt.
+        // BEEKEEPER_MANAGED_AGENT injection or lost their PID-file receipt.
         //
         // TODO: the three sweeps above each walk the PID table independently.
         // A future consolidation should collect a single shared process snapshot

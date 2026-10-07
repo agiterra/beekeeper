@@ -48,9 +48,9 @@ const FLAGS_DEFINED_BUT_NOT_FOR_THIS_VERB: [&str; 1] = ["--verifies"];
 
 fn bee(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_bee"))
-        .env_remove("BUZZ_PRIVATE_KEY")
-        .env_remove("BUZZ_AUTH_TAG")
-        .env("BUZZ_RELAY_URL", "http://127.0.0.1:1/")
+        .env_remove("BEEKEEPER_PRIVATE_KEY")
+        .env_remove("BEEKEEPER_AUTH_TAG")
+        .env("BEEKEEPER_RELAY_URL", "http://127.0.0.1:1/")
         .args(args)
         .output()
         .expect("bee runs")

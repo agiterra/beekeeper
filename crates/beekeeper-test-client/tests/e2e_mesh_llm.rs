@@ -1,6 +1,6 @@
 //! End-to-end acceptance tests for Beekeeper shared compute.
 //!
-//! These tests require a membership-gated buzz-relay and a mesh-enabled desktop
+//! These tests require a membership-gated beekeeper-relay and a mesh-enabled desktop
 //! publishing its client-signed discovery note. Live-inference rows additionally
 //! require two desktop mesh nodes (serve + client).
 //! All tests are `#[ignore]` by default — they need infra CI does not host
@@ -175,7 +175,7 @@ async fn trust_member_reads_mesh_status() {
 /// Assertion 2: a valid Nostr identity that is NOT a relay member gets nothing
 /// back for a kind:30003 mesh-status REQ — membership gates the read.
 ///
-/// Requires a relay with `BUZZ_REQUIRE_RELAY_MEMBERSHIP=true` and a published
+/// Requires a relay with `BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP=true` and a published
 /// status event that members can see (paired with assertion 1).
 #[tokio::test]
 #[ignore]

@@ -1,7 +1,7 @@
 [package]
 name = "beekeeper-relay"
-default-run = "buzz-relay"
-# Independent version: buzz-relay is versioned on its own cadence via
+default-run = "beekeeper-relay"
+# Independent version: beekeeper-relay is versioned on its own cadence via
 # `just release-relay`. It does NOT inherit the workspace version.
 version = "0.2.1"
 edition.workspace = true
@@ -11,7 +11,7 @@ repository.workspace = true
 description = "WebSocket relay server for the Beekeeper communications platform"
 
 [[bin]]
-name = "buzz-relay"
+name = "beekeeper-relay"
 path = "src/main.rs"
 
 [dependencies]
@@ -55,7 +55,7 @@ redis = { workspace = true }
 # Redis TLS (rediss://, e.g. ElastiCache) uses rustls, which needs a process
 # CryptoProvider installed at startup. Both aws-lc-rs and ring are compiled in
 # transitively, so rustls can't auto-select one — we install ring explicitly in
-# main(). Mirrors buzz-acp's rustls setup for wss://.
+# main(). Mirrors beekeeper-acp's rustls setup for wss://.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 sqlx = { workspace = true }
 reqwest = { workspace = true }

@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 /// Default capacity of the event channel from background task to harness.
-/// Override with `BUZZ_ACP_EVENT_BUFFER` env var at startup.
+/// Override with `BEEKEEPER_ACP_EVENT_BUFFER` env var at startup.
 const EVENT_CHANNEL_CAPACITY_DEFAULT: usize = 256;
 /// Capacity of the command channel from harness to background task.
 const CMD_CHANNEL_CAPACITY: usize = 64;
@@ -33,7 +33,7 @@ const CMD_CHANNEL_CAPACITY: usize = 64;
 /// Read the event channel capacity from the environment, falling back to the
 /// compiled-in default. Parsed once at call-site (connect time).
 fn event_channel_capacity() -> usize {
-    std::env::var("BUZZ_ACP_EVENT_BUFFER")
+    std::env::var("BEEKEEPER_ACP_EVENT_BUFFER")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .map(|v| v.max(1)) // mpsc::channel panics on capacity 0
@@ -674,7 +674,7 @@ impl RestClient {
     /// malformed `repo_ref`/`oid`, a network or auth failure, a non-success
     /// status, a response too large or malformed to parse — is `Err`, and
     /// callers must treat `Err` as "not checked," never as "confirmed not
-    /// reachable" — see the caller in `buzz-session-provider`'s
+    /// reachable" — see the caller in `beekeeper-session-provider`'s
     /// `reachability` module, which applies exactly that mapping.
     pub async fn git_object_reachable(
         &self,
@@ -733,7 +733,7 @@ fn is_git_oid(value: &str) -> bool {
 }
 
 /// Split a NIP-MP repository coordinate (`30617:<owner-hex>:<repo-d>`) into
-/// the `(owner, repo)` path segments `buzz-relay`'s git routes expect.
+/// the `(owner, repo)` path segments `beekeeper-relay`'s git routes expect.
 ///
 /// Mirrors the grammar `validate_repo_id` enforces server-side
 /// (`crates/beekeeper-relay/src/api/git/transport.rs`): a 64-lowercase-hex owner
@@ -7554,7 +7554,7 @@ mod tests {
     /// A rate-limited `OK(id, false, …)` must arm the backoff gate and re-park
     /// the refused frame, driven through the real frame dispatcher.
     ///
-    /// This is the buzz-acp side of the relay's rejection-correlation change:
+    /// This is the beekeeper-acp side of the relay's rejection-correlation change:
     /// a refused EVENT is now acknowledged on its own channel instead of via
     /// NOTICE. Reverting either the gate arming or the requeue in the `Ok` arm
     /// must fail this test.

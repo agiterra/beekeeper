@@ -7,7 +7,7 @@ license.workspace = true
 description = "Runs a mirror sync command whenever the relay publishes a kind:30618 git ref-state event"
 
 [[bin]]
-name = "buzz-mirror-bridge"
+name = "beekeeper-mirror-bridge"
 path = "src/main.rs"
 
 [dependencies]

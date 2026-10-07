@@ -36,7 +36,7 @@ docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -d postgres \
   -c "DROP DATABASE IF EXISTS buzz_scratch; CREATE DATABASE buzz_scratch;"
 scratch="postgres://buzz:buzz_dev@localhost:5432/buzz_scratch"
 DATABASE_URL="$scratch" cargo run -q -p beekeeper-admin -- migrate
-DATABASE_URL="$scratch" BUZZ_TEST_DATABASE_URL="$scratch" \
+DATABASE_URL="$scratch" BEEKEEPER_TEST_DATABASE_URL="$scratch" \
   cargo test -p beekeeper-db --lib <filter> -- --ignored --test-threads=1
 ```
 
@@ -76,7 +76,7 @@ it a targeted gate against an isolated database — see `just test-genesis`.
 
 ## 4. `just test` cannot run from a feature worktree against a newer database
 
-`_ensure-migrations` runs `buzz-admin migrate`, which **fails closed** when the
+`_ensure-migrations` runs `beekeeper-admin migrate`, which **fails closed** when the
 database holds a migration the branch does not resolve:
 
 ```

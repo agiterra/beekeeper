@@ -17,7 +17,7 @@ import {
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/codingSessionGenesis";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
@@ -27,7 +27,7 @@ import {
 import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import { buildCodingSessionNameEvent } from "@/features/coding-sessions/lib/codingSessionName";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
   codingSessionTranscriptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -134,7 +134,7 @@ function sessionEvents(genesis: RelayEvent): RelayEvent[] {
         ["cst-key", codingSessionTranscriptSemanticKey(TARGET, seq)],
       ],
       JSON.stringify({
-        schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
         session: TARGET,
         eventSeq: seq,
         timestamp: (BASE + 10 + seq) * 1_000,
@@ -174,7 +174,7 @@ function sessionEvents(genesis: RelayEvent): RelayEvent[] {
         ["csm-key", codingSessionMetadataSemanticKey(TARGET)],
       ],
       JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: TARGET,
         projectRef: PROJECT_REF,
         repoRef: REPO_REF,

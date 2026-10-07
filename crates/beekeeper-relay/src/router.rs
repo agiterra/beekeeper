@@ -141,8 +141,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         // Webhook trigger (secret-authenticated, no NIP-98)
         .route("/hooks/{id}", post(api::bridge::workflow_webhook))
-        // Mesh demo echo probe — testbed-only; 404 unless BUZZ_MESH=on and
-        // BUZZ_MESH_DEMO_ECHO=on (see api::mesh_demo).
+        // Mesh demo echo probe — testbed-only; 404 unless BEEKEEPER_MESH=on and
+        // BEEKEEPER_MESH_DEMO_ECHO=on (see api::mesh_demo).
         .route("/_mesh/demo/echo", post(api::mesh_demo::demo_echo))
         // Huddle audio WebSocket route
         .route(
@@ -483,7 +483,7 @@ fn build_cors_layer(cors_origins: &[String]) -> CorsLayer {
 
     if origins.is_empty() {
         tracing::error!(
-            "BUZZ_CORS_ORIGINS set but no valid origins could be parsed — \
+            "BEEKEEPER_CORS_ORIGINS set but no valid origins could be parsed — \
              refusing to fall back to permissive CORS. Fix the origins or unset \
              the variable for development mode."
         );

@@ -1,6 +1,6 @@
 //! Use-limited relay invite persistence (v2 opaque tokens).
 //!
-//! Unlike the stateless v1 HMAC invite tokens in `buzz-relay::invite_token`,
+//! Unlike the stateless v1 HMAC invite tokens in `beekeeper-relay::invite_token`,
 //! v2 invites are backed by durable rows in `relay_invites`. The table stores
 //! only `SHA-256(code)` — never the reusable bearer secret — so a leaked
 //! database does not immediately yield valid invite codes.
@@ -397,7 +397,7 @@ mod tests {
     }
 
     fn test_database_url() -> String {
-        std::env::var("BUZZ_TEST_DATABASE_URL")
+        std::env::var("BEEKEEPER_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| TEST_DB_URL.to_owned())
     }

@@ -44,7 +44,7 @@ const BARE_BUZZ_LINK_AT_START = new RegExp(
   `^${SCHEME}://(?:message\\?|channel/|(?:pr|issue|repo|project)\\?)[^\\s<>"')\\]}*]+`,
   "i",
 );
-const BUZZ_LINK_SUFFIX_AT_START =
+const BEEKEEPER_LINK_SUFFIX_AT_START =
   /^:\/\/(?:message\?|channel\/|(?:pr|issue|repo|project)\?)[^\s<>"')\]}*]+/i;
 const TRAILING_PUNCTUATION = /[.,;:!?]+$/;
 
@@ -189,7 +189,7 @@ export function registerComposerMessageLinkMarkdownIt(
   const rule = (state: any, silent: boolean): boolean => {
     const remaining = state.src.slice(state.pos);
     const fullMatch = BARE_BUZZ_LINK_AT_START.exec(remaining);
-    const suffixMatch = BUZZ_LINK_SUFFIX_AT_START.exec(remaining);
+    const suffixMatch = BEEKEEPER_LINK_SUFFIX_AT_START.exec(remaining);
     const resumesTextToken =
       !fullMatch && suffixMatch && SCHEME_AT_END.test(state.pending ?? "");
     const rawHref =

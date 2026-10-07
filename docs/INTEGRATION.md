@@ -154,7 +154,7 @@ path from the git transport's, and they can disagree: on 2026-08-29 a seat's
 same key succeeded seconds later. The HTTP answer is now printed as a secondary
 line, labelled `relay HTTP membership:`, and never decides the exit code.
 
-**No remedy ever tells you to unset `BUZZ_AUTH_TAG`.** That was the old advice on
+**No remedy ever tells you to unset `BEEKEEPER_AUTH_TAG`.** That was the old advice on
 a 403, and following it would have made the seat drop the owner attestation its
 push depends on. A denial with an attestation present says to ask the operator to
 confirm the seat's *owner* is a relay member, and to keep the attestation.
@@ -208,7 +208,7 @@ the sequence, in order, so nobody re-derives it.
 6. **Then land the checkout you run from.** With the dev app stopped,
    `git merge --ff-only origin/main` in the main checkout, rebuild
    `bee` (`cargo build -p beekeeper-cli`), and relaunch with the keyring enabled
-   (`env -u BUZZ_DESKTOP_NOKEYRING just desktop-standalone`). Never merge,
+   (`env -u BEEKEEPER_DESKTOP_NOKEYRING just desktop-standalone`). Never merge,
    rebase, or switch in that checkout while the app runs.
 
 #### Seats push on their owner's grant
@@ -222,7 +222,7 @@ a seat must never be able to commit or push as the human. But a seat's own key
 holds no membership and no roster row, so on its own it can read nothing.
 
 What carries it is the **NIP-OA owner attestation** the harness also injects as
-`BUZZ_AUTH_TAG` — `["auth", <owner>, <conditions>, <sig>]`, signed by the owner
+`BEEKEEPER_AUTH_TAG` — `["auth", <owner>, <conditions>, <sig>]`, signed by the owner
 over the agent key. Git's credential protocol can return an `Authorization`
 value but cannot add a separate header, so the helper attaches the tag to the
 **signed NIP-98 event itself**, where the relay reads it
@@ -357,13 +357,13 @@ path that is a relay build input. It runs in the `deploy-scripts` step and in
 `just check`. An exclusion pattern whose shape it cannot expand is fatal, not
 ignored — an unexamined pattern is how a rebuild goes missing quietly.
 
-The consequence to expect when reading deployment state: **`BUZZ_IMAGE` may
+The consequence to expect when reading deployment state: **`BEEKEEPER_IMAGE` may
 legitimately trail `origin/main`.** See `deploy/autodeploy/README.md` § Verify.
 Pull requests are not filtered.
 
 Known runner-environment limitations (excluded from the gate, still run on
 dev machines; an upstream-issue candidate):
-- `buzz-relay` `api::mesh_demo::…round_trips_echo` — loopback QUIC cannot
+- `beekeeper-relay` `api::mesh_demo::…round_trips_echo` — loopback QUIC cannot
   complete inside the docker-in-incus runner (10s ECHO_TIMEOUT expires; the
   test self-skips on redis-less dev machines anyway).
 Re-check if the runner topology changes.
@@ -381,7 +381,7 @@ the chosen round's request and holds the response until the test releases it,
 so the steer/cancel provably lands mid-turn. Measured before the fix, at
 `--test-threads 8`: 2/20 failures idle and 3/15 under full CPU saturation;
 after, 0/65 across both conditions.
-- `buzz-pair-relay` `integration::test_120s_timeout` /
+- `beekeeper-pair-relay` `integration::test_120s_timeout` /
   `test_cancellation_immediate` — 2 s close-window assertions that flake
   under a fully loaded gate (observed 2026-08-15 during a local ceremony);
   51/51 pass in isolation. Load-sensitivity, not a regression.
@@ -411,7 +411,7 @@ relay and pushes to GitHub, which exists as CI trigger and backup. The moving
 parts, all deployed by `scripts/forge/setup-hive-mirror.sh` (idempotent,
 re-run it after changing any of them):
 
-- **`buzz-mirror-bridge`** (`crates/beekeeper-mirror-bridge`, installed to
+- **`beekeeper-mirror-bridge`** (`crates/beekeeper-mirror-bridge`, installed to
   `/usr/local/bin`, run as `hive-mirror-bridge.service`) subscribes to the
   relay's relay-signed **kind:30618** NIP-34 ref-state events — published on
   every ref-changing push, replaceable, so the bridge simply resyncs per event
@@ -607,7 +607,7 @@ Every 5 minutes it polls Woodpecker's sqlite, and when the newest push pipeline
 for its repo and branch is green it exports the source from the forge git
 mirror at that commit (`git archive`, never a network clone), builds
 `<image>:<short-sha>` inside the relay instance, takes a `pg_dump` backup
-(`$BASE/backup-pre-*.sql.gz`), flips `BUZZ_IMAGE` in `$BASE/compose/.env`, and
+(`$BASE/backup-pre-*.sql.gz`), flips `BEEKEEPER_IMAGE` in `$BASE/compose/.env`, and
 restarts with compose health-wait. An unhealthy relay rolls back to the
 previous image automatically. Red pipelines never deploy; a failed attempt
 leaves `$BASE/autodeploy-failed-<short-sha>` in the instance so it will not
@@ -638,7 +638,7 @@ Before finding 32, the relay's NIP-11 document advertised only `version:
 0.2.1` — the crate version, which moves once a release, not the build. There
 was no mechanism to answer "did that push actually redeploy hive", short of
 running a command that needs the new code and watching whether it works (see
-§ Deploying and `deploy/autodeploy/README.md` § "A trailing `BUZZ_IMAGE` is
+§ Deploying and `deploy/autodeploy/README.md` § "A trailing `BEEKEEPER_IMAGE` is
 now sometimes correct" for why a trailing image is not, on its own, evidence
 of anything). Two additive NIP-11 fields fix that:
 
@@ -674,7 +674,7 @@ of anything). Two additive NIP-11 fields fix that:
 
   The commit and its count are resolved **together** (`resolve_stamp` in
   `crates/beekeeper-relay/build.rs`), never independently: a count read from a
-  local checkout while the SHA came from `BUZZ_SOURCE_SHA` would advertise a
+  local checkout while the SHA came from `BEEKEEPER_SOURCE_SHA` would advertise a
   commit from one history and an ordinal from another, which no consumer
   could detect.
 
@@ -683,7 +683,7 @@ Resolution (`crates/beekeeper-relay/build.rs` / `src/build_provenance.rs`, and s
 
 1. `git rev-parse HEAD` in the crate's own checkout, when `.git` is present —
    a native `cargo build`.
-2. `BUZZ_SOURCE_SHA`, the build-arg `Dockerfile` already declares (`ARG`
+2. `BEEKEEPER_SOURCE_SHA`, the build-arg `Dockerfile` already declares (`ARG`
    default `unknown`, then `ENV`) and the image-build path threads through:
    `deploy/autodeploy/autodeploy` passes the full `$sha` it already selects
    from Woodpecker, for hive. (The inherited `.github/workflows/docker.yml`

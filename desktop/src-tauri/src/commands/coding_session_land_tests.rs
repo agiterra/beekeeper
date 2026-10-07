@@ -21,7 +21,7 @@ const HEAD_SHA: &str = "07c470be07c470be07c470be07c470be07c470be";
 // Nostr id hashes `created_at` along with everything else, so leaving it at
 // `Timestamp::now()` made `the_typescript_decoder_fixture_is_this_adapter_s_real_output`
 // fail on every run after the one that happened to write the fixture,
-// regardless of `BUZZ_UPDATE_FIXTURES=1` — the write and the read-back were
+// regardless of `BEEKEEPER_UPDATE_FIXTURES=1` — the write and the read-back were
 // always self-consistent within one process, never across two.
 const FIXED_CREATED_AT: u64 = 1_735_689_600;
 
@@ -777,7 +777,7 @@ fn fixed_mission(decision: &str, head_sha: Option<&str>) -> Mission {
 #[test]
 fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
     // Regenerate with
-    // `BUZZ_UPDATE_FIXTURES=1 cargo test --manifest-path desktop/src-tauri/Cargo.toml coding_session_land`.
+    // `BEEKEEPER_UPDATE_FIXTURES=1 cargo test --manifest-path desktop/src-tauri/Cargo.toml coding_session_land`.
     let admitted = fixed_mission("approve", Some(HEAD_SHA));
     let refused = fixed_mission("changes-requested", Some(HEAD_SHA));
     let generated = serde_json::to_string_pretty(&json!({
@@ -818,7 +818,7 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
         + "\n";
 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(TS_DECODER_FIXTURE);
-    if std::env::var("BUZZ_UPDATE_FIXTURES").is_ok() {
+    if std::env::var("BEEKEEPER_UPDATE_FIXTURES").is_ok() {
         std::fs::write(&path, &generated).expect("write fixture");
     }
     let stored = std::fs::read_to_string(&path)
@@ -829,7 +829,7 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
         serde_json::from_str(&generated).expect("generated fixture is JSON");
     assert_eq!(
         stored_value, generated_value,
-        "the Desktop land fixture is stale; regenerate it with BUZZ_UPDATE_FIXTURES=1"
+        "the Desktop land fixture is stale; regenerate it with BEEKEEPER_UPDATE_FIXTURES=1"
     );
     assert_eq!(generated_value["admitted"]["admitted"], json!(true));
     assert_eq!(generated_value["refused"]["admitted"], json!(false));

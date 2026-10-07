@@ -20,7 +20,7 @@ remotely-run agent must satisfy. It covers three layers:
    presence is the sole status signal; shutdown is a relay message; liveness
    bounds are enforced by the agent harness itself, not by the desktop.
 3. **The Kubernetes binding** — the first conforming provider,
-   `buzz-backend-kubernetes`, which realizes the contract as a bare Pod
+   `beekeeper-backend-kubernetes`, which realizes the contract as a bare Pod
    running the `sprig` image.
 
 We state five invariants — **identity fail-closed**, **no secrets in
@@ -30,7 +30,7 @@ rules.
 
 A scoping note that governs the whole document: the desktop is **one
 launcher among many**. What makes a process a live Beekeeper agent is a keypair,
-a NIP-OA auth tag, and a relay URL, handed as environment to the `buzz-acp`
+a NIP-OA auth tag, and a relay URL, handed as environment to the `beekeeper-acp`
 harness; anything that can set that environment and exec the harness — a
 bash script, a systemd unit, a CI job, or this document's provider protocol
 — is a conforming launcher. §Launchers states which obligations bind whom.
@@ -49,7 +49,7 @@ substrate, how their state is observed, and how their lifetime is bounded. It
 deliberately does **not** specify:
 
 - **Agent conversational behavior.** What the agent does with events is
-  governed by the ACP harness (`buzz-acp`) and the NIPs it implements
+  governed by the ACP harness (`beekeeper-acp`) and the NIPs it implements
   (NIP-OA, NIP-AE, NIP-AA, …), unchanged by where the harness runs.
 - **Malicious-provider containment.** A provider binary receives the agent's
   `nsec` by design — that is its job. The protocol *bounds the desktop's
@@ -81,7 +81,7 @@ Five principals:
 - **Substrate** `S` — the remote compute environment `P` deploys into (a
   Kubernetes cluster for the binding in this document). Opaque to `D`;
   `D` never talks to `S`.
-- **Agent** `A` — a `buzz-acp` harness process (plus the ACP agent under it)
+- **Agent** `A` — a `beekeeper-acp` harness process (plus the ACP agent under it)
   running on `S`, holding the nsec it was given, connected to the relay.
 - **Relay** `R` — the Beekeeper relay. The *only* channel that connects `D` to a
   running `A`. Everything `D` knows about a live remote agent, it learns
@@ -120,14 +120,14 @@ the actual layering, because the obligations in this document do not all
 bind at the same layer. Three contracts, nested:
 
 1. **The agent/harness contract — binds every launcher.** A live Beekeeper agent
-   is a `buzz-acp` process holding a keypair, a NIP-OA auth tag (or resolved
+   is a `beekeeper-acp` process holding a keypair, a NIP-OA auth tag (or resolved
    owner pubkey), and a relay URL, delivered as environment. The relay
    authenticates the keypair and the auth tag — never the launcher. At this
    layer live: fail-closed identity (I1's property, enforced wherever the
    env is assembled), presence publication (I3), owner-verified `!shutdown`,
    and **intentional clean exit is terminal to automatic supervisor
-   restart** (I5). A bash script that exports `BUZZ_PRIVATE_KEY`,
-   `BUZZ_RELAY_URL`, `BUZZ_AUTH_TAG` and execs the harness is a conforming
+   restart** (I5). A bash script that exports `BEEKEEPER_PRIVATE_KEY`,
+   `BEEKEEPER_RELAY_URL`, `BEEKEEPER_AUTH_TAG` and execs the harness is a conforming
    launcher at this layer — today, with no code change.
 2. **The provider/deployer contract — binds provider-managed launches
    only.** The two operations (`info`/`deploy`), the reconciliation loop,
@@ -254,7 +254,7 @@ one.
   The Kubernetes binding minimizes the *avoidable* part of that window by
   sizing the termination grace period to the harness's full graceful-shutdown
   path (§K8s Grace). Two consequences the bound imposes: (a) the harness's
-  presence-suppression knob, `BUZZ_ACP_NO_PRESENCE`, MUST join
+  presence-suppression knob, `BEEKEEPER_ACP_NO_PRESENCE`, MUST join
   `RESERVED_ENV_KEYS` — locally the knob is cosmetic (the process and UI
   remain visible), but remotely M1 makes presence the *only* signal, so an
   unreserved user env var would convert "wrong for ≤180s" into "wrong
@@ -363,7 +363,7 @@ deploy-time errors MUST be able to surface: the selected binary's full
 path, any shadowed candidates for the same id (later-PATH duplicates), and
 candidates rejected for malformed names. A deploy error that names which
 binary ran answers the first question a user with two copies of
-`buzz-backend-kubernetes` will ask. (At `28ae6cd21` discovery records only
+`beekeeper-backend-kubernetes` will ask. (At `28ae6cd21` discovery records only
 the winning path — a desktop change alongside Known Defect 3's.)
 
 **Resolution rule.** Every subsequent operation resolves the provider id
@@ -482,14 +482,14 @@ The agent payload (field list per
 | `launch` | **normative addition** (§Launch data): the desktop-resolved launch contract — `command` (name, not path), normalized `args`, layered `env`, overridable `policy_env`, and `owner_pubkey` |
 
 **Reserved-key rule (normative for providers).** `D` strips
-`BUZZ_PRIVATE_KEY`, `NOSTR_PRIVATE_KEY`, `BUZZ_AUTH_TAG`, `BUZZ_RELAY_URL`,
+`BEEKEEPER_PRIVATE_KEY`, `NOSTR_PRIVATE_KEY`, `BEEKEEPER_AUTH_TAG`, `BEEKEEPER_RELAY_URL`,
 and the other reserved keys from `env_vars` before merge. A provider MUST
 construct the agent environment's identity variables from the **top-level**
-payload fields (`private_key_nsec` → `BUZZ_PRIVATE_KEY`/`NOSTR_PRIVATE_KEY`,
-`auth_tag` → `BUZZ_AUTH_TAG`, `relay_url` → `BUZZ_RELAY_URL`); reading
+payload fields (`private_key_nsec` → `BEEKEEPER_PRIVATE_KEY`/`NOSTR_PRIVATE_KEY`,
+`auth_tag` → `BEEKEEPER_AUTH_TAG`, `relay_url` → `BEEKEEPER_RELAY_URL`); reading
 `env_vars` for them yields an identityless agent. A related hardening `D`
 performs is part of the contract's rationale: env keys are validated as
-POSIX-shaped names before merge, because a key like `BUZZ_AUTH_TAG=x`
+POSIX-shaped names before merge, because a key like `BEEKEEPER_AUTH_TAG=x`
 smuggled through `Command::env` would bypass the reserved-key strip
 entirely. A provider materializing `env_vars` into a substrate object
 (e.g. a Kubernetes Secret) MUST likewise never let a user-supplied key
@@ -527,12 +527,12 @@ spawn**, and the provider applies it mechanically.
                                 // (resolve_effective_harness_descriptor)
   "policy_env":   {str: str},   // overridable behavior defaults (tier 1, below):
                                 // runtime default_env (e.g. GOOSE_MODE=auto),
-                                // BUZZ_ACP_RELAY_OBSERVER, BUZZ_ACP_LAZY_POOL=true,
-                                // BUZZ_ACP_SESSION_TITLE (resolved),
-                                // BUZZ_ACP_TEAM_INSTRUCTIONS, BUZZ_ACP_MODEL,
+                                // BEEKEEPER_ACP_RELAY_OBSERVER, BEEKEEPER_ACP_LAZY_POOL=true,
+                                // BEEKEEPER_ACP_SESSION_TITLE (resolved),
+                                // BEEKEEPER_ACP_TEAM_INSTRUCTIONS, BEEKEEPER_ACP_MODEL,
                                 // MCP_HOOK_SERVERS=* (mcp_hooks runtimes only)
   "owner_pubkey": str | null    // resolved workspace owner (hex) — legacy
-                                // BUZZ_ACP_AGENT_OWNER fallback, non-secret
+                                // BEEKEEPER_ACP_AGENT_OWNER fallback, non-secret
 }
 ```
 
@@ -544,8 +544,8 @@ byte, and definition-provided `agent_args` are lost when the instance's own
 args are empty. `launch.env` is that descriptor's layered env, which is
 where per-runtime model/provider injection lives (`GOOSE_MODEL`/
 `GOOSE_PROVIDER` for goose; nothing for `provider_locked` runtimes like
-Claude; `BUZZ_AGENT_MODEL`/`BUZZ_AGENT_PROVIDER` for buzz-agent). A fixed
-`provider → BUZZ_AGENT_PROVIDER` mapping is wrong for three of the four
+Claude; `BEEKEEPER_AGENT_MODEL`/`BEEKEEPER_AGENT_PROVIDER` for buzz-agent). A fixed
+`provider → BEEKEEPER_AGENT_PROVIDER` mapping is wrong for three of the four
 built-in runtimes and is why this block exists.
 
 **What `policy_env` carries — and deliberately does not.** Its irreducible
@@ -553,10 +553,10 @@ wire fields are exactly three scalars plus the metadata-derived defaults —
 plus the four record-derived behavior knobs that would otherwise be
 mis-tiered (below):
 
-- `BUZZ_ACP_TEAM_INSTRUCTIONS` — the only truly non-reconstructible policy
+- `BEEKEEPER_ACP_TEAM_INSTRUCTIONS` — the only truly non-reconstructible policy
   value: `effective_team_instructions` (`spawn_hash.rs:41-52`) needs the
   desktop's `TeamRecord` store, which no pod can reach.
-- `BUZZ_ACP_SESSION_TITLE` — sent **resolved** (`resolve_session_title`,
+- `BEEKEEPER_ACP_SESSION_TITLE` — sent **resolved** (`resolve_session_title`,
   `runtime/metadata.rs:45`), not as its `display_name`/`name` inputs. The
   resolution strips control characters, and that property transfers: an
   interior NUL fails a local spawn at the env boundary, and would make the
@@ -572,7 +572,7 @@ mis-tiered (below):
   resolved local env" not a pure function of the record; serializing it
   verbatim would bake a host accident into the pod. Launch data MUST be
   computed from record + config alone.
-- `BUZZ_ACP_LAZY_POOL=true` — a **deliberate pick, not a transcription**:
+- `BEEKEEPER_ACP_LAZY_POOL=true` — a **deliberate pick, not a transcription**:
   the two local paths disagree (manual Start is eager, `runtime.rs:1001`;
   launch restore is lazy, `restore.rs:333`, precisely to avoid "N idle
   brains on every launch"). Remote pods take the lazy arm: an idle LLM pool
@@ -580,14 +580,14 @@ mis-tiered (below):
 - `MCP_HOOK_SERVERS=*` when the resolved runtime has `mcp_hooks`
   (`runtime.rs:594-598`; buzz-agent only at `28ae6cd21`) — gates the
   `_Stop`/`_PostCompact` hook tools.
-- `BUZZ_ACP_SYSTEM_PROMPT`, `BUZZ_ACP_IDLE_TIMEOUT`,
-  `BUZZ_ACP_MAX_TURN_DURATION`, `BUZZ_ACP_AGENTS` — resolved by the desktop
+- `BEEKEEPER_ACP_SYSTEM_PROMPT`, `BEEKEEPER_ACP_IDLE_TIMEOUT`,
+  `BEEKEEPER_ACP_MAX_TURN_DURATION`, `BEEKEEPER_ACP_AGENTS` — resolved by the desktop
   from the record's `system_prompt` / `idle_timeout_seconds` /
   `max_turn_duration_seconds` / `parallelism` (each omitted when null,
-  matching the local spawn's conditional emission). `BUZZ_ACP_AGENTS` is
+  matching the local spawn's conditional emission). `BEEKEEPER_ACP_AGENTS` is
   the **effective** parallelism: `min(record.parallelism, harness_cap)`
   where the cap is harness-specific (e.g. OpenClaw is capped at 5). These
-  are **tier-1 control-plane** keys: `BUZZ_ACP_AGENTS` is in
+  are **tier-1 control-plane** keys: `BEEKEEPER_ACP_AGENTS` is in
   `RESERVED_ENV_KEYS` (`env_vars.rs`) so the desktop-resolved effective
   value cannot be overridden by a definition env var; the others are
   tier-1 by local fact (written before the user env layer). A provider
@@ -596,11 +596,11 @@ mis-tiered (below):
   field silently defeating an override that works locally — which is why
   the provider MUST NOT remap them (§Entrypoint mapping table).
 
-`BUZZ_ACP_DEDUP` and `BUZZ_ACP_MULTIPLE_EVENT_HANDLING` are **deliberately
+`BEEKEEPER_ACP_DEDUP` and `BEEKEEPER_ACP_MULTIPLE_EVENT_HANDLING` are **deliberately
 unset**: the local spawn writes `queue`/`steer` (`runtime.rs:730-731`), and
 those are exactly the harness's clap defaults (`config.rs:344,356`) — a pod
 that omits both is behaviorally identical, and adding rows for them would
-imply a divergence that does not exist. `BUZZ_MANAGED_AGENT` is likewise
+imply a divergence that does not exist. `BEEKEEPER_MANAGED_AGENT` is likewise
 deliberately absent remotely: it brands local harness processes so the
 desktop's orphan sweep and instance reaper can prove ownership by scanning
 process env (`orphan_sweep.rs`, `instance_reaper.rs`) — there is no local
@@ -614,7 +614,7 @@ process to sweep.
    system prompt, model, idle timeout, etc. Locally the user env is written
    after them (`runtime.rs:860` and its comment). A policy-wins order here
    would make remote agents ignore overrides local agents honor.
-   **Exception — `BUZZ_ACP_AGENTS`:** this key IS reserved
+   **Exception — `BEEKEEPER_ACP_AGENTS`:** this key IS reserved
    (`env_vars.rs:RESERVED_ENV_KEYS`) so the desktop-controlled effective
    parallelism (applying any per-harness cap) cannot be bypassed by a
    user-supplied definition env var. The reserved-key strip removes any
@@ -626,10 +626,10 @@ process to sweep.
 3. **Authoritative** — unoverridable at every layer, written last and
    backed by the reserved-key strip: the identity variables from top-level
    payload fields (§Reserved-key rule), the respond-to gate values,
-   `BUZZ_ACP_AGENT_OWNER`, the inactivity bound, `BUZZ_ACP_MCP_COMMAND`,
-   and `BUZZ_MANAGED_AGENT_START_NONCE`. For the nonce, the provider MUST
+   `BEEKEEPER_ACP_AGENT_OWNER`, the inactivity bound, `BEEKEEPER_ACP_MCP_COMMAND`,
+   and `BEEKEEPER_MANAGED_AGENT_START_NONCE`. For the nonce, the provider MUST
    set it to the attempt's **generation token** (§K8s Secrets): the harness
-   stamps it into every observer lifecycle frame (`buzz-acp/lib.rs:1501`),
+   stamps it into every observer lifecycle frame (`beekeeper-acp/lib.rs:1501`),
    so the Secret generation and the lifecycle correlator become one
    identity instead of an empty string.
 
@@ -639,8 +639,8 @@ desktop's filesystem; forwarding them into a container is a guaranteed
 failure. The provider/image re-derives:
 
 - the harness and agent binaries: `launch.command` is a *name*, resolved
-  against the image's own `PATH` (`BUZZ_ACP_AGENT_COMMAND`), and
-  `BUZZ_ACP_MCP_COMMAND=buzz-dev-mcp` likewise;
+  against the image's own `PATH` (`BEEKEEPER_ACP_AGENT_COMMAND`), and
+  `BEEKEEPER_ACP_MCP_COMMAND=beekeeper-dev-mcp` likewise;
 - `CLAUDE_CODE_EXECUTABLE` — a `resolve_command()` host path
   (`configure_runtime_cli`, `runtime.rs:424-446`), same class as the
   command paths: image-local resolution or unset;
@@ -648,16 +648,16 @@ failure. The provider/image re-derives:
 - git credential/signing helper locations — the relay-URL *scoping* of the
   credential config is normative (never a global helper), the helper *path*
   is image-local (§Image);
-- `BUZZ_ACP_SETUP_PAYLOAD` is desktop-computed readiness state and MUST NOT
+- `BEEKEEPER_ACP_SETUP_PAYLOAD` is desktop-computed readiness state and MUST NOT
   appear in a remote pod.
 
 **Owner resolution (normative):** the provider MUST have either a non-null
-`auth_tag` (→ `BUZZ_AUTH_TAG`) or a non-null `launch.owner_pubkey`
-(→ `BUZZ_ACP_AGENT_OWNER`) before any mutation; if both are null it MUST
+`auth_tag` (→ `BEEKEEPER_AUTH_TAG`) or a non-null `launch.owner_pubkey`
+(→ `BEEKEEPER_ACP_AGENT_OWNER`) before any mutation; if both are null it MUST
 refuse the deploy. Without an owner the harness cannot match `!shutdown`
 (`beekeeper-acp/src/lib.rs: resolve_agent_owner`, main-loop owner check) and the
 agent answers its own stop command conversationally — §Stop would be
-describing a mechanism that does not work. `BUZZ_ACP_AGENT_OWNER` is a
+describing a mechanism that does not work. `BEEKEEPER_ACP_AGENT_OWNER` is a
 reserved key, so this value can only arrive as authoritative launch data,
 never through user env.
 
@@ -968,7 +968,7 @@ can yield two live instances in one scope.
 I5's enforcement point. A new harness knob:
 
 ```
---exit-after-inactivity <secs>   /   BUZZ_ACP_EXIT_AFTER_INACTIVITY
+--exit-after-inactivity <secs>   /   BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY
 ```
 
 - **Default 0 = disabled.** The flag ships in the harness every *local*
@@ -991,17 +991,17 @@ I5's enforcement point. A new harness knob:
   which under `lazy_pool` starts false (`:1320`) and flips true only on a
   wake (`:2570`) — and wakes require pending work (`pool_lifecycle.rs:42`).
   A reaper riding that tick composes with the mandated
-  `BUZZ_ACP_LAZY_POOL=true` (§Launch data) into a deadlock in I5's single
+  `BEEKEEPER_ACP_LAZY_POOL=true` (§Launch data) into a deadlock in I5's single
   most important case: a never-mentioned lazy pod never runs the tick, so
   the idle agent the reaper exists to kill is exactly the one it can never
   evaluate. The reaper therefore runs on its own timer, independent of pool
   state (an idle-pool check needs no pool). Check granularity makes the
   effective bound `t ∈ [T, T+interval)`, immaterial at T=7200.
-- **Reserved keys**: `BUZZ_ACP_EXIT_AFTER_INACTIVITY` MUST join
+- **Reserved keys**: `BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY` MUST join
   `RESERVED_ENV_KEYS` (`env_vars.rs`) when it lands — it is tier-3
   authoritative (§Launch data), and without reservation a user env var
   could disable the reaper and reopen unbounded lifetime through the front
-  door. `BUZZ_ACP_NO_PRESENCE` (`config.rs:378`) MUST join in the same
+  door. `BEEKEEPER_ACP_NO_PRESENCE` (`config.rs:378`) MUST join in the same
   change, for the same shape of reason at I3 instead of I5: unreserved, it
   lets user env silently defeat the 180s presence bound (I3). One knob
   guards "knows when to leave", the other "you can see that it left";
@@ -1029,7 +1029,7 @@ after both prerequisites, §Pod shape; the universal rule is I5's),
 harness exit completes the pod on every intentional path — turning
 agent-level I5 into substrate-level I5.
 
-## The Kubernetes Binding (`buzz-backend-kubernetes`)
+## The Kubernetes Binding (`beekeeper-backend-kubernetes`)
 
 The first conforming provider: a Rust crate in this repository, distributed as a
 standalone binary. Everything above is the contract; this section is its
@@ -1072,7 +1072,7 @@ that image was never ours to ship, and the default was removed on
 
 What the image contains: Alpine base + `bash` (required by the dev-MCP
 shell tool) + `git` + CA certificates + the static musl `sprig` multicall
-binary with its personality links (`buzz-acp`, `buzz-agent`, `buzz-dev-mcp`,
+binary with its personality links (`beekeeper-acp`, `buzz-agent`, `beekeeper-dev-mcp`,
 `rg`, `tree`, `buzz`, `git-credential-nostr`, `git-sign-nostr`) + a baked
 system gitconfig wiring the nostr signing and credential helpers. The baked
 credential-helper config MUST be scoped to the relay's git URL — mirroring
@@ -1089,7 +1089,7 @@ from immutable digests for exactly this reason), and the object holding it
 runs with an nsec, so tag-only references — not just `:latest` — are
 rejected. The provider records the reference it used in a pod annotation
 (`beekeeper.agiterra.io/image`) for post-hoc attribution.
-**Any image MUST contain the runtime ABI** — the `buzz-acp`
+**Any image MUST contain the runtime ABI** — the `beekeeper-acp`
 entrypoint and everything §Entrypoint and launch ABI requires — not merely
 alternate-harness dependencies. A conforming custom image is "sprig
 plus your tools", never "your tools instead".
@@ -1108,10 +1108,10 @@ nothing reaps children or forwards signals — so the entrypoint MUST end in
 #!/bin/bash
 set -e
 # nest scaffolding, if DECISION A lands, goes here
-exec buzz-acp   # exec, not a call — buzz-acp must be PID 1
+exec beekeeper-acp   # exec, not a call — beekeeper-acp must be PID 1
 ```
 
-`bash -c "setup && buzz-acp"` (no `exec`) is non-conforming: bash becomes
+`bash -c "setup && beekeeper-acp"` (no `exec`) is non-conforming: bash becomes
 PID 1, and a PID-1 bash with no trap never delivers SIGTERM to the harness
 (PID 1 receives kernel-level default-handler signal immunity), so the pod
 rides out the entire grace period and is SIGKILLed with presence still
@@ -1129,28 +1129,28 @@ individually:
 
 | source | env var |
 |---|---|
-| `relay_url` | `BUZZ_RELAY_URL` |
-| `private_key_nsec` | `BUZZ_PRIVATE_KEY` and `NOSTR_PRIVATE_KEY` (the git helpers read the latter) |
-| `auth_tag` | `BUZZ_AUTH_TAG` (omitted when null; then `launch.owner_pubkey` → `BUZZ_ACP_AGENT_OWNER` is REQUIRED — §Launch data owner rule) |
-| `launch.command` | `BUZZ_ACP_AGENT_COMMAND` — the *name*, resolved against the image's own PATH; never a forwarded host path |
-| `launch.args` | `BUZZ_ACP_AGENT_ARGS`, comma-joined |
+| `relay_url` | `BEEKEEPER_RELAY_URL` |
+| `private_key_nsec` | `BEEKEEPER_PRIVATE_KEY` and `NOSTR_PRIVATE_KEY` (the git helpers read the latter) |
+| `auth_tag` | `BEEKEEPER_AUTH_TAG` (omitted when null; then `launch.owner_pubkey` → `BEEKEEPER_ACP_AGENT_OWNER` is REQUIRED — §Launch data owner rule) |
+| `launch.command` | `BEEKEEPER_ACP_AGENT_COMMAND` — the *name*, resolved against the image's own PATH; never a forwarded host path |
+| `launch.args` | `BEEKEEPER_ACP_AGENT_ARGS`, comma-joined |
 | `launch.env`, `launch.policy_env` | verbatim, at their precedence tiers |
-| generation token (§K8s Secrets) | `BUZZ_MANAGED_AGENT_START_NONCE` — the lifecycle-frame correlator and the Secret generation are one identity (§Launch data tier 3) |
-| `system_prompt`, `idle_timeout_seconds`, `max_turn_duration_seconds`, `parallelism` | **not mapped by the provider** — the desktop resolves these into `launch.policy_env` (`BUZZ_ACP_SYSTEM_PROMPT`, `BUZZ_ACP_IDLE_TIMEOUT`, `BUZZ_ACP_MAX_TURN_DURATION`, `BUZZ_ACP_AGENTS`). `BUZZ_ACP_AGENTS` carries the **effective** parallelism (`min(record.parallelism, harness_cap)`), is reserved (`env_vars.rs:RESERVED_ENV_KEYS`), and cannot be overridden by user env. The remaining knobs are tier-1 by local fact (written before user env); a provider that mapped the top-level copies after `launch.env` would silently defeat local overrides. The top-level fields remain as display/bookkeeping inputs only |
+| generation token (§K8s Secrets) | `BEEKEEPER_MANAGED_AGENT_START_NONCE` — the lifecycle-frame correlator and the Secret generation are one identity (§Launch data tier 3) |
+| `system_prompt`, `idle_timeout_seconds`, `max_turn_duration_seconds`, `parallelism` | **not mapped by the provider** — the desktop resolves these into `launch.policy_env` (`BEEKEEPER_ACP_SYSTEM_PROMPT`, `BEEKEEPER_ACP_IDLE_TIMEOUT`, `BEEKEEPER_ACP_MAX_TURN_DURATION`, `BEEKEEPER_ACP_AGENTS`). `BEEKEEPER_ACP_AGENTS` carries the **effective** parallelism (`min(record.parallelism, harness_cap)`), is reserved (`env_vars.rs:RESERVED_ENV_KEYS`), and cannot be overridden by user env. The remaining knobs are tier-1 by local fact (written before user env); a provider that mapped the top-level copies after `launch.env` would silently defeat local overrides. The top-level fields remain as display/bookkeeping inputs only |
 | `turn_timeout_seconds` | not mapped — deprecated upstream and ignored; the local spawn also does not emit it |
-| `respond_to` | `BUZZ_ACP_RESPOND_TO` |
-| `respond_to_allowlist` | `BUZZ_ACP_RESPOND_TO_ALLOWLIST`, comma-joined |
-| — | `BUZZ_ACP_MCP_COMMAND=buzz-dev-mcp` (image-local; the dev-MCP requirement) |
-| `provider_config.inactivity_seconds` | `BUZZ_ACP_EXIT_AFTER_INACTIVITY` (schema default 7200; the I5 opt-in, §Auto-Stop — the config field and this env var are one knob, not two) |
+| `respond_to` | `BEEKEEPER_ACP_RESPOND_TO` |
+| `respond_to_allowlist` | `BEEKEEPER_ACP_RESPOND_TO_ALLOWLIST`, comma-joined |
+| — | `BEEKEEPER_ACP_MCP_COMMAND=beekeeper-dev-mcp` (image-local; the dev-MCP requirement) |
+| `provider_config.inactivity_seconds` | `BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY` (schema default 7200; the I5 opt-in, §Auto-Stop — the config field and this env var are one knob, not two) |
 
 The top-level `model`/`provider` payload fields are display/bookkeeping
 inputs; the *environment* consequence of model and provider selection
-(per-runtime vars, `provider_locked` suppression, `BUZZ_ACP_MODEL`) arrives
+(per-runtime vars, `provider_locked` suppression, `BEEKEEPER_ACP_MODEL`) arrives
 resolved inside `launch.env`/`launch.policy_env`. A provider MUST NOT map
 `provider` to any env var itself — that mapping is per-runtime and lives in
 the desktop's resolver (§Launch data).
 
-**Encoding honesty note.** `BUZZ_ACP_AGENT_ARGS` is comma-delimited by the
+**Encoding honesty note.** `BEEKEEPER_ACP_AGENT_ARGS` is comma-delimited by the
 harness's CLI parser, and the desktop's *local* spawn performs the same
 comma-join — an argument containing a comma is unrepresentable in both
 paths. This is a harness interface limitation the binding inherits and
@@ -1430,7 +1430,7 @@ ephemeral-runner lesson: disposable generations still need durable
 diagnostics, forwarded off the pod by the cluster operator's stack. The
 binding's contribution is correlation, not transport: the pod carries the
 full-pubkey annotation, the generation token (doubling as
-`BUZZ_MANAGED_AGENT_START_NONCE`, so lifecycle frames and pod logs share a
+`BEEKEEPER_MANAGED_AGENT_START_NONCE`, so lifecycle frames and pod logs share a
 correlator), the provider version, and the resolved image reference
 (§Image) — enough to attribute any shipped log line to an exact identity,
 generation, and binary, with no secret in any of it. GC on next-deploy
@@ -1473,9 +1473,9 @@ is conforming iff:
    pubkey — refusing to launch rather than launching identityless (I1's
    property, enforced wherever the env is assembled).
 2. It does not suppress the harness's promises on a remote agent:
-   presence stays enabled (`BUZZ_ACP_NO_PRESENCE` never set — remotely,
+   presence stays enabled (`BEEKEEPER_ACP_NO_PRESENCE` never set — remotely,
    presence is the only signal, I3), and the inactivity knob
-   (`BUZZ_ACP_EXIT_AFTER_INACTIVITY`) carries the owner's *deliberate*
+   (`BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY`) carries the owner's *deliberate*
    lifetime policy, never an accidental passthrough of user env (I5; the
    reserved-key rule is the provider path's realization of this).
 3. The substrate's **termination signal reaches the harness process**,
@@ -1649,10 +1649,10 @@ Desktop- and harness-side, discovered during this design:
    `agent_args` serialize as blank/empty — a different command line than the
    identical local agent; (c) no `owner_pubkey` — a null-`auth_tag` agent
    cannot match `!shutdown` (it *answers* it), stranding §Stop; (d) spawn
-   policy (`BUZZ_ACP_RELAY_OBSERVER`, runtime `default_env` such as
+   policy (`BEEKEEPER_ACP_RELAY_OBSERVER`, runtime `default_env` such as
    `GOOSE_MODE=auto`, team instructions, session title, lazy-pool selection)
    is absent — remote pods run different observer/approval semantics
-   (`BUZZ_ACP_DEDUP`/`BUZZ_ACP_MULTIPLE_EVENT_HANDLING` are *not* on this
+   (`BEEKEEPER_ACP_DEDUP`/`BEEKEEPER_ACP_MULTIPLE_EVENT_HANDLING` are *not* on this
    list: the local writes match the harness defaults, §Launch data); (e) a
    mesh-provider agent deploys pointed at a loopback URL that cannot exist
    in the pod instead of being refused. Until `deploy_payload_json` emits
@@ -1667,7 +1667,7 @@ Desktop- and harness-side, discovered during this design:
    Conformance: a provider that echoes a launch-only secret into an error
    must come back redacted.
 4. **The I5 reaper does not exist, and its natural home is a trap**
-   (harness code prerequisite). `BUZZ_ACP_EXIT_AFTER_INACTIVITY` appears
+   (harness code prerequisite). `BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY` appears
    nowhere in the harness at `28ae6cd21`; §Auto-Stop is a design, not a
    description. Worse, the obvious attachment point — the existing 30s
    maintenance tick — is gated on `pool_ready` (`lib.rs:1743`), which under

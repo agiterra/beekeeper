@@ -30,7 +30,7 @@ fn run_helper_with_args(
         .stderr(Stdio::piped())
         .current_dir(std::env::temp_dir())
         .env_remove("NOSTR_PRIVATE_KEY")
-        .env_remove("BUZZ_AUTH_TAG")
+        .env_remove("BEEKEEPER_AUTH_TAG")
         .env_remove("GIT_CONFIG_COUNT")
         // Prevent git config on the test machine from supplying credentials.
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -155,7 +155,10 @@ fn includes_nip_oa_auth_tag_in_signed_event() {
 
     let out = run_helper(
         &valid_input(),
-        &[("NOSTR_PRIVATE_KEY", &nsec), ("BUZZ_AUTH_TAG", &auth_tag)],
+        &[
+            ("NOSTR_PRIVATE_KEY", &nsec),
+            ("BEEKEEPER_AUTH_TAG", &auth_tag),
+        ],
     );
     assert!(
         out.status.success(),
@@ -193,7 +196,10 @@ fn malformed_nip_oa_auth_tag_fails_closed() {
     let nsec = fresh_nsec();
     let out = run_helper(
         &valid_input(),
-        &[("NOSTR_PRIVATE_KEY", &nsec), ("BUZZ_AUTH_TAG", "not-json")],
+        &[
+            ("NOSTR_PRIVATE_KEY", &nsec),
+            ("BEEKEEPER_AUTH_TAG", "not-json"),
+        ],
     );
 
     assert_eq!(out.status.code(), Some(1));

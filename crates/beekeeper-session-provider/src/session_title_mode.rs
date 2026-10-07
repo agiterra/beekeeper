@@ -25,7 +25,7 @@
 //! An absent file is the default (`agent`). An unreadable or malformed file
 //! titles nothing — the provider fails closed and says why — because a person
 //! who asked for no title must never get one by accident. The host-wide
-//! `BUZZ_CSP_AUTO_TITLE=off` switch wins over every mode.
+//! `BEEKEEPER_CSP_AUTO_TITLE=off` switch wins over every mode.
 
 use std::path::Path;
 
@@ -141,7 +141,7 @@ pub fn write(state_dir: &Path, mode: SessionTitleMode) -> Result<(), String> {
 pub(crate) enum Admission {
     /// Generate (switch on, mode `agent`).
     Generate,
-    /// `BUZZ_CSP_AUTO_TITLE=off`: the host switch wins over every mode.
+    /// `BEEKEEPER_CSP_AUTO_TITLE=off`: the host switch wins over every mode.
     HostOff,
     /// The mode leaves titling to someone else, or to no one.
     Declined(SessionTitleMode),

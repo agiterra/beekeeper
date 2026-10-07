@@ -10,7 +10,7 @@ name = "beekeeper_dev_mcp"
 path = "src/lib.rs"
 
 [[bin]]
-name = "buzz-dev-mcp"
+name = "beekeeper-dev-mcp"
 path = "src/main.rs"
 
 [dependencies]

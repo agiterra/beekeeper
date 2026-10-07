@@ -3,9 +3,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ARTIFACT_DIR="${BUZZ_RELEASE_SMOKE_ARTIFACT_DIR:-${ROOT}/desktop/test-results/release-smoke}"
-DB_NAME="${BUZZ_RELEASE_SMOKE_DB:-buzz_release_smoke_${$}}"
-REDIS_DB="${BUZZ_RELEASE_SMOKE_REDIS_DB:-}"
+ARTIFACT_DIR="${BEEKEEPER_RELEASE_SMOKE_ARTIFACT_DIR:-${ROOT}/desktop/test-results/release-smoke}"
+DB_NAME="${BEEKEEPER_RELEASE_SMOKE_DB:-buzz_release_smoke_${$}}"
+REDIS_DB="${BEEKEEPER_RELEASE_SMOKE_REDIS_DB:-}"
 LOCK_DIR="${TMPDIR:-/tmp}/buzz-desktop-release-smoke.lock"
 RELAY_PID=""
 LOCK_HELD=false
@@ -19,9 +19,9 @@ with socket.socket() as sock:
 PY
 }
 
-RELAY_PORT="${BUZZ_RELEASE_SMOKE_RELAY_PORT:-$(free_port)}"
-HEALTH_PORT="${BUZZ_RELEASE_SMOKE_HEALTH_PORT:-$(free_port)}"
-METRICS_PORT="${BUZZ_RELEASE_SMOKE_METRICS_PORT:-$(free_port)}"
+RELAY_PORT="${BEEKEEPER_RELEASE_SMOKE_RELAY_PORT:-$(free_port)}"
+HEALTH_PORT="${BEEKEEPER_RELEASE_SMOKE_HEALTH_PORT:-$(free_port)}"
+METRICS_PORT="${BEEKEEPER_RELEASE_SMOKE_METRICS_PORT:-$(free_port)}"
 COMMUNITY_HOST="localhost:${RELAY_PORT}"
 RELAY_HTTP_URL="http://${COMMUNITY_HOST}"
 STARTED_AT="$(date +%s)"
@@ -52,10 +52,10 @@ trap cleanup EXIT INT TERM
 
 # Shared Docker services expose one Redis instance and a finite database index
 # space. Serialize automatic allocation; callers that deliberately own an
-# isolated Redis DB may opt out by setting BUZZ_RELEASE_SMOKE_REDIS_DB.
+# isolated Redis DB may opt out by setting BEEKEEPER_RELEASE_SMOKE_REDIS_DB.
 if [[ -z "${REDIS_DB}" ]]; then
   mkdir "${LOCK_DIR}" 2>/dev/null || {
-    log "another release-smoke run owns ${LOCK_DIR}; set BUZZ_RELEASE_SMOKE_REDIS_DB only for an isolated runner"
+    log "another release-smoke run owns ${LOCK_DIR}; set BEEKEEPER_RELEASE_SMOKE_REDIS_DB only for an isolated runner"
     exit 1
   }
   LOCK_HELD=true
@@ -90,17 +90,17 @@ export PGSCHEMA_PLAN_USER=buzz PGSCHEMA_PLAN_PASSWORD=buzz_dev
 ./bin/pgschema apply --file schema/schema.sql --auto-approve
 docker exec -i -e PGPASSWORD=buzz_dev buzz-postgres \
   psql -U buzz -d "${DB_NAME}" -v ON_ERROR_STOP=1 < scripts/reconcile-schema-after-pgschema.sql
-BUZZ_DB_NAME="${DB_NAME}" BUZZ_COMMUNITY_HOST="${COMMUNITY_HOST}" ./scripts/setup-desktop-test-data.sh
+BEEKEEPER_DB_NAME="${DB_NAME}" BEEKEEPER_COMMUNITY_HOST="${COMMUNITY_HOST}" ./scripts/setup-desktop-test-data.sh
 docker exec buzz-redis redis-cli -n "${REDIS_DB}" FLUSHDB >/dev/null
 phase database "${phase_start}"
 
 phase_start="$(date +%s)"
-if [[ -n "${BUZZ_E2E_RELAY_BIN:-}" ]]; then
-  RELAY_BIN="${BUZZ_E2E_RELAY_BIN}"
+if [[ -n "${BEEKEEPER_E2E_RELAY_BIN:-}" ]]; then
+  RELAY_BIN="${BEEKEEPER_E2E_RELAY_BIN}"
 else
   log "building relay"
   cargo build --profile ci -p beekeeper-relay
-  RELAY_BIN="${ROOT}/target/ci/buzz-relay"
+  RELAY_BIN="${ROOT}/target/ci/beekeeper-relay"
 fi
 log "starting relay at ${RELAY_HTTP_URL}"
 RELAY_PRIVATE_KEY="$(openssl rand -hex 32)"
@@ -108,15 +108,15 @@ env \
   DATABASE_URL="postgres://buzz:buzz_dev@localhost:5432/${DB_NAME}" \
   REDIS_URL="redis://localhost:6379/${REDIS_DB}" \
   RELAY_URL="ws://${COMMUNITY_HOST}" \
-  BUZZ_BIND_ADDR="127.0.0.1:${RELAY_PORT}" \
-  BUZZ_HEALTH_PORT="${HEALTH_PORT}" \
-  BUZZ_METRICS_PORT="${METRICS_PORT}" \
-  BUZZ_RELAY_PRIVATE_KEY="${RELAY_PRIVATE_KEY}" \
-  BUZZ_REQUIRE_AUTH_TOKEN=false \
-  BUZZ_RECONCILE_CHANNELS=true \
-  BUZZ_RATE_LIMIT_HUMAN_MESSAGES_PER_MIN=1000000 \
-  BUZZ_RATE_LIMIT_HUMAN_API_CALLS_PER_MIN=1000000 \
-  BUZZ_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC=100000 \
+  BEEKEEPER_BIND_ADDR="127.0.0.1:${RELAY_PORT}" \
+  BEEKEEPER_HEALTH_PORT="${HEALTH_PORT}" \
+  BEEKEEPER_METRICS_PORT="${METRICS_PORT}" \
+  BEEKEEPER_RELAY_PRIVATE_KEY="${RELAY_PRIVATE_KEY}" \
+  BEEKEEPER_REQUIRE_AUTH_TOKEN=false \
+  BEEKEEPER_RECONCILE_CHANNELS=true \
+  BEEKEEPER_RATE_LIMIT_HUMAN_MESSAGES_PER_MIN=1000000 \
+  BEEKEEPER_RATE_LIMIT_HUMAN_API_CALLS_PER_MIN=1000000 \
+  BEEKEEPER_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC=100000 \
   "${RELAY_BIN}" > "${ARTIFACT_DIR}/relay.log" 2>&1 &
 RELAY_PID=$!
 ready=false
@@ -132,7 +132,7 @@ done
 phase relay "${phase_start}"
 
 phase_start="$(date +%s)"
-if [[ "${BUZZ_RELEASE_SMOKE_NO_BUILD:-0}" == "1" ]]; then
+if [[ "${BEEKEEPER_RELEASE_SMOKE_NO_BUILD:-0}" == "1" ]]; then
   log "reusing existing desktop E2E bundle"
 else
   log "building desktop E2E bundle"
@@ -142,8 +142,8 @@ phase build "${phase_start}"
 
 phase_start="$(date +%s)"
 log "running release smoke"
-BUZZ_E2E_RELAY_URL="${RELAY_HTTP_URL}" \
-BUZZ_RELEASE_SMOKE_ARTIFACT_DIR="${ARTIFACT_DIR}" \
+BEEKEEPER_E2E_RELAY_URL="${RELAY_HTTP_URL}" \
+BEEKEEPER_RELEASE_SMOKE_ARTIFACT_DIR="${ARTIFACT_DIR}" \
 pnpm -C desktop exec playwright test --config=playwright.release-smoke.config.ts
 phase smoke "${phase_start}"
 phase total "${STARTED_AT}"

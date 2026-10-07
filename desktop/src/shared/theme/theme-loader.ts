@@ -20,10 +20,10 @@ import {
  * applied by {@link ThemeProvider} toggling a `data-beekeeper-sidebar` attribute
  * on the document root; the CSS lives in `shared/styles/globals/theme.css`.
  */
-export const BUZZ_THEME_NAME = "buzz";
+export const BEEKEEPER_THEME_NAME = "buzz";
 
 /**
- * Beekeeper Dark theme name. The dark-mode counterpart to {@link BUZZ_THEME_NAME}:
+ * Beekeeper Dark theme name. The dark-mode counterpart to {@link BEEKEEPER_THEME_NAME}:
  * reuses the GitHub Dark palette for every base color, with the same branded
  * sidebar gradient (dark-tuned colors, see `shared/styles/globals/theme.css`).
  * {@link ThemeProvider} toggles the shared `data-beekeeper-sidebar` attribute for
@@ -33,13 +33,13 @@ export const BUZZ_THEME_NAME = "buzz";
  * combined "Beekeeper" tile under System mode (follow-OS) plus a single "Beekeeper" tile
  * under Light and a "Beekeeper Dark" tile under Dark.
  */
-export const BUZZ_DARK_THEME_NAME = "buzz-dark";
+export const BEEKEEPER_DARK_THEME_NAME = "buzz-dark";
 
 /** The Shiki bundle Beekeeper borrows its base palette from. */
-export const BUZZ_BASE_THEME: SyntaxThemeName = "github-light";
+export const BEEKEEPER_BASE_THEME: SyntaxThemeName = "github-light";
 
 /** The Shiki bundle Beekeeper Dark borrows its base palette from. */
-export const BUZZ_DARK_BASE_THEME: SyntaxThemeName = "github-dark";
+export const BEEKEEPER_DARK_BASE_THEME: SyntaxThemeName = "github-dark";
 
 /**
  * Resolve a theme name to the real Shiki bundled theme it maps to.
@@ -53,8 +53,8 @@ export const BUZZ_DARK_BASE_THEME: SyntaxThemeName = "github-dark";
  * back to unhighlighted plain text.
  */
 export function resolveShikiThemeName(name: string): SyntaxThemeName {
-  if (name === BUZZ_THEME_NAME) return BUZZ_BASE_THEME;
-  if (name === BUZZ_DARK_THEME_NAME) return BUZZ_DARK_BASE_THEME;
+  if (name === BEEKEEPER_THEME_NAME) return BEEKEEPER_BASE_THEME;
+  if (name === BEEKEEPER_DARK_THEME_NAME) return BEEKEEPER_DARK_BASE_THEME;
   return name as SyntaxThemeName;
 }
 

@@ -21,7 +21,7 @@ import type { RelayEvent } from "@/shared/api/types";
 
 /**
  * The relay rejects an event stamped more than 900 s from its clock
- * (`MAX_TIMESTAMP_DRIFT_SECS` in `buzz-relay` ingest), so a row stored after a
+ * (`MAX_TIMESTAMP_DRIFT_SECS` in `beekeeper-relay` ingest), so a row stored after a
  * read began is never stamped earlier than this before it. The extra minute
  * absorbs skew between this machine's clock and the relay's.
  */

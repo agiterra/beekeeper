@@ -1,7 +1,7 @@
 //! Setup-mode listener for not-ready agents.
 //!
 //! When the desktop determines an agent is `NotReady` (missing provider,
-//! model, or credentials), it spawns `buzz-acp` with a setup-mode payload
+//! model, or credentials), it spawns `beekeeper-acp` with a setup-mode payload
 //! instead of starting the normal agent pool. This module implements that
 //! early-branch path:
 //!
@@ -14,10 +14,10 @@
 //!
 //! # Contract (NON-NEGOTIABLE)
 //!
-//! * **Desktop is the ONLY readiness source.** `buzz-acp` trusts the payload
+//! * **Desktop is the ONLY readiness source.** `beekeeper-acp` trusts the payload
 //!   passed by the desktop and does NOT re-derive readiness.
 //! * **Normal startup gains no second readiness path.** The early branch is
-//!   entered only when `BUZZ_ACP_SETUP_PAYLOAD` is set.
+//!   entered only when `BEEKEEPER_ACP_SETUP_PAYLOAD` is set.
 //! * `spawn_key_refusal`-class identity failures are outside this path: no
 //!   valid key → no safe process to post as the agent.
 //!
@@ -52,7 +52,7 @@ use uuid::Uuid;
 /// `RequirementPayload::CliLogin` so the sentinel JSON the desktop parses
 /// contains the exact wire literals the FE expects.
 ///
-/// buzz-acp is a separate crate and must NOT depend on desktop types —
+/// beekeeper-acp is a separate crate and must NOT depend on desktop types —
 /// this explicit mirror is the correct pattern (same as the rest of
 /// `RequirementPayload` as "the Rust counterpart to desktop's `Requirement`").
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -80,13 +80,13 @@ use crate::{
 // ── Payload ───────────────────────────────────────────────────────────────────
 
 /// Env var carrying the JSON-encoded setup payload.
-pub(crate) const SETUP_PAYLOAD_ENV_VAR: &str = "BUZZ_ACP_SETUP_PAYLOAD";
+pub(crate) const SETUP_PAYLOAD_ENV_VAR: &str = "BEEKEEPER_ACP_SETUP_PAYLOAD";
 
 /// A single missing requirement, surface-discriminated so the nudge copy
 /// names exactly what to set and where.
 ///
 /// This is the Rust counterpart to the desktop's `Requirement` type
-/// (`managed_agents/readiness.rs`). Desktop serializes it; `buzz-acp`
+/// (`managed_agents/readiness.rs`). Desktop serializes it; `beekeeper-acp`
 /// deserializes and renders copy from it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "surface", rename_all = "snake_case")]
@@ -310,13 +310,13 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
     tracing::info!(
         agent = %payload.agent_name,
         requirements = payload.requirements.len(),
-        "buzz-acp entering setup mode"
+        "beekeeper-acp entering setup mode"
     );
 
     let pubkey_hex = config.keys.public_key().to_hex();
 
-    // Parse BUZZ_AUTH_TAG for relay membership / NIP-OA.
-    let relay_auth_tag: Option<nostr::Tag> = std::env::var("BUZZ_AUTH_TAG")
+    // Parse BEEKEEPER_AUTH_TAG for relay membership / NIP-OA.
+    let relay_auth_tag: Option<nostr::Tag> = std::env::var("BEEKEEPER_AUTH_TAG")
         .ok()
         .filter(|s| !s.is_empty())
         .and_then(|s| beekeeper_sdk::nip_oa::parse_auth_tag(&s).ok());
@@ -1045,9 +1045,9 @@ mod tests {
 
     // ── availability round-trip tests ─────────────────────────────────────────
     //
-    // These tests prove the desktop→buzz-acp→sentinel path preserves the
+    // These tests prove the desktop→beekeeper-acp→sentinel path preserves the
     // `availability` field. They simulate what actually happens at runtime:
-    // desktop serializes a `cli_login` JSON blob → buzz-acp parses it via
+    // desktop serializes a `cli_login` JSON blob → beekeeper-acp parses it via
     // `from_raw_env_value` → `nudge_body()` re-serializes into the sentinel →
     // the sentinel JSON is extracted and checked for the `availability` field.
     //

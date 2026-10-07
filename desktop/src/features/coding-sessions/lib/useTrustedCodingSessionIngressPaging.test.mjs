@@ -81,7 +81,7 @@ async function signedTranscripts(count) {
     "./codingSessionCommand.ts"
   );
   const {
-    BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+    BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
     CODING_SESSION_TRANSCRIPT_TAG_VERSION,
     codingSessionTranscriptSemanticKey,
   } = await import("./codingSessionTrustedIngress.ts");
@@ -101,7 +101,7 @@ async function signedTranscripts(count) {
           ["cst-key", codingSessionTranscriptSemanticKey(TARGET, seq)],
         ],
         content: JSON.stringify({
-          schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+          schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
           session: TARGET,
           eventSeq: seq,
           timestamp: createdAt * 1000,

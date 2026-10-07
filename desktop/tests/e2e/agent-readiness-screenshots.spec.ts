@@ -232,7 +232,7 @@ test.describe("agent readiness gate screenshots", () => {
           command: "buzz-agent",
           binary_path: "/usr/local/bin/buzz-agent",
           default_args: [],
-          mcp_command: "buzz-dev-mcp",
+          mcp_command: "beekeeper-dev-mcp",
           install_hint: "Ships with the Beekeeper desktop app.",
           install_instructions_url: "https://github.com/block/buzz",
           can_auto_install: false,

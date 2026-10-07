@@ -16,7 +16,7 @@ import {
   parseBoundedJson,
 } from "./wireDecode.ts";
 
-export const BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA =
+export const BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA =
   "buzz-coding-session-transcript/v1" as const;
 export const CODING_SESSION_TRANSCRIPT_TAG_VERSION = "cst1-1" as const;
 
@@ -25,7 +25,7 @@ const MAX_TRANSCRIPT_ITEM_DEPTH = 24;
 const MAX_TRANSCRIPT_IDENTITY_BYTES = 512;
 
 export type BeekeeperCodingSessionTranscriptV1 = {
-  schema: typeof BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA;
+  schema: typeof BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA;
   session: CodingSessionTarget;
   eventSeq: number;
   timestamp: number;
@@ -48,7 +48,7 @@ export function parseBeekeeperCodingSessionTranscript(
       "turnId",
       "item",
     ]) ||
-    value.schema !== BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA
+    value.schema !== BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA
   ) {
     return null;
   }
@@ -72,7 +72,7 @@ export function parseBeekeeperCodingSessionTranscript(
     return null;
   }
   return Object.freeze({
-    schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+    schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
     session,
     eventSeq: value.eventSeq as number,
     timestamp: value.timestamp,

@@ -19,7 +19,7 @@ function raw(extra) {
     name: "Bob",
     persona_id: null,
     relay_url: "wss://relay.example",
-    acp_command: "buzz-acp",
+    acp_command: "beekeeper-acp",
     agent_command: "claude",
     agent_args: [],
     mcp_command: "",

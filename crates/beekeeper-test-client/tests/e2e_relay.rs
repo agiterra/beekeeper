@@ -44,7 +44,7 @@ fn relay_http_url() -> String {
 }
 
 fn test_owner_keys() -> Keys {
-    std::env::var("BUZZ_TEST_OWNER_PRIVATE_KEY")
+    std::env::var("BEEKEEPER_TEST_OWNER_PRIVATE_KEY")
         .ok()
         .and_then(|secret| Keys::parse(&secret).ok())
         .unwrap_or_else(Keys::generate)

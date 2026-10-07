@@ -1,6 +1,6 @@
 //! The `bee` command tree as data, for documents that must not drift from it.
 //!
-//! `buzz-acp`'s base prompt carries a table of every `bee` group and its
+//! `beekeeper-acp`'s base prompt carries a table of every `bee` group and its
 //! subcommands. A hand-written copy of that table told every seat that
 //! `bee sessions` had six subcommands when it had forty-one; this function is
 //! what the prompt's drift test renders the expected table from.

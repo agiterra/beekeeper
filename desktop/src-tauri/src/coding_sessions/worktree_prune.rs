@@ -390,7 +390,7 @@ pub(crate) const CHECKPOINT_REF_ROOT: &str = "refs/beekeeper/checkpoints";
 /// reading of it being a guess: one path component of ASCII letters, digits,
 /// `-`, `_` and `.`, with no `..`, no leading or trailing `.` and no `.lock`
 /// suffix. This is exactly the rule the provider applies before writing one
-/// (`buzz-session-provider` `turn_checkpoint_git::checkpoint_ref`), so every
+/// (`beekeeper-session-provider` `turn_checkpoint_git::checkpoint_ref`), so every
 /// directory it can write is one this can retire; anything else could never
 /// have been written, so nothing is deleted for it.
 fn is_checkpoint_session_component(session_id: &str) -> bool {

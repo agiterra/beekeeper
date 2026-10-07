@@ -27,7 +27,7 @@ use std::io::Cursor;
 use std::time::Duration;
 
 /// Lifetime of a Blossom `t=get` read token. Matches the desktop client's
-/// `MEDIA_GET_AUTH_EXPIRY_SECS` and `buzz-dev-mcp`'s `view_image`.
+/// `MEDIA_GET_AUTH_EXPIRY_SECS` and `beekeeper-dev-mcp`'s `view_image`.
 const MEDIA_GET_AUTH_EXPIRY_SECS: u64 = 600;
 /// Connect + read timeout for one blob fetch.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);

@@ -330,7 +330,7 @@ fn turn_row(
 /// (`beekeeper_core::coding_session_payload::result_item`) and nothing else: this
 /// command never multiplies tokens by a price list it carries. An earlier
 /// version gated the number on a `pricingIdentity` key inside `usage`; that
-/// key is a `buzz-acp` internal (`crates/beekeeper-acp/src/usage.rs`) that no
+/// key is a `beekeeper-acp` internal (`crates/beekeeper-acp/src/usage.rs`) that no
 /// producer serializes into a 44225, so the gate reported `null` for every
 /// turn on the wire while the item beside it carried a number (REVIEW-A1 F2).
 fn published_cost(result: Option<&Value>) -> Option<f64> {

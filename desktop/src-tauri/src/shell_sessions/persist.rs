@@ -202,7 +202,7 @@ pub fn set_enabled(app: &AppHandle, persist: bool) -> Result<(), String> {
     Ok(())
 }
 
-// History is written by the detached host (`buzz-shell-host`), which owns the
+// History is written by the detached host (`beekeeper-shell-host`), which owns the
 // scrollback and keeps checkpointing even while the app is closed. This module
 // only reads it back (`load_all`) for the reboot fallback and cleans it up.
 

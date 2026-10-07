@@ -17,11 +17,11 @@ use beekeeper_host_core::record::CodingSessionProviderRecord;
 use crate::discovery::{augmented_path, resolve_command};
 
 /// Binary name of the provider.
-pub const PROVIDER_BINARY: &str = "buzz-session-provider";
+pub const PROVIDER_BINARY: &str = "beekeeper-session-provider";
 /// ACP adapter the provider spawns for each coding session.
 const PROVIDER_AGENT_BINARY: &str = "claude-agent-acp";
 /// Read-only context sidecar the provider hands to verified sessions.
-const CONTEXT_MCP_BINARY: &str = "buzz-dev-mcp";
+const CONTEXT_MCP_BINARY: &str = "beekeeper-dev-mcp";
 /// The CLI the ACP adapter drives.
 const CLAUDE_CLI_BINARY: &str = "claude";
 
@@ -186,9 +186,12 @@ mod tests {
     fn a_named_provider_binary_that_is_absent_is_refused_with_its_path() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut config = config_for(&dir.path().join("state"));
-        config.provider_command = Some(dir.path().join("nowhere/buzz-session-provider"));
+        config.provider_command = Some(dir.path().join("nowhere/beekeeper-session-provider"));
         let error = resolve_provider_binary(&config).expect_err("must be refused");
-        assert!(error.contains("nowhere/buzz-session-provider"), "{error}");
+        assert!(
+            error.contains("nowhere/beekeeper-session-provider"),
+            "{error}"
+        );
     }
 
     /// The child must carry the marker, and it must be this host's pid — a

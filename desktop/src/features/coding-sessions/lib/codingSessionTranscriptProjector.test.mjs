@@ -6,7 +6,7 @@ import {
   oracleProjectTrustedCodingSessionTranscriptsToTranscript,
 } from "./codingSessionProjectionOracle.testFixtures.ts";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   buildTrustedCodingSessionTranscriptProjectionContext,
   projectTrustedCodingSessionTranscriptsToTranscript,
   selectExactTrustedCodingSessionTranscriptEntries,
@@ -43,7 +43,7 @@ function entry({
   eventId = hex64(nextEventId++),
 }) {
   const transcript = {
-    schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+    schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
     session: target,
     eventSeq,
     timestamp: 1_800_000_000_000 + eventSeq,

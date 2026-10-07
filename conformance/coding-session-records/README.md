@@ -19,7 +19,7 @@ reading the actual Rust types and the actual TypeScript and Dart decoders.
 | 44230 closure | `crates/beekeeper-core/src/coding_session_closure.rs` `decode_coding_session_closure` | `sessionCoordinationStrictJson.ts` `hasStrictClosureJson` | `coding_session_session_decoders.dart` `decodeCodingSessionClosure` |
 
 **There is exactly one strict Rust reader per record.** `beekeeper-cli`,
-`beekeeper-db`, `buzz-relay`, `beekeeper-sdk` and `buzz-session-provider` all call
+`beekeeper-db`, `beekeeper-relay`, `beekeeper-sdk` and `beekeeper-session-provider` all call
 `beekeeper-core`'s `decode_*` and none re-spells a key set, so one `beekeeper-core` test
 covers every Rust consumer. That is not true of the other two languages, which
 is where every divergence below lives.

@@ -95,7 +95,7 @@ CodingSessionMetadata _metadataVariant({
         'repoRef': null,
         'title': null,
         'agentRef': null,
-        'provider': 'buzz-session-provider',
+        'provider': 'beekeeper-session-provider',
         'runtime': 'claude-agent-acp',
         'model': 'opus',
         'status': 'running',

@@ -11,7 +11,7 @@ use super::*;
 
 /// The environment variable that turns [`two_process_lock_child`] from a
 /// no-op into the second process of the lock test.
-const LOCK_CHILD_STORE: &str = "BUZZ_TEST_ASSIGNMENT_INPUT_LOCK_CHILD_STORE";
+const LOCK_CHILD_STORE: &str = "BEEKEEPER_TEST_ASSIGNMENT_INPUT_LOCK_CHILD_STORE";
 
 fn run_git(dir: &Path, args: &[&str]) -> String {
     let mut command = std::process::Command::new("git");

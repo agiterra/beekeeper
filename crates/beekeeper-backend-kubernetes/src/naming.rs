@@ -7,6 +7,9 @@
 use nostr::nips::nip19::FromBech32;
 
 /// `app.kubernetes.io/managed-by` value: the management marker's identity half.
+/// Persisted on every resource this backend created, and used to select and
+/// adopt them, so it keeps the pre-rename binary name: changing it would
+/// orphan existing pods and secrets.
 pub const MANAGED_BY: &str = "buzz-backend-kubernetes";
 
 /// Label key carrying [`MANAGED_BY`].
@@ -113,7 +116,7 @@ impl AgentIdentity {
 
 /// A fresh generation token: 8 lowercase hex chars from the OS RNG.
 ///
-/// Appears in the Secret name and as `BUZZ_MANAGED_AGENT_START_NONCE`, so the
+/// Appears in the Secret name and as `BEEKEEPER_MANAGED_AGENT_START_NONCE`, so the
 /// Secret generation and the harness's lifecycle-frame correlator are one
 /// identity (§Launch data tier 3).
 pub fn new_generation() -> String {

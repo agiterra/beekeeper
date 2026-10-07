@@ -111,7 +111,7 @@ fn live_claude_models_fall_back_to_the_first_adapter_option() {
 
 // ── env assembly ─────────────────────────────────────────────────────────────
 
-/// `BUZZ_AUTH_TAG` is parsed by the provider as a JSON array of strings and
+/// `BEEKEEPER_AUTH_TAG` is parsed by the provider as a JSON array of strings and
 /// handed straight to `nostr::Tag::parse`. Any re-encoding (bare signature,
 /// object form, comma-joined) makes the tag fail to verify at AUTH time, which
 /// surfaces only as a relay rejection at runtime.
@@ -121,7 +121,7 @@ fn auth_tag_is_a_json_array_of_strings() {
     let record = mint_provider_record(&owner, RELAY).expect("mint");
     let env = env_for(&record);
 
-    let raw = env.get("BUZZ_AUTH_TAG").expect("auth tag in env");
+    let raw = env.get("BEEKEEPER_AUTH_TAG").expect("auth tag in env");
     let parts: Vec<String> = serde_json::from_str(raw).expect("auth tag must be a JSON array");
     assert_eq!(parts.len(), 4, "{parts:?}");
     assert_eq!(parts[0], "auth");
@@ -165,7 +165,7 @@ fn child_env_never_carries_the_owner_secret() {
 
     // Positive control: the provider's own key IS present, so the assertion
     // above is checking encoding, not an empty environment.
-    let provider_nsec = env.get("BUZZ_PRIVATE_KEY").expect("provider key");
+    let provider_nsec = env.get("BEEKEEPER_PRIVATE_KEY").expect("provider key");
     assert!(provider_nsec.starts_with("nsec1"), "{provider_nsec}");
     assert_ne!(provider_nsec, &owner_nsec);
 }
@@ -193,7 +193,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         relay_url: RELAY,
         state_dir: Path::new("/tmp/session-provider/aaaa"),
         agent_command: Some(PathBuf::from("/opt/buzz/bin/claude-agent-acp")),
-        context_mcp_command: Some(PathBuf::from("/opt/buzz/bin/buzz-dev-mcp")),
+        context_mcp_command: Some(PathBuf::from("/opt/buzz/bin/beekeeper-dev-mcp")),
         claude_code_executable: Some(PathBuf::from("/usr/local/bin/claude")),
         runtimes: Vec::new(),
         augmented_path: Some("/opt/buzz/bin:/usr/bin".into()),

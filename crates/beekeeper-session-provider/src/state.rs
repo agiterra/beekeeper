@@ -1,7 +1,7 @@
 //! Durable provider state: watermarks, command dedupe, session records,
 //! per-generation sequence counters, and the catalog revision.
 //!
-//! Four files, all under `BUZZ_CSP_STATE_DIR`:
+//! Four files, all under `BEEKEEPER_CSP_STATE_DIR`:
 //!
 //! - `state.json` — the whole mutable snapshot, replaced atomically
 //!   (write to a temp file, fsync, rename). A torn write can therefore never
@@ -126,7 +126,7 @@ pub fn acquire_state_dir_lock(dir: &Path) -> io::Result<StateDirLock> {
         return Err(io::Error::new(
             io::ErrorKind::WouldBlock,
             format!(
-                "another buzz-session-provider instance already owns {} (owner pid: {}): {error}",
+                "another beekeeper-session-provider instance already owns {} (owner pid: {}): {error}",
                 dir.display(),
                 if owner.is_empty() { "unknown" } else { owner },
             ),

@@ -2,7 +2,7 @@
 //!
 //! These tests exercise the full pack-resolve pipeline and verify that:
 //! - Goose personas emit GOOSE_PROVIDER, GOOSE_MODEL, GOOSE_TEMPERATURE
-//! - `buzz-agent` personas emit BUZZ_AGENT_MODEL, BUZZ_AGENT_PROVIDER
+//! - `buzz-agent` personas emit BEEKEEPER_AGENT_MODEL, BEEKEEPER_AGENT_PROVIDER
 //! - The import filter strips derived provider/model keys but preserves knobs
 //! - Multi-runtime packs produce correct per-persona env var prefixes
 //! - Models without a provider prefix emit only the model key (no provider)
@@ -15,8 +15,8 @@ use beekeeper_persona::resolve::resolve_pack;
 const DERIVED_PROVIDER_MODEL_ENV_KEYS: &[&str] = &[
     "GOOSE_MODEL",
     "GOOSE_PROVIDER",
-    "BUZZ_AGENT_MODEL",
-    "BUZZ_AGENT_PROVIDER",
+    "BEEKEEPER_AGENT_MODEL",
+    "BEEKEEPER_AGENT_PROVIDER",
 ];
 
 fn filter_derived(env_vars: Vec<(String, String)>) -> BTreeMap<String, String> {
@@ -134,14 +134,14 @@ You are a test bot.
         .collect();
 
     assert_eq!(
-        env.get("BUZZ_AGENT_MODEL"),
+        env.get("BEEKEEPER_AGENT_MODEL"),
         Some(&"gpt-4o"),
-        "should emit BUZZ_AGENT_MODEL=gpt-4o"
+        "should emit BEEKEEPER_AGENT_MODEL=gpt-4o"
     );
     assert_eq!(
-        env.get("BUZZ_AGENT_PROVIDER"),
+        env.get("BEEKEEPER_AGENT_PROVIDER"),
         Some(&"openai"),
-        "should emit BUZZ_AGENT_PROVIDER=openai"
+        "should emit BEEKEEPER_AGENT_PROVIDER=openai"
     );
 
     // Must NOT contain GOOSE_* keys
@@ -291,22 +291,22 @@ You are a buzz bot.
         Some(&"claude-sonnet-4-20250514")
     );
     assert!(
-        !goose_env.contains_key("BUZZ_AGENT_MODEL"),
-        "goose persona must not emit BUZZ_AGENT_MODEL"
+        !goose_env.contains_key("BEEKEEPER_AGENT_MODEL"),
+        "goose persona must not emit BEEKEEPER_AGENT_MODEL"
     );
     assert!(
-        !goose_env.contains_key("BUZZ_AGENT_PROVIDER"),
-        "goose persona must not emit BUZZ_AGENT_PROVIDER"
+        !goose_env.contains_key("BEEKEEPER_AGENT_PROVIDER"),
+        "goose persona must not emit BEEKEEPER_AGENT_PROVIDER"
     );
 
-    // `buzz-agent` persona gets BUZZ_AGENT_* env vars
+    // `buzz-agent` persona gets BEEKEEPER_AGENT_* env vars
     let buzz_env: std::collections::HashMap<_, _> = buzz
         .runtime_env_vars
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    assert_eq!(buzz_env.get("BUZZ_AGENT_MODEL"), Some(&"gpt-4o"));
-    assert_eq!(buzz_env.get("BUZZ_AGENT_PROVIDER"), Some(&"openai"));
+    assert_eq!(buzz_env.get("BEEKEEPER_AGENT_MODEL"), Some(&"gpt-4o"));
+    assert_eq!(buzz_env.get("BEEKEEPER_AGENT_PROVIDER"), Some(&"openai"));
     assert!(
         !buzz_env.contains_key("GOOSE_MODEL"),
         "buzz-agent persona must not emit GOOSE_MODEL"

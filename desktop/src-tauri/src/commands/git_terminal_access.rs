@@ -206,7 +206,7 @@ pub fn enable_git_terminal_access(
     let mut command = bee_command(&bee, &relay_url);
     command.args(["setup", "--write-key", "--helper"]);
     command.arg(&helper);
-    command.env("BUZZ_PRIVATE_KEY", &nsec);
+    command.env("BEEKEEPER_PRIVATE_KEY", &nsec);
     run_bee(command)?;
 
     git_terminal_access_status(app, state)

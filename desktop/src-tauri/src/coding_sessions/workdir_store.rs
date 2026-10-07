@@ -14,7 +14,7 @@
 //! This module owns the **desktop's** record — preferences, defaults, MRU,
 //! and one-shot create hints — in `coding-session-workdirs.json`. It also
 //! *materializes* the narrower view the provider actually reads
-//! (`BUZZ_CSP_PROJECTS_FILE`, i.e. `<state-dir>/projects.json`) on every
+//! (`BEEKEEPER_CSP_PROJECTS_FILE`, i.e. `<state-dir>/projects.json`) on every
 //! mutation. Two files rather than one because they answer different
 //! questions: this one remembers what the human chose and when, the other is
 //! the minimum a subprocess needs to resolve a cwd. The provider re-reads its

@@ -397,7 +397,7 @@ impl ConnectionManager {
     /// Closes every live connection with a `1012 Service Restart` close frame.
     ///
     /// This is the original, all-at-once drain, retained as the default path
-    /// (`BUZZ_DRAIN_JITTER_MS` unset or `0`). It is synchronous and returns as
+    /// (`BEEKEEPER_DRAIN_JITTER_MS` unset or `0`). It is synchronous and returns as
     /// soon as every close is queued and every connection cancelled, so the
     /// caller's hard-drain timeout backstops delivery unchanged.
     ///
@@ -433,7 +433,7 @@ impl ConnectionManager {
     /// Closes every live connection with a `1012 Service Restart` frame,
     /// spreading closes across `[1, jitter_ms]`.
     ///
-    /// This is the jittered drain, used only when `BUZZ_DRAIN_JITTER_MS > 0`.
+    /// This is the jittered drain, used only when `BEEKEEPER_DRAIN_JITTER_MS > 0`.
     /// It is kept deliberately separate from [`Self::drain_all`] so that the
     /// default (jitter-off) shutdown path is byte-for-byte the previously
     /// shipped behavior; the new close-acknowledgement machinery only runs when

@@ -1,4 +1,4 @@
-//! `buzz-shell-host` — a detached PTY host for one Beekeeper built-in shell session.
+//! `beekeeper-shell-host` — a detached PTY host for one Beekeeper built-in shell session.
 //!
 //! Spawned by the desktop app (never run by hand); it detaches from the app's
 //! session so it keeps the shell alive across app restarts/updates, and serves
@@ -6,7 +6,7 @@
 
 #[cfg(not(unix))]
 fn main() {
-    eprintln!("buzz-shell-host is only supported on Unix platforms");
+    eprintln!("beekeeper-shell-host is only supported on Unix platforms");
     std::process::exit(1);
 }
 
@@ -22,7 +22,7 @@ use beekeeper_shell_host::host::{self, HostOptions};
 #[cfg(unix)]
 #[derive(Parser)]
 #[command(
-    name = "buzz-shell-host",
+    name = "beekeeper-shell-host",
     about = "Detached PTY host for a Beekeeper shell session"
 )]
 struct Cli {

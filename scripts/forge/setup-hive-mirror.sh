@@ -61,10 +61,10 @@ if [[ "${1:-}" == "--remote" ]]; then
     fi
     git --version
 
-    echo "== build git-credential-nostr, nostr-keyfile-pubkey, buzz-mirror-bridge =="
+    echo "== build git-credential-nostr, nostr-keyfile-pubkey, beekeeper-mirror-bridge =="
     if [ ! -x /usr/local/bin/git-credential-nostr ] \
         || [ ! -x /usr/local/bin/nostr-keyfile-pubkey ] \
-        || [ ! -x /usr/local/bin/buzz-mirror-bridge ]; then
+        || [ ! -x /usr/local/bin/beekeeper-mirror-bridge ]; then
         rm -rf /tmp/bridge-build
         git -c safe.directory="$MIRROR_REPO" clone -q "$MIRROR_REPO" /tmp/bridge-build
         if [ ! -d /tmp/bridge-build/crates/beekeeper-mirror-bridge ]; then
@@ -79,7 +79,7 @@ if [[ "${1:-}" == "--remote" ]]; then
              cargo build -q --release -p beekeeper-mirror-bridge'
         install -m755 /tmp/bridge-build/target/release/git-credential-nostr /usr/local/bin/
         install -m755 /tmp/bridge-build/target/release/examples/pubkey /usr/local/bin/nostr-keyfile-pubkey
-        install -m755 /tmp/bridge-build/target/release/buzz-mirror-bridge /usr/local/bin/
+        install -m755 /tmp/bridge-build/target/release/beekeeper-mirror-bridge /usr/local/bin/
         rm -rf /tmp/bridge-build
     fi
     echo "helper: $(ls -l /usr/local/bin/git-credential-nostr | awk '{print $NF}')"
@@ -130,7 +130,7 @@ Fetch from hive failed. Most likely the pubkey above is not yet a member of
 the community. From the admin box:
 
   ssh agincus "incus exec hive -- docker exec buzz-prod-relay-1 \\
-    buzz-admin add-member --pubkey $PUBKEY --role member"
+    beekeeper-admin add-member --pubkey $PUBKEY --role member"
 
 If it then fails with "not a project member or channel member", the repo's
 read gate also wants channel/project membership — add the pubkey to the
@@ -209,7 +209,7 @@ Wants=network-online.target
 
 [Service]
 User=git
-ExecStart=/usr/local/bin/buzz-mirror-bridge --relay $WS_URL --keyfile $KEYFILE
+ExecStart=/usr/local/bin/beekeeper-mirror-bridge --relay $WS_URL --keyfile $KEYFILE
 Restart=always
 RestartSec=5
 

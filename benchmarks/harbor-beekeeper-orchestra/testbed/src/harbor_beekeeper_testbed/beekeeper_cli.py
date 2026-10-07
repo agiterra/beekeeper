@@ -40,9 +40,9 @@ class BeekeeperCli:
                 timeout=self._timeout,
                 check=False,
                 env={
-                    "BUZZ_RELAY_URL": self._relay_url,
-                    "BUZZ_PRIVATE_KEY": self._secret_key,
-                    "BUZZ_AUTH_TAG": self._auth_tag,
+                    "BEEKEEPER_RELAY_URL": self._relay_url,
+                    "BEEKEEPER_PRIVATE_KEY": self._secret_key,
+                    "BEEKEEPER_AUTH_TAG": self._auth_tag,
                     "PATH": _path(),
                 },
             )

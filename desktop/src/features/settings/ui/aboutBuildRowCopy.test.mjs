@@ -47,7 +47,7 @@ test("a distance names the method it was measured by", () => {
 
 /**
  * The case that is live today: hive answers `unknown` on every build because
- * its deployer predates the `BUZZ_SOURCE_SHA` fix (2ba548c9e). A bare
+ * its deployer predates the `BEEKEEPER_SOURCE_SHA` fix (2ba548c9e). A bare
  * "unknown" sends the reader to the relay; naming the cause does not.
  */
 test("a relay that stamps no build says why", () => {

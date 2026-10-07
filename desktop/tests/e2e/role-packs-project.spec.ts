@@ -10,7 +10,7 @@ import {
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/codingSessionGenesis";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
@@ -433,7 +433,7 @@ function rankedMetadataEvent(input: {
         ["csm-key", codingSessionMetadataSemanticKey(input.target)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: input.target,
         projectRef: RANKED_PROJECT_ADDRESS,
         repoRef: null,
@@ -484,7 +484,7 @@ function noVersionRoleMetadataEvent(): RelayEvent {
         ["csm-key", codingSessionMetadataSemanticKey(NO_VERSION_TARGET)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: NO_VERSION_TARGET,
         projectRef: RANKED_PROJECT_ADDRESS,
         repoRef: null,
@@ -517,7 +517,7 @@ function noRoleMetadataEvent(): RelayEvent {
         ["csm-key", codingSessionMetadataSemanticKey(NO_ROLE_TARGET)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: NO_ROLE_TARGET,
         projectRef: RANKED_PROJECT_ADDRESS,
         repoRef: null,

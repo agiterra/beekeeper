@@ -4,14 +4,14 @@
 //! `docs/CI_MANAGED_CONTINUATION_SPEC.md` require exercising the actual
 //! CLI/provider/local-relay composition, not a library-level simulation. That
 //! composition is fundamentally three independent OS processes (the real
-//! `buzz-relay` binary, the built `bee` CLI, and the real
-//! `buzz-session-provider` binary) talking over a real network socket, so the
+//! `beekeeper-relay` binary, the built `bee` CLI, and the real
+//! `beekeeper-session-provider` binary) talking over a real network socket, so the
 //! composition itself lives in `scripts/ci-continuation-acceptance.sh` — a
 //! Rust `#[tokio::test]` gains nothing over a shell script for orchestrating
 //! three subprocesses and would just duplicate its logic. This test is the
 //! contractual entry point `cargo test --ignored` (and `just
 //! test-ci-continuation`) expect: it builds nothing itself (the `just`
-//! recipe builds `bee`/`buzz-relay`/`buzz-session-provider` first, matching
+//! recipe builds `bee`/`beekeeper-relay`/`beekeeper-session-provider` first, matching
 //! `test-ci-completion`'s own shape) and asserts the script's exit code.
 //!
 //! Read the script's header comment for what each of its eight numbered PASS
@@ -22,7 +22,7 @@
 //! with its durable `DUPLICATE_OPERATION` refusal) exercise the ordinary,
 //! no-restart path. Steps 6-8 exercise
 //! `docs/CI_CONTINUATION_RECOVERY_SPEC.md` §5's kill/restart composition, all
-//! against the real `buzz-session-provider` binary `kill -9`'d and respawned
+//! against the real `beekeeper-session-provider` binary `kill -9`'d and respawned
 //! over the same state dir:
 //!
 //! - **Scenario A** (step 6): a registration left `waiting`, the provider
@@ -81,7 +81,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 #[test]
-#[ignore = "spawns real buzz-relay/bee/buzz-session-provider processes against a scratch \
+#[ignore = "spawns real beekeeper-relay/bee/beekeeper-session-provider processes against a scratch \
             Postgres database and Redis DB 14; requires Docker Postgres+Redis+MinIO up \
             (`just _ensure-services`) and the three binaries built \
             (`just test-ci-continuation` does both)"]

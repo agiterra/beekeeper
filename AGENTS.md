@@ -246,7 +246,7 @@ Run `just ci` before every PR — it runs repository-wide formatting, lint,
 and static checks; Rust, Tauri, desktop, and mobile tests; and desktop and web
 builds. Clippy passing does not mean fmt passes; run both.
 
-Run `just test` for integration tests if you touched `buzz-relay`,
+Run `just test` for integration tests if you touched `beekeeper-relay`,
 `beekeeper-db`, or `beekeeper-auth` — these require a running Postgres and Redis.
 
 **Pre-commit hooks** are installed automatically by `just setup` and auto-fix
@@ -283,7 +283,7 @@ Additional rules:
 
 **Prefer Nostr events over new HTTP endpoints**: For new feature work, model
 the operation as a Nostr event (new kind in `beekeeper-core/src/kind.rs`, handler
-in `buzz-relay`) rather than adding endpoint-specific JSON APIs. HTTP is
+in `beekeeper-relay`) rather than adding endpoint-specific JSON APIs. HTTP is
 reserved for things that genuinely need an HTTP-only surface: media upload/download
 (Blossom), webhooks, git smart HTTP, NIP-11/NIP-05 metadata, health checks,
 and the generic Nostr bridge endpoints:
@@ -310,7 +310,7 @@ channel carry its id in their `d` tag instead: kind:39000 (metadata),
 kind:39001, kind:39002 (membership). `get_channels` resolves a user's channels
 from the `d` tag of their kind:39002 events, not from `h`.
 
-**Agent-facing operations go in `beekeeper-cli`**: New agent-facing features belong in `beekeeper-cli` — add a subcommand there first, then wire the REST/WebSocket call in `client.rs`. `buzz-dev-mcp` (shell + file tools for `buzz-agent`) is separate.
+**Agent-facing operations go in `beekeeper-cli`**: New agent-facing features belong in `beekeeper-cli` — add a subcommand there first, then wire the REST/WebSocket call in `client.rs`. `beekeeper-dev-mcp` (shell + file tools for `buzz-agent`) is separate.
 
 **Workflow conditions**: `beekeeper-workflow` uses
 [evalexpr](https://docs.rs/evalexpr) for condition evaluation. Keep expressions
@@ -362,9 +362,9 @@ consumed internally by `bee git check`. Full field reference:
 ## Agent CLI (`beekeeper-cli`)
 
 `bee` is the agent-first CLI. Auth env vars
-(`BUZZ_RELAY_URL`, `BUZZ_PRIVATE_KEY`, `BUZZ_AUTH_TAG`) are auto-injected
+(`BEEKEEPER_RELAY_URL`, `BEEKEEPER_PRIVATE_KEY`, `BEEKEEPER_AUTH_TAG`) are auto-injected
 by the ACP harness into managed agent subprocesses. In development, set
-`BUZZ_PRIVATE_KEY` and `BUZZ_RELAY_URL` in your environment manually.
+`BEEKEEPER_PRIVATE_KEY` and `BEEKEEPER_RELAY_URL` in your environment manually.
 
 ### Building the CLI
 

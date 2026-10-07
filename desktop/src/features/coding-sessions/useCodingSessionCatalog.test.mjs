@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildCodingSessionTargetKey } from "./lib/codingSessionCommand.ts";
-import { BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA } from "./lib/codingSessionTranscriptPresentation.ts";
-import { BUZZ_CODING_SESSION_METADATA_SCHEMA } from "./lib/codingSessionTrustedIngress.ts";
+import { BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA } from "./lib/codingSessionTranscriptPresentation.ts";
+import { BEEKEEPER_CODING_SESSION_METADATA_SCHEMA } from "./lib/codingSessionTrustedIngress.ts";
 import { mergeTrustedCodingSessionIngress } from "./useCodingSessionCatalog.ts";
 
 const CHANNEL_ID = "channel-1";
@@ -29,7 +29,7 @@ function metadataEntry({
     targetKey: buildCodingSessionTargetKey(target),
     signerPubkey,
     metadata: {
-      schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
       session: target,
       projectRef: "30621:owner:agiterra",
       repoRef: null,
@@ -70,7 +70,7 @@ function transcriptEntry({
     targetKey: buildCodingSessionTargetKey(target),
     signerPubkey,
     transcript: {
-      schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
       session: target,
       eventSeq,
       timestamp,

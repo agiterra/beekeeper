@@ -506,7 +506,7 @@ export const CODING_SESSION_POLICY_STATED_NOT_ENFORCED =
  * B2.4 shipped its consumer: `exhausted_umbrella_budget`
  * (`crates/beekeeper-session-provider/src/commands.rs`), reached from the 44220
  * turn gate and from a create's first turn, which override
- * `BUZZ_CSP_TURN_BUDGET` for that umbrella. The umbrella's founder is still
+ * `BEEKEEPER_CSP_TURN_BUDGET` for that umbrella. The umbrella's founder is still
  * never refused, and a policy published while a seat is already running does
  * not bind until that umbrella's next create or resume — POLICY.md §4.1.
  *

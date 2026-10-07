@@ -162,7 +162,7 @@ impl Drop for SttPipeline {
 /// Previous value (28 frames / 450 ms) felt sluggish in conversation.
 ///
 /// This window is a turn-taking quality knob, not a latency lever: an earlier
-/// env override (`BUZZ_STT_FLUSH_MS`) let it be lowered to 150 ms, which split
+/// env override (`BEEKEEPER_STT_FLUSH_MS`) let it be lowered to 150 ms, which split
 /// natural mid-sentence pauses into separate messages and confused the
 /// listening agents. Reverted — the window is fixed at the production value.
 const SILENCE_FLUSH_FRAMES: usize = 19;
@@ -194,23 +194,23 @@ const RECV_TIMEOUT: Duration = Duration::from_millis(50);
 const STT_NUM_THREADS: i32 = 1;
 
 /// EXPERIMENTAL (latency bench): override recognizer intra-op threads via
-/// `BUZZ_STT_THREADS`. Default preserves the production single thread.
+/// `BEEKEEPER_STT_THREADS`. Default preserves the production single thread.
 fn stt_num_threads() -> i32 {
-    std::env::var("BUZZ_STT_THREADS")
+    std::env::var("BEEKEEPER_STT_THREADS")
         .ok()
         .and_then(|v| v.parse::<i32>().ok())
         .filter(|&n| n >= 1)
         .unwrap_or(STT_NUM_THREADS)
 }
 
-/// EXPERIMENTAL (latency bench): `BUZZ_STT_SPECULATIVE=1` starts the Parakeet
+/// EXPERIMENTAL (latency bench): `BEEKEEPER_STT_SPECULATIVE=1` starts the Parakeet
 /// decode at the FIRST silent VAD frame instead of after the full flush
 /// window, overlapping the ~150-250 ms decode with the silence wait. If
 /// speech resumes, the speculative result is discarded. When silence holds
 /// to the flush threshold the transcript is emitted immediately, so the STT
 /// leg collapses to ~max(flush window, decode time).
 fn stt_speculative_decode() -> bool {
-    std::env::var("BUZZ_STT_SPECULATIVE").is_ok_and(|v| v == "1")
+    std::env::var("BEEKEEPER_STT_SPECULATIVE").is_ok_and(|v| v == "1")
 }
 
 fn stt_worker(

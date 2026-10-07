@@ -1,6 +1,6 @@
 //! Media storage, validation, and thumbnail generation for Beekeeper.
 //!
-//! Library crate — no Axum dependency for handlers. Axum handlers live in `buzz-relay`.
+//! Library crate — no Axum dependency for handlers. Axum handlers live in `beekeeper-relay`.
 
 pub mod auth;
 pub mod bucket_index;

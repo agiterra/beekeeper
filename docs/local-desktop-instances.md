@@ -25,8 +25,8 @@ just prod-desktop tag=build/2026-08-12 # or pinned
 ```
 
 `scripts/local-prod-build.sh` builds in the detached worktree
-`~/Code/lightyear/buzz-prod` (override: `BUZZ_PROD_WORKTREE`): release
-sidecars + `buzz-session-provider` (added to the bundle via
+`~/Code/lightyear/buzz-prod` (override: `BEEKEEPER_PROD_WORKTREE`): release
+sidecars + `beekeeper-session-provider` (added to the bundle via
 `desktop/src-tauri/tauri.local-prod.conf.json`), then
 `pnpm tauri build --bundles app`, verifies the bundle, and installs to
 `/Applications` (refuses while the app is running; `--no-install` to skip).
@@ -53,7 +53,7 @@ relay. The worktree's `target/` dirs cost 15–25 GB; `cargo clean` in
 ## Dev instance (zero keychain prompts)
 
 ```bash
-export BUZZ_DESKTOP_NOKEYRING=1   # once, in ~/.zshrc
+export BEEKEEPER_DESKTOP_NOKEYRING=1   # once, in ~/.zshrc
 cd ~/Code/lightyear/buzz          # main checkout, parked on integrated
 just desktop-standalone
 ```

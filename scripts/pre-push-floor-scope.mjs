@@ -370,7 +370,7 @@ export function desktopTestPlan(paths, existsFn) {
 // ── CLI entry: the only impure part ──────────────────────────────────────────
 // Reads changed paths on stdin (one per line) and prints the scope as JSON.
 // The graph comes from `cargo metadata --no-deps` unless
-// BUZZ_PRE_PUSH_FLOOR_GRAPH names a JSON file holding one, which is how
+// BEEKEEPER_PRE_PUSH_FLOOR_GRAPH names a JSON file holding one, which is how
 // `scripts/test-pre-push-floor.sh` keeps its cargo stub honest about how many
 // times the floor really invokes cargo.
 async function main() {
@@ -382,7 +382,7 @@ async function main() {
   const paths = stdin.split("\n").filter((line) => line.trim() !== "");
 
   let graph;
-  const injected = process.env.BUZZ_PRE_PUSH_FLOOR_GRAPH;
+  const injected = process.env.BEEKEEPER_PRE_PUSH_FLOOR_GRAPH;
   if (injected) {
     graph = JSON.parse(readFileSync(injected, "utf8"));
   } else {

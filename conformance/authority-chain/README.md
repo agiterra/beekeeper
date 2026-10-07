@@ -45,7 +45,7 @@ it with the transition's own id.
 | --- | --- |
 | `beekeeper-core`'s transition decoder (shared by the relay's ingest and `beekeeper-db`) | `crates/beekeeper-core/src/coding_session_authority_transition_project_action_tests.rs` |
 | `beekeeper-cli`'s receipt-backed chain projection (`bee sessions report`/`hire`/`operation get`) | `crates/beekeeper-cli/src/commands/sessions/operations_receipt_tests.rs` |
-| `buzz-session-provider`'s acceptance-receipt fence | `crates/beekeeper-session-provider/src/authority.rs` |
+| `beekeeper-session-provider`'s acceptance-receipt fence | `crates/beekeeper-session-provider/src/authority.rs` |
 | The desktop TypeScript timeline decoder | `desktop/src/features/coding-sessions/lib/codingSessionAuthorityConformance.test.mjs` |
 
 The provider deliberately tolerates *unknown* receipt keys (see

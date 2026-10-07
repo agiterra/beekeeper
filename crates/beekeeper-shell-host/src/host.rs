@@ -103,7 +103,7 @@ pub fn run(opts: HostOptions) -> i32 {
     }) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("buzz-shell-host: openpty failed: {e}");
+            eprintln!("beekeeper-shell-host: openpty failed: {e}");
             return 1;
         }
     };
@@ -114,7 +114,7 @@ pub fn run(opts: HostOptions) -> i32 {
     let mut child = match pair.slave.spawn_command(builder) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("buzz-shell-host: spawn {} failed: {e}", opts.shell);
+            eprintln!("beekeeper-shell-host: spawn {} failed: {e}", opts.shell);
             return 1;
         }
     };
@@ -131,14 +131,14 @@ pub fn run(opts: HostOptions) -> i32 {
     let mut reader = match pair.master.try_clone_reader() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("buzz-shell-host: clone reader failed: {e}");
+            eprintln!("beekeeper-shell-host: clone reader failed: {e}");
             return 1;
         }
     };
     let writer = match pair.master.take_writer() {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("buzz-shell-host: take writer failed: {e}");
+            eprintln!("beekeeper-shell-host: take writer failed: {e}");
             return 1;
         }
     };
@@ -175,14 +175,14 @@ pub fn run(opts: HostOptions) -> i32 {
         created_at: opts.created_at,
     };
     if let Err(e) = receipt.write(&opts.hosts_dir) {
-        eprintln!("buzz-shell-host: failed to write receipt: {e}");
+        eprintln!("beekeeper-shell-host: failed to write receipt: {e}");
     }
 
     let listener = match bind_socket(&opts.socket_path) {
         Ok(l) => l,
         Err(e) => {
             eprintln!(
-                "buzz-shell-host: bind {} failed: {e}",
+                "beekeeper-shell-host: bind {} failed: {e}",
                 opts.socket_path.display()
             );
             return 1;
@@ -263,7 +263,7 @@ fn serve(
 ) {
     listener
         .set_nonblocking(true)
-        .unwrap_or_else(|e| eprintln!("buzz-shell-host: set_nonblocking failed: {e}"));
+        .unwrap_or_else(|e| eprintln!("beekeeper-shell-host: set_nonblocking failed: {e}"));
     loop {
         match listener.accept() {
             Ok((stream, _addr)) => {
@@ -279,7 +279,7 @@ fn serve(
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => {
-                eprintln!("buzz-shell-host: accept failed: {e}");
+                eprintln!("beekeeper-shell-host: accept failed: {e}");
                 return;
             }
         }
@@ -306,13 +306,13 @@ fn register_and_serve_client(
     // anything, hits `WouldBlock`, and the thread exits immediately, silently
     // dropping every Input/Resize/Kill/SetTitle frame the client ever sends.
     if let Err(e) = stream.set_nonblocking(false) {
-        eprintln!("buzz-shell-host: failed to clear client nonblocking flag: {e}");
+        eprintln!("beekeeper-shell-host: failed to clear client nonblocking flag: {e}");
     }
 
     let mut write_half = match stream.try_clone() {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("buzz-shell-host: client clone failed: {e}");
+            eprintln!("beekeeper-shell-host: client clone failed: {e}");
             return;
         }
     };

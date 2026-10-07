@@ -234,7 +234,7 @@ pub struct LlmResponse {
 /// Mirrors `beekeeper_core::agent_turn_metric::PricingIdentity` but is local to
 /// `buzz-agent` (which does not depend on `buzz-core`). The two structs have
 /// the same camelCase wire representation and are deserialized identically by
-/// `buzz-acp`.
+/// `beekeeper-acp`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PricingIdentity {

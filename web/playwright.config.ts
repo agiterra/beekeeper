@@ -1,9 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
 // Parallel worktrees each run their own preview server; E2E_PORT (or the
-// older BUZZ_E2E_PORT) keeps them apart, in the same order the desktop config
+// older BEEKEEPER_E2E_PORT) keeps them apart, in the same order the desktop config
 // reads them (desktop/tests/helpers/previewOrigin.ts).
-const PORT = Number(process.env.E2E_PORT || process.env.BUZZ_E2E_PORT || 4173);
+const PORT = Number(
+  process.env.E2E_PORT || process.env.BEEKEEPER_E2E_PORT || 4173,
+);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({

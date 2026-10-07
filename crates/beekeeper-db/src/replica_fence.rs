@@ -84,7 +84,7 @@ pub const FENCE_CLOCK_MARGIN_SECS: i64 = 5;
 /// How often the probe samples the writer and commits a heartbeat token.
 ///
 /// 500ms keeps the cadence at least 2x under the smallest sensible bounded
-/// budget (`BUZZ_REPLICA_READ_MAX_AGE_MS`, deploy plan 1000ms) so
+/// budget (`BEEKEEPER_REPLICA_READ_MAX_AGE_MS`, deploy plan 1000ms) so
 /// eligibility doesn't flap between beats. Cost is one single-row UPDATE
 /// tuple of WAL per beat per pod — ~20 beats/s fleet-wide, <0.1% of the
 /// writer.

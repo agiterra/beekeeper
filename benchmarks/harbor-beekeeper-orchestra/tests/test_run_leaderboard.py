@@ -101,7 +101,7 @@ def test_command_uses_standard_settings_only(args, binaries, agent_binaries):
 
 
 def test_agent_binaries_must_exist(tmp_path):
-    with pytest.raises(SystemExit, match="buzz-dev-mcp"):
+    with pytest.raises(SystemExit, match="beekeeper-dev-mcp"):
         run_leaderboard.find_agent_binaries(tmp_path)
 
 

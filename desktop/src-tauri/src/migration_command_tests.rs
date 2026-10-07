@@ -17,9 +17,9 @@ fn reconcile_legacy_command_names_rewrites_renamed_sidecars() {
     reconcile_legacy_command_names_in_file(&dir.path().join("agents/managed-agents.json"));
 
     let records = read_agents_json(dir.path());
-    assert_eq!(records[0]["acp_command"], "buzz-acp");
+    assert_eq!(records[0]["acp_command"], "beekeeper-acp");
     assert_eq!(records[0]["agent_command"], "buzz-agent");
-    assert_eq!(records[0]["mcp_command"], "buzz-dev-mcp");
+    assert_eq!(records[0]["mcp_command"], "beekeeper-dev-mcp");
 }
 
 #[test]
@@ -38,9 +38,9 @@ fn reconcile_legacy_command_names_updates_removed_mcp_server_for_buzz_agent() {
     reconcile_legacy_command_names_in_file(&dir.path().join("agents/managed-agents.json"));
 
     let records = read_agents_json(dir.path());
-    assert_eq!(records[0]["acp_command"], "buzz-acp");
+    assert_eq!(records[0]["acp_command"], "beekeeper-acp");
     assert_eq!(records[0]["agent_command"], "buzz-agent");
-    assert_eq!(records[0]["mcp_command"], "buzz-dev-mcp");
+    assert_eq!(records[0]["mcp_command"], "beekeeper-dev-mcp");
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn reconcile_legacy_command_names_clears_removed_mcp_server_for_goose() {
     reconcile_legacy_command_names_in_file(&dir.path().join("agents/managed-agents.json"));
 
     let records = read_agents_json(dir.path());
-    assert_eq!(records[0]["acp_command"], "buzz-acp");
+    assert_eq!(records[0]["acp_command"], "beekeeper-acp");
     assert_eq!(records[0]["agent_command"], "goose");
     assert_eq!(records[0]["mcp_command"], "");
 }

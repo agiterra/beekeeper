@@ -28,20 +28,20 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 /// Launcher-only path to one private, immutable context package.
-pub const SESSION_CONTEXT_PACKAGE_ENV: &str = "BUZZ_SESSION_CONTEXT_PACKAGE";
+pub const SESSION_CONTEXT_PACKAGE_ENV: &str = "BEEKEEPER_SESSION_CONTEXT_PACKAGE";
 /// Launcher-only directory holding one execution's package generations.
 ///
 /// Preferred over [`SESSION_CONTEXT_PACKAGE_ENV`]: the launching provider may
 /// write a newer verified generation into this directory while the session
 /// runs, and this server serves the newest generation it can fully validate.
-pub const SESSION_CONTEXT_PACKAGE_DIR_ENV: &str = "BUZZ_SESSION_CONTEXT_PACKAGE_DIR";
+pub const SESSION_CONTEXT_PACKAGE_DIR_ENV: &str = "BEEKEEPER_SESSION_CONTEXT_PACKAGE_DIR";
 /// Launcher-only `cs-target` key of the execution this server serves.
 ///
 /// A public wire identity, not a credential: every event that execution
 /// publishes already carries it. Without it `session_inbox` cannot tell which
 /// of the umbrella's commands were addressed to *this* seat, and says so
 /// rather than paging a sibling's mail.
-pub const SESSION_CONTEXT_SELF_TARGET_ENV: &str = "BUZZ_SESSION_CONTEXT_SELF_TARGET";
+pub const SESSION_CONTEXT_SELF_TARGET_ENV: &str = "BEEKEEPER_SESSION_CONTEXT_SELF_TARGET";
 
 const DEFAULT_HISTORY_LIMIT: usize = 200;
 /// The package ceiling itself, imported rather than restated, so the page cap

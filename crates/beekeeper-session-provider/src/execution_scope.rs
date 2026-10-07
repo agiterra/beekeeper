@@ -452,7 +452,7 @@ pub enum WorkspaceAssociation {
 pub struct ScopeInputs<'a> {
     /// What the scope is for.
     pub purpose: ScopePurpose,
-    /// Provider state dir (`BUZZ_CSP_STATE_DIR`).
+    /// Provider state dir (`BEEKEEPER_CSP_STATE_DIR`).
     pub state_dir: &'a Path,
     /// Names the execution's host-owned directory: the session id, or a
     /// host command's own stable name.

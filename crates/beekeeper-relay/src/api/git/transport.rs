@@ -1308,18 +1308,18 @@ pub async fn receive_pack(
     );
     let hooks_dir = repo.path().join("hooks").display().to_string();
     let mut hook_env = vec![
-        ("BUZZ_HOOK_URL", hook_url),
+        ("BEEKEEPER_HOOK_URL", hook_url),
         (
-            "BUZZ_HOOK_SECRET",
+            "BEEKEEPER_HOOK_SECRET",
             state.config.git_hook_hmac_secret.clone(),
         ),
-        ("BUZZ_REPO_ID", repo_name.to_string()),
-        ("BUZZ_REPO_OWNER", params.owner.clone()),
+        ("BEEKEEPER_REPO_ID", repo_name.to_string()),
+        ("BEEKEEPER_REPO_OWNER", params.owner.clone()),
         (
-            "BUZZ_COMMUNITY_ID",
+            "BEEKEEPER_COMMUNITY_ID",
             auth.tenant.community().as_uuid().to_string(),
         ),
-        ("BUZZ_PUSHER_PUBKEY", pusher_hex.clone()),
+        ("BEEKEEPER_PUSHER_PUBKEY", pusher_hex.clone()),
     ];
     hook_env.extend(receive_pack_git_config(hooks_dir));
 
@@ -2516,7 +2516,7 @@ mod track_c_tests {
         let mut config = crate::config::Config::from_env().expect("default config loads");
         config.require_relay_membership = false;
         config.redis_url = "redis://127.0.0.1:1".to_string();
-        config.database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+        config.database_url = std::env::var("BEEKEEPER_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| TEST_DB_URL.to_string());
         let pool = sqlx::PgPool::connect(&config.database_url)
@@ -3564,7 +3564,7 @@ mod sec005_read_gate_tests {
     const TEST_DB_URL: &str = "postgres://buzz:buzz_dev@localhost:5432/buzz"; // sadscan:disable np.postgres.1
 
     async fn setup_db() -> beekeeper_db::Db {
-        let url = std::env::var("BUZZ_TEST_DATABASE_URL")
+        let url = std::env::var("BEEKEEPER_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| TEST_DB_URL.to_string());
         let pool = sqlx::PgPool::connect(&url).await.expect("connect test DB");
@@ -4417,7 +4417,7 @@ mod sec005_read_gate_tests {
     #[tokio::test]
     #[ignore = "requires Postgres"]
     async fn ban_gate_fails_closed_with_503_when_the_store_is_unreachable() {
-        let url = std::env::var("BUZZ_TEST_DATABASE_URL")
+        let url = std::env::var("BEEKEEPER_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| TEST_DB_URL.to_string());
         let pool = sqlx::PgPool::connect(&url).await.expect("connect test DB");

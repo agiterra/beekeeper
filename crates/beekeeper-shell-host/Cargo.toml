@@ -12,7 +12,7 @@ name = "beekeeper_shell_host"
 path = "src/lib.rs"
 
 [[bin]]
-name = "buzz-shell-host"
+name = "beekeeper-shell-host"
 path = "src/main.rs"
 
 [dependencies]

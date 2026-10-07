@@ -6,7 +6,7 @@
 //! model with this machine's Claude credentials. Run it with
 //!
 //! ```text
-//! BUZZ_LIVE_CLAUDE_ACP=<path to claude-agent-acp> \
+//! BEEKEEPER_LIVE_CLAUDE_ACP=<path to claude-agent-acp> \
 //!   cargo test -p beekeeper-acp --test live_background_wake -- --ignored --nocapture
 //! ```
 
@@ -35,8 +35,8 @@ fn short(msg: &serde_json::Value) -> String {
 #[tokio::test]
 #[ignore = "drives the real claude-agent-acp and model; see module docs"]
 async fn an_autonomous_wake_is_read_while_it_happens() {
-    let Ok(adapter) = std::env::var("BUZZ_LIVE_CLAUDE_ACP") else {
-        panic!("set BUZZ_LIVE_CLAUDE_ACP to the claude-agent-acp binary");
+    let Ok(adapter) = std::env::var("BEEKEEPER_LIVE_CLAUDE_ACP") else {
+        panic!("set BEEKEEPER_LIVE_CLAUDE_ACP to the claude-agent-acp binary");
     };
     let dir = std::env::temp_dir().join(format!("bgwake-live-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");

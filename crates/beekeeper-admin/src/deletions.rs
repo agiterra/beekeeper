@@ -1,4 +1,4 @@
-//! Thin `buzz-admin deletions` adapter.
+//! Thin `beekeeper-admin deletions` adapter.
 
 pub use beekeeper_deletion::Command as DeletionsCommand;
 
@@ -13,7 +13,7 @@ mod tests {
 
     #[test]
     fn continuous_worker_command_is_not_exposed() {
-        let command = crate::Cli::try_parse_from(["buzz-admin", "deletions", "worker"]);
+        let command = crate::Cli::try_parse_from(["beekeeper-admin", "deletions", "worker"]);
         assert!(command.is_err());
     }
 }

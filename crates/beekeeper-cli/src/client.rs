@@ -534,8 +534,8 @@ impl BeekeeperClient {
     /// Timeout defaults are tuned for degraded WAN links and can be overridden
     /// via environment variables:
     ///
-    /// - `BUZZ_CONNECT_TIMEOUT_SECS` — TCP connect timeout (default 15 s)
-    /// - `BUZZ_TIMEOUT_SECS` — per-request total timeout (default 30 s)
+    /// - `BEEKEEPER_CONNECT_TIMEOUT_SECS` — TCP connect timeout (default 15 s)
+    /// - `BEEKEEPER_TIMEOUT_SECS` — per-request total timeout (default 30 s)
     ///
     /// A value of zero for either variable is treated as invalid and falls back to the default.
     pub fn new(
@@ -545,8 +545,8 @@ impl BeekeeperClient {
         auth_tag_json: Option<String>,
     ) -> Result<Self, CliError> {
         let http = reqwest::Client::builder()
-            .timeout(env_duration_secs("BUZZ_TIMEOUT_SECS", 30))
-            .connect_timeout(env_duration_secs("BUZZ_CONNECT_TIMEOUT_SECS", 15))
+            .timeout(env_duration_secs("BEEKEEPER_TIMEOUT_SECS", 30))
+            .connect_timeout(env_duration_secs("BEEKEEPER_CONNECT_TIMEOUT_SECS", 15))
             .build()
             .map_err(|e| CliError::Other(e.to_string()))?;
         Ok(Self {
@@ -1417,7 +1417,7 @@ const REMEDY_MEMBERSHIP: &str =
     "the relay's membership gate refused this key: it is not a relay member, and an owner or \
      admin must add it";
 
-/// The membership gate's sentence when `BUZZ_AUTH_TAG` is set.
+/// The membership gate's sentence when `BEEKEEPER_AUTH_TAG` is set.
 ///
 /// An attested seat is admitted *through its owner*
 /// (`beekeeper-relay/src/api/mod.rs` `check_relay_membership`): an attestation that
@@ -1574,7 +1574,7 @@ const REFUSAL_GATES: &[RefusalGate] = &[
     RefusalGate {
         marker: "event pubkey does not match authenticated identity",
         remedy: "the event is signed by a different key than the request authenticated as: sign \
-                 it with the key in `BUZZ_PRIVATE_KEY`",
+                 it with the key in `BEEKEEPER_PRIVATE_KEY`",
         attested_remedy: None,
     },
 ];
@@ -1626,10 +1626,10 @@ pub(crate) const RELAY_REFUSALS_THE_CLI_NAMES: &[&str] = &[
 
 /// Append the CLI's remedy to a refusal the relay just returned.
 ///
-/// Reads `BUZZ_AUTH_TAG` only to know whether this process carries an owner
+/// Reads `BEEKEEPER_AUTH_TAG` only to know whether this process carries an owner
 /// attestation at all; the tag's value is never printed.
 fn decorate_refusal(message: String) -> String {
-    refusal_with_remedy(&message, std::env::var("BUZZ_AUTH_TAG").is_ok())
+    refusal_with_remedy(&message, std::env::var("BEEKEEPER_AUTH_TAG").is_ok())
 }
 
 /// The relay's refusal, plus one sentence naming the gate that refused it.
@@ -1637,7 +1637,7 @@ fn decorate_refusal(message: String) -> String {
 /// A refusal this table does not recognise is returned **verbatim**: the relay
 /// is the authority on its own gates, and advice about the wrong one is worse
 /// than none. That is the whole lesson of item 92, where every 403 carried
-/// "BUZZ_AUTH_TAG … try unsetting it" — advice that would have cost a seat the
+/// "BEEKEEPER_AUTH_TAG … try unsetting it" — advice that would have cost a seat the
 /// git access it demonstrably had.
 ///
 /// The remedy is not conditioned on the HTTP status. The same gate answers
@@ -1661,7 +1661,7 @@ pub(crate) fn refusal_with_remedy(message: &str, attested: bool) -> String {
 }
 
 /// Normalize a relay URL: ws:// → http://, wss:// → https://, strip trailing slash.
-/// BUZZ_RELAY_URL may be ws/wss (copied from MCP config).
+/// BEEKEEPER_RELAY_URL may be ws/wss (copied from MCP config).
 pub fn normalize_relay_url(url: &str) -> String {
     url.replace("wss://", "https://")
         .replace("ws://", "http://")
@@ -1935,7 +1935,7 @@ mod retry_tests {
     #[test]
     fn env_duration_secs_parsing() {
         // All assertions share one env var key; sequential set/remove prevents races.
-        const KEY: &str = "BUZZ_CLI_TEST_DURATION_SECS";
+        const KEY: &str = "BEEKEEPER_CLI_TEST_DURATION_SECS";
 
         // Valid numeric value is parsed.
         std::env::set_var(KEY, "42");
@@ -2687,7 +2687,7 @@ mod tests {
     /// A membership refusal names the membership gate, not the attestation.
     ///
     /// Item 92 (2026-08-29): a hired seat ran `bee git check`, got
-    /// `relay_membership_required`, was told its `BUZZ_AUTH_TAG` "may be stale
+    /// `relay_membership_required`, was told its `BEEKEEPER_AUTH_TAG` "may be stale
     /// or revoked; try unsetting it" — and then pushed successfully with that
     /// same attestation. The advice would have cost it the access it had.
     #[test]

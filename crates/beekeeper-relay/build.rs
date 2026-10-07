@@ -10,7 +10,7 @@
 //! 1. `git rev-parse HEAD` in this crate's own checkout, when `.git` is
 //!    present — a native `cargo build`, or a Docker build stage that `COPY`s
 //!    the full working tree.
-//! 2. `BUZZ_SOURCE_SHA` — the build-arg `Dockerfile` already declares
+//! 2. `BEEKEEPER_SOURCE_SHA` — the build-arg `Dockerfile` already declares
 //!    (`ARG`/`ENV`, consumed here at `cargo build` time) and every build path
 //!    already threads through: `deploy/autodeploy/autodeploy` for hive. This is
 //!    the case `git` cannot answer: the relay's own `.dockerignore` excludes
@@ -18,7 +18,7 @@
 //!    export, which never had one.
 //! 3. `unknown` — a legal, disclosed value, never invented.
 //!
-//! `BUZZ_SOURCE_SHA` is checked first, not the checkout: it is what the
+//! `BEEKEEPER_SOURCE_SHA` is checked first, not the checkout: it is what the
 //! Dockerfile calls the "compile immutable artifact identity" input, and a
 //! packaging pipeline supplying it is stating an intent that should not be
 //! second-guessed by whatever `.git` happens to be lying around in the same
@@ -33,20 +33,20 @@ use std::process::Command;
 include!("src/build_provenance.rs");
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=BUZZ_SOURCE_SHA");
-    println!("cargo:rerun-if-env-changed=BUZZ_SOURCE_COMMIT_COUNT");
+    println!("cargo:rerun-if-env-changed=BEEKEEPER_SOURCE_SHA");
+    println!("cargo:rerun-if-env-changed=BEEKEEPER_SOURCE_COMMIT_COUNT");
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     println!("cargo:rerun-if-changed={manifest_dir}/src");
     watch_git_refs(&manifest_dir);
 
     let (commit, count) = resolve_stamp(&manifest_dir);
-    println!("cargo:rustc-env=BUZZ_RELAY_SOURCE_SHA={commit}");
+    println!("cargo:rustc-env=BEEKEEPER_RELAY_SOURCE_SHA={commit}");
     println!(
-        "cargo:rustc-env=BUZZ_RELAY_SOURCE_COMMIT_COUNT={}",
+        "cargo:rustc-env=BEEKEEPER_RELAY_SOURCE_COMMIT_COUNT={}",
         count.map(|n| n.to_string()).unwrap_or_default()
     );
     println!(
-        "cargo:rustc-env=BUZZ_RELAY_BUILD_TIME={}",
+        "cargo:rustc-env=BEEKEEPER_RELAY_BUILD_TIME={}",
         rfc3339_utc_now()
     );
 }
@@ -55,21 +55,21 @@ fn main() {
 /// resolved **together**, never independently.
 ///
 /// The coupling is the point. A count read from this checkout while the SHA
-/// came from `BUZZ_SOURCE_SHA` would disclose `software_commit` from one
+/// came from `BEEKEEPER_SOURCE_SHA` would disclose `software_commit` from one
 /// history and `software_commit_count` from another: two internally
 /// consistent-looking fields describing different objects, which no consumer
 /// could detect. So a source that answers for the commit answers for the
 /// count or yields none at all.
 ///
-/// 1. `BUZZ_SOURCE_SHA`, paired with `BUZZ_SOURCE_COMMIT_COUNT`. When that
+/// 1. `BEEKEEPER_SOURCE_SHA`, paired with `BEEKEEPER_SOURCE_COMMIT_COUNT`. When that
 ///    var is absent or malformed the count is `None` — deliberately *not*
 ///    falling through to the checkout, whose history is by assumption not
 ///    this commit's.
 /// 2. This checkout's `HEAD`, paired with its own `rev-list --count`.
 /// 3. (`unknown`, `None`).
 fn resolve_stamp(manifest_dir: &str) -> (String, Option<u32>) {
-    if let Some(commit) = env_override("BUZZ_SOURCE_SHA") {
-        let count = std::env::var("BUZZ_SOURCE_COMMIT_COUNT")
+    if let Some(commit) = env_override("BEEKEEPER_SOURCE_SHA") {
+        let count = std::env::var("BEEKEEPER_SOURCE_COMMIT_COUNT")
             .ok()
             .and_then(|value| parse_commit_count(&value));
         return (commit, count);
@@ -100,7 +100,7 @@ fn git_commit_count(manifest_dir: &str) -> Option<u32> {
     parse_commit_count(&git_stdout(manifest_dir, &["rev-list", "--count", "HEAD"])?)
 }
 
-/// `BUZZ_SOURCE_SHA` from the build environment, when it is plausibly a
+/// `BEEKEEPER_SOURCE_SHA` from the build environment, when it is plausibly a
 /// commit. Never invented: an unset or malformed value falls through to the
 /// checkout, then to `unknown` — it is never echoed back unvalidated.
 fn env_override(var: &str) -> Option<String> {

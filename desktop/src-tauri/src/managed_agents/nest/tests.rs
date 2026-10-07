@@ -31,14 +31,14 @@ fn init_nest_dir_prod_sets_buzz() {
 
 #[test]
 fn nest_skill_contains_safe_mention_workflow() {
-    assert!(BUZZ_CLI_SKILL_MD.contains("--mention <hex-or-npub>"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("every presentation-only name that should notify"));
-    assert!(BUZZ_CLI_SKILL_MD
+    assert!(BEEKEEPER_CLI_SKILL_MD.contains("--mention <hex-or-npub>"));
+    assert!(BEEKEEPER_CLI_SKILL_MD.contains("every presentation-only name that should notify"));
+    assert!(BEEKEEPER_CLI_SKILL_MD
         .contains("permits unresolved or ambiguous `@Name` text as presentation-only"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("signed event's `mention_pubkeys`"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("no follow-up verification command is needed"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("Add membership separately only when authorized"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("never changes membership automatically"));
+    assert!(BEEKEEPER_CLI_SKILL_MD.contains("signed event's `mention_pubkeys`"));
+    assert!(BEEKEEPER_CLI_SKILL_MD.contains("no follow-up verification command is needed"));
+    assert!(BEEKEEPER_CLI_SKILL_MD.contains("Add membership separately only when authorized"));
+    assert!(BEEKEEPER_CLI_SKILL_MD.contains("never changes membership automatically"));
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn ensure_nest_creates_skill_file() {
     let skill = root.join(".agents/skills/buzz-cli/SKILL.md");
     assert!(skill.exists(), "SKILL.md should exist at .agents path");
     let content = fs::read_to_string(&skill).unwrap();
-    assert_eq!(content, BUZZ_CLI_SKILL_MD);
+    assert_eq!(content, BEEKEEPER_CLI_SKILL_MD);
 
     // On unix, harness-specific symlinks should resolve to the canonical dir.
     #[cfg(unix)]
@@ -926,7 +926,7 @@ fn refresh_skill_overwrites_on_version_bump() {
 
     let content = fs::read_to_string(&skill_md).unwrap();
     assert_eq!(
-        content, BUZZ_CLI_SKILL_MD,
+        content, BEEKEEPER_CLI_SKILL_MD,
         "SKILL.md must be refreshed on version bump"
     );
 }

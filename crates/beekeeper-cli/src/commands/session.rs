@@ -97,7 +97,7 @@ pub enum SessionCmd {
 /// `session_broker::server`). The default targets the **production** app's
 /// broker; a dev-build app binds `…/buzz-dev/session-broker.sock` instead —
 /// set the env override to reach it.
-const SOCKET_PATH_ENV: &str = "BUZZ_SESSION_BROKER_SOCK";
+const SOCKET_PATH_ENV: &str = "BEEKEEPER_SESSION_BROKER_SOCK";
 const DEFAULT_SOCKET_REL: &str = ".local/state/buzz/session-broker.sock";
 
 pub async fn dispatch(cmd: &SessionCmd, caller: Option<String>) -> Result<(), CliError> {

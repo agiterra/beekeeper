@@ -6,14 +6,14 @@ import 'package:nostr/nostr.dart' as nostr;
 
 /// The mobile reader against a live relay — the NIP-98 binding to the
 /// repository root is the one seam no other suite covers. Skipped unless
-/// `BUZZ_AGENTS_REPO_LIVE` names `<relay http>|<hex key>|<owner>|<repo id>|<path>`:
+/// `BEEKEEPER_AGENTS_REPO_LIVE` names `<relay http>|<hex key>|<owner>|<repo id>|<path>`:
 ///
 /// ```text
-/// BUZZ_AGENTS_REPO_LIVE='http://localhost:3010|<hex>|<owner>|<id>|plans/rpg.md' \
+/// BEEKEEPER_AGENTS_REPO_LIVE='http://localhost:3010|<hex>|<owner>|<id>|plans/rpg.md' \
 ///   flutter test test/features/agents_repo/data/agents_repo_http_client_live_test.dart
 /// ```
 void main() {
-  final spec = Platform.environment['BUZZ_AGENTS_REPO_LIVE'];
+  final spec = Platform.environment['BEEKEEPER_AGENTS_REPO_LIVE'];
   test(
     'tree and raw answer under the repo-root NIP-98 token',
     () async {
@@ -45,6 +45,6 @@ void main() {
         '${parts[4]} blob ${file.blob}',
       );
     },
-    skip: spec == null ? 'BUZZ_AGENTS_REPO_LIVE not set' : false,
+    skip: spec == null ? 'BEEKEEPER_AGENTS_REPO_LIVE not set' : false,
   );
 }

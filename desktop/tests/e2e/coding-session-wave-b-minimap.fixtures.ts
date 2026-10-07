@@ -11,7 +11,7 @@ import {
   buildCodingSessionHandoverTags,
 } from "@/features/coding-sessions/lib/codingSessionHandoverWire";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
@@ -24,7 +24,7 @@ import {
   KIND_CODING_SESSION_TEAM_TRANSACTION,
 } from "@/features/coding-sessions/lib/codingSessionTeamTransactionWire";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   codingSessionTranscriptSemanticKey,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -100,7 +100,7 @@ function metadataEvent(
       ["csm-key", codingSessionMetadataSemanticKey(target)],
     ],
     JSON.stringify({
-      schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
       session: target,
       projectRef: null,
       repoRef: null,
@@ -143,7 +143,7 @@ function transcriptWriter(target: Target, baseCreatedAt: number) {
         ["cst-key", codingSessionTranscriptSemanticKey(target, seq)],
       ],
       JSON.stringify({
-        schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
         session: target,
         eventSeq: seq,
         timestamp: timestampMs,

@@ -239,13 +239,13 @@ impl FromRequestParts<Arc<AppState>> for AuthenticatedUpload {
 }
 
 /// Build per-event upload attribution when upload records are enabled
-/// (`BUZZ_MEDIA_UPLOAD_RECORDS`). Returns `None` when the feature is off —
+/// (`BEEKEEPER_MEDIA_UPLOAD_RECORDS`). Returns `None` when the feature is off —
 /// the upload pipeline then writes no `_uploads/` record at all.
 ///
 /// - `uploader_name` is the uploader's current display name in the bound
 ///   community (best-effort label; lookup failure degrades to absent).
 /// - `net.ip` is read from the operator-configured trusted edge header
-///   (`BUZZ_MEDIA_UPLOAD_IP_HEADER`) and validated as a public IP —
+///   (`BEEKEEPER_MEDIA_UPLOAD_IP_HEADER`) and validated as a public IP —
 ///   fail-empty: missing/malformed/non-public values record nothing. The
 ///   socket address is never used; behind a sidecar it is meaningless, and a
 ///   wrong address is worse than none.

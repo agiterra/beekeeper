@@ -112,32 +112,32 @@ steps:
       # Fresh-clone mtimes defeat incremental compilation anyway, and it
       # roughly triples target-dir disk — off in CI.
       CARGO_INCREMENTAL: "0"
-      BUZZ_TEST_DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
-      BUZZ_TEST_POSTGRES_PASSWORD: buzz_dev
+      BEEKEEPER_TEST_DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
+      BEEKEEPER_TEST_POSTGRES_PASSWORD: buzz_dev
       DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
       REDIS_URL: redis://redis:6379
-      BUZZ_S3_ENDPOINT: http://rustfs:9000
-      BUZZ_S3_ACCESS_KEY: buzz_dev
-      BUZZ_S3_SECRET_KEY: buzz_dev_secret
+      BEEKEEPER_S3_ENDPOINT: http://rustfs:9000
+      BEEKEEPER_S3_ACCESS_KEY: buzz_dev
+      BEEKEEPER_S3_SECRET_KEY: buzz_dev_secret
       # The Redis-gated tunnel/mesh tests return early — reporting a pass
       # without asserting — when Redis is unreachable. Redis is a declared
       # service here, so a skip means the service is broken, not absent: this
       # turns that case into a failure instead of a silent green.
-      BUZZ_TEST_REQUIRE_REDIS: "1"
+      BEEKEEPER_TEST_REQUIRE_REDIS: "1"
     commands:
       # The repo pins its toolchain via hermit shims in bin/
       - export PATH="$CI_WORKSPACE/bin:$PATH"
       # The relay's release image builds with `--locked`, but `cargo test` does
       # not, so a Cargo.lock that has drifted from the manifests passes this
       # gate and then fails the deploy build. That is exactly how the stale
-      # buzz-shell-host closure reached `integrated` on 2026-08-18 and blocked
+      # beekeeper-shell-host closure reached `integrated` on 2026-08-18 and blocked
       # the relay from shipping. Seconds, and it fails before anything costly.
       - cargo metadata --locked --format-version 1 > /dev/null
       # The DB-backed relay/db unit tests need the migrated schema, not just a
       # reachable postgres (upstream CI has the same apply-schema step).
       - cargo run -p beekeeper-admin -- migrate
       # mesh_demo runs for real here (redis is a declared service, and
-      # BUZZ_TEST_REQUIRE_REDIS above makes a skip fatal rather than silent),
+      # BEEKEEPER_TEST_REQUIRE_REDIS above makes a skip fatal rather than silent),
       # but its loopback-QUIC echo cannot complete inside this docker-in-incus
       # runner (10s ECHO_TIMEOUT expires consistently, isolated or not).
       # Known runner-env limitation — see docs/INTEGRATION.md. The echo test
@@ -157,13 +157,13 @@ steps:
       # line, marking them would have quietly deleted their CI coverage to make
       # a local count look tidy. Three module filters, OR'd by libtest (the
       # same shape `just test-genesis` uses). Extend the filters when you mark
-      # another Postgres-gated buzz-relay test.
+      # another Postgres-gated beekeeper-relay test.
       - cargo test -p beekeeper-relay --lib -- --ignored api::media::tests api::admin::tests handlers::event::tests::fanout_access
       # CI completion proves atomic storage and the real bee subscriber against
       # a local relay. These are ignored in the infrastructure-free unit run.
       - cargo test -p beekeeper-db --lib ci_result -- --ignored --test-threads=1
       - cargo build -p beekeeper-cli --bin bee
-      - BUZZ_TEST_BEE_BIN="$CARGO_TARGET_DIR/debug/bee" cargo test -p beekeeper-relay --lib ci_result -- --ignored --test-threads=1
+      - BEEKEEPER_TEST_BEE_BIN="$CARGO_TARGET_DIR/debug/bee" cargo test -p beekeeper-relay --lib ci_result -- --ignored --test-threads=1
 
   desktop:
     image: buzz-ci:1
@@ -226,13 +226,13 @@ steps:
       # Same env as the rust step — beekeeper-agent previously ran inside it.
       CARGO_TARGET_DIR: /ci-target
       CARGO_INCREMENTAL: "0"
-      BUZZ_TEST_DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
-      BUZZ_TEST_POSTGRES_PASSWORD: buzz_dev
+      BEEKEEPER_TEST_DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
+      BEEKEEPER_TEST_POSTGRES_PASSWORD: buzz_dev
       DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
       REDIS_URL: redis://redis:6379
-      BUZZ_S3_ENDPOINT: http://rustfs:9000
-      BUZZ_S3_ACCESS_KEY: buzz_dev
-      BUZZ_S3_SECRET_KEY: buzz_dev_secret
+      BEEKEEPER_S3_ENDPOINT: http://rustfs:9000
+      BEEKEEPER_S3_ACCESS_KEY: buzz_dev
+      BEEKEEPER_S3_SECRET_KEY: buzz_dev_secret
     commands:
       - export PATH="$CI_WORKSPACE/bin:$PATH"
       # Runs the whole suite: the fake_llm steer/cancel timing races were

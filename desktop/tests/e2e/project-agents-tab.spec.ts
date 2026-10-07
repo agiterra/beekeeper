@@ -3,7 +3,7 @@ import { finalizeEvent, generateSecretKey } from "nostr-tools/pure";
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_METADATA_TAG_VERSION,
   codingSessionMetadataSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
@@ -108,7 +108,7 @@ function seatMetadataEvent(input: {
         ["csm-key", codingSessionMetadataSemanticKey(target)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: target,
         projectRef: PROJECT_ADDRESS,
         repoRef: null,

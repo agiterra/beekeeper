@@ -2,7 +2,7 @@
 //!
 //! These tests moved here with the code they cover, from the desktop app's
 //! `session_provider::tests`. They are the assertions a reader of the spawn
-//! path cannot make by eye: the exact `BUZZ_AUTH_TAG` shape, the record file's
+//! path cannot make by eye: the exact `BEEKEEPER_AUTH_TAG` shape, the record file's
 //! camelCase wire keys, and which variables are exported only when somebody
 //! actually chose a value. Every one of them now also covers `beekeeper-host`,
 //! which is the point of the move — the properties belong to the contract, not
@@ -201,7 +201,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         relay_url: RELAY,
         state_dir: Path::new("/tmp/session-provider/aaaa"),
         agent_command: Some(PathBuf::from("/opt/buzz/bin/claude-agent-acp")),
-        context_mcp_command: Some(PathBuf::from("/opt/buzz/bin/buzz-dev-mcp")),
+        context_mcp_command: Some(PathBuf::from("/opt/buzz/bin/beekeeper-dev-mcp")),
         claude_code_executable: Some(PathBuf::from("/usr/local/bin/claude")),
         runtimes: sample_runtimes(),
         augmented_path: Some("/opt/buzz/bin:/usr/bin".into()),
@@ -220,16 +220,19 @@ fn env_carries_the_required_provider_contract() {
     let env = env_for(&record);
 
     assert_eq!(
-        env.get("BUZZ_PRIVATE_KEY").map(String::as_str),
+        env.get("BEEKEEPER_PRIVATE_KEY").map(String::as_str),
         Some("nsec1provider")
     );
-    assert_eq!(env.get("BUZZ_RELAY_URL").map(String::as_str), Some(RELAY));
     assert_eq!(
-        env.get("BUZZ_CSP_STATE_DIR").map(String::as_str),
+        env.get("BEEKEEPER_RELAY_URL").map(String::as_str),
+        Some(RELAY)
+    );
+    assert_eq!(
+        env.get("BEEKEEPER_CSP_STATE_DIR").map(String::as_str),
         Some("/tmp/session-provider/aaaa")
     );
     assert_eq!(
-        env.get("BUZZ_CSP_PROJECTS_FILE").map(String::as_str),
+        env.get("BEEKEEPER_CSP_PROJECTS_FILE").map(String::as_str),
         Some(
             Path::new("/tmp/session-provider/aaaa")
                 .join(PROJECTS_FILE_NAME)
@@ -238,16 +241,17 @@ fn env_carries_the_required_provider_contract() {
         )
     );
     assert_eq!(
-        env.get("BUZZ_CSP_INSTANCE_ID").map(String::as_str),
+        env.get("BEEKEEPER_CSP_INSTANCE_ID").map(String::as_str),
         Some(record.instance_id.as_str())
     );
     assert_eq!(
-        env.get("BUZZ_CSP_AGENT_COMMAND").map(String::as_str),
+        env.get("BEEKEEPER_CSP_AGENT_COMMAND").map(String::as_str),
         Some("/opt/buzz/bin/claude-agent-acp")
     );
     assert_eq!(
-        env.get("BUZZ_CSP_CONTEXT_MCP_COMMAND").map(String::as_str),
-        Some("/opt/buzz/bin/buzz-dev-mcp")
+        env.get("BEEKEEPER_CSP_CONTEXT_MCP_COMMAND")
+            .map(String::as_str),
+        Some("/opt/buzz/bin/beekeeper-dev-mcp")
     );
     assert_eq!(
         env.get("CLAUDE_CODE_EXECUTABLE").map(String::as_str),
@@ -262,18 +266,18 @@ fn env_carries_the_required_provider_contract() {
     );
 }
 
-/// `BUZZ_CSP_RUNTIMES` must round-trip through the exact parser the sidecar
+/// `BEEKEEPER_CSP_RUNTIMES` must round-trip through the exact parser the sidecar
 /// uses — the env map is the real interface, so this is the drift check.
 #[test]
 fn env_carries_a_parseable_runtime_list() {
     let env = env_for(&sample_record());
-    let raw = env.get("BUZZ_CSP_RUNTIMES").expect("runtimes in env");
+    let raw = env.get("BEEKEEPER_CSP_RUNTIMES").expect("runtimes in env");
     let parsed = beekeeper_core::coding_session_runtime::parse_runtime_descriptors(raw)
         .expect("the sidecar parser must accept what the host writes");
     assert_eq!(parsed, sample_runtimes());
     // The legacy variables stay exported alongside the list, so an older
     // sidecar binary keeps working under a newer desktop.
-    assert!(env.contains_key("BUZZ_CSP_AGENT_COMMAND"));
+    assert!(env.contains_key("BEEKEEPER_CSP_AGENT_COMMAND"));
     assert!(env.contains_key("CLAUDE_CODE_EXECUTABLE"));
 }
 
@@ -299,7 +303,7 @@ fn env_omits_an_empty_runtime_list() {
         turn_budget: None,
         app_checkout: None,
     });
-    assert!(!env.contains_key("BUZZ_CSP_RUNTIMES"));
+    assert!(!env.contains_key("BEEKEEPER_CSP_RUNTIMES"));
     // Without an augmented PATH the child inherits the process PATH unchanged.
     assert!(!env.contains_key("PATH"));
 }
@@ -310,7 +314,7 @@ fn env_omits_an_empty_runtime_list() {
 fn env_omits_the_auth_tag_when_unattested() {
     let mut record = sample_record();
     record.auth_tag = None;
-    assert!(!env_for(&record).contains_key("BUZZ_AUTH_TAG"));
+    assert!(!env_for(&record).contains_key("BEEKEEPER_AUTH_TAG"));
 }
 
 /// The person's ceiling has to reach the child, and an unset one must stay
@@ -339,10 +343,10 @@ fn env_exports_the_raw_frame_switch_only_when_it_is_asked_for() {
         app_checkout: None,
     };
 
-    assert!(!build_provider_env(&base(false)).contains_key("BUZZ_CSP_EMIT_RAW_SDK_FRAMES"));
+    assert!(!build_provider_env(&base(false)).contains_key("BEEKEEPER_CSP_EMIT_RAW_SDK_FRAMES"));
     assert_eq!(
         build_provider_env(&base(true))
-            .get("BUZZ_CSP_EMIT_RAW_SDK_FRAMES")
+            .get("BEEKEEPER_CSP_EMIT_RAW_SDK_FRAMES")
             .map(String::as_str),
         Some("true")
     );
@@ -407,17 +411,17 @@ fn env_exports_the_session_ceiling_only_when_one_is_chosen() {
         app_checkout: None,
     };
 
-    assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_MAX_SESSIONS"));
+    assert!(!build_provider_env(&base(None)).contains_key("BEEKEEPER_CSP_MAX_SESSIONS"));
     assert_eq!(
         build_provider_env(&base(Some(9)))
-            .get("BUZZ_CSP_MAX_SESSIONS")
+            .get("BEEKEEPER_CSP_MAX_SESSIONS")
             .map(String::as_str),
         Some("9")
     );
     // Zero is unlimited, not "unset": it must be exported like any other choice.
     assert_eq!(
         build_provider_env(&base(Some(0)))
-            .get("BUZZ_CSP_MAX_SESSIONS")
+            .get("BEEKEEPER_CSP_MAX_SESSIONS")
             .map(String::as_str),
         Some("0")
     );
@@ -446,10 +450,10 @@ fn env_exports_the_turn_idle_timeout_only_when_one_is_chosen() {
         app_checkout: None,
     };
 
-    assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_IDLE_TIMEOUT"));
+    assert!(!build_provider_env(&base(None)).contains_key("BEEKEEPER_CSP_IDLE_TIMEOUT"));
     assert_eq!(
         build_provider_env(&base(Some(3_600)))
-            .get("BUZZ_CSP_IDLE_TIMEOUT")
+            .get("BEEKEEPER_CSP_IDLE_TIMEOUT")
             .map(String::as_str),
         Some("3600")
     );
@@ -477,16 +481,16 @@ fn env_exports_the_crew_turn_budget_only_when_one_is_chosen() {
         app_checkout: None,
     };
 
-    assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_TURN_BUDGET"));
+    assert!(!build_provider_env(&base(None)).contains_key("BEEKEEPER_CSP_TURN_BUDGET"));
     assert_eq!(
         build_provider_env(&base(Some(50)))
-            .get("BUZZ_CSP_TURN_BUDGET")
+            .get("BEEKEEPER_CSP_TURN_BUDGET")
             .map(String::as_str),
         Some("50")
     );
     assert_eq!(
         build_provider_env(&base(Some(0)))
-            .get("BUZZ_CSP_TURN_BUDGET")
+            .get("BEEKEEPER_CSP_TURN_BUDGET")
             .map(String::as_str),
         Some("0")
     );
@@ -589,7 +593,7 @@ fn an_ambient_bee_is_cleared_before_the_provider_child_starts() {
 /// The host's own key variables must not survive into the provider child.
 ///
 /// The host resolves the provider key from [`PRIVATE_KEY_VAR`] or
-/// [`KEY_FILE_VAR`] and passes it on as `BUZZ_PRIVATE_KEY`, which the agent
+/// [`KEY_FILE_VAR`] and passes it on as `BEEKEEPER_PRIVATE_KEY`, which the agent
 /// fence strips. The `BEEKEEPER_HOST_*` names are outside that fence's `BUZZ_`
 /// prefix, so before this list named them a host launched with either one set
 /// handed the raw key to the provider and, through it, to every agent.
@@ -674,7 +678,7 @@ fn env_declares_the_steer_idle_guard_for_claude_and_omits_it_for_codex() {
         turn_budget: None,
         app_checkout: None,
     });
-    let raw = env.get("BUZZ_CSP_RUNTIMES").expect("runtimes in env");
+    let raw = env.get("BEEKEEPER_CSP_RUNTIMES").expect("runtimes in env");
     let list: Vec<serde_json::Value> = serde_json::from_str(raw).expect("json array");
     let claude = list
         .iter()

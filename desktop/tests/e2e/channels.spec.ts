@@ -4519,10 +4519,10 @@ test("stopping a managed bot in one community leaves its other communities runni
 }) => {
   const agentPubkey = TEST_IDENTITIES.charlie.pubkey;
   // Must match the relay of the community seeded by the mock bridge
-  // (`seedDefaultCommunity` follows BUZZ_E2E_RELAY_URL); the agent also has a
+  // (`seedDefaultCommunity` follows BEEKEEPER_E2E_RELAY_URL); the agent also has a
   // live runtime in a second community on another relay.
   const activeRelayUrl = (
-    process.env.BUZZ_E2E_RELAY_URL ?? "http://localhost:3000"
+    process.env.BEEKEEPER_E2E_RELAY_URL ?? "http://localhost:3000"
   ).replace(/^http/, "ws");
   const otherRelayUrl = "ws://other-community.example";
 

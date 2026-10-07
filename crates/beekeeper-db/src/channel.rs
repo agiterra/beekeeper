@@ -1686,7 +1686,7 @@ mod tests {
 
     const TEST_DB_URL: &str = "postgres://buzz:buzz_dev@localhost:5432/buzz"; // sadscan:disable np.postgres.1 -- local test-only credentials
 
-    /// Resolve the test database, honouring `BUZZ_TEST_DATABASE_URL` before
+    /// Resolve the test database, honouring `BEEKEEPER_TEST_DATABASE_URL` before
     /// falling back to the stock dev URL.
     ///
     /// The literal is not a usable default everywhere: `localhost` resolves to
@@ -1696,7 +1696,7 @@ mod tests {
     /// reach. The env var is the escape hatch, and it is what the rest of the
     /// crate already reads.
     fn test_db_url() -> String {
-        std::env::var("BUZZ_TEST_DATABASE_URL").unwrap_or_else(|_| TEST_DB_URL.to_string())
+        std::env::var("BEEKEEPER_TEST_DATABASE_URL").unwrap_or_else(|_| TEST_DB_URL.to_string())
     }
 
     async fn setup_pool() -> PgPool {

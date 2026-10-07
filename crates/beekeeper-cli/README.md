@@ -12,11 +12,11 @@ cargo install --path crates/beekeeper-cli
 
 | Env Var | Mode | Use Case |
 |---------|------|----------|
-| `BUZZ_PRIVATE_KEY` | NIP-98 Schnorr signature | Agents with a keypair |
+| `BEEKEEPER_PRIVATE_KEY` | NIP-98 Schnorr signature | Agents with a keypair |
 
 ```bash
 # Private key identity (NIP-98 signed requests)
-export BUZZ_PRIVATE_KEY="nsec1..."
+export BEEKEEPER_PRIVATE_KEY="nsec1..."
 bee channels list
 ```
 
@@ -26,7 +26,7 @@ All output is JSON on stdout. Errors are JSON on stderr. Exit codes: 0=ok, 1=use
 
 ```bash
 # Set relay URL (defaults to http://localhost:3000)
-export BUZZ_RELAY_URL="https://relay.example.com"
+export BEEKEEPER_RELAY_URL="https://relay.example.com"
 
 # Messages
 bee messages send --channel <uuid> --content "Hello"

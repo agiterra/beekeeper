@@ -114,7 +114,7 @@ function foundedSetupInvokeInitScript(config: {
       acp_command: "sprig",
       agent_command: "buzz-agent",
       agent_args: [],
-      mcp_command: "buzz-dev-mcp",
+      mcp_command: "beekeeper-dev-mcp",
       turn_timeout_seconds: 300,
       idle_timeout_seconds: null,
       max_turn_duration_seconds: null,

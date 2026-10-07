@@ -829,7 +829,7 @@ export type MessageModeration = {
  * than per row — it owns a query subscription and a mutation observer.
  *
  * Standing matches the two authorities the relay grants for `DeleteMessage`
- * (`decide_authority`, `buzz-relay/src/handlers/moderation_authz.rs`):
+ * (`decide_authority`, `beekeeper-relay/src/handlers/moderation_authz.rs`):
  * community `owner`/`admin` from `relay_members`, **or** channel
  * `owner`/`admin` from `channel_members` within that channel. Implementing only
  * the first left a channel owner with no `relay_members` row unable to moderate

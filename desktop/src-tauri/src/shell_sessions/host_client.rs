@@ -1,5 +1,5 @@
 //! Client side of the detached shell host: the desktop app's connection to a
-//! `buzz-shell-host` process over its Unix socket.
+//! `beekeeper-shell-host` process over its Unix socket.
 //!
 //! A `HostClient` owns the write half (kill, rename/receipt-mutation). The
 //! read half is handed back to the manager, which runs a thread reading

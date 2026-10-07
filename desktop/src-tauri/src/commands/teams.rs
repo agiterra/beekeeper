@@ -407,7 +407,7 @@ mod tests {
             "name": persona_id,
             "persona_id": persona_id,
             "relay_url": "ws://localhost:3000",
-            "acp_command": "buzz-acp",
+            "acp_command": "beekeeper-acp",
             "agent_command": "goose",
             "agent_args": [],
             "mcp_command": "",

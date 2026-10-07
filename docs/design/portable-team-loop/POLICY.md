@@ -227,7 +227,7 @@ told nothing counted it and then refused by `bee sessions complete`.
 ### 4.1 Enforced: `budget.turns`, at the provider's turn gate
 
 `budget.turns`, when set, is the umbrella's turn ceiling. It **overrides**
-`BUZZ_CSP_TURN_BUDGET` for that session rather than tightening it, and it binds
+`BEEKEEPER_CSP_TURN_BUDGET` for that session rather than tightening it, and it binds
 even where the host set no ceiling at all — the common case, since the
 environment default is unlimited. A host ceiling and a session ceiling answer
 different questions (*how much will this machine spend on anything* versus *how

@@ -2,7 +2,7 @@
 //!
 //! The host knows its own coding sessions: it reads them out of the provider's
 //! atomically-replaced state file. It does **not** know about managed agents
-//! (`buzz-acp`), which are still the desktop app's children and still die with
+//! (`beekeeper-acp`), which are still the desktop app's children and still die with
 //! it — so the app pushes those rows here, and the menu bar shows a complete
 //! picture without the host having to grow a relay connection or an opinion
 //! about a tier it does not own.

@@ -14,7 +14,7 @@
 //! feature gates the whole store; when it is off, [`SecretStore`] is unusable
 //! and callers fall back to their own `0o600` file storage.
 //!
-//! The store is deliberately NOT on any env-read path. `BUZZ_PRIVATE_KEY`
+//! The store is deliberately NOT on any env-read path. `BEEKEEPER_PRIVATE_KEY`
 //! resolution for harnessed agents and CI is handled upstream (an env
 //! short-circuit for the human key, child-process env injection for agents);
 //! adding an env tier here would duplicate that precedence and create a

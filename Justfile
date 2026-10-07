@@ -19,8 +19,8 @@ fresh := ""
 # back to 0600 files under the instance's app-data dir, so rebuilt (unsigned)
 # dev binaries never trigger macOS keychain password prompts. Opt in per shell
 # (`just nokeyring=1 desktop-standalone`) or permanently via
-# `export BUZZ_DESKTOP_NOKEYRING=1` in your shell profile.
-nokeyring := env_var_or_default("BUZZ_DESKTOP_NOKEYRING", "")
+# `export BEEKEEPER_DESKTOP_NOKEYRING=1` in your shell profile.
+nokeyring := env_var_or_default("BEEKEEPER_DESKTOP_NOKEYRING", "")
 
 # List all available tasks
 default:
@@ -239,7 +239,7 @@ autodeploy-test:
     ./scripts/test-woodpecker-path-filter.sh
 
 # Rewrite pre-rename `buzz_*` tracing targets in a local .env (RUST_LOG,
-# BUZZ_OTEL_FILTER) to their `beekeeper_*` names, keeping a .env.bak. Uses the
+# BEEKEEPER_OTEL_FILTER) to their `beekeeper_*` names, keeping a .env.bak. Uses the
 # exact program the relay deployer applies to the live .env, read out of
 # deploy/autodeploy/autodeploy, so the two cannot disagree. Binaries already
 # read the old names and warn on stderr; this makes the warning go away.
@@ -375,9 +375,9 @@ _ensure-sidecar-stubs:
     set -euo pipefail
     TARGET=$(rustc -vV | sed -n 's|host: ||p')
     mkdir -p desktop/src-tauri/binaries
-    SIDECARS=(buzz-acp buzz-agent buzz-dev-mcp git-credential-nostr bee)
+    SIDECARS=(beekeeper-acp buzz-agent beekeeper-dev-mcp git-credential-nostr bee)
     if [[ "$TARGET" != *windows* ]]; then
-        SIDECARS+=(buzz-backend-kubernetes buzz-shell-host beekeeper-host)
+        SIDECARS+=(beekeeper-backend-kubernetes beekeeper-shell-host beekeeper-host)
     fi
     for bin in "${SIDECARS[@]}"; do
         touch "desktop/src-tauri/binaries/${bin}-${TARGET}"
@@ -445,24 +445,24 @@ desktop-tauri-test-compiled-flags: _ensure-sidecar-stubs
     set -euo pipefail
     cd desktop/src-tauri
     echo "=== Clean build (no flag) → expect false ==="
-    env -u BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY \
-      BUZZ_TEST_EXPECTED_AUTO_CONNECT_DEFAULT_RELAY=false \
+    env -u BEEKEEPER_BUILD_AUTO_CONNECT_DEFAULT_RELAY \
+      BEEKEEPER_TEST_EXPECTED_AUTO_CONNECT_DEFAULT_RELAY=false \
       cargo test compiled_flag_matches_expected -- --ignored --nocapture
-    env -u BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY \
-      BUZZ_TEST_EXPECTED_AGENT_ACCESS_OWNER_ONLY=false \
+    env -u BEEKEEPER_BUILD_AGENT_ACCESS_OWNER_ONLY \
+      BEEKEEPER_TEST_EXPECTED_AGENT_ACCESS_OWNER_ONLY=false \
       cargo test --lib
-    env -u BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY \
-      BUZZ_TEST_EXPECTED_AGENT_ACCESS_OWNER_ONLY=false \
+    env -u BEEKEEPER_BUILD_AGENT_ACCESS_OWNER_ONLY \
+      BEEKEEPER_TEST_EXPECTED_AGENT_ACCESS_OWNER_ONLY=false \
       cargo test compiled_policy_matches_expected -- --ignored --nocapture
     echo "=== Internal build (flags set) → expect true ==="
-    BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY=1 \
-      BUZZ_TEST_EXPECTED_AUTO_CONNECT_DEFAULT_RELAY=true \
+    BEEKEEPER_BUILD_AUTO_CONNECT_DEFAULT_RELAY=1 \
+      BEEKEEPER_TEST_EXPECTED_AUTO_CONNECT_DEFAULT_RELAY=true \
       cargo test compiled_flag_matches_expected -- --ignored --nocapture
-    BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1 \
-      BUZZ_TEST_EXPECTED_AGENT_ACCESS_OWNER_ONLY=true \
+    BEEKEEPER_BUILD_AGENT_ACCESS_OWNER_ONLY=1 \
+      BEEKEEPER_TEST_EXPECTED_AGENT_ACCESS_OWNER_ONLY=true \
       cargo test --lib
-    BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1 \
-      BUZZ_TEST_EXPECTED_AGENT_ACCESS_OWNER_ONLY=true \
+    BEEKEEPER_BUILD_AGENT_ACCESS_OWNER_ONLY=1 \
+      BEEKEEPER_TEST_EXPECTED_AGENT_ACCESS_OWNER_ONLY=true \
       cargo test compiled_policy_matches_expected -- --ignored --nocapture
     echo "Both compiled states verified."
 
@@ -635,7 +635,7 @@ test-git-push-gate: _ensure-services
     scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
     DATABASE_URL="${scratch}" cargo run -q -p beekeeper-admin -- migrate
     echo "==> git push-gate acceptance cases against ${db} (serial, isolated)"
-    DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
+    DATABASE_URL="${scratch}" BEEKEEPER_TEST_DATABASE_URL="${scratch}" \
         cargo test -p beekeeper-relay --lib -- \
         api::git::policy::tests::gate api::git::verdict_admission::tests \
         api::git::verdict_admission::observed_tests \
@@ -683,7 +683,7 @@ test-genesis: _ensure-services
     # The event tests expect a migrated schema; they do not build one themselves.
     DATABASE_URL="${scratch}" cargo run -q -p beekeeper-admin -- migrate
     echo "==> genesis + authority-chain proofs against ${db} (serial, isolated)"
-    DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
+    DATABASE_URL="${scratch}" BEEKEEPER_TEST_DATABASE_URL="${scratch}" \
         cargo test -p beekeeper-db --lib -- genesis authority_transition --ignored --test-threads=1
 
 # CI callback composition and atomic result proofs require Postgres. Keep them
@@ -699,30 +699,30 @@ test-ci-completion: _ensure-services
     pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
     scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
     DATABASE_URL="${scratch}" cargo run -q -p beekeeper-admin -- migrate
-    DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
+    DATABASE_URL="${scratch}" BEEKEEPER_TEST_DATABASE_URL="${scratch}" \
         cargo test -p beekeeper-db --lib ci_result -- --ignored --test-threads=1
     cargo build -p beekeeper-cli --bin bee
     target_dir="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
-    DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" BUZZ_TEST_BEE_BIN="${target_dir}/debug/bee" \
+    DATABASE_URL="${scratch}" BEEKEEPER_TEST_DATABASE_URL="${scratch}" BEEKEEPER_TEST_BEE_BIN="${target_dir}/debug/bee" \
         cargo test -p beekeeper-relay --lib ci_result -- --ignored --test-threads=1
 
 # CI-managed turn continuation (docs/CI_MANAGED_CONTINUATION_IMPL.md): composes
-# the real buzz-relay binary (its own scratch database, dropped on exit; Redis
+# the real beekeeper-relay binary (its own scratch database, dropped on exit; Redis
 # logical DB 14, never DB 0 or the dev database), the built `bee` CLI, and the
-# real buzz-session-provider binary (a fake ACP adapter script standing in for
+# real beekeeper-session-provider binary (a fake ACP adapter script standing in for
 # the model — no network model call) to prove registration, real-webhook-
 # produced CI results, at-most-once turn admission, and the materialized-
 # context contract end to end. See scripts/ci-continuation-acceptance.sh for
 # what each step proves and what this does not cover (the private-project
 # read path, §3f).
 test-ci-continuation: _ensure-services
-    cargo build -p beekeeper-cli --bin bee -p beekeeper-relay --bin buzz-relay -p beekeeper-session-provider --bin buzz-session-provider
+    cargo build -p beekeeper-cli --bin bee -p beekeeper-relay --bin beekeeper-relay -p beekeeper-session-provider --bin beekeeper-session-provider
     cargo test -p beekeeper-session-provider --test ci_continuation_composition -- --ignored --test-threads=1
 
 # Absent-participant handover (docs/HANDOVER_IMPL.md §6): composes the real
-# buzz-relay binary (its own scratch database, dropped on exit; Redis logical
+# beekeeper-relay binary (its own scratch database, dropped on exit; Redis logical
 # DB 14, never DB 0 or the dev database), the built `bee` CLI, and **two**
-# real buzz-session-provider processes with distinct keys, state dirs and
+# real beekeeper-session-provider processes with distinct keys, state dirs and
 # working directories (fake ACP adapter scripts standing in for the model — no
 # network model call), against a relay-hosted git repository pushed to and
 # fetched from over the relay's own smart-HTTP transport with NIP-98
@@ -739,10 +739,10 @@ test-ci-continuation: _ensure-services
 #
 # Absent-participant handover composition: two providers, one relay-hosted repo
 test-handover: _ensure-services
-    cargo build -p beekeeper-cli --bin bee -p beekeeper-relay --bin buzz-relay -p beekeeper-session-provider --bin buzz-session-provider -p git-credential-nostr --bin git-credential-nostr
+    cargo build -p beekeeper-cli --bin bee -p beekeeper-relay --bin beekeeper-relay -p beekeeper-session-provider --bin beekeeper-session-provider -p git-credential-nostr --bin git-credential-nostr
     ./scripts/handover-acceptance.sh
 
-# Composes a real `beekeeper-host`, a real `buzz-session-provider` as its
+# Composes a real `beekeeper-host`, a real `beekeeper-session-provider` as its
 # child, a real control socket and a second host competing for the same state
 # directory. Needs no relay, no Postgres and no Redis — the provider is pointed
 # at an unreachable URL on purpose, which is what lets this observe supervision
@@ -820,13 +820,13 @@ mesh-dev-fresh:
     set -euo pipefail
     ./scripts/dev-reset.sh --yes
     ./scripts/setup-desktop-test-data.sh
-    export BUZZ_PRIVATE_KEY="3dbaebadb5dfd777ff25149ee230d907a15a9e1294b40b830661e65bb42f6c03"
-    export BUZZ_REQUIRE_RELAY_MEMBERSHIP=true
-    export BUZZ_ALLOW_NIP_OA_AUTH=true
+    export BEEKEEPER_PRIVATE_KEY="3dbaebadb5dfd777ff25149ee230d907a15a9e1294b40b830661e65bb42f6c03"
+    export BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP=true
+    export BEEKEEPER_ALLOW_NIP_OA_AUTH=true
     export RELAY_OWNER_PUBKEY="e5ebc6cdb579be112e336cc319b5989b4bb6af11786ea90dbe52b5f08d741b34"
-    export BUZZ_RELAY_PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
-    export BUZZ_RECONCILE_CHANNELS=true
-    export BUZZ_RESET_WEBVIEW_STATE=1
+    export BEEKEEPER_RELAY_PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
+    export BEEKEEPER_RECONCILE_CHANNELS=true
+    export BEEKEEPER_RESET_WEBVIEW_STATE=1
     exec just mesh=1 dev
 
 # Real serve->client->inference on this machine (not CI).
@@ -865,7 +865,7 @@ desktop-screenshot *ARGS:
         trap "kill $! 2>/dev/null || true" EXIT
         for i in $(seq 1 20); do curl -sf "http://127.0.0.1:$port/" >/dev/null && break; sleep 0.5; done
     fi
-    BUZZ_SCREENSHOT_BASE_URL="${BUZZ_SCREENSHOT_BASE_URL:-http://127.0.0.1:$port}" node tests/helpers/screenshot.mjs {{ARGS}}
+    BEEKEEPER_SCREENSHOT_BASE_URL="${BEEKEEPER_SCREENSHOT_BASE_URL:-http://127.0.0.1:$port}" node tests/helpers/screenshot.mjs {{ARGS}}
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
 
@@ -889,7 +889,7 @@ relay-web: bootstrap _ensure-migrations
     set +o allexport
     [[ -d node_modules ]] || pnpm install
     pnpm -C web build
-    BUZZ_WEB_DIR=./web/dist cargo run -p beekeeper-relay
+    BEEKEEPER_WEB_DIR=./web/dist cargo run -p beekeeper-relay
 
 # Build and run the private read-only admin dashboard
 admin: bootstrap _ensure-migrations
@@ -901,9 +901,9 @@ admin: bootstrap _ensure-migrations
     set +o allexport
     [[ -d node_modules ]] || pnpm install
     pnpm -C admin-web build
-    export BUZZ_ADMIN_HOST="${BUZZ_ADMIN_HOST:-admin.localhost:3000}"
-    export BUZZ_ADMIN_WEB_DIR="${BUZZ_ADMIN_WEB_DIR:-{{justfile_directory()}}/admin-web/dist}"
-    echo "Admin dashboard: http://${BUZZ_ADMIN_HOST}/reports"
+    export BEEKEEPER_ADMIN_HOST="${BEEKEEPER_ADMIN_HOST:-admin.localhost:3000}"
+    export BEEKEEPER_ADMIN_WEB_DIR="${BEEKEEPER_ADMIN_WEB_DIR:-{{justfile_directory()}}/admin-web/dist}"
+    echo "Admin dashboard: http://${BEEKEEPER_ADMIN_HOST}/reports"
     cargo run -p beekeeper-relay
 
 # Seed deterministic reports and product feedback for local admin dashboard review
@@ -936,17 +936,17 @@ dev *ARGS: bootstrap _ensure-sidecar-stubs _ensure-migrations
     set -o allexport
     source .env
     set +o allexport
-    bind_addr="${BUZZ_BIND_ADDR:-0.0.0.0:3000}"
+    bind_addr="${BEEKEEPER_BIND_ADDR:-0.0.0.0:3000}"
     relay_port="${bind_addr##*:}"; [[ -n "$relay_port" ]] || relay_port=3000
-    health_port="${BUZZ_HEALTH_PORT:-8080}"
-    metrics_port="${BUZZ_METRICS_PORT:-9102}"
+    health_port="${BEEKEEPER_HEALTH_PORT:-8080}"
+    metrics_port="${BEEKEEPER_METRICS_PORT:-9102}"
     if command -v lsof >/dev/null 2>&1; then
         for spec in "relay:$relay_port" "health:$health_port" "metrics:$metrics_port"; do
             name="${spec%%:*}"; port="${spec##*:}"
             if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
                 echo "Error: $name port $port is already in use; refusing to launch desktop against a stale relay." >&2
                 lsof -nP -iTCP:"$port" -sTCP:LISTEN >&2 || true
-                echo "Stop the process above (often a stale buzz-relay) and rerun: just dev" >&2
+                echo "Stop the process above (often a stale beekeeper-relay) and rerun: just dev" >&2
                 exit 1
             fi
         done
@@ -955,9 +955,9 @@ dev *ARGS: bootstrap _ensure-sidecar-stubs _ensure-migrations
     # Docker Desktop's forwarded MinIO port can stall under the deployment
     # probe's 32 concurrent writers. Keep the gate enabled in local dev, using
     # the bounded profile already used by the relay test launcher.
-    export BUZZ_GIT_PROBE_WRITERS="${BUZZ_GIT_PROBE_WRITERS:-8}"
-    export BUZZ_GIT_PROBE_ROUNDS="${BUZZ_GIT_PROBE_ROUNDS:-2}"
-    ./target/debug/buzz-relay &
+    export BEEKEEPER_GIT_PROBE_WRITERS="${BEEKEEPER_GIT_PROBE_WRITERS:-8}"
+    export BEEKEEPER_GIT_PROBE_ROUNDS="${BEEKEEPER_GIT_PROBE_ROUNDS:-2}"
+    ./target/debug/beekeeper-relay &
     RELAY_PID=$!
     cleanup() {
         [[ -n "${INSTANCE_ID:-}" ]] && ../scripts/cleanup-instance-agents.sh "$INSTANCE_ID" || true
@@ -967,7 +967,7 @@ dev *ARGS: bootstrap _ensure-sidecar-stubs _ensure-migrations
     relay_ready=false
     for _ in $(seq 1 120); do
         if ! kill -0 "$RELAY_PID" 2>/dev/null; then
-            echo "Error: buzz-relay exited during startup; refusing to launch desktop." >&2
+            echo "Error: beekeeper-relay exited during startup; refusing to launch desktop." >&2
             wait "$RELAY_PID" || true
             exit 1
         fi
@@ -978,16 +978,16 @@ dev *ARGS: bootstrap _ensure-sidecar-stubs _ensure-migrations
         sleep 0.5
     done
     if [[ "$relay_ready" != true ]]; then
-        echo "Error: buzz-relay did not become healthy within 60 seconds; refusing to launch desktop." >&2
+        echo "Error: beekeeper-relay did not become healthy within 60 seconds; refusing to launch desktop." >&2
         exit 1
     fi
     cd {{desktop_dir}}
     [[ -d node_modules ]] || pnpm install
     source ../scripts/instance-env.sh
-    INSTANCE_ID=$(node -e "console.log(JSON.parse(process.env.BUZZ_TAURI_CONFIG).identifier)")
-    echo "Starting on Vite port ${BUZZ_VITE_PORT}, relay ${BUZZ_RELAY_URL}"
+    INSTANCE_ID=$(node -e "console.log(JSON.parse(process.env.BEEKEEPER_TAURI_CONFIG).identifier)")
+    echo "Starting on Vite port ${BEEKEEPER_VITE_PORT}, relay ${BEEKEEPER_RELAY_URL}"
     FEATURES=(); [[ -n "{{mesh}}" ]] && FEATURES=(--features mesh-llm)
-    pnpm exec tauri dev ${FEATURES[@]+"${FEATURES[@]}"} --config "$BUZZ_TAURI_CONFIG" {{ARGS}}
+    pnpm exec tauri dev ${FEATURES[@]+"${FEATURES[@]}"} --config "$BEEKEEPER_TAURI_CONFIG" {{ARGS}}
 
 # Run only the desktop app. No relay, database, Docker, migrations, or .env are needed.
 # The app opens normally and asks for a community before making a relay connection.
@@ -998,18 +998,18 @@ desktop-standalone *ARGS: _ensure-sidecar-stubs
     cargo build -p beekeeper-acp -p beekeeper-agent -p beekeeper-backend-kubernetes -p beekeeper-dev-mcp -p beekeeper-cli -p git-credential-nostr -p beekeeper-shell-host -p beekeeper-host -p beekeeper-session-provider
     TARGET=$(rustc -vV | sed -n 's|host: ||p')
     TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).target_directory")
-    for bin in buzz-acp buzz-agent buzz-backend-kubernetes buzz-dev-mcp git-credential-nostr bee buzz-shell-host beekeeper-host; do
+    for bin in beekeeper-acp buzz-agent beekeeper-backend-kubernetes beekeeper-dev-mcp git-credential-nostr bee beekeeper-shell-host beekeeper-host; do
         cp "${TARGET_DIR}/debug/${bin}" "desktop/src-tauri/binaries/${bin}-${TARGET}"
         chmod +x "desktop/src-tauri/binaries/${bin}-${TARGET}"
     done
     cd {{desktop_dir}}
     [[ -d node_modules ]] || pnpm install
-    unset BUZZ_PRIVATE_KEY BUZZ_SHARE_IDENTITY
+    unset BEEKEEPER_PRIVATE_KEY BEEKEEPER_SHARE_IDENTITY
     if [[ -n "{{fresh}}" ]]; then
-        export BUZZ_RESET_WEBVIEW_STATE=1
+        export BEEKEEPER_RESET_WEBVIEW_STATE=1
     fi
     source ../scripts/instance-env.sh
-    INSTANCE_ID=$(node -e "console.log(JSON.parse(process.env.BUZZ_TAURI_CONFIG).identifier)")
+    INSTANCE_ID=$(node -e "console.log(JSON.parse(process.env.BEEKEEPER_TAURI_CONFIG).identifier)")
     # Worktrees get a scoped keyring service so concurrent instances do not
     # share an identity. The main checkout deliberately leaves this UNSET so
     # the Rust default applies: `beekeeper-desktop-dev` is where the existing
@@ -1017,14 +1017,14 @@ desktop-standalone *ARGS: _ensure-sidecar-stubs
     # migration runs for (managed_agents/storage.rs `migrate_agent_keys_to_dev_service`
     # early-returns unless `keyring_service()` is exactly that). Naming the
     # main checkout `.main` would silently strand both.
-    if [[ -n "${BUZZ_INSTANCE_SLUG:-}" ]]; then
-        export BUZZ_DEV_KEYRING_SERVICE="beekeeper-desktop-dev.${BUZZ_INSTANCE_SLUG}"
+    if [[ -n "${BEEKEEPER_INSTANCE_SLUG:-}" ]]; then
+        export BEEKEEPER_DEV_KEYRING_SERVICE="beekeeper-desktop-dev.${BEEKEEPER_INSTANCE_SLUG}"
     fi
     if [[ -n "{{fresh}}" ]]; then
-        ../scripts/reset-desktop-standalone-state.sh "$INSTANCE_ID" "${BUZZ_DEV_KEYRING_SERVICE:-beekeeper-desktop-dev}"
+        ../scripts/reset-desktop-standalone-state.sh "$INSTANCE_ID" "${BEEKEEPER_DEV_KEYRING_SERVICE:-beekeeper-desktop-dev}"
     fi
     trap '../scripts/cleanup-instance-agents.sh "$INSTANCE_ID" || true' EXIT
-    echo "Starting standalone desktop on Vite port ${BUZZ_VITE_PORT}; no relay services were started"
+    echo "Starting standalone desktop on Vite port ${BEEKEEPER_VITE_PORT}; no relay services were started"
     TAURI_FLAGS=()
     if [[ -n "{{nokeyring}}" ]]; then
         echo "system-keyring OFF: secrets live in 0600 files under the app-data dir"
@@ -1032,7 +1032,7 @@ desktop-standalone *ARGS: _ensure-sidecar-stubs
         # is stripped by a cargo runner wrapper rather than runner args.
         TAURI_FLAGS=(-r "{{justfile_directory()}}/scripts/cargo-strip-keyring.sh")
     fi
-    pnpm exec tauri dev ${TAURI_FLAGS[@]+"${TAURI_FLAGS[@]}"} --config "$BUZZ_TAURI_CONFIG" {{ARGS}}
+    pnpm exec tauri dev ${TAURI_FLAGS[@]+"${TAURI_FLAGS[@]}"} --config "$BEEKEEPER_TAURI_CONFIG" {{ARGS}}
 
 # Run the desktop frontend dev server (port derived from worktree)
 desktop-dev:
@@ -1041,8 +1041,8 @@ desktop-dev:
     cd {{desktop_dir}}
     [[ -d node_modules ]] || pnpm install
     source ../scripts/instance-env.sh
-    echo "Starting frontend dev server on Vite port ${BUZZ_VITE_PORT}, relay ${BUZZ_RELAY_URL}"
-    pnpm exec vite --port "${BUZZ_VITE_PORT}" --strictPort
+    echo "Starting frontend dev server on Vite port ${BEEKEEPER_VITE_PORT}, relay ${BEEKEEPER_RELAY_URL}"
+    pnpm exec vite --port "${BEEKEEPER_VITE_PORT}" --strictPort
 
 # ─── Web ─────────────────────────────────────────────────────────────────────
 
@@ -1052,9 +1052,9 @@ web:
     set -euo pipefail
     [[ -d node_modules ]] || pnpm install
     source scripts/instance-env.sh
-    export VITE_PORT=$((BUZZ_VITE_PORT + 100))
-    export VITE_RELAY_URL="${BUZZ_RELAY_URL}"
-    echo "Starting web dev server on port ${VITE_PORT}, relay ${BUZZ_RELAY_URL}"
+    export VITE_PORT=$((BEEKEEPER_VITE_PORT + 100))
+    export VITE_RELAY_URL="${BEEKEEPER_RELAY_URL}"
+    echo "Starting web dev server on port ${VITE_PORT}, relay ${BEEKEEPER_RELAY_URL}"
     cd {{web_dir}}
     pnpm exec vite --port "${VITE_PORT}" --strictPort
 
@@ -1412,20 +1412,20 @@ _release-pr lane version:
 # ─── Agent Harness ────────────────────────────────────────────────────────────
 
 # Run a goose agent connected to a Beekeeper relay (foreground)
-goose relay="ws://localhost:3000" agents="1" heartbeat="0" prompt="" key="$BUZZ_PRIVATE_KEY":
+goose relay="ws://localhost:3000" agents="1" heartbeat="0" prompt="" key="$BEEKEEPER_PRIVATE_KEY":
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
     source ./scripts/_goose-env.sh "{{relay}}" "{{key}}" "{{agents}}" "{{heartbeat}}" "{{prompt}}"
-    exec env "${env_args[@]}" ./target/release/buzz-acp
+    exec env "${env_args[@]}" ./target/release/beekeeper-acp
 
 # Run a goose agent in the background (screen session named 'goose-agent-N')
-goose-bg relay="ws://localhost:3000" agents="1" heartbeat="0" prompt="" key="$BUZZ_PRIVATE_KEY":
+goose-bg relay="ws://localhost:3000" agents="1" heartbeat="0" prompt="" key="$BEEKEEPER_PRIVATE_KEY":
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
     source ./scripts/_goose-env.sh "{{relay}}" "{{key}}" "{{agents}}" "{{heartbeat}}" "{{prompt}}"
-    screen -dmS goose-agent-{{agents}} bash -c "$(printf '%q ' env "${env_args[@]}") ./target/release/buzz-acp"
+    screen -dmS goose-agent-{{agents}} bash -c "$(printf '%q ' env "${env_args[@]}") ./target/release/beekeeper-acp"
     echo "Agent running in screen session 'goose-agent-{{agents}}'. Attach with: screen -r goose-agent-{{agents}}"
 
 # ─── Benchmarking ─────────────────────────────────────────────────────────────
@@ -1467,7 +1467,7 @@ sandbox-seed TREE *ARGS:
     export PATH="{{justfile_directory()}}/bin:$PATH"
     # A fresh worktree has nothing built, so look for a usable `bee` rather than
     # assuming this checkout has one.
-    BEE="${BUZZ_BEE:-$(command -v bee 2>/dev/null || true)}"
+    BEE="${BEEKEEPER_BEE:-$(command -v bee 2>/dev/null || true)}"
     for candidate in \
         "{{justfile_directory()}}/target/release/bee" \
         "{{justfile_directory()}}/target/debug/bee" \
@@ -1477,7 +1477,7 @@ sandbox-seed TREE *ARGS:
     done
     if [[ -z "$BEE" || ! -x "$BEE" ]]; then
         echo "no 'bee' found. Build it with 'cargo build -p beekeeper-cli', install the app," >&2
-        echo "or set BUZZ_BEE to a binary." >&2
+        echo "or set BEEKEEPER_BEE to a binary." >&2
         exit 1
     fi
     "$BEE" sandbox seed --tree "{{TREE}}" --from "{{justfile_directory()}}" {{ARGS}}
@@ -1487,7 +1487,7 @@ sandbox-plan *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
-    BEE="${BUZZ_BEE:-$(command -v bee 2>/dev/null || true)}"
+    BEE="${BEEKEEPER_BEE:-$(command -v bee 2>/dev/null || true)}"
     [[ -n "$BEE" && -x "$BEE" ]] || BEE="{{justfile_directory()}}/target/debug/bee"
     [[ -x "$BEE" ]] || { echo "no 'bee' found; run 'cargo build -p beekeeper-cli'" >&2; exit 1; }
     "$BEE" sandbox plan {{ARGS}}

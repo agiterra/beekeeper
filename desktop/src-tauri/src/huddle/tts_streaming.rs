@@ -1,8 +1,8 @@
 //! EXPERIMENTAL (latency bench): streaming synthesis path for the TTS worker.
 //!
-//! `BUZZ_TTS_STREAMING=1` streams PCM deltas out of Pocket as they are
+//! `BEEKEEPER_TTS_STREAMING=1` streams PCM deltas out of Pocket as they are
 //! generated instead of waiting for the full first-chunk synthesis.
-//! `BUZZ_TTS_EMIT_FRAMES` tunes the delta size in Flow LM frames (80 ms of
+//! `BEEKEEPER_TTS_EMIT_FRAMES` tunes the delta size in Flow LM frames (80 ms of
 //! audio each). Default 12 = the Mimi decoder's native chunk, which keeps
 //! streamed audio bit-identical to the batch path; smaller deltas are faster
 //! to first audio but diverge (~23 dB SNR vs batch — decoder intra-chunk
@@ -13,12 +13,12 @@ use super::*;
 use crate::huddle::pocket::{PocketTts, VoiceStyle};
 
 /// Read the streaming env overrides once per worker: `Some(emit_frames)`
-/// when `BUZZ_TTS_STREAMING=1`, `None` for the production batch path.
+/// when `BEEKEEPER_TTS_STREAMING=1`, `None` for the production batch path.
 pub(super) fn streaming_emit_frames() -> Option<usize> {
-    std::env::var("BUZZ_TTS_STREAMING")
+    std::env::var("BEEKEEPER_TTS_STREAMING")
         .is_ok_and(|v| v == "1")
         .then(|| {
-            std::env::var("BUZZ_TTS_EMIT_FRAMES")
+            std::env::var("BEEKEEPER_TTS_EMIT_FRAMES")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(12)

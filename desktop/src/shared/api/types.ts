@@ -340,7 +340,7 @@ export type ManagedAgent = {
   autoRestartOnConfigChange: boolean;
   backend: ManagedAgentBackend;
   backendAgentId: string | null;
-  /** Who the agent should respond to. Maps to `buzz-acp --respond-to`. */
+  /** Who the agent should respond to. Maps to `beekeeper-acp --respond-to`. */
   respondTo: RespondToMode;
   /**
    * Normalized 64-char lowercase hex pubkeys. Used only when `respondTo` is
@@ -349,7 +349,7 @@ export type ManagedAgent = {
   respondToAllowlist: string[];
 };
 
-/** Inbound author gate mode. Mirrors buzz-acp's --respond-to CLI flag. */
+/** Inbound author gate mode. Mirrors beekeeper-acp's --respond-to CLI flag. */
 export type RespondToMode = "owner-only" | "allowlist" | "anyone";
 
 export type BackendProviderCandidate = {

@@ -1719,13 +1719,13 @@ fn timeout_message(
         match phase {
             TimeoutPhase::Transport => format!(
                 "read timeout: no response bytes received within {per_request_timeout:?} \
-                 (consider raising BUZZ_AGENT_LLM_TIMEOUT_SECS)"
+                 (consider raising BEEKEEPER_AGENT_LLM_TIMEOUT_SECS)"
             ),
             // Total-request timeout fired during body streaming: the response
             // started but did not complete within the window.
             TimeoutPhase::BodyRead => format!(
                 "request timed out: response did not complete within {per_request_timeout:?} \
-                 (consider raising BUZZ_AGENT_LLM_TIMEOUT_SECS)"
+                 (consider raising BEEKEEPER_AGENT_LLM_TIMEOUT_SECS)"
             ),
         }
     }
@@ -2509,7 +2509,7 @@ fn apply_openrouter_mutations(
         }
 
         // A7: Anthropic cache_control injection for anthropic/* models. Gated on
-        // `prompt_caching` (`BUZZ_AGENT_PROMPT_CACHING`) for the same reason as
+        // `prompt_caching` (`BEEKEEPER_AGENT_PROMPT_CACHING`) for the same reason as
         // the native Anthropic route: these are Anthropic-dialect breakpoints on
         // an Anthropic model, so the documented kill switch must reach them too.
         if prompt_caching && effective_model.starts_with("anthropic/") {
@@ -4935,7 +4935,7 @@ mod tests {
                 "connect timeout must not mention 'read timeout': {msg}"
             );
             assert!(
-                !msg.contains("BUZZ_AGENT_LLM_TIMEOUT_SECS"),
+                !msg.contains("BEEKEEPER_AGENT_LLM_TIMEOUT_SECS"),
                 "connect timeout must not reference the read-timeout config knob: {msg}"
             );
         }
@@ -4956,7 +4956,7 @@ mod tests {
             "transport read-timeout must include the 240s configured value: {msg}"
         );
         assert!(
-            msg.contains("BUZZ_AGENT_LLM_TIMEOUT_SECS"),
+            msg.contains("BEEKEEPER_AGENT_LLM_TIMEOUT_SECS"),
             "transport read-timeout must reference the config knob: {msg}"
         );
         assert!(
@@ -4988,7 +4988,7 @@ mod tests {
             "body-read timeout must include the 300s per-request value: {msg}"
         );
         assert!(
-            msg.contains("BUZZ_AGENT_LLM_TIMEOUT_SECS"),
+            msg.contains("BEEKEEPER_AGENT_LLM_TIMEOUT_SECS"),
             "body-read timeout must reference the config knob: {msg}"
         );
         assert!(
@@ -5066,7 +5066,7 @@ mod tests {
             "read timeout must include the configured 50ms value: {msg}"
         );
         assert!(
-            msg.contains("BUZZ_AGENT_LLM_TIMEOUT_SECS"),
+            msg.contains("BEEKEEPER_AGENT_LLM_TIMEOUT_SECS"),
             "read timeout must name the config knob: {msg}"
         );
         assert!(
@@ -5192,7 +5192,7 @@ mod tests {
             "body-read timeout must include the per-request 100ms value: {msg}"
         );
         assert!(
-            msg.contains("BUZZ_AGENT_LLM_TIMEOUT_SECS"),
+            msg.contains("BEEKEEPER_AGENT_LLM_TIMEOUT_SECS"),
             "body-read timeout must reference the config knob: {msg}"
         );
 
@@ -6110,7 +6110,7 @@ mod tests {
         );
     }
 
-    /// `BUZZ_AGENT_PROMPT_CACHING=0` must reach the OpenRouter `anthropic/*`
+    /// `BEEKEEPER_AGENT_PROMPT_CACHING=0` must reach the OpenRouter `anthropic/*`
     /// route too, not just the native Anthropic Messages routes. The switch and
     /// this route landed in separate changes, so nothing but this test stops the
     /// gate from being dropped and the kill switch silently becoming a no-op on
@@ -6129,7 +6129,7 @@ mod tests {
         apply_openrouter_mutations(&mut body, None, "anthropic/claude-opus-4-7", false);
         assert!(
             !body.to_string().contains("cache_control"),
-            "BUZZ_AGENT_PROMPT_CACHING=0 must suppress every breakpoint: {body}"
+            "BEEKEEPER_AGENT_PROMPT_CACHING=0 must suppress every breakpoint: {body}"
         );
         // The switch is scoped to caching — the routing-contract mutations that
         // make the request serveable at all must still be applied.
