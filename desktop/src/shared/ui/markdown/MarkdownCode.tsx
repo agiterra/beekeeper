@@ -15,6 +15,7 @@
 
 import type React from "react";
 
+import { inlineCodeFilePathCandidate } from "@/features/coding-sessions/lib/filePathCandidate";
 import { cn } from "@/shared/lib/cn";
 import { hasRedactionMarker } from "@/shared/lib/redactionMarker";
 import { INLINE_CODE_CHIP_CLASS } from "@/shared/ui/mentionChip";
@@ -25,6 +26,8 @@ import {
   extractLanguage,
   SyntaxHighlightedCode,
 } from "./CodeBlock";
+import { FileChip, FileRefPlainCode } from "./FileChip";
+import { presentFileRef, useFileRefScope } from "./fileRefContext";
 
 /**
  * Build the `code` renderer for one component variant.
@@ -75,6 +78,24 @@ export function createCodeComponent(interactive: boolean) {
       );
     }
 
+    // SV-32: a path the agent wrote may become a chip. The scope is read in
+    // a child component, so this one stays hook-free (and callable directly).
+    const candidate =
+      interactive && !hasRedaction
+        ? inlineCodeFilePathCandidate(rawCode)
+        : null;
+    if (candidate) {
+      return (
+        <FileRefInlineCode
+          {...props}
+          candidate={candidate}
+          className={className}
+        >
+          {children}
+        </FileRefInlineCode>
+      );
+    }
+
     return (
       <code {...props} className={cn(INLINE_CODE_CHIP_CLASS, className)}>
         {hasRedaction ? (
@@ -85,4 +106,44 @@ export function createCodeComponent(interactive: boolean) {
       </code>
     );
   };
+}
+
+/**
+ * Inline code naming a file: a chip on the computer that ran the session,
+ * plain code with the reason elsewhere in a session, and untouched outside a
+ * coding-session answer (no `FileRefContext`).
+ */
+function FileRefInlineCode({
+  candidate,
+  children,
+  className,
+  ...props
+}: React.ComponentProps<"code"> & { candidate: string }) {
+  const fileRefScope = useFileRefScope();
+  const fileRef = presentFileRef(fileRefScope, candidate);
+  if (fileRef.kind === "chip" && fileRefScope) {
+    return (
+      <FileChip
+        candidate={candidate}
+        fileRef={fileRef.ref}
+        scope={fileRefScope}
+      />
+    );
+  }
+  if (fileRef.kind === "plain") {
+    return (
+      <FileRefPlainCode
+        {...props}
+        className={className}
+        reason={fileRef.reason}
+      >
+        {children}
+      </FileRefPlainCode>
+    );
+  }
+  return (
+    <code {...props} className={cn(INLINE_CODE_CHIP_CLASS, className)}>
+      {children}
+    </code>
+  );
 }

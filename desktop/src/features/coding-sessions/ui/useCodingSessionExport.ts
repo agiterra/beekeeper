@@ -17,7 +17,7 @@ import {
   writeCodingSessionTranscriptExport,
 } from "@/shared/api/tauriCodingSessionExport";
 import { buildTranscriptExportPlan } from "@/features/coding-sessions/lib/transcriptExport/transcriptExportEngine";
-import { mapTranscriptItemsToExportMessages } from "@/features/coding-sessions/lib/transcriptExport/transcriptExportMessages";
+import { mapCodingSessionTranscriptToExportMessages } from "@/features/coding-sessions/lib/transcriptExport/transcriptExportMessages";
 
 type ExportableCodingSession = {
   title: string | null;
@@ -45,7 +45,9 @@ export function useCodingSessionExport(
             ? "dark"
             : "light",
           attachmentMode: "metadata",
-          messages: mapTranscriptItemsToExportMessages(session.transcript),
+          messages: mapCodingSessionTranscriptToExportMessages(
+            session.transcript,
+          ),
           nowIso: new Date().toISOString(),
           viewerVersion: probe.appVersion,
           takenDirectoryNames: probe.takenDirectoryNames,

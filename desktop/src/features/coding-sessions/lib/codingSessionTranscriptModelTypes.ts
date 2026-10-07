@@ -44,6 +44,30 @@ export type CodingSessionTurnSettlement = "live" | "settled" | "unknown";
  */
 export type CodingSessionTurnRestingStatus = "running" | "stopped" | "unknown";
 
+/**
+ * What the prose join (`codingSessionTranscriptModelText.ts`) adds to an
+ * assistant message or a thought (CONTRACT.md, `conformance/transcript-prose-join`).
+ *
+ * A joined item keeps its first piece's id and `sourceEventId` (the
+ * contract's `firstEventId`), so its row stays mounted as later paragraphs
+ * arrive. These fields name where it currently ends. All are absent on a
+ * single piece, which ends at itself.
+ */
+export type CodingSessionProseFields = {
+  /** Item id of the message's last piece. */
+  proseLastPieceId?: string;
+  /** Signed event id of the message's last piece (the contract's `lastEventId`). */
+  proseLastEventId?: string;
+  /**
+   * Rule 7: the producer is still writing this message — it is its turn's
+   * last item, the turn has no result or interruption, and the caller holds
+   * live evidence for the exact target (an unexpired lease on the current
+   * generation, no session-ending status). Present only when true; never
+   * derived from `isWorking`. See `codingSessionProseArriving.ts`.
+   */
+  arriving?: true;
+};
+
 export type CodingSessionTranscriptToolItem = Extract<
   TranscriptItem,
   { type: "tool" }

@@ -9,9 +9,15 @@
  * (recorded in the ledger row).
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import test from "node:test";
 
-import { mapTranscriptItemsToExportMessages } from "./transcriptExportMessages.ts";
+import { projectCodingSessionTranscript } from "../codingSessionTranscriptProjection.ts";
+import {
+  mapCodingSessionTranscriptToExportMessages,
+  mapTranscriptItemsToExportMessages,
+} from "./transcriptExportMessages.ts";
 
 const timestamp = "2026-04-23T12:00:00.000Z";
 
@@ -144,4 +150,106 @@ test("tool items map to tool_call with toolName, status, isError, and the result
       timestamp,
     },
   ]);
+});
+
+// ── SV-36 S5: a coding session exports the messages the agent wrote ─────────
+
+const proseJoinFixture = JSON.parse(
+  readFileSync(
+    resolve(
+      process.cwd(),
+      "../conformance/transcript-prose-join/fixtures/vectors.json",
+    ),
+    "utf8",
+  ),
+);
+
+/** A vector's items as the session hands them to export: per stream, in order. */
+function sessionTranscriptOf(vector) {
+  const streams = new Map();
+  for (const envelope of vector.input) {
+    const target = envelope.content.session;
+    const key = JSON.stringify([
+      envelope.signer,
+      target.driver,
+      target.instanceId,
+      target.sessionId,
+      target.generation,
+    ]);
+    const stream = streams.get(key) ?? { key, envelope, byEventId: new Map() };
+    stream.byEventId.set(envelope.eventId, {
+      target,
+      eventSeq: envelope.content.eventSeq,
+      timestamp: envelope.content.timestamp,
+      turnId: envelope.content.turnId,
+      item: envelope.content.item,
+      sourceEventId: envelope.eventId,
+    });
+    streams.set(key, stream);
+  }
+  return [...streams.values()]
+    .sort((left, right) => (left.key < right.key ? -1 : 1))
+    .flatMap((stream) =>
+      projectCodingSessionTranscript(
+        [...stream.byEventId.values()].sort(
+          (left, right) => left.eventSeq - right.eventSeq,
+        ),
+        {
+          generationId: stream.key,
+          bridgeSource: { pubkey: stream.envelope.signer, label: "vector" },
+        },
+      ),
+    );
+}
+
+for (const vector of proseJoinFixture.vectors) {
+  test(`export joins prose like the contract: ${vector.name}`, () => {
+    const items = sessionTranscriptOf(vector);
+    const idByEvent = new Map(
+      items.map((item) => [item.sourceEventId, item.id]),
+    );
+    const exported = mapCodingSessionTranscriptToExportMessages(items).filter(
+      (message) =>
+        message.kind === "assistant_text" || message.kind === "thought",
+    );
+    assert.deepEqual(
+      exported.map((message) => [message.kind, message.id, message.text]),
+      vector.expectedMessages.map((expected) => [
+        expected.kind === "reasoning" ? "thought" : "assistant_text",
+        idByEvent.get(expected.firstEventId),
+        expected.text,
+      ]),
+      `${vector.name}: one export message per contract message`,
+    );
+  });
+}
+
+test("the raw mapper stays one to one", () => {
+  const pieces = [
+    {
+      id: "p1",
+      type: "message",
+      renderClass: "message",
+      role: "assistant",
+      title: "Response",
+      text: "One.\n\n",
+      timestamp,
+      turnId: "t",
+    },
+    {
+      id: "p2",
+      type: "message",
+      renderClass: "message",
+      role: "assistant",
+      title: "Response",
+      text: "Two.",
+      timestamp,
+      turnId: "t",
+    },
+  ];
+  assert.equal(mapTranscriptItemsToExportMessages(pieces).length, 2);
+  assert.deepEqual(
+    mapCodingSessionTranscriptToExportMessages(pieces).map((m) => m.text),
+    ["One.\n\nTwo."],
+  );
 });

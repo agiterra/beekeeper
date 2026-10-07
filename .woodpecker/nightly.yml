@@ -55,7 +55,9 @@ steps:
       - cargo test -p beekeeper-db -- --ignored --test-threads=1
 
   desktop-e2e:
-    image: mcr.microsoft.com/playwright:v1.49.0-noble
+    image: mcr.microsoft.com/playwright:v1.60.0-noble
+    when:
+      - status: [success, failure]
     volumes:
       - /srv/ci-cache/hermit:/root/.cache/hermit
       - /srv/ci-cache/hermit-state:/root/.local/state/hermit
@@ -66,4 +68,6 @@ steps:
       - cd desktop
       - pnpm install --frozen-lockfile
       - pnpm build:e2e
-      - pnpm exec playwright test
+      # The Chromium projects by name: a bare `playwright test` would also run
+      # smoke-webkit, which has its own workflow (nightly-webkit.yml).
+      - pnpm exec playwright test --project=smoke --project=smoke-serial --project=integration

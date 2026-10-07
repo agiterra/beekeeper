@@ -13,7 +13,10 @@
  *   transcript as its own block list) and handed to the model, which is the
  *   SV-91 rule moved from every block to the owner.
  * - Revision: (transcript array identity, isWorking, workingTurnId,
- *   generationSuperseded).
+ *   generationSuperseded, producerWriting). `producerWriting` is rule 7's
+ *   liveness (SV-36 S5), resolved by the caller per generation from that
+ *   generation's own lease and status, so one execution's lease lapsing
+ *   re-derives only its own model.
  *   SV-118 keeps an unchanged generation's transcript array identical, so an
  *   event in execution A cannot re-derive execution B. A changed revision
  *   derives exactly once, then `stabilizeCodingSessionTranscriptModel` keeps
@@ -79,6 +82,12 @@ export type CodingSessionExecutionModelInput = {
   workingTurnId: string | null;
   /** A newer generation of the same execution exists (SV-91 `unreported`). */
   generationSuperseded: boolean;
+  /**
+   * This generation's producer has live evidence of writing
+   * (`isCodingSessionProducerWriting`): its trailing prose is `arriving`.
+   * Omitted is `false`. Never derived from `isWorking`.
+   */
+  producerWriting?: boolean;
 };
 
 /** Which part of a block's turn a view shows. */
@@ -185,6 +194,7 @@ type RevisionKey = {
   isWorking: boolean;
   workingTurnId: string | null;
   generationSuperseded: boolean;
+  producerWriting: boolean;
   executionKey: string;
   authority: string | null;
   driver: string | null;
@@ -309,6 +319,7 @@ function revisionKeyOf(input: CodingSessionExecutionModelInput): RevisionKey {
     isWorking: input.isWorking,
     workingTurnId: input.isWorking ? input.workingTurnId : null,
     generationSuperseded: input.generationSuperseded,
+    producerWriting: input.producerWriting === true,
     executionKey: input.executionKey,
     authority: input.record.providerAuthorityPubkey ?? null,
     driver: target?.driver ?? null,
@@ -324,6 +335,7 @@ function revisionKeysEqual(left: RevisionKey, right: RevisionKey): boolean {
     left.isWorking === right.isWorking &&
     left.workingTurnId === right.workingTurnId &&
     left.generationSuperseded === right.generationSuperseded &&
+    left.producerWriting === right.producerWriting &&
     left.executionKey === right.executionKey &&
     left.authority === right.authority &&
     left.driver === right.driver &&
@@ -364,6 +376,7 @@ function deriveRevision(
       // The working block's own turn, never "whichever appeared last".
       ...(workingTurnId === null ? {} : { workingTurnId }),
       backgroundTasksByTurn,
+      producerWriting: key.producerWriting,
     }),
   );
   freezeDeep(model);

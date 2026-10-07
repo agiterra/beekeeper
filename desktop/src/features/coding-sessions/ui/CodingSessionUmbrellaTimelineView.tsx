@@ -1,6 +1,11 @@
 import * as React from "react";
 
 import { useCodingSessionAssignmentInputs } from "@/features/coding-sessions/hooks/useCodingSessionAssignmentInputs";
+import {
+  type CodingSessionReachabilityResolver,
+  UNKNOWN_CODING_SESSION_REACHABILITY,
+} from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
+import { isCodingSessionProducerWriting } from "@/features/coding-sessions/lib/codingSessionProseArriving";
 import { useCodingSessionSeatWorktreeActors } from "@/features/coding-sessions/hooks/useCodingSessionSeatWorktreeActors";
 import type { CodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionConversationLane";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
@@ -101,6 +106,7 @@ export function CodingSessionUmbrellaTimelineView({
   operatorProfiles,
   resolveMissionActor,
   resolvePromptSeat,
+  resolveReachability = UNKNOWN_CODING_SESSION_REACHABILITY,
   scrollMemoryKey,
   umbrella,
   wakeOperations,
@@ -162,6 +168,12 @@ export function CodingSessionUmbrellaTimelineView({
    * has a single seat and no second author to confuse it with.
    */
   resolvePromptSeat?: CodingSessionPromptSeatResolver;
+  /**
+   * Each generation's lease reading, from the workspace's one coordination
+   * read. It decides, per generation, whether its trailing answer reads
+   * "Writing…" (SV-36 rule 7). Omitted, nothing is known and nothing is.
+   */
+  resolveReachability?: CodingSessionReachabilityResolver;
   umbrella: CodingSessionUmbrellaRecord;
   /**
    * Fold-resolved operations for the wake reading (finding 17). Not gated on
@@ -335,6 +347,8 @@ export function CodingSessionUmbrellaTimelineView({
         ...execution.priorGenerations,
         execution.activeGeneration,
       ]) {
+        const generationSuperseded =
+          execution.activeGeneration.generationId !== record.generationId;
         models.set(
           record.generationId,
           executionModelStore.model({
@@ -343,8 +357,14 @@ export function CodingSessionUmbrellaTimelineView({
             isWorking: workingTurnByGeneration.has(record.generationId),
             workingTurnId:
               workingTurnByGeneration.get(record.generationId) ?? null,
-            generationSuperseded:
-              execution.activeGeneration.generationId !== record.generationId,
+            generationSuperseded,
+            // Rule 7 from this generation's own lease and status: one
+            // execution's lease never re-derives another's model.
+            producerWriting: isCodingSessionProducerWriting({
+              reachability: resolveReachability(record.commandTarget),
+              status: record.status,
+              generationSuperseded,
+            }),
           }),
         );
       }
@@ -355,6 +375,7 @@ export function CodingSessionUmbrellaTimelineView({
     executionModelStore,
     missionDensity,
     narrativeEntries,
+    resolveReachability,
     umbrella.executions,
     workingBlockKeys,
   ]);

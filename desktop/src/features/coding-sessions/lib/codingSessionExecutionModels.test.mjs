@@ -689,3 +689,82 @@ test("workingTurnId picks the working turn and is part of the revision", async (
   assert.equal(store.model({ ...input, workingTurnId: "A" }), byA);
   assert.equal(store.stats().derivations, 2);
 });
+
+// ── SV-36 S5: liveness is a revision input, per generation ─────────────────
+
+/** An open turn: a prompt and two paragraph pieces, no result yet. */
+function openTurn(name) {
+  return [
+    prompt(`${name}-prompt`, name),
+    say(`${name}-p1`, name, "One.\n\n"),
+    say(`${name}-p2`, name, "Two."),
+  ];
+}
+
+function arrivingProse(selection) {
+  return onlyTurn(selection)
+    .entries.filter(
+      (entry) =>
+        entry.kind === "item" &&
+        entry.item.type === "message" &&
+        entry.item.role === "assistant",
+    )
+    .map((entry) => [entry.item.text, entry.item.arriving === true]);
+}
+
+test("a live lease marks the selected block's answer arriving; a liveness change is a new revision", () => {
+  const store = createCodingSessionExecutionModelStore();
+  const rec = record(openTurn("t1"));
+  const seq = seqOf(rec, "t1");
+  const quiet = store.model(input(rec));
+  assert.deepEqual(arrivingProse(quiet.selectBlock(seq)), [
+    ["One.\n\nTwo.", false],
+  ]);
+  const live = store.model({ ...input(rec), producerWriting: true });
+  assert.notEqual(live, quiet, "liveness is in the revision key");
+  assert.deepEqual(arrivingProse(live.selectBlock(seq)), [
+    ["One.\n\nTwo.", true],
+  ]);
+  const again = store.model({ ...input(rec), producerWriting: true });
+  assert.equal(again, live, "identical inputs keep the revision");
+  assert.equal(store.stats().derivations, 2);
+  // The lease lapses: the same transcript reads settled again.
+  const lapsed = store.model(input(rec));
+  assert.deepEqual(arrivingProse(lapsed.selectBlock(seq)), [
+    ["One.\n\nTwo.", false],
+  ]);
+});
+
+test("one execution's liveness never changes another's model", () => {
+  const store = createCodingSessionExecutionModelStore();
+  const a = record(openTurn("a1"), "gen-a", 1);
+  const b = record(openTurn("b1"), "gen-b", 1);
+  const inputB = { ...input(b), executionKey: "execution-b" };
+  const modelB = store.model(inputB);
+  const liveA = store.model({ ...input(a), producerWriting: true });
+  assert.deepEqual(arrivingProse(liveA.selectBlock(seqOf(a, "a1"))), [
+    ["One.\n\nTwo.", true],
+  ]);
+  const derivations = store.stats().derivations;
+  assert.equal(store.model(inputB), modelB, "B's revision is untouched");
+  store.model(input(a));
+  assert.equal(store.model(inputB), modelB, "A lapsing leaves B alone");
+  assert.equal(store.stats().derivations, derivations + 1);
+  assert.deepEqual(
+    arrivingProse(modelB.selectBlock(0)),
+    [["One.\n\nTwo.", false]],
+    "the sibling with no lease shows no Writing…",
+  );
+});
+
+test("isWorking alone never makes the answer arriving", () => {
+  const store = createCodingSessionExecutionModelStore();
+  const rec = record(openTurn("t1"));
+  const working = store.model({
+    ...input(rec, { isWorking: true }),
+    workingTurnId: "t1",
+  });
+  assert.deepEqual(arrivingProse(working.selectBlock(seqOf(rec, "t1"))), [
+    ["One.\n\nTwo.", false],
+  ]);
+});

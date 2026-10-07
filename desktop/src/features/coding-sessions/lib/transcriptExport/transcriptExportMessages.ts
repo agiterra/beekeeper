@@ -9,9 +9,27 @@
  * production-dormant.
  */
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
+import { joinConsecutiveCodingSessionProse } from "@/features/coding-sessions/lib/codingSessionTranscriptModelText";
 
 import type { TranscriptExportMessage } from "./transcriptExportEngine";
 
+/**
+ * A coding session's transcript as export messages: its prose pieces joined
+ * into the messages the agent wrote first (SV-36 S5,
+ * `conformance/transcript-prose-join/CONTRACT.md`), so one paragraph-streamed
+ * answer exports as one `assistant_text`, keyed on its first piece. The join
+ * runs over the whole transcript, so any other item — a status included —
+ * ends a message, exactly as the contract says.
+ */
+export function mapCodingSessionTranscriptToExportMessages(
+  items: readonly TranscriptItem[],
+): TranscriptExportMessage[] {
+  return mapTranscriptItemsToExportMessages(
+    joinConsecutiveCodingSessionProse(items),
+  );
+}
+
+/** Items to export messages, one to one. */
 export function mapTranscriptItemsToExportMessages(
   items: readonly TranscriptItem[],
 ): TranscriptExportMessage[] {

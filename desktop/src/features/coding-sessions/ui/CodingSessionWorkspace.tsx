@@ -14,6 +14,7 @@ import {
   umbrellaHasCollapsedHistory,
 } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { useCodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
+import { isCodingSessionProducerWriting } from "@/features/coding-sessions/lib/codingSessionProseArriving";
 import { useCodingSessionChannelAccess } from "@/features/coding-sessions/hooks/useCodingSessionChannelAccess";
 import {
   type CodingSessionChannelAccess,
@@ -616,6 +617,14 @@ function ReadyCodingSessionWorkspace({
   const transcriptModel = useStableCodingSessionTranscriptModel(
     transcript,
     settlement.isWorking,
+    undefined,
+    // SV-36 rule 7: "Writing…" from this generation's lease, never isWorking.
+    // A prior generation is never `provider_reachable`, so none is superseded.
+    isCodingSessionProducerWriting({
+      reachability,
+      status: session.status,
+      generationSuperseded: false,
+    }),
   );
   // The Agents surface reads each spawn through the turn settlement its
   // stream row reads it through, so the two never disagree side by side.

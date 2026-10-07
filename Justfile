@@ -547,6 +547,16 @@ e2e-affected base="":
     node scripts/e2e-affected.mjs compare --require-core --exit-codes "$(IFS=,; echo "${codes[*]}")" \
         "$reports/smoke.json" "$reports/smoke-serial.json"
 
+# A WebKit engine proxy, not WKWebView: it catches Chromium-only CSS and
+# layout assumptions before the macOS app does, but it is not the webview the
+# app ships in. One-time setup per machine:
+# `cd desktop && pnpm exec playwright install webkit`. Never run it while
+# another suite serves this worktree's `dist`.
+#
+# Build the e2e bundle and run the curated smoke-webkit project (WebKit engine)
+desktop-e2e-webkit:
+    cd {{desktop_dir}} && pnpm test:e2e:webkit
+
 # Run desktop relay-backed e2e tests
 desktop-e2e-integration: _ensure-migrations
     cd {{desktop_dir}} && pnpm test:e2e:integration

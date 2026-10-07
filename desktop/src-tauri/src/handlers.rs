@@ -507,6 +507,10 @@ pub(crate) fn invoke_handler(
         // Session view parity B0 — registration lines only.
         coding_sessions::session_tree::resolve_coding_session_tree,
         coding_sessions::session_tree::list_coding_session_tree_entries,
+        // SV-32 file chips — registration lines only.
+        coding_sessions::file_refs::coding_session_file_refs,
+        coding_sessions::file_refs::coding_session_open_file_ref,
+        coding_sessions::file_refs::coding_session_reveal_file_ref,
         coding_sessions::worktree::plan_coding_session_worktree,
         coding_sessions::worktree::set_coding_session_worktree_parent,
         coding_sessions::worktree::record_coding_session_worktree,

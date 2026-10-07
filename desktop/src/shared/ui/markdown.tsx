@@ -53,7 +53,7 @@ import {
   useEntityCardOpenHandlers,
   useOpenEntityLink,
 } from "./markdown/entityLinks";
-import { ExternalLinkAnchor } from "./markdown/ExternalLinkAnchor";
+import { FileLinkAnchor } from "./markdown/FileLinkAnchor";
 import { FileCard } from "./markdown/FileCard";
 import {
   MarkdownChannelDeepLink,
@@ -1361,14 +1361,14 @@ export function createMarkdownComponents(
     const isLinearLink = supportedLinkPreview?.kind === "linear-issue";
 
     return (
-      <ExternalLinkAnchor
+      <FileLinkAnchor
         anchorProps={props}
         href={href}
         isLinearLink={isLinearLink}
         label={label}
       >
         {children}
-      </ExternalLinkAnchor>
+      </FileLinkAnchor>
     );
   }
 

@@ -7,6 +7,7 @@ import { ThoughtDisclosure } from "@/features/agents/ui/activityRenderClasses/Th
 import { TranscriptActivityItem } from "@/features/agents/ui/activityRenderClasses/TranscriptActivityItem";
 import {
   type CodingSessionTurnSettlement,
+  isCodingSessionProseArriving,
   isCodingSessionTranscriptError,
   isCompletedSuccessfulCodingSessionTool,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
@@ -24,6 +25,7 @@ import {
   type CodingSessionWakeOperationIndex,
 } from "@/features/coding-sessions/lib/codingSessionWakeReading";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
+import { FileRefProvider } from "@/features/coding-sessions/useFileRefResolution";
 import { Markdown } from "@/shared/ui/markdown";
 import { copyTextToClipboard } from "@/shared/lib/clipboard";
 import { RedactedText } from "@/shared/ui/RedactedPill";
@@ -257,16 +259,31 @@ export const CodingSessionItem = React.memo(function CodingSessionItem({
       );
     }
 
+    const arriving = isCodingSessionProseArriving(item);
     return (
       <article
         className="min-w-0 text-base leading-6 text-foreground"
+        data-arriving={arriving ? "true" : undefined}
         data-role="assistant-message"
         data-testid="coding-session-assistant-message"
       >
-        <Markdown
-          className="text-base leading-6"
-          content={item.text.trim() || " "}
-        />
+        <FileRefProvider item={item} text={item.text}>
+          <Markdown
+            className="text-base leading-6"
+            content={item.text.trim() || " "}
+          />
+        </FileRefProvider>
+        {arriving ? (
+          // SV-36 S5, rule 7: the provider holds a live lease on this exact
+          // generation and the turn has not ended, so more of this message
+          // may follow. Never shown from `isWorking`.
+          <p
+            className="mt-1 text-sm text-muted-foreground"
+            data-testid="coding-session-assistant-writing"
+          >
+            Writing…
+          </p>
+        ) : null}
       </article>
     );
   }

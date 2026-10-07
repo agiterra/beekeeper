@@ -649,24 +649,45 @@ export function codingSessionSubagentModelName(
 
 /**
  * SV-97: a subagent's children without the prose that only repeats its
- * report. The provider publishes the subagent's last answer twice — as an
- * `assistant_text` item attributed to the call, then as the call's result —
- * and a surface that shows the report would otherwise print it twice. Only
- * the *final* assistant message is dropped, and only when its trimmed text is
- * the report's; an empty report (none shown) drops nothing.
+ * report. The provider publishes the subagent's last answer twice — as
+ * `assistant_text` attributed to the call, then as the call's result — and a
+ * surface that shows the report would otherwise print it twice.
+ *
+ * That answer may arrive as several pieces (a 24 KiB cut, or one per
+ * paragraph with paragraph flush; SV-36), so the test is over the trailing
+ * run of assistant pieces read as the one message they join into: the
+ * shortest run ending at the final assistant piece whose concatenation, trimmed,
+ * is the report is dropped whole. A single matching piece is the one-piece
+ * case. Nothing else is dropped, and an empty report (none shown) drops
+ * nothing.
  */
 export function withoutCodingSessionSubagentEchoedReport<
   T extends TranscriptItem,
 >(children: readonly T[], report: string): readonly T[] {
   const shown = report.trim();
   if (!shown) return children;
-  for (let index = children.length - 1; index >= 0; index -= 1) {
-    const child = children[index];
-    if (child.type !== "message" || child.role !== "assistant") continue;
-    if (child.text.trim() !== shown) return children;
-    return [...children.slice(0, index), ...children.slice(index + 1)];
+  let last = children.length - 1;
+  while (last >= 0 && !isAssistantProse(children[last])) last -= 1;
+  if (last < 0) return children;
+  let text = "";
+  for (let start = last; start >= 0; start -= 1) {
+    const child = children[start];
+    if (!isAssistantProse(child)) return children;
+    text = child.text + text;
+    if (text.trim() === shown) {
+      return [...children.slice(0, start), ...children.slice(last + 1)];
+    }
+    // Pieces only add words going back: once longer than the report, no
+    // earlier start can match.
+    if (text.trim().length > shown.length) return children;
   }
   return children;
+}
+
+function isAssistantProse(
+  item: TranscriptItem | undefined,
+): item is Extract<TranscriptItem, { type: "message" }> {
+  return item?.type === "message" && item.role === "assistant";
 }
 
 /** `<model> · <tokens> tok · <N> tools`, each part only when known. */

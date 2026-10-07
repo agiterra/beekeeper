@@ -875,6 +875,7 @@ export function UmbrellaCodingSessionWorkspace({
                               mission ? routeRail.revealRef : undefined
                             }
                             narrativeScrollRef={narrativeScrollRef}
+                            resolveReachability={resolveReachability}
                             scrollMemoryKey={narrativeMemoryKey}
                             onMissionVisibleTimesChange={
                               mission ? routeRail.setVisibleAt : undefined

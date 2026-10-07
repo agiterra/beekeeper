@@ -4,6 +4,7 @@ import { handleWaveBMinimapMockCommand } from "./e2eBridgeWaveBMinimap";
 import { handleWaveBOrchestrationMockCommand } from "./e2eBridgeWaveBOrchestration";
 import { handleWaveBSurfacesMockCommand } from "./e2eBridgeWaveBSurfaces";
 import { handleWaveBTerminalMockCommand } from "./e2eBridgeWaveBTerminal";
+import { handleFileRefsMockCommand } from "./e2eBridgeFileRefs";
 
 /**
  * The session-view parity Wave B seam in the E2E bridge (brief §4).
@@ -45,6 +46,7 @@ const HANDLERS: readonly WaveBHandler[] = [
   handleWaveBTerminalMockCommand,
   handleWaveBMinimapMockCommand,
   handleWaveBOrchestrationMockCommand,
+  handleFileRefsMockCommand,
 ];
 
 /** Ask each Wave B lane module in turn; the first to answer wins. */

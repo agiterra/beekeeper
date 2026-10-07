@@ -25,7 +25,13 @@ import {
   leavesCodingSessionTranscript,
   normalizeContent,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModelPredicates";
-import { joinConsecutiveCodingSessionProse } from "@/features/coding-sessions/lib/codingSessionTranscriptModelText";
+import { codingSessionArrivingPieceId } from "@/features/coding-sessions/lib/codingSessionProseArriving";
+import {
+  codingSessionProseLastPieceId,
+  isCodingSessionProsePiece,
+  joinConsecutiveCodingSessionProse,
+  withCodingSessionProseArriving,
+} from "@/features/coding-sessions/lib/codingSessionTranscriptModelText";
 import { groupAdjacentTools } from "@/features/coding-sessions/lib/codingSessionTranscriptModelTools";
 import type {
   CodingSessionTranscriptBlock,
@@ -71,7 +77,9 @@ export {
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModelPredicates";
 export { stabilizeCodingSessionTranscriptModel } from "@/features/coding-sessions/lib/codingSessionTranscriptModelStability";
 export {
-  joinCodingSessionProseText,
+  codingSessionProseLastEventId,
+  codingSessionProseLastPieceId,
+  isCodingSessionProseArriving,
   joinConsecutiveCodingSessionProse,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModelText";
 export { summarizeCodingSessionTools } from "@/features/coding-sessions/lib/codingSessionTranscriptModelTools";
@@ -80,6 +88,7 @@ export {
   type CodingSessionChangedFile,
   type CodingSessionChangedFileDiff,
   type CodingSessionObservedChanges,
+  type CodingSessionProseFields,
   type CodingSessionTranscriptBlock,
   type CodingSessionTranscriptEntry,
   type CodingSessionTranscriptModel,
@@ -127,6 +136,14 @@ export type CodingSessionTranscriptModelOptions = {
     string,
     readonly CodingSessionTurnBackgroundTask[]
   >;
+  /**
+   * Rule 7's liveness half for this transcript's exact target
+   * (`isCodingSessionProducerWriting`): live lease evidence, no higher
+   * generation, no session-ending status. Only then is a turn's trailing
+   * prose marked `arriving`. Omitted is `false` — no evidence, nothing
+   * arriving — and it is never read from `isWorking`.
+   */
+  producerWriting?: boolean;
 };
 
 export function deriveCodingSessionTranscriptModel(
@@ -192,6 +209,7 @@ export function deriveCodingSessionTranscriptModel(
         supersededTurns.has(candidate),
         subagents,
         backgroundTasks,
+        options.producerWriting === true,
       );
       if (
         turn.entries.length > 0 ||
@@ -352,6 +370,7 @@ function deriveTurn(
   superseded: boolean,
   subagents: CodingSessionSubagentPartition,
   backgroundTaskSource: TurnBackgroundTasks,
+  producerWriting: boolean,
 ): CodingSessionTranscriptTurn {
   const visible: TranscriptItem[] = [];
   const diagnostics: TranscriptItem[] = [];
@@ -432,7 +451,17 @@ function deriveTurn(
     visible.push(item);
   }
 
-  const joined = joinConsecutiveCodingSessionProse(visible, resultBodies);
+  // Rule 7 over the raw turn: a later status, tool or result ends it. A turn
+  // a later one followed is not read as still writing either, whatever the
+  // lease says — the conservative side of SV-44's supersession.
+  const arrivingPieceId = codingSessionArrivingPieceId(
+    turn.items,
+    producerWriting && !superseded,
+  );
+  const joined = markArrivingProse(
+    joinConsecutiveCodingSessionProse(visible, resultBodies),
+    arrivingPieceId,
+  );
   const echoes = assistantResultEchoes(turn.items, joined, resultBodies);
   const narrative = joined.filter(
     (item) =>
@@ -479,6 +508,20 @@ function deriveTurn(
       startedAt,
     }),
   };
+}
+
+/** Mark the joined message ending at the arriving piece, if any. */
+function markArrivingProse(
+  joined: TranscriptItem[],
+  arrivingPieceId: string | null,
+): TranscriptItem[] {
+  if (arrivingPieceId === null) return joined;
+  return joined.map((item) =>
+    isCodingSessionProsePiece(item) &&
+    codingSessionProseLastPieceId(item) === arrivingPieceId
+      ? withCodingSessionProseArriving(item, true)
+      : item,
+  );
 }
 
 /**

@@ -25,6 +25,7 @@ import {
 import type { RelayEvent } from "@/shared/api/types";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
+import { shotPath } from "../helpers/shotPath";
 
 // Session-view parity, wave A (plans/SESSION_VIEW_PARITY_PLAN.md rule 4):
 // every UI ID gets a screenshot, scoped to its subject with
@@ -243,13 +244,17 @@ async function openSession(page: Page): Promise<Locator> {
   return workspace;
 }
 
-test("captures each wave A UI ID, hash-distinct", async ({ page }) => {
+test("captures each wave A UI ID, hash-distinct", async ({
+  page,
+}, testInfo) => {
   test.setTimeout(90_000);
   const hashes = new Map<string, string>();
   const shoot = async (name: string, locator: Locator) => {
     await expect(locator).toBeVisible();
     await waitForAnimations(page);
-    const png = await locator.screenshot({ path: `${SHOTS}/${name}.png` });
+    const png = await locator.screenshot({
+      path: shotPath(testInfo, SHOTS, name),
+    });
     hashes.set(name, createHash("sha256").update(png).digest("hex"));
   };
   // Move the pointer somewhere inert so no hover state leaks between shots.

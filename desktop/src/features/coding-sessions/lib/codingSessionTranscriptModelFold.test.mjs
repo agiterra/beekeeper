@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   deriveCodingSessionTranscriptModel,
   formatFoldedFailures,
-  joinCodingSessionProseText,
   joinConsecutiveCodingSessionProse,
   stabilizeCodingSessionTranscriptModel,
 } from "./codingSessionTranscriptModel.ts";
@@ -427,24 +426,24 @@ test("paragraph pieces join into one message without breaking a fence or a list"
   );
 });
 
-test("two messages the provider names as distinct get a paragraph break", () => {
-  assert.equal(
-    joinCodingSessionProseText("Done.", "Next", true),
-    "Done.\n\nNext",
-  );
-  assert.equal(
-    joinCodingSessionProseText("Done.\n\n", "Next", true),
-    "Done.\n\nNext",
-  );
-  // Slices of one message are concatenated exactly, even mid-word.
-  assert.equal(joinCodingSessionProseText("Hel", "lo", false), "Hello");
-
+test("two messages the provider names as distinct stay two, nothing inserted", () => {
   const turn = onlyTurn([
     message({ id: "prompt", role: "user", text: "Go" }),
     message({ id: "a", role: "assistant", text: "Done.", messageId: "m1" }),
     message({ id: "b", role: "assistant", text: "Next", messageId: "m2" }),
   ]);
-  assert.equal(turn.entries[1].item.text, "Done.\n\nNext");
+  assert.deepEqual(
+    turn.entries.slice(1).map((entry) => entry.item.text),
+    ["Done.", "Next"],
+  );
+  // Slices of one message are concatenated exactly, even mid-word.
+  assert.equal(
+    joinConsecutiveCodingSessionProse([
+      message({ id: "x", role: "assistant", text: "Hel" }),
+      message({ id: "y", role: "assistant", text: "lo" }),
+    ])[0].text,
+    "Hello",
+  );
 });
 
 test("prose separated by a tool stays two messages", () => {

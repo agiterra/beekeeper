@@ -43,6 +43,7 @@ import { resetAvatarProfileSync } from "@/features/profile/avatarProfileSync";
 import { resetSidebarRelayConnectionCardState } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
 import { clearMarkdownNodeCache } from "@/shared/ui/markdown/nodeCache";
 import { resetRedactionDictionary } from "@/features/coding-sessions/useRedactionDictionary";
+import { resetFileRefResolution } from "@/features/coding-sessions/useFileRefResolution";
 import { resetCodingSessionPopoutBootstrapCache } from "@/features/coding-sessions/lib/codingSessionBootstrap";
 import { resetPendingCodingSessionLifecycle } from "@/features/coding-sessions/lib/codingSessionPendingLifecycle";
 import { resetPendingCodingSessionTurns } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
@@ -111,6 +112,7 @@ async function resetCommunityState({
   // A provider identity is minted per relay, so every cached
   // (signer, session) redaction scope is meaningless after a switch.
   resetRedactionDictionary();
+  resetFileRefResolution();
   // Pending create/stop overlays are relay-scoped commands; carrying them
   // across a community switch would synthesize rows for sessions the new
   // relay never saw.

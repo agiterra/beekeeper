@@ -147,7 +147,9 @@ export const CodingSessionTurn = React.memo(function CodingSessionTurn({
   );
   const answerEntry = answerIndex >= 0 ? turn.entries[answerIndex] : undefined;
   const answerText =
-    answerEntry?.kind === "item" && answerEntry.item.type === "message"
+    turn.completion !== null &&
+    answerEntry?.kind === "item" &&
+    answerEntry.item.type === "message"
       ? answerEntry.item.text.trim()
       : null;
 

@@ -15,6 +15,8 @@ pub(crate) mod assignment_input;
 pub(crate) mod host_git;
 // The durable queue that owns *when* that happens, so no panel decides it.
 pub(crate) mod assignment_establishment;
+// SV-32: paths in an answer, resolved against that session's folder here.
+pub(crate) mod file_refs;
 pub(crate) mod naming;
 // D9/SV-56: who titles a session here, and telling this computer's host.
 pub(crate) mod naming_mode;
