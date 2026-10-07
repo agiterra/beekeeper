@@ -32,6 +32,10 @@ use wire::{Request, Response};
 const RELAY_MESH_PROVIDER: &str = "relay-mesh";
 
 fn main() {
+    // First, while the process is single-threaded: an older desktop may still
+    // hand this provider `BUZZ_*` names.
+    beekeeper_core::env_compat::adopt_legacy_env("beekeeper-backend-kubernetes");
+
     // rustls needs a process-level provider before the first TLS connection.
     // The release build compiles every sidecar in one cargo invocation, which
     // unifies the `ring` and `aws-lc-rs` features and leaves rustls unable to

@@ -1,0 +1,1 @@
+{"ok":false,"error":"BEEKEEPER_ACP_NO_PRESENCE (or its legacy spelling) must not be set on a remote agent: presence is the only signal that a remote agent is alive"}

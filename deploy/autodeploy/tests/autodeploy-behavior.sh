@@ -183,8 +183,8 @@ grep -q "wp-testrelay.sqlite" "$INCUS_LOG"  || fail "scratch sqlite path must be
 # discover the commit on its own — this build-arg is the only place on this
 # path that still knows it, and it must be the full sha (bee git check --ref
 # needs the whole object name), not the short one used for the image tag.
-grep -q "docker build --build-arg BUZZ_SOURCE_SHA=8888888888888888888888888888888888888888 " "$INCUS_LOG" \
-                                             || fail "docker build must pass --build-arg BUZZ_SOURCE_SHA=<full sha>; log: $(grep 'docker build' "$INCUS_LOG")"
+grep -q "docker build --build-arg BEEKEEPER_SOURCE_SHA=8888888888888888888888888888888888888888 " "$INCUS_LOG" \
+                                             || fail "docker build must pass --build-arg BEEKEEPER_SOURCE_SHA=<full sha>; log: $(grep 'docker build' "$INCUS_LOG")"
 grep -q "docker build .* -t test-relay:888888888 " "$INCUS_LOG" \
                                              || fail "docker build must tag with the short sha; log: $(grep 'docker build' "$INCUS_LOG")"
 # The ordinal of that same commit, for NIP-11 `software_commit_count`. The
@@ -192,8 +192,12 @@ grep -q "docker build .* -t test-relay:888888888 " "$INCUS_LOG" \
 # *shape* — the arg is always passed, and carries either a plain positive
 # decimal or the empty string. Never `0`, and never a word: both would
 # subtract as data on the client rather than reading as absent.
-grep -qE "docker build .*--build-arg BUZZ_SOURCE_COMMIT_COUNT=([1-9][0-9]*)? " "$INCUS_LOG" \
-                                             || fail "docker build must pass --build-arg BUZZ_SOURCE_COMMIT_COUNT=<positive decimal or empty>; log: $(grep 'docker build' "$INCUS_LOG")"
+grep -qE "docker build .*--build-arg BEEKEEPER_SOURCE_COMMIT_COUNT=([1-9][0-9]*)? " "$INCUS_LOG" \
+                                             || fail "docker build must pass --build-arg BEEKEEPER_SOURCE_COMMIT_COUNT=<positive decimal or empty>; log: $(grep 'docker build' "$INCUS_LOG")"
+# The image name is a Compose-interpolated deploy name and keeps its BUZZ_
+# spelling (deploy/compose/.env.example says why).
+grep -q "s#^BUZZ_IMAGE=.*#BUZZ_IMAGE=test-relay:888888888#" "$INCUS_LOG" \
+                                             || fail "the deploy must still flip BUZZ_IMAGE in .env; log: $(grep 'BUZZ_IMAGE' "$INCUS_LOG")"
 
 # ── 8. an unhealthy relay rolls back ─────────────────────────────────────────
 run STUB_PIPELINE_ROW="success 9999999999999999999999999999999999999999" STUB_CURRENT=111111111 STUB_HEALTH=unhealthy
@@ -210,7 +214,7 @@ run STUB_PIPELINE_ROW="success aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" STUB_CU
 [[ $rc -eq 0 ]]                                      || fail "legacy RUST_LOG deploy should exit 0, got $rc"
 grep -q "rewriting pre-rename buzz_\* log targets" <<<"$out" \
                                                       || fail "a legacy RUST_LOG must be reported when it is rewritten"
-grep -q "sed -i -E '/^(RUST_LOG|BUZZ_OTEL_FILTER)=/" "$INCUS_LOG" \
+grep -q "sed -i -E '/^(RUST_LOG|BEEKEEPER_OTEL_FILTER|BUZZ_OTEL_FILTER)=/" "$INCUS_LOG" \
                                                       || fail "the image flip must also rewrite the filter variables"
 run STUB_PIPELINE_ROW="success bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" STUB_CURRENT=999999999 \
     STUB_RUST_LOG="beekeeper_relay=info,tower_http=info"
@@ -227,6 +231,7 @@ check_rewrite() {  # check_rewrite <input line> <expected line>
 }
 check_rewrite 'RUST_LOG=buzz_relay=info,buzz_db=info,buzz_auth=info,buzz_pubsub=info,tower_http=info' \
               'RUST_LOG=beekeeper_relay=info,beekeeper_db=info,beekeeper_auth=info,beekeeper_pubsub=info,tower_http=info'
+check_rewrite 'BEEKEEPER_OTEL_FILTER=buzz_relay=info' 'BEEKEEPER_OTEL_FILTER=beekeeper_relay=info'
 check_rewrite 'BUZZ_OTEL_FILTER=buzz_relay=info,buzz_datastore=info' \
               'BUZZ_OTEL_FILTER=beekeeper_relay=info,beekeeper_datastore=info'
 check_rewrite 'RUST_LOG="info, buzz_relay::api=trace,buzz_db[query]=debug,buzz_relay_mesh"' \

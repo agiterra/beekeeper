@@ -455,7 +455,7 @@ pub async fn deploy(
                 // to a Secret that is not the one mounted. Restamp so there is
                 // exactly one generation per attempt (§K8s Secrets).
                 let mut env = env.clone();
-                env.insert(crate::env::START_NONCE_KEY.to_string(), generation.clone());
+                crate::env::stamp_generation(&mut env, &generation);
 
                 // Secret first: the pod's spec references this exact name, so
                 // payload and Secret are atomic at the pod-spec boundary.

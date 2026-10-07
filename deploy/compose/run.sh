@@ -35,15 +35,26 @@ MSG
   fi
 }
 
+# The relay image's admin CLI. Images from before the rename have only
+# /usr/local/bin/buzz-admin; current ones have beekeeper-admin (and keep a
+# buzz-admin link). Prefer the new name, fall back to the old one, so a
+# pinned older BUZZ_IMAGE still works.
+relay_admin() {
+  docker compose exec relay bash -c \
+    'if [ -x /usr/local/bin/beekeeper-admin ]; then exec /usr/local/bin/beekeeper-admin "$@"; fi; exec /usr/local/bin/buzz-admin "$@"' \
+    relay-admin "$@"
+}
+
 backup_hint() {
   cat <<'MSG'
 Back up these before upgrades and on a regular schedule:
 
-- deploy/compose/.env, especially BUZZ_RELAY_PRIVATE_KEY, DB/Redis/S3 secrets, and BUZZ_GIT_HOOK_HMAC_SECRET
+- deploy/compose/.env, especially BEEKEEPER_RELAY_PRIVATE_KEY, DB/Redis/S3 secrets, and BEEKEEPER_GIT_HOOK_HMAC_SECRET
+  (BUZZ_RELAY_PRIVATE_KEY and BUZZ_GIT_HOOK_HMAC_SECRET in a .env from before the rename)
 - The owner private key if bootstrap generated one for RELAY_OWNER_PUBKEY
 - Postgres data (prefer pg_dump or a quiesced volume snapshot)
 - RustFS (S3) bucket contents for media and git objects
-- buzz-git-data volume (BUZZ_GIT_REPO_PATH=/data/git)
+- buzz-git-data volume (BEEKEEPER_GIT_REPO_PATH=/data/git)
 - Caddy data/config volumes if using compose.caddy.yml
 
 Keep Postgres + object/git state snapshots from the same maintenance window.
@@ -87,13 +98,13 @@ case "${1:-help}" in
     backup_hint
     ;;
   add-member)
-    docker compose exec relay /usr/local/bin/buzz-admin add-member --pubkey "${2:?Usage: ./run.sh add-member <npub-or-hex> [--role member|admin]}" "${@:3}"
+    relay_admin add-member --pubkey "${2:?Usage: ./run.sh add-member <npub-or-hex> [--role member|admin]}" "${@:3}"
     ;;
   remove-member)
-    docker compose exec relay /usr/local/bin/buzz-admin remove-member --pubkey "${2:?Usage: ./run.sh remove-member <npub-or-hex> [--role member|admin]}" "${@:3}"
+    relay_admin remove-member --pubkey "${2:?Usage: ./run.sh remove-member <npub-or-hex> [--role member|admin]}" "${@:3}"
     ;;
   list-members)
-    docker compose exec relay /usr/local/bin/buzz-admin list-members
+    relay_admin list-members
     ;;
   help|-h|--help)
     cat <<'MSG'
