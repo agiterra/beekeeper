@@ -135,13 +135,37 @@ pub(super) fn build_launch_block_with_session_policy(
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
 
+    // Both spellings, and the bundled commands under their pre-rename names,
+    // for the transition. A current provider normalizes the keys and maps the
+    // commands itself, so this costs it nothing. But discovery still accepts a
+    // legacy `buzz-backend-*` provider, which copies these maps into the pod
+    // verbatim, and a pre-rename image reads only `BUZZ_*` and ships only
+    // `buzz-*` executables: sent new-names-only, its agent would start without
+    // its prompt, model and policy, or not start at all, and say nothing.
+    let launch_env = beekeeper_core_pkg::env_compat::mirror_map(launch_env);
+    let policy_env = beekeeper_core_pkg::env_compat::mirror_map(policy_env);
     serde_json::json!({
-        "command": descriptor.command,
+        "command": wire_command_name(&descriptor.command),
         "args": descriptor.args,
         "env": launch_env,
         "policy_env": policy_env,
         "owner_pubkey": owner_pubkey,
     })
+}
+
+/// The command name a remote provider forwards to the pod.
+///
+/// The bundled harnesses go out under the `buzz-*` names every sprig image
+/// ships, so an older provider (which forwards the name verbatim) and an older
+/// image both still find the binary. A current provider maps either spelling.
+/// Anything else, including a path, is sent as given.
+fn wire_command_name(command: &str) -> &str {
+    match command {
+        "beekeeper-acp" => "buzz-acp",
+        "beekeeper-agent" => "buzz-agent",
+        "beekeeper-dev-mcp" => "buzz-dev-mcp",
+        other => other,
+    }
 }
 
 pub(super) fn ensure_remote_provider_supported(provider: Option<&str>) -> Result<(), String> {
@@ -256,6 +280,20 @@ mod tests {
     use super::*;
     use crate::managed_agents::{readiness::EffectiveHarnessDescriptor, RespondTo, TeamRecord};
 
+    #[test]
+    fn bundled_commands_go_out_under_the_names_every_image_ships() {
+        assert_eq!(wire_command_name("beekeeper-agent"), "buzz-agent");
+        assert_eq!(wire_command_name("beekeeper-acp"), "buzz-acp");
+        assert_eq!(wire_command_name("beekeeper-dev-mcp"), "buzz-dev-mcp");
+        assert_eq!(wire_command_name("buzz-agent"), "buzz-agent");
+        assert_eq!(wire_command_name("goose"), "goose");
+        assert_eq!(
+            wire_command_name("/opt/bin/beekeeper-agent"),
+            "/opt/bin/beekeeper-agent",
+            "a path is sent as given"
+        );
+    }
+
     fn record() -> ManagedAgentRecord {
         serde_json::from_value(serde_json::json!({
             "pubkey": "abcd1234",
@@ -339,6 +377,9 @@ mod tests {
             "23"
         );
         assert_eq!(launch["policy_env"]["BEEKEEPER_ACP_AGENTS"], "4");
+        // Legacy twins ride the wire too, for an older provider and image.
+        assert_eq!(launch["policy_env"]["BUZZ_ACP_AGENTS"], "4");
+        assert_eq!(launch["policy_env"]["BUZZ_ACP_MODEL"], "model");
         assert_eq!(launch["owner_pubkey"], "owner-hex");
     }
 

@@ -569,8 +569,14 @@ pub fn validate_provider_config(config: &serde_json::Value) -> Result<(), String
 /// removes its target-triple suffix while copying an external binary, but on
 /// Windows leaves the executable/script extension, which is not part of the
 /// provider id.
+///
+/// Both the current `beekeeper-backend-` prefix and the pre-rename
+/// `buzz-backend-` are accepted: a provider a user installed before the rename
+/// (`~/.local/bin/buzz-backend-<id>`) is still theirs.
 fn provider_id_from_filename(name: &str) -> Option<&str> {
-    let raw = name.strip_prefix("buzz-backend-")?;
+    let raw = PROVIDER_PREFIXES
+        .iter()
+        .find_map(|prefix| name.strip_prefix(prefix))?;
     let id = [".exe", ".bat", ".cmd"]
         .into_iter()
         .find_map(|extension| {
@@ -583,7 +589,36 @@ fn provider_id_from_filename(name: &str) -> Option<&str> {
     (!id.is_empty()).then_some(id)
 }
 
-/// Enumerate PATH for buzz-backend-* executables. Returns (id, path) pairs.
+/// Provider executable filename prefixes, current first.
+pub(crate) const PROVIDER_PREFIXES: [&str; 2] = ["beekeeper-backend-", "buzz-backend-"];
+
+/// Pick one binary per provider id from executable `(filename, path)` entries
+/// in search order: the first current-prefix binary when there is one,
+/// otherwise the first legacy one. A stale `buzz-backend-kubernetes` left in
+/// `~/.local/bin` cannot shadow the bundled `beekeeper-backend-kubernetes`.
+pub(crate) fn select_provider_candidates(
+    entries: impl IntoIterator<Item = (String, PathBuf)>,
+) -> Vec<(String, PathBuf)> {
+    let mut results: Vec<(String, PathBuf, bool)> = Vec::new();
+    for (name, path) in entries {
+        let Some(id) = provider_id_from_filename(&name) else {
+            continue;
+        };
+        let legacy = !name.starts_with(PROVIDER_PREFIXES[0]);
+        match results.iter_mut().find(|(found, _, _)| found == id) {
+            Some(existing) if existing.2 && !legacy => *existing = (id.to_string(), path, false),
+            Some(_) => {}
+            None => results.push((id.to_string(), path, legacy)),
+        }
+    }
+    results
+        .into_iter()
+        .map(|(id, path, _)| (id, path))
+        .collect()
+}
+
+/// Enumerate PATH for `beekeeper-backend-*` (and legacy `buzz-backend-*`)
+/// executables. Returns (id, path) pairs.
 /// Only includes files that are executable. Does NOT execute any binaries.
 ///
 /// On macOS, GUI apps inherit a minimal PATH from launchd (`/usr/bin:/bin:/usr/sbin:/sbin`)
@@ -591,9 +626,8 @@ fn provider_id_from_filename(name: &str) -> Option<&str> {
 /// We augment the search with those directories so bundled and user-installed providers
 /// are always discovered regardless of how the desktop was launched.
 pub fn discover_provider_candidates() -> Vec<(String, PathBuf)> {
-    let prefix = "buzz-backend-";
     let mut seen = std::collections::HashSet::new();
-    let mut results = Vec::new();
+    let mut entries_in_order = Vec::new();
 
     let path_var = std::env::var_os("PATH").unwrap_or_default();
     let mut dirs: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
@@ -624,17 +658,16 @@ pub fn discover_provider_candidates() -> Vec<(String, PathBuf)> {
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with(prefix) {
-                if let Some(id) = provider_id_from_filename(&name) {
-                    if !seen.contains(&name) && is_executable(&entry.path()) {
-                        seen.insert(name.clone());
-                        results.push((id.to_string(), entry.path()));
-                    }
-                }
+            if provider_id_from_filename(&name).is_some()
+                && !seen.contains(&name)
+                && is_executable(&entry.path())
+            {
+                seen.insert(name.clone());
+                entries_in_order.push((name, entry.path()));
             }
         }
     }
-    results
+    select_provider_candidates(entries_in_order)
 }
 
 /// Resolve a provider ID to a discovered, executable binary path.
@@ -645,7 +678,7 @@ pub fn discover_provider_candidates() -> Vec<(String, PathBuf)> {
 /// 3. Returns the canonical path of the discovered binary
 ///
 /// All deploy, start, and create paths MUST use this instead of raw
-/// `resolve_command(format!("buzz-backend-{id}"))` to prevent a compromised
+/// `resolve_command(format!("beekeeper-backend-{id}"))` to prevent a compromised
 /// frontend/IPC caller from steering execution to an arbitrary binary.
 pub fn resolve_provider_binary(provider_id: &str) -> Result<PathBuf, String> {
     // Reject IDs that could be path components or shell metacharacters.
@@ -671,7 +704,7 @@ pub fn resolve_provider_binary(provider_id: &str) -> Result<PathBuf, String> {
             .canonicalize()
             .map_err(|e| format!("provider binary not accessible: {e}")),
         None => Err(format!(
-            "provider 'buzz-backend-{provider_id}' not found on PATH"
+            "provider 'beekeeper-backend-{provider_id}' not found on PATH"
         )),
     }
 }

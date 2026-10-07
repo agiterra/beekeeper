@@ -134,12 +134,12 @@ impl DatabricksAuthIntent {
 }
 
 pub(super) fn databricks_sign_in_required_error() -> String {
-    "Databricks sign-in is required; save this agent, then open its model picker to sign in, or run `buzz-agent auth databricks`"
+    "Databricks sign-in is required; save this agent, then open its model picker to sign in, or run `beekeeper-agent auth databricks`"
         .to_string()
 }
 
 pub(super) fn databricks_sign_in_timed_out_error() -> String {
-    "Databricks sign-in timed out; open the model picker to retry, or run `buzz-agent auth databricks`"
+    "Databricks sign-in timed out; open the model picker to retry, or run `beekeeper-agent auth databricks`"
         .to_string()
 }
 

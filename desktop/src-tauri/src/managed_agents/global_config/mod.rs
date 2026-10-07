@@ -71,7 +71,7 @@ pub struct GlobalAgentConfig {
     /// Lowest user-settable layer — per-agent and persona values win on any
     /// key collision. Reserved and derived keys are rejected at save time and
     /// stripped at spawn time.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::env_vars::deserialize_env_vars")]
     pub env_vars: BTreeMap<String, String>,
 
     /// Global fallback provider (e.g. `"databricks_v2"`, `"anthropic"`).

@@ -18,7 +18,7 @@ fn reconcile_legacy_command_names_rewrites_renamed_sidecars() {
 
     let records = read_agents_json(dir.path());
     assert_eq!(records[0]["acp_command"], "beekeeper-acp");
-    assert_eq!(records[0]["agent_command"], "buzz-agent");
+    assert_eq!(records[0]["agent_command"], "beekeeper-agent");
     assert_eq!(records[0]["mcp_command"], "beekeeper-dev-mcp");
 }
 
@@ -39,7 +39,7 @@ fn reconcile_legacy_command_names_updates_removed_mcp_server_for_buzz_agent() {
 
     let records = read_agents_json(dir.path());
     assert_eq!(records[0]["acp_command"], "beekeeper-acp");
-    assert_eq!(records[0]["agent_command"], "buzz-agent");
+    assert_eq!(records[0]["agent_command"], "beekeeper-agent");
     assert_eq!(records[0]["mcp_command"], "beekeeper-dev-mcp");
 }
 
@@ -182,4 +182,107 @@ fn reconcile_legacy_team_persona_runtime_files_rewrites_persona_md() {
 
     let updated = std::fs::read_to_string(persona_path).unwrap();
     assert!(updated.contains("runtime: buzz-agent\n"));
+}
+
+// ── buzz-* → beekeeper-* (2026-10) ─────────────────────────────────
+
+#[test]
+fn reconcile_legacy_command_names_rewrites_buzz_binaries_to_beekeeper() {
+    let dir = tempfile::tempdir().unwrap();
+    write_agents_json(
+        dir.path(),
+        &serde_json::json!([{
+            "name": "Brain",
+            "runtime": "buzz-agent",
+            "acp_command": "buzz-acp",
+            "agent_command": "buzz-agent",
+            "agent_command_override": "buzz-agent",
+            "mcp_command": "buzz-dev-mcp"
+        }]),
+    );
+
+    reconcile_legacy_command_names_in_file(&dir.path().join("agents/managed-agents.json"));
+
+    let records = read_agents_json(dir.path());
+    assert_eq!(records[0]["acp_command"], "beekeeper-acp");
+    assert_eq!(records[0]["agent_command"], "beekeeper-agent");
+    assert_eq!(records[0]["agent_command_override"], "beekeeper-agent");
+    assert_eq!(records[0]["mcp_command"], "beekeeper-dev-mcp");
+    // The runtime id is not a command name and is never rewritten.
+    assert_eq!(records[0]["runtime"], "buzz-agent");
+}
+
+#[test]
+fn reconcile_legacy_command_names_maps_the_removed_buzz_mcp_server_by_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    write_agents_json(
+        dir.path(),
+        &serde_json::json!([
+            {
+                "name": "Bundled",
+                "acp_command": "buzz-acp",
+                "agent_command": "buzz-agent",
+                "mcp_command": "buzz-mcp-server"
+            },
+            {
+                "name": "Goose",
+                "acp_command": "buzz-acp",
+                "agent_command": "goose",
+                "mcp_command": "buzz-mcp-server"
+            }
+        ]),
+    );
+
+    reconcile_legacy_command_names_in_file(&dir.path().join("agents/managed-agents.json"));
+
+    let records = read_agents_json(dir.path());
+    assert_eq!(records[0]["mcp_command"], "beekeeper-dev-mcp");
+    assert_eq!(records[1]["agent_command"], "goose");
+    assert_eq!(records[1]["mcp_command"], "");
+}
+
+#[test]
+fn reconcile_legacy_command_names_leaves_current_names_and_paths_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    write_agents_json(
+        dir.path(),
+        &serde_json::json!([
+            {
+                "name": "Current",
+                "acp_command": "beekeeper-acp",
+                "agent_command": "beekeeper-agent",
+                "mcp_command": "beekeeper-dev-mcp"
+            },
+            {
+                "name": "Pinned",
+                "acp_command": "/opt/old/buzz-acp",
+                "agent_command": "/opt/old/buzz-agent",
+                "mcp_command": "/opt/old/buzz-dev-mcp"
+            }
+        ]),
+    );
+    let path = dir.path().join("agents/managed-agents.json");
+    let before = std::fs::read_to_string(&path).unwrap();
+
+    reconcile_legacy_command_names_in_file(&path);
+
+    assert_eq!(before, std::fs::read_to_string(&path).unwrap());
+}
+
+#[test]
+fn reconcile_mcp_commands_replaces_the_old_dev_mcp_name() {
+    let dir = tempfile::tempdir().unwrap();
+    write_agents_json(
+        dir.path(),
+        &serde_json::json!([{
+            "name": "Brain",
+            "agent_command": "beekeeper-agent",
+            "mcp_command": "buzz-dev-mcp"
+        }]),
+    );
+
+    reconcile_mcp_commands_in_file(&dir.path().join("agents/managed-agents.json"));
+
+    let records = read_agents_json(dir.path());
+    assert_eq!(records[0]["mcp_command"], "beekeeper-dev-mcp");
 }

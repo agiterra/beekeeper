@@ -555,6 +555,13 @@ fn tauri_platform_configs_bundle_kubernetes_only_on_supported_hosts() {
             has_kubernetes, expected,
             "unexpected Kubernetes externalBin for {target}; merged {paths:?}"
         );
+        // Every bundled sidecar carries its post-rename name.
+        for bin in external_bins.iter().filter_map(|value| value.as_str()) {
+            assert!(!bin.contains("buzz-"), "{bin} for {target}");
+        }
+        assert!(external_bins
+            .iter()
+            .any(|v| v == "binaries/beekeeper-agent"));
     }
 }
 

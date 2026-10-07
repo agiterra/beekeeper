@@ -256,3 +256,45 @@ fn reserved_key_absent_from_definition_env_falls_through() {
     assert_eq!(model.value.as_deref(), Some("persona-struct-model"));
     assert_eq!(model.origin, ConfigOrigin::PersonaDefault);
 }
+
+// ── BUZZ_* → BEEKEEPER_* rename ───────────────────────────────────────────────
+
+/// A tier that still carries the pre-rename spelling is read.
+#[test]
+fn legacy_prompt_key_is_read_from_an_env_tier() {
+    let record = test_record();
+    let runtime = test_runtime();
+    let tiers = InheritedConfigTiers {
+        global_env: BTreeMap::from([(
+            "BUZZ_ACP_SYSTEM_PROMPT".to_string(),
+            "legacy-global-prompt".to_string(),
+        )]),
+        ..Default::default()
+    };
+
+    let surface = read_config_surface(&record, Some(runtime), None, &tiers);
+
+    let prompt = surface.normalized.system_prompt.unwrap();
+    assert_eq!(prompt.value.as_deref(), Some("legacy-global-prompt"));
+    assert_eq!(prompt.origin, ConfigOrigin::GlobalDefault);
+}
+
+/// Within one tier the current spelling wins over a stale legacy one.
+#[test]
+fn current_key_wins_over_legacy_key_in_the_same_tier() {
+    let mut record = test_record();
+    record.env_vars.insert(
+        "BUZZ_AGENT_MAX_CONTEXT_TOKENS".to_string(),
+        "1000".to_string(),
+    );
+    record.env_vars.insert(
+        "BEEKEEPER_AGENT_MAX_CONTEXT_TOKENS".to_string(),
+        "2000".to_string(),
+    );
+    let runtime = buzz_agent_runtime();
+
+    let surface = read_config_surface(&record, Some(runtime), None, &Default::default());
+
+    let field = surface.normalized.context_limit.unwrap();
+    assert_eq!(field.value.as_deref(), Some("2000"));
+}

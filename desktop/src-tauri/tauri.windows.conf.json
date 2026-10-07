@@ -2,7 +2,7 @@
   "bundle": {
     "externalBin": [
       "binaries/beekeeper-acp",
-      "binaries/buzz-agent",
+      "binaries/beekeeper-agent",
       "binaries/beekeeper-dev-mcp",
       "binaries/git-credential-nostr",
       "binaries/bee"

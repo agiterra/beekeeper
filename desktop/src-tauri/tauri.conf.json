@@ -54,7 +54,7 @@
     "targets": "all",
     "externalBin": [
       "binaries/beekeeper-acp",
-      "binaries/buzz-agent",
+      "binaries/beekeeper-agent",
       "binaries/beekeeper-backend-kubernetes",
       "binaries/beekeeper-dev-mcp",
       "binaries/git-credential-nostr",

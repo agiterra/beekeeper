@@ -169,12 +169,22 @@ const LEGACY_MESH_API_KEY_PLACEHOLDER: &str = "sprout-mesh-local";
 /// `env_vars` keys were never migrated.
 const LEGACY_MESH_PROVIDER_ENV_KEY: &str = "SPROUT_AGENT_PROVIDER";
 
+/// The provider key between #971 and the `BUZZ_*` → `BEEKEEPER_*` rename.
+/// Records are normalized on load, but this lookup also serves maps that
+/// never went through a load (an IPC payload, a test fixture), so it names
+/// the spelling itself.
+const BUZZ_MESH_PROVIDER_ENV_KEY: &str = "BUZZ_AGENT_PROVIDER";
+
 /// The legacy env discriminator: recognizes the relay-mesh preset purely from
 /// the env vars a pre-typed-field record carries, returning its served model id.
 ///
 /// All three sentinels must match — the local base URL alone is not enough,
 /// since a user may point their own OpenAI-compatible provider at the same
 /// port. The placeholder API key is what makes this Beekeeper's own preset.
+///
+/// The provider key has three spellings, newest first: `BEEKEEPER_AGENT_PROVIDER`,
+/// `BUZZ_AGENT_PROVIDER`, `SPROUT_AGENT_PROVIDER`. The first one present is the
+/// one read.
 ///
 /// Two of those sentinels were renamed in the same Jun-11 window, in separate
 /// commits, with neither migrating persisted records: the provider env *key*
@@ -194,6 +204,7 @@ fn mesh_preset_env_model_id(env_vars: &BTreeMap<String, String>) -> Option<Strin
     }
     let provider = env_vars
         .get("BEEKEEPER_AGENT_PROVIDER")
+        .or_else(|| env_vars.get(BUZZ_MESH_PROVIDER_ENV_KEY))
         .or_else(|| env_vars.get(LEGACY_MESH_PROVIDER_ENV_KEY))?
         .trim();
     if provider != "openai" {

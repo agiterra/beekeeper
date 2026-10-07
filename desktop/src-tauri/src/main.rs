@@ -2,6 +2,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // First, while the process is single threaded: read any legacy `BUZZ_*`
+    // variable (an operator's shell, an old launch agent) as its
+    // `BEEKEEPER_*` name, so the rest of the app reads one spelling.
+    beekeeper_core_pkg::env_compat::adopt_legacy_env("beekeeper-desktop");
+
     if beekeeper_lib::print_agent_access_owner_only_probe_if_requested() {
         return;
     }

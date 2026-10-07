@@ -64,7 +64,7 @@ pub(crate) mod cli_probe;
 ///
 /// `config_file_path` is the harness config file path (if any) — not part of
 /// the process env but relevant for display and future write-back dispatch.
-/// `effective_command` is the resolved harness binary name (e.g. `"buzz-agent"`,
+/// `effective_command` is the resolved harness binary name (e.g. `"beekeeper-agent"`,
 /// `"goose"`) after persona and override resolution.
 #[derive(Debug, Clone)]
 pub(crate) struct EffectiveAgentEnv {
@@ -75,7 +75,7 @@ pub(crate) struct EffectiveAgentEnv {
     // replaces this resolution path wholesale.
     #[allow(dead_code)]
     pub config_file_path: Option<&'static str>,
-    /// The resolved harness binary name (e.g. `"buzz-agent"`, `"goose"`).
+    /// The resolved harness binary name (e.g. `"beekeeper-agent"`, `"goose"`).
     pub effective_command: String,
 }
 
@@ -93,7 +93,7 @@ pub(crate) struct EffectiveAgentEnv {
 /// the effective values.
 #[derive(Debug, Clone)]
 pub(crate) struct EffectiveHarnessDescriptor {
-    /// The raw effective command string (e.g. `"buzz-agent"`, `"my-acp-agent"`).
+    /// The raw effective command string (e.g. `"beekeeper-agent"`, `"my-acp-agent"`).
     /// Used for `known_acp_runtime` lookup and hashing.
     pub command: String,
     /// Normalized effective args.  Instance args win when non-empty; otherwise

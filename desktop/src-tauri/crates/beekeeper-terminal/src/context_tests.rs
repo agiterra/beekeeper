@@ -140,3 +140,28 @@ fn well_formed_key_rejects_the_equals_bypass() {
         assert!(!is_well_formed_env_key(bad), "accepted {bad:?}");
     }
 }
+
+/// Every context variable also goes out under its pre-rename `BUZZ_*` name
+/// with the same value, and a variable that is absent is absent in both
+/// spellings.
+#[test]
+fn every_context_variable_has_its_legacy_twin() {
+    let mut context = context_named("buzz-tui");
+    context.thread_id = Some("thread-1".to_owned());
+    let vars = context_vars(&context);
+    let get = |name: &str| {
+        vars.iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| v.clone())
+    };
+    for (key, value) in vars.iter().filter(|(k, _)| k.starts_with("BEEKEEPER_")) {
+        let legacy = key.replacen("BEEKEEPER_", "BUZZ_", 1);
+        assert_eq!(
+            get(&legacy).as_ref(),
+            Some(value),
+            "{legacy} missing or different"
+        );
+    }
+    let without_thread = context_vars(&context_named("buzz-tui"));
+    assert!(!without_thread.iter().any(|(k, _)| *k == "BUZZ_THREAD_ID"));
+}

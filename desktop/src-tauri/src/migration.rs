@@ -8,7 +8,8 @@
 //! immediately visible to all others.
 //!
 //! **Command reconciliation** (`reconcile_legacy_command_names`): Per-launch
-//! fix-up of persisted built-in command names from the Sprout→Buzz rename.
+//! fix-up of persisted built-in command names from the Sprout→Buzz and
+//! `buzz-*` → `beekeeper-*` renames (`migration/command_names.rs`).
 //!
 //! **Provider reconciliation** (`reconcile_provider_mcp_commands`): Per-launch
 //! fix-up of `mcp_command` values in `managed-agents.json` against the
@@ -22,6 +23,8 @@ use tauri::Manager;
 
 use crate::util::replace_with_symlink;
 
+mod command_names;
+use command_names::reconcile_legacy_command_names_in_file;
 mod identifiers;
 use identifiers::canonical_dev_data_dir;
 pub(crate) use identifiers::is_dev_data_dir_name;
@@ -697,7 +700,7 @@ fn reconcile_mcp_commands_in_file(path: &Path) {
         }
         // Only fix values that are clearly stale (empty or a removed binary).
         // Leave user-customized values untouched.
-        if !current.is_empty() && current != "buzz-mcp-server" {
+        if !current.is_empty() && !matches!(current, "buzz-mcp-server" | "buzz-dev-mcp") {
             return false;
         }
         eprintln!(
@@ -712,77 +715,6 @@ fn reconcile_mcp_commands_in_file(path: &Path) {
             serde_json::Value::String(expected.to_string()),
         );
         true
-    });
-}
-
-fn replace_command_field(
-    obj: &mut serde_json::Map<String, serde_json::Value>,
-    field: &str,
-    replacement: String,
-) -> bool {
-    let Some(current) = obj.get(field).and_then(|v| v.as_str()) else {
-        return false;
-    };
-    if current == replacement {
-        return false;
-    }
-    eprintln!(
-        "beekeeper-desktop: command-rename-reconcile: {:?}: {field} {:?} → {:?}",
-        obj.get("name").and_then(|v| v.as_str()).unwrap_or("?"),
-        current,
-        replacement,
-    );
-    obj.insert(field.to_string(), serde_json::Value::String(replacement));
-    true
-}
-
-fn reconcile_legacy_command_names_in_file(path: &Path) {
-    patch_json_records(path, |obj| {
-        let mut changed = false;
-
-        if let Some(acp_command) = obj
-            .get("acp_command")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-        {
-            if acp_command == "sprout-acp" {
-                changed |= replace_command_field(obj, "acp_command", "beekeeper-acp".to_string());
-            }
-        }
-
-        let mut agent_command = obj
-            .get("agent_command")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if agent_command == "sprout-agent" {
-            agent_command = "buzz-agent".to_string();
-            changed |= replace_command_field(obj, "agent_command", agent_command.clone());
-        }
-
-        if let Some(mcp_command) = obj
-            .get("mcp_command")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-        {
-            match mcp_command.as_str() {
-                "sprout-dev-mcp" => {
-                    changed |=
-                        replace_command_field(obj, "mcp_command", "beekeeper-dev-mcp".to_string());
-                }
-                "sprout-mcp" | "sprout-mcp-server" | "buzz-mcp-server" => {
-                    let replacement = if agent_command == "buzz-agent" {
-                        "beekeeper-dev-mcp"
-                    } else {
-                        ""
-                    };
-                    changed |= replace_command_field(obj, "mcp_command", replacement.to_string());
-                }
-                _ => {}
-            }
-        }
-
-        changed
     });
 }
 

@@ -58,11 +58,11 @@ pub(super) fn buffer_contains_identifier(buf: &[u8], id: &[u8]) -> bool {
     })
 }
 
-/// Extract the `BEEKEEPER_MANAGED_AGENT` value from a process's environment.
+/// Extract the `BEEKEEPER_MANAGED_AGENT` (or legacy `BUZZ_MANAGED_AGENT`)
+/// value from a process's environment.
 /// Returns `None` if the process doesn't have the marker or can't be read.
 #[cfg(target_os = "macos")]
 fn extract_buzz_marker_value(pid: u32) -> Option<String> {
-    let prefix = b"BEEKEEPER_MANAGED_AGENT=";
     let buf = sweep::procargs2_buffer(pid)?;
 
     if buf.len() < std::mem::size_of::<libc::c_int>() {
@@ -96,25 +96,14 @@ fn extract_buzz_marker_value(pid: u32) -> Option<String> {
         }
         args_remaining -= 1;
     }
-    // Search environment entries for our marker.
-    for entry in buf[pos..].split(|&b| b == 0) {
-        if entry.starts_with(prefix) {
-            return String::from_utf8(entry[prefix.len()..].to_vec()).ok();
-        }
-    }
-    None
+    // Search environment entries for our marker, under either spelling.
+    super::process::marker_value(buf[pos..].split(|&b| b == 0))
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn extract_buzz_marker_value(pid: u32) -> Option<String> {
-    let prefix = b"BEEKEEPER_MANAGED_AGENT=";
     let data = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
-    for entry in data.split(|&b| b == 0) {
-        if entry.starts_with(prefix) {
-            return String::from_utf8(entry[prefix.len()..].to_vec()).ok();
-        }
-    }
-    None
+    super::process::marker_value(data.split(|&b| b == 0))
 }
 
 #[cfg(not(unix))]

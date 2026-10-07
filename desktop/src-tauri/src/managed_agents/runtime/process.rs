@@ -7,6 +7,12 @@ use super::*;
 /// may report either form depending on how the binary was built.
 pub(crate) const KNOWN_AGENT_BINARIES: &[&str] = &[
     "beekeeper-acp",
+    "beekeeper_acp",
+    "beekeeper-agent",
+    "beekeeper_agent",
+    // The pre-rename binary names. A harness started by an older build is
+    // still ours to reap after an upgrade, so these stay.
+    "buzz-acp",
     "buzz_acp",
     "buzz-agent",
     "buzz_agent",
@@ -20,7 +26,14 @@ pub(crate) const KNOWN_AGENT_BINARIES: &[&str] = &[
     // beekeeper-dev-mcp's multicall personalities (rg, tree, buzz,
     // git-credential-nostr, git-sign-nostr) are short-lived per-tool-call
     // invocations — not listed here.
+    //
+    // `beekeeper-dev-mcp` is 17 bytes, so Linux `/proc/<pid>/comm` reports it
+    // as `beekeeper-dev-m` and only the `/proc/<pid>/exe` fallback in
+    // `process_belongs_to_us` matches it. `beekeeper-agent` is exactly 15
+    // bytes and survives the truncation.
     "beekeeper-dev-mcp",
+    "beekeeper_dev_mcp",
+    "buzz-dev-mcp",
     "buzz_dev_mcp",
 ];
 
@@ -138,6 +151,7 @@ pub(crate) fn current_instance_id(app: &AppHandle) -> String {
 /// Build the full `BEEKEEPER_MANAGED_AGENT=<instance-id>` env entry we match
 /// against when scanning processes. Kept here so the spawn stamp and the sweep
 /// matcher can never drift apart.
+#[cfg(test)]
 pub(super) fn buzz_marker_entry(instance_id: &str) -> Vec<u8> {
     format!("BEEKEEPER_MANAGED_AGENT={instance_id}").into_bytes()
 }
@@ -204,11 +218,35 @@ fn process_env_block(_pid: u32) -> Option<Vec<u8>> {
 /// is this desktop instance's id. A process stamped with a *different*
 /// instance id belongs to another live Beekeeper app and must never be reaped here.
 pub(crate) fn process_has_buzz_marker(pid: u32, instance_id: &str) -> bool {
-    let marker = buzz_marker_entry(instance_id);
     let Some(block) = process_env_block(pid) else {
         return false;
     };
-    env_block_has_entry(&block, &marker)
+    env_block_has_marker(&block, instance_id)
+}
+
+/// The ownership marker's name, then its pre-rename spelling. A harness an
+/// older build spawned carries only `BUZZ_MANAGED_AGENT`, and is still ours.
+pub(super) const MARKER_KEYS: [&str; 2] = ["BEEKEEPER_MANAGED_AGENT", "BUZZ_MANAGED_AGENT"];
+
+/// The ownership marker's value among a process's environment entries: the
+/// current name when present, otherwise the legacy one. Reading the legacy
+/// name only as a fallback means a process stamped by a newer build is judged
+/// by the stamp that build meant, never by a stale inherited twin.
+pub(super) fn marker_value<'a>(entries: impl Iterator<Item = &'a [u8]>) -> Option<String> {
+    let entries: Vec<&[u8]> = entries.collect();
+    MARKER_KEYS.iter().find_map(|key| {
+        let prefix = format!("{key}=");
+        entries
+            .iter()
+            .find_map(|entry| entry.strip_prefix(prefix.as_bytes()))
+            .and_then(|value| String::from_utf8(value.to_vec()).ok())
+    })
+}
+
+/// Whether an environment block carries this instance's ownership marker,
+/// under either spelling (see [`marker_value`]).
+fn env_block_has_marker(block: &[u8], instance_id: &str) -> bool {
+    marker_value(block.split(|&byte| byte == 0)).as_deref() == Some(instance_id)
 }
 
 /// Whether a running process carries `key` in its environment, with any value.
@@ -223,13 +261,17 @@ pub(crate) fn process_has_env_key(pid: u32, key: &str) -> bool {
     let Some(block) = process_env_block(pid) else {
         return false;
     };
-    env_block_has_key(&block, key.as_bytes())
+    // Either spelling: a launcher built before the rename stamps `BUZZ_*`.
+    beekeeper_core_pkg::env_compat::both_spellings(key)
+        .iter()
+        .any(|key| env_block_has_key(&block, key.as_bytes()))
 }
 
 /// Whether a null-delimited environment block holds this exact entry.
 ///
 /// Pure so the byte-level matching is provable without a live process; the
 /// platform-specific half above is the part that cannot be.
+#[cfg(test)]
 fn env_block_has_entry(block: &[u8], entry: &[u8]) -> bool {
     block.split(|&byte| byte == 0).any(|found| found == entry)
 }
@@ -559,6 +601,37 @@ mod env_block_tests {
             &block(&["BEEKEEPER_HOST_CHILD="]),
             b"BEEKEEPER_HOST_CHILD"
         ));
+    }
+
+    #[test]
+    fn the_ownership_marker_is_read_under_either_spelling_new_first() {
+        let id = "io.agiterra.beekeeper.app";
+        // Spawned by a build from before the rename.
+        assert!(env_block_has_marker(
+            &block(&["PATH=/bin", "BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app"]),
+            id
+        ));
+        // Spawned now: both spellings, same value.
+        assert!(env_block_has_marker(
+            &block(&[
+                "BEEKEEPER_MANAGED_AGENT=io.agiterra.beekeeper.app",
+                "BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app",
+            ]),
+            id
+        ));
+        // The current name decides; a stale legacy twin cannot claim it.
+        assert!(!env_block_has_marker(
+            &block(&[
+                "BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app",
+                "BEEKEEPER_MANAGED_AGENT=io.agiterra.beekeeper.app.dev",
+            ]),
+            id
+        ));
+        assert!(!env_block_has_marker(
+            &block(&["BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app.dev"]),
+            id
+        ));
+        assert!(!env_block_has_marker(&block(&["PATH=/bin"]), id));
     }
 
     #[test]

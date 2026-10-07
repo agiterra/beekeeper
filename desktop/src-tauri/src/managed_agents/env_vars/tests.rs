@@ -515,3 +515,146 @@ fn deploy_model_precedence_none_when_both_absent() {
     let effective = persona_model.clone().or(record_model.clone());
     assert_eq!(effective, None);
 }
+
+// ── BUZZ_* → BEEKEEPER_* rename ────────────────────────────────────
+
+#[test]
+fn reserved_list_names_both_spellings_of_every_key() {
+    // A child adopts `BUZZ_<X>` as `BEEKEEPER_<X>` when the new name is
+    // unset, so a reserved key is only reserved if both spellings are.
+    for key in RESERVED_ENV_KEYS {
+        for spelling in beekeeper_core_pkg::env_compat::both_spellings(key) {
+            assert!(
+                is_reserved_env_key(&spelling),
+                "`{spelling}` (twin of `{key}`) must be reserved too"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_user_supplied_private_key_is_refused_under_either_spelling() {
+    for key in ["BUZZ_PRIVATE_KEY", "BEEKEEPER_PRIVATE_KEY"] {
+        let env = map(&[(key, "nsec1fake")]);
+        let err = validate_user_env_keys(&env).expect_err("reserved at save time");
+        assert!(err.contains(key), "{err}");
+        assert!(
+            merged_user_env(&BTreeMap::new(), &env).is_empty(),
+            "`{key}` must be stripped at spawn time"
+        );
+    }
+}
+
+#[test]
+fn merged_env_reads_legacy_keys_under_the_new_name_and_the_new_name_wins() {
+    // An old persona carries the legacy spelling; the agent carries the new
+    // one. They are the same key, and the agent layer still wins.
+    let persona = map(&[("BUZZ_AGENT_MODEL", "old"), ("BUZZ_AGENT_EXTRA", "kept")]);
+    let agent = map(&[("BEEKEEPER_AGENT_MODEL", "new")]);
+    let merged = merged_user_env(&persona, &agent);
+    assert_eq!(
+        merged.get("BEEKEEPER_AGENT_MODEL").map(String::as_str),
+        Some("new")
+    );
+    assert_eq!(
+        merged.get("BEEKEEPER_AGENT_EXTRA").map(String::as_str),
+        Some("kept")
+    );
+    assert!(!merged.contains_key("BUZZ_AGENT_MODEL"));
+    assert!(!merged.contains_key("BUZZ_AGENT_EXTRA"));
+
+    // Within one layer, both spellings present: the new spelling wins.
+    let agent = map(&[
+        ("BUZZ_AGENT_MODEL", "stale"),
+        ("BEEKEEPER_AGENT_MODEL", "current"),
+    ]);
+    let merged = merged_user_env(&BTreeMap::new(), &agent);
+    assert_eq!(
+        merged.get("BEEKEEPER_AGENT_MODEL").map(String::as_str),
+        Some("current")
+    );
+}
+
+#[test]
+fn derived_provider_model_keys_cover_the_legacy_spelling() {
+    assert!(is_derived_provider_model_key("BUZZ_AGENT_MODEL"));
+    assert!(is_derived_provider_model_key("BUZZ_AGENT_PROVIDER"));
+    assert!(is_derived_provider_model_key("BEEKEEPER_AGENT_MODEL"));
+}
+
+#[test]
+fn safe_to_reveal_covers_both_spellings() {
+    for key in [
+        "BUZZ_AGENT_MODEL",
+        "BEEKEEPER_AGENT_MODEL",
+        "BUZZ_AGENT_PROVIDER",
+        "BEEKEEPER_AGENT_PROVIDER",
+    ] {
+        assert!(super::is_safe_to_reveal(key), "{key}");
+    }
+    assert!(!super::is_safe_to_reveal("BUZZ_PRIVATE_KEY"));
+    assert!(!super::is_safe_to_reveal("BEEKEEPER_PRIVATE_KEY"));
+}
+
+#[test]
+fn stored_env_maps_load_under_the_new_names() {
+    use crate::managed_agents::types::{AgentDefinition, ManagedAgentRecord};
+
+    // A persona saved before the rename: legacy keys, plus one key saved
+    // under both spellings, where the new spelling must win.
+    let legacy_env = serde_json::json!({
+        "BUZZ_AGENT_MODEL": "old-model",
+        "BUZZ_AGENT_THINKING_EFFORT": "high",
+        "BEEKEEPER_AGENT_THINKING_EFFORT": "low",
+        "ANTHROPIC_BASE_URL": "https://example.invalid",
+    });
+    let definition: AgentDefinition = serde_json::from_value(serde_json::json!({
+        "id": "p1",
+        "display_name": "P",
+        "avatar_url": null,
+        "system_prompt": "",
+        "env_vars": legacy_env,
+        "created_at": "t",
+        "updated_at": "t",
+    }))
+    .expect("legacy persona loads");
+    let expected = map(&[
+        ("BEEKEEPER_AGENT_MODEL", "old-model"),
+        ("BEEKEEPER_AGENT_THINKING_EFFORT", "low"),
+        ("ANTHROPIC_BASE_URL", "https://example.invalid"),
+    ]);
+    assert_eq!(definition.env_vars, expected);
+
+    // A managed-agent record, through the same field attribute.
+    let mut record_json =
+        serde_json::to_value(definition.clone().into_agent_record()).expect("record serializes");
+    record_json["env_vars"] = legacy_env;
+    let record: ManagedAgentRecord =
+        serde_json::from_value(record_json).expect("legacy record loads");
+    assert_eq!(record.env_vars, expected);
+
+    // Saving writes the new names only.
+    let saved = serde_json::to_value(&record).expect("record serializes");
+    let saved_keys: Vec<&str> = saved["env_vars"]
+        .as_object()
+        .expect("env_vars object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert!(
+        saved_keys.iter().all(|key| !key.starts_with("BUZZ_")),
+        "{saved_keys:?}"
+    );
+
+    // Global config and custom harness definitions share the attribute.
+    let global: crate::managed_agents::global_config::GlobalAgentConfig =
+        serde_json::from_value(serde_json::json!({ "env_vars": { "BUZZ_AGENT_MODEL": "m" } }))
+            .expect("legacy global config loads");
+    assert_eq!(
+        global
+            .env_vars
+            .get("BEEKEEPER_AGENT_MODEL")
+            .map(String::as_str),
+        Some("m")
+    );
+}

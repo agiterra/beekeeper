@@ -22,6 +22,14 @@ const SECRET_KEYS: &[&str] = &[
     "BEEKEEPER_ACP_PRIVATE_KEY",
     "BEEKEEPER_ACP_API_TOKEN",
     "BEEKEEPER_RELAY_URL",
+    // Pre-rename spellings: a child built before the rename (or `bee`
+    // adopting them) reads these as the same credentials.
+    "BUZZ_PRIVATE_KEY",
+    "BUZZ_AUTH_TAG",
+    "BUZZ_API_TOKEN",
+    "BUZZ_ACP_PRIVATE_KEY",
+    "BUZZ_ACP_API_TOKEN",
+    "BUZZ_RELAY_URL",
 ];
 
 const CANARY: &str = "SAMI_CANARY_MUST_NOT_LEAK";
