@@ -80,7 +80,7 @@ pub mod coding_session_rewind;
 /// tier and the live catalog select, and why.
 pub mod coding_session_routing;
 /// Runtime descriptors shared by the desktop host and the coding-session
-/// provider sidecar (`BUZZ_CSP_RUNTIMES`).
+/// provider sidecar (`BEEKEEPER_CSP_RUNTIMES`).
 pub mod coding_session_runtime;
 /// Where a seat's skill bundle lives: the directory names and the session-id
 /// sanitizer the provider and the desktop host both compose paths from.
@@ -97,6 +97,8 @@ pub mod coding_session_verdict_admission;
 /// NIP-AE Agent Engrams — slug grammar, conversation key, d-tag derivation,
 /// body parse/serialize, envelope build/validate, head selection.
 pub mod engram;
+/// Environment variables across the `BUZZ_*` → `BEEKEEPER_*` rename.
+pub mod env_compat;
 /// Relay-side error types.
 pub mod error;
 /// Relay-side event wrapper with verification tracking.
