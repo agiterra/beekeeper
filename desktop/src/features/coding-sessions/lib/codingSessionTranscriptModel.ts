@@ -108,6 +108,14 @@ type MutableTurn = {
 export type CodingSessionTranscriptModelOptions = {
   isWorking: boolean;
   /**
+   * Which turn `isWorking` belongs to, when the caller knows (SV-100). The
+   * umbrella's working block is the execution's LAST block, and its turn need
+   * not be the turn that appeared last: with interleaved turns (A, then a
+   * queued B, then more of A) the running turn is A. Omitted, the turn that
+   * appeared last is the working one, as the single view has always read it.
+   */
+  workingTurnId?: string;
+  /**
    * Each turn's background tasks, derived by the caller over more than these
    * items (SV-91). An umbrella turn block holds a window of its execution's
    * stream — and in Mission Live not even the tool items — so a task derived
@@ -177,7 +185,10 @@ export function deriveCodingSessionTranscriptModel(
     if (isMutableTurn(candidate)) {
       const turn = deriveTurn(
         candidate,
-        options.isWorking && candidate === lastTurn,
+        options.isWorking &&
+          (options.workingTurnId === undefined
+            ? candidate === lastTurn
+            : candidate.id === options.workingTurnId),
         supersededTurns.has(candidate),
         subagents,
         backgroundTasks,

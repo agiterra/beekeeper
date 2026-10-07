@@ -201,7 +201,9 @@ export class CodingSessionCatalogProjection {
       // Nothing projectable (no transcript yet, or every entry conflicted):
       // hold no fold for it, so a later first entry starts clean.
       if (held) this.drop(projectorKey);
-      return [];
+      // One shared empty array, so a metadata-only generation keeps its
+      // transcript identity across merges and nothing keyed on it re-derives.
+      return NO_TRANSCRIPT;
     }
     if (!held) {
       held = { channelId, projector: createCodingSessionTranscriptProjector() };
@@ -245,6 +247,8 @@ export class CodingSessionCatalogProjection {
 export function createCodingSessionCatalogProjection(): CodingSessionCatalogProjection {
   return new CodingSessionCatalogProjection();
 }
+
+const NO_TRANSCRIPT = Object.freeze([]) as unknown as TranscriptItem[];
 
 function identityKey(signerPubkey: string, targetKey: string): string {
   return `${signerPubkey}\u0000${targetKey}`;

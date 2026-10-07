@@ -42,6 +42,10 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import type { CodingSessionWakeOperationIndex } from "@/features/coding-sessions/lib/codingSessionWakeReading";
 import { CODING_SESSION_UNKNOWN_ACTOR } from "@/features/coding-sessions/lib/codingSessionTurnByline";
+import {
+  type CodingSessionExecutionModel,
+  useCodingSessionExecutionModelStore,
+} from "@/features/coding-sessions/lib/codingSessionExecutionModels";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -299,6 +303,61 @@ export function CodingSessionUmbrellaTimelineView({
     () => resolveWorkingBlockKeys(umbrella, narrativeEntries),
     [narrativeEntries, umbrella],
   );
+  // SV-100: one model per execution generation, shared by every turn block
+  // and the minimap below — derived once per (transcript, working,
+  // superseded) revision however many views show it. The store lives as long
+  // as this mounted timeline and is keyed by its scope, so another channel or
+  // umbrella starts cold. Brief filters each block's items before rendering
+  // (`projectCodingSessionMissionTimeline`), so its blocks keep their own
+  // derivation and no shared model is built for it.
+  const executionModelStore = useCodingSessionExecutionModelStore(
+    `${channelId}\u0000${umbrella.umbrellaKey}`,
+  );
+  const executionModels = React.useMemo(() => {
+    const models = new Map<string, CodingSessionExecutionModel>();
+    if (missionDensity === "brief") return models;
+    // A generation's model is working only when its execution's working
+    // block is one of its turns — the rule the blocks already render by.
+    // And the working line belongs to that block's turn — with interleaved
+    // turns (A, a queued B, more of A) the running turn is A, not B.
+    const workingTurnByGeneration = new Map<string, string>();
+    for (const entry of narrativeEntries) {
+      if (
+        entry.kind === "turn-block" &&
+        entry.turnId !== null &&
+        workingBlockKeys.has(codingSessionUmbrellaEntryKey(entry))
+      ) {
+        workingTurnByGeneration.set(entry.generationId, entry.turnId);
+      }
+    }
+    for (const execution of umbrella.executions) {
+      for (const record of [
+        ...execution.priorGenerations,
+        execution.activeGeneration,
+      ]) {
+        models.set(
+          record.generationId,
+          executionModelStore.model({
+            record,
+            executionKey: execution.executionKey,
+            isWorking: workingTurnByGeneration.has(record.generationId),
+            workingTurnId:
+              workingTurnByGeneration.get(record.generationId) ?? null,
+            generationSuperseded:
+              execution.activeGeneration.generationId !== record.generationId,
+          }),
+        );
+      }
+    }
+    executionModelStore.retain(models.keys());
+    return models;
+  }, [
+    executionModelStore,
+    missionDensity,
+    narrativeEntries,
+    umbrella.executions,
+    workingBlockKeys,
+  ]);
   const factCandidates = React.useMemo(
     () =>
       narrativeEntries.flatMap((entry) =>
@@ -429,7 +488,7 @@ export function CodingSessionUmbrellaTimelineView({
   const minimapItems = useCodingSessionUmbrellaTimelineMinimapItems({
     enabled: drawsMinimap,
     entries: narrativeEntries,
-    workingBlockKeys,
+    executionModels,
     currentUserPubkey,
   });
   // A turn above the render window has no node: widen the window first,
@@ -644,6 +703,7 @@ export function CodingSessionUmbrellaTimelineView({
               blockKey={key}
               channelId={channelId}
               currentUserPubkey={currentUserPubkey}
+              executionModel={executionModels.get(entry.generationId)}
               isHighlighted={revealed?.key === key}
               isFolded={
                 focusedExecutionKey !== null &&

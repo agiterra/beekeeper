@@ -15,9 +15,9 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import { useCodingSessionHireOutcomes } from "@/features/coding-sessions/hooks/useCodingSessionHire";
 import {
-  CODING_SESSION_CONTINUITY_STATUSES,
-  CODING_SESSION_CONTINUITY_TITLE,
-} from "@/features/coding-sessions/lib/codingSessionTranscriptItems";
+  type CodingSessionExecutionModel,
+  isCodingSessionRehydrationClaimItem,
+} from "@/features/coding-sessions/lib/codingSessionExecutionModels";
 import { buildCodingSessionTurnByline } from "@/features/coding-sessions/lib/codingSessionTurnByline";
 import type { CodingSessionUmbrellaTurnBlock as TurnBlock } from "@/features/coding-sessions/lib/codingSessionUmbrellaTimeline";
 import type {
@@ -52,6 +52,7 @@ export function CodingSessionUmbrellaTurnBlock({
   blockKey,
   channelId,
   currentUserPubkey,
+  executionModel,
   isHighlighted,
   isFolded,
   isWorking,
@@ -85,6 +86,15 @@ export function CodingSessionUmbrellaTurnBlock({
   blockKey: string;
   channelId: string;
   currentUserPubkey: string | null;
+  /**
+   * SV-100: this block's generation's shared model, published by the umbrella
+   * timeline's execution-model store. Present, the block **selects** what it
+   * renders from it (`selectBlock(block.blockSeq, …)`) and reads its running
+   * background tasks from it — it derives nothing of its own. Absent (Mission
+   * Brief, whose blocks are filtered before they arrive, and any direct
+   * caller), the block derives its model from its own items as it always has.
+   */
+  executionModel?: CodingSessionExecutionModel;
   isHighlighted: boolean;
   isFolded: boolean;
   isWorking: boolean;
@@ -222,14 +232,34 @@ export function CodingSessionUmbrellaTurnBlock({
   // and handed to the narrative's model. Derived from the block's items alone
   // they were lost twice over: Mission Live moves the announcing Bash call
   // into the bundle below, and the `autonomous_turn…` row that answers it
-  // lives in the next block.
+  // lives in the next block. With a shared model (SV-100) the owner already
+  // did this once for the generation, so the hook is handed nothing to read —
+  // it is still called, unconditionally, for the Rules of Hooks.
   const backgroundTasksByTurn = useCodingSessionBlockBackgroundTasks({
-    blockItems: block.items,
+    blockItems: executionModel ? NO_ITEMS : block.items,
     generationSuperseded:
       execution !== undefined &&
       execution.activeGeneration.generationId !== block.generationId,
-    transcript: record?.transcript ?? null,
+    transcript: executionModel ? NO_ITEMS : (record?.transcript ?? null),
   });
+  // SV-100: the views select from the generation's one model. The store
+  // returns the same selection object for the same inputs, so these are
+  // passed through as they are — never wrapped or spread.
+  const hideRehydrationClaim = mission && !hasPriorGeneration;
+  const narrativeModel = executionModel?.selectBlock(block.blockSeq, {
+    variant: bundleExecution ? "mission-narrative" : "whole",
+    hideRehydrationClaim,
+  });
+  const bundleModel =
+    executionModel && bundleExecution
+      ? executionModel.selectBlock(block.blockSeq, {
+          variant: "mission-execution",
+          hideRehydrationClaim,
+        })
+      : undefined;
+  const hasRunningBackgroundTask = executionModel
+    ? hasRunningSharedBackgroundTask(executionModel, block.turnId)
+    : hasRunningCodingSessionBackgroundTask(backgroundTasksByTurn);
   const narrativeItems = bundleExecution
     ? missionItems.filter((item) => !isCodingSessionMissionExecutionItem(item))
     : missionItems;
@@ -268,7 +298,7 @@ export function CodingSessionUmbrellaTurnBlock({
     !hasCodingSessionMissionAttentionItem(missionItems) &&
     // A turn that ended with work still going has not plainly finished: its
     // clause is what a reader scrolling past must see (SV-91).
-    !hasRunningCodingSessionBackgroundTask(backgroundTasksByTurn);
+    !hasRunningBackgroundTask;
   // F5: the promise is about the rows Mission Live actually renders. In Live
   // the execution bundle is on by the same density gate that turns collapse
   // on, so a turn's tool items arrive as **one** bundle row, not as many —
@@ -315,6 +345,23 @@ export function CodingSessionUmbrellaTurnBlock({
     runtime: record?.runtime,
   });
   const name = byline.name;
+
+  // SV-100: an empty shared selection means every item of this block is
+  // shown somewhere else — owned by an earlier part of the same turn (one
+  // turn, rendered once, whole, carrying its own working line), or a session
+  // fact that lives in Details. Rendering the transcript here would read "No
+  // conversation yet", or "Session is working" a second time, so such a block
+  // renders nothing. Only a working block with no turn of its own (a trailing
+  // provider row) keeps the placeholder, which is the one true statement it
+  // has to make.
+  if (
+    narrativeModel !== undefined &&
+    (!isWorking || block.turnId !== null) &&
+    isEmptyCodingSessionSelection(narrativeModel) &&
+    (bundleModel === undefined || isEmptyCodingSessionSelection(bundleModel))
+  ) {
+    return null;
+  }
 
   if (isFolded) {
     if (foldedSummary === null) return null;
@@ -546,13 +593,17 @@ export function CodingSessionUmbrellaTurnBlock({
         </p>
       ) : null}
       <CodingSessionTranscript
-        backgroundTasksByTurn={backgroundTasksByTurn}
+        // A supplied model already carries the generation's tasks.
+        backgroundTasksByTurn={
+          narrativeModel ? undefined : backgroundTasksByTurn
+        }
         currentUserPubkey={currentUserPubkey}
         generationId={block.generationId}
         hireDispatch={hireDispatch}
         isWorking={isWorking}
         items={narrativeItems}
         lastTranscriptEventAt={record?.lastTranscriptAt}
+        model={narrativeModel}
         onOpenAgentsSurface={openAgentsSurface ?? undefined}
         operatorProfiles={operatorProfiles}
         resolveSeat={resolvePromptSeat}
@@ -568,7 +619,9 @@ export function CodingSessionUmbrellaTurnBlock({
           <CodingSessionTranscript
             // The narrative above says the turn's background tasks; the
             // bundle holds only its tool calls and says none (SV-91).
-            backgroundTasksByTurn={NO_BLOCK_BACKGROUND_TASKS}
+            backgroundTasksByTurn={
+              bundleModel ? undefined : NO_BLOCK_BACKGROUND_TASKS
+            }
             currentUserPubkey={currentUserPubkey}
             generationId={block.generationId}
             hireDispatch={hireDispatch}
@@ -577,6 +630,7 @@ export function CodingSessionUmbrellaTurnBlock({
             // Its own provider of the last event time: omitted, the bundle's
             // running tools read `null` and never shimmered (SV-104).
             lastTranscriptEventAt={record?.lastTranscriptAt}
+            model={bundleModel}
             operatorProfiles={operatorProfiles}
             resolveSeat={resolvePromptSeat}
             restingStatus={blockRestingStatus}
@@ -647,6 +701,23 @@ const NO_BLOCK_BACKGROUND_TASKS: ReadonlyMap<
   string,
   readonly CodingSessionTurnBackgroundTask[]
 > = new Map();
+
+const NO_ITEMS: readonly TranscriptItem[] = Object.freeze([]);
+
+/**
+ * Is one of this block's turn's background tasks still running, read from the
+ * generation's shared model (SV-100)? The model derived the tasks once over
+ * the whole generation, supersession applied; a block is one turn, so its
+ * turn's entry is the whole answer. An unturned block has none.
+ */
+function hasRunningSharedBackgroundTask(
+  executionModel: CodingSessionExecutionModel,
+  turnId: string | null,
+): boolean {
+  if (turnId === null) return false;
+  const tasks = executionModel.backgroundTasksByTurn.get(turnId);
+  return tasks?.some((task) => task.state === "running") ?? false;
+}
 
 /**
  * {@link deriveCodingSessionBlockBackgroundTasks}, kept reference-stable while
@@ -778,17 +849,8 @@ export function hidesCodingSessionRehydrationClaim(input: {
   mission: boolean;
 }): boolean {
   if (!input.mission || input.hasPriorGeneration) return false;
-  const { item } = input;
-  return (
-    item.type === "lifecycle" &&
-    item.title === CODING_SESSION_CONTINUITY_TITLE &&
-    item.text.startsWith(REHYDRATED_CONTINUITY_PROSE)
-  );
+  return isCodingSessionRehydrationClaimItem(input.item);
 }
-
-/** The `session_rehydrated` prose, read from the map that mints it. */
-const REHYDRATED_CONTINUITY_PROSE =
-  CODING_SESSION_CONTINUITY_STATUSES.get("session_rehydrated") ?? "Rehydrated";
 
 function foldedTurnSummary(block: TurnBlock): string | null {
   const source = resolveCodingSessionHandoffSource(block);
@@ -924,4 +986,12 @@ export function buildUmbrellaTurnBlockHandoff(input: {
     participantKey: `execution:${input.targetExecutionKey}`,
     text,
   };
+}
+
+/** A shared selection with nothing to render: no blocks, no diagnostics. */
+function isEmptyCodingSessionSelection(selection: {
+  blocks: readonly unknown[];
+  diagnostics: readonly unknown[];
+}): boolean {
+  return selection.blocks.length === 0 && selection.diagnostics.length === 0;
 }
