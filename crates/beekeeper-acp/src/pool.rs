@@ -1365,18 +1365,21 @@ fn mcp_servers_with_git_origin(
             }),
         (None, _) => None,
     };
+    // Each name in both spellings, for an MCP server (or a `bee` it runs)
+    // built before the BUZZ_ → BEEKEEPER_ rename.
     if let Some(origin) = origin {
+        let origin = EnvVar::with_legacy_mirrors(vec![origin]);
         for server in &mut servers {
-            server.env.push(origin.clone());
+            server.env.extend(origin.iter().cloned());
         }
     }
     if let Some(coordinate) = pulse_project.filter(|value| !value.trim().is_empty()) {
-        let pulse_env = EnvVar {
+        let pulse_env = EnvVar::with_legacy_mirrors(vec![EnvVar {
             name: "BEEKEEPER_PULSE_PROJECT".into(),
             value: coordinate.trim().to_string(),
-        };
+        }]);
         for server in &mut servers {
-            server.env.push(pulse_env.clone());
+            server.env.extend(pulse_env.iter().cloned());
         }
     }
     servers
@@ -4843,10 +4846,15 @@ mod tests {
             None,
         );
         for server in &servers {
-            assert!(server
-                .env
-                .iter()
-                .any(|entry| entry.name == "BEEKEEPER_PULSE_PROJECT" && entry.value == coordinate));
+            for name in ["BEEKEEPER_PULSE_PROJECT", "BUZZ_PULSE_PROJECT"] {
+                assert!(server
+                    .env
+                    .iter()
+                    .any(|entry| entry.name == name && entry.value == coordinate));
+            }
+            assert!(server.env.iter().any(|entry| {
+                entry.name == "BUZZ_GIT_ORIGIN_CHANNEL_ID" && entry.value == channel_id.to_string()
+            }));
         }
     }
 
@@ -6046,7 +6054,7 @@ mod tests {
     #[tokio::test]
     async fn run_prompt_task_commits_standing_context_only_after_acp_success() {
         let capture = std::env::temp_dir().join(format!(
-            "buzz-acp-standing-lifecycle-{}.ndjson",
+            "beekeeper-acp-standing-lifecycle-{}.ndjson",
             Uuid::new_v4()
         ));
         let quoted_capture = capture.to_string_lossy().replace('\'', "'\\''");
@@ -6139,7 +6147,7 @@ done"#
     #[tokio::test]
     async fn channel_prompt_commits_delivery_state_only_after_acp_success() {
         let capture = std::env::temp_dir().join(format!(
-            "buzz-acp-channel-delivery-lifecycle-{}.ndjson",
+            "beekeeper-acp-channel-delivery-lifecycle-{}.ndjson",
             Uuid::new_v4()
         ));
         let quoted_capture = capture.to_string_lossy().replace('\'', "'\\''");
@@ -6319,7 +6327,7 @@ done"#
         });
 
         let capture = std::env::temp_dir().join(format!(
-            "buzz-acp-merged-delivery-wire-{}.ndjson",
+            "beekeeper-acp-merged-delivery-wire-{}.ndjson",
             Uuid::new_v4()
         ));
         let quoted_capture = capture.to_string_lossy().replace('\'', "'\\''");
@@ -6473,7 +6481,7 @@ done"#
         });
 
         let capture = std::env::temp_dir().join(format!(
-            "buzz-acp-late-steer-wire-{}.ndjson",
+            "beekeeper-acp-late-steer-wire-{}.ndjson",
             Uuid::new_v4()
         ));
         let quoted_capture = capture.to_string_lossy().replace('\'', "'\\''");

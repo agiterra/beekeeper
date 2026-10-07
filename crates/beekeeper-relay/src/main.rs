@@ -93,8 +93,14 @@ impl EmissionScope {
 
 const USAGE_METRICS_LOCK_KEY: i64 = 0x4255_5A5A_4D45_5452;
 
+fn main() -> anyhow::Result<()> {
+    // Before clap, tokio or any thread: read BUZZ_* as BEEKEEPER_*.
+    beekeeper_core::env_compat::adopt_legacy_env("beekeeper-relay");
+    async_main()
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn async_main() -> anyhow::Result<()> {
     // Install the ring CryptoProvider for rustls. Required before any rustls
     // TLS connection (rediss:// to ElastiCache, wss://, S3 over TLS): both
     // aws-lc-rs and ring are compiled in transitively, so rustls can't
@@ -107,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
     // If OTEL_EXPORTER_OTLP_ENDPOINT is set, also attach an OpenTelemetry tracing
     // layer that exports spans via OTLP gRPC alongside the JSON stdout logs.
     //
-    // Build a single shared Resource (service.name=beekeeper-relay by default, overridable
+    // Build a single shared Resource (service.name=buzz-relay by default, overridable
     // via OTEL_SERVICE_NAME) for the trace provider so that Datadog can identify
     // spans under the correct service identity.
     let resource = telemetry::service_resource();
@@ -116,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
     let otel_layer = match &tracer_init {
         telemetry::TracerInit::Enabled(p) => {
             use opentelemetry::trace::TracerProvider as _;
-            Some(tracing_opentelemetry::layer().with_tracer(p.tracer("beekeeper-relay")))
+            Some(tracing_opentelemetry::layer().with_tracer(p.tracer("buzz-relay")))
         }
         _ => None,
     };

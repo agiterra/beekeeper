@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::topic::BEEKEEPER_PREFIX;
+use crate::topic::REDIS_KEY_PREFIX;
 
 /// Tenant-local Redis pub/sub channel suffix for connection-control messages.
 pub const CONN_CONTROL_SUFFIX: &str = "conn-control";
@@ -32,7 +32,7 @@ pub const CONN_CONTROL_PATTERN: &str = "buzz:*:conn-control";
 /// Redis pub/sub channel for connection-control messages under `ctx`.
 pub fn conn_control_channel(ctx: &TenantContext) -> String {
     format!(
-        "{BEEKEEPER_PREFIX}:{}:{CONN_CONTROL_SUFFIX}",
+        "{REDIS_KEY_PREFIX}:{}:{CONN_CONTROL_SUFFIX}",
         ctx.community()
     )
 }
@@ -40,7 +40,7 @@ pub fn conn_control_channel(ctx: &TenantContext) -> String {
 /// Parse a connection-control Redis channel into its scoped community id.
 pub fn parse_conn_control_channel(channel: &str) -> Option<CommunityId> {
     let mut parts = channel.split(':');
-    if parts.next()? != BEEKEEPER_PREFIX {
+    if parts.next()? != REDIS_KEY_PREFIX {
         return None;
     }
     let community_id = Uuid::parse_str(parts.next()?).ok()?;

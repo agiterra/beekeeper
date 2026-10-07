@@ -8,6 +8,7 @@
 
 #[cfg(unix)]
 fn main() -> std::process::ExitCode {
+    beekeeper_core::env_compat::adopt_legacy_env("beekeeper-host");
     beekeeper_host::cli::main()
 }
 

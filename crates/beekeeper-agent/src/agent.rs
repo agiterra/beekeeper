@@ -72,7 +72,7 @@ const MAX_REPLY_NAGS: u32 = 2;
 /// Not a real MCP server. It rides the same tool-result path as `_Stop` hook
 /// output, so the model sees `{hook, server, text}` attribution naming the
 /// in-process guard rather than an MCP server that could be impersonated.
-const REPLY_GUARD_SERVER: &str = "buzz-agent";
+const REPLY_GUARD_SERVER: &str = "beekeeper-agent";
 
 /// Reminder text emitted when a turn is about to end with nothing published.
 ///

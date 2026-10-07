@@ -94,8 +94,14 @@ enum CliError {
     Other(String),
 }
 
+fn main() {
+    // Before clap, tokio or any thread: read BUZZ_* as BEEKEEPER_*.
+    beekeeper_core::env_compat::adopt_legacy_env("beekeeper-pair");
+    async_main()
+}
+
 #[tokio::main]
-async fn main() {
+async fn async_main() {
     let cli = Cli::parse();
     if let Err(e) = run(cli.command).await {
         eprintln!("error: {e}");

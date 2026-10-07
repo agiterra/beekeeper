@@ -5,6 +5,7 @@
 //! event as the credential value.  Git then sends:
 //!   Authorization: Nostr <credential>
 
+pub mod legacy_env;
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 

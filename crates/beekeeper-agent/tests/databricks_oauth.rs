@@ -2,7 +2,7 @@
 //!
 //! No browser dance — we cover the silent-refresh and cache-hit paths
 //! against a stubbed OIDC server (axum). The interactive browser flow is
-//! exercised manually via the `buzz-agent auth databricks` subcommand
+//! exercised manually via the `beekeeper-agent auth databricks` subcommand
 //! (see `lib.rs::auth_subcommand`).
 //!
 //! The second test module (further down) is an ACP-level envelope
@@ -504,7 +504,7 @@ impl AgentHarness {
         max_sessions: usize,
         token: Option<&str>,
     ) -> Self {
-        let bin = env!("CARGO_BIN_EXE_buzz-agent");
+        let bin = env!("CARGO_BIN_EXE_beekeeper-agent");
         let home = token
             .is_none()
             .then(|| TempDir::new().expect("create isolated OAuth home"));
@@ -528,7 +528,7 @@ impl AgentHarness {
         if let Some(home) = &home {
             cmd.env("HOME", home.path());
         }
-        let mut child = cmd.spawn().expect("spawn buzz-agent");
+        let mut child = cmd.spawn().expect("spawn beekeeper-agent");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         Self {

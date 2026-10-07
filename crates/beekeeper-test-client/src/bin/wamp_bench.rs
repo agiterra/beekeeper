@@ -16,8 +16,14 @@ use beekeeper_test_client::BeekeeperTestClient;
 use nostr::Keys;
 use tokio::time::MissedTickBehavior;
 
+fn main() -> anyhow::Result<()> {
+    // Before clap, tokio or any thread: read BUZZ_* as BEEKEEPER_*.
+    beekeeper_core::env_compat::adopt_legacy_env("wamp-bench");
+    async_main()
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn async_main() -> anyhow::Result<()> {
     let _ = rustls::crypto::CryptoProvider::install_default(
         rustls::crypto::aws_lc_rs::default_provider(),
     );

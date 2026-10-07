@@ -17,7 +17,7 @@ struct Harness {
 
 impl Harness {
     async fn spawn(extra: &[(&str, &str)]) -> Self {
-        let bin = env!("CARGO_BIN_EXE_buzz-agent");
+        let bin = env!("CARGO_BIN_EXE_beekeeper-agent");
         let mut cmd = tokio::process::Command::new(bin);
         cmd.env("BEEKEEPER_AGENT_PROVIDER", "openai")
             .env("OPENAI_COMPAT_API_KEY", "test")
@@ -32,7 +32,7 @@ impl Harness {
         for (k, v) in extra {
             cmd.env(k, v);
         }
-        let mut child = cmd.spawn().expect("spawn buzz-agent");
+        let mut child = cmd.spawn().expect("spawn beekeeper-agent");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         Self {
@@ -186,7 +186,7 @@ async fn handshake(h: &mut Harness) -> String {
         .await;
     let init = h.recv_for_id(init_id).await;
     assert_eq!(init["result"]["protocolVersion"], 2);
-    assert_eq!(init["result"]["agentInfo"]["name"], "buzz-agent");
+    assert_eq!(init["result"]["agentInfo"]["name"], "beekeeper-agent");
     assert_eq!(
         init["result"]["agentCapabilities"]["promptCapabilities"]["image"],
         false
@@ -470,7 +470,7 @@ async fn test_concurrent_prompt_rejected() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_oversized_line_kills_agent() {
     let url = spawn_fake_llm(vec![]).await;
-    let bin = env!("CARGO_BIN_EXE_buzz-agent");
+    let bin = env!("CARGO_BIN_EXE_beekeeper-agent");
     let mut cmd = tokio::process::Command::new(bin);
     cmd.env("BEEKEEPER_AGENT_PROVIDER", "openai")
         .env("OPENAI_COMPAT_API_KEY", "test")

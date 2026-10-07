@@ -4,8 +4,14 @@
 use beekeeper_test_client::BeekeeperTestClient;
 use nostr::{EventBuilder, Keys, Kind, Tag};
 
+fn main() -> anyhow::Result<()> {
+    // Before clap, tokio or any thread: read BUZZ_* as BEEKEEPER_*.
+    beekeeper_core::env_compat::adopt_legacy_env("mention");
+    async_main()
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn async_main() -> anyhow::Result<()> {
     // rustls needs a CryptoProvider even for plain ws:// connections.
     let _ = rustls::crypto::ring::default_provider().install_default();
     let args: Vec<String> = std::env::args().collect();

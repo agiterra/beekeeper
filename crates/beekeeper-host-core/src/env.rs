@@ -154,7 +154,17 @@ pub fn app_checkout_dir() -> Option<PathBuf> {
 /// included only after the desktop resolves the provider's default binary to
 /// an installed path; model lists, caps, and timeouts remain provider-owned so
 /// the host cannot silently pin stale defaults across upgrades.
+///
+/// Every `BEEKEEPER_*` name is also written as its pre-rename `BUZZ_*` twin
+/// ([`beekeeper_core::env_compat::mirror_map`]), so a provider built before
+/// the rename still finds its configuration under a newer host. The new
+/// provider adopts either spelling and reads one.
 pub fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, String> {
+    beekeeper_core::env_compat::mirror_map(build_canonical_provider_env(inputs))
+}
+
+/// [`build_provider_env`] before the legacy mirrors are added.
+fn build_canonical_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.insert(
         "BEEKEEPER_PRIVATE_KEY".to_string(),
@@ -276,7 +286,7 @@ pub fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, St
 /// exported in their shell.
 ///
 /// `BEE` is the second: it names the `bee` a seat runs
-/// (`beekeeper_session_provider::seat_bee`), it sits outside the `BUZZ_` prefix so
+/// (`beekeeper_session_provider::seat_bee`), it sits outside the fenced prefixes so
 /// the provider's own agent fence does not cover it, and a developer who
 /// exported one in the shell that launched the desktop would otherwise have
 /// the provider inherit it and hand it on. The provider resolves its own —
@@ -286,18 +296,33 @@ pub fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, St
 /// The host's own key variables are the third: a host launched with
 /// [`PRIVATE_KEY_VAR`] or [`KEY_FILE_VAR`] has already resolved the key and
 /// hands it to the provider as `BEEKEEPER_PRIVATE_KEY`, which the agent fence then
-/// removes. The `BEEKEEPER_HOST_*` names sit outside that fence's `BUZZ_`
-/// prefix, so without this entry the raw key would ride along to the provider
-/// and on to every agent it starts.
+/// removes. The `BEEKEEPER_HOST_*` names were outside that fence's prefix
+/// when it covered only `BUZZ_`, and the fence is the provider's, not the
+/// host's, so this list clears them itself rather than trusting a later step.
+///
+/// **Both spellings of every Beekeeper name.** The provider adopts any
+/// inherited `BUZZ_<X>` as `BEEKEEPER_<X>` when the new name is unset
+/// (`beekeeper_core::env_compat::adopt_legacy_env`), so clearing only the
+/// new spelling would let a stale `BUZZ_AUTH_TAG` from the operator's shell
+/// come back as the attestation. `build_provider_env` re-adds the legacy
+/// twin of anything the host actually means to set.
 pub const INHERITED_KEYS_TO_CLEAR: &[&str] = &[
     "BEEKEEPER_AUTH_TAG",
+    "BUZZ_AUTH_TAG",
     PRIVATE_KEY_VAR,
+    "BUZZ_HOST_PRIVATE_KEY",
     KEY_FILE_VAR,
+    "BUZZ_HOST_KEY_FILE",
     BEE_VAR,
     SHARED_WORKDIRS_VAR,
+    "BUZZ_CSP_SHARED_WORKDIRS",
     "BEEKEEPER_ACP_PRIVATE_KEY",
+    "BUZZ_ACP_PRIVATE_KEY",
     "BEEKEEPER_API_TOKEN",
+    "BUZZ_API_TOKEN",
     "BEEKEEPER_CSP_RUNTIMES",
+    "BUZZ_CSP_RUNTIMES",
     "BEEKEEPER_CSP_CONTEXT_MCP_COMMAND",
+    "BUZZ_CSP_CONTEXT_MCP_COMMAND",
     "NOSTR_PRIVATE_KEY",
 ];

@@ -2320,7 +2320,7 @@ async fn tokio_main() -> Result<()> {
             .as_deref()
             .and_then(|hex| nostr::PublicKey::from_hex(hex).ok()),
         memory_enabled: config.memory_enabled,
-        harness_name: crate::config::normalize_agent_command_identity(&config.agent_command),
+        harness_name: crate::config::harness_identity(&config.agent_command),
         relay_url: config.relay_url.clone(),
     });
 
@@ -5554,7 +5554,9 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
             .to_string(),
         command: config.mcp_command.clone(),
         args: vec![],
-        env: {
+        // Both spellings: the MCP server may be a build from before the
+        // BUZZ_ → BEEKEEPER_ rename.
+        env: EnvVar::with_legacy_mirrors({
             let mut env = vec![
                 EnvVar {
                     name: "BEEKEEPER_RELAY_URL".into(),
@@ -5595,7 +5597,7 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
                 }
             }
             env
-        },
+        }),
     }]
 }
 
@@ -7819,6 +7821,35 @@ mod build_mcp_servers_tests {
             names.contains(&"BEEKEEPER_PRIVATE_KEY"),
             "missing BEEKEEPER_PRIVATE_KEY; got {names:?}"
         );
+    }
+
+    /// Every Beekeeper name reaches the MCP server in both spellings, with the
+    /// same value, so a dev-mcp built before the rename still authenticates;
+    /// nothing else is added.
+    #[test]
+    fn session_new_mcp_server_env_carries_both_spellings() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("BEEKEEPER_AUTH_TAG", "test-attestation-tag");
+        let config = test_config();
+        let servers = build_mcp_servers(&config);
+        std::env::remove_var("BEEKEEPER_AUTH_TAG");
+        let env = &servers[0].env;
+        let get = |name: &str| env.iter().find(|e| e.name == name).map(|e| e.value.clone());
+        for name in [
+            "BEEKEEPER_RELAY_URL",
+            "BEEKEEPER_PRIVATE_KEY",
+            "BEEKEEPER_AUTH_TAG",
+        ] {
+            let twin = beekeeper_core::env_compat::legacy_twin(name).expect("twin");
+            assert!(get(name).is_some(), "{name} missing");
+            assert_eq!(get(name), get(&twin), "{twin} does not mirror {name}");
+        }
+        let current = env
+            .iter()
+            .filter(|e| e.name.starts_with("BEEKEEPER_"))
+            .count();
+        let legacy = env.iter().filter(|e| e.name.starts_with("BUZZ_")).count();
+        assert_eq!(current, legacy, "{env:?}");
     }
 
     #[test]

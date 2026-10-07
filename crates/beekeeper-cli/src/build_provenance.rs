@@ -149,9 +149,59 @@ fn head_ref(head: &Path) -> Option<String> {
     Some(text.lines().next()?.strip_prefix("ref:")?.trim().to_owned())
 }
 
+/// The two names a build input may arrive under, current first:
+/// `BEEKEEPER_<suffix>`, then the pre-rename `BUZZ_<suffix>` that an older
+/// pipeline (an installed autodeploy, a CI job not yet updated) still passes.
+/// `build.rs` emits `cargo:rerun-if-env-changed` for both.
+pub fn build_input_names(suffix: &str) -> [String; 2] {
+    [format!("BEEKEEPER_{suffix}"), format!("BUZZ_{suffix}")]
+}
+
+/// The first of `build_input_names(suffix)` that `lookup` finds set and not
+/// blank. The current name wins whenever it carries a value.
+pub fn build_input(suffix: &str, lookup: impl Fn(&str) -> Option<String>) -> Option<String> {
+    build_input_names(suffix)
+        .into_iter()
+        .find_map(|name| lookup(&name).filter(|value| !value.trim().is_empty()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_build_input_is_read_under_either_spelling_with_the_current_one_winning() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| (*value).to_owned())
+            }
+        };
+        assert_eq!(
+            build_input("SOURCE_SHA", env(&[("BUZZ_SOURCE_SHA", "old")])).as_deref(),
+            Some("old")
+        );
+        assert_eq!(
+            build_input(
+                "SOURCE_SHA",
+                env(&[("BUZZ_SOURCE_SHA", "old"), ("BEEKEEPER_SOURCE_SHA", "new")])
+            )
+            .as_deref(),
+            Some("new")
+        );
+        assert_eq!(
+            build_input(
+                "SOURCE_SHA",
+                env(&[("BUZZ_SOURCE_SHA", "old"), ("BEEKEEPER_SOURCE_SHA", " ")])
+            )
+            .as_deref(),
+            Some("old"),
+            "a blank current value is no value"
+        );
+        assert_eq!(build_input("SOURCE_SHA", env(&[])), None);
+    }
     use std::fs;
 
     /// A main checkout plus one linked worktree, in the layout git writes.

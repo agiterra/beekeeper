@@ -416,7 +416,7 @@ impl PkceOAuthTokenSource {
 
         // No usable token — return error instead of opening a browser.
         Err(AgentError::LlmAuth(
-            "no cached Databricks token; run `buzz-agent auth databricks` first".into(),
+            "no cached Databricks token; run `beekeeper-agent auth databricks` first".into(),
         ))
     }
 }

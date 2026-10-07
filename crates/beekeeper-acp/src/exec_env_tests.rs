@@ -2,7 +2,7 @@ use super::*;
 
 const FENCE: EnvFence = EnvFence {
     keys: &["NOSTR_PRIVATE_KEY"],
-    prefixes: &["BUZZ_"],
+    prefixes: &["BEEKEEPER_", "BUZZ_"],
     exempt: &[],
 };
 
@@ -27,6 +27,7 @@ fn only_named_baseline_categories_survive_from_the_host() {
             ("DATABASE_URL", "postgres://a"),
             ("KETTLE_FILE", "/granted/a/data.json"),
             ("BEEKEEPER_PRIVATE_KEY", "nsec-provider"),
+            ("BUZZ_PRIVATE_KEY", "nsec-provider"),
             ("NOSTR_PRIVATE_KEY", "nsec-provider"),
             ("HTTPS_PROXY", "http://proxy:3128"),
         ]),
@@ -42,6 +43,7 @@ fn only_named_baseline_categories_survive_from_the_host() {
         "DATABASE_URL",
         "KETTLE_FILE",
         "BEEKEEPER_PRIVATE_KEY",
+        "BUZZ_PRIVATE_KEY",
         "NOSTR_PRIVATE_KEY",
     ] {
         assert_eq!(env.get(absent), None, "{absent} was inherited");
@@ -273,7 +275,9 @@ async fn a_bounded_launch_gives_the_child_exactly_the_resolved_environment() {
     );
     assert!(!text.contains("PROJECT_A_ONLY"), "{text}");
     assert!(
-        !text.lines().any(|line| line.starts_with("BUZZ_")),
+        !text
+            .lines()
+            .any(|line| line.starts_with("BUZZ_") || line.starts_with("BEEKEEPER_")),
         "the harness's own namespace leaked: {text}"
     );
 }

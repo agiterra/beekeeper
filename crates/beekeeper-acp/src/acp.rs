@@ -539,6 +539,21 @@ pub struct EnvVar {
     pub value: String,
 }
 
+impl EnvVar {
+    /// `env` plus the pre-rename `BUZZ_<X>` twin of every `BEEKEEPER_<X>`
+    /// entry, for an MCP server that may be older than the rename (a
+    /// `beekeeper-dev-mcp` or `bee` built before it reads only the legacy
+    /// names). See `beekeeper_core::env_compat::with_legacy_mirrors`.
+    pub fn with_legacy_mirrors(env: Vec<EnvVar>) -> Vec<EnvVar> {
+        beekeeper_core::env_compat::with_legacy_mirrors(
+            env.into_iter().map(|entry| (entry.name, entry.value)),
+        )
+        .into_iter()
+        .map(|(name, value)| EnvVar { name, value })
+        .collect()
+    }
+}
+
 /// Stop reason returned by `session/prompt` when the agent finishes a turn.
 ///
 /// Maps to the `stopReason` field in the `SessionPromptResponse`.
@@ -1518,7 +1533,7 @@ impl AcpClient {
     /// the fence unconditional, which is right for every variable a
     /// *supervised* agent must not hold — and wrong for the one case where the
     /// host is deliberately handing the child a different identity than its
-    /// own. A coding-session seat is that case: the sidecar's `BUZZ_*` must
+    /// own. A coding-session seat is that case: the sidecar's `BEEKEEPER_*`/`BUZZ_*` must
     /// still be stripped, and then the seat's own credentials must be put back,
     /// which no fence configuration can express.
     ///
@@ -4660,8 +4675,8 @@ mod tests {
             "params": {
                 "cwd": "/private/checkout",
                 "mcpServers": [{
-                    "name": "buzz-session-context",
-                    "command": "/private/buzz-session-context",
+                    "name": "beekeeper-session-context",
+                    "command": "/private/beekeeper-session-context",
                     "args": [],
                     "env": [{
                         "name": "BEEKEEPER_SESSION_CONTEXT_PACKAGE",
@@ -5305,7 +5320,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = std::env::temp_dir().join(format!(
-            "buzz-acp-{name}-{}-{}",
+            "beekeeper-acp-{name}-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));
@@ -5335,7 +5350,8 @@ mod tests {
     ) -> String {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = std::env::temp_dir().join(format!("buzz-acp-env-probe-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("beekeeper-acp-env-probe-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create env probe dir");
         let path = dir.join(file_name);
         std::fs::write(
@@ -5684,7 +5700,8 @@ mod tests {
         // nine deadlines' worth of clock time.
         const GAP: std::time::Duration = std::time::Duration::from_millis(90);
 
-        let dir = std::env::temp_dir().join(format!("buzz-acp-keepalive-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("beekeeper-acp-keepalive-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create gate dir");
         let gates: Vec<std::path::PathBuf> = (0..KEEPALIVES)
             .map(|i| dir.join(format!("keepalive-{i}")))
@@ -6777,7 +6794,7 @@ mod tests {
 
     /// Unique temp path for one test's captured request bytes.
     fn capture_path(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join("buzz-acp-steer-capture");
+        let dir = std::env::temp_dir().join("beekeeper-acp-steer-capture");
         std::fs::create_dir_all(&dir).expect("create capture dir");
         let path = dir.join(format!("{name}.json"));
         let _ = std::fs::remove_file(&path);
@@ -8133,7 +8150,7 @@ sleep 5
     /// A gate file a script polls for, so a test orders the agent's next line
     /// against something the client has already done.
     fn gate_path(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join("buzz-acp-steer-gates");
+        let dir = std::env::temp_dir().join("beekeeper-acp-steer-gates");
         std::fs::create_dir_all(&dir).expect("create gate dir");
         let path = dir.join(format!("{name}-{}", std::process::id()));
         let _ = std::fs::remove_file(&path);
@@ -9144,7 +9161,8 @@ sleep 5
             client.steering_supported()
         );
 
-        let cwd = std::env::temp_dir().join(format!("buzz-acp-live-steer-{}", std::process::id()));
+        let cwd =
+            std::env::temp_dir().join(format!("beekeeper-acp-live-steer-{}", std::process::id()));
         std::fs::create_dir_all(&cwd).expect("create session cwd");
         let session_id = client
             .session_new(&cwd.display().to_string(), Vec::new(), None, None)

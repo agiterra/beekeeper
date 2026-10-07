@@ -25,6 +25,7 @@
 //! - **Freshness** — `created_at` must be within ±120 s of relay wall-clock.
 //! - **Deduplication** — duplicate event IDs are rejected; dedup entries expire after 300 s.
 
+pub mod legacy_env;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;

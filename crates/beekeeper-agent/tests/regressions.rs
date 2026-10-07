@@ -141,7 +141,7 @@ struct Harness {
 
 impl Harness {
     async fn spawn_with_env(base_url: &str, extra: &[(&str, &str)]) -> Self {
-        let bin = env!("CARGO_BIN_EXE_buzz-agent");
+        let bin = env!("CARGO_BIN_EXE_beekeeper-agent");
         let mut cmd = tokio::process::Command::new(bin);
         cmd.env("BEEKEEPER_AGENT_PROVIDER", "openai")
             .env("OPENAI_COMPAT_API_KEY", "test")
@@ -158,7 +158,7 @@ impl Harness {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        let mut child = cmd.spawn().expect("spawn buzz-agent");
+        let mut child = cmd.spawn().expect("spawn beekeeper-agent");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         let stderr = child.stderr.take().unwrap();
@@ -1649,8 +1649,8 @@ async fn hook_stop_timeout_failopen() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancel_kills_inflight_tool_via_mcp_notification() {
     // beekeeper-dev-mcp is a separate crate; locate its binary relative to
-    // the buzz-agent test binary (they share the same target dir).
-    let self_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_buzz-agent"));
+    // the beekeeper-agent test binary (they share the same target dir).
+    let self_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_beekeeper-agent"));
     let dev_mcp_bin = self_bin.parent().unwrap().join("beekeeper-dev-mcp");
     let dev_mcp_is_executable = std::fs::metadata(&dev_mcp_bin)
         .map(|metadata| {
@@ -1909,7 +1909,7 @@ async fn cancel_sends_notifications_cancelled_to_any_mcp_server() {
 /// Number of reply-guard reminders present in one captured LLM request.
 ///
 /// A reminder is a tool-role message whose JSON body is attributed to the
-/// in-process guard (`server: "buzz-agent"`) at the `_Stop` hook point — the
+/// in-process guard (`server: "beekeeper-agent"`) at the `_Stop` hook point — the
 /// same lower-trust shape as real hook output.
 fn reply_nag_count(request: &Value) -> usize {
     request["messages"]
@@ -1919,7 +1919,7 @@ fn reply_nag_count(request: &Value) -> usize {
                 .filter(|m| {
                     m["role"] == "tool"
                         && serde_json::from_str::<Value>(m["content"].as_str().unwrap_or(""))
-                            .map(|p| p["hook"] == "_Stop" && p["server"] == "buzz-agent")
+                            .map(|p| p["hook"] == "_Stop" && p["server"] == "beekeeper-agent")
                             .unwrap_or(false)
                 })
                 .count()
@@ -2046,7 +2046,7 @@ async fn reply_guard_nags_twice_then_lets_the_turn_end() {
     let nag = msgs
         .iter()
         .filter_map(|m| serde_json::from_str::<Value>(m["content"].as_str().unwrap_or("")).ok())
-        .find(|p| p["server"] == "buzz-agent")
+        .find(|p| p["server"] == "beekeeper-agent")
         .expect("reminder body");
     let text = nag["text"].as_str().unwrap_or("");
     assert!(
@@ -2339,14 +2339,14 @@ async fn reply_guard_combines_with_stop_hook_objection() {
 /// field would have rejected the documented `1`.
 #[test]
 fn reply_guard_rejects_unparseable_toggle() {
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_buzz-agent"))
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_beekeeper-agent"))
         .env("BEEKEEPER_AGENT_PROVIDER", "openai")
         .env("OPENAI_COMPAT_API_KEY", "test")
         .env("OPENAI_COMPAT_MODEL", "fake-model")
         .env("BEEKEEPER_AGENT_REQUIRE_REPLY", "true")
         .stdin(Stdio::null())
         .output()
-        .expect("run buzz-agent");
+        .expect("run beekeeper-agent");
     assert!(
         !out.status.success(),
         "expected a config error exit, got {:?}",
@@ -2361,14 +2361,14 @@ fn reply_guard_rejects_unparseable_toggle() {
 
 #[test]
 fn max_token_recoveries_rejects_unparseable_value() {
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_buzz-agent"))
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_beekeeper-agent"))
         .env("BEEKEEPER_AGENT_PROVIDER", "openai")
         .env("OPENAI_COMPAT_API_KEY", "test")
         .env("OPENAI_COMPAT_MODEL", "fake-model")
         .env("BEEKEEPER_AGENT_MAX_TOKEN_RECOVERIES", "unbounded")
         .stdin(Stdio::null())
         .output()
-        .expect("run buzz-agent");
+        .expect("run beekeeper-agent");
     assert!(
         !out.status.success(),
         "invalid recovery budget was accepted"

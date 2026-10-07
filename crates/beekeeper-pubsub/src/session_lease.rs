@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::PubSubError;
-use crate::topic::BEEKEEPER_PREFIX;
+use crate::topic::REDIS_KEY_PREFIX;
 
 /// Relay-derived lease duration, measured from Redis acceptance time.
 pub const SESSION_LEASE_TTL_SECS: u64 = 180;
@@ -154,7 +154,7 @@ pub enum LeaseApplyOutcome {
 /// Community/channel/exact-target scoped Redis register key.
 pub fn session_lease_key(ctx: &TenantContext, channel_id: Uuid, target_key: &str) -> String {
     format!(
-        "{BEEKEEPER_PREFIX}:{}:session-lease:{channel_id}:{target_key}",
+        "{REDIS_KEY_PREFIX}:{}:session-lease:{channel_id}:{target_key}",
         ctx.community()
     )
 }
@@ -162,7 +162,7 @@ pub fn session_lease_key(ctx: &TenantContext, channel_id: Uuid, target_key: &str
 /// Community/channel scoped expiry-index key.
 pub fn session_lease_index_key(ctx: &TenantContext, channel_id: Uuid) -> String {
     format!(
-        "{BEEKEEPER_PREFIX}:{}:session-lease-index:{channel_id}",
+        "{REDIS_KEY_PREFIX}:{}:session-lease-index:{channel_id}",
         ctx.community()
     )
 }

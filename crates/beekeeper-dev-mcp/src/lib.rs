@@ -201,7 +201,7 @@ impl ServerHandler for SessionContextMcp {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new(
-                "buzz-session-context-mcp",
+                "beekeeper-session-context-mcp",
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(

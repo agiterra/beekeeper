@@ -64,7 +64,11 @@ pub fn both_spellings(name: &str) -> Vec<String> {
 pub struct Adoption {
     /// `(BEEKEEPER_<X>, value)` pairs to set, sorted by name.
     pub set: Vec<(String, String)>,
-    /// Legacy names that were ignored because the new name was already set.
+    /// Legacy names that were ignored because the new name was already set
+    /// to a *different* value. A legacy twin carrying the same value is what
+    /// a dual-writing parent ([`with_legacy_mirrors`]) sends every child, so
+    /// it is neither adopted nor reported: saying so on every start of every
+    /// child would bury the one notice that matters.
     pub shadowed: Vec<String>,
 }
 
@@ -80,8 +84,10 @@ where
         let Some(canonical) = canonical_name(name) else {
             continue;
         };
-        if vars.contains_key(&canonical) {
-            adoption.shadowed.push(name.clone());
+        if let Some(current) = vars.get(&canonical) {
+            if current != value {
+                adoption.shadowed.push(name.clone());
+            }
         } else {
             adoption.set.push((canonical, value.clone()));
         }
@@ -256,6 +262,18 @@ mod tests {
             !notice.contains("wss://old") && !notice.contains("stale"),
             "never values: {notice}"
         );
+    }
+
+    /// What every child of a dual-writing parent sees: both spellings, same
+    /// value. Nothing to adopt and nothing worth a line on stderr.
+    #[test]
+    fn a_mirrored_environment_adopts_nothing_and_says_nothing() {
+        let adoption = plan_adoption(vars(&[
+            ("BEEKEEPER_RELAY_URL", "wss://x"),
+            ("BUZZ_RELAY_URL", "wss://x"),
+        ]));
+        assert_eq!(adoption, Adoption::default());
+        assert_eq!(adoption_notice("bee", &adoption), None);
     }
 
     #[test]

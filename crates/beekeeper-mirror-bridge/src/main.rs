@@ -183,8 +183,14 @@ async fn run_connection(args: &Args, keys: &Keys) -> String {
     reason
 }
 
+fn main() -> ExitCode {
+    // Before clap, tokio or any thread: read BUZZ_* as BEEKEEPER_*.
+    beekeeper_core::env_compat::adopt_legacy_env("beekeeper-mirror-bridge");
+    async_main()
+}
+
 #[tokio::main]
-async fn main() -> ExitCode {
+async fn async_main() -> ExitCode {
     // The workspace compiles both aws-lc-rs and ring into rustls
     // transitively, so it cannot auto-select a provider and panics on the
     // first TLS connection without this. Mirrors beekeeper-admin's main().
