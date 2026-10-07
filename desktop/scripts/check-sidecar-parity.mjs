@@ -49,19 +49,13 @@ import { fileURLToPath } from "node:url";
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /**
- * Cargo package -> the binary it produces, where they differ. The packages
- * are named `beekeeper-*` but the binaries keep their deployed `buzz-*` names
- * (and `beekeeper-cli` builds `bee`); a package not listed here names its own
- * binary (e.g. `beekeeper-host`).
+ * Cargo package -> the binary it produces, where they differ. Since the
+ * 2026-10 rename every `beekeeper-*` package builds the binary of the same
+ * name; `beekeeper-cli`, which builds `bee`, is the one exception. A package
+ * not listed here names its own binary.
  */
 const BINARY_OF = {
-  "beekeeper-acp": "beekeeper-acp",
-  "beekeeper-agent": "buzz-agent",
-  "beekeeper-backend-kubernetes": "beekeeper-backend-kubernetes",
   "beekeeper-cli": "bee",
-  "beekeeper-dev-mcp": "beekeeper-dev-mcp",
-  "beekeeper-session-provider": "beekeeper-session-provider",
-  "beekeeper-shell-host": "beekeeper-shell-host",
 };
 const binaryOf = (pkg) => BINARY_OF[pkg] ?? pkg;
 

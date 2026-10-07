@@ -11,7 +11,7 @@ cd "$REPO_ROOT"
 : "${RELAY_URL:=ws://localhost:3030}"
 : "${BEEKEEPER_RELAY_PRIVATE_KEY:=0000000000000000000000000000000000000000000000000000000000000001}"
 export BEEKEEPER_RELAY_URL RELAY_URL BEEKEEPER_RELAY_PRIVATE_KEY
-unset BEEKEEPER_AUTH_TAG
+unset BEEKEEPER_AUTH_TAG BUZZ_AUTH_TAG # both: a legacy name is adopted when the new one is unset
 
 for binary in bee beekeeper-admin; do
   resolved="$(command -v "$binary" || true)"

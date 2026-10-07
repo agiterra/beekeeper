@@ -106,7 +106,7 @@ The defining constraint, stated as a design axiom:
 An agent's identity is a Nostr keypair. The **agent record** on `D` carries:
 `name`, `relay_url`, the nsec (keyring-hydrated), the NIP-OA `auth` tag
 attesting owner authorization, `agent_command`/`agent_args` (the ACP agent the
-harness spawns — `goose`, `claude-agent-acp`, `codex-acp`, `buzz-agent`, or
+harness spawns — `goose`, `claude-agent-acp`, `codex-acp`, `beekeeper-agent`, or
 any user-supplied command: this is the **configurable harness** requirement),
 effective `system_prompt`/`model`/`provider`, timeout and parallelism knobs,
 the `respond_to` gate, merged `env_vars`, and a `backend` discriminator:
@@ -1072,8 +1072,10 @@ that image was never ours to ship, and the default was removed on
 
 What the image contains: Alpine base + `bash` (required by the dev-MCP
 shell tool) + `git` + CA certificates + the static musl `sprig` multicall
-binary with its personality links (`beekeeper-acp`, `buzz-agent`, `beekeeper-dev-mcp`,
-`rg`, `tree`, `buzz`, `git-credential-nostr`, `git-sign-nostr`) + a baked
+binary with its personality links (`beekeeper-acp`, `beekeeper-agent`, `beekeeper-dev-mcp`,
+`rg`, `tree`, `buzz`, `git-credential-nostr`, `git-sign-nostr`, plus the
+pre-rename `buzz-acp`, `buzz-agent` and `buzz-dev-mcp`, which digest-pinned
+older backends still exec) + a baked
 system gitconfig wiring the nostr signing and credential helpers. The baked
 credential-helper config MUST be scoped to the relay's git URL — mirroring
 the local spawn's `credential.<relay-url>/git.helper` scoping — never a

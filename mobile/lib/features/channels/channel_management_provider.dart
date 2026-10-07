@@ -182,8 +182,14 @@ class DirectoryUser {
 }
 
 /// Whether the mobile DM directory should show local preview identities.
+/// The pre-rename `BUZZ_MOCK_DM_DIRECTORY` define is still honoured when the
+/// new name is not given.
 const bool mockDmDirectoryEnabled =
-    kDebugMode && bool.fromEnvironment('BEEKEEPER_MOCK_DM_DIRECTORY');
+    kDebugMode &&
+    bool.fromEnvironment(
+      'BEEKEEPER_MOCK_DM_DIRECTORY',
+      defaultValue: bool.fromEnvironment('BUZZ_MOCK_DM_DIRECTORY'),
+    );
 
 /// Whether the new-DM picker should use local preview identities.
 ///

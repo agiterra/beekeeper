@@ -2667,7 +2667,8 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     { command: string; args: string[] }
   > = {
     goose: { command: "goose", args: ["acp"] },
-    "buzz-agent": { command: "buzz-agent", args: [] },
+    // Runtime id stays `buzz-agent`; the binary it runs is `beekeeper-agent`.
+    "buzz-agent": { command: "beekeeper-agent", args: [] },
     claude: { command: "claude", args: [] },
     codex: { command: "codex", args: [] },
   };
@@ -8359,8 +8360,8 @@ async function handleDiscoverAcpRuntimes(
       label: "Beekeeper Agent",
       avatar_url: "",
       availability: "available",
-      command: "buzz-agent",
-      binary_path: "/usr/local/bin/buzz-agent",
+      command: "beekeeper-agent",
+      binary_path: "/usr/local/bin/beekeeper-agent",
       default_args: [],
       mcp_command: "beekeeper-dev-mcp",
       install_hint: "Ships with the Beekeeper desktop app.",
@@ -9340,7 +9341,7 @@ async function handleCreateManagedAgent(
     .replace(/-/g, "")
     .padEnd(64, "0")
     .slice(0, 64);
-  const agentCommand = args.input.agentCommand ?? "buzz-agent";
+  const agentCommand = args.input.agentCommand ?? "beekeeper-agent";
   const agentArgs =
     args.input.agentArgs && args.input.agentArgs.length > 0
       ? [...args.input.agentArgs]

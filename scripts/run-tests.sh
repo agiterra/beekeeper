@@ -38,6 +38,9 @@ if [[ -f ".env" ]]; then
   # shellcheck disable=SC1091
   source .env
   set +o allexport
+  # shellcheck source=lib/env-compat.sh
+  source "${REPO_ROOT}/scripts/lib/env-compat.sh"
+  beekeeper_adopt_legacy_env run-tests
 else
   # Use defaults matching docker-compose.yml
   export DATABASE_URL="postgres://buzz:buzz_dev@localhost:5432/buzz" # sadscan:disable np.postgres.1

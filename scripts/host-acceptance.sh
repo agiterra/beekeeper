@@ -190,7 +190,11 @@ fi
 CHILD=$(pgrep -P "$HOST_PID" | head -1)
 record_pid "$CHILD"
 
-if [[ -n "$CHILD" ]] && [[ "$(ps -o comm= -p "$CHILD" | xargs basename)" == "beekeeper-session-provider" ]]; then
+# Linux truncates a process's comm to 15 bytes, so `beekeeper-session-provider`
+# reads there as `beekeeper-sessi`; macOS reports the full path. Accept either.
+PROVIDER_NAME="beekeeper-session-provider"
+CHILD_COMM="$(ps -o comm= -p "$CHILD" 2>/dev/null | xargs basename 2>/dev/null || true)"
+if [[ -n "$CHILD" ]] && { [[ "$CHILD_COMM" == "$PROVIDER_NAME" ]] || [[ "$CHILD_COMM" == "${PROVIDER_NAME:0:15}" ]]; }; then
     pass "the child is a real beekeeper-session-provider (pid $CHILD)"
 else
     fail "the child is not a provider"; note "$(ps -o pid,ppid,comm= -p "${CHILD:-1}")"

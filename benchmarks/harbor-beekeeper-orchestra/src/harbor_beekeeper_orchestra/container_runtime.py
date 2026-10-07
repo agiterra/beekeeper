@@ -1,6 +1,6 @@
 """Run the production Beekeeper agent stack inside the Harbor task container.
 
-Each provisioned identity is a full ``beekeeper-acp`` → ``buzz-agent`` →
+Each provisioned identity is a full ``beekeeper-acp`` → ``beekeeper-agent`` →
 ``beekeeper-dev-mcp`` process tree launched *inside* the task container — the same
 binaries and the same MCP toolset (shell, file tools, the ``bee`` CLI on
 PATH) that the desktop app gives a Beekeeper agent. The harness stays outside:
@@ -71,7 +71,7 @@ class BeekeeperContainerRuntime:
         artifact_root: Path,
         endpoints: dict[str, EndpointLaunchConfig],
         buzz_acp_binary: str = "beekeeper-acp",
-        buzz_agent_binary: str = "buzz-agent",
+        buzz_agent_binary: str = "beekeeper-agent",
         buzz_dev_mcp_binary: str = "beekeeper-dev-mcp",
         buzz_cli_binary: str = "bee",
         relay_gateway: str = "",
@@ -203,7 +203,7 @@ class BeekeeperContainerRuntime:
         """Upload the pinned Linux binaries into the task container."""
         uploads = {
             f"{REMOTE_BIN}/beekeeper-acp": self.buzz_acp_binary,
-            f"{REMOTE_BIN}/buzz-agent": self.buzz_agent_binary,
+            f"{REMOTE_BIN}/beekeeper-agent": self.buzz_agent_binary,
             f"{REMOTE_BIN}/beekeeper-dev-mcp": self.buzz_dev_mcp_binary,
         }
         if self.relay_gateway:
@@ -367,7 +367,7 @@ class BeekeeperContainerRuntime:
             # so beekeeper-dev-mcp's shim can wire git auth/signing for the agent.
             "NOSTR_PRIVATE_KEY": credential.nostr_secret_key,
             "BEEKEEPER_AUTH_TAG": credential.nostr_auth_tag,
-            "BEEKEEPER_ACP_AGENT_COMMAND": f"{REMOTE_BIN}/buzz-agent",
+            "BEEKEEPER_ACP_AGENT_COMMAND": f"{REMOTE_BIN}/beekeeper-agent",
             "BEEKEEPER_ACP_AGENT_ARGS": "",
             "BEEKEEPER_ACP_MCP_COMMAND": f"{REMOTE_BIN}/beekeeper-dev-mcp",
             "BEEKEEPER_ACP_CHANNELS": trial.channel_id,

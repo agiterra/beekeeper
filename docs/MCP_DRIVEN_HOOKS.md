@@ -67,7 +67,7 @@ Hooks are **off by default**. The operator must explicitly opt in via
 
 ### Not a hook: the reply guard
 
-`buzz-agent` has one in-process objection at the `_Stop` gate that is **not** an
+`beekeeper-agent` has one in-process objection at the `_Stop` gate that is **not** an
 MCP hook and exposes no hook tool: the reply guard
 (`BEEKEEPER_AGENT_REQUIRE_REPLY=1`), which reminds the model to publish when a turn is
 about to end with nothing posted to Beekeeper. There is no `_ReplyGuard` tool to

@@ -162,6 +162,12 @@ Hermit's lazy tool download (each tool is fetched once on first invocation and
 cached thereafter). You can also run `just bootstrap` independently at any time;
 it is safe to re-run.
 
+Environment variables are named `BEEKEEPER_*`. If your `.env` predates that
+rename and still says `BUZZ_*`, it keeps working, but run `just env-migrate`
+once: it renames the keys in place, keeps the original as `.env.bak`, and
+leaves alone the few names Docker Compose interpolates itself. See
+[docs/INTEGRATION.md § Environment variable names](docs/INTEGRATION.md#environment-variable-names-beekeeper_-and-the-legacy-buzz_).
+
 `just setup` then starts Docker services (Postgres on `:5432`, Redis on `:6379`,
 Adminer on `:8082`, Keycloak on `:8180` for local OAuth/OIDC testing, RustFS on
 `:9000` for media and git object storage, and Prometheus on `:9090` for metrics) and runs all

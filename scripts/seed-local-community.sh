@@ -15,6 +15,9 @@ if [[ -f ".env" ]]; then
   # shellcheck disable=SC1091
   source .env
   set +o allexport
+  # shellcheck source=lib/env-compat.sh
+  source "${REPO_ROOT}/scripts/lib/env-compat.sh"
+  beekeeper_adopt_legacy_env seed-local-community
 fi
 
 export PGHOST="${PGHOST:-localhost}"

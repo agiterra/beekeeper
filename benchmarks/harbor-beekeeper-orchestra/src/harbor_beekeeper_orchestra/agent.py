@@ -34,7 +34,7 @@ class BeekeeperOrchestraAgent(BaseAgent):
         artifact_root: str | Path | None = None,
         endpoint_config: str | Path | dict[str, Any] | None = None,
         buzz_acp_binary: str = "beekeeper-acp",
-        buzz_agent_binary: str = "buzz-agent",
+        buzz_agent_binary: str = "beekeeper-agent",
         buzz_dev_mcp_binary: str = "beekeeper-dev-mcp",
         buzz_cli_binary: str = "bee",
         relay_gateway: str = "",

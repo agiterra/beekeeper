@@ -110,9 +110,33 @@ def test_env_file_wires_owner_and_ports(state_dir):
     env_path = benchmark.write_env_file(state)
     env = dict(line.split("=", 1) for line in env_path.read_text().splitlines() if line)
     assert env["RELAY_OWNER_PUBKEY"] == state["owner_pubkey"]
-    assert env["BEEKEEPER_HTTP_PORT"] == str(benchmark.RELAY_HTTP_PORT)
+    # compose.yml interpolates the published port itself, under its BUZZ_ name.
+    assert env["BUZZ_HTTP_PORT"] == str(benchmark.RELAY_HTTP_PORT)
+    assert "BEEKEEPER_HTTP_PORT" not in env
     assert env["BEEKEEPER_PG_HOST_PORT"] == str(benchmark.PG_HOST_PORT)
     assert env["BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP"] == "true"
+
+
+def _env_file(state):
+    env_path = benchmark.write_env_file(state)
+    return dict(
+        line.split("=", 1) for line in env_path.read_text().splitlines() if line
+    )
+
+
+def test_env_file_image_reads_the_legacy_name(state_dir, monkeypatch):
+    monkeypatch.delenv("BEEKEEPER_IMAGE", raising=False)
+    monkeypatch.setenv("BUZZ_IMAGE", "legacy:tag")
+    assert _env_file(benchmark.load_state())["BUZZ_IMAGE"] == "legacy:tag"
+
+
+def test_env_file_image_prefers_the_new_name(state_dir, monkeypatch):
+    monkeypatch.setenv("BEEKEEPER_IMAGE", "new:tag")
+    monkeypatch.setenv("BUZZ_IMAGE", "legacy:tag")
+    env = _env_file(benchmark.load_state())
+    # compose.yml interpolates ${BUZZ_IMAGE}, so that is the key written.
+    assert env["BUZZ_IMAGE"] == "new:tag"
+    assert "BEEKEEPER_IMAGE" not in env
 
 
 def test_compose_command_isolates_the_project(state_dir):

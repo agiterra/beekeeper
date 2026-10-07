@@ -47,6 +47,9 @@ load_env() {
     # shellcheck disable=SC1091
     source .env
     set +o allexport
+    # shellcheck source=lib/env-compat.sh
+    source "${REPO_ROOT}/scripts/lib/env-compat.sh"
+    beekeeper_adopt_legacy_env dev-setup
   fi
 
   # Smooth the local rename path for developers with a pre-Buzz .env copied

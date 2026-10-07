@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SIDECARS=(beekeeper-acp buzz-agent beekeeper-dev-mcp git-credential-nostr bee)
+SIDECARS=(beekeeper-acp beekeeper-agent beekeeper-dev-mcp git-credential-nostr bee)
 HOST=$(rustc -vV | sed -n 's|host: ||p')
 TARGET=${1:-$HOST}
 if [[ "$TARGET" != *windows* ]]; then

@@ -310,7 +310,7 @@ channel carry its id in their `d` tag instead: kind:39000 (metadata),
 kind:39001, kind:39002 (membership). `get_channels` resolves a user's channels
 from the `d` tag of their kind:39002 events, not from `h`.
 
-**Agent-facing operations go in `beekeeper-cli`**: New agent-facing features belong in `beekeeper-cli` — add a subcommand there first, then wire the REST/WebSocket call in `client.rs`. `beekeeper-dev-mcp` (shell + file tools for `buzz-agent`) is separate.
+**Agent-facing operations go in `beekeeper-cli`**: New agent-facing features belong in `beekeeper-cli` — add a subcommand there first, then wire the REST/WebSocket call in `client.rs`. `beekeeper-dev-mcp` (shell + file tools for `beekeeper-agent`) is separate.
 
 **Workflow conditions**: `beekeeper-workflow` uses
 [evalexpr](https://docs.rs/evalexpr) for condition evaluation. Keep expressions

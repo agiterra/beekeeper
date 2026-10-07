@@ -179,21 +179,21 @@ def test_user_relay_url_prefers_host_view(tmp_path):
 
 async def test_install_stack_uploads_the_pinned_stack(tmp_path):
     binaries = {}
-    for name in ("beekeeper-acp", "buzz-agent", "beekeeper-dev-mcp"):
+    for name in ("beekeeper-acp", "beekeeper-agent", "beekeeper-dev-mcp"):
         path = tmp_path / name
         path.write_text("#!binary")
         binaries[name] = str(path)
     rt = runtime(
         tmp_path,
         buzz_acp_binary=binaries["beekeeper-acp"],
-        buzz_agent_binary=binaries["buzz-agent"],
+        buzz_agent_binary=binaries["beekeeper-agent"],
         buzz_dev_mcp_binary=binaries["beekeeper-dev-mcp"],
     )
     environment = Environment()
     await rt._install_stack(environment)
     assert {target for _, target in environment.uploads} == {
         f"{REMOTE_BIN}/beekeeper-acp",
-        f"{REMOTE_BIN}/buzz-agent",
+        f"{REMOTE_BIN}/beekeeper-agent",
         f"{REMOTE_BIN}/beekeeper-dev-mcp",
     }
     assert any("chmod 0755" in cmd for cmd, _ in environment.commands)
@@ -274,8 +274,8 @@ async def test_launch_wires_the_desktop_environment(tmp_path, configured, expect
     assert agent.pid == 4242
     command, env = environment.commands[-1]
     assert f"{REMOTE_BIN}/beekeeper-acp" in command
-    # The real product wiring: acp spawns buzz-agent, which gets beekeeper-dev-mcp.
-    assert env["BEEKEEPER_ACP_AGENT_COMMAND"] == f"{REMOTE_BIN}/buzz-agent"
+    # The real product wiring: acp spawns beekeeper-agent, which gets beekeeper-dev-mcp.
+    assert env["BEEKEEPER_ACP_AGENT_COMMAND"] == f"{REMOTE_BIN}/beekeeper-agent"
     assert env["BEEKEEPER_ACP_MCP_COMMAND"] == f"{REMOTE_BIN}/beekeeper-dev-mcp"
     assert env["BEEKEEPER_RELAY_URL"] == trial.relay_ws_url
     assert env["BEEKEEPER_PRIVATE_KEY"] == orch.nostr_secret_key

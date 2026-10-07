@@ -333,6 +333,9 @@ if [[ -f .env ]]; then
     # shellcheck source=/dev/null
     source .env
     set +o allexport
+    # shellcheck source=lib/env-compat.sh
+    source "${REPO_ROOT}/scripts/lib/env-compat.sh"
+    beekeeper_adopt_legacy_env e2e-git-perms
 fi
 
 export BEEKEEPER_GIT_REPO_PATH="${REPO_ROOT}/repos"
@@ -347,7 +350,7 @@ export BEEKEEPER_REQUIRE_AUTH_TOKEN=false
 rm -rf "${REPO_ROOT}/repos"
 mkdir -p "${REPO_ROOT}/repos"
 
-./target/release/beekeeper-relay > /tmp/buzz-relay-e2e.log 2>&1 &
+./target/release/beekeeper-relay > /tmp/beekeeper-relay-e2e.log 2>&1 &
 RELAY_PID=$!
 
 # Wait for relay to be ready (poll, not sleep)
@@ -356,7 +359,7 @@ for i in $(seq 1 "$RELAY_STARTUP_TIMEOUT"); do
         break
     fi
     if [[ $i -eq "$RELAY_STARTUP_TIMEOUT" ]]; then
-        fail "Relay did not start within ${RELAY_STARTUP_TIMEOUT}s. Check /tmp/buzz-relay-e2e.log"
+        fail "Relay did not start within ${RELAY_STARTUP_TIMEOUT}s. Check /tmp/beekeeper-relay-e2e.log"
     fi
     sleep 1
 done
@@ -478,7 +481,7 @@ log "Bot1: pushing..."
 if git_push "$BOT1_PRIVKEY" "$BOT1_DIR" -u origin main; then
     success "Bot1 push succeeded (member can push)"
 else
-    tail -20 /tmp/buzz-relay-e2e.log
+    tail -20 /tmp/beekeeper-relay-e2e.log
     fail "Bot1 push failed (member should be able to push)"
 fi
 
@@ -508,7 +511,7 @@ log "Bot2: pushing..."
 if git_push "$BOT2_PRIVKEY" "$BOT2_DIR"; then
     success "Bot2 push succeeded (bot promoted to member)"
 else
-    tail -20 /tmp/buzz-relay-e2e.log
+    tail -20 /tmp/beekeeper-relay-e2e.log
     fail "Bot2 push failed (bot should be promoted to member)"
 fi
 

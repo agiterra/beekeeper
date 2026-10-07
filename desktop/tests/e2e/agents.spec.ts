@@ -1323,25 +1323,25 @@ test("custom personas share with people and keep export separate", async ({
     });
     (
       window as Window & {
-        __BUZZ_RECIPIENT_POPOVER_OBSERVER__?: MutationObserver;
-        __BUZZ_RECIPIENT_POPOVER_STATE_CHANGES__?: string[];
+        __BEEKEEPER_RECIPIENT_POPOVER_OBSERVER__?: MutationObserver;
+        __BEEKEEPER_RECIPIENT_POPOVER_STATE_CHANGES__?: string[];
       }
-    ).__BUZZ_RECIPIENT_POPOVER_OBSERVER__ = observer;
+    ).__BEEKEEPER_RECIPIENT_POPOVER_OBSERVER__ = observer;
     (
       window as Window & {
-        __BUZZ_RECIPIENT_POPOVER_STATE_CHANGES__?: string[];
+        __BEEKEEPER_RECIPIENT_POPOVER_STATE_CHANGES__?: string[];
       }
-    ).__BUZZ_RECIPIENT_POPOVER_STATE_CHANGES__ = stateChanges;
+    ).__BEEKEEPER_RECIPIENT_POPOVER_STATE_CHANGES__ = stateChanges;
   });
   await recipientSearch.click();
   await waitForAnimations(page);
   const recipientPopoverStateChanges = await page.evaluate(() => {
     const trackedWindow = window as Window & {
-      __BUZZ_RECIPIENT_POPOVER_OBSERVER__?: MutationObserver;
-      __BUZZ_RECIPIENT_POPOVER_STATE_CHANGES__?: string[];
+      __BEEKEEPER_RECIPIENT_POPOVER_OBSERVER__?: MutationObserver;
+      __BEEKEEPER_RECIPIENT_POPOVER_STATE_CHANGES__?: string[];
     };
-    trackedWindow.__BUZZ_RECIPIENT_POPOVER_OBSERVER__?.disconnect();
-    return trackedWindow.__BUZZ_RECIPIENT_POPOVER_STATE_CHANGES__ ?? [];
+    trackedWindow.__BEEKEEPER_RECIPIENT_POPOVER_OBSERVER__?.disconnect();
+    return trackedWindow.__BEEKEEPER_RECIPIENT_POPOVER_STATE_CHANGES__ ?? [];
   });
   expect(recipientPopoverStateChanges).not.toContain("closed");
   const recipientList = page.getByTestId("persona-share-recipient-results");
