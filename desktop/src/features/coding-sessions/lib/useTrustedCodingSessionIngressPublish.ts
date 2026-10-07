@@ -122,10 +122,20 @@ export function createCodingSessionIngressPublishCoalescer(
  *
  * `store.snapshot()` allocates new arrays and new entry objects every call, so
  * a transcript append also handed every consumer a "new" metadata list, and a
- * status change a "new" transcript list. Entries are compared by the fields the
- * store derives them from; the parsed payload is the store's own retained
- * object, so reference equality on it is exact. The snapshot's shape is
- * unchanged.
+ * status change a "new" transcript list. Entries are matched by `eventId`, not
+ * by position: the store sorts transcripts by channel, target, signer and
+ * sequence, so one event inserted mid-array (any generation but the last, or
+ * a late arrival) would otherwise give every later entry a new identity. A
+ * matched prior entry is reused only when every field the store derives it
+ * from agrees — an id match alone proves nothing — and the parsed payload is
+ * the store's own retained object, so reference equality on it is exact. Each
+ * prior entry is reused at most once, so duplicate ids cannot alias.
+ *
+ * The result always has the NEXT snapshot's order. Per array: the previous
+ * array itself when the result is element-for-element identical to it; the
+ * fresh array when no entry could be reused; otherwise a new array of reused
+ * and fresh entries. When neither array differs from `next`'s own, `next` is
+ * returned as is; otherwise a copy of it with the merged arrays.
  */
 export function reuseCodingSessionIngressSnapshotArrays(
   previous: TrustedCodingSessionIngressSnapshot | null,
@@ -148,23 +158,37 @@ export function reuseCodingSessionIngressSnapshotArrays(
   return { ...next, metadata, transcripts };
 }
 
-function reuseEntries<T>(
+function reuseEntries<T extends { eventId: string }>(
   previous: T[],
   next: T[],
   same: (left: T, right: T) => boolean,
 ): T[] {
-  let changed = previous.length !== next.length;
+  if (previous.length === 0) return next.length === 0 ? previous : next;
+  // eventId -> prior entries with that id, in prior order; a reused entry is
+  // removed so it can be handed out only once.
+  const priorById = new Map<string, T[]>();
+  for (const entry of previous) {
+    const bucket = priorById.get(entry.eventId);
+    if (bucket === undefined) priorById.set(entry.eventId, [entry]);
+    else bucket.push(entry);
+  }
+  let identical = previous.length === next.length;
   let reused = 0;
   const merged = next.map((entry, index) => {
-    const prior = previous[index];
-    if (prior !== undefined && same(prior, entry)) {
-      reused += 1;
-      return prior;
+    let result = entry;
+    const bucket = priorById.get(entry.eventId);
+    if (bucket !== undefined) {
+      const at = bucket.findIndex((prior) => same(prior, entry));
+      if (at !== -1) {
+        result = bucket[at] as T;
+        bucket.splice(at, 1);
+        reused += 1;
+      }
     }
-    changed = true;
-    return entry;
+    if (identical && result !== previous[index]) identical = false;
+    return result;
   });
-  if (!changed) return previous;
+  if (identical) return previous;
   return reused === 0 ? next : merged;
 }
 

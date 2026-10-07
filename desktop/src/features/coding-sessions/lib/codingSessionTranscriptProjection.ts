@@ -133,9 +133,45 @@ function projectCodingSessionTranscriptUnsafe(
   envelopes: unknown[],
   options: ProjectCodingSessionTranscriptOptions,
 ): CodingSessionProjectedTranscriptItem[] {
-  const projected = assignSyntheticTurnPresentation(
-    envelopes.map((envelope) => toIntermediate(envelope, options)),
-  );
+  const fold = createCodingSessionTranscriptFold(options);
+  for (const envelope of envelopes) {
+    fold.push(envelope);
+  }
+  return fold.takeItems();
+}
+
+/**
+ * A left fold over one ordered envelope list, resumable at any entry.
+ *
+ * The full projection and the retained per-generation projector
+ * (`codingSessionTranscriptProjector`) share this one fold, so resuming can
+ * never drift from rebuilding. Its only cross-entry state is the item buffer,
+ * the pending tool calls a later `tool_result` replaces in place, and the open
+ * synthetic turn.
+ */
+export type CodingSessionTranscriptFold = {
+  /** Present one more envelope. Total: never throws. */
+  push(envelope: unknown): void;
+  /**
+   * The fold's own mutable buffer. Callers that publish must copy it — a
+   * later `push` may replace any earlier slot.
+   */
+  readonly items: readonly CodingSessionProjectedTranscriptItem[];
+  /** Hand the buffer over; the fold must not be pushed to afterwards. */
+  takeItems(): CodingSessionProjectedTranscriptItem[];
+};
+
+/**
+ * `seal` sees every item exactly once, as it is stored. It lets a caller that
+ * publishes items freeze them at creation; the fold never touches a stored
+ * item again (a paired result stores a new object in the call's slot).
+ */
+export function createCodingSessionTranscriptFold(
+  options: ProjectCodingSessionTranscriptOptions = {},
+  seal?: (
+    item: CodingSessionProjectedTranscriptItem,
+  ) => CodingSessionProjectedTranscriptItem,
+): CodingSessionTranscriptFold {
   const result: CodingSessionProjectedTranscriptItem[] = [];
   const pendingToolCalls = new Map<
     string,
@@ -145,32 +181,41 @@ function projectCodingSessionTranscriptUnsafe(
       ctx: Identity;
     }
   >();
+  const turns: SyntheticTurnState = { active: undefined };
+  const store = (item: CodingSessionProjectedTranscriptItem) =>
+    seal ? seal(item) : item;
 
-  for (const entry of projected) {
+  const step = (envelope: unknown): void => {
+    const entry = assignSyntheticTurnPresentation(
+      turns,
+      toIntermediate(envelope, options),
+    );
     if (entry.kind === "fallback") {
-      result.push(entry.item);
-      continue;
+      result.push(store(entry.item));
+      return;
     }
 
     const item = entry.item;
     if (!isRecord(item) || typeof item.kind !== "string") {
       result.push(
-        finalize(buildBaseTranscriptItem(item, entry.ctx), entry.ctx),
+        store(finalize(buildBaseTranscriptItem(item, entry.ctx), entry.ctx)),
       );
-      continue;
+      return;
     }
 
     if (item.kind === "tool_call") {
       const plan = buildPlanFromExitPlanModeToolCall(item, entry.ctx);
       if (plan) {
-        result.push(stampSubagent(finalize(plan, entry.ctx), item));
-        continue;
+        result.push(store(stampSubagent(finalize(plan, entry.ctx), item)));
+        return;
       }
 
       result.push(
-        stampSubagent(
-          finalize(buildToolCallItem(item, entry.ctx), entry.ctx),
-          item,
+        store(
+          stampSubagent(
+            finalize(buildToolCallItem(item, entry.ctx), entry.ctx),
+            item,
+          ),
         ),
       );
       const toolId = toolIdFromToolCall(item);
@@ -181,7 +226,7 @@ function projectCodingSessionTranscriptUnsafe(
           ctx: entry.ctx,
         });
       }
-      continue;
+      return;
     }
 
     if (item.kind === "tool_result") {
@@ -193,45 +238,86 @@ function projectCodingSessionTranscriptUnsafe(
               toolCallPairingKey(entry.ctx.targetKey, toolId),
             );
       if (pending) {
-        result[pending.index] = stampSubagent(
-          finalize(
-            buildPairedToolResultItem(
-              pending.item,
+        result[pending.index] = store(
+          stampSubagent(
+            finalize(
+              buildPairedToolResultItem(
+                pending.item,
+                pending.ctx,
+                item,
+                entry.ctx,
+              ),
               pending.ctx,
-              item,
-              entry.ctx,
             ),
-            pending.ctx,
+            pending.item,
+            item,
           ),
-          pending.item,
-          item,
         );
         if (toolId !== null) {
           pendingToolCalls.delete(
             toolCallPairingKey(entry.ctx.targetKey, toolId),
           );
         }
-        continue;
+        return;
       }
       result.push(
-        stampSubagent(
-          finalize(buildToolResultItem(item, entry.ctx), entry.ctx),
-          item,
+        store(
+          stampSubagent(
+            finalize(buildToolResultItem(item, entry.ctx), entry.ctx),
+            item,
+          ),
         ),
       );
-      continue;
+      return;
     }
 
     result.push(
-      stampSubagent(
-        finalize(buildBaseTranscriptItem(item, entry.ctx), entry.ctx),
-        item,
+      store(
+        stampSubagent(
+          finalize(buildBaseTranscriptItem(item, entry.ctx), entry.ctx),
+          item,
+        ),
       ),
     );
-  }
+  };
 
-  return result;
+  return {
+    push(envelope) {
+      const length = result.length;
+      try {
+        step(envelope);
+      } catch {
+        // Backstop, as in `projectCodingSessionTranscriptItem`: every builder
+        // is already defensive, but a hostile value (a throwing getter) must
+        // degrade to one bounded item, not abort the fold half-applied. Every
+        // store happens after its builders return, so at most the one slot a
+        // failed step would have added is discarded here.
+        result.length = length;
+        turns.active = undefined;
+        result.push(
+          store(
+            buildFallbackItem(
+              envelope,
+              null,
+              toIsoTimestamp(Number.NaN),
+              options.channelId ?? null,
+            ),
+          ),
+        );
+      }
+    },
+    get items() {
+      return result;
+    },
+    takeItems() {
+      return result;
+    },
+  };
 }
+
+type SyntheticTurnState = {
+  active: { targetKey: string; turnId: string } | undefined;
+};
 
 /**
  * Turn reconstruction for producers that do not name their own turns.
@@ -242,60 +328,55 @@ function projectCodingSessionTranscriptUnsafe(
  * identity becomes the stable key. A target change fences the open turn, and
  * terminal entries close it. Orphan/pre-prompt telemetry deliberately stays
  * ungrouped instead of being guessed into a turn.
+ *
+ * One entry at a time against the fold's carried `state`, so a resumed fold
+ * reconstructs exactly the turns a rebuild would.
  */
 function assignSyntheticTurnPresentation(
-  entries: IntermediateEnvelope[],
-): IntermediateEnvelope[] {
-  let active:
-    | {
-        targetKey: string;
-        turnId: string;
-      }
-    | undefined;
+  state: SyntheticTurnState,
+  entry: IntermediateEnvelope,
+): IntermediateEnvelope {
+  if (entry.kind === "fallback") {
+    state.active = undefined;
+    return entry;
+  }
 
-  return entries.map((entry) => {
-    if (entry.kind === "fallback") {
-      active = undefined;
-      return entry;
+  const item = entry.item;
+  const kind =
+    isRecord(item) && typeof item.kind === "string" ? item.kind : null;
+
+  if (state.active?.targetKey !== entry.ctx.targetKey) {
+    state.active = undefined;
+  }
+
+  let acpSource: string | undefined;
+  if (kind === "user_prompt") {
+    const steered = isRecord(item) && item.steered === true;
+    acpSource = steered ? "session/steer:user" : "session/prompt:user";
+    if (!steered) {
+      state.active = {
+        targetKey: entry.ctx.targetKey,
+        turnId: buildSyntheticTurnId(entry.ctx.targetKey, entry.ctx.id),
+      };
     }
+  }
 
-    const item = entry.item;
-    const kind =
-      isRecord(item) && typeof item.kind === "string" ? item.kind : null;
+  const withPresentation: IntermediateEnvelope = {
+    ...entry,
+    ctx: {
+      ...entry.ctx,
+      turnId: entry.ctx.hasDeclaredTurn
+        ? entry.ctx.declaredTurnId
+        : state.active?.turnId,
+      acpSource,
+    },
+  };
 
-    if (active?.targetKey !== entry.ctx.targetKey) {
-      active = undefined;
-    }
+  if (kind === "result" || kind === "interrupted") {
+    state.active = undefined;
+  }
 
-    let acpSource: string | undefined;
-    if (kind === "user_prompt") {
-      const steered = isRecord(item) && item.steered === true;
-      acpSource = steered ? "session/steer:user" : "session/prompt:user";
-      if (!steered) {
-        active = {
-          targetKey: entry.ctx.targetKey,
-          turnId: buildSyntheticTurnId(entry.ctx.targetKey, entry.ctx.id),
-        };
-      }
-    }
-
-    const withPresentation: IntermediateEnvelope = {
-      ...entry,
-      ctx: {
-        ...entry.ctx,
-        turnId: entry.ctx.hasDeclaredTurn
-          ? entry.ctx.declaredTurnId
-          : active?.turnId,
-        acpSource,
-      },
-    };
-
-    if (kind === "result" || kind === "interrupted") {
-      active = undefined;
-    }
-
-    return withPresentation;
-  });
+  return withPresentation;
 }
 
 /** Single-envelope turn/source presentation, without any batch history. */

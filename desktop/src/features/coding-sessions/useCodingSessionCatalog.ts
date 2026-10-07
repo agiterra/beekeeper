@@ -7,9 +7,10 @@ import { groupCodingSessionCatalog } from "./lib/codingSessionUmbrellaModel";
 import { rememberCodingSessionPopoutBootstrap } from "./lib/codingSessionBootstrap";
 import { buildCodingSessionTargetKey } from "./lib/codingSessionCommand";
 import {
-  buildCodingSessionTranscriptGenerationId,
-  projectTrustedCodingSessionTranscriptsToTranscript,
-} from "./lib/codingSessionTranscriptPresentation";
+  type CodingSessionCatalogProjection,
+  createCodingSessionCatalogProjection,
+  useRetainedCodingSessionCatalogProjection,
+} from "./lib/codingSessionCatalogProjection";
 import type {
   TrustedCodingSessionMetadataEntry,
   TrustedCodingSessionTranscriptEntry,
@@ -86,14 +87,18 @@ export function useCodingSessionCatalog(
   // execution only through that provider's own 44224 receipt.
   const createObservations =
     useCodingSessionCreateObservations(ingressChannelIds);
+  const projection = useRetainedCodingSessionCatalogProjection(
+    catalogProjectionScopeKey(trustedIngress),
+  );
   const snapshot = React.useMemo(
     () =>
       composeCodingSessionCatalogSnapshot(
         channelId,
         trustedIngress,
         createObservations,
+        projection,
       ),
-    [channelId, createObservations, trustedIngress],
+    [channelId, createObservations, projection, trustedIngress],
   );
 
   useRememberedCodingSessionPopoutBootstraps(
@@ -127,6 +132,21 @@ export function useCodingSessionCatalog(
   return snapshot;
 }
 
+/**
+ * The ingress scope a retained projection is valid for: authority identity
+ * plus the channel set and request the snapshot was read under. A change to
+ * either starts from an empty projection rather than resuming folds built
+ * under different trust.
+ */
+function catalogProjectionScopeKey(
+  trustedIngress: Pick<
+    ReturnType<typeof useTrustedCodingSessionIngress>,
+    "authorityIdentity" | "scopeIdentity"
+  >,
+): string {
+  return `${trustedIngress.authorityIdentity ?? ""}\u0000${trustedIngress.scopeIdentity}`;
+}
+
 /** The trusted-ingress slice the channel snapshot is composed from. */
 type TrustedIngressSlice = Pick<
   ReturnType<typeof useTrustedCodingSessionIngress>,
@@ -142,10 +162,11 @@ type TrustedIngressSlice = Pick<
 >;
 
 /**
- * Compose the channel snapshot from its two reads. Pure, so the field
- * contract — creates and geneses ride beside the entries, and the founding
- * read's own loading flag stays separate from the catalog's — is testable
- * without mounting either subscription.
+ * Compose the channel snapshot from its two reads. Pure apart from the
+ * optional retained `projection`, which only changes how much work a merge
+ * repeats, never its answer — so the field contract (creates and geneses ride
+ * beside the entries, and the founding read's own loading flag stays separate
+ * from the catalog's) is testable without mounting either subscription.
  */
 export function composeCodingSessionCatalogSnapshot(
   channelId: string | null,
@@ -154,10 +175,11 @@ export function composeCodingSessionCatalogSnapshot(
     CodingSessionCreateObservationSnapshot,
     "observations" | "geneses" | "isLoading"
   >,
+  projection: CodingSessionCatalogProjection = createCodingSessionCatalogProjection(),
 ): CodingSessionCatalogSnapshot {
   return {
     channelId,
-    entries: mergeTrustedCodingSessionIngress(
+    entries: projection.merge(
       channelId,
       trustedIngress.metadata,
       trustedIngress.transcripts,
@@ -280,14 +302,15 @@ export function useGlobalCodingSessionCatalog(
     options.persistenceCacheKey,
   );
   const createObservations = useCodingSessionCreateObservations(channelIds);
+  const projection = useRetainedCodingSessionCatalogProjection(
+    catalogProjectionScopeKey(trustedIngress),
+  );
   return React.useMemo(
     () => ({
       entries: channelIds.flatMap((channelId) =>
-        mergeTrustedCodingSessionIngress(
-          channelId,
-          trustedIngress.metadata,
-          trustedIngress.transcripts,
-        ).map((session) => ({ channelId, session })),
+        projection
+          .merge(channelId, trustedIngress.metadata, trustedIngress.transcripts)
+          .map((session) => ({ channelId, session })),
       ),
       creates: createObservations.observations,
       geneses: createObservations.geneses,
@@ -297,219 +320,25 @@ export function useGlobalCodingSessionCatalog(
       authorityErrorMessage: trustedIngress.authorityErrorMessage,
       lifecycleFor: trustedIngress.lifecycleFor,
     }),
-    [channelIds, createObservations, trustedIngress],
+    [channelIds, createObservations, projection, trustedIngress],
   );
 }
 
 /**
  * Build one catalog record per (signer, target) a channel has verified events
- * for.
- *
- * A generation is discoverable from either side: metadata alone (a session
- * created but not yet spoken in) or transcripts alone (a provider whose
- * metadata has not arrived yet). Neither is required, so a session never
- * becomes invisible because one of its two streams is late.
+ * for — the full rebuild, with no retained state. Callers that publish
+ * repeatedly (the hooks above) hold a `CodingSessionCatalogProjection`
+ * instead, which returns the same records while re-presenting only what each
+ * publish changed (SV-118).
  */
 export function mergeTrustedCodingSessionIngress(
   channelId: string | null,
   metadataEntries: readonly TrustedCodingSessionMetadataEntry[],
   transcriptEntries: readonly TrustedCodingSessionTranscriptEntry[],
 ): CodingSessionCatalogRecord[] {
-  if (!channelId) return [];
-
-  const identities = new Map<
-    string,
-    {
-      target: TrustedCodingSessionTranscriptEntry["transcript"]["session"];
-      signerPubkey: string;
-    }
-  >();
-  for (const entry of metadataEntries) {
-    if (entry.channelId !== channelId) continue;
-    identities.set(`${entry.signerPubkey}\u0000${entry.targetKey}`, {
-      target: entry.metadata.session,
-      signerPubkey: entry.signerPubkey,
-    });
-  }
-  for (const entry of transcriptEntries) {
-    if (entry.channelId !== channelId) continue;
-    identities.set(`${entry.signerPubkey}\u0000${entry.targetKey}`, {
-      target: entry.transcript.session,
-      signerPubkey: entry.signerPubkey,
-    });
-  }
-
-  const sessions = [...identities.values()].map(({ target, signerPubkey }) => {
-    const targetKey = buildCodingSessionTargetKey(target);
-    // No `conflictCount === 0` gate here: metadata conflict counts are
-    // same-signer by construction (the snapshot resolves per signer), and a
-    // provider legitimately restates its metadata several times within one
-    // second right after a create. The ingress store already picked a
-    // deterministic winner; discarding it here threw away the session's
-    // title on every fresh create. Receipts and transcripts keep their
-    // fail-closed conflict handling — those are immutable facts, not
-    // last-writer-wins state.
-    const metadataEntry = metadataEntries.find(
-      (entry) =>
-        entry.channelId === channelId &&
-        entry.targetKey === targetKey &&
-        entry.signerPubkey === signerPubkey,
-    );
-    const targetTranscripts = transcriptEntries.filter(
-      (entry) =>
-        entry.channelId === channelId &&
-        entry.targetKey === targetKey &&
-        entry.signerPubkey === signerPubkey,
-    );
-    const transcript = projectTrustedCodingSessionTranscriptsToTranscript(
-      targetTranscripts,
-      channelId,
-      signerPubkey,
-      target,
-    );
-    const latestTimestamp = targetTranscripts.reduce(
-      (latest, entry) => Math.max(latest, entry.transcript.timestamp),
-      metadataEntry ? metadataEntry.createdAt * 1000 : 0,
-    );
-    const metadata = metadataEntry?.metadata;
-    const driverLabel = formatDriverLabel(target.driver);
-    return {
-      generationId: buildCodingSessionTranscriptGenerationId(
-        channelId,
-        signerPubkey,
-        target,
-      ),
-      label: `${driverLabel} · generation ${target.generation}`,
-      title: metadata?.title ?? "Coding session",
-      providerAuthorityPubkey: signerPubkey,
-      metadataAuthorityPubkey: metadataEntry?.signerPubkey ?? null,
-      lastEventAt: new Date(latestTimestamp).toISOString(),
-      lastTranscriptAt:
-        targetTranscripts.length > 0
-          ? targetTranscripts.reduce(
-              (latest, entry) => Math.max(latest, entry.transcript.timestamp),
-              0,
-            )
-          : null,
-      status: metadata?.status ?? inferTranscriptStatus(targetTranscripts),
-      // When the status itself was observed (44223 created_at, ms). Kept
-      // separate from lastEventAt (a max over both streams) so status
-      // derivation can compare metadata freshness against the transcript.
-      statusAt: metadataEntry ? metadataEntry.createdAt * 1000 : null,
-      statusEventId: metadataEntry?.eventId ?? null,
-      transcript,
-      conflictCount: targetTranscripts.reduce(
-        (count, entry) => count + entry.conflictCount,
-        metadataEntry?.conflictCount ?? 0,
-      ),
-      commandTarget: target,
-      projectRef: metadata?.projectRef ?? null,
-      repoRef: metadata?.repoRef ?? null,
-      sessionRef: metadata?.sessionRef ?? null,
-      provider: metadata?.provider ?? null,
-      runtime: metadata?.runtime ?? target.driver,
-      model: metadata?.model ?? null,
-      agentRef: metadata?.agentRef ?? null,
-      // The role key only ever accompanies an actor (the decoder enforces
-      // it), so an execution with no agent can never carry one.
-      role: metadata?.agentRef ? (metadata.role ?? null) : null,
-      // Published only for a budgeted umbrella, so absence is "the provider
-      // disclosed no budget" — never a locally assumed unlimited. Raised to
-      // the umbrella's furthest count below, because the provider only ever
-      // publishes it on the acting execution.
-      turnBudget: metadata?.turnBudget ?? null,
-      // The router's decision, straight off the 44223 the provider signed.
-      // Nothing here re-derives it: a seat's routing is a fact the wire
-      // carries or does not.
-      routing: metadata?.routing ?? null,
-      capabilities: metadata?.capabilities ?? null,
-      // Which `bee` this exact generation's seat was observed running,
-      // straight off the 44223 the provider signed. Null means this record's
-      // own metadata carried no `beeStamp` — an older host, not an unknown
-      // build (`codingSessionSeatBee.ts`).
-      beeStamp: metadata?.beeStamp ?? null,
-      // Which persona pack this exact generation's seat was observed
-      // staging, straight off the same 44223. Null means this record's own
-      // metadata carried no `packRef` — no 30624 source for the project, or
-      // an older host (`codingSessionPackRef.ts`).
-      packRef: metadata?.packRef ?? null,
-      // How that pack was composed, off the same 44223; null when the host
-      // staged an uncomposed pack or predates the key (spec § 4.6).
-      composeRef: metadata?.composeRef ?? null,
-    } satisfies CodingSessionCatalogRecord;
-  });
-
-  applyUmbrellaTurnBudget(sessions);
-
-  sessions.sort(
-    (left, right) =>
-      Date.parse(right.lastEventAt) - Date.parse(left.lastEventAt) ||
-      left.generationId.localeCompare(right.generationId),
+  return createCodingSessionCatalogProjection().merge(
+    channelId,
+    metadataEntries,
+    transcriptEntries,
   );
-  return sessions;
-}
-
-/**
- * Raise every seat of an umbrella to that umbrella's furthest turn budget.
- *
- * The provider publishes `turnBudget` on the metadata of whichever execution
- * is acting, so a sibling that has been idle keeps echoing whatever the count
- * was when it last spoke. The budget is one number per umbrella, and counts
- * only rise, so the highest `used` any seat has published is the newest fact
- * about it — showing a seat's own stale copy would tell the operator there is
- * room at the moment the next agent turn is refused. An execution that claimed
- * no `sessionRef` belongs to no umbrella and keeps exactly what it published.
- */
-function applyUmbrellaTurnBudget(sessions: CodingSessionCatalogRecord[]): void {
-  const furthest = new Map<
-    string,
-    NonNullable<CodingSessionCatalogRecord["turnBudget"]>
-  >();
-  for (const session of sessions) {
-    const { sessionRef, turnBudget } = session;
-    if (!sessionRef || !turnBudget) continue;
-    const held = furthest.get(sessionRef);
-    if (
-      !held ||
-      turnBudget.used > held.used ||
-      (turnBudget.used === held.used && turnBudget.limit > held.limit)
-    ) {
-      furthest.set(sessionRef, turnBudget);
-    }
-  }
-  for (const session of sessions) {
-    if (!session.sessionRef) continue;
-    const budget = furthest.get(session.sessionRef);
-    if (budget) session.turnBudget = budget;
-  }
-}
-
-function formatDriverLabel(driver: string): string {
-  const normalized = driver.trim().replace(/[-_]+/g, " ");
-  if (!normalized) return "Coding";
-  return normalized.replace(/\b\p{L}/gu, (letter) => letter.toUpperCase());
-}
-
-/**
- * Infer a status from the transcript when metadata has not arrived.
- *
- * Only terminal items say anything definite; anything else means the provider
- * was still emitting, which is what "running" reports.
- */
-function inferTranscriptStatus(
-  entries: readonly TrustedCodingSessionTranscriptEntry[],
-): CodingSessionCatalogRecord["status"] {
-  const latest = entries
-    .filter((entry) => entry.conflictCount === 0)
-    .sort(
-      (left, right) => right.transcript.eventSeq - left.transcript.eventSeq,
-    )[0]?.transcript.item as Record<string, unknown> | undefined;
-  if (!latest || typeof latest.kind !== "string") return "unknown";
-  if (latest.kind === "interrupted") return "interrupted";
-  if (latest.kind === "result") {
-    if (latest.subtype === "cancelled") return "interrupted";
-    if (latest.subtype === "error" || latest.isError === true) return "failed";
-    if (latest.subtype === "success") return "completed";
-  }
-  return "running";
 }

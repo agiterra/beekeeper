@@ -5,6 +5,7 @@ import { encodeStructuredKey } from "./codingSessionKeys";
 import { canonicalizeProjectionPayload } from "./codingSessionPayload";
 import type { CodingSessionTranscriptItemV1 } from "./codingSessionTranscriptItemContract";
 import { projectCodingSessionTranscript } from "./codingSessionTranscriptProjection";
+import type { CodingSessionTranscriptProjectionContext } from "./codingSessionTranscriptProjector";
 import {
   boundedNonempty,
   decodeTarget,
@@ -140,7 +141,43 @@ export function projectTrustedCodingSessionTranscriptsToTranscript(
   target: CodingSessionCommandTarget,
   source?: CodingSessionIngressSource | null,
 ): TranscriptItem[] {
-  const exact = entries
+  const exact = selectExactTrustedCodingSessionTranscriptEntries(
+    entries,
+    channelId,
+    signerPubkey,
+    target,
+  );
+  if (exact.length === 0) return [];
+
+  const context = buildTrustedCodingSessionTranscriptProjectionContext(
+    channelId,
+    signerPubkey,
+    target,
+    source,
+  );
+  return projectCodingSessionTranscript(
+    exact.map(trustedCodingSessionTranscriptEnvelope),
+    {
+      channelId: context.channelId,
+      generationId: context.generationId,
+      bridgeSource: { ...context.bridgeSource },
+    },
+  );
+}
+
+/**
+ * The one generation a transcript shows: exact channel, signer and target,
+ * with every conflicted entry withheld, in `eventSeq` order with the event id
+ * as the tie-break. Shared by the full projection and the retained projector
+ * so both see the same list.
+ */
+export function selectExactTrustedCodingSessionTranscriptEntries(
+  entries: readonly TrustedCodingSessionTranscriptEntry[],
+  channelId: string,
+  signerPubkey: string,
+  target: CodingSessionCommandTarget,
+): TrustedCodingSessionTranscriptEntry[] {
+  return entries
     .filter(
       (entry) =>
         entry.channelId === channelId &&
@@ -153,30 +190,45 @@ export function projectTrustedCodingSessionTranscriptsToTranscript(
         left.transcript.eventSeq - right.transcript.eventSeq ||
         left.eventId.localeCompare(right.eventId),
     );
-  if (exact.length === 0) return [];
+}
 
-  return projectCodingSessionTranscript(
-    exact.map((entry) => ({
-      target: entry.transcript.session,
-      eventSeq: entry.transcript.eventSeq,
-      timestamp: entry.transcript.timestamp,
-      turnId: entry.transcript.turnId,
-      item: entry.transcript.item,
-      sourceEventId: entry.eventId,
-    })),
-    {
+/** The caller-owned scope one generation's items are projected under. */
+export function buildTrustedCodingSessionTranscriptProjectionContext(
+  channelId: string,
+  signerPubkey: string,
+  target: CodingSessionCommandTarget,
+  source?: CodingSessionIngressSource | null,
+): CodingSessionTranscriptProjectionContext {
+  return {
+    channelId,
+    generationId: buildCodingSessionTranscriptGenerationId(
       channelId,
-      generationId: buildCodingSessionTranscriptGenerationId(
-        channelId,
-        signerPubkey,
-        target,
-      ),
-      bridgeSource: {
-        pubkey: signerPubkey,
-        label: source?.label ?? "Trusted coding-session provider",
-      },
+      signerPubkey,
+      target,
+    ),
+    bridgeSource: {
+      pubkey: signerPubkey,
+      label: source?.label ?? "Trusted coding-session provider",
     },
-  );
+  };
+}
+
+/**
+ * The CST envelope as the native projector reads it: only `session` is renamed
+ * `target`. The `turnId` key is always present, so a `null` stays the
+ * provider's "no turn" rather than inviting synthetic reconstruction.
+ */
+export function trustedCodingSessionTranscriptEnvelope(
+  entry: TrustedCodingSessionTranscriptEntry,
+) {
+  return {
+    target: entry.transcript.session,
+    eventSeq: entry.transcript.eventSeq,
+    timestamp: entry.transcript.timestamp,
+    turnId: entry.transcript.turnId,
+    item: entry.transcript.item,
+    sourceEventId: entry.eventId,
+  };
 }
 
 function sameTarget(
