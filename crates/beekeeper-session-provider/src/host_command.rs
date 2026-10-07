@@ -8,7 +8,7 @@
 //! secret scrubbed. A timeout reports exit 124, the convention `timeout(1)`
 //! established.
 //!
-//! Reimplemented rather than shared: `buzz-dev-mcp` is an agent tool with a
+//! Reimplemented rather than shared: `beekeeper-dev-mcp` is an agent tool with a
 //! shell, a PATH shim and an MCP result shape, none of which belongs in the
 //! provider. The pieces that matter for safety — process-group kill, bounded
 //! capture, exit 124 — are the same by construction.
@@ -1098,17 +1098,17 @@ mod tests {
             working_directory: ".".into(),
             timeout_secs: 5,
             env: BTreeMap::new(),
-            env_from_host: vec!["BUZZ_PRIVATE_KEY".into()],
+            env_from_host: vec!["BEEKEEPER_PRIVATE_KEY".into()],
             tail_bytes: 64,
             artifact_max_bytes: 1024,
             upload: false,
             checkout: beekeeper_workflow::schema::HostCheckout::Current,
         };
         let mut host_env = HashMap::new();
-        host_env.insert("BUZZ_PRIVATE_KEY".to_owned(), "nsec".to_owned());
+        host_env.insert("BEEKEEPER_PRIVATE_KEY".to_owned(), "nsec".to_owned());
         let refusal = prepare(&spec, dir.path(), &host_env).expect_err("fenced name is refused");
         assert_eq!(refusal.code, ACTION_HOST_ENV_FENCED);
-        assert!(FENCE.covers("BUZZ_PRIVATE_KEY"));
+        assert!(FENCE.covers("BEEKEEPER_PRIVATE_KEY"));
         assert!(FENCE.covers("NOSTR_PRIVATE_KEY"));
     }
 

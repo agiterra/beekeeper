@@ -22,7 +22,7 @@ remove_path() {
     fi
 }
 
-case "${BUZZ_TEST_PLATFORM:-$(uname -s)}" in
+case "${BEEKEEPER_TEST_PLATFORM:-$(uname -s)}" in
     Darwin)
         remove_path "$HOME/Library/Application Support/$instance_id"
         remove_path "$HOME/Library/Caches/$instance_id"

@@ -1,4 +1,4 @@
-//! Capability-sliced `SessionDriver` adapter for `buzz-shell-host` (A-16).
+//! Capability-sliced `SessionDriver` adapter for `beekeeper-shell-host` (A-16).
 //!
 //! Scope-locked to four slices by architect ruling: `detect`, `attach-existing`,
 //! `list-probe`, `input-resize`. Deliberately excludes spawn, kill/signal
@@ -25,7 +25,7 @@ use super::host_client::{self, AttachedClient};
 /// else loudly — see `§Driver-selection`'s `pickDriver`/`instantiate` in
 /// `conformance/agent-session-drivers/CONTRACT.md`, which this deliberately
 /// does NOT port (out of scope until >= 2 real backends exist).
-pub const BUZZ_SHELL_HOST: &str = "buzz-shell-host";
+pub const BEEKEEPER_SHELL_HOST: &str = "beekeeper-shell-host";
 
 /// `detect` outcome: never launches the backend, only checks it's resolvable.
 #[derive(Debug, PartialEq, Eq)]
@@ -88,7 +88,7 @@ fn classify_availability(resolved: Option<PathBuf>) -> Detected {
     match resolved {
         Some(_) => Detected::Available,
         None => Detected::Unavailable {
-            reason: format!("{BUZZ_SHELL_HOST} binary not found"),
+            reason: format!("{BEEKEEPER_SHELL_HOST} binary not found"),
         },
     }
 }
@@ -98,7 +98,7 @@ pub struct BeekeeperShellHostDriver;
 
 impl SessionDriver for BeekeeperShellHostDriver {
     fn detect(&self) -> Detected {
-        classify_availability(crate::managed_agents::resolve_command(BUZZ_SHELL_HOST))
+        classify_availability(crate::managed_agents::resolve_command(BEEKEEPER_SHELL_HOST))
     }
 
     fn attach_existing(
@@ -133,7 +133,7 @@ impl SessionDriver for BeekeeperShellHostDriver {
 
 /// The name-check + `Detected` branch logic, with the detection outcome
 /// injected rather than computed, so it's testable without depending on
-/// whether `buzz-shell-host` happens to be resolvable wherever the test
+/// whether `beekeeper-shell-host` happens to be resolvable wherever the test
 /// runs — the same seam `classify_availability` provides for `detect()`
 /// itself. `resolve_driver` is the thin wrapper that supplies the real
 /// outcome.
@@ -142,13 +142,13 @@ fn resolve_from_detection(
     driver: BeekeeperShellHostDriver,
     detected: Detected,
 ) -> Result<BeekeeperShellHostDriver, String> {
-    if backend != BUZZ_SHELL_HOST {
+    if backend != BEEKEEPER_SHELL_HOST {
         return Err(format!("unknown session driver backend: {backend}"));
     }
     match detected {
         Detected::Available => Ok(driver),
         Detected::Unavailable { reason } => Err(format!(
-            "session driver backend \"{BUZZ_SHELL_HOST}\" unavailable: {reason}"
+            "session driver backend \"{BEEKEEPER_SHELL_HOST}\" unavailable: {reason}"
         )),
     }
 }
@@ -163,7 +163,7 @@ fn resolve_from_detection(
 /// anyway. The error string is unchanged either way; only the ordering is.
 pub fn resolve_driver(backend: &str) -> Result<BeekeeperShellHostDriver, String> {
     let driver = BeekeeperShellHostDriver;
-    if backend != BUZZ_SHELL_HOST {
+    if backend != BEEKEEPER_SHELL_HOST {
         return Err(format!("unknown session driver backend: {backend}"));
     }
     let detected = driver.detect();
@@ -223,25 +223,25 @@ mod tests {
         assert_eq!(
             result,
             Detected::Unavailable {
-                reason: "buzz-shell-host binary not found".to_string()
+                reason: "beekeeper-shell-host binary not found".to_string()
             }
         );
     }
 
     #[test]
     fn classify_availability_some_is_available() {
-        let result = classify_availability(Some(PathBuf::from("/usr/bin/buzz-shell-host")));
+        let result = classify_availability(Some(PathBuf::from("/usr/bin/beekeeper-shell-host")));
         assert_eq!(result, Detected::Available);
     }
 
     #[test]
     fn driver_detect_agrees_with_resolve_command_right_now() {
         // The real wiring, not a re-derivation: whatever resolve_command says
-        // right now for BUZZ_SHELL_HOST is exactly what detect() must report.
+        // right now for BEEKEEPER_SHELL_HOST is exactly what detect() must report.
         // A driver.detect() hardcoded to Available (ignoring resolve_command)
         // fails this in this dev worktree, where the sidecar binary isn't built.
         let driver = BeekeeperShellHostDriver;
-        let resolved = crate::managed_agents::resolve_command(BUZZ_SHELL_HOST);
+        let resolved = crate::managed_agents::resolve_command(BEEKEEPER_SHELL_HOST);
         match (driver.detect(), resolved) {
             (Detected::Available, Some(_)) => {}
             (Detected::Unavailable { .. }, None) => {}
@@ -254,22 +254,22 @@ mod tests {
     #[test]
     fn resolve_driver_fails_loud_when_backend_unavailable() {
         // Injects the Unavailable outcome directly instead of depending on
-        // whether buzz-shell-host happens to be resolvable in whatever
+        // whether beekeeper-shell-host happens to be resolvable in whatever
         // environment runs this test (a dev worktree without the sidecar
         // built, CI with it on PATH, etc.) — the property under test is the
         // error-string contract in resolve_from_detection's match arm, not a
         // fact about this machine. See BUILDER-BRIEF-PREAMBLE.md law 1.
         let err = resolve_from_detection(
-            BUZZ_SHELL_HOST,
+            BEEKEEPER_SHELL_HOST,
             BeekeeperShellHostDriver,
             Detected::Unavailable {
-                reason: "buzz-shell-host binary not found".to_string(),
+                reason: "beekeeper-shell-host binary not found".to_string(),
             },
         )
         .unwrap_err();
         assert_eq!(
             err,
-            "session driver backend \"buzz-shell-host\" unavailable: buzz-shell-host binary not found"
+            "session driver backend \"beekeeper-shell-host\" unavailable: beekeeper-shell-host binary not found"
         );
     }
 

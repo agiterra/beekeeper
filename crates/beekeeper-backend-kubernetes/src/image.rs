@@ -40,7 +40,7 @@ pub fn parse(raw: &str) -> Result<ImageRef, String> {
     if reference.is_empty() {
         return Err("provider_config.image is required: there is no default \
                     image, so the digest-pinned image to run (one containing \
-                    the buzz-acp runtime ABI) must be given explicitly"
+                    the beekeeper-acp runtime ABI) must be given explicitly"
             .to_string());
     }
 

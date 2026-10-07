@@ -143,7 +143,7 @@ pub fn normalize_host(host: &str) -> String {
 ///
 /// Shared by the relay's host-resolution seam (startup community seeding and
 /// the deployment-community bind), the relay's `bind_deployment_community`, and
-/// the `buzz-admin` CLI's tenant resolution. All of these must derive the
+/// the `beekeeper-admin` CLI's tenant resolution. All of these must derive the
 /// *byte-identical* authority that live request resolution
 /// ([`crate::tenant::normalize_host`]) produces from an inbound `Host`, or a
 /// bootstrapped/looked-up community lands under a host no request resolves to.
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn relay_url_authority_keeps_explicit_nondefault_port() {
         // The default dev seed: startup, bind_deployment_community, and
-        // buzz-admin must all derive `localhost:3000` (NOT bare `localhost`),
+        // beekeeper-admin must all derive `localhost:3000` (NOT bare `localhost`),
         // or the admin lookup misses the community startup seeded.
         assert_eq!(relay_url_authority("ws://localhost:3000"), "localhost:3000");
         assert_eq!(

@@ -16,9 +16,9 @@
 //! The test creates and removes its own bucket, driving bucket setup with `mc`
 //! through `docker exec` in a container that reaches the store at
 //! localhost:9000 — the compose `mc` service (`buzz-mc`), which shares the
-//! RustFS network namespace. Override it with `BUZZ_MC_CONTAINER`
-//! (`BUZZ_MINIO_CONTAINER` is still read); credentials/endpoint/region/addressing
-//! use the same `BUZZ_S3_*` env vars as `static_creds_minio`.
+//! RustFS network namespace. Override it with `BEEKEEPER_MC_CONTAINER`
+//! (`BEEKEEPER_MINIO_CONTAINER` is still read); credentials/endpoint/region/addressing
+//! use the same `BEEKEEPER_S3_*` env vars as `static_creds_minio`.
 
 use std::process::Command;
 
@@ -31,14 +31,14 @@ fn env_or(name: &str, default: &str) -> String {
 
 fn minio_config(bucket: String) -> MediaConfig {
     MediaConfig {
-        s3_endpoint: env_or("BUZZ_S3_ENDPOINT", "http://localhost:9000"),
-        s3_access_key: env_or("BUZZ_S3_ACCESS_KEY", "buzz_dev"),
-        s3_secret_key: env_or("BUZZ_S3_SECRET_KEY", "buzz_dev_secret"),
+        s3_endpoint: env_or("BEEKEEPER_S3_ENDPOINT", "http://localhost:9000"),
+        s3_access_key: env_or("BEEKEEPER_S3_ACCESS_KEY", "buzz_dev"),
+        s3_secret_key: env_or("BEEKEEPER_S3_SECRET_KEY", "buzz_dev_secret"),
         s3_bucket: bucket,
-        s3_region: env_or("BUZZ_S3_REGION", "us-east-1"),
-        s3_addressing_style: env_or("BUZZ_S3_ADDRESSING_STYLE", "path")
+        s3_region: env_or("BEEKEEPER_S3_REGION", "us-east-1"),
+        s3_addressing_style: env_or("BEEKEEPER_S3_ADDRESSING_STYLE", "path")
             .parse()
-            .expect("BUZZ_S3_ADDRESSING_STYLE must be path or virtual"),
+            .expect("BEEKEEPER_S3_ADDRESSING_STYLE must be path or virtual"),
         max_image_bytes: 50 * 1024 * 1024,
         max_gif_bytes: 10 * 1024 * 1024,
         max_video_bytes: 524_288_000,
@@ -51,8 +51,8 @@ fn minio_config(bucket: String) -> MediaConfig {
 }
 
 fn run_mc(args: &[String]) -> Result<(), String> {
-    let container = std::env::var("BUZZ_MC_CONTAINER")
-        .or_else(|_| std::env::var("BUZZ_MINIO_CONTAINER"))
+    let container = std::env::var("BEEKEEPER_MC_CONTAINER")
+        .or_else(|_| std::env::var("BEEKEEPER_MINIO_CONTAINER"))
         .unwrap_or_else(|_| "buzz-mc".to_string());
     let output = Command::new("docker")
         .arg("exec")

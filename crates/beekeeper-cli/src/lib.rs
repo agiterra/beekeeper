@@ -36,13 +36,13 @@ where
 {
     // Install ring as the process-level rustls CryptoProvider. Required because the
     // release workflow builds all binaries in one cargo invocation, which unifies
-    // features across the workspace and enables *both* ring (from buzz-acp/buzz-dev-mcp)
+    // features across the workspace and enables *both* ring (from beekeeper-acp/beekeeper-dev-mcp)
     // and aws-lc-rs (from reqwest's rustls feature via hyper-rustls). With both on,
     // rustls cannot auto-select a provider, and any code that reaches
     // ClientConfig::builder() — specifically the WSS path in publish_ephemeral_event
     // used by `agents draft-create`, `agents draft-update`, and `users set-presence`
     // — panics at rustls crypto/mod.rs. The `let _ =` swallow is intentional: when
-    // buzz-dev-mcp delegates to run_from_args, it has already installed ring; the
+    // beekeeper-dev-mcp delegates to run_from_args, it has already installed ring; the
     // double-install returns Err and is harmless.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -145,9 +145,9 @@ pub static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
 Beekeeper CLI — interact with a Beekeeper relay
 
 Configuration (flags override env vars):
-  BUZZ_RELAY_URL     Relay base URL        [default: http://localhost:3000]
-  BUZZ_PRIVATE_KEY   Nostr private key (hex or nsec)  [required]
-  BUZZ_AUTH_TAG      NIP-OA auth tag JSON  [optional]
+  BEEKEEPER_RELAY_URL     Relay base URL        [default: http://localhost:3000]
+  BEEKEEPER_PRIVATE_KEY   Nostr private key (hex or nsec)  [required]
+  BEEKEEPER_AUTH_TAG      NIP-OA auth tag JSON  [optional]
 
 The 'pack' subcommand runs locally and does not require a relay connection.
 
@@ -155,16 +155,20 @@ Exit codes: 0=ok  1=bad input  2=relay/network error  3=auth error  4=other  5=w
 Errors are JSON on stderr: {\"error\": \"<category>\", \"message\": \"<detail>\"}"
 )]
 struct Cli {
-    /// Relay URL (http:// or https://). Overrides BUZZ_RELAY_URL env var.
-    #[arg(long, env = "BUZZ_RELAY_URL", default_value = "http://localhost:3000")]
+    /// Relay URL (http:// or https://). Overrides BEEKEEPER_RELAY_URL env var.
+    #[arg(
+        long,
+        env = "BEEKEEPER_RELAY_URL",
+        default_value = "http://localhost:3000"
+    )]
     relay: String,
 
     /// Nostr private key (hex or nsec). This is the CLI's identity.
-    #[arg(long, env = "BUZZ_PRIVATE_KEY", hide_env_values = true)]
+    #[arg(long, env = "BEEKEEPER_PRIVATE_KEY", hide_env_values = true)]
     private_key: Option<String>,
 
     /// NIP-OA auth tag JSON (owner attestation). Injected into every signed event.
-    #[arg(long, env = "BUZZ_AUTH_TAG", hide_env_values = true)]
+    #[arg(long, env = "BEEKEEPER_AUTH_TAG", hide_env_values = true)]
     auth_tag: Option<String>,
 
     /// Output format: 'json' (default, full fields) or 'compact' (reduced fields).
@@ -668,7 +672,7 @@ republish in progress). If the retry also fails, the command exits with an error
 Suggested --reason codes (unknown values are allowed): rotated, retired, \
 bot-rebuilt, left-organization, spam\n\n\
 Archiving a third-party identity is a human owner/admin action: an agent \
-running under BUZZ_AUTH_TAG signs as itself, so it can only ever satisfy \
+running under BEEKEEPER_AUTH_TAG signs as itself, so it can only ever satisfy \
 the self path (target == signer) — not the owner-of-agent path for another \
 identity.\n\n\
 Examples:\n  \
@@ -2097,14 +2101,14 @@ pub enum ProjectsCmd {
     /// published its association does not appear.
     ///
     /// The project is SLUG (with --owner, as `members`) or --project
-    /// <coordinate>; with neither, `BUZZ_PULSE_PROJECT` names it, which a
+    /// <coordinate>; with neither, `BEEKEEPER_PULSE_PROJECT` names it, which a
     /// project seat's provider sets. `--format compact` drops `owner_role`
     /// and keeps `verified`.
     #[command(
         after_help = "Examples:\n  bee projects agents\n  bee projects agents my-project --owner <hex>\n  bee --format compact projects agents --project 30621:<owner-hex>:<slug>"
     )]
     Agents {
-        /// Project slug. Defaults to the project `BUZZ_PULSE_PROJECT` names.
+        /// Project slug. Defaults to the project `BEEKEEPER_PULSE_PROJECT` names.
         #[arg(conflicts_with = "project")]
         slug: Option<String>,
         /// Project owner pubkey (64-char hex). Defaults to the current identity.
@@ -2509,7 +2513,7 @@ pub enum MediaCmd {
 pub enum MemCmd {
     /// List non-tombstoned memory entries
     Ls {
-        /// Owner pubkey (hex). Overrides BUZZ_AUTH_TAG.
+        /// Owner pubkey (hex). Overrides BEEKEEPER_AUTH_TAG.
         #[arg(long)]
         owner: Option<String>,
         /// Agent pubkey (hex) to read as this key's owner.
@@ -2610,7 +2614,7 @@ pub enum PackCmd {
         #[arg(long)]
         role: String,
         /// Path to a template catalog (`<name>/<semver>/TEMPLATE.md`).
-        /// Defaults to `$BUZZ_TEMPLATES_DIR`, then the templates this `bee`'s
+        /// Defaults to `$BEEKEEPER_TEMPLATES_DIR`, then the templates this `bee`'s
         /// app bundle ships (or, for a development build, its own checkout's);
         /// without any, `![[beekeeper/…]]` includes refuse.
         #[arg(long)]
@@ -2645,7 +2649,7 @@ pub enum PackCmd {
         /// `memory@latest`
         template: String,
         /// Path to the template catalog (`<name>/<semver>/TEMPLATE.md`).
-        /// Defaults to `$BUZZ_TEMPLATES_DIR`, then the templates this `bee`'s
+        /// Defaults to `$BEEKEEPER_TEMPLATES_DIR`, then the templates this `bee`'s
         /// app bundle ships (or, for a development build, its own checkout's)
         #[arg(long)]
         templates: Option<PathBuf>,
@@ -2682,7 +2686,7 @@ pub enum GitCmd {
         #[arg(long, value_enum, default_value = "global")]
         scope: commands::git_setup::ConfigScope,
         /// Also write the identity to the key file at mode 0600.
-        /// Requires BUZZ_PRIVATE_KEY; never overwrites a different identity.
+        /// Requires BEEKEEPER_PRIVATE_KEY; never overwrites a different identity.
         #[arg(long)]
         write_key: bool,
         /// Print the commands instead of running them; changes nothing.
@@ -2703,7 +2707,7 @@ pub enum GitCmd {
     ///
     /// Uses the key `git-credential-nostr` itself would use
     /// (`$NOSTR_PRIVATE_KEY`, else `git config nostr.keyfile`) — not
-    /// `BUZZ_PRIVATE_KEY` — so the verdict is about the identity git presents.
+    /// `BEEKEEPER_PRIVATE_KEY` — so the verdict is about the identity git presents.
     /// Exit 0 when the transport accepts, 3 when it denies.
     Check {
         /// Key file to test. Defaults to whatever `nostr.keyfile` names.
@@ -2728,7 +2732,7 @@ pub enum GitCmd {
 /// Community moderation commands.
 ///
 /// The community (tenant) is selected by the relay host in `--relay` /
-/// `BUZZ_RELAY_URL` — moderation commands are community-global and carry no
+/// `BEEKEEPER_RELAY_URL` — moderation commands are community-global and carry no
 /// channel scope. The signing key must be a community owner/admin; the relay
 /// authorizes every command.
 #[derive(Subcommand)]
@@ -3392,7 +3396,7 @@ pub enum SessionsCmd {
         cwd: Option<PathBuf>,
         /// The provider's projects file, whose sibling `pending-hints/`
         /// directory receives the --cwd binding. Defaults to
-        /// $BUZZ_CSP_PROJECTS_FILE; the projects file itself is never modified.
+        /// $BEEKEEPER_CSP_PROJECTS_FILE; the projects file itself is never modified.
         #[arg(long = "projects-file", requires = "cwd")]
         projects_file: Option<PathBuf>,
     },
@@ -4011,7 +4015,7 @@ pub enum TeamDecisionCmd {
     /// Only the party the request named — or the founder, always — can answer.
     /// An answer from anyone else is excluded `Unauthorized` by the fold.
     #[command(
-        after_help = "Examples:\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice-index 0\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice 'neither; hold until the rebuild' --note 'the sidecar is stale'\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice-index 0 --condition 'any SHA whose buzz-acp diff against origin/main is empty'"
+        after_help = "Examples:\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice-index 0\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice 'neither; hold until the rebuild' --note 'the sidecar is stale'\n  bee sessions decide answer --channel <uuid> --session-ref <uuid> --genesis <hex64> --request <request-id> --choice-index 0 --condition 'any SHA whose beekeeper-acp diff against origin/main is empty'"
     )]
     Answer {
         /// Channel UUID containing the session.
@@ -4345,7 +4349,7 @@ pub struct HandoverContinueArgs {
     #[arg(long)]
     pub remote: Option<String>,
     /// The provider's projects file, whose sibling `pending-hints/` directory
-    /// receives the binding. Defaults to $BUZZ_CSP_PROJECTS_FILE. A create
+    /// receives the binding. Defaults to $BEEKEEPER_CSP_PROJECTS_FILE. A create
     /// carries no directory field, so a reconstruction into --cwd writes a
     /// one-shot hint naming it; the projects file itself is generated and is
     /// never modified.
@@ -4756,7 +4760,7 @@ pub enum RegistryCmd {
         /// Registry class to measure, e.g. `verifier`
         #[arg(long)]
         role: String,
-        /// `providerInstanceRef` from BUZZ_CSP_RUNTIMES
+        /// `providerInstanceRef` from BEEKEEPER_CSP_RUNTIMES
         #[arg(long)]
         runtime: String,
         /// Model id the runtime offers
@@ -4965,20 +4969,20 @@ impl PulseKindArg {
 /// log (NIP-AD, kind 44250). A draft is not a commit: `draft put` publishes
 /// the whole new text of one file for everyone in the project to read and
 /// build on; `commit` lands the open heads on `main` and marks them
-/// committed. Every verb takes `--project` (`BUZZ_PULSE_PROJECT` supplies it
+/// committed. Every verb takes `--project` (`BEEKEEPER_PULSE_PROJECT` supplies it
 /// for a seat the harness launched).
 #[derive(Subcommand)]
 pub enum AgentsRepoCmd {
     /// List the files on main, with the open draft on each
     Ls {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
     },
     /// Print one file as main has it, or as its open draft has it
     Show {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Path inside the repository, e.g. `plans/rpg.md`
         path: String,
@@ -4989,7 +4993,7 @@ pub enum AgentsRepoCmd {
     /// List the open drafts (the head per path) and recent commit records
     Drafts {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Only this path
         #[arg(long)]
@@ -5005,7 +5009,7 @@ pub enum AgentsRepoCmd {
     /// under a lease, and mark the drafts committed
     Commit {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Every open head
         #[arg(long)]
@@ -5016,7 +5020,7 @@ pub enum AgentsRepoCmd {
         /// The commit subject (default names the paths)
         #[arg(long)]
         message: Option<String>,
-        /// The shipped templates directory (default: `BUZZ_TEMPLATES_DIR`,
+        /// The shipped templates directory (default: `BEEKEEPER_TEMPLATES_DIR`,
         /// then the templates this `bee`'s app bundle ships, or a development
         /// build's own checkout's)
         #[arg(long)]
@@ -5029,20 +5033,20 @@ pub enum AgentsRepoCmd {
         /// The agents repository's root (default: the working directory)
         #[arg(long, default_value = ".")]
         root: std::path::PathBuf,
-        /// The shipped templates directory (default: `BUZZ_TEMPLATES_DIR`,
+        /// The shipped templates directory (default: `BEEKEEPER_TEMPLATES_DIR`,
         /// then the templates this `bee`'s app bundle ships, or a development
         /// build's own checkout's)
         #[arg(long)]
         templates: Option<std::path::PathBuf>,
         /// The project coordinate `actions.yml` is parsed against
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
     },
     /// Repair: mark drafts committed for a commit that is already on main
     #[command(name = "commit-record")]
     CommitRecord {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The commit sha on main
         commit: String,
@@ -5061,7 +5065,7 @@ pub enum AgentsRepoDraftCmd {
     /// Draft the whole new text of a file (from --file or stdin)
     Put {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Path inside the repository, e.g. `plans/rpg.md`
         path: String,
@@ -5079,7 +5083,7 @@ pub enum AgentsRepoDraftCmd {
     /// Draft moving a role or plan between its live path and archive/
     Move {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The path to move; its only destination is its archive counterpart
         path: String,
@@ -5093,7 +5097,7 @@ pub enum AgentsRepoDraftCmd {
     /// Draft archiving a live role or plan
     Archive {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// `roles/<role>.md` or `plans/<plan>.md`
         path: String,
@@ -5107,7 +5111,7 @@ pub enum AgentsRepoDraftCmd {
     /// Draft putting an archived role or plan back in force
     Unarchive {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// `roles/archive/<role>.md` or `plans/archive/<plan>.md`
         path: String,
@@ -5121,7 +5125,7 @@ pub enum AgentsRepoDraftCmd {
     /// Draft deleting a file that is on main
     Delete {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Path inside the repository
         path: String,
@@ -5135,7 +5139,7 @@ pub enum AgentsRepoDraftCmd {
     /// Withdraw a draft you wrote (a NIP-09 deletion of it)
     Withdraw {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The draft id (or an 8+ character prefix)
         id: String,
@@ -5149,13 +5153,13 @@ pub enum DocsCmd {
     /// List the documents, folders and images on main, and drafts of new ones
     List {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
     },
     /// Print a document as main has it, or as its open draft has it
     Show {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The document's path (`docs/notes/a.md`, or `notes/a.md`)
         path: String,
@@ -5166,7 +5170,7 @@ pub enum DocsCmd {
     /// Draft the whole new text of a document (from --file or stdin)
     Edit {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The document's path (`docs/notes/a.md`, or `notes/a.md`)
         path: String,
@@ -5183,7 +5187,7 @@ pub enum DocsCmd {
     /// Draft a move: rename a document or move it between folders
     Mv {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The document, image or folder keep to move
         path: String,
@@ -5199,7 +5203,7 @@ pub enum DocsCmd {
     /// Draft a delete
     Rm {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The document, image or folder keep to delete
         path: String,
@@ -5217,7 +5221,7 @@ pub enum DocsCmd {
     )]
     NewFolder {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The folder (`docs/mockups`, or `mockups`)
         folder: String,
@@ -5232,7 +5236,7 @@ pub enum DocsCmd {
     )]
     Image {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Where it goes (`docs/mockups/img/shot.png`)
         path: String,
@@ -5254,7 +5258,7 @@ pub enum PinsCmd {
     /// List the project's pins, in sidebar order
     List {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Include targets that were pinned once and are not now
         #[arg(long)]
@@ -5263,7 +5267,7 @@ pub enum PinsCmd {
     /// Pin a document, plan or folder to every member's sidebar
     Pin {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// A file path (`docs/notes/a.md`) or a folder (`docs/mockups`)
         target: String,
@@ -5279,7 +5283,7 @@ pub enum PinsCmd {
     /// Unpin a target, leaving its row with `pinned: false`
     Unpin {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The pinned target
         target: String,
@@ -5287,7 +5291,7 @@ pub enum PinsCmd {
     /// Move a pinned target to a position in the order
     Move {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The pinned target
         target: String,
@@ -5308,13 +5312,13 @@ pub enum PlansCmd {
     /// List the plans on main (in force and archived) and drafts of new ones
     List {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
     },
     /// Print a plan as main has it, or as its open draft has it
     Show {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The plan's name (`rpg`), file (`rpg.md`) or path (`plans/rpg.md`)
         name: String,
@@ -5325,7 +5329,7 @@ pub enum PlansCmd {
     /// Draft the whole new text of a plan (from --file or stdin)
     Edit {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The plan's name (`rpg`), file (`rpg.md`) or path (`plans/rpg.md`)
         name: String,
@@ -5345,7 +5349,7 @@ pub enum PlansCmd {
 ///
 /// Every subcommand takes `--project`, resolved exactly as `bee pulse` does
 /// (a full `30621:<owner-hex>:<dtag>` coordinate, or a bare dtag that
-/// resolves only when exactly one visible project matches; `BUZZ_PULSE_PROJECT`
+/// resolves only when exactly one visible project matches; `BEEKEEPER_PULSE_PROJECT`
 /// supplies it when the flag is absent, so a seat the harness launched needs
 /// no flag). Lists and items are named by id, by a unique id prefix of at
 /// least six characters, or — for lists — by a unique title.
@@ -5354,7 +5358,7 @@ pub enum TodosCmd {
     /// List the project's to-do lists with open/completed counts
     Lists {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Include archived lists
         #[arg(long)]
@@ -5363,7 +5367,7 @@ pub enum TodosCmd {
     /// Show one list: open items in order, then completed most recent first
     Show {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// List id, unique id prefix, or unique title
         list: String,
@@ -5371,7 +5375,7 @@ pub enum TodosCmd {
     /// Create a list (visible to every project member unless --personal)
     CreateList {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// The list's title
         #[arg(long)]
@@ -5386,7 +5390,7 @@ pub enum TodosCmd {
     /// Pin a list to the project sidebar (shared with every member)
     Pin {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// List id, unique id prefix, or unique title
         list: String,
@@ -5394,7 +5398,7 @@ pub enum TodosCmd {
     /// Unpin a list from the project sidebar
     Unpin {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// List id, unique id prefix, or unique title
         list: String,
@@ -5402,7 +5406,7 @@ pub enum TodosCmd {
     /// Retitle a list
     RenameList {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// List id, unique id prefix, or unique title
         list: String,
@@ -5413,7 +5417,7 @@ pub enum TodosCmd {
     /// Archive a list (or restore it with --undo)
     ArchiveList {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// List id, unique id prefix, or unique title
         list: String,
@@ -5424,7 +5428,7 @@ pub enum TodosCmd {
     /// Add an item to a list (one op per field: add, then assignee, then due)
     Add {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// List id, unique id prefix, or unique title
         list: String,
@@ -5443,7 +5447,7 @@ pub enum TodosCmd {
     /// Rewrite an item's text
     Edit {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Item id or unique id prefix
         item: String,
@@ -5454,7 +5458,7 @@ pub enum TodosCmd {
     /// Mark an item done
     Done {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Item id or unique id prefix
         item: String,
@@ -5462,7 +5466,7 @@ pub enum TodosCmd {
     /// Mark an item not done; it returns to its place among the open items
     Undone {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Item id or unique id prefix
         item: String,
@@ -5470,7 +5474,7 @@ pub enum TodosCmd {
     /// Assign an item to a pubkey, or `none` to clear
     Assign {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Item id or unique id prefix
         item: String,
@@ -5480,7 +5484,7 @@ pub enum TodosCmd {
     /// Set an item's due date (YYYY-MM-DD), or `none` to clear
     Due {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Item id or unique id prefix
         item: String,
@@ -5490,7 +5494,7 @@ pub enum TodosCmd {
     /// Move an open item to a position (0 = first)
     Move {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Item id or unique id prefix
         item: String,
@@ -5501,7 +5505,7 @@ pub enum TodosCmd {
     /// Remove an item for good
     Remove {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Item id or unique id prefix
         item: String,
@@ -5512,7 +5516,7 @@ pub enum TodosCmd {
 ///
 /// Every subcommand takes `--project`, which accepts a full
 /// `30621:<owner-hex>:<dtag>` coordinate or a bare dtag that resolves only
-/// when exactly one *visible* project matches. `BUZZ_PULSE_PROJECT` supplies
+/// when exactly one *visible* project matches. `BEEKEEPER_PULSE_PROJECT` supplies
 /// the same value when the flag is absent; the ACP harness sets it per
 /// channel session.
 #[derive(Subcommand)]
@@ -5520,7 +5524,7 @@ pub enum PulseCmd {
     /// Publish one Pulse entry (kind 44240)
     Update {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// What the entry claims
         #[arg(long, value_enum)]
@@ -5551,7 +5555,7 @@ pub enum PulseCmd {
     /// List a project's Pulse entries, unfolded and newest first
     List {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Only entries created at or after this Unix timestamp
         #[arg(long)]
@@ -5569,13 +5573,13 @@ pub enum PulseCmd {
     /// List the coding sessions observed in the project's channels
     Sessions {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
     },
     /// Print the project's Pulse digest — entries and sessions, folded
     Digest {
         /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
-        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        #[arg(long, env = "BEEKEEPER_PULSE_PROJECT")]
         project: Option<String>,
         /// Only rows on this branch; the reserved value '-' selects rows with no branch
         #[arg(long)]
@@ -5617,7 +5621,7 @@ pub enum PulseCmd {
     },
 }
 
-/// Normalize hand-authored `BUZZ_AUTH_TAG` input to strict JSON.
+/// Normalize hand-authored `BEEKEEPER_AUTH_TAG` input to strict JSON.
 ///
 /// `.env` files and shell exports sometimes carry the tag in the unquoted
 /// shorthand `[auth,<hex>,<conditions>,<hex>]` (quotes dropped by hand).
@@ -5705,7 +5709,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             .as_ref()
             .map(|k| Keys::parse(k))
             .transpose()
-            .map_err(|e| CliError::Key(format!("invalid BUZZ_PRIVATE_KEY: {e}")))?;
+            .map_err(|e| CliError::Key(format!("invalid BEEKEEPER_PRIVATE_KEY: {e}")))?;
         return match sub {
             GitCmd::Setup {
                 helper,
@@ -5745,7 +5749,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
     }
 
     // Session commands are local-only — they call the desktop session broker,
-    // not the relay. No key/relay is required; when BUZZ_PRIVATE_KEY is present
+    // not the relay. No key/relay is required; when BEEKEEPER_PRIVATE_KEY is present
     // the caller pubkey is passed to the broker for its audit log.
     // Host commands are local-only too — they call `beekeeper-host`'s control
     // socket, or write a login registration. No key and no relay: a machine
@@ -5884,14 +5888,16 @@ async fn run(cli: Cli) -> Result<(), CliError> {
     // Auth: private key is required for all relay operations.
     // The keypair IS the identity — no tokens, no other auth.
     let private_key_str = cli.private_key.ok_or_else(|| {
-        CliError::Auth("BUZZ_PRIVATE_KEY is required (use --private-key or set env var)".into())
+        CliError::Auth(
+            "BEEKEEPER_PRIVATE_KEY is required (use --private-key or set env var)".into(),
+        )
     })?;
     let keys = Keys::parse(&private_key_str)
-        .map_err(|e| CliError::Key(format!("invalid BUZZ_PRIVATE_KEY: {e}")))?;
+        .map_err(|e| CliError::Key(format!("invalid BEEKEEPER_PRIVATE_KEY: {e}")))?;
 
     // NIP-OA: parse and verify the auth tag if provided.
     //
-    // `BUZZ_AUTH_TAG` is hand-authored configuration, so the unquoted raw
+    // `BEEKEEPER_AUTH_TAG` is hand-authored configuration, so the unquoted raw
     // shorthand `[auth,hex,,hex]` is normalized to JSON here — at this input
     // edge only. The SDK grammar and the `x-auth-tag` wire format stay strict
     // JSON; all validation and signature verification happen on the strict
@@ -5900,17 +5906,18 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Some(ref input) if !input.is_empty() => {
             let json = normalize_auth_tag_input(input);
             let tag = beekeeper_sdk::nip_oa::parse_auth_tag(&json)
-                .map_err(|e| CliError::Auth(format!("BUZZ_AUTH_TAG is malformed: {e}")))?;
+                .map_err(|e| CliError::Auth(format!("BEEKEEPER_AUTH_TAG is malformed: {e}")))?;
             beekeeper_sdk::nip_oa::verify_auth_tag(&json, &keys.public_key()).map_err(|e| {
                 CliError::Auth(format!(
-                    "BUZZ_AUTH_TAG verification failed for pubkey {}: {e}",
+                    "BEEKEEPER_AUTH_TAG verification failed for pubkey {}: {e}",
                     keys.public_key().to_hex()
                 ))
             })?;
             // Canonical wire form derives from the parsed-and-verified tag
-            // (same shape as buzz-acp's RestClient), never from raw input.
-            let canonical = serde_json::to_string(tag.as_slice())
-                .map_err(|e| CliError::Auth(format!("BUZZ_AUTH_TAG serialization failed: {e}")))?;
+            // (same shape as beekeeper-acp's RestClient), never from raw input.
+            let canonical = serde_json::to_string(tag.as_slice()).map_err(|e| {
+                CliError::Auth(format!("BEEKEEPER_AUTH_TAG serialization failed: {e}"))
+            })?;
             (Some(tag), Some(canonical))
         }
         _ => (None, None),
@@ -6404,7 +6411,7 @@ mod tests {
         );
 
         // The build time is a second line, never inside the parentheses:
-        // `parse_bee_version` (buzz-session-provider) reads the first line and
+        // `parse_bee_version` (beekeeper-session-provider) reads the first line and
         // refuses a stamp that is not a commit, so a time in there would cost
         // the beeStamp surface the sha it already has.
         let built = version
@@ -7534,7 +7541,7 @@ mod tests {
     }
 
     /// `--project` is optional at parse time on every subcommand: the value may
-    /// come from `BUZZ_PULSE_PROJECT`, and its absence is a runtime usage error
+    /// come from `BEEKEEPER_PULSE_PROJECT`, and its absence is a runtime usage error
     /// that names the variable.
     #[test]
     fn pulse_reads_parse_without_an_explicit_project() {
@@ -7547,7 +7554,7 @@ mod tests {
     }
 
     /// `projects agents` names its project three ways, one at a time: nothing
-    /// (the seat's `BUZZ_PULSE_PROJECT` decides at runtime), SLUG with an
+    /// (the seat's `BEEKEEPER_PULSE_PROJECT` decides at runtime), SLUG with an
     /// optional --owner, or --project. Mixing SLUG and --project, or --owner
     /// without a SLUG, is refused before any I/O.
     #[test]

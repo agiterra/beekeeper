@@ -1,9 +1,9 @@
-//! `buzz-test-cli` — Manual testing CLI for the Beekeeper relay.
+//! `beekeeper-test-cli` — Manual testing CLI for the Beekeeper relay.
 //!
 //! # Usage
 //!
 //! ```text
-//! buzz-test-cli [OPTIONS]
+//! beekeeper-test-cli [OPTIONS]
 //!
 //! Options:
 //!   --url <URL>        Relay WebSocket URL [default: ws://localhost:3000]
@@ -17,12 +17,12 @@
 //!
 //! Send a message:
 //! ```text
-//! buzz-test-cli --channel my-channel --send "Hello, Beekeeper!"
+//! beekeeper-test-cli --channel my-channel --send "Hello, Beekeeper!"
 //! ```
 //!
 //! Subscribe and watch events:
 //! ```text
-//! buzz-test-cli --channel my-channel --subscribe
+//! beekeeper-test-cli --channel my-channel --subscribe
 //! ```
 
 use std::time::Duration;
@@ -34,7 +34,7 @@ use nostr::{Filter, Keys};
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            beekeeper_core::log_targets::read_filter_var("RUST_LOG", "buzz-test-cli")
+            beekeeper_core::log_targets::read_filter_var("RUST_LOG", "beekeeper-test-cli")
                 .unwrap_or_else(|| "beekeeper_test_client=debug".to_string())
                 .as_str(),
         )
@@ -47,8 +47,8 @@ async fn main() {
     let channel = opts.channel.as_deref().unwrap_or("default");
     let kind = opts.kind.unwrap_or(9);
 
-    let keys = match std::env::var("BUZZ_PRIVATE_KEY") {
-        Ok(sk) => Keys::parse(&sk).expect("invalid BUZZ_PRIVATE_KEY"),
+    let keys = match std::env::var("BEEKEEPER_PRIVATE_KEY") {
+        Ok(sk) => Keys::parse(&sk).expect("invalid BEEKEEPER_PRIVATE_KEY"),
         Err(_) => Keys::generate(),
     };
     println!("Using pubkey: {}", keys.public_key());
@@ -209,10 +209,10 @@ fn parse_args(args: &[String]) -> CliOpts {
 
 fn print_help() {
     println!(
-        r#"buzz-test-cli — Manual testing CLI for the Beekeeper relay
+        r#"beekeeper-test-cli — Manual testing CLI for the Beekeeper relay
 
 USAGE:
-    buzz-test-cli [OPTIONS]
+    beekeeper-test-cli [OPTIONS]
 
 OPTIONS:
     --url <URL>        Relay WebSocket URL [default: ws://localhost:3000]
@@ -224,13 +224,13 @@ OPTIONS:
 
 EXAMPLES:
     # Send a message to a channel
-    buzz-test-cli --channel my-channel --send "Hello, Beekeeper!"
+    beekeeper-test-cli --channel my-channel --send "Hello, Beekeeper!"
 
     # Subscribe and watch live events
-    buzz-test-cli --channel my-channel --subscribe
+    beekeeper-test-cli --channel my-channel --subscribe
 
     # Use a different relay URL
-    buzz-test-cli --url ws://relay.example.com --channel test --subscribe
+    beekeeper-test-cli --url ws://relay.example.com --channel test --subscribe
 "#
     );
 }

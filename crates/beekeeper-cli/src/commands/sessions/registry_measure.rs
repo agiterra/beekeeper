@@ -226,7 +226,7 @@ impl SpawnPlan {
     }
 }
 
-/// Resolve `--runtime` and `--model` against `BUZZ_CSP_RUNTIMES`.
+/// Resolve `--runtime` and `--model` against `BEEKEEPER_CSP_RUNTIMES`.
 ///
 /// The runtime list is the same environment variable the desktop host writes
 /// and the provider sidecar reads, so a bench run is aimed at a real
@@ -238,21 +238,21 @@ impl SpawnPlan {
 /// instance ref is not in it, or when the model is not one the descriptor
 /// offers — listing what is on offer each time.
 pub fn resolve_spawn_plan(instance_ref: &str, model: &str) -> Result<SpawnPlan, CliError> {
-    let raw = std::env::var("BUZZ_CSP_RUNTIMES").map_err(|_| {
+    let raw = std::env::var("BEEKEEPER_CSP_RUNTIMES").map_err(|_| {
         CliError::Usage(
-            "BUZZ_CSP_RUNTIMES is not set: a bench run is aimed at a real runtime descriptor, \
+            "BEEKEEPER_CSP_RUNTIMES is not set: a bench run is aimed at a real runtime descriptor, \
              not at a name. Export the same JSON the desktop host writes."
                 .to_owned(),
         )
     })?;
     let descriptors = parse_runtime_descriptors(&raw)
-        .map_err(|error| CliError::Usage(format!("BUZZ_CSP_RUNTIMES: {error}")))?;
+        .map_err(|error| CliError::Usage(format!("BEEKEEPER_CSP_RUNTIMES: {error}")))?;
     let descriptor = descriptors
         .iter()
         .find(|candidate| candidate.instance_ref == instance_ref)
         .ok_or_else(|| {
             CliError::Usage(format!(
-                "no runtime {instance_ref:?} in BUZZ_CSP_RUNTIMES; it offers: {}",
+                "no runtime {instance_ref:?} in BEEKEEPER_CSP_RUNTIMES; it offers: {}",
                 descriptors
                     .iter()
                     .map(|d| d.instance_ref.clone())
@@ -692,7 +692,7 @@ pub async fn cmd_registry_measure(
         // rather than failing later inside the publish loop.
         let client = client.ok_or_else(|| {
             CliError::Auth(
-                "publishing bench rows requires BUZZ_PRIVATE_KEY (use --dry-run to score without \
+                "publishing bench rows requires BEEKEEPER_PRIVATE_KEY (use --dry-run to score without \
                  publishing)"
                     .into(),
             )

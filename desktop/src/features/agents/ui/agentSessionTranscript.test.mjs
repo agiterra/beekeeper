@@ -158,7 +158,7 @@ test("buildTranscript keeps read_file activity categorized by the actual tool wh
       },
       content: {
         type: "text",
-        text: 'const BUZZ_READ_TOOLS = new Set(["get_feed", "get_event"]);\nconst BUZZ_WRITE_TOOLS = new Set(["delete_message"]);',
+        text: 'const BEEKEEPER_READ_TOOLS = new Set(["get_feed", "get_event"]);\nconst BEEKEEPER_WRITE_TOOLS = new Set(["delete_message"]);',
       },
     }),
   ]);

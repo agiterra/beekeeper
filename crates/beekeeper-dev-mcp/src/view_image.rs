@@ -284,23 +284,25 @@ fn server_authority(url: &reqwest::Url) -> Option<String> {
 }
 
 /// Mint a `t=get` Authorization header for `url` when it is relay-hosted
-/// media and `BUZZ_PRIVATE_KEY` is available; `None` otherwise.
+/// media and `BEEKEEPER_PRIVATE_KEY` is available; `None` otherwise.
 ///
 /// Fail-open by design: while the relay's media-read-auth flag is off, an
 /// unauthenticated request still succeeds, so a missing/invalid key degrades
 /// to an unsigned fetch instead of an error. Once the flag is on, the fetch
 /// 403s and the error path below names the missing key.
 fn relay_media_get_auth(url: &reqwest::Url) -> Option<String> {
-    let relay = std::env::var("BUZZ_RELAY_URL").ok()?;
+    let relay = std::env::var("BEEKEEPER_RELAY_URL").ok()?;
     let relay = reqwest::Url::parse(&relay).ok()?;
     if !is_relay_media_url(url, &relay) {
         return None;
     }
-    let key = std::env::var("BUZZ_PRIVATE_KEY").ok()?;
+    let key = std::env::var("BEEKEEPER_PRIVATE_KEY").ok()?;
     let keys = match nostr::Keys::parse(&key) {
         Ok(k) => k,
         Err(e) => {
-            tracing::warn!("BUZZ_PRIVATE_KEY invalid; fetching relay media unauthenticated: {e}");
+            tracing::warn!(
+                "BEEKEEPER_PRIVATE_KEY invalid; fetching relay media unauthenticated: {e}"
+            );
             return None;
         }
     };
@@ -317,7 +319,7 @@ fn relay_media_get_auth(url: &reqwest::Url) -> Option<String> {
 /// Fetch an http(s) URL with a streaming read and a hard byte cap.
 /// Refuses up-front if `Content-Length` advertises more than the cap.
 /// Relay-hosted `/media/` URLs get a signed Blossom `t=get` header when
-/// `BUZZ_RELAY_URL` + `BUZZ_PRIVATE_KEY` are configured.
+/// `BEEKEEPER_RELAY_URL` + `BEEKEEPER_PRIVATE_KEY` are configured.
 async fn fetch_url(url: &str) -> Result<Vec<u8>, ErrorData> {
     let parsed = reqwest::Url::parse(url)
         .map_err(|e| invalid_params(format!("invalid URL: {url} ({e})")))?;
@@ -338,7 +340,7 @@ async fn fetch_url(url: &str) -> Result<Vec<u8>, ErrorData> {
     let authed = auth.is_some();
     if let Some(header) = auth {
         req = req.header("Authorization", header);
-        if let Ok(auth_tag) = std::env::var("BUZZ_AUTH_TAG") {
+        if let Ok(auth_tag) = std::env::var("BEEKEEPER_AUTH_TAG") {
             if !auth_tag.trim().is_empty() {
                 req = req.header("x-auth-tag", auth_tag);
             }
@@ -353,7 +355,7 @@ async fn fetch_url(url: &str) -> Result<Vec<u8>, ErrorData> {
         if matches!(status.as_u16(), 401 | 403) && !authed {
             return Err(invalid_params(format!(
                 "fetch {url} returned HTTP {status} — this relay requires authenticated media \
-                 reads; set BUZZ_PRIVATE_KEY (and BUZZ_RELAY_URL) to a member identity"
+                 reads; set BEEKEEPER_PRIVATE_KEY (and BEEKEEPER_RELAY_URL) to a member identity"
             )));
         }
         return Err(invalid_params(format!(

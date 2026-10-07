@@ -123,7 +123,7 @@ test("controller stops after the bounded retry budget is exhausted", async () =>
 });
 
 test("retry classifier covers every relay back-pressure reason, and no authority failure", () => {
-  // The exact three CLOSED reasons `buzz-relay/src/connection.rs` emits.
+  // The exact three CLOSED reasons `beekeeper-relay/src/connection.rs` emits.
   // Matching only the first one is what stranded a live session behind
   // "Generation not found" after navigating away and back.
   for (const reason of [

@@ -167,11 +167,11 @@ fn local_agent() -> ManagedAgentRecord {
         auth_tag: Some("localauthtag".to_string()),
         relay_url: "wss://relay.local".to_string(),
         avatar_url: None,
-        acp_command: "buzz-acp".to_string(),
+        acp_command: "beekeeper-acp".to_string(),
         agent_command: "goose".to_string(),
         agent_command_override: Some("claude".to_string()),
         agent_args: vec![],
-        mcp_command: "buzz-dev-mcp".to_string(),
+        mcp_command: "beekeeper-dev-mcp".to_string(),
         turn_timeout_seconds: 320,
         idle_timeout_seconds: None,
         max_turn_duration_seconds: None,
@@ -298,7 +298,10 @@ fn inbound_managed_agent_drops_injected_secrets_and_harness() {
         Some("claude".to_string()),
         "harness override overwritten"
     );
-    assert_eq!(a.mcp_command, "buzz-dev-mcp", "mcp command overwritten");
+    assert_eq!(
+        a.mcp_command, "beekeeper-dev-mcp",
+        "mcp command overwritten"
+    );
     assert_eq!(a.relay_url, "wss://relay.local", "relay url overwritten");
     assert_eq!(a.runtime_pid, Some(1234), "runtime pid overwritten");
     match &a.backend {

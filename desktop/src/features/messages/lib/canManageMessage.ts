@@ -31,7 +31,7 @@ export type MessageManageOptions = {
  *
  * This deliberately mirrors the relay's authorization for the *delete* paths
  * (`validate_standard_deletion_event` for kind:5 and the kind:9005 arm of
- * `validate_admin_event` in `buzz-relay/src/handlers/side_effects.rs`):
+ * `validate_admin_event` in `beekeeper-relay/src/handlers/side_effects.rs`):
  *
  *   1. `"self"` — the current user pubkey matches the message pubkey, or the
  *      message author's profile carries an `ownerPubkey` (NIP-OA owner record)

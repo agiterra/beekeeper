@@ -86,7 +86,7 @@ function bail(msg) {
 // `just desktop-screenshot` passes this worktree's port; run directly, the
 // script honours E2E_PORT before falling back to 4173.
 const BASE_URL =
-  process.env.BUZZ_SCREENSHOT_BASE_URL ??
+  process.env.BEEKEEPER_SCREENSHOT_BASE_URL ??
   `http://127.0.0.1:${process.env.E2E_PORT || "4173"}`;
 const DEFAULT_MOCK_PUBKEY = "deadbeef".repeat(8);
 const ONBOARDING_PREFIX = "buzz-onboarding-complete.v1:";
@@ -100,7 +100,7 @@ const TEST_PUBKEYS = [
   "df8e91b86fda13a9a67896df77232f7bdab2ba9c3e165378e1ba3d24c13a328e",
 ];
 
-// `BUZZ_HEADED=1` runs a real browser window instead of headless.
+// `BEEKEEPER_HEADED=1` runs a real browser window instead of headless.
 //
 // Headless Chromium rasterizes in software (SwiftShader), which mis-renders
 // `backdrop-filter` when an ancestor establishes a rounded clip
@@ -109,7 +109,9 @@ const TEST_PUBKEYS = [
 // inside the rounded focus drawer. Headed rendering is correct, as is the real
 // app's WKWebView, so this is a capture-only artifact. Default stays headless so
 // CI is unaffected.
-const browser = await chromium.launch({ headless: !process.env.BUZZ_HEADED });
+const browser = await chromium.launch({
+  headless: !process.env.BEEKEEPER_HEADED,
+});
 const page = await browser.newPage({
   viewport: { width: vpWidth, height: vpHeight },
 });

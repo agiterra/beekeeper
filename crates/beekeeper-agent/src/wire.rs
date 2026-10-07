@@ -82,7 +82,7 @@ pub struct SessionSteerParams {
 
 /// Params for `session/set_model`: override the active model for an existing
 /// session without respawning. Applied immediately; subsequent prompts on this
-/// session use `model_id` instead of the configured `BUZZ_AGENT_MODEL`.
+/// session use `model_id` instead of the configured `BEEKEEPER_AGENT_MODEL`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSetModelParams {
@@ -138,7 +138,7 @@ pub fn session_update(sid: &str, update: Value) -> Value {
 
 /// A `_goose/unstable/session/update` notification — the separate top-level
 /// method goose uses for custom usage and status events.  Used by buzz-agent
-/// to emit the `usage_update` payload so buzz-acp's `UsageTracker` can treat
+/// to emit the `usage_update` payload so beekeeper-acp's `UsageTracker` can treat
 /// buzz-agent and goose symmetrically.
 pub fn goose_session_update(sid: &str, update: Value) -> Value {
     json!({
@@ -158,7 +158,7 @@ pub fn goose_session_update(sid: &str, update: Value) -> Value {
 /// show up as tokens silently vanishing, which is the failure this reporting
 /// exists to prevent.
 ///
-/// All counts are SESSION-cumulative, matching goose, so buzz-acp's
+/// All counts are SESSION-cumulative, matching goose, so beekeeper-acp's
 /// `UsageTracker` can compute per-turn deltas symmetrically for both agents.
 ///
 /// ## `_goose/unstable/session/update` contract (ACP)

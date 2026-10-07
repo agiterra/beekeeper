@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SIDECARS=(buzz-acp buzz-agent buzz-dev-mcp git-credential-nostr bee)
+SIDECARS=(beekeeper-acp buzz-agent beekeeper-dev-mcp git-credential-nostr bee)
 HOST=$(rustc -vV | sed -n 's|host: ||p')
 TARGET=${1:-$HOST}
 if [[ "$TARGET" != *windows* ]]; then
-    # buzz-shell-host and beekeeper-host both refuse to run off Unix
+    # beekeeper-shell-host and beekeeper-host both refuse to run off Unix
     # (crates/*/src/main.rs) and tauri.windows.conf.json declares neither, so
     # they are Unix-only here too.
-    SIDECARS+=(buzz-backend-kubernetes buzz-shell-host beekeeper-host)
+    SIDECARS+=(beekeeper-backend-kubernetes beekeeper-shell-host beekeeper-host)
     BUILD_HINT="cargo build --release -p beekeeper-acp -p beekeeper-agent -p beekeeper-backend-kubernetes -p beekeeper-dev-mcp -p git-credential-nostr -p beekeeper-cli -p beekeeper-shell-host -p beekeeper-host"
 else
     BUILD_HINT="cargo build --release -p beekeeper-acp -p beekeeper-agent -p beekeeper-dev-mcp -p git-credential-nostr -p beekeeper-cli"

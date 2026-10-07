@@ -1,4 +1,4 @@
-# buzz-pair
+# beekeeper-pair
 
 CLI tool for testing the [NIP-AB device pairing protocol](../beekeeper-core/src/pairing/NIP-AB.md) end-to-end. Exercises the full protocol over a live Nostr relay — designed for interop testing and NIP submission, not production use.
 
@@ -8,10 +8,10 @@ CLI tool for testing the [NIP-AB device pairing protocol](../beekeeper-core/src/
 cargo build --release -p beekeeper-pairing-cli
 
 # Terminal 1 — source (holds the secret)
-./target/release/buzz-pair source --relay wss://relay.damus.io
+./target/release/beekeeper-pair source --relay wss://relay.damus.io
 
 # Terminal 2 — target (receives the secret)
-./target/release/buzz-pair target --show-secret
+./target/release/beekeeper-pair target --show-secret
 # paste the QR URI from terminal 1 when prompted
 ```
 
@@ -24,7 +24,7 @@ Both sides display a 6-digit SAS code. Confirm they match on each side, and the 
 Acts as the device holding the secret. Generates an ephemeral keypair and session secret, displays a `nostrpair://` QR URI, waits for a target to connect, performs SAS verification, and sends the payload.
 
 ```
-buzz-pair source --relay <RELAY_URL> [--nsec <BECH32_NSEC>]
+beekeeper-pair source --relay <RELAY_URL> [--nsec <BECH32_NSEC>]
 ```
 
 - `--relay` — WebSocket relay URL (default: `wss://relay.damus.io`)
@@ -35,7 +35,7 @@ buzz-pair source --relay <RELAY_URL> [--nsec <BECH32_NSEC>]
 Acts as the receiving device. Reads a `nostrpair://` URI from stdin, connects to the relay encoded in the URI, sends an offer, verifies SAS, and receives the payload.
 
 ```
-buzz-pair target [--relay <OVERRIDE_URL>] [--show-secret]
+beekeeper-pair target [--relay <OVERRIDE_URL>] [--show-secret]
 ```
 
 - `--relay` — Override the relay URL from the QR code
@@ -46,7 +46,7 @@ buzz-pair target [--relay <OVERRIDE_URL>] [--show-secret]
 Prints all derived cryptographic values from the NIP-AB spec's fixed test keys. Useful for verifying implementations against the spec.
 
 ```
-buzz-pair test-vectors
+beekeeper-pair test-vectors
 ```
 
 ## Testing Against a Local Beekeeper Relay
@@ -63,7 +63,7 @@ The CLI supports NIP-42 authentication, so it works with Beekeeper relays out of
 ```bash
 just setup                          # Docker services + schema
 cargo build --release --workspace
-screen -dmS relay bash -c "./target/release/buzz-relay 2>&1 | tee /tmp/buzz-relay.log"
+screen -dmS relay bash -c "./target/release/beekeeper-relay 2>&1 | tee /tmp/beekeeper-relay.log"
 sleep 3 && curl -s http://localhost:3000/health   # → "ok"
 ```
 
@@ -91,10 +91,10 @@ This spawns source and target as PTY-driven subprocesses, feeds the QR URI betwe
 
 ```bash
 # Terminal 1
-./target/release/buzz-pair source --relay ws://localhost:3000
+./target/release/beekeeper-pair source --relay ws://localhost:3000
 
 # Terminal 2
-./target/release/buzz-pair target --show-secret
+./target/release/beekeeper-pair target --show-secret
 # paste the nostrpair:// URI, confirm SAS on both sides
 ```
 

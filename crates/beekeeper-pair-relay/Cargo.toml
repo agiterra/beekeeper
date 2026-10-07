@@ -12,7 +12,7 @@ name = "beekeeper_pair_relay"
 path = "src/lib.rs"
 
 [[bin]]
-name = "buzz-pair-relay"
+name = "beekeeper-pair-relay"
 path = "src/main.rs"
 
 [dependencies]

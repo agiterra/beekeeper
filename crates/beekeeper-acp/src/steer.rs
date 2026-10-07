@@ -1,6 +1,6 @@
 //! Public mid-turn steering transport.
 //!
-//! The narrow surface an out-of-tree caller (today `buzz-session-provider`)
+//! The narrow surface an out-of-tree caller (today `beekeeper-session-provider`)
 //! uses to hand an input to the turn already running on an [`AcpClient`] and
 //! learn, truthfully, what became of it. The legacy channel harness keeps its
 //! private `pool` types and adapts them onto this module; nothing here knows

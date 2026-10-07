@@ -31,7 +31,7 @@ pub const DEFAULT_MODEL: &str = "default";
 
 /// Default ceiling on concurrently live sessions.
 pub const DEFAULT_MAX_SESSIONS: usize = 10;
-/// `BUZZ_CSP_MAX_SESSIONS` value meaning "no ceiling".
+/// `BEEKEEPER_CSP_MAX_SESSIONS` value meaning "no ceiling".
 ///
 /// Zero used to be rejected outright. It is the natural spelling of unlimited,
 /// nothing depended on the old error, and a person who has decided their own
@@ -47,18 +47,18 @@ pub const UNLIMITED_MAX_SESSIONS: usize = 0;
 /// cost a reconnect. Four hours matches how long a coding session actually
 /// rests between turns; the cap on concurrently live sessions still bounds
 /// how many adapters can be held. Override with
-/// `BUZZ_CSP_SESSION_IDLE_SHUTDOWN_SECS`.
+/// `BEEKEEPER_CSP_SESSION_IDLE_SHUTDOWN_SECS`.
 pub const DEFAULT_SESSION_IDLE_SHUTDOWN_SECS: u64 = 14_400;
 /// Default file name of the agent-seat custody file, beside the projects file.
 pub const ACTOR_SEATS_FILE_NAME: &str = "actor-seats.json";
-/// Default per-turn silence budget, mirroring the buzz-acp harness.
+/// Default per-turn silence budget, mirroring the beekeeper-acp harness.
 ///
 /// Off-round on purpose — see the harness constant of the same name. Claude
 /// Code's `Monitor` budget is 900000ms; while this was also 900s, a turn that
 /// died at ~900s could have been ended by either clock and the duration said
 /// nothing about which.
 pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 870;
-/// Default per-turn wall-clock ceiling, mirroring the buzz-acp harness.
+/// Default per-turn wall-clock ceiling, mirroring the beekeeper-acp harness.
 pub const DEFAULT_MAX_TURN_DURATION_SECS: u64 = 7200;
 /// Default budget for silence *after* a turn has finished answering.
 ///
@@ -70,7 +70,7 @@ pub const DEFAULT_MAX_TURN_DURATION_SECS: u64 = 7200;
 /// budget the idle timer has to reserve for genuinely long tools.
 ///
 /// `0` disables the watch, leaving the idle timer as the only backstop.
-/// Override with `BUZZ_CSP_ANSWER_STALL_TIMEOUT`.
+/// Override with `BEEKEEPER_CSP_ANSWER_STALL_TIMEOUT`.
 pub const DEFAULT_ANSWER_STALL_TIMEOUT_SECS: u64 = 120;
 /// Default ceiling on turns started under one umbrella (crew plan D9).
 ///
@@ -78,9 +78,9 @@ pub const DEFAULT_ANSWER_STALL_TIMEOUT_SECS: u64 = 120;
 /// has taken two hundred turns on one umbrella is either finishing something
 /// large or looping, and the founder is the one who should say which. Founder
 /// turns are never counted against the sender, so the number only ever bounds
-/// delegated work. Override with `BUZZ_CSP_TURN_BUDGET`.
+/// delegated work. Override with `BEEKEEPER_CSP_TURN_BUDGET`.
 pub const DEFAULT_TURN_BUDGET: u64 = 200;
-/// `BUZZ_CSP_TURN_BUDGET` value meaning "no budget", spelled like
+/// `BEEKEEPER_CSP_TURN_BUDGET` value meaning "no budget", spelled like
 /// [`UNLIMITED_MAX_SESSIONS`]: zero is how a person says unlimited here too,
 /// and it suppresses both the refusal and the published `turnBudget` key.
 pub const UNLIMITED_TURN_BUDGET: u64 = 0;
@@ -120,7 +120,7 @@ pub struct Config {
     pub projects_file: Option<PathBuf>,
     /// Host-local agent-seat custody file, re-read on every lifecycle command.
     ///
-    /// `BUZZ_CSP_ACTOR_SEATS` when set; otherwise `actor-seats.json` beside
+    /// `BEEKEEPER_CSP_ACTOR_SEATS` when set; otherwise `actor-seats.json` beside
     /// [`Config::projects_file`], because the two files carry the same kind of
     /// fact for the same creates and a host that configured one has already
     /// told us where the other lives. `None` — no projects file either — means
@@ -134,7 +134,7 @@ pub struct Config {
     /// Stable provider instance id carried in every `cs-target`.
     pub instance_id: String,
     /// Every runtime this provider offers, in the host's order. Never empty:
-    /// when `BUZZ_CSP_RUNTIMES` is absent a single legacy Claude descriptor is
+    /// when `BEEKEEPER_CSP_RUNTIMES` is absent a single legacy Claude descriptor is
     /// synthesized from the older per-variable surface.
     pub runtimes: Vec<RuntimeDescriptor>,
     /// Ceiling on concurrently live sessions.
@@ -165,20 +165,20 @@ pub struct Config {
     /// with its own label, mobile renders one block per item, and the context
     /// brief's latest assistant event names only the last paragraph. Turn it on
     /// only where the readers join consecutive prose.
-    /// See `BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH`.
+    /// See `BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH`.
     pub transcript_paragraph_flush: bool,
     /// Ask the adapter to forward raw SDK messages to the local log.
     ///
     /// Off by default. This is a debugging instrument, not a setting: the
     /// frames are the adapter's unredacted internals and they are wanted for
-    /// one investigation at a time. See `BUZZ_CSP_EMIT_RAW_SDK_FRAMES`.
+    /// one investigation at a time. See `BEEKEEPER_CSP_EMIT_RAW_SDK_FRAMES`.
     pub emit_raw_sdk_frames: bool,
     /// How long this host keeps its own note of the host paths it redacted out
     /// of published transcripts, so an operator can read one back on the
     /// machine that produced it.
     ///
     /// Never covers credentials — that gate is in `buzz-core`, where the
-    /// redaction is decided. See `BUZZ_CSP_REDACTION_RETENTION_DAYS`; `0`
+    /// redaction is decided. See `BEEKEEPER_CSP_REDACTION_RETENTION_DAYS`; `0`
     /// disables recording and sweeps away anything already written.
     pub redaction_retention: crate::redaction_vault::RetentionPolicy,
     /// Age past which an unseen command is ignored rather than acted on.
@@ -194,9 +194,9 @@ pub struct Config {
     /// catalog then publishes only what it knows from its own tables.
     pub model_details: BTreeMap<String, BTreeMap<String, ModelDetail>>,
     /// Isolation every coding session gets beyond its file boundary:
-    /// `BUZZ_CSP_SESSION_OPERATOR_GIT=withhold` keeps the operator's Git
+    /// `BEEKEEPER_CSP_SESSION_OPERATOR_GIT=withhold` keeps the operator's Git
     /// credentials (credential helpers, `nostr.keyfile`, the ssh agent) out
-    /// of sessions, and `BUZZ_CSP_SESSION_EGRESS_PROXY=<loopback ip>:<port>`
+    /// of sessions, and `BEEKEEPER_CSP_SESSION_EGRESS_PROXY=<loopback ip>:<port>`
     /// confines their outbound network to TCP to that one loopback port with
     /// every proxy variable pointed at it. Both absent is today's behaviour;
     /// a malformed value refuses startup. See [`crate::session_isolation`].
@@ -206,9 +206,9 @@ pub struct Config {
     ///
     /// On by default: there is nothing to set up on any device, and no new
     /// third party sees the message — the same runtime, account and vendor
-    /// already received it as the turn. `BUZZ_CSP_AUTO_TITLE=off` turns it
+    /// already received it as the turn. `BEEKEEPER_CSP_AUTO_TITLE=off` turns it
     /// off for the whole host; a runtime can also opt out on its own with an
-    /// explicit `"titleModel": null` in `BUZZ_CSP_RUNTIMES`. The provider
+    /// explicit `"titleModel": null` in `BEEKEEPER_CSP_RUNTIMES`. The provider
     /// logs which at startup. See [`crate::auto_title`].
     pub auto_title: bool,
 }
@@ -249,20 +249,20 @@ impl Config {
     pub fn from_lookup(
         lookup: impl Fn(&'static str) -> Option<String>,
     ) -> Result<Self, ConfigError> {
-        let private_key = required(&lookup, "BUZZ_PRIVATE_KEY")?;
+        let private_key = required(&lookup, "BEEKEEPER_PRIVATE_KEY")?;
         let keys = Keys::parse(private_key.trim()).map_err(|error| ConfigError::Invalid {
-            name: "BUZZ_PRIVATE_KEY",
+            name: "BEEKEEPER_PRIVATE_KEY",
             reason: error.to_string(),
         })?;
-        let relay_url = required(&lookup, "BUZZ_RELAY_URL")?;
-        let auth_tag = parse_auth_tag(lookup("BUZZ_AUTH_TAG").as_deref())?;
+        let relay_url = required(&lookup, "BEEKEEPER_RELAY_URL")?;
+        let auth_tag = parse_auth_tag(lookup("BEEKEEPER_AUTH_TAG").as_deref())?;
 
-        let state_dir = PathBuf::from(required(&lookup, "BUZZ_CSP_STATE_DIR")?);
-        let projects_file = lookup("BUZZ_CSP_PROJECTS_FILE")
+        let state_dir = PathBuf::from(required(&lookup, "BEEKEEPER_CSP_STATE_DIR")?);
+        let projects_file = lookup("BEEKEEPER_CSP_PROJECTS_FILE")
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
-        let actor_seats_file = lookup("BUZZ_CSP_ACTOR_SEATS")
+        let actor_seats_file = lookup("BEEKEEPER_CSP_ACTOR_SEATS")
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
@@ -272,13 +272,13 @@ impl Config {
                     .and_then(|path| path.parent())
                     .map(|parent| parent.join(ACTOR_SEATS_FILE_NAME))
             });
-        let context_mcp_command = lookup("BUZZ_CSP_CONTEXT_MCP_COMMAND")
+        let context_mcp_command = lookup("BEEKEEPER_CSP_CONTEXT_MCP_COMMAND")
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
 
         let pubkey_hex = keys.public_key().to_hex();
-        let instance_id = match lookup("BUZZ_CSP_INSTANCE_ID") {
+        let instance_id = match lookup("BEEKEEPER_CSP_INSTANCE_ID") {
             Some(value) if !value.trim().is_empty() => value.trim().to_owned(),
             _ => pubkey_hex
                 .get(..INSTANCE_ID_PUBKEY_PREFIX_LEN)
@@ -289,16 +289,21 @@ impl Config {
         let runtimes = parse_runtimes(&lookup)?;
 
         // 0 is unlimited, not invalid — see `UNLIMITED_MAX_SESSIONS`.
-        let max_sessions = parse_usize(&lookup, "BUZZ_CSP_MAX_SESSIONS", DEFAULT_MAX_SESSIONS)?;
+        let max_sessions =
+            parse_usize(&lookup, "BEEKEEPER_CSP_MAX_SESSIONS", DEFAULT_MAX_SESSIONS)?;
         let session_idle_shutdown = parse_secs(
             &lookup,
-            "BUZZ_CSP_SESSION_IDLE_SHUTDOWN_SECS",
+            "BEEKEEPER_CSP_SESSION_IDLE_SHUTDOWN_SECS",
             DEFAULT_SESSION_IDLE_SHUTDOWN_SECS,
         )?;
-        let idle_timeout = parse_secs(&lookup, "BUZZ_CSP_IDLE_TIMEOUT", DEFAULT_IDLE_TIMEOUT_SECS)?;
+        let idle_timeout = parse_secs(
+            &lookup,
+            "BEEKEEPER_CSP_IDLE_TIMEOUT",
+            DEFAULT_IDLE_TIMEOUT_SECS,
+        )?;
         let max_turn_duration = parse_secs(
             &lookup,
-            "BUZZ_CSP_MAX_TURN_DURATION",
+            "BEEKEEPER_CSP_MAX_TURN_DURATION",
             DEFAULT_MAX_TURN_DURATION_SECS,
         )?;
         // The harness validates this pair (`beekeeper-acp/src/config.rs`); this side
@@ -308,9 +313,9 @@ impl Config {
         // are contradictory.
         if idle_timeout >= max_turn_duration {
             return Err(ConfigError::Invalid {
-                name: "BUZZ_CSP_IDLE_TIMEOUT",
+                name: "BEEKEEPER_CSP_IDLE_TIMEOUT",
                 reason: format!(
-                    "must be less than BUZZ_CSP_MAX_TURN_DURATION ({}s), otherwise the idle \
+                    "must be less than BEEKEEPER_CSP_MAX_TURN_DURATION ({}s), otherwise the idle \
                      guard can never fire; got {}s",
                     max_turn_duration.as_secs(),
                     idle_timeout.as_secs(),
@@ -319,7 +324,7 @@ impl Config {
         }
         let answer_stall_timeout = match parse_secs(
             &lookup,
-            "BUZZ_CSP_ANSWER_STALL_TIMEOUT",
+            "BEEKEEPER_CSP_ANSWER_STALL_TIMEOUT",
             DEFAULT_ANSWER_STALL_TIMEOUT_SECS,
         )? {
             zero if zero.is_zero() => None,
@@ -327,15 +332,15 @@ impl Config {
         };
         let command_horizon = parse_secs(
             &lookup,
-            "BUZZ_CSP_COMMAND_HORIZON_SECS",
+            "BEEKEEPER_CSP_COMMAND_HORIZON_SECS",
             DEFAULT_COMMAND_HORIZON_SECS,
         )?;
-        // 0 is unlimited here for the same reason as `BUZZ_CSP_MAX_SESSIONS`.
-        let turn_budget = parse_u64(&lookup, "BUZZ_CSP_TURN_BUDGET", DEFAULT_TURN_BUDGET)?;
-        let include_thoughts = parse_bool(&lookup, "BUZZ_CSP_INCLUDE_THOUGHTS", true)?;
+        // 0 is unlimited here for the same reason as `BEEKEEPER_CSP_MAX_SESSIONS`.
+        let turn_budget = parse_u64(&lookup, "BEEKEEPER_CSP_TURN_BUDGET", DEFAULT_TURN_BUDGET)?;
+        let include_thoughts = parse_bool(&lookup, "BEEKEEPER_CSP_INCLUDE_THOUGHTS", true)?;
         let transcript_paragraph_flush =
-            parse_bool(&lookup, "BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", false)?;
-        let emit_raw_sdk_frames = parse_bool(&lookup, "BUZZ_CSP_EMIT_RAW_SDK_FRAMES", false)?;
+            parse_bool(&lookup, "BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", false)?;
+        let emit_raw_sdk_frames = parse_bool(&lookup, "BEEKEEPER_CSP_EMIT_RAW_SDK_FRAMES", false)?;
         let auto_title = parse_bool(&lookup, crate::auto_title::AUTO_TITLE_ENV, true)?;
         let session_isolation = crate::session_isolation::SessionIsolation::from_lookup(&lookup)?;
         let redaction_retention = crate::redaction_vault::RetentionPolicy::from_setting(
@@ -383,10 +388,10 @@ impl Config {
     }
 }
 
-/// Resolve the runtime list: `BUZZ_CSP_RUNTIMES` when present, otherwise a
+/// Resolve the runtime list: `BEEKEEPER_CSP_RUNTIMES` when present, otherwise a
 /// single Claude descriptor synthesized from the legacy per-variable surface.
 ///
-/// When `BUZZ_CSP_RUNTIMES` is set it is the complete list — the legacy
+/// When `BEEKEEPER_CSP_RUNTIMES` is set it is the complete list — the legacy
 /// variables are ignored rather than merged, because a partial merge would
 /// make the effective configuration depend on which of two writers ran last.
 /// A malformed list fails startup: the supervisor is the only writer, so a
@@ -394,11 +399,11 @@ impl Config {
 fn parse_runtimes(
     lookup: &impl Fn(&'static str) -> Option<String>,
 ) -> Result<Vec<RuntimeDescriptor>, ConfigError> {
-    let Some(raw) = non_empty(lookup, "BUZZ_CSP_RUNTIMES") else {
+    let Some(raw) = non_empty(lookup, "BEEKEEPER_CSP_RUNTIMES") else {
         return Ok(vec![legacy_claude_descriptor(lookup)]);
     };
     let descriptors = parse_runtime_descriptors(&raw).map_err(|reason| ConfigError::Invalid {
-        name: "BUZZ_CSP_RUNTIMES",
+        name: "BEEKEEPER_CSP_RUNTIMES",
         reason,
     })?;
     warn_on_diverging_legacy_variables(lookup, &descriptors);
@@ -407,8 +412,8 @@ fn parse_runtimes(
 
 /// Flag legacy per-variable configuration that the runtime list overrides.
 ///
-/// The desktop host deliberately exports `BUZZ_CSP_AGENT_COMMAND` *alongside*
-/// `BUZZ_CSP_RUNTIMES` so an older sidecar binary keeps working, which makes
+/// The desktop host deliberately exports `BEEKEEPER_CSP_AGENT_COMMAND` *alongside*
+/// `BEEKEEPER_CSP_RUNTIMES` so an older sidecar binary keeps working, which makes
 /// "both are set" the normal shape of every spawn — warning on mere presence
 /// would put permanent noise in the log and train people to ignore it. A
 /// warning therefore fires only when a legacy value would have changed
@@ -418,36 +423,39 @@ fn warn_on_diverging_legacy_variables(
     lookup: &impl Fn(&'static str) -> Option<String>,
     descriptors: &[RuntimeDescriptor],
 ) {
-    if let Some(command) = non_empty(lookup, "BUZZ_CSP_AGENT_COMMAND") {
+    if let Some(command) = non_empty(lookup, "BEEKEEPER_CSP_AGENT_COMMAND") {
         let matches_a_descriptor = descriptors
             .iter()
             .any(|descriptor| descriptor.agent_command == command);
         if !matches_a_descriptor {
             tracing::warn!(
                 target: "csp::config",
-                "BUZZ_CSP_AGENT_COMMAND names {command:?}, which no BUZZ_CSP_RUNTIMES \
+                "BEEKEEPER_CSP_AGENT_COMMAND names {command:?}, which no BEEKEEPER_CSP_RUNTIMES \
                  descriptor uses — the list wins and the variable is ignored"
             );
         }
     }
-    for legacy in ["BUZZ_CSP_DEFAULT_MODEL", "BUZZ_CSP_ALLOWED_MODELS"] {
+    for legacy in [
+        "BEEKEEPER_CSP_DEFAULT_MODEL",
+        "BEEKEEPER_CSP_ALLOWED_MODELS",
+    ] {
         if non_empty(lookup, legacy).is_some() {
             tracing::warn!(
                 target: "csp::config",
-                "{legacy} is ignored because BUZZ_CSP_RUNTIMES is set"
+                "{legacy} is ignored because BEEKEEPER_CSP_RUNTIMES is set"
             );
         }
     }
 }
 
 /// The single-runtime configuration older hosts express through
-/// `BUZZ_CSP_AGENT_COMMAND` / `BUZZ_CSP_DEFAULT_MODEL` /
-/// `BUZZ_CSP_ALLOWED_MODELS` — today's zero-config Claude default.
+/// `BEEKEEPER_CSP_AGENT_COMMAND` / `BEEKEEPER_CSP_DEFAULT_MODEL` /
+/// `BEEKEEPER_CSP_ALLOWED_MODELS` — today's zero-config Claude default.
 fn legacy_claude_descriptor(lookup: &impl Fn(&'static str) -> Option<String>) -> RuntimeDescriptor {
-    let agent_command = non_empty(lookup, "BUZZ_CSP_AGENT_COMMAND")
+    let agent_command = non_empty(lookup, "BEEKEEPER_CSP_AGENT_COMMAND")
         .unwrap_or_else(|| DEFAULT_AGENT_COMMAND.to_owned());
-    let configured_default_model = non_empty(lookup, "BUZZ_CSP_DEFAULT_MODEL");
-    let configured_allowed_models = non_empty(lookup, "BUZZ_CSP_ALLOWED_MODELS");
+    let configured_default_model = non_empty(lookup, "BEEKEEPER_CSP_DEFAULT_MODEL");
+    let configured_allowed_models = non_empty(lookup, "BEEKEEPER_CSP_ALLOWED_MODELS");
     let discover_models = configured_default_model.is_none() && configured_allowed_models.is_none();
     let default_model = configured_default_model.unwrap_or_else(|| DEFAULT_MODEL.to_owned());
     let allowed_models = parse_allowed_models(configured_allowed_models.as_deref(), &default_model);
@@ -551,7 +559,7 @@ fn parse_bool(
     }
 }
 
-/// Parse `BUZZ_CSP_ALLOWED_MODELS` into the catalog's canonical order.
+/// Parse `BEEKEEPER_CSP_ALLOWED_MODELS` into the catalog's canonical order.
 ///
 /// The catalog's canonical form pins `allowedModels[0] == defaultModel` with the
 /// remainder sorted, so the ordering is decided here once rather than at each
@@ -574,17 +582,17 @@ fn parse_allowed_models(raw: Option<&str>, default_model: &str) -> Vec<String> {
     models
 }
 
-/// Decode `BUZZ_AUTH_TAG` — a JSON array of strings forming one Nostr tag.
+/// Decode `BEEKEEPER_AUTH_TAG` — a JSON array of strings forming one Nostr tag.
 fn parse_auth_tag(raw: Option<&str>) -> Result<Option<nostr::Tag>, ConfigError> {
     let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
     let parts: Vec<String> = serde_json::from_str(raw).map_err(|error| ConfigError::Invalid {
-        name: "BUZZ_AUTH_TAG",
+        name: "BEEKEEPER_AUTH_TAG",
         reason: format!("expected a JSON array of strings: {error}"),
     })?;
     let tag = nostr::Tag::parse(parts).map_err(|error| ConfigError::Invalid {
-        name: "BUZZ_AUTH_TAG",
+        name: "BEEKEEPER_AUTH_TAG",
         reason: error.to_string(),
     })?;
     Ok(Some(tag))
@@ -605,11 +613,11 @@ mod tests {
     fn minimal() -> HashMap<&'static str, String> {
         env(&[
             (
-                "BUZZ_PRIVATE_KEY",
+                "BEEKEEPER_PRIVATE_KEY",
                 "0000000000000000000000000000000000000000000000000000000000000001",
             ),
-            ("BUZZ_RELAY_URL", "ws://localhost:3000"),
-            ("BUZZ_CSP_STATE_DIR", "/tmp/csp"),
+            ("BEEKEEPER_RELAY_URL", "ws://localhost:3000"),
+            ("BEEKEEPER_CSP_STATE_DIR", "/tmp/csp"),
         ])
     }
 
@@ -633,27 +641,27 @@ mod tests {
             !load(&vars).expect("config").emit_raw_sdk_frames,
             "a debugging instrument that defaults on is not a switch"
         );
-        vars.insert("BUZZ_CSP_EMIT_RAW_SDK_FRAMES", "true".to_owned());
+        vars.insert("BEEKEEPER_CSP_EMIT_RAW_SDK_FRAMES", "true".to_owned());
         assert!(load(&vars).expect("config").emit_raw_sdk_frames);
     }
 
     #[test]
     fn an_idle_budget_that_could_never_fire_is_refused() {
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_IDLE_TIMEOUT", "7200".to_owned());
-        vars.insert("BUZZ_CSP_MAX_TURN_DURATION", "7200".to_owned());
+        vars.insert("BEEKEEPER_CSP_IDLE_TIMEOUT", "7200".to_owned());
+        vars.insert("BEEKEEPER_CSP_MAX_TURN_DURATION", "7200".to_owned());
         assert!(
             matches!(
                 load(&vars),
                 Err(ConfigError::Invalid {
-                    name: "BUZZ_CSP_IDLE_TIMEOUT",
+                    name: "BEEKEEPER_CSP_IDLE_TIMEOUT",
                     ..
                 })
             ),
             "an idle budget at the wall-clock ceiling must be refused"
         );
 
-        vars.insert("BUZZ_CSP_IDLE_TIMEOUT", "7199".to_owned());
+        vars.insert("BEEKEEPER_CSP_IDLE_TIMEOUT", "7199".to_owned());
         assert!(load(&vars).is_ok(), "one second under the ceiling is fine");
     }
 
@@ -671,14 +679,14 @@ mod tests {
         );
 
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_ANSWER_STALL_TIMEOUT", "0".to_owned());
+        vars.insert("BEEKEEPER_CSP_ANSWER_STALL_TIMEOUT", "0".to_owned());
         assert_eq!(
             load(&vars).expect("zero should load").answer_stall_timeout,
             None,
             "zero must disable the watch, not arm it at zero"
         );
 
-        vars.insert("BUZZ_CSP_ANSWER_STALL_TIMEOUT", "45".to_owned());
+        vars.insert("BEEKEEPER_CSP_ANSWER_STALL_TIMEOUT", "45".to_owned());
         assert_eq!(
             load(&vars).expect("should load").answer_stall_timeout,
             Some(Duration::from_secs(45)),
@@ -713,12 +721,12 @@ mod tests {
     fn parses_the_optional_context_mcp_command() {
         let mut vars = minimal();
         vars.insert(
-            "BUZZ_CSP_CONTEXT_MCP_COMMAND",
-            " /opt/buzz/bin/buzz-dev-mcp ".into(),
+            "BEEKEEPER_CSP_CONTEXT_MCP_COMMAND",
+            " /opt/buzz/bin/beekeeper-dev-mcp ".into(),
         );
         assert_eq!(
             load(&vars).unwrap().context_mcp_command,
-            Some(PathBuf::from("/opt/buzz/bin/buzz-dev-mcp"))
+            Some(PathBuf::from("/opt/buzz/bin/beekeeper-dev-mcp"))
         );
     }
 
@@ -732,16 +740,16 @@ mod tests {
         assert!(config.pubkey_hex().starts_with(&config.instance_id));
 
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_INSTANCE_ID", "workstation-a".into());
+        vars.insert("BEEKEEPER_CSP_INSTANCE_ID", "workstation-a".into());
         assert_eq!(load(&vars).unwrap().instance_id, "workstation-a");
     }
 
     #[test]
     fn allowed_models_put_the_default_first_and_sort_the_rest() {
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_DEFAULT_MODEL", "model-b".into());
+        vars.insert("BEEKEEPER_CSP_DEFAULT_MODEL", "model-b".into());
         vars.insert(
-            "BUZZ_CSP_ALLOWED_MODELS",
+            "BEEKEEPER_CSP_ALLOWED_MODELS",
             " model-c , model-a ,model-b, model-a ".into(),
         );
         let config = load(&vars).expect("env should load");
@@ -759,11 +767,11 @@ mod tests {
     #[test]
     fn either_model_override_disables_live_discovery() {
         let mut default_only = minimal();
-        default_only.insert("BUZZ_CSP_DEFAULT_MODEL", "model-a".into());
+        default_only.insert("BEEKEEPER_CSP_DEFAULT_MODEL", "model-a".into());
         assert!(!load(&default_only).unwrap().runtimes[0].discover_models);
 
         let mut allowed_only = minimal();
-        allowed_only.insert("BUZZ_CSP_ALLOWED_MODELS", "model-a,model-b".into());
+        allowed_only.insert("BEEKEEPER_CSP_ALLOWED_MODELS", "model-a,model-b".into());
         assert!(!load(&allowed_only).unwrap().runtimes[0].discover_models);
     }
 
@@ -771,10 +779,10 @@ mod tests {
     fn a_runtimes_list_replaces_the_legacy_surface_entirely() {
         let mut vars = minimal();
         // Legacy variables present but ignored: the list is the whole truth.
-        vars.insert("BUZZ_CSP_AGENT_COMMAND", "/somewhere/else".into());
-        vars.insert("BUZZ_CSP_DEFAULT_MODEL", "legacy-model".into());
+        vars.insert("BEEKEEPER_CSP_AGENT_COMMAND", "/somewhere/else".into());
+        vars.insert("BEEKEEPER_CSP_DEFAULT_MODEL", "legacy-model".into());
         vars.insert(
-            "BUZZ_CSP_RUNTIMES",
+            "BEEKEEPER_CSP_RUNTIMES",
             serde_json::json!([
                 {
                     "instanceRef": "claude-primary",
@@ -816,12 +824,12 @@ mod tests {
     fn a_malformed_runtimes_list_refuses_to_start() {
         for raw in ["not json", "[]", r#"[{"instanceRef":"x"}]"#] {
             let mut vars = minimal();
-            vars.insert("BUZZ_CSP_RUNTIMES", raw.into());
+            vars.insert("BEEKEEPER_CSP_RUNTIMES", raw.into());
             assert!(
                 matches!(
                     load(&vars),
                     Err(ConfigError::Invalid {
-                        name: "BUZZ_CSP_RUNTIMES",
+                        name: "BEEKEEPER_CSP_RUNTIMES",
                         ..
                     })
                 ),
@@ -833,29 +841,32 @@ mod tests {
     #[test]
     fn rejects_missing_and_malformed_variables() {
         let mut vars = minimal();
-        vars.remove("BUZZ_CSP_STATE_DIR");
+        vars.remove("BEEKEEPER_CSP_STATE_DIR");
         assert!(matches!(
             load(&vars),
-            Err(ConfigError::Missing("BUZZ_CSP_STATE_DIR"))
+            Err(ConfigError::Missing("BEEKEEPER_CSP_STATE_DIR"))
         ));
 
         let mut vars = minimal();
-        vars.insert("BUZZ_PRIVATE_KEY", "not-a-key".into());
+        vars.insert("BEEKEEPER_PRIVATE_KEY", "not-a-key".into());
         assert!(matches!(load(&vars), Err(ConfigError::Invalid { .. })));
 
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_INCLUDE_THOUGHTS", "maybe".into());
+        vars.insert("BEEKEEPER_CSP_INCLUDE_THOUGHTS", "maybe".into());
         assert!(matches!(load(&vars), Err(ConfigError::Invalid { .. })));
 
         let mut vars = minimal();
-        vars.insert("BUZZ_AUTH_TAG", "{\"not\":\"an array\"}".into());
+        vars.insert("BEEKEEPER_AUTH_TAG", "{\"not\":\"an array\"}".into());
         assert!(matches!(load(&vars), Err(ConfigError::Invalid { .. })));
     }
 
     #[test]
     fn parses_a_nip_oa_auth_tag() {
         let mut vars = minimal();
-        vars.insert("BUZZ_AUTH_TAG", r#"["owner-attestation","payload"]"#.into());
+        vars.insert(
+            "BEEKEEPER_AUTH_TAG",
+            r#"["owner-attestation","payload"]"#.into(),
+        );
         let config = load(&vars).expect("env should load");
         let tag = config.auth_tag.expect("auth tag should parse");
         assert_eq!(tag.as_slice()[0], "owner-attestation");
@@ -864,7 +875,7 @@ mod tests {
     #[test]
     fn include_thoughts_can_be_switched_off() {
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_INCLUDE_THOUGHTS", "false".into());
+        vars.insert("BEEKEEPER_CSP_INCLUDE_THOUGHTS", "false".into());
         assert!(!load(&vars).unwrap().include_thoughts);
     }
 
@@ -874,9 +885,12 @@ mod tests {
     fn transcript_paragraph_flush_is_off_unless_switched_on() {
         assert!(!load(&minimal()).unwrap().transcript_paragraph_flush);
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", "1".into());
+        vars.insert("BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", "1".into());
         assert!(load(&vars).unwrap().transcript_paragraph_flush);
-        vars.insert("BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", "sometimes".into());
+        vars.insert(
+            "BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH",
+            "sometimes".into(),
+        );
         assert!(load(&vars).is_err());
     }
 
@@ -887,11 +901,11 @@ mod tests {
     fn auto_title_is_on_unless_switched_off() {
         assert!(load(&minimal()).unwrap().auto_title);
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_AUTO_TITLE", "off".into());
+        vars.insert("BEEKEEPER_CSP_AUTO_TITLE", "off".into());
         assert!(!load(&vars).unwrap().auto_title);
-        vars.insert("BUZZ_CSP_AUTO_TITLE", "on".into());
+        vars.insert("BEEKEEPER_CSP_AUTO_TITLE", "on".into());
         assert!(load(&vars).unwrap().auto_title);
-        vars.insert("BUZZ_CSP_AUTO_TITLE", "sometimes".into());
+        vars.insert("BEEKEEPER_CSP_AUTO_TITLE", "sometimes".into());
         assert!(load(&vars).is_err());
     }
 
@@ -900,17 +914,17 @@ mod tests {
     #[test]
     fn zero_max_sessions_means_unlimited_rather_than_invalid() {
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_MAX_SESSIONS", "0".into());
+        vars.insert("BEEKEEPER_CSP_MAX_SESSIONS", "0".into());
         let config = load(&vars).expect("zero is a valid ceiling");
         assert_eq!(config.max_sessions, UNLIMITED_MAX_SESSIONS);
 
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_MAX_SESSIONS", "12".into());
+        vars.insert("BEEKEEPER_CSP_MAX_SESSIONS", "12".into());
         assert_eq!(load(&vars).expect("explicit ceiling").max_sessions, 12);
 
         // A value that is not a number at all is still a configuration error.
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_MAX_SESSIONS", "lots".into());
+        vars.insert("BEEKEEPER_CSP_MAX_SESSIONS", "lots".into());
         assert!(matches!(load(&vars), Err(ConfigError::Invalid { .. })));
     }
 
@@ -925,22 +939,22 @@ mod tests {
         );
 
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_TURN_BUDGET", "0".into());
+        vars.insert("BEEKEEPER_CSP_TURN_BUDGET", "0".into());
         assert_eq!(
             load(&vars).expect("zero is a valid budget").turn_budget,
             UNLIMITED_TURN_BUDGET
         );
 
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_TURN_BUDGET", "25".into());
+        vars.insert("BEEKEEPER_CSP_TURN_BUDGET", "25".into());
         assert_eq!(load(&vars).expect("explicit budget").turn_budget, 25);
 
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_TURN_BUDGET", "plenty".into());
+        vars.insert("BEEKEEPER_CSP_TURN_BUDGET", "plenty".into());
         assert!(matches!(
             load(&vars),
             Err(ConfigError::Invalid {
-                name: "BUZZ_CSP_TURN_BUDGET",
+                name: "BEEKEEPER_CSP_TURN_BUDGET",
                 ..
             })
         ));

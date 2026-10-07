@@ -707,7 +707,7 @@ mod tests {
         require_relay_membership: bool,
     ) -> (Arc<AppState>, TenantContext) {
         let mut config = crate::config::Config::from_env().expect("config from env");
-        let database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+        let database_url = std::env::var("BEEKEEPER_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| TEST_DB_URL.to_string());
         config.database_url = database_url.clone();

@@ -7,7 +7,7 @@ import { hexToBytes } from "@noble/hashes/utils.js";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/codingSessionGenesis";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
@@ -456,7 +456,7 @@ export function seededSessionEvents(input: {
           ["csm-key", codingSessionMetadataSemanticKey(target)],
         ],
         JSON.stringify({
-          schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+          schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
           session: target,
           projectRef: PROJECT_REF,
           repoRef: null,

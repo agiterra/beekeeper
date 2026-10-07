@@ -101,7 +101,7 @@ impl KeyUnresolved {
 
 /// A resolved provider secret, and where it came from.
 pub struct ResolvedKey {
-    /// The nsec, bech32-encoded as the provider's `BUZZ_PRIVATE_KEY` expects.
+    /// The nsec, bech32-encoded as the provider's `BEEKEEPER_PRIVATE_KEY` expects.
     pub nsec: String,
     /// The pubkey it derives to, for checking it against the record.
     pub public_key_hex: String,

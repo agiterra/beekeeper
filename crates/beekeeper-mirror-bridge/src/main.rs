@@ -1,4 +1,4 @@
-//! buzz-mirror-bridge — event-driven trigger for a git mirror sync.
+//! beekeeper-mirror-bridge — event-driven trigger for a git mirror sync.
 //!
 //! Subscribes to the relay's relay-signed kind:30618 NIP-34 ref-state events
 //! (published on every ref-changing push) and runs a sync command whenever one
@@ -35,7 +35,7 @@ const STABLE_CONNECTION_SECS: u64 = 60;
 #[command(about, version)]
 struct Args {
     /// Relay websocket URL, e.g. wss://hive.agiterra.org
-    #[arg(long, env = "BUZZ_RELAY_URL")]
+    #[arg(long, env = "BEEKEEPER_RELAY_URL")]
     relay: String,
 
     /// Key file holding an nsec1... or 64-char hex secret (0600).
@@ -187,7 +187,7 @@ async fn run_connection(args: &Args, keys: &Keys) -> String {
 async fn main() -> ExitCode {
     // The workspace compiles both aws-lc-rs and ring into rustls
     // transitively, so it cannot auto-select a provider and panics on the
-    // first TLS connection without this. Mirrors buzz-admin's main().
+    // first TLS connection without this. Mirrors beekeeper-admin's main().
     if rustls::crypto::ring::default_provider()
         .install_default()
         .is_err()

@@ -6,7 +6,7 @@
 # Composes, as independent OS processes talking over a real Unix socket:
 #   - the actual `beekeeper-host` binary, commissioned from a throwaway `$HOME`
 #     with a real keypair and a real `0600` key file;
-#   - the actual `buzz-session-provider` binary as its supervised child;
+#   - the actual `beekeeper-session-provider` binary as its supervised child;
 #   - the actual `bee` CLI, driving `bee host …` over the control socket;
 #   - a second `beekeeper-host` against the same state directory, to exercise
 #     the refusal that stops two launchers fighting over one provider.
@@ -119,7 +119,7 @@ PYTHON=$(command -v python3)
 cargo build --quiet -p beekeeper-host -p beekeeper-cli -p beekeeper-session-provider
 HOST="$REPO/target/debug/beekeeper-host"
 BEE="$REPO/target/debug/bee"
-PROVIDER="$REPO/target/debug/buzz-session-provider"
+PROVIDER="$REPO/target/debug/beekeeper-session-provider"
 for binary in "$HOST" "$BEE" "$PROVIDER"; do
     [[ -x "$binary" ]] || { echo "missing $binary" >&2; exit 1; }
 done
@@ -190,8 +190,8 @@ fi
 CHILD=$(pgrep -P "$HOST_PID" | head -1)
 record_pid "$CHILD"
 
-if [[ -n "$CHILD" ]] && [[ "$(ps -o comm= -p "$CHILD" | xargs basename)" == "buzz-session-provider" ]]; then
-    pass "the child is a real buzz-session-provider (pid $CHILD)"
+if [[ -n "$CHILD" ]] && [[ "$(ps -o comm= -p "$CHILD" | xargs basename)" == "beekeeper-session-provider" ]]; then
+    pass "the child is a real beekeeper-session-provider (pid $CHILD)"
 else
     fail "the child is not a provider"; note "$(ps -o pid,ppid,comm= -p "${CHILD:-1}")"
 fi

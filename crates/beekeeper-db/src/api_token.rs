@@ -346,11 +346,11 @@ mod tests {
 
     const TEST_DB_URL: &str = "postgres://buzz:buzz_dev@localhost:5432/buzz";
 
-    /// Resolve the test database, honouring `BUZZ_TEST_DATABASE_URL` before
+    /// Resolve the test database, honouring `BEEKEEPER_TEST_DATABASE_URL` before
     /// falling back to the stock dev URL — `localhost` in the literal resolves
     /// to `::1` first, so an IPv6-loopback Postgres shadows the dev instance.
     fn test_db_url() -> String {
-        std::env::var("BUZZ_TEST_DATABASE_URL").unwrap_or_else(|_| TEST_DB_URL.to_string())
+        std::env::var("BEEKEEPER_TEST_DATABASE_URL").unwrap_or_else(|_| TEST_DB_URL.to_string())
     }
 
     async fn setup_db() -> Db {

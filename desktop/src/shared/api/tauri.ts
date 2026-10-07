@@ -942,7 +942,7 @@ export async function getBakedBuildEnvKeys(): Promise<string[]> {
  * A single baked build env entry.
  *
  * The value is already masked in Rust for secret keys (keys not in the
- * explicit safe-to-reveal allowlist: `BUZZ_AGENT_PROVIDER`, `BUZZ_AGENT_MODEL`,
+ * explicit safe-to-reveal allowlist: `BEEKEEPER_AGENT_PROVIDER`, `BEEKEEPER_AGENT_MODEL`,
  * `DATABRICKS_HOST`, `DATABRICKS_MODEL`). Non-allowlisted keys have their
  * values replaced with `••••••`. Non-secret values are shown as-is.
  * Empty-value keys are filtered out.
@@ -959,7 +959,7 @@ export type BakedEnvEntry = {
  * Return the baked build env entries with values shown (masked where
  * appropriate) for display in the Agent defaults card.
  *
- * Provider and model arrive as `BUZZ_AGENT_PROVIDER` / `BUZZ_AGENT_MODEL`
+ * Provider and model arrive as `BEEKEEPER_AGENT_PROVIDER` / `BEEKEEPER_AGENT_MODEL`
  * keys and are included in the list alongside other baked vars.
  *
  * OSS builds return an empty array — the baked-env section is hidden.

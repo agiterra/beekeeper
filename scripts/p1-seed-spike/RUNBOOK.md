@@ -6,8 +6,8 @@ meaningfully continue from replayed kind-44225 transcript history?** You
 (one Claude, one Codex), and judge continuation quality. This harness prepares
 the seed; nothing here writes to the relay.
 
-Everything below assumes your authenticated environment: `BUZZ_RELAY_URL`,
-`BUZZ_PRIVATE_KEY` set, `bee` CLI at `target/release/bee`
+Everything below assumes your authenticated environment: `BEEKEEPER_RELAY_URL`,
+`BEEKEEPER_PRIVATE_KEY` set, `bee` CLI at `target/release/bee`
 (`cargo build --release -p beekeeper-cli`), adapter CLIs (`claude-agent-acp`,
 `codex-acp` or the plain `claude` / `codex` CLIs) logged in.
 
@@ -157,7 +157,7 @@ If **no** packaging approach yields continuation better than pasted-summary
 quality: P1 fails as a bet — B2/B3/B4 shrink to record-only continuity and you
 decide the fork story. If package-seeding beats the baseline on either
 adapter: G1 passes for that adapter; report which format/budget worked best,
-and B2 productizes exactly that (translator in `buzz-session-provider`).
+and B2 productizes exactly that (translator in `beekeeper-session-provider`).
 
 ## Report back (closes ruling R2)
 

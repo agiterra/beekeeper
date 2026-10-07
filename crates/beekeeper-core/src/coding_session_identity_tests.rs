@@ -157,7 +157,7 @@ fn a_control_character_decodes_and_the_accessor_answers_ok() {
         .is_canonical());
 }
 
-/// An operator who sets `BUZZ_CSP_INSTANCE_ID` publishes exactly that, and the
+/// An operator who sets `BEEKEEPER_CSP_INSTANCE_ID` publishes exactly that, and the
 /// type holds it. The canonical shape is disclosed, never assumed.
 #[test]
 fn an_operator_named_instance_is_held_and_disclosed_as_not_a_pubkey_prefix() {

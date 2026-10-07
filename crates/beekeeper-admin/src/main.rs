@@ -35,7 +35,7 @@ use nostr::{EventBuilder, Keys, Kind, Tag};
 use tracing::warn;
 
 #[derive(Parser)]
-#[command(name = "buzz-admin", about = "Beekeeper instance administration")]
+#[command(name = "beekeeper-admin", about = "Beekeeper instance administration")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -111,7 +111,7 @@ enum Command {
         channel: Option<String>,
 
         /// Relay private key (hex) for signing events. Falls back to
-        /// BUZZ_RELAY_PRIVATE_KEY env var. If neither is set, generates
+        /// BEEKEEPER_RELAY_PRIVATE_KEY env var. If neither is set, generates
         /// an ephemeral key (events will be unverifiable after restart).
         #[arg(long)]
         relay_key: Option<String>,
@@ -133,7 +133,7 @@ async fn main() {
     // Install the ring CryptoProvider for rustls. The workspace redis TLS
     // feature compiles both aws-lc-rs and ring in transitively, so rustls can't
     // auto-select a provider and would panic on the first rediss:// (ElastiCache)
-    // Redis TLS connection without this. Mirrors buzz-relay's main().
+    // Redis TLS connection without this. Mirrors beekeeper-relay's main().
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("failed to install rustls crypto provider");
@@ -156,7 +156,7 @@ async fn run(cli: Cli) -> Result<i32> {
             let keys = Keys::generate();
             println!("Public key:  {}", keys.public_key().to_hex());
             println!("Secret key:  {}", keys.secret_key().display_secret());
-            println!("\nSet BUZZ_PRIVATE_KEY to the secret key to use this identity.");
+            println!("\nSet BEEKEEPER_PRIVATE_KEY to the secret key to use this identity.");
             Ok(0)
         }
         Command::Migrate => {
@@ -403,25 +403,26 @@ async fn publish_membership_list_with_bump(
     tracing::info!(
         member_count = members.len(),
         ts,
-        "NIP-43 membership list published by buzz-admin"
+        "NIP-43 membership list published by beekeeper-admin"
     );
     Ok(())
 }
 
 /// Connect to DB, Redis pub/sub, and load the relay keypair.
 ///
-/// `BUZZ_RELAY_PRIVATE_KEY` is required — the CLI signs kind:13534 events.
+/// `BEEKEEPER_RELAY_PRIVATE_KEY` is required — the CLI signs kind:13534 events.
 async fn connect_member_services() -> Result<(Db, Arc<PubSubManager>, Keys)> {
     let db = connect_db().await?;
 
     let relay_keypair = {
-        let hex = std::env::var("BUZZ_RELAY_PRIVATE_KEY").map_err(|_| {
+        let hex = std::env::var("BEEKEEPER_RELAY_PRIVATE_KEY").map_err(|_| {
             anyhow::anyhow!(
-                "BUZZ_RELAY_PRIVATE_KEY is required for add-member/remove-member.\n\
+                "BEEKEEPER_RELAY_PRIVATE_KEY is required for add-member/remove-member.\n\
                  The relay must have a stable signing key to publish kind:13534 events."
             )
         })?;
-        Keys::parse(&hex).map_err(|e| anyhow::anyhow!("invalid BUZZ_RELAY_PRIVATE_KEY: {e}"))?
+        Keys::parse(&hex)
+            .map_err(|e| anyhow::anyhow!("invalid BEEKEEPER_RELAY_PRIVATE_KEY: {e}"))?
     };
 
     let redis_url =
@@ -455,8 +456,8 @@ async fn connect_db() -> Result<Db> {
 
 /// Resolve the deployment's tenant from the configured `RELAY_URL` host.
 ///
-/// `buzz-admin` runs inside the relay container (`compose exec relay
-/// buzz-admin …`), so it shares the relay's `RELAY_URL` and resolves the same
+/// `beekeeper-admin` runs inside the relay container (`compose exec relay
+/// beekeeper-admin …`), so it shares the relay's `RELAY_URL` and resolves the same
 /// single community against the durable `communities` host map. This is
 /// deliberately NOT a default tenant: an unmapped host fails closed with an
 /// error, mirroring the relay's own `bind_community` row-zero seam. The CLI is
@@ -470,12 +471,12 @@ async fn resolve_admin_tenant(db: &Db) -> Result<TenantContext> {
     // `Url::host_str()` drops the port/brackets, so for `ws://localhost:3000`
     // the admin would look up `localhost` while startup seeded `localhost:3000`
     // — and `wss://relay.example:8443` would resolve `relay.example`. Sharing
-    // the helper keeps buzz-admin byte-identical to the community startup seeds.
+    // the helper keeps beekeeper-admin byte-identical to the community startup seeds.
     let host = relay_url_authority(&relay_url);
     let record = db.lookup_community_by_host(&host).await?.ok_or_else(|| {
         anyhow::anyhow!(
             "RELAY_URL host '{host}' is not mapped to a community.\n\
-             buzz-admin operates on the configured relay's community; ensure the \
+             beekeeper-admin operates on the configured relay's community; ensure the \
              relay has started and seeded its community (or set RELAY_URL to a \
              mapped host)."
         )
@@ -496,10 +497,10 @@ async fn reconcile_channels(
     // never use an ephemeral key because it replaces an existing authoritative
     // snapshot.
     let configured_relay_key =
-        relay_key_arg.or_else(|| std::env::var("BUZZ_RELAY_PRIVATE_KEY").ok());
+        relay_key_arg.or_else(|| std::env::var("BEEKEEPER_RELAY_PRIVATE_KEY").ok());
     if channel_arg.is_some() && configured_relay_key.is_none() {
         return Err(anyhow::anyhow!(
-            "--channel requires --relay-key or BUZZ_RELAY_PRIVATE_KEY"
+            "--channel requires --relay-key or BEEKEEPER_RELAY_PRIVATE_KEY"
         ));
     }
     let relay_keys = match configured_relay_key {
@@ -513,7 +514,7 @@ async fn reconcile_channels(
                 k.public_key().to_hex()
             );
             eprintln!("Events signed with this key won't be verifiable after this run.");
-            eprintln!("Pass --relay-key or set BUZZ_RELAY_PRIVATE_KEY for production use.");
+            eprintln!("Pass --relay-key or set BEEKEEPER_RELAY_PRIVATE_KEY for production use.");
             k
         }
     };

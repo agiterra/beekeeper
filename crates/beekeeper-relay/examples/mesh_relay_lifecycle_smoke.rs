@@ -6,7 +6,7 @@
 //! desktop app actually joins a mesh:
 //!
 //!   1. MEMBERSHIP — two Nostr identities are added to a membership-gated
-//!      buzz-relay (kind:13534 roster via buzz-admin); a third is not.
+//!      beekeeper-relay (kind:13534 roster via beekeeper-admin); a third is not.
 //!   2. ADVERTISE — each member process publishes a client-signed kind:30003
 //!      status note carrying its MeshLLM owner binding
 //!      (`ownerId`/`ownerVerifyingKey`/`ownerBindingSig`) and, for the serve
@@ -49,7 +49,7 @@
 //! ```text
 //! ./scripts/start-relay-for-tests.sh            # with membership env set
 //! cargo build --profile ci -p beekeeper-admin
-//! BUZZ_ADMIN_BIN=target/ci/buzz-admin \
+//! BEEKEEPER_ADMIN_BIN=target/ci/beekeeper-admin \
 //!   cargo run --profile ci -p beekeeper-relay --example mesh_relay_lifecycle_smoke
 //! ```
 use std::collections::BTreeSet;
@@ -394,7 +394,7 @@ fn member_owner_ids(events: &[Event]) -> BTreeSet<String> {
 async fn role_serve() -> anyhow::Result<()> {
     init_native_runtime().await?;
     let model = std::env::var("MESH_SMOKE_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
-    let keys = Keys::parse(&env("BUZZ_MEMBER_NSEC")?)?;
+    let keys = Keys::parse(&env("BEEKEEPER_MEMBER_NSEC")?)?;
     let owner = load_keystore(std::path::Path::new(&env("MESH_OWNER_KEY")?), None)
         .map_err(|error| anyhow::anyhow!("loading serve owner keystore: {error}"))?;
     // The exact owner ids the orchestrator provisioned for members A and B.
@@ -494,7 +494,7 @@ async fn role_serve() -> anyhow::Result<()> {
 /// stranger's admission attack, so denial is differential, not absence.
 async fn role_client() -> anyhow::Result<()> {
     init_native_runtime().await?;
-    let keys = Keys::parse(&env("BUZZ_MEMBER_NSEC")?)?;
+    let keys = Keys::parse(&env("BEEKEEPER_MEMBER_NSEC")?)?;
     let owner = load_keystore(std::path::Path::new(&env("MESH_OWNER_KEY")?), None)
         .map_err(|error| anyhow::anyhow!("loading client owner keystore: {error}"))?;
 
@@ -603,7 +603,7 @@ async fn role_client() -> anyhow::Result<()> {
 /// rejection, and the mesh must not route inference for it even with the
 /// leaked endpoint address.
 async fn role_stranger() -> anyhow::Result<()> {
-    let keys = Keys::parse(&env("BUZZ_MEMBER_NSEC")?)?;
+    let keys = Keys::parse(&env("BEEKEEPER_MEMBER_NSEC")?)?;
     let leaked_endpoint = env("MESH_LEAKED_ENDPOINT")?;
 
     // DENY (relay read): the membership-gated relay must reject the
@@ -676,11 +676,11 @@ async fn role_stranger() -> anyhow::Result<()> {
 fn orchestrate() -> anyhow::Result<()> {
     let model = std::env::var("MESH_SMOKE_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
     eprintln!("[lifecycle] model: {model}");
-    let admin =
-        std::env::var("BUZZ_ADMIN_BIN").unwrap_or_else(|_| "target/ci/buzz-admin".to_string());
+    let admin = std::env::var("BEEKEEPER_ADMIN_BIN")
+        .unwrap_or_else(|_| "target/ci/beekeeper-admin".to_string());
     anyhow::ensure!(
         std::path::Path::new(&admin).exists(),
-        "buzz-admin binary not found at {admin} (set BUZZ_ADMIN_BIN)"
+        "beekeeper-admin binary not found at {admin} (set BEEKEEPER_ADMIN_BIN)"
     );
 
     let scratch = std::env::temp_dir().join(format!("buzz-mesh-lifecycle-{}", std::process::id()));
@@ -705,13 +705,16 @@ fn orchestrate() -> anyhow::Result<()> {
     let (stranger_key, _stranger_owner_id) = make_owner("stranger")?;
     let expected_owners = format!("{serve_owner_id},{client_owner_id}");
 
-    // MEMBERSHIP: A and B become relay members via buzz-admin (publishes the
+    // MEMBERSHIP: A and B become relay members via beekeeper-admin (publishes the
     // kind:13534 roster snapshot). C is deliberately not added.
     for (label, keys) in [("A", &member_a), ("B", &member_b)] {
         let status = Command::new(&admin)
             .args(["add-member", "--pubkey", &keys.public_key().to_hex()])
             .status()?;
-        anyhow::ensure!(status.success(), "buzz-admin add-member {label} failed");
+        anyhow::ensure!(
+            status.success(),
+            "beekeeper-admin add-member {label} failed"
+        );
         eprintln!(
             "[lifecycle] member {label} added: {}",
             keys.public_key().to_hex()
@@ -740,7 +743,7 @@ fn orchestrate() -> anyhow::Result<()> {
     let mut serve_child = Command::new(&exe)
         .env("MESH_ROLE", "serve")
         .env("MESH_SMOKE_MODEL", &model)
-        .env("BUZZ_MEMBER_NSEC", secret_hex(&member_a))
+        .env("BEEKEEPER_MEMBER_NSEC", secret_hex(&member_a))
         .env("MESH_OWNER_KEY", &serve_key)
         .env("MESH_EXPECTED_OWNERS", &expected_owners)
         .env("HOME", role_home("serve")?)
@@ -765,7 +768,7 @@ fn orchestrate() -> anyhow::Result<()> {
     eprintln!("[lifecycle] starting CLIENT member (relay-driven join)...");
     let mut client_child = Command::new(&exe)
         .env("MESH_ROLE", "client")
-        .env("BUZZ_MEMBER_NSEC", secret_hex(&member_b))
+        .env("BEEKEEPER_MEMBER_NSEC", secret_hex(&member_b))
         .env("MESH_OWNER_KEY", &client_key)
         .env("HOME", role_home("client")?)
         .env("MESH_LLM_NATIVE_RUNTIME_CACHE_DIR", &native_cache)
@@ -821,7 +824,7 @@ fn orchestrate() -> anyhow::Result<()> {
     eprintln!("[lifecycle] starting STRANGER (non-member, leaked endpoint)...");
     let mut stranger_child = Command::new(&exe)
         .env("MESH_ROLE", "stranger")
-        .env("BUZZ_MEMBER_NSEC", secret_hex(&stranger))
+        .env("BEEKEEPER_MEMBER_NSEC", secret_hex(&stranger))
         .env("MESH_OWNER_KEY", &stranger_key)
         .env("MESH_LEAKED_ENDPOINT", &endpoint)
         .env("HOME", role_home("stranger")?)

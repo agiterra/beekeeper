@@ -9,7 +9,7 @@ import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codi
 import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/codingSessionGenesis";
 import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
@@ -18,7 +18,7 @@ import {
   lifecycleReceiptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
   codingSessionTranscriptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -154,7 +154,7 @@ function workingMetadataEvent(): RelayEvent {
         ["csm-key", codingSessionMetadataSemanticKey(TARGET)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: TARGET,
         projectRef: null,
         repoRef: null,
@@ -221,7 +221,7 @@ function transcriptEvent(eventSeq: number, item: unknown): RelayEvent {
         ["cst-key", codingSessionTranscriptSemanticKey(TARGET, eventSeq)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
         session: TARGET,
         eventSeq,
         timestamp: BASE_TIMESTAMP_MS + eventSeq * 1_000,

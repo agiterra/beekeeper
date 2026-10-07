@@ -40,7 +40,7 @@ use crate::error::CliError;
 
 /// The environment variable a session provider sets on a project seat to the
 /// umbrella's project coordinate; the default project for this command.
-pub const PROJECT_ENV: &str = "BUZZ_PULSE_PROJECT";
+pub const PROJECT_ENV: &str = "BEEKEEPER_PULSE_PROJECT";
 
 /// One agent of a project, as its owner published it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

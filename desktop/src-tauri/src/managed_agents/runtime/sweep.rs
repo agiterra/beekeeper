@@ -2,8 +2,8 @@
 //! process-tree helpers shared with the periodic orphan sweeps in `runtime.rs`.
 //!
 //! The env-var and PID-file sweeps cannot see a harness whose receipt is gone
-//! or that predates `BUZZ_MANAGED_AGENT` injection. This sweep derives the
-//! expected `buzz-acp` path from the running executable and kills any process
+//! or that predates `BEEKEEPER_MANAGED_AGENT` injection. This sweep derives the
+//! expected `beekeeper-acp` path from the running executable and kills any process
 //! whose exe matches exactly, minus the tracked set. The PID enumeration,
 //! procargs, parent/PGID lookups, and live-descendant classification helpers
 //! collected here are also called directly by the periodic orphan sweeps.
@@ -198,7 +198,7 @@ pub(super) fn ppid_of_linux(pid: u32) -> Option<u32> {
 ///    check spares it. This is NOT a redundant fast-path — it covers a
 ///    case the walk cannot.
 /// 3. Bounded ancestor walk from `ppid` — covers deeper live chains where
-///    intermediates run in their own process groups (e.g. buzz-acp ->
+///    intermediates run in their own process groups (e.g. beekeeper-acp ->
 ///    node shim -> codex-acp).
 #[cfg(target_os = "macos")]
 pub(super) fn is_live_descendant_macos(pid: u32, ppid: u32, skip_pids: &[u32]) -> bool {
@@ -242,7 +242,7 @@ pub struct ProcessSnapshot {
 
 /// Strip the kernel-appended `" (deleted)"` suffix from an executable path.
 ///
-/// On Linux, `read_link("/proc/<pid>/exe")` returns `…/buzz-acp (deleted)`
+/// On Linux, `read_link("/proc/<pid>/exe")` returns `…/beekeeper-acp (deleted)`
 /// when the on-disk binary has been replaced since the process launched.
 /// That is exactly the class of stale-install orphan this sweep targets, so
 /// we must strip the suffix before comparing against the expected path.
@@ -278,11 +278,11 @@ pub(super) fn strip_deleted_suffix(path: PathBuf) -> PathBuf {
 /// This sweep was written when "not tracked by this app" and "owned by
 /// nobody" were the same set, so reaping the second was safe. `beekeeper-host`
 /// makes them different sets: it supervises children of its own, which no
-/// desktop tracks. Today those children are `buzz-session-provider` and
+/// desktop tracks. Today those children are `beekeeper-session-provider` and
 /// `claude-agent-acp`, neither of which this sweep looks at — it filters on
-/// `<bundle>/buzz-acp` by name. But `session_provider/commands.rs` already
-/// resolves `buzz-acp` for the models probe, so the moment any runtime's
-/// adapter is `buzz-acp`, a desktop boot would silently kill a host-owned
+/// `<bundle>/beekeeper-acp` by name. But `session_provider/commands.rs` already
+/// resolves `beekeeper-acp` for the models probe, so the moment any runtime's
+/// adapter is `beekeeper-acp`, a desktop boot would silently kill a host-owned
 /// child. The symptom would be agents dying whenever somebody opens the app,
 /// which reads as anything but a sweep. The predicate closes that before it
 /// can happen rather than after.
@@ -342,10 +342,10 @@ fn proc_exe_path_from_procargs2(pid: u32) -> Option<PathBuf> {
 ///
 /// Applies a cheap `proc_name` pre-filter before the expensive
 /// `KERN_PROCARGS2` sysctl: only PIDs whose binary name matches the harness
-/// binary name (`buzz-acp`) proceed to the full exe-path fetch.  This mirrors
+/// binary name (`beekeeper-acp`) proceed to the full exe-path fetch.  This mirrors
 /// the pattern `sweep_system_agent_processes` uses and cuts the expensive
 /// two-sysctl call by ~99.9% (there are typically O(hundreds) of user
-/// processes but at most a handful of `buzz-acp` instances).
+/// processes but at most a handful of `beekeeper-acp` instances).
 #[cfg(target_os = "macos")]
 fn collect_process_snapshots(harness_name: &str) -> Vec<ProcessSnapshot> {
     let my_uid = unsafe { libc::getuid() };
@@ -432,7 +432,7 @@ fn collect_process_snapshots(harness_name: &str) -> Vec<ProcessSnapshot> {
         }
         let upid = pid as u32;
         // Cheap name pre-filter via /proc/<pid>/comm (15-char truncated, but
-        // "buzz-acp" is 8 chars so it's always preserved).
+        // "beekeeper-acp" is 8 chars so it's always preserved).
         let Ok(comm) = std::fs::read_to_string(format!("/proc/{upid}/comm")) else {
             continue;
         };
@@ -461,12 +461,12 @@ fn collect_process_snapshots(harness_name: &str) -> Vec<ProcessSnapshot> {
 
 // ── expected_harness_exe_path ─────────────────────────────────────────────
 
-/// Derive the expected path of the `buzz-acp` harness binary next to the
+/// Derive the expected path of the `beekeeper-acp` harness binary next to the
 /// current executable. Returns `None` if `current_exe()` fails or has no
 /// parent directory.
 ///
-/// In a `.app` bundle: `.../Contents/MacOS/buzz-acp`.
-/// In a dev checkout: `<target-dir>/debug/buzz-acp` or similar.
+/// In a `.app` bundle: `.../Contents/MacOS/beekeeper-acp`.
+/// In a dev checkout: `<target-dir>/debug/beekeeper-acp` or similar.
 /// Never hardcoded — always derived from the running process.
 ///
 /// Attempts `std::fs::canonicalize` to resolve symlinks so the path
@@ -485,26 +485,26 @@ fn collect_process_snapshots(harness_name: &str) -> Vec<ProcessSnapshot> {
 /// incorrectly killed. Similarly, an orphan spawned by an older install of
 /// the same app (different bundle path, e.g. a prior DMG) will not match
 /// this path — that class is handled by `sweep_system_agent_processes`, which
-/// scopes by `BUZZ_MANAGED_AGENT` instance ID rather than exe path.
+/// scopes by `BEEKEEPER_MANAGED_AGENT` instance ID rather than exe path.
 pub fn expected_harness_exe_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    let raw = dir.join("buzz-acp");
+    let raw = dir.join("beekeeper-acp");
     // Canonicalize if possible; fall back to the raw path on failure.
     Some(std::fs::canonicalize(&raw).unwrap_or(raw))
 }
 
 /// The basename of the harness binary — used for the cheap name pre-filter in
 /// `collect_process_snapshots` before the expensive exe-path lookup.
-const HARNESS_BINARY_NAME: &str = "buzz-acp";
+const HARNESS_BINARY_NAME: &str = "beekeeper-acp";
 
 // ── sweep_untracked_bundle_harnesses ─────────────────────────────────────
 
-/// Sweep and kill harness processes that share this bundle's exact `buzz-acp`
+/// Sweep and kill harness processes that share this bundle's exact `beekeeper-acp`
 /// executable path but are not in `skip_pids`.
 ///
 /// Complements the env-var-based `sweep_system_agent_processes`: this sweep
-/// catches orphans that predate the `BUZZ_MANAGED_AGENT` env var injection
+/// catches orphans that predate the `BEEKEEPER_MANAGED_AGENT` env var injection
 /// and any that lost their PID-file receipt.
 ///
 /// **Boot-time only.** This function is called once, under the store lock,
@@ -516,7 +516,7 @@ const HARNESS_BINARY_NAME: &str = "buzz-acp";
 /// snapshot and the scan.
 ///
 /// Scoping guarantee: only processes whose exe path (after symlink resolution
-/// where possible) equals `<this bundle>/buzz-acp` are candidates. Dev builds
+/// where possible) equals `<this bundle>/beekeeper-acp` are candidates. Dev builds
 /// at a different path, other installs, and children of tracked parents are
 /// never directly targeted. Children die with their parent's process group
 /// when `resolve_pgids_and_kill` signals the PGID.
@@ -562,30 +562,30 @@ mod tests {
     fn strip_deleted_suffix_removes_kernel_suffix() {
         // Linux appends " (deleted)" when the binary has been replaced since
         // launch — this is exactly the stale orphan class we want to reap.
-        let p = PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS/buzz-acp (deleted)");
+        let p = PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS/beekeeper-acp (deleted)");
         assert_eq!(
             strip_deleted_suffix(p),
-            PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS/buzz-acp")
+            PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS/beekeeper-acp")
         );
     }
 
     #[test]
     fn strip_deleted_suffix_leaves_normal_path_unchanged() {
-        let p = PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS/buzz-acp");
+        let p = PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS/beekeeper-acp");
         assert_eq!(strip_deleted_suffix(p.clone()), p,);
     }
 
     #[test]
     fn strip_deleted_suffix_does_not_strip_partial_match() {
         // "(deleted)" without the leading space must not be stripped.
-        let p = PathBuf::from("/some/path/buzz-acp(deleted)");
+        let p = PathBuf::from("/some/path/beekeeper-acp(deleted)");
         assert_eq!(strip_deleted_suffix(p.clone()), p,);
     }
 
     // ── select_untracked_bundle_harnesses ────────────────────────────────
 
-    const BUNDLE_HARNESS: &str = "/Applications/Beekeeper.app/Contents/MacOS/buzz-acp";
-    const DEV_HARNESS: &str = "/Users/dev/buzz/.worktrees/main/target/debug/buzz-acp";
+    const BUNDLE_HARNESS: &str = "/Applications/Beekeeper.app/Contents/MacOS/beekeeper-acp";
+    const DEV_HARNESS: &str = "/Users/dev/buzz/.worktrees/main/target/debug/beekeeper-acp";
 
     fn snap(pid: u32, path: &str) -> ProcessSnapshot {
         ProcessSnapshot {
@@ -706,7 +706,8 @@ mod tests {
     #[test]
     fn deleted_suffix_stripped_path_matches_expected() {
         // Snapshot with " (deleted)" suffix stripped → should match the clean expected path.
-        let raw = PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS/buzz-acp (deleted)");
+        let raw =
+            PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS/beekeeper-acp (deleted)");
         let snaps = vec![ProcessSnapshot {
             pid: 3001,
             exe_path: strip_deleted_suffix(raw),

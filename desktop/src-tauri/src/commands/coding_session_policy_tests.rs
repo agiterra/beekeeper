@@ -329,7 +329,7 @@ const TS_DECODER_FIXTURE: &str =
 #[test]
 fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
     // Regenerate with
-    // `BUZZ_UPDATE_FIXTURES=1 cargo test --manifest-path desktop/src-tauri/Cargo.toml coding_session_policy`.
+    // `BEEKEEPER_UPDATE_FIXTURES=1 cargo test --manifest-path desktop/src-tauri/Cargo.toml coding_session_policy`.
     let founder = fixed_keys(0x11);
     let event = signed_policy(&founder, complete_policy());
     let generated = serde_json::to_string_pretty(&json!({
@@ -353,7 +353,7 @@ fixture is what let a decoder stay green while it would have thrown for every re
         + "\n";
 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(TS_DECODER_FIXTURE);
-    if std::env::var("BUZZ_UPDATE_FIXTURES").is_ok() {
+    if std::env::var("BEEKEEPER_UPDATE_FIXTURES").is_ok() {
         std::fs::write(&path, &generated).expect("write fixture");
     }
     let stored = std::fs::read_to_string(&path)
@@ -371,7 +371,7 @@ fixture is what let a decoder stay green while it would have thrown for every re
         serde_json::from_str(&generated).expect("generated fixture is JSON");
     assert_eq!(
         stored_value, generated_value,
-        "the Desktop policy fixture is stale; regenerate it with BUZZ_UPDATE_FIXTURES=1"
+        "the Desktop policy fixture is stale; regenerate it with BEEKEEPER_UPDATE_FIXTURES=1"
     );
 
     // The fixture must exercise the shapes the decoder is pinned to, or it

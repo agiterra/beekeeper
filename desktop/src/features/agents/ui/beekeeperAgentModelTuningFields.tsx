@@ -16,13 +16,13 @@ import {
   type AgentDropdownOption,
 } from "./agentConfigControls";
 import {
-  BUZZ_AGENT_THINKING_EFFORT,
-  BUZZ_AGENT_THINKING_EFFORT_VALUES,
+  BEEKEEPER_AGENT_THINKING_EFFORT,
+  BEEKEEPER_AGENT_THINKING_EFFORT_VALUES,
   getProviderEffortConfig,
 } from "./beekeeperAgentConfig";
 
 /**
- * Shared effort-select dropdown for the `BUZZ_AGENT_THINKING_EFFORT` env var.
+ * Shared effort-select dropdown for the `BEEKEEPER_AGENT_THINKING_EFFORT` env var.
  *
  * Used by both `BeekeeperAgentModelTuningFields` (per-agent/persona dialogs) and
  * `AgentDefaultsSettingsCard` (global defaults settings card) to ensure a
@@ -107,7 +107,7 @@ export function EffortSelectField({
       : (inheritFallbackLabel ?? "Inherit");
   const effortOptions: AgentDropdownOption[] = [
     { label: emptyOptionLabel ?? inheritLabel, value: "" },
-    ...BUZZ_AGENT_THINKING_EFFORT_VALUES.flatMap((v) => {
+    ...BEEKEEPER_AGENT_THINKING_EFFORT_VALUES.flatMap((v) => {
       const isValid = (effortValid as readonly string[]).includes(v);
       if (!showUnavailableOptions && !isValid) return [];
       const isDefault = v === effortDefault;
@@ -169,7 +169,7 @@ export function EffortSelectField({
 }
 
 /**
- * Auto-clear hook: resets `BUZZ_AGENT_THINKING_EFFORT` to "" (Inherit) when
+ * Auto-clear hook: resets `BEEKEEPER_AGENT_THINKING_EFFORT` to "" (Inherit) when
  * the current value is no longer valid for the new provider/model.
  *
  * Call this in any component that renders `EffortSelectField` and owns the
@@ -311,11 +311,11 @@ export function BeekeeperAgentModelTuningFields({
   const { validValues: effortValid, defaultValue: effortDefault } =
     effortConfig;
 
-  const currentEffort = envVars[BUZZ_AGENT_THINKING_EFFORT] ?? "";
+  const currentEffort = envVars[BEEKEEPER_AGENT_THINKING_EFFORT] ?? "";
   useEffortAutoClear({
     currentEffort,
     effortValid,
-    onClear: () => onEnvVarChange(BUZZ_AGENT_THINKING_EFFORT, ""),
+    onClear: () => onEnvVarChange(BEEKEEPER_AGENT_THINKING_EFFORT, ""),
   });
 
   return (
@@ -332,11 +332,11 @@ export function BeekeeperAgentModelTuningFields({
             effortDefault={effortDefault}
             effortValid={effortValid}
             htmlFor="ba-thinking-effort"
-            inheritedEffort={inheritedEnvVars[BUZZ_AGENT_THINKING_EFFORT]}
+            inheritedEffort={inheritedEnvVars[BEEKEEPER_AGENT_THINKING_EFFORT]}
             inheritFallbackLabel="Inherit (agent default)"
             label="Thinking / Effort"
             onChange={(value) =>
-              onEnvVarChange(BUZZ_AGENT_THINKING_EFFORT, value)
+              onEnvVarChange(BEEKEEPER_AGENT_THINKING_EFFORT, value)
             }
             testId="ba-thinking-effort-select"
           />

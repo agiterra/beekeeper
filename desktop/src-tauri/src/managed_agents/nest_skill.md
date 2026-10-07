@@ -11,11 +11,11 @@ version: 1
 
 ## Environment
 
-`BUZZ_PRIVATE_KEY` is set by the harness at runtime or by the developer's environment. If missing, tell the user to set it (hex or nsec format). Never read or echo the value.
+`BEEKEEPER_PRIVATE_KEY` is set by the harness at runtime or by the developer's environment. If missing, tell the user to set it (hex or nsec format). Never read or echo the value.
 
-`BUZZ_RELAY_URL` defaults to `http://localhost:3000`. In development, the user may need to set this to a staging or production relay URL.
+`BEEKEEPER_RELAY_URL` defaults to `http://localhost:3000`. In development, the user may need to set this to a staging or production relay URL.
 
-`BUZZ_AUTH_TAG` is required for `bee agents draft-create` and `bee agents draft-update` because those commands send owner-reviewed Desktop drafts. If missing, explain that this managed agent cannot open owner-reviewed agent drafts from chat.
+`BEEKEEPER_AUTH_TAG` is required for `bee agents draft-create` and `bee agents draft-update` because those commands send owner-reviewed Desktop drafts. If missing, explain that this managed agent cannot open owner-reviewed agent drafts from chat.
 
 Run the bundled CLI with `--help` and `<command> <subcommand> --help` to discover all flags, arguments, and usage. This skill documents only what `--help` cannot tell you.
 
@@ -127,7 +127,7 @@ bee messages send --channel <UUID> \
 4. **`dms open` returns `dm_id`** — use this value as `--channel` for subsequent `messages send/get` commands on that DM.
 5. **Content max 65,536 bytes** (exit 1 if exceeded). Diffs auto-truncate at 61,440 bytes at a hunk boundary.
 6. **`users get` always returns an array** — even for a single pubkey lookup. Never expect a bare object.
-7. **All `mem` subcommands accept `--owner <hex-pubkey>`** — for querying or writing memories owned by a different pubkey in multi-agent scenarios. Defaults to the owner from `BUZZ_AUTH_TAG`.
+7. **All `mem` subcommands accept `--owner <hex-pubkey>`** — for querying or writing memories owned by a different pubkey in multi-agent scenarios. Defaults to the owner from `BEEKEEPER_AUTH_TAG`.
 8. **`mem rm` cannot delete `core`** — use `mem set core ''` instead.
 
 ## Forum Posts

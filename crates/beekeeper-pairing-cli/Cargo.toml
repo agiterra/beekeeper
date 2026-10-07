@@ -8,7 +8,7 @@ repository.workspace = true
 description = "CLI tool for NIP-AB device pairing interop testing"
 
 [[bin]]
-name = "buzz-pair"
+name = "beekeeper-pair"
 path = "src/main.rs"
 
 [dependencies]

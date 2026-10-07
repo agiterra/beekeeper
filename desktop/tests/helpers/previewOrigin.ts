@@ -8,7 +8,7 @@
  * shared default, a worktree that forgot to set a port would quietly test a
  * sibling's `dist` against its own specs.
  *
- * So the port is, in order: `E2E_PORT`; `BUZZ_E2E_PORT` (the older spelling);
+ * So the port is, in order: `E2E_PORT`; `BEEKEEPER_E2E_PORT` (the older spelling);
  * 4173 under `CI` (one checkout per container); otherwise a port derived from
  * this checkout's path, in 4300–4999 — stable for one worktree (so its own
  * server is reused across runs) and different between worktrees.
@@ -31,7 +31,7 @@ const checkout = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 export const PREVIEW_PORT =
   process.env.E2E_PORT ||
-  process.env.BUZZ_E2E_PORT ||
+  process.env.BEEKEEPER_E2E_PORT ||
   (process.env.CI ? "4173" : portForCheckout(checkout));
 
 /** `http://127.0.0.1:<PREVIEW_PORT>`, with no trailing slash. */

@@ -1,6 +1,6 @@
 //! Client-side registry for the built-in shell.
 //!
-//! Each session's shell runs in a **detached host process** (`buzz-shell-host`)
+//! Each session's shell runs in a **detached host process** (`beekeeper-shell-host`)
 //! that owns the PTY and outlives this app, so a shell (and whatever is running
 //! in it) survives an app restart/update. This module is the *client*: it
 //! spawns/attaches hosts over their Unix sockets and mirrors each host's output
@@ -81,7 +81,7 @@ fn socket_path_for(dir: &std::path::Path, id: &str) -> PathBuf {
 }
 
 /// Spawn a new detached shell session running `command` (default: `$SHELL`) in
-/// `cwd` (default: `$HOME`). The shell runs in a `buzz-shell-host` process that
+/// `cwd` (default: `$HOME`). The shell runs in a `beekeeper-shell-host` process that
 /// outlives this app. `project_ref`, if given, tags the session with the
 /// project container it was opened from (see `set_project_ref`).
 ///
@@ -154,9 +154,9 @@ fn spawn_host_and_attach(
     // `detect` slice only checks resolvability, it never launches anything;
     // the actual spawn below stays outside the trait (spawn is forbidden on
     // `SessionDriver` by architect ruling — see `session_driver.rs`).
-    session_driver::resolve_driver(session_driver::BUZZ_SHELL_HOST)?;
-    let host_bin = crate::managed_agents::resolve_command("buzz-shell-host")
-        .ok_or_else(|| "buzz-shell-host binary not found".to_string())?;
+    session_driver::resolve_driver(session_driver::BEEKEEPER_SHELL_HOST)?;
+    let host_bin = crate::managed_agents::resolve_command("beekeeper-shell-host")
+        .ok_or_else(|| "beekeeper-shell-host binary not found".to_string())?;
 
     // Spawn detached with stdio to /dev/null; the host double-forks + setsid so
     // it survives this app. Reap our short-lived direct child.
@@ -970,7 +970,7 @@ pub fn input_line(session_id: &str) -> Option<String> {
 }
 
 // Persistence (history checkpoint + live-cwd tracking) now lives in the
-// detached host process (`buzz-shell-host`), which owns the authoritative
+// detached host process (`beekeeper-shell-host`), which owns the authoritative
 // scrollback and keeps writing across app restarts. The app only reads that
 // on-disk history back (`persist::load_all`) as the reboot fallback.
 

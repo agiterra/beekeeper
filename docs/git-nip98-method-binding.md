@@ -73,11 +73,11 @@ then sends `POST git-receive-pack` carrying the same header. Under `beekeeper-au
   `error: RPC failed; HTTP 401` / `send-pack: unexpected disconnect`. The same
   push with `--no-verify` succeeded instantly — the only variable was elapsed time.
 - Not hook-specific: pack building for a large repository does the same thing.
-  With `BUZZ_GIT_MAX_PACK_BYTES` at 500 MB, a pack that takes over a minute to
+  With `BEEKEEPER_GIT_MAX_PACK_BYTES` at 500 MB, a pack that takes over a minute to
   produce is unpushable regardless of hooks.
 
 The fix is `verify_nip98_event_within`, called from the git transport with
-`git_nip98_tolerance_secs` (`BUZZ_GIT_NIP98_TOLERANCE_SECS`, default **600 s**).
+`git_nip98_tolerance_secs` (`BEEKEEPER_GIT_NIP98_TOLERANCE_SECS`, default **600 s**).
 The rest of the HTTP surface keeps ±60 s; values below 60 are clamped up.
 
 **This widens the escalation window described above.** The token's lifetime is

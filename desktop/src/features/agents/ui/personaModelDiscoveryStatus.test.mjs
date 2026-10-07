@@ -129,11 +129,11 @@ test("other Databricks discovery failures fall through to the generic notice", (
 });
 
 test("auth-required errors name the agent and ask for sign-in", () => {
-  // Real shape from run_agent_models_command wrapping buzz-acp stderr when
+  // Real shape from run_agent_models_command wrapping beekeeper-acp stderr when
   // cursor-agent is signed out (spec ErrorCode::AuthRequired text).
   const status = formatModelDiscoveryErrorStatus(
     new Error(
-      "buzz-acp models failed (exit 1): agent communication failed: Agent reported error (code -32000): Authentication required",
+      "beekeeper-acp models failed (exit 1): agent communication failed: Agent reported error (code -32000): Authentication required",
     ),
     "",
     "Cursor",
@@ -160,7 +160,7 @@ test("non-auth -32000 errors do NOT get the sign-in copy", () => {
   // "Authentication required" text may route to the sign-in message.
   const status = formatModelDiscoveryErrorStatus(
     new Error(
-      "buzz-acp models failed (exit 1): Agent reported error (code -32000): model catalog fetch timed out",
+      "beekeeper-acp models failed (exit 1): Agent reported error (code -32000): model catalog fetch timed out",
     ),
     "anthropic",
     "Cursor",

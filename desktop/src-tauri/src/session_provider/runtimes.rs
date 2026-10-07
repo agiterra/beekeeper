@@ -1,7 +1,7 @@
 //! The host-side runtime table for the coding-session provider.
 //!
 //! One static table names the runtimes this desktop can offer to the sidecar
-//! (`BUZZ_CSP_RUNTIMES`) and to the frontend picker
+//! (`BEEKEEPER_CSP_RUNTIMES`) and to the frontend picker
 //! (`coding_session_provider_runtimes`). The table is deliberately small and
 //! v1-conservative: claude is always offered (today's zero-config default),
 //! codex and goose only when their adapter binaries actually resolve.
@@ -71,7 +71,7 @@ const HOST_RUNTIMES: &[HostRuntime] = &[
         adapter_commands: &["codex-acp"],
         agent_args: &[],
         // codex-acp answers the same ACP model probe claude-agent-acp does.
-        // Verified 2026-08-24 against codex-acp 1.6.2: `buzz-acp models --json`
+        // Verified 2026-08-24 against codex-acp 1.6.2: `beekeeper-acp models --json`
         // returns a `model` config option whose `currentValue` is the real
         // model (`gpt-5.6-terra`) and whose options list every selectable one.
         // Left `false`, every Codex execution rendered as `Codex · default` —
@@ -183,8 +183,8 @@ pub(crate) fn known_instance_ref(instance_ref: &str) -> Option<bool> {
 
 /// What the models command needs to probe one runtime's own adapter.
 ///
-/// The probe is driver-agnostic — `buzz-acp models --json` drives whatever
-/// `BUZZ_ACP_AGENT_COMMAND` names — but the desktop command used to resolve
+/// The probe is driver-agnostic — `beekeeper-acp models --json` drives whatever
+/// `BEEKEEPER_ACP_AGENT_COMMAND` names — but the desktop command used to resolve
 /// `claude-agent-acp` by name whatever runtime it was asked about, so opting a
 /// second runtime into discovery would have reported Claude's models under its
 /// label (§2 item 39).
@@ -221,7 +221,7 @@ pub(crate) fn runtime_probe_target(instance_ref: &str) -> Result<RuntimeProbeTar
     })
 }
 
-/// Build the descriptor list written to `BUZZ_CSP_RUNTIMES` for one spawn.
+/// Build the descriptor list written to `BEEKEEPER_CSP_RUNTIMES` for one spawn.
 ///
 /// Claude is always included — with the bare command name when the adapter did
 /// not resolve, preserving the sidecar's own PATH fallback. Codex and goose are

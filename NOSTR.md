@@ -1,6 +1,6 @@
 # Using Third-Party Nostr Clients with Beekeeper
 
-Beekeeper is a Nostr relay that speaks NIP-29 (relay-based groups) natively. Third-party Nostr clients connect directly to `buzz-relay` using NIP-29 and NIP-42 authentication. The old NIP-28 compatibility proxy has been removed.
+Beekeeper is a Nostr relay that speaks NIP-29 (relay-based groups) natively. Third-party Nostr clients connect directly to `beekeeper-relay` using NIP-29 and NIP-42 authentication. The old NIP-28 compatibility proxy has been removed.
 
 ## Community scope
 
@@ -29,7 +29,7 @@ Connect any NIP-29 client straight to the relay.
 
 ```bash
 # 1. (Optional) Enable pubkey allowlist — must be set BEFORE relay startup
-export BUZZ_PUBKEY_ALLOWLIST=true
+export BEEKEEPER_PUBKEY_ALLOWLIST=true
 
 # 2. Start the relay (auto-starts Docker services and runs migrations)
 just relay &                         # relay on :3000
@@ -84,7 +84,7 @@ PGPASSWORD=buzz_dev psql -h localhost -U buzz -d buzz -c \
 
 ### Pubkey Allowlist
 
-When `BUZZ_PUBKEY_ALLOWLIST=true`, NIP-42 connections that authenticate with only a pubkey
+When `BEEKEEPER_PUBKEY_ALLOWLIST=true`, NIP-42 connections that authenticate with only a pubkey
 (no API token) are checked against the `pubkey_allowlist` table. This lets you open the
 relay to specific external Nostr identities without granting full access.
 
@@ -213,13 +213,13 @@ nak req -k 1059 --tag "p=<your-hex-pubkey>" \
 
 ## Relay Membership (NIP-43)
 
-When `BUZZ_REQUIRE_RELAY_MEMBERSHIP=true`, every authenticated connection is checked against the
+When `BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP=true`, every authenticated connection is checked against the
 `relay_members` table. In today's single-community deployment this is the relay-wide member list; in multi-community mode the same rule is scoped to the host-derived community. Only pubkeys with a row for that community may use that community. The relay owner
 is bootstrapped automatically from `RELAY_OWNER_PUBKEY` on startup.
 
 ### CLI: Managing Members
 
-Use `buzz-admin` — the operator CLI shipped in the relay image — to manage relay membership.
+Use `beekeeper-admin` — the operator CLI shipped in the relay image — to manage relay membership.
 In a Docker Compose deployment, use `run.sh`:
 
 ```bash
@@ -236,13 +236,13 @@ In a Docker Compose deployment, use `run.sh`:
 ./run.sh list-members
 ```
 
-Or invoke `buzz-admin` directly inside the container:
+Or invoke `beekeeper-admin` directly inside the container:
 
 ```bash
-docker compose exec relay buzz-admin add-member --pubkey npub1abc...
-docker compose exec relay buzz-admin add-member --pubkey npub1abc... --role admin
-docker compose exec relay buzz-admin remove-member --pubkey npub1abc...
-docker compose exec relay buzz-admin list-members
+docker compose exec relay beekeeper-admin add-member --pubkey npub1abc...
+docker compose exec relay beekeeper-admin add-member --pubkey npub1abc... --role admin
+docker compose exec relay beekeeper-admin remove-member --pubkey npub1abc...
+docker compose exec relay beekeeper-admin list-members
 ```
 
 **Exit codes:**
@@ -262,7 +262,7 @@ docker compose exec relay buzz-admin list-members
 |----------|-------|
 | `DATABASE_URL` | Postgres connection string |
 | `REDIS_URL` | Redis connection string |
-| `BUZZ_RELAY_PRIVATE_KEY` | Hex private key — required to sign kind:13534 events |
+| `BEEKEEPER_RELAY_PRIVATE_KEY` | Hex private key — required to sign kind:13534 events |
 
 ### NIP-43 Admin Events (WebSocket)
 
@@ -334,9 +334,9 @@ but only admins/owners can set it. Full spec:
 
 | Variable | Required | Default | Description |
 |----------|:--------:|---------|-------------|
-| `BUZZ_PUBKEY_ALLOWLIST` | ❌ | `false` | Enable pubkey allowlist for NIP-42 pubkey-only auth |
-| `BUZZ_RELAY_PRIVATE_KEY` | ❌ | random | Hex secret key for relay signing (discovery events, system messages) |
-| `BUZZ_REQUIRE_AUTH_TOKEN` | ❌ | `false` | Require authenticated NIP-42 for all connections |
+| `BEEKEEPER_PUBKEY_ALLOWLIST` | ❌ | `false` | Enable pubkey allowlist for NIP-42 pubkey-only auth |
+| `BEEKEEPER_RELAY_PRIVATE_KEY` | ❌ | random | Hex secret key for relay signing (discovery events, system messages) |
+| `BEEKEEPER_REQUIRE_AUTH_TOKEN` | ❌ | `false` | Require authenticated NIP-42 for all connections |
 
 ---
 

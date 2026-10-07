@@ -107,7 +107,7 @@ test("agent mode: the default, said with the machine, the account and the env sw
     "a session on another computer follows that computer's setting",
   );
   await expect(disclosure).toContainText(
-    "A host started with BUZZ_CSP_AUTO_TITLE=off, or a runtime configured with no title model, titles nothing.",
+    "A host started with BEEKEEPER_CSP_AUTO_TITLE=off, or a runtime configured with no title model, titles nothing.",
   );
   await expect(disclosure).toContainText(
     "A name someone types always wins, in every mode.",

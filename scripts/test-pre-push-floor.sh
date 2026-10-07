@@ -11,7 +11,7 @@
 # Hermetic: a throwaway git repo under $TMPDIR, with `cargo`, `pnpm`, `just`
 # and `flutter` stubbed on PATH the way deploy/autodeploy/tests stub `incus`,
 # `flock` and `sleep`. The package graph is injected through
-# BUZZ_PRE_PUSH_FLOOR_GRAPH so `cargo metadata` is not one of the cargo
+# BEEKEEPER_PRE_PUSH_FLOOR_GRAPH so `cargo metadata` is not one of the cargo
 # invocations being counted. Only `node` is real — it is what runs the mapping
 # under test. Seconds, no toolchain, no network.
 set -uo pipefail
@@ -157,8 +157,8 @@ run_floor() { # run_floor <branch> [STUB_FAIL_MATCH] [BUDGET]
     PATH="$work/bin:$PATH" \
       STUB_LOG="$work/stub.log" \
       STUB_FAIL_MATCH="${2:-}" \
-      BUZZ_PRE_PUSH_FLOOR_BUDGET_SECONDS="${3:-120}" \
-      BUZZ_PRE_PUSH_FLOOR_GRAPH="$work/graph.json" \
+      BEEKEEPER_PRE_PUSH_FLOOR_BUDGET_SECONDS="${3:-120}" \
+      BEEKEEPER_PRE_PUSH_FLOOR_GRAPH="$work/graph.json" \
       ./scripts/pre-push-floor.sh
   ) >"$work/stdout.txt" 2>"$work/stderr.txt"
   floor_status=$?
@@ -310,7 +310,7 @@ git -C "$scratch" checkout --quiet cli-only
 : >"$work/stub.log"
 push_out=$(
   cd "$scratch" && PATH="$work/bin:$PATH" STUB_LOG="$work/stub.log" \
-    BUZZ_PRE_PUSH_FLOOR_GRAPH="$work/graph.json" \
+    BEEKEEPER_PRE_PUSH_FLOOR_GRAPH="$work/graph.json" \
     git push --quiet "$bare" cli-only 2>&1
 )
 check_contains "the push printed the floor's summary" "$push_out" "pre-push floor: beekeeper-cli ("
@@ -327,7 +327,7 @@ git -C "$scratch" config core.hooksPath "$scratch/.githooks"
 push_out=$(
   cd "$linked" && PATH="$work/bin:$PATH" STUB_LOG="$work/stub.log" \
     STUB_REFUSE_GIT_REPO_ENV=1 \
-    BUZZ_PRE_PUSH_FLOOR_GRAPH="$work/graph.json" \
+    BEEKEEPER_PRE_PUSH_FLOOR_GRAPH="$work/graph.json" \
     git push --quiet "$bare" linked-hook 2>&1
 )
 push_status=$?
@@ -362,7 +362,7 @@ if command -v lefthook >/dev/null 2>&1; then
   : >"$work/stub.log"
   lefthook_out=$(
     cd "$scratch" && PATH="$work/bin:$PATH" STUB_LOG="$work/stub.log" \
-      BUZZ_PRE_PUSH_FLOOR_GRAPH="$work/graph.json" \
+      BEEKEEPER_PRE_PUSH_FLOOR_GRAPH="$work/graph.json" \
       lefthook run pre-push 2>&1
   )
   check_contains "lefthook ran the floor" "$lefthook_out" "pre-push floor:"

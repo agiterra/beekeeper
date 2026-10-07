@@ -32,8 +32,8 @@ pub(super) fn parse_embedded_source(
 
 pub(super) fn embedded_source() -> TeamReadinessSource {
     parse_embedded_source(
-        option_env!("BUZZ_DESKTOP_BUILD_SOURCE_SHA"),
-        option_env!("BUZZ_DESKTOP_BUILD_SOURCE_DIRTY"),
+        option_env!("BEEKEEPER_DESKTOP_BUILD_SOURCE_SHA"),
+        option_env!("BEEKEEPER_DESKTOP_BUILD_SOURCE_DIRTY"),
     )
 }
 

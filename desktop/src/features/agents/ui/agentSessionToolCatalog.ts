@@ -64,7 +64,7 @@ export function getToolStatusDisplay(status: ToolStatus, isError: boolean) {
   };
 }
 
-const BUZZ_READ_TOOLS = new Set([
+const BEEKEEPER_READ_TOOLS = new Set([
   "get_messages",
   "get_channel_history",
   "get_thread",
@@ -85,7 +85,7 @@ const BUZZ_READ_TOOLS = new Set([
   "get_contact_list",
 ]);
 
-const BUZZ_WRITE_TOOLS = new Set([
+const BEEKEEPER_WRITE_TOOLS = new Set([
   "send_message",
   "send_diff_message",
   "edit_message",
@@ -119,13 +119,16 @@ const BUZZ_WRITE_TOOLS = new Set([
   "set_contact_list",
 ]);
 
-const BUZZ_TOOL_NAMES = new Set([...BUZZ_READ_TOOLS, ...BUZZ_WRITE_TOOLS]);
+const BEEKEEPER_TOOL_NAMES = new Set([
+  ...BEEKEEPER_READ_TOOLS,
+  ...BEEKEEPER_WRITE_TOOLS,
+]);
 
-const BUZZ_TOOL_NAMES_BY_LENGTH = [...BUZZ_TOOL_NAMES].sort(
+const BEEKEEPER_TOOL_NAMES_BY_LENGTH = [...BEEKEEPER_TOOL_NAMES].sort(
   (left, right) => right.length - left.length,
 );
 
-const BUZZ_TOOL_TITLE_ALIASES: Array<[RegExp, string]> = [
+const BEEKEEPER_TOOL_TITLE_ALIASES: Array<[RegExp, string]> = [
   [/\bsending message to channel\b/, "send_message"],
   [/\bretrieving recent messages from channel\b/, "get_messages"],
   [/\bgetting channel details\b/, "get_channel"],
@@ -138,8 +141,8 @@ const BUZZ_TOOL_TITLE_ALIASES: Array<[RegExp, string]> = [
 
 export function getBeekeeperToolInfo(title: string): BeekeeperToolInfo | null {
   const name = normalizeToolName(title);
-  const isRead = BUZZ_READ_TOOLS.has(name);
-  const isWrite = BUZZ_WRITE_TOOLS.has(name);
+  const isRead = BEEKEEPER_READ_TOOLS.has(name);
+  const isWrite = BEEKEEPER_WRITE_TOOLS.has(name);
   if (!isRead && !isWrite) {
     return null;
   }
@@ -231,7 +234,7 @@ export function findBeekeeperToolName(
 
   const normalized = normalizeToolNameText(value);
   return (
-    BUZZ_TOOL_NAMES_BY_LENGTH.find(
+    BEEKEEPER_TOOL_NAMES_BY_LENGTH.find(
       (name) =>
         (includeShortNames || name.length >= 8) && normalized.includes(name),
     ) ?? null
@@ -245,7 +248,7 @@ function findBeekeeperToolAlias(value: string) {
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ");
   return (
-    BUZZ_TOOL_TITLE_ALIASES.find(([pattern]) =>
+    BEEKEEPER_TOOL_TITLE_ALIASES.find(([pattern]) =>
       pattern.test(normalizedPhrase),
     )?.[1] ?? null
   );
@@ -271,7 +274,7 @@ export function formatToolTitle(
   fallbackTitle?: string,
 ): string {
   const name = normalizeToolName(toolName);
-  if (BUZZ_READ_TOOLS.has(name) || BUZZ_WRITE_TOOLS.has(name)) {
+  if (BEEKEEPER_READ_TOOLS.has(name) || BEEKEEPER_WRITE_TOOLS.has(name)) {
     return name
       .split("_")
       .map((part) => part.charAt(0).toUpperCase() + part.slice(1))

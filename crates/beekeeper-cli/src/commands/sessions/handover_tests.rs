@@ -686,7 +686,7 @@ fn no_projects_file_refuses_with_the_remedy_before_anything_is_claimed() {
             "the provider resolves its working directory from its projects file, not from this \
              command"
         ) && remedy.contains("--projects-file")
-            && remedy.contains("BUZZ_CSP_PROJECTS_FILE")
+            && remedy.contains("BEEKEEPER_CSP_PROJECTS_FILE")
             && remedy.contains("<state-dir>/projects.json")
             && remedy.contains(&cwd.display().to_string()),
         "the refusal names the mechanism, the flag, the variable, the desktop path and the \

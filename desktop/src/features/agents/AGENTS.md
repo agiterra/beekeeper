@@ -44,7 +44,7 @@ with a TypeScript lookup table or an id comparison in a component.
    (`hasRenderableAgentConfigField`, `getRenderableEffortField`).
 2. **Effort reads/writes go through the descriptor.** Use the effort
    descriptor's `currentPersistence` key — never a raw
-   `BUZZ_AGENT_THINKING_EFFORT` literal in UI code. `currentPersistence` is
+   `BEEKEEPER_AGENT_THINKING_EFFORT` literal in UI code. `currentPersistence` is
    where the value lives *today*; `targetApplication` is how the harness
    *should* receive it. They intentionally differ until PR 2.7 migrates
    Goose/Claude — do not "fix" one to match the other without doing the

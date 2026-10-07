@@ -34,7 +34,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
  * Every value is a disclosed non-answer or a real one: an absent commit reads
  * `unknown` and never an empty string, a dash, or a stale previous value. The
  * relay's `unknown` names its cause, because hive answers `unknown` on every
- * build for one specific reason — its deployer predates the `BUZZ_SOURCE_SHA`
+ * build for one specific reason — its deployer predates the `BEEKEEPER_SOURCE_SHA`
  * fix (2ba548c9e) — and a bare "unknown" would send the reader to the wrong
  * place.
  */

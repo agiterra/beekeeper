@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .max_connections(1)
             .connect(&database_url)
             .await?;
-        let runtime_role = std::env::var("BUZZ_PUSH_RUNTIME_DATABASE_ROLE")?;
+        let runtime_role = std::env::var("BEEKEEPER_PUSH_RUNTIME_DATABASE_ROLE")?;
         PostgresAuthorityStore::apply_migrations_and_grants(&pool, &runtime_role).await?;
         return Ok(());
     }

@@ -9,7 +9,7 @@ fn agent(pubkey: &str, name: &str, home_role: Option<&str>) -> ManagedAgentRecor
         "pubkey": pubkey,
         "name": name,
         "relay_url": "wss://relay.example",
-        "acp_command": "buzz-acp",
+        "acp_command": "beekeeper-acp",
         "agent_command": "goose",
         "agent_args": [],
         "mcp_command": "",

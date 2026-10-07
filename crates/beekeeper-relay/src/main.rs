@@ -38,11 +38,11 @@ fn buzz_auto_migrate_enabled(value: Option<&str>) -> bool {
 fn relay_keypair_from_config(relay_private_key: Option<&str>) -> anyhow::Result<nostr::Keys> {
     let hex = relay_private_key.ok_or_else(|| {
         anyhow::anyhow!(
-            "BUZZ_RELAY_PRIVATE_KEY must be set. Run `just bootstrap` for local \
+            "BEEKEEPER_RELAY_PRIVATE_KEY must be set. Run `just bootstrap` for local \
              development or configure a stable 32-byte hex private key."
         )
     })?;
-    nostr::Keys::parse(hex).map_err(|e| anyhow::anyhow!("invalid BUZZ_RELAY_PRIVATE_KEY: {e}"))
+    nostr::Keys::parse(hex).map_err(|e| anyhow::anyhow!("invalid BEEKEEPER_RELAY_PRIVATE_KEY: {e}"))
 }
 
 /// Controls how many per-community gauge series the usage poller emits.
@@ -54,7 +54,7 @@ fn relay_keypair_from_config(relay_private_key: Option<&str>) -> anyhow::Result<
 ///
 /// Fleet-wide totals (`buzz_total_*`) always emit regardless of mode.
 ///
-/// Set via `BUZZ_USAGE_METRICS_PER_COMMUNITY`:
+/// Set via `BEEKEEPER_USAGE_METRICS_PER_COMMUNITY`:
 ///   - `all` — emit per-community series for every community (default)
 ///   - `off` — suppress all per-community series; fleet totals only
 ///
@@ -69,7 +69,7 @@ enum EmissionScope {
 
 impl EmissionScope {
     fn from_env() -> Self {
-        let raw = std::env::var("BUZZ_USAGE_METRICS_PER_COMMUNITY")
+        let raw = std::env::var("BEEKEEPER_USAGE_METRICS_PER_COMMUNITY")
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase();
@@ -79,7 +79,7 @@ impl EmissionScope {
             other => {
                 warn!(
                     value = other,
-                    "BUZZ_USAGE_METRICS_PER_COMMUNITY: unknown value — defaulting to all"
+                    "BEEKEEPER_USAGE_METRICS_PER_COMMUNITY: unknown value — defaulting to all"
                 );
                 EmissionScope::All
             }
@@ -107,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
     // If OTEL_EXPORTER_OTLP_ENDPOINT is set, also attach an OpenTelemetry tracing
     // layer that exports spans via OTLP gRPC alongside the JSON stdout logs.
     //
-    // Build a single shared Resource (service.name=buzz-relay by default, overridable
+    // Build a single shared Resource (service.name=beekeeper-relay by default, overridable
     // via OTEL_SERVICE_NAME) for the trace provider so that Datadog can identify
     // spans under the correct service identity.
     let resource = telemetry::service_resource();
@@ -116,7 +116,7 @@ async fn main() -> anyhow::Result<()> {
     let otel_layer = match &tracer_init {
         telemetry::TracerInit::Enabled(p) => {
             use opentelemetry::trace::TracerProvider as _;
-            Some(tracing_opentelemetry::layer().with_tracer(p.tracer("buzz-relay")))
+            Some(tracing_opentelemetry::layer().with_tracer(p.tracer("beekeeper-relay")))
         }
         _ => None,
     };
@@ -133,14 +133,17 @@ async fn main() -> anyhow::Result<()> {
                 .json()
                 .event_format(trace_context_lookup.json_formatter(otel_enabled))
                 .with_filter(log_env_filter(
-                    beekeeper_core::log_targets::read_filter_var("RUST_LOG", "buzz-relay")
+                    beekeeper_core::log_targets::read_filter_var("RUST_LOG", "beekeeper-relay")
                         .as_deref(),
                 )),
         )
         .with(otel_layer.map(|layer| {
             layer.with_filter(telemetry::otel_env_filter(
-                beekeeper_core::log_targets::read_filter_var("BUZZ_OTEL_FILTER", "buzz-relay")
-                    .as_deref(),
+                beekeeper_core::log_targets::read_filter_var(
+                    "BEEKEEPER_OTEL_FILTER",
+                    "beekeeper-relay",
+                )
+                .as_deref(),
             ))
         }))
         .with(trace_context_lookup_layer)
@@ -151,7 +154,7 @@ async fn main() -> anyhow::Result<()> {
         warn!(error = %e, "Failed to build OTLP trace exporter; distributed tracing disabled");
     }
 
-    info!("Starting buzz-relay");
+    info!("Starting beekeeper-relay");
 
     let config = Config::from_env().map_err(|e| {
         error!("Invalid configuration: {e}");
@@ -201,7 +204,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let auto_migrate =
-        buzz_auto_migrate_enabled(std::env::var("BUZZ_AUTO_MIGRATE").ok().as_deref());
+        buzz_auto_migrate_enabled(std::env::var("BEEKEEPER_AUTO_MIGRATE").ok().as_deref());
     if auto_migrate {
         db.migrate().await.map_err(|e| {
             error!("Failed to run database migrations: {e}");
@@ -209,7 +212,7 @@ async fn main() -> anyhow::Result<()> {
         })?;
         info!("Database migrations complete");
     } else {
-        info!("Skipping database migrations because BUZZ_AUTO_MIGRATE is not enabled");
+        info!("Skipping database migrations because BEEKEEPER_AUTO_MIGRATE is not enabled");
     }
 
     if let Err(e) = db.ensure_future_partitions(3).await {
@@ -227,7 +230,7 @@ async fn main() -> anyhow::Result<()> {
     // the migration decision: spawn_fence_probe first verifies the
     // commit-time floor guard (catalog shape + observed behavior through the
     // armed pool) against the live schema, so a relay running with
-    // BUZZ_AUTO_MIGRATE off and migration 0021 unapplied can never open the
+    // BEEKEEPER_AUTO_MIGRATE off and migration 0021 unapplied can never open the
     // fence over an unenforced floor. Verification failure is loud but
     // non-fatal: the fence stays closed and every cursor page routes to the
     // writer.
@@ -248,11 +251,11 @@ async fn main() -> anyhow::Result<()> {
     // that no one can administer.
     if config.require_relay_membership && config.relay_owner_pubkey.is_none() {
         error!(
-            "BUZZ_REQUIRE_RELAY_MEMBERSHIP=true but RELAY_OWNER_PUBKEY is not set or invalid. \
+            "BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP=true but RELAY_OWNER_PUBKEY is not set or invalid. \
              Set RELAY_OWNER_PUBKEY to a valid 64-char hex pubkey."
         );
         return Err(anyhow::anyhow!(
-            "RELAY_OWNER_PUBKEY required when BUZZ_REQUIRE_RELAY_MEMBERSHIP=true"
+            "RELAY_OWNER_PUBKEY required when BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP=true"
         ));
     }
 
@@ -261,7 +264,7 @@ async fn main() -> anyhow::Result<()> {
     // or bootstrapping if we'll reject the config anyway.
     if config.require_relay_membership && config.relay_private_key.is_none() {
         return Err(anyhow::anyhow!(
-            "BUZZ_RELAY_PRIVATE_KEY is required when BUZZ_REQUIRE_RELAY_MEMBERSHIP=true. \
+            "BEEKEEPER_RELAY_PRIVATE_KEY is required when BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP=true. \
              NIP-43 events signed with an ephemeral key become unverifiable after restart."
         ));
     }
@@ -282,7 +285,7 @@ async fn main() -> anyhow::Result<()> {
         if host.is_empty() {
             if config.require_relay_membership {
                 return Err(anyhow::anyhow!(
-                    "Cannot derive a community host from BUZZ_RELAY_URL ({:?}); a resolvable host is required when BUZZ_REQUIRE_RELAY_MEMBERSHIP=true",
+                    "Cannot derive a community host from BEEKEEPER_RELAY_URL ({:?}); a resolvable host is required when BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP=true",
                     config.relay_url
                 ));
             }
@@ -301,7 +304,7 @@ async fn main() -> anyhow::Result<()> {
                     if config.require_relay_membership {
                         error!("Fatal: failed to ensure deployment community with membership enforcement enabled: {e}");
                         return Err(anyhow::anyhow!(
-                            "Failed to ensure deployment community (required when BUZZ_REQUIRE_RELAY_MEMBERSHIP=true): {e}"
+                            "Failed to ensure deployment community (required when BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP=true): {e}"
                         ));
                     }
                     error!("Failed to ensure deployment community (non-fatal, membership not required): {e}");
@@ -325,7 +328,7 @@ async fn main() -> anyhow::Result<()> {
                         "Fatal: failed to backfill allowlist with membership enforcement enabled: {e}"
                     );
                     return Err(anyhow::anyhow!(
-                        "Failed to backfill pubkey_allowlist (required when BUZZ_REQUIRE_RELAY_MEMBERSHIP=true): {e}"
+                        "Failed to backfill pubkey_allowlist (required when BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP=true): {e}"
                     ));
                 } else {
                     error!("Failed to backfill pubkey_allowlist (non-fatal): {e}");
@@ -348,7 +351,7 @@ async fn main() -> anyhow::Result<()> {
                     // in a broken state.
                     error!("Fatal: failed to bootstrap relay owner with membership enforcement enabled: {e}");
                     return Err(anyhow::anyhow!(
-                        "Failed to bootstrap relay owner (required when BUZZ_REQUIRE_RELAY_MEMBERSHIP=true): {e}"
+                        "Failed to bootstrap relay owner (required when BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP=true): {e}"
                     ));
                 } else {
                     error!(
@@ -377,7 +380,7 @@ async fn main() -> anyhow::Result<()> {
         info!("Audit service ready");
         Some(AuditService::new(audit_pool))
     } else {
-        info!("Audit logging disabled by BUZZ_AUDIT_ENABLED");
+        info!("Audit logging disabled by BEEKEEPER_AUDIT_ENABLED");
         None
     };
 
@@ -467,7 +470,7 @@ async fn main() -> anyhow::Result<()> {
         state.started_at,
     );
 
-    // Inter-relay mesh (BUZZ_MESH seam). `boot_mesh` returns None when the
+    // Inter-relay mesh (BEEKEEPER_MESH seam). `boot_mesh` returns None when the
     // kill switch is off — nothing is bound, published, or spawned, so the
     // relay behaves byte-identically to a build without the mesh. When
     // enabled, a misconfigured mesh is fatal here (bind/Redis failure): an
@@ -484,7 +487,7 @@ async fn main() -> anyhow::Result<()> {
         let runtime_id = handle.local_runtime_id;
         // Register the per-profile inbound consumers (huddle datagram fan-in,
         // HuddleControl accept loop, reliable-stream accept + optional
-        // BUZZ_MESH_DEMO_ECHO) before peers can route traffic here.
+        // BEEKEEPER_MESH_DEMO_ECHO) before peers can route traffic here.
         handle.wire_consumers(
             Arc::clone(&state.audio_rooms),
             state.config.mesh_demo_echo,
@@ -500,15 +503,15 @@ async fn main() -> anyhow::Result<()> {
     // linearizable conditional-write axiom (A3) before serving git traffic.
     // Failure is fatal: a backend that cannot satisfy pointer CAS invalidates
     // the manifest-pointer protocol. This is a deployment gate, not a proof.
-    if std::env::var("BUZZ_GIT_CONFORMANCE_PROBE")
+    if std::env::var("BEEKEEPER_GIT_CONFORMANCE_PROBE")
         .map(|v| v != "false")
         .unwrap_or(true)
     {
-        let race_width = std::env::var("BUZZ_GIT_PROBE_WRITERS")
+        let race_width = std::env::var("BEEKEEPER_GIT_PROBE_WRITERS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(32);
-        let race_rounds = std::env::var("BUZZ_GIT_PROBE_ROUNDS")
+        let race_rounds = std::env::var("BEEKEEPER_GIT_PROBE_ROUNDS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(3);
@@ -549,7 +552,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         let reconcile_state = Arc::clone(&state);
-        let interval_secs = std::env::var("BUZZ_NIP43_RECONCILE_INTERVAL_SECS")
+        let interval_secs = std::env::var("BEEKEEPER_NIP43_RECONCILE_INTERVAL_SECS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(60)
@@ -579,9 +582,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Emit kind:39000/39002 discovery events for channels that exist in the DB
     // but don't have corresponding events (e.g. seeded via direct SQL inserts).
-    // Only runs when BUZZ_RECONCILE_CHANNELS=true (dev/CI environments).
+    // Only runs when BEEKEEPER_RECONCILE_CHANNELS=true (dev/CI environments).
     // Production relays create channels through the event pipeline and don't need this.
-    if std::env::var("BUZZ_RECONCILE_CHANNELS").is_ok() {
+    if std::env::var("BEEKEEPER_RECONCILE_CHANNELS").is_ok() {
         let reconcile_state = Arc::clone(&state);
         tokio::spawn(async move {
             // Resolve the deployment's community from the configured relay URL
@@ -641,7 +644,7 @@ async fn main() -> anyhow::Result<()> {
     // together with the workflow engine in a future multi-pod coordination pass.
     {
         let reaper_state = Arc::clone(&state);
-        let reaper_interval_secs: u64 = std::env::var("BUZZ_REAPER_INTERVAL_SECS")
+        let reaper_interval_secs: u64 = std::env::var("BEEKEEPER_REAPER_INTERVAL_SECS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(60);
@@ -917,7 +920,7 @@ async fn main() -> anyhow::Result<()> {
     // so missed archive commands still converge without a global DB scan.
     {
         let lifecycle_state = Arc::clone(&state);
-        let interval_secs = std::env::var("BUZZ_COMMUNITY_REVALIDATE_INTERVAL_SECS")
+        let interval_secs = std::env::var("BEEKEEPER_COMMUNITY_REVALIDATE_INTERVAL_SECS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(30)
@@ -980,7 +983,7 @@ async fn main() -> anyhow::Result<()> {
     // Pool metrics: periodic background task polling DB + Redis pool stats.
     {
         let pool_state = Arc::clone(&state);
-        let interval_secs = std::env::var("BUZZ_POOL_METRICS_INTERVAL_SECS")
+        let interval_secs = std::env::var("BEEKEEPER_POOL_METRICS_INTERVAL_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(10)
@@ -1208,8 +1211,8 @@ async fn run_periodic_until_cancelled<Tick, TickFuture>(
 ///
 /// ```text
 /// ┌─────────────────────────────────────────────────────────┐
-/// │  Listener 1: TCP BUZZ_BIND_ADDR:3000  (app router)   │
-/// │  Listener 2: UDS BUZZ_UDS_PATH        (app, optional)│
+/// │  Listener 1: TCP BEEKEEPER_BIND_ADDR:3000  (app router)   │
+/// │  Listener 2: UDS BEEKEEPER_UDS_PATH        (app, optional)│
 /// │  Listener 3: TCP 0.0.0.0:8080           (health only)  │
 /// │  Listener 4: TCP 0.0.0.0:9102           (metrics, via  │
 /// │              PrometheusBuilder — already bound)         │
@@ -1244,7 +1247,7 @@ async fn run_periodic_until_cancelled<Tick, TickFuture>(
 /// case from SIGTERM to forced exit is 5s + 30s = 35s, so an orchestrator's
 /// grace period must exceed 35s (60s leaves headroom), assuming no `preStop`
 /// hook adds further delay.
-/// With jitter off (`BUZZ_DRAIN_JITTER_MS=0`, the default) sockets close
+/// With jitter off (`BEEKEEPER_DRAIN_JITTER_MS=0`, the default) sockets close
 /// all-at-once right after the grace, so the per-socket delay collapses to
 /// roughly the 5s grace plus the ack wait.
 const GRACEFUL_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
@@ -1334,7 +1337,7 @@ async fn serve(
     let tcp_listener = tokio::net::TcpListener::bind(&config.bind_addr)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to bind {}: {e}", config.bind_addr))?;
-    info!(addr = %config.bind_addr, "buzz-relay TCP listening");
+    info!(addr = %config.bind_addr, "beekeeper-relay TCP listening");
 
     #[cfg(unix)]
     if let Some(ref uds_path) = config.uds_path {
@@ -1345,14 +1348,14 @@ async fn serve(
             }
             Ok(_) => {
                 return Err(anyhow::anyhow!(
-                    "BUZZ_UDS_PATH {uds_path} exists but is not a socket"
+                    "BEEKEEPER_UDS_PATH {uds_path} exists but is not a socket"
                 ));
             }
             Err(_) => {}
         }
         let uds_listener = tokio::net::UnixListener::bind(uds_path)
             .map_err(|e| anyhow::anyhow!("Failed to bind UDS {uds_path}: {e}"))?;
-        info!(path = %uds_path, "buzz-relay UDS listening");
+        info!(path = %uds_path, "beekeeper-relay UDS listening");
 
         let router_uds = router.clone();
         let mut uds_rx = shutdown_tx.subscribe();
@@ -1386,7 +1389,7 @@ async fn serve(
 
     #[cfg(not(unix))]
     if config.uds_path.is_some() {
-        tracing::warn!("BUZZ_UDS_PATH set but UDS not supported on this platform");
+        tracing::warn!("BEEKEEPER_UDS_PATH set but UDS not supported on this platform");
     }
 
     // TCP-only path.
@@ -1441,7 +1444,7 @@ fn reminder_to_event(reminder: &beekeeper_db::event::DueReminder) -> nostr::Even
 
 /// Return the usage poll interval, with a floor that prevents a busy loop.
 fn usage_metrics_interval_secs() -> u64 {
-    std::env::var("BUZZ_USAGE_METRICS_INTERVAL_SECS")
+    std::env::var("BEEKEEPER_USAGE_METRICS_INTERVAL_SECS")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(300)
@@ -1450,7 +1453,7 @@ fn usage_metrics_interval_secs() -> u64 {
 
 /// Return a gauge lifetime that always outlives several usage-poller ticks.
 fn usage_metrics_idle_timeout_secs(interval_secs: u64) -> u64 {
-    let configured = std::env::var("BUZZ_USAGE_METRICS_IDLE_TIMEOUT_SECS")
+    let configured = std::env::var("BEEKEEPER_USAGE_METRICS_IDLE_TIMEOUT_SECS")
         .ok()
         .and_then(|value| value.parse().ok());
     idle_timeout_secs(configured, interval_secs)

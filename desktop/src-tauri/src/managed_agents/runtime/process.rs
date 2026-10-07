@@ -6,7 +6,7 @@ use super::*;
 /// variants are listed because macOS `proc_name()` and Linux `/proc/comm`
 /// may report either form depending on how the binary was built.
 pub(crate) const KNOWN_AGENT_BINARIES: &[&str] = &[
-    "buzz-acp",
+    "beekeeper-acp",
     "buzz_acp",
     "buzz-agent",
     "buzz_agent",
@@ -17,16 +17,16 @@ pub(crate) const KNOWN_AGENT_BINARIES: &[&str] = &[
     "codex-acp",
     "codex_acp",
     "goose",
-    // buzz-dev-mcp's multicall personalities (rg, tree, buzz,
+    // beekeeper-dev-mcp's multicall personalities (rg, tree, buzz,
     // git-credential-nostr, git-sign-nostr) are short-lived per-tool-call
     // invocations — not listed here.
-    "buzz-dev-mcp",
+    "beekeeper-dev-mcp",
     "buzz_dev_mcp",
 ];
 
 /// Script interpreters that may host managed agent wrappers (e.g. npm shims).
 /// A process whose name matches here is NOT immediately claimed — it must also
-/// carry `BUZZ_MANAGED_AGENT` in its environment (checked by the caller via
+/// carry `BEEKEEPER_MANAGED_AGENT` in its environment (checked by the caller via
 /// `process_has_buzz_marker()`). This avoids sweeping unrelated node processes.
 pub(crate) const KNOWN_SCRIPT_INTERPRETERS: &[&str] = &["node"];
 
@@ -46,7 +46,7 @@ pub(super) fn name_matches_known_binary(name: &str) -> bool {
 
 /// Check if a process name is a known script interpreter that may be hosting
 /// a managed agent wrapper (e.g. `node` running an npm shim for `codex-acp`).
-/// Callers must additionally verify `BUZZ_MANAGED_AGENT` ownership.
+/// Callers must additionally verify `BEEKEEPER_MANAGED_AGENT` ownership.
 pub(super) fn name_matches_interpreter(name: &str) -> bool {
     KNOWN_SCRIPT_INTERPRETERS.contains(&name)
 }
@@ -123,7 +123,7 @@ pub(crate) fn process_belongs_to_us(_pid: u32) -> bool {
     false
 }
 
-/// The value stamped into the `BUZZ_MANAGED_AGENT` env var of every agent we
+/// The value stamped into the `BEEKEEPER_MANAGED_AGENT` env var of every agent we
 /// spawn, identifying *which* desktop instance owns it. We use the app's bundle
 /// identifier (`io.agiterra.beekeeper.app` for release, `io.agiterra.beekeeper.app.dev`
 /// for `just dev`) because it is stable across restarts — a relaunched dev
@@ -135,11 +135,11 @@ pub(crate) fn current_instance_id(app: &AppHandle) -> String {
     app.config().identifier.clone()
 }
 
-/// Build the full `BUZZ_MANAGED_AGENT=<instance-id>` env entry we match
+/// Build the full `BEEKEEPER_MANAGED_AGENT=<instance-id>` env entry we match
 /// against when scanning processes. Kept here so the spawn stamp and the sweep
 /// matcher can never drift apart.
 pub(super) fn buzz_marker_entry(instance_id: &str) -> Vec<u8> {
-    format!("BUZZ_MANAGED_AGENT={instance_id}").into_bytes()
+    format!("BEEKEEPER_MANAGED_AGENT={instance_id}").into_bytes()
 }
 
 /// The null-delimited environment block of a running process, or `None`.
@@ -200,7 +200,7 @@ fn process_env_block(_pid: u32) -> Option<Vec<u8>> {
 }
 
 /// Check if a running process is one of *our* managed agents: it must carry
-/// `BUZZ_MANAGED_AGENT=<instance_id>` in its environment, where `instance_id`
+/// `BEEKEEPER_MANAGED_AGENT=<instance_id>` in its environment, where `instance_id`
 /// is this desktop instance's id. A process stamped with a *different*
 /// instance id belongs to another live Beekeeper app and must never be reaped here.
 pub(crate) fn process_has_buzz_marker(pid: u32, instance_id: &str) -> bool {
@@ -236,8 +236,8 @@ fn env_block_has_entry(block: &[u8], entry: &[u8]) -> bool {
 
 /// Whether a null-delimited environment block holds `key` with any value.
 ///
-/// Matches `key=` rather than a bare prefix: `BUZZ_HOST` must not match
-/// `BUZZ_HOSTNAME`, and a prefix test is exactly how that mistake gets made.
+/// Matches `key=` rather than a bare prefix: `BEEKEEPER_HOST` must not match
+/// `BEEKEEPER_HOSTNAME`, and a prefix test is exactly how that mistake gets made.
 fn env_block_has_key(block: &[u8], key: &[u8]) -> bool {
     block
         .split(|&byte| byte == 0)
@@ -347,7 +347,7 @@ fn sigterm_then_sigkill(pids: &[i32]) {
 }
 
 /// Resolve orphan candidate PIDs to their actual process group IDs, dedupe,
-/// and signal the groups. An orphaned grandchild (e.g. `goose` or `buzz-dev-mcp`)
+/// and signal the groups. An orphaned grandchild (e.g. `goose` or `beekeeper-dev-mcp`)
 /// whose harness has exited retains the harness's PGID — signaling that PGID
 /// kills the entire orphaned subtree. Falls back to the candidate PID itself
 /// when PGID resolution fails (process may have exited between detection and
@@ -525,28 +525,31 @@ mod env_block_tests {
     fn an_exact_entry_matches_and_a_different_instance_does_not() {
         let block = block(&[
             "PATH=/usr/bin",
-            "BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app",
+            "BEEKEEPER_MANAGED_AGENT=io.agiterra.beekeeper.app",
             "HOME=/home/agent",
         ]);
         assert!(env_block_has_entry(
             &block,
-            b"BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app"
+            b"BEEKEEPER_MANAGED_AGENT=io.agiterra.beekeeper.app"
         ));
         assert!(
-            !env_block_has_entry(&block, b"BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app.dev"),
+            !env_block_has_entry(
+                &block,
+                b"BEEKEEPER_MANAGED_AGENT=io.agiterra.beekeeper.app.dev"
+            ),
             "another live instance's agents must never match"
         );
     }
 
-    /// A key test that matched a prefix would spare `BUZZ_HOSTNAME` as if it
+    /// A key test that matched a prefix would spare `BEEKEEPER_HOSTNAME` as if it
     /// were `BEEKEEPER_HOST_CHILD`, so the `=` is load-bearing.
     #[test]
     fn a_key_match_requires_the_equals_sign() {
-        let both = block(&["BEEKEEPER_HOST_CHILD=4242", "BUZZ_HOSTNAME=somewhere"]);
+        let both = block(&["BEEKEEPER_HOST_CHILD=4242", "BEEKEEPER_HOSTNAME=somewhere"]);
         assert!(env_block_has_key(&both, b"BEEKEEPER_HOST_CHILD"));
-        assert!(env_block_has_key(&both, b"BUZZ_HOSTNAME"));
+        assert!(env_block_has_key(&both, b"BEEKEEPER_HOSTNAME"));
         assert!(
-            !env_block_has_key(&both, b"BUZZ_HOST"),
+            !env_block_has_key(&both, b"BEEKEEPER_HOST"),
             "a prefix must not match a longer key"
         );
         assert!(!env_block_has_key(&both, b"BEEKEEPER_HOST_CHILD_OF"));

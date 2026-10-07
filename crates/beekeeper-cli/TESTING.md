@@ -51,13 +51,13 @@ curl -s http://localhost:3000/_liveness
 # "ok" or 200 status
 ```
 
-The `.env` should have `BUZZ_REQUIRE_AUTH_TOKEN=false` for local dev.
+The `.env` should have `BEEKEEPER_REQUIRE_AUTH_TOKEN=false` for local dev.
 
 ---
 
 ## 4. Mint Test Credentials
 
-### Option A: buzz-admin (full scopes including admin)
+### Option A: beekeeper-admin (full scopes including admin)
 
 This mints a token with all CLI-relevant scopes (including `admin:channels`)
 via direct DB access. Use this for testing admin operations (archive,
@@ -71,13 +71,13 @@ cargo run -p beekeeper-admin -- mint-token \
 ```
 
 This generates a keypair and prints:
-- **Private key (nsec)** — save for `BUZZ_PRIVATE_KEY` testing
+- **Private key (nsec)** — save for `BEEKEEPER_PRIVATE_KEY` testing
 
 Export:
 
 ```bash
-export BUZZ_RELAY_URL="http://localhost:3000"
-export BUZZ_PRIVATE_KEY="nsec1..."   # from the mint output
+export BEEKEEPER_RELAY_URL="http://localhost:3000"
+export BEEKEEPER_PRIVATE_KEY="nsec1..."   # from the mint output
 ```
 
 ### Scope reference
@@ -679,7 +679,7 @@ validators rather than from taste:
   tag injection would make the event **invalid**. Membership delegation still
   reaches the relay: `submit_event` sends the same tag in the `x-auth-tag`
   header, which is where `POST /events` reads it
-  (`crates/beekeeper-relay/src/api/bridge.rs`). If a run under `BUZZ_AUTH_TAG`
+  (`crates/beekeeper-relay/src/api/bridge.rs`). If a run under `BEEKEEPER_AUTH_TAG`
   ever comes back `invalid: unsupported coding-session command tag`, that
   regression is the cause.
 - A `boundary` turn **omits** the `deliver` key. The payload is
@@ -1032,10 +1032,10 @@ bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" \
 
 ##### Recorded live run
 
-Run **2026-08-27 04:00–04:06 UTC** against a local `buzz-relay` built from this
+Run **2026-08-27 04:00–04:06 UTC** against a local `beekeeper-relay` built from this
 branch (`cargo build -p beekeeper-relay`, debug) on `http://localhost:3000`, backed
 by the docker `buzz-postgres` / `buzz-redis` dev services. Identity:
-`93240b3e…` (`buzz-admin generate-key`). Channel
+`93240b3e…` (`beekeeper-admin generate-key`). Channel
 `944a3b6e-d43c-4a72-aa05-8cc4e2473919`, umbrella
 `f75b3f56-ca72-4277-a1f9-4b6aee727929`.
 
@@ -1072,7 +1072,7 @@ stand in for a provider here.
 
 ##### Recorded live run — `sessions hire` (2026-08-28 17:30–17:50 UTC)
 
-Against a local `buzz-relay` built from this branch (debug) on
+Against a local `beekeeper-relay` built from this branch (debug) on
 `http://127.0.0.1:3077`, backed by the docker `buzz-postgres` / `buzz-redis`
 dev services. Founder `88cfb21c…`, granted operator `8b2bd4e6…`, channel
 `ddcccba6-893b-4fcb-bf29-543ddecc260d`, umbrella
@@ -1120,7 +1120,7 @@ and inbox `stage`/`turnId` were exercised only by the unit tests in
 `crates/beekeeper-cli/src/commands/sessions/crew_tests.rs`. Neither was
 `--deliver interrupt` end to end (nothing was running to cancel), nor the
 `STALE_GENERATION` arm of `--readdress`, nor the "durably stopped" refusal, nor
-a run under `BUZZ_AUTH_TAG` (which is the case the `sign_event_unchecked`
+a run under `BEEKEEPER_AUTH_TAG` (which is the case the `sign_event_unchecked`
 choice exists for — see the envelope note above). Those remain open until the
 S4 acceptance run seats two managed agents in one umbrella.
 
@@ -1229,7 +1229,7 @@ the 2026-09-01 batch.
 ### 6.13a Project to-do lists (`bee todos`, kind 44248)
 
 Shared per-project lists, NIP-TD (`docs/nips/NIP-TD.md`). Every subcommand
-takes `--project` exactly as `bee pulse` does (`BUZZ_PULSE_PROJECT` when the
+takes `--project` exactly as `bee pulse` does (`BEEKEEPER_PULSE_PROJECT` when the
 flag is absent). Reads fold every op for the coordinate with the same fold
 Desktop and Mobile bind to; each write is one op on one field, stamped past
 the latest op on its target. Needs a project the signer may write: create one
@@ -1279,11 +1279,11 @@ A project's roles, plans, team manifest, actions and skills live in
 `<slug>-beekeeper-agents` (spec § 4.11). Edits travel through the relay as
 shared drafts, NIP-AD (`docs/nips/NIP-AD.md`), and nothing reaches `main`
 until someone commits. Every subcommand takes `--project` as `bee pulse`
-does (`BUZZ_PULSE_PROJECT` when the flag is absent). `ls`/`show` read
+does (`BEEKEEPER_PULSE_PROJECT` when the flag is absent). `ls`/`show` read
 `main`'s tip through the relay's `tree`/`raw` routes (no clone); `drafts`
 folds the op log with the fold Desktop and Mobile bind to; `commit` needs
 git and the credential helper (`just install-git-credentials`) plus the
-shipped templates: `--templates` or `BUZZ_TEMPLATES_DIR` when given, else the
+shipped templates: `--templates` or `BEEKEEPER_TEMPLATES_DIR` when given, else the
 ones the app bundle ships beside `bee` (or, for a development build, its own
 checkout's); the working directory is never searched.
 
@@ -1516,7 +1516,7 @@ whatever the host is set to — never a row, never a gap.
 - With the shipped registry against the live catalog: exit 0, `"isStale":
   false`, `stale` and `dormant` both empty, and 33 entries under `variants`
   (the effort brackets). Confirm with `echo $?`.
-- Add a model to the provider's `BUZZ_CSP_RUNTIMES` (or let a runtime discover
+- Add a model to the provider's `BEEKEEPER_CSP_RUNTIMES` (or let a runtime discover
   a new one) and re-run: the new id shows up under `stale` and the exit code is
   4. **This is the "what happens when a new model gets added?" case** — the
   registry does not silently absorb it and the command does not pass.
@@ -1756,8 +1756,8 @@ bee sessions whoami
   the relay holds none. A *failed* kind:0 lookup is not `null`: it exits 2
   with the CLI's standard error envelope and prints no object at all.
 - **`relay_url`** — `BeekeeperClient::relay_url()` verbatim, not a second read of
-  `BUZZ_RELAY_URL`. The two can disagree: a live run with
-  `BUZZ_RELAY_URL=wss://hive.agiterra.org` printed
+  `BEEKEEPER_RELAY_URL`. The two can disagree: a live run with
+  `BEEKEEPER_RELAY_URL=wss://hive.agiterra.org` printed
   `"relay_url":"https://hive.agiterra.org"` (scheme normalized). `whoami`
   always prints what the client will actually use.
 - **`role`** — the role slug of the active team seat this signer holds, or
@@ -1773,11 +1773,11 @@ bee sessions whoami
 already the minimal four-key shape `compact` reduces other reads to.
 
 **Unseated key.** hive enforces `relay_membership_required`; a fresh
-`BUZZ_PRIVATE_KEY` with no relay membership is refused before `whoami`'s own
+`BEEKEEPER_PRIVATE_KEY` with no relay membership is refused before `whoami`'s own
 logic runs:
 
 ```bash
-BUZZ_PRIVATE_KEY=$(openssl rand -hex 32) bee sessions whoami
+BEEKEEPER_PRIVATE_KEY=$(openssl rand -hex 32) bee sessions whoami
 # → exit 3
 # {"error":"auth_error","message":"relay error 403: relay_membership_required — …","retryable":false}
 ```
@@ -1819,9 +1819,9 @@ bee users set-profile 2>&1; echo "exit: $?"
 # exit: 1 (at least one field required)
 
 # Exit 3: No auth configured
-env -u BUZZ_PRIVATE_KEY \
+env -u BEEKEEPER_PRIVATE_KEY \
   cargo run -p beekeeper-cli -- channels list 2>&1; echo "exit: $?"
-# stderr: {"error":"auth_error","message":"auth error: BUZZ_PRIVATE_KEY is required (use --private-key or set env var)"}
+# stderr: {"error":"auth_error","message":"auth error: BEEKEEPER_PRIVATE_KEY is required (use --private-key or set env var)"}
 # exit: 3
 
 # Not-found returns null, not an error (exit 0)
@@ -1837,14 +1837,14 @@ bee channels get --channel "00000000-0000-0000-0000-000000000000"
 Test authentication.
 
 ```bash
-# Private key (BUZZ_PRIVATE_KEY)
-BUZZ_PRIVATE_KEY="nsec1..." bee channels list | jq .
+# Private key (BEEKEEPER_PRIVATE_KEY)
+BEEKEEPER_PRIVATE_KEY="nsec1..." bee channels list | jq .
 # Should succeed
 
 # No auth → exit 3
-env -u BUZZ_PRIVATE_KEY \
+env -u BEEKEEPER_PRIVATE_KEY \
   cargo run -p beekeeper-cli -- channels list 2>&1; echo "exit: $?"
-# stderr: {"error":"auth_error","message":"auth error: BUZZ_PRIVATE_KEY is required (use --private-key or set env var)"}
+# stderr: {"error":"auth_error","message":"auth error: BEEKEEPER_PRIVATE_KEY is required (use --private-key or set env var)"}
 # exit: 3
 ```
 
@@ -1935,7 +1935,7 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 70 | `sessions hire` (44221 `session.hire`) | ☐ | Historical founder/operator run is recorded above. Re-run current receipt-backed authority: founder + operator any role; active lead non-lead only; revoked/stale/wrong-genesis refused; created includes an accepted exact-role `grant-seat`; `created_ungranted` is live and must not be rehired. Open: `failed`/`seating` and old-relay wording. |
 | 69 | `sessions status` / `list` founder | ☐ | `founder`/`createSigner` per row, `founders` array on `--format json` status (an envelope key — not in bare piped NDJSON); `null` when the channel holds no joined create; never the provider's key |
 | 71 | `sessions assign/report/verdict/acknowledge/complete/block` | ☐ | Body accepts inline JSON, `@path`, or stdin; malformed/wrong-operation body is refused before write; `complete` refuses without an acknowledged approving disposition |
-| 71a | `--example` on every `--body` verb | ☐ | Prints a complete valid body to stdout and labels to stderr, exit 0, with `BUZZ_PRIVATE_KEY` and `BUZZ_RELAY_URL` **unset** and no relay reachable; `assign` offers `builder`/`verifier`/`runner` and `verdict` offers `refutation`/`disposition`; an unknown label lists the ones that exist; a body that does not decode is refused with every required key plus the `--example` command in one message |
+| 71a | `--example` on every `--body` verb | ☐ | Prints a complete valid body to stdout and labels to stderr, exit 0, with `BEEKEEPER_PRIVATE_KEY` and `BEEKEEPER_RELAY_URL` **unset** and no relay reachable; `assign` offers `builder`/`verifier`/`runner` and `verdict` offers `refutation`/`disposition`; an unknown label lists the ones that exist; a body that does not decode is refused with every required key plus the `--example` command in one message |
 | 71b | `sessions assign --verifies <report-id>` | ☐ | Fills `baseSha` from that report's `headSha`; agreement with an explicit `baseSha` passes; disagreement is refused naming both values and writes nothing; a report with no `headSha`, an id that is not a report, or a report from another session is refused |
 | 72 | `sessions operation get/list` | ☐ | `get --id` verifies the exact signed 44244 and derives `h`/`d`/genesis scope from it; explicit scope remains all-three-or-none; signed provenance, exclusions, conflicts, settlement and canonical terminal disclosed |
 | 73 | team-operation provider wake | ☐ | 44244 is stored first; 44220 text contains only `operationId` and `type`; every installed seat pack tells the recipient to run `operation get --id`; an **assignment** shares its `deliveryCommandId` with its wake, every other class derives `cli-wake-v1:<operationId>:<12 hex>` and records none; failed wake leaves stored operation visible and delivery unconfirmed |
@@ -1946,7 +1946,7 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 78 | pre-publish fold check on every 44244 verb | ☐ | A causal reference that is absent, excluded or present-but-not-included is refused before signing, naming the id and the rule; a `--supersedes` that changes the subject, the author or the type is refused; a record that points at nothing makes zero relay reads; `complete` adopts your own canonical `mission.blocked` and the answer carries `supersedes` (present and `null` when it corrected nothing) plus a `correctedTerminal` sentence |
 | 79 | `workflows run-status` | ☐ | `GET /workflow-runs/{run_id}` resolves a run by run id alone (no workflow id needed); response carries the run's status, `workflow_name`, `trigger_event_id`/`trigger_author`, the run's own `checkout` (the bound commit, or `null`, readable while the run is still waiting — ledger 206 B), every host step (exit code, `headSha`, `dirty`, `checkout`, duration, result event id) and every approval; 404 on an unknown run id, 403 when the caller's key cannot read the workflow's channel |
 | 80 | `sessions measure` | ☐ | Reproduces both 2026-09-20 audits from the relay: kettle at `--until 2026-09-20T11:49:46Z` gives 5 completed turns, 9,250,152 input / 106,661 output, 155 tool calls, `$2.297416` with `results_priced: 2` of 5, lead queue→start `[0,0,0,43]`; the RPG umbrella gives 32 turns, 66,492,119 / 714,115, `$38.540707` and 14/32 disposition-or-ACK turns. Writes nothing; the goal is on the timeline even when it precedes `--since`; an unpriced result is coverage, never a zero; a second umbrella in the same channel contributes no founder-signed actions and no action-chain rows; founder-signed acts split into `person_actions` (kettle 5, RPG 2), `host_actions_under_founder_key` (kettle 2, RPG 7 — each naming the `session.hire` it answered) and `unattributed_founder_actions` (0 in both), and each row states the rule that placed it (ledger 206 C); every unsupported metric appears in `honesty` as `unknown` with its reason, including `approvals the person signed` when the author+kind read of 46030/46031 returns none |
-| 81 | `actions example` | ☐ | Offline and keyless: `BUZZ_PRIVATE_KEY= bee actions example > /tmp/a.yml` exits 0 with no relay reachable, and the file it writes publishes as-is (`bee actions publish --file /tmp/a.yml`) once the project coordinate is supplied. `--kind manual-verify|ref-updated|schedule|ci-result` prints one whole file with just that action; the verify one carries `checkout: required`. A file whose `trigger` has no `on` is refused with where the key goes; one carrying `true:` (what a YAML 1.1 tool writes back) is told exactly that; every refusal lists the object's required keys and names `bee actions example` (ledger 206 A) |
+| 81 | `actions example` | ☐ | Offline and keyless: `BEEKEEPER_PRIVATE_KEY= bee actions example > /tmp/a.yml` exits 0 with no relay reachable, and the file it writes publishes as-is (`bee actions publish --file /tmp/a.yml`) once the project coordinate is supplied. `--kind manual-verify|ref-updated|schedule|ci-result` prints one whole file with just that action; the verify one carries `checkout: required`. A file whose `trigger` has no `on` is refused with where the key goes; one carrying `true:` (what a YAML 1.1 tool writes back) is told exactly that; every refusal lists the object's required keys and names `bee actions example` (ledger 206 A) |
 
 ---
 
@@ -1956,7 +1956,7 @@ bee channels delete --channel "$FORUM_ID" | jq .
 
 **A seat's first command on any `--body` verb is `--example`, never a probe.**
 Every verb that takes `--body` prints a complete, valid, minimal body for
-itself, reaches no relay, signs nothing and needs no `BUZZ_PRIVATE_KEY`:
+itself, reaches no relay, signs nothing and needs no `BEEKEEPER_PRIVATE_KEY`:
 
 ```bash
 bee sessions assign  --example builder    > assignment.json
@@ -2126,7 +2126,7 @@ four legal words. A sub-object nobody set is omitted rather than published as
 `{}`, which the record refuses.
 
 **What the provider does with it.** `budget.turns` overrides
-`BUZZ_CSP_TURN_BUDGET` for that umbrella, through one predicate serving both
+`BEEKEEPER_CSP_TURN_BUDGET` for that umbrella, through one predicate serving both
 the 44220 turn gate and a create's first turn; the refusal names the published
 policy rather than the environment variable. The founder is never refused. A
 policy published mid-session does not bind until that umbrella's next create or
@@ -2411,7 +2411,7 @@ bee git check --push              # also probes git-receive-pack
 bee --format compact git check    # git_transport / relay_http_membership / remedy
 ```
 
-What to check, on a seat (`NOSTR_PRIVATE_KEY` + `BUZZ_AUTH_TAG` set by the ACP
+What to check, on a seat (`NOSTR_PRIVATE_KEY` + `BEEKEEPER_AUTH_TAG` set by the ACP
 harness) and on the operator's own shell:
 
 1. The `key` line names the key **git** will present and where it came from. In
@@ -2432,7 +2432,7 @@ harness) and on the operator's own shell:
    succeeded seconds later.
 4. `relay HTTP membership:` is a **secondary** line for a different gate. It may
    refuse while git accepts. It must never change the exit code, and no output
-   anywhere may advise unsetting `BUZZ_AUTH_TAG` — dropping the attestation
+   anywhere may advise unsetting `BEEKEEPER_AUTH_TAG` — dropping the attestation
    removes the owner grant a seat's push rides on.
 
 Not runnable from a seat without a relay-known key; say so rather than
@@ -2548,7 +2548,7 @@ assert that anything does.
 # The class a ruling covers, instead of one commit (live run 2, finding 21).
 bee sessions decide answer --channel <uuid> --session-ref <uuid> \
   --genesis <hex64> --request <hex64> --choice-index 0 \
-  --condition 'any SHA whose buzz-acp diff against origin/main is empty'
+  --condition 'any SHA whose beekeeper-acp diff against origin/main is empty'
 
 # Read it back: the signed body carries it verbatim under `condition`.
 bee --format compact sessions operation get --id <answer-id>
@@ -2596,7 +2596,7 @@ this section asks a seat to report anything: every row is produced by the hire
 host's git hooks, the provider, or the relay.
 
 ```bash
-export BUZZ_RELAY_URL=wss://hive.agiterra.org BUZZ_PRIVATE_KEY=$(cat ~/.nostr/key)
+export BEEKEEPER_RELAY_URL=wss://hive.agiterra.org BEEKEEPER_PRIVATE_KEY=$(cat ~/.nostr/key)
 bee --format compact pulse missions --channel <uuid> --session-ref <uuid> --genesis <hex64> [--repo <repo-id>]
 bee pulse prune-wip --repo <repo-id> [--merged <sha,sha>]
 ```
@@ -2657,7 +2657,7 @@ Nothing below has produced a measured registry row on this machine. Read the
 ### The dry run (no relay, no model)
 
 ```bash
-export BUZZ_CSP_RUNTIMES='[{"instanceRef":"claude-primary","driver":"claude",
+export BEEKEEPER_CSP_RUNTIMES='[{"instanceRef":"claude-primary","driver":"claude",
   "runtime":"claude","agentCommand":"/path/to/stub-adapter.sh",
   "agentArgs":["--acp"],"allowedModels":["opus[1m]"]}]'
 bee sessions registry measure --role verifier --runtime claude-primary \
@@ -2793,7 +2793,7 @@ Expected:
 6. Aliases resolve: `explain dangling_reference` and `explain DanglingReference`
    both print the `dangling` entry. Every fold exclusion code resolves by its
    snake_case wire spelling and by its Rust `Debug` spelling.
-7. With `BUZZ_PRIVATE_KEY` and `BUZZ_RELAY_URL` unset, every command above still
+7. With `BEEKEEPER_PRIVATE_KEY` and `BEEKEEPER_RELAY_URL` unset, every command above still
    works. That is the point of the lane: a seat asking what a word means should
    not have to be authenticated or online to find out.
 

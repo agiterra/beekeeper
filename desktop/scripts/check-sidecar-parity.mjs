@@ -6,12 +6,12 @@
  * recipes are what actually gets built and copied next to the app. When those
  * drift, nothing fails — the app simply runs an old binary, and the drift is
  * invisible until someone dates the files by hand. That happened on
- * 2026-09-05: `buzz-shell-host` beside the app was dated Aug 22 while the
+ * 2026-09-05: `beekeeper-shell-host` beside the app was dated Aug 22 while the
  * other seven were 10:17, and nobody could say whether that meant "unchanged"
  * or "missed" (PLAN-2026-09-05 §1). A stale sidecar should fail a check, not a
  * morning.
  *
- * The expected set is `externalBin` plus `buzz-session-provider`. The provider
+ * The expected set is `externalBin` plus `beekeeper-session-provider`. The provider
  * is deliberately not in the base config: `tauri.local-prod.conf.json` is the
  * tracked delta that adds it for bundles that carry it, and that file is
  * checked here too.
@@ -24,7 +24,7 @@
  *
  * The three artifacts added on 2026-09-30 are the ones that had already
  * drifted, unwatched, and broke every macOS and Linux release and canary
- * build: `scripts/bundle-sidecars.sh` required a `buzz-shell-host` that not
+ * build: `scripts/bundle-sidecars.sh` required a `beekeeper-shell-host` that not
  * one of the eight CI "Build sidecars" steps built, and no root-workspace
  * crate depended on it either (ledger 295). The two locally-exercised paths
  * were correct, which is exactly why nobody hit it — the checked lists were
@@ -33,7 +33,7 @@
  * stale-binary morning happens.
  *
  * Two sidecars are **Unix-only** and this asserts that too, in both
- * directions: `buzz-shell-host` and `beekeeper-host` both exit non-zero off Unix
+ * directions: `beekeeper-shell-host` and `beekeeper-host` both exit non-zero off Unix
  * (their `main.rs`), so `tauri.windows.conf.json` must not declare them and
  * the Windows build lines must not build them. A Windows bundle that declared
  * one would fail Tauri's compile-time `externalBin` check with a message
@@ -55,25 +55,25 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
  * binary (e.g. `beekeeper-host`).
  */
 const BINARY_OF = {
-  "beekeeper-acp": "buzz-acp",
+  "beekeeper-acp": "beekeeper-acp",
   "beekeeper-agent": "buzz-agent",
-  "beekeeper-backend-kubernetes": "buzz-backend-kubernetes",
+  "beekeeper-backend-kubernetes": "beekeeper-backend-kubernetes",
   "beekeeper-cli": "bee",
-  "beekeeper-dev-mcp": "buzz-dev-mcp",
-  "beekeeper-session-provider": "buzz-session-provider",
-  "beekeeper-shell-host": "buzz-shell-host",
+  "beekeeper-dev-mcp": "beekeeper-dev-mcp",
+  "beekeeper-session-provider": "beekeeper-session-provider",
+  "beekeeper-shell-host": "beekeeper-shell-host",
 };
 const binaryOf = (pkg) => BINARY_OF[pkg] ?? pkg;
 
 /** The one sidecar the base bundle config deliberately does not declare. */
-const PROVIDER = "buzz-session-provider";
+const PROVIDER = "beekeeper-session-provider";
 
 /**
  * Sidecars the Windows bundle does not carry.
  *
- * `buzz-shell-host` and `beekeeper-host` refuse to run off Unix (their `main.rs`),
+ * `beekeeper-shell-host` and `beekeeper-host` refuse to run off Unix (their `main.rs`),
  * so shipping them there would ship a binary that exits 1.
- * `buzz-backend-kubernetes` is a different case with the same answer: it has
+ * `beekeeper-backend-kubernetes` is a different case with the same answer: it has
  * always been gated out of `bundle-sidecars.sh` and has never been declared in
  * `tauri.windows.conf.json`. Adding this check is what surfaced that it was
  * only ever an unwritten convention.
@@ -83,8 +83,8 @@ const PROVIDER = "buzz-session-provider";
  * missing name.
  */
 const UNIX_ONLY = [
-  "buzz-backend-kubernetes",
-  "buzz-shell-host",
+  "beekeeper-backend-kubernetes",
+  "beekeeper-shell-host",
   "beekeeper-host",
 ];
 

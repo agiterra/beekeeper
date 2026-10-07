@@ -31,9 +31,9 @@ pub use usage::TurnUsage;
 ///
 /// Public because its audience is load-bearing and asymmetric: this text is
 /// written for agents the harness spawns with `EnvFence::OPEN`, which inherit
-/// `BUZZ_PRIVATE_KEY`/`BUZZ_RELAY_URL` from the harness and can therefore
+/// `BEEKEEPER_PRIVATE_KEY`/`BEEKEEPER_RELAY_URL` from the harness and can therefore
 /// actually run the `bee` commands it teaches. Coding sessions launched by
-/// `buzz-session-provider` are fenced out of that namespace and never receive
+/// `beekeeper-session-provider` are fenced out of that namespace and never receive
 /// this prompt; that crate asserts the difference against this constant rather
 /// than against a copy of the string.
 pub const BASE_PROMPT: &str = include_str!("base_prompt.md");
@@ -78,7 +78,7 @@ use uuid::Uuid;
 /// dedicated parser; the default path uses the existing `CliArgs`.
 ///
 /// **Constraint**: subcommand must be argv[1] — flags before the subcommand
-/// name (e.g., `buzz-acp --verbose models`) are not supported.
+/// name (e.g., `beekeeper-acp --verbose models`) are not supported.
 fn is_subcommand(name: &str) -> bool {
     std::env::args().nth(1).map(|a| a == name).unwrap_or(false)
 }
@@ -86,7 +86,7 @@ fn is_subcommand(name: &str) -> bool {
 /// Timeout for lightweight helper subcommands (spawn + initialize + model/method probes).
 const MODELS_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Timeout for `buzz-acp authenticate`. Browser-based vendor auth can require
+/// Timeout for `beekeeper-acp authenticate`. Browser-based vendor auth can require
 /// human interaction, so it must not share the short probe timeout.
 const AUTHENTICATE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
@@ -141,22 +141,22 @@ fn emit_runtime_lifecycle(
 /// Resolve the agent's owner pubkey at startup.
 ///
 /// Priority:
-/// 1. `BUZZ_AUTH_TAG` env var — NIP-OA attestation signed by the owner.
+/// 1. `BEEKEEPER_AUTH_TAG` env var — NIP-OA attestation signed by the owner.
 ///    Verified against the agent's own pubkey to extract the owner pubkey.
-/// 2. `--agent-owner` CLI flag / `BUZZ_ACP_AGENT_OWNER` env var.
+/// 2. `--agent-owner` CLI flag / `BEEKEEPER_ACP_AGENT_OWNER` env var.
 fn resolve_agent_owner(config: &Config) -> Option<String> {
-    // Try BUZZ_AUTH_TAG first (NIP-OA attestation).
-    if let Ok(auth_tag) = std::env::var("BUZZ_AUTH_TAG") {
+    // Try BEEKEEPER_AUTH_TAG first (NIP-OA attestation).
+    if let Ok(auth_tag) = std::env::var("BEEKEEPER_AUTH_TAG") {
         if !auth_tag.is_empty() {
             let agent_pk = config.keys.public_key();
             match beekeeper_sdk::nip_oa::verify_auth_tag(&auth_tag, &agent_pk) {
                 Ok(owner_pk) => {
                     let owner_hex = owner_pk.to_hex().to_ascii_lowercase();
-                    tracing::info!("owner resolved from BUZZ_AUTH_TAG: {owner_hex}");
+                    tracing::info!("owner resolved from BEEKEEPER_AUTH_TAG: {owner_hex}");
                     return Some(owner_hex);
                 }
                 Err(e) => {
-                    tracing::warn!("BUZZ_AUTH_TAG verification failed: {e} — falling back");
+                    tracing::warn!("BEEKEEPER_AUTH_TAG verification failed: {e} — falling back");
                 }
             }
         }
@@ -1908,7 +1908,7 @@ mod idle_pool_sleep_tests {
 const REPLAY_FLOOR_MAX_AGE_SECS: u64 = 15 * 60;
 
 /// Resolve the startup watermark from process-start time and an optional
-/// replay floor (`--replay-floor` / `BUZZ_ACP_REPLAY_FLOOR`).
+/// replay floor (`--replay-floor` / `BEEKEEPER_ACP_REPLAY_FLOOR`).
 ///
 /// A publish-first mention send publishes the triggering message BEFORE this
 /// harness spawns, so the watermark must reach back to the send timestamp for
@@ -2004,7 +2004,7 @@ async fn tokio_main() -> Result<()> {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            beekeeper_core::log_targets::read_filter_var("RUST_LOG", "buzz-acp")
+            beekeeper_core::log_targets::read_filter_var("RUST_LOG", "beekeeper-acp")
                 .and_then(|filter| EnvFilter::try_new(filter).ok())
                 .unwrap_or_else(|| EnvFilter::new("beekeeper_acp=info")),
         )
@@ -2016,16 +2016,16 @@ async fn tokio_main() -> Result<()> {
     // ── Setup-mode early branch ───────────────────────────────────────────────
     //
     // When the desktop determines an agent is not ready (missing credentials,
-    // model, or provider), it spawns buzz-acp with BUZZ_ACP_SETUP_PAYLOAD set.
+    // model, or provider), it spawns beekeeper-acp with BEEKEEPER_ACP_SETUP_PAYLOAD set.
     // We enter the minimal setup-listener path and never start the agent pool.
     if let Some(payload) = setup_mode::SetupPayload::from_env()
         .map_err(|e| anyhow::anyhow!("setup payload error: {e}"))?
     {
-        tracing::info!("buzz-acp: setup payload present, entering setup-listener mode");
+        tracing::info!("beekeeper-acp: setup payload present, entering setup-listener mode");
         return setup_mode::run_setup_listener(config, payload).await;
     }
 
-    tracing::info!("buzz-acp starting: {}", config.summary());
+    tracing::info!("beekeeper-acp starting: {}", config.summary());
 
     let observer = config
         .relay_observer
@@ -2060,7 +2060,7 @@ async fn tokio_main() -> Result<()> {
     // blind spot between "agents ready" and "first REQ sent".
     //
     // A publish-first mention send passes the triggering message's send
-    // timestamp as a replay floor (`--replay-floor` / `BUZZ_ACP_REPLAY_FLOOR`):
+    // timestamp as a replay floor (`--replay-floor` / `BEEKEEPER_ACP_REPLAY_FLOOR`):
     // the message is already on the relay when this process spawns, so the
     // watermark must reach back to it for the first REQ to replay it — however
     // long the spawn took.
@@ -2079,8 +2079,8 @@ async fn tokio_main() -> Result<()> {
 
     let pubkey_hex = config.keys.public_key().to_hex();
 
-    // Parse BUZZ_AUTH_TAG into a nostr::Tag for NIP-OA relay membership delegation.
-    let relay_auth_tag: Option<nostr::Tag> = std::env::var("BUZZ_AUTH_TAG")
+    // Parse BEEKEEPER_AUTH_TAG into a nostr::Tag for NIP-OA relay membership delegation.
+    let relay_auth_tag: Option<nostr::Tag> = std::env::var("BEEKEEPER_AUTH_TAG")
         .ok()
         .filter(|s| !s.is_empty())
         .and_then(|s| beekeeper_sdk::nip_oa::parse_auth_tag(&s).ok());
@@ -2109,7 +2109,7 @@ async fn tokio_main() -> Result<()> {
     let presence_publisher = relay.event_publisher();
     let presence_keys = config.keys.clone();
 
-    // Priority: BUZZ_AUTH_TAG (NIP-OA attestation) → --agent-owner flag.
+    // Priority: BEEKEEPER_AUTH_TAG (NIP-OA attestation) → --agent-owner flag.
     let startup_owner: Option<String> = resolve_agent_owner(&config);
     if let Some(ref owner) = startup_owner {
         tracing::info!("agent owner: {owner}");
@@ -2122,7 +2122,7 @@ async fn tokio_main() -> Result<()> {
             RespondTo::OwnerOnly => {
                 tracing::warn!(
                     "respond-to=owner-only but no owner is set — all events will be \
-                     dropped. Set BUZZ_AUTH_TAG or --agent-owner, or use --respond-to=anyone."
+                     dropped. Set BEEKEEPER_AUTH_TAG or --agent-owner, or use --respond-to=anyone."
                 );
             }
             RespondTo::Allowlist => {
@@ -2258,7 +2258,8 @@ async fn tokio_main() -> Result<()> {
         ));
     }
 
-    let runtime_start_nonce = std::env::var("BUZZ_MANAGED_AGENT_START_NONCE").unwrap_or_default();
+    let runtime_start_nonce =
+        std::env::var("BEEKEEPER_MANAGED_AGENT_START_NONCE").unwrap_or_default();
     let dedup_mode = config.dedup_mode;
     let mut queue =
         EventQueue::new(dedup_mode).with_in_flight_deadline(config.max_turn_duration_secs);
@@ -2326,7 +2327,7 @@ async fn tokio_main() -> Result<()> {
     if !config.memory_enabled {
         tracing::info!(
             target: "engram::core",
-            "NIP-AE core memory injection disabled (re-enable by removing --no-memory / BUZZ_ACP_NO_MEMORY)"
+            "NIP-AE core memory injection disabled (re-enable by removing --no-memory / BEEKEEPER_ACP_NO_MEMORY)"
         );
     }
 
@@ -3730,7 +3731,7 @@ async fn tokio_main() -> Result<()> {
     // for the background task to finish, rather than aborting immediately (#40).
     relay.shutdown().await;
 
-    tracing::info!("buzz-acp stopped");
+    tracing::info!("beekeeper-acp stopped");
     Ok(())
 }
 
@@ -4908,7 +4909,7 @@ mod agent_draft_prompt_tests {
     /// Both halves of it were false at once: the section was described as
     /// carrying "entries only, never session state" (written 2026-08-19, made
     /// wrong on 2026-08-20 when `render_digest` grew session groups), and
-    /// `BUZZ_PULSE_PROJECT` was described as being in scope for the agent when
+    /// `BEEKEEPER_PULSE_PROJECT` was described as being in scope for the agent when
     /// `mcp_servers_with_git_origin` only ever puts it on MCP-server env.
     #[test]
     fn shared_base_prompt_describes_the_pulse_section_it_actually_receives() {
@@ -4920,12 +4921,12 @@ mod agent_draft_prompt_tests {
         assert!(BASE_PROMPT.contains("provider-reachable, open-but-unverified, closed"));
         assert!(
             BASE_PROMPT.contains(
-                "`BUZZ_PULSE_PROJECT` is set on your MCP servers' environment, not on your own shell"
+                "`BEEKEEPER_PULSE_PROJECT` is set on your MCP servers' environment, not on your own shell"
             ),
             "the coordinate never reaches the agent subprocess — see mcp_servers_with_git_origin"
         );
         // The write instruction is correct for *this* audience: managed agents
-        // inherit the harness's credentials. `buzz-session-provider` pins the
+        // inherit the harness's credentials. `beekeeper-session-provider` pins the
         // other half — its fenced adapters must never be told the same thing.
         assert!(BASE_PROMPT.contains("post it yourself with `bee pulse update`"));
     }
@@ -5288,7 +5289,7 @@ fn extract_auth_methods(init_result: &serde_json::Value) -> Vec<serde_json::Valu
         .unwrap_or_default()
 }
 
-/// `buzz-acp auth-methods` — spawn an adapter, initialize it, print authMethods.
+/// `beekeeper-acp auth-methods` — spawn an adapter, initialize it, print authMethods.
 async fn run_auth_methods(args: AuthMethodsArgs) -> Result<()> {
     let mut client = match spawn_auth_client(&args.agent).await {
         Ok(c) => c,
@@ -5336,7 +5337,7 @@ async fn run_auth_methods(args: AuthMethodsArgs) -> Result<()> {
     Ok(())
 }
 
-/// `buzz-acp authenticate` — invoke one adapter-owned auth method.
+/// `beekeeper-acp authenticate` — invoke one adapter-owned auth method.
 async fn run_authenticate(args: AuthenticateArgs) -> Result<()> {
     let mut client = match spawn_auth_client(&args.agent).await {
         Ok(c) => c,
@@ -5556,11 +5557,11 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
         env: {
             let mut env = vec![
                 EnvVar {
-                    name: "BUZZ_RELAY_URL".into(),
+                    name: "BEEKEEPER_RELAY_URL".into(),
                     value: config.relay_url.clone(),
                 },
                 EnvVar {
-                    name: "BUZZ_PRIVATE_KEY".into(),
+                    name: "BEEKEEPER_PRIVATE_KEY".into(),
                     // bech32 encoding of a valid secret key is infallible.
                     // Panic here is correct: injecting a bogus secret would cause
                     // delayed, hard-to-diagnose agent failures downstream.
@@ -5571,12 +5572,12 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
                         .expect("secret key bech32 encoding should never fail"),
                 },
             ];
-            // Forward BUZZ_AUTH_TAG (NIP-OA owner attestation credential)
+            // Forward BEEKEEPER_AUTH_TAG (NIP-OA owner attestation credential)
             // so the MCP server can attach it to every signed event.
-            if let Ok(auth_tag) = std::env::var("BUZZ_AUTH_TAG") {
+            if let Ok(auth_tag) = std::env::var("BEEKEEPER_AUTH_TAG") {
                 if !auth_tag.is_empty() {
                     env.push(EnvVar {
-                        name: "BUZZ_AUTH_TAG".into(),
+                        name: "BEEKEEPER_AUTH_TAG".into(),
                         value: auth_tag,
                     });
                 }
@@ -5585,10 +5586,10 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
             // author name instead of the raw npub. Read from the process env
             // rather than Config: this is a pass-through of a contract owned
             // upstream, and absent simply means dev-mcp falls back to the npub.
-            if let Ok(display_name) = std::env::var("BUZZ_ACP_DISPLAY_NAME") {
+            if let Ok(display_name) = std::env::var("BEEKEEPER_ACP_DISPLAY_NAME") {
                 if !display_name.is_empty() {
                     env.push(EnvVar {
-                        name: "BUZZ_ACP_DISPLAY_NAME".into(),
+                        name: "BEEKEEPER_ACP_DISPLAY_NAME".into(),
                         value: display_name,
                     });
                 }
@@ -7776,7 +7777,7 @@ mod build_mcp_servers_tests {
             kinds_override: None,
             channels_override: None,
             no_mention_filter: false,
-            config_path: std::path::PathBuf::from("./buzz-acp.toml"),
+            config_path: std::path::PathBuf::from("./beekeeper-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
             presence_enabled: true,
@@ -7811,28 +7812,28 @@ mod build_mcp_servers_tests {
 
         let names: Vec<&str> = server.env.iter().map(|e| e.name.as_str()).collect();
         assert!(
-            names.contains(&"BUZZ_RELAY_URL"),
-            "missing BUZZ_RELAY_URL; got {names:?}"
+            names.contains(&"BEEKEEPER_RELAY_URL"),
+            "missing BEEKEEPER_RELAY_URL; got {names:?}"
         );
         assert!(
-            names.contains(&"BUZZ_PRIVATE_KEY"),
-            "missing BUZZ_PRIVATE_KEY; got {names:?}"
+            names.contains(&"BEEKEEPER_PRIVATE_KEY"),
+            "missing BEEKEEPER_PRIVATE_KEY; got {names:?}"
         );
     }
 
     #[test]
     fn session_new_mcp_server_forwards_buzz_auth_tag() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("BUZZ_AUTH_TAG", "test-attestation-tag");
+        std::env::set_var("BEEKEEPER_AUTH_TAG", "test-attestation-tag");
         let config = test_config();
         let servers = build_mcp_servers(&config);
-        std::env::remove_var("BUZZ_AUTH_TAG");
+        std::env::remove_var("BEEKEEPER_AUTH_TAG");
 
         let server = &servers[0];
-        let auth_tag_env = server.env.iter().find(|e| e.name == "BUZZ_AUTH_TAG");
+        let auth_tag_env = server.env.iter().find(|e| e.name == "BEEKEEPER_AUTH_TAG");
         assert!(
             auth_tag_env.is_some(),
-            "BUZZ_AUTH_TAG should be forwarded when set"
+            "BEEKEEPER_AUTH_TAG should be forwarded when set"
         );
         assert_eq!(auth_tag_env.unwrap().value, "test-attestation-tag");
     }
@@ -7840,28 +7841,31 @@ mod build_mcp_servers_tests {
     #[test]
     fn session_new_mcp_server_skips_empty_buzz_auth_tag() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("BUZZ_AUTH_TAG", "");
+        std::env::set_var("BEEKEEPER_AUTH_TAG", "");
         let config = test_config();
         let servers = build_mcp_servers(&config);
-        std::env::remove_var("BUZZ_AUTH_TAG");
+        std::env::remove_var("BEEKEEPER_AUTH_TAG");
 
         let server = &servers[0];
-        let has_auth_tag = server.env.iter().any(|e| e.name == "BUZZ_AUTH_TAG");
-        assert!(!has_auth_tag, "empty BUZZ_AUTH_TAG should not be forwarded");
+        let has_auth_tag = server.env.iter().any(|e| e.name == "BEEKEEPER_AUTH_TAG");
+        assert!(
+            !has_auth_tag,
+            "empty BEEKEEPER_AUTH_TAG should not be forwarded"
+        );
     }
 
     #[test]
     fn test_display_name_set_is_forwarded_to_mcp_server() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("BUZZ_ACP_DISPLAY_NAME", "Duncan");
+        std::env::set_var("BEEKEEPER_ACP_DISPLAY_NAME", "Duncan");
         let config = test_config();
         let servers = build_mcp_servers(&config);
-        std::env::remove_var("BUZZ_ACP_DISPLAY_NAME");
+        std::env::remove_var("BEEKEEPER_ACP_DISPLAY_NAME");
 
         let entry = servers[0]
             .env
             .iter()
-            .find(|e| e.name == "BUZZ_ACP_DISPLAY_NAME");
+            .find(|e| e.name == "BEEKEEPER_ACP_DISPLAY_NAME");
         assert_eq!(
             entry.map(|e| e.value.as_str()),
             Some("Duncan"),
@@ -7872,7 +7876,7 @@ mod build_mcp_servers_tests {
     #[test]
     fn test_display_name_unset_omits_the_key_entirely() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("BUZZ_ACP_DISPLAY_NAME");
+        std::env::remove_var("BEEKEEPER_ACP_DISPLAY_NAME");
         let config = test_config();
         let servers = build_mcp_servers(&config);
 
@@ -7882,7 +7886,7 @@ mod build_mcp_servers_tests {
             !servers[0]
                 .env
                 .iter()
-                .any(|e| e.name == "BUZZ_ACP_DISPLAY_NAME"),
+                .any(|e| e.name == "BEEKEEPER_ACP_DISPLAY_NAME"),
             "unset display name should not add the key"
         );
     }
@@ -7890,16 +7894,16 @@ mod build_mcp_servers_tests {
     #[test]
     fn test_display_name_empty_omits_the_key_entirely() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("BUZZ_ACP_DISPLAY_NAME", "");
+        std::env::set_var("BEEKEEPER_ACP_DISPLAY_NAME", "");
         let config = test_config();
         let servers = build_mcp_servers(&config);
-        std::env::remove_var("BUZZ_ACP_DISPLAY_NAME");
+        std::env::remove_var("BEEKEEPER_ACP_DISPLAY_NAME");
 
         assert!(
             !servers[0]
                 .env
                 .iter()
-                .any(|e| e.name == "BUZZ_ACP_DISPLAY_NAME"),
+                .any(|e| e.name == "BEEKEEPER_ACP_DISPLAY_NAME"),
             "empty display name should not be forwarded"
         );
     }
@@ -8001,7 +8005,7 @@ mod error_outcome_emission_tests {
             kinds_override: None,
             channels_override: None,
             no_mention_filter: false,
-            config_path: std::path::PathBuf::from("./buzz-acp.toml"),
+            config_path: std::path::PathBuf::from("./beekeeper-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
             presence_enabled: true,

@@ -4065,7 +4065,7 @@ mod tests {
     /// Uses configured test Postgres and Redis; returns `None` if setup fails.
     async fn bridge_handler_test_state() -> Option<Arc<crate::state::AppState>> {
         let mut config = crate::config::Config::from_env().ok()?;
-        config.database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+        config.database_url = std::env::var("BEEKEEPER_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| TEST_DB_URL.to_string());
         config.redis_url =

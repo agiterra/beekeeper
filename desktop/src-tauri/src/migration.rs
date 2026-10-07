@@ -3,7 +3,7 @@
 //! **Worktree sync** (`sync_shared_agent_data`): Per-launch symlink creation
 //! from the current worktree data directory to the canonical dev data
 //! directory (`io.agiterra.beekeeper.app.dev`). Only runs when
-//! `BUZZ_SHARE_IDENTITY=1` and `BUZZ_PRIVATE_KEY` is set. All dev
+//! `BEEKEEPER_SHARE_IDENTITY=1` and `BEEKEEPER_PRIVATE_KEY` is set. All dev
 //! instances share the same physical files — edits in any worktree are
 //! immediately visible to all others.
 //!
@@ -31,7 +31,7 @@ use identifiers::CANONICAL_DEV_IDENTIFIER;
 /// JSON files symlinked from worktree data directories to the canonical
 /// dev data directory. Only data files — never `agent-pids/` or `logs/`.
 /// `identity.key` is deliberately excluded because worktree instances
-/// receive their identity via the `BUZZ_PRIVATE_KEY` env var.
+/// receive their identity via the `BEEKEEPER_PRIVATE_KEY` env var.
 const SHARED_AGENT_FILES: &[&str] = &[
     "agents/managed-agents.json",
     "agents/personas.json",
@@ -446,26 +446,26 @@ fn patch_json_records(
 /// data directory to the canonical dev data directory.
 ///
 /// Guards:
-/// - `BUZZ_SHARE_IDENTITY` must be `"1"`
-/// - `BUZZ_PRIVATE_KEY` must parse as valid `nostr::Keys`
+/// - `BEEKEEPER_SHARE_IDENTITY` must be `"1"`
+/// - `BEEKEEPER_PRIVATE_KEY` must parse as valid `nostr::Keys`
 /// - The canonical dir must differ from the current dir (skip if we ARE canonical)
 /// - The canonical dir must exist
 pub fn sync_shared_agent_data(app: &tauri::AppHandle) {
     // Guard: only runs when sharing identity with a worktree.
-    let is_shared = std::env::var("BUZZ_SHARE_IDENTITY")
+    let is_shared = std::env::var("BEEKEEPER_SHARE_IDENTITY")
         .map(|v| v == "1")
         .unwrap_or(false);
     if !is_shared {
         return;
     }
 
-    // Guard: BUZZ_PRIVATE_KEY must be a valid nostr key.
-    let has_valid_key = std::env::var("BUZZ_PRIVATE_KEY")
+    // Guard: BEEKEEPER_PRIVATE_KEY must be a valid nostr key.
+    let has_valid_key = std::env::var("BEEKEEPER_PRIVATE_KEY")
         .ok()
         .and_then(|k| k.parse::<nostr::Keys>().ok())
         .is_some();
     if !has_valid_key {
-        eprintln!("beekeeper-desktop: shared-agent-sync: BUZZ_PRIVATE_KEY invalid, skipping");
+        eprintln!("beekeeper-desktop: shared-agent-sync: BEEKEEPER_PRIVATE_KEY invalid, skipping");
         return;
     }
 
@@ -746,7 +746,7 @@ fn reconcile_legacy_command_names_in_file(path: &Path) {
             .map(str::to_string)
         {
             if acp_command == "sprout-acp" {
-                changed |= replace_command_field(obj, "acp_command", "buzz-acp".to_string());
+                changed |= replace_command_field(obj, "acp_command", "beekeeper-acp".to_string());
             }
         }
 
@@ -768,11 +768,11 @@ fn reconcile_legacy_command_names_in_file(path: &Path) {
             match mcp_command.as_str() {
                 "sprout-dev-mcp" => {
                     changed |=
-                        replace_command_field(obj, "mcp_command", "buzz-dev-mcp".to_string());
+                        replace_command_field(obj, "mcp_command", "beekeeper-dev-mcp".to_string());
                 }
                 "sprout-mcp" | "sprout-mcp-server" | "buzz-mcp-server" => {
                     let replacement = if agent_command == "buzz-agent" {
-                        "buzz-dev-mcp"
+                        "beekeeper-dev-mcp"
                     } else {
                         ""
                     };
@@ -928,7 +928,7 @@ fn reconcile_databricks_v1_to_v2_in_file(path: &Path, rewrite_v1_provider: bool)
         let mut changed = false;
 
         // Only rewrite the structured provider field when the baked build env
-        // marks this as a Block build (BUZZ_AGENT_PROVIDER == "databricks_v2").
+        // marks this as a Block build (BEEKEEPER_AGENT_PROVIDER == "databricks_v2").
         // OSS users may intentionally select V1 (Model Serving), so we must not
         // silently migrate their provider to V2 (AI Gateway).
         if rewrite_v1_provider && obj.get("provider").and_then(|v| v.as_str()) == Some("databricks")
@@ -947,7 +947,7 @@ fn reconcile_databricks_v1_to_v2_in_file(path: &Path, rewrite_v1_provider: bool)
             );
             // Also clear the model field — a V1 model name (e.g. "dbrx-instruct")
             // on a V2 provider would shadow the baked DATABRICKS_MODEL at spawn time
-            // (BUZZ_AGENT_MODEL from runtime_metadata_env_vars takes priority in
+            // (BEEKEEPER_AGENT_MODEL from runtime_metadata_env_vars takes priority in
             // buzz-agent config.rs). Clearing it lets the baked V2 default win.
             if obj.remove("model").is_some() {
                 eprintln!(
@@ -987,7 +987,7 @@ fn reconcile_databricks_v1_to_v2_in_file(path: &Path, rewrite_v1_provider: bool)
 /// `provider: "databricks"` to `"databricks_v2"`.
 ///
 /// **Block builds** (where `baked_build_env()` contains
-/// `BUZZ_AGENT_PROVIDER=databricks_v2`): the structured `provider` field is
+/// `BEEKEEPER_AGENT_PROVIDER=databricks_v2`): the structured `provider` field is
 /// rewritten V1→V2 because the baked release targets V2 exclusively. Records
 /// that were saved before this migration would otherwise silently override the
 /// baked value at spawn time (last-write-wins in `Command::env`).
@@ -995,7 +995,7 @@ fn reconcile_databricks_v1_to_v2_in_file(path: &Path, rewrite_v1_provider: bool)
 /// **OSS builds** (baked env empty): the `provider` field is left alone —
 /// V1 (`databricks`) is a valid Model Serving choice for OSS users.
 ///
-/// In both cases, stale `BUZZ_AGENT_PROVIDER` / `BUZZ_AGENT_MODEL` /
+/// In both cases, stale `BEEKEEPER_AGENT_PROVIDER` / `BEEKEEPER_AGENT_MODEL` /
 /// `GOOSE_PROVIDER` / `GOOSE_MODEL` are stripped from `env_vars`. These keys
 /// are always re-derived from structured fields at spawn time; persisted copies
 /// silence UI edits and cause stale routing.
@@ -1005,12 +1005,12 @@ fn reconcile_databricks_v1_to_v2_in_file(path: &Path, rewrite_v1_provider: bool)
 /// `reconcile_legacy_command_names` and `reconcile_provider_mcp_commands`.
 pub fn reconcile_databricks_v1_to_v2(app: &tauri::AppHandle) {
     use crate::managed_agents::baked_build_env;
-    // On Block builds, the baked env contains BUZZ_AGENT_PROVIDER=databricks_v2.
+    // On Block builds, the baked env contains BEEKEEPER_AGENT_PROVIDER=databricks_v2.
     // Use that as a reliable signal that this is a Block build and the V1
     // provider should be migrated. OSS builds have an empty baked env, so
     // rewrite_v1_provider is false and the structured provider is preserved.
     let rewrite_v1_provider = baked_build_env()
-        .get("BUZZ_AGENT_PROVIDER")
+        .get("BEEKEEPER_AGENT_PROVIDER")
         .map(|v| v == "databricks_v2")
         .unwrap_or(false);
     let Ok(current_dir) = app.path().app_data_dir() else {

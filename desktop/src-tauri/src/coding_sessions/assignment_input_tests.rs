@@ -1,7 +1,7 @@
 //! Tests for the desktop's *adapter* onto the shared assignment-input records.
 //!
 //! The git ladder, the refusal codes and the durable queue moved to
-//! `buzz-session-provider`, and their cases moved with them
+//! `beekeeper-session-provider`, and their cases moved with them
 //! (`crates/beekeeper-session-provider/src/assignment_inputs_tests.rs`: remote
 //! ladder, fetch, dirty tree, interruption bound, two-process lock). What is
 //! left to prove here is what only this crate can get wrong — that the seat's

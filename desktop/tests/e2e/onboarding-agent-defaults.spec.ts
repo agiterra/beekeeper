@@ -467,7 +467,7 @@ test("defaults renders only fields supported by the selected harness", async ({
         runtime("claude", "available", { status: "logged_in" }),
       ],
       globalAgentConfig: {
-        env_vars: { BUZZ_AGENT_THINKING_EFFORT: "high" },
+        env_vars: { BEEKEEPER_AGENT_THINKING_EFFORT: "high" },
         provider: null,
         model: "stale-model",
         preferred_runtime: null,
@@ -1123,7 +1123,11 @@ test("baked build config keeps Finish enabled without manual provider setup", as
         runtime("buzz-agent", "available", { status: "not_applicable" }),
       ],
       bakedBuildEnv: [
-        { key: "BUZZ_AGENT_PROVIDER", masked: false, value: "databricks_v2" },
+        {
+          key: "BEEKEEPER_AGENT_PROVIDER",
+          masked: false,
+          value: "databricks_v2",
+        },
         {
           key: "DATABRICKS_HOST",
           masked: false,

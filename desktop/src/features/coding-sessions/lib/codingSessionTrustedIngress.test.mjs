@@ -18,8 +18,8 @@ import {
   resolveCodingSessionIngressAuthority,
 } from "./codingSessionIngressAuthority.ts";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   classifyTrustedCodingSessionIngressEvent,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
@@ -77,7 +77,7 @@ function createdReceipt(overrides = {}) {
 
 function metadata(overrides = {}) {
   return {
-    schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+    schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
     session: TARGET,
     projectRef: "30621:owner:agiterra",
     repoRef: null,
@@ -157,7 +157,7 @@ function metadataEvent(
 
 function transcript(overrides = {}) {
   return {
-    schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+    schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
     session: OTHER_TARGET,
     eventSeq: 1,
     timestamp: 1_800_000_000_000,

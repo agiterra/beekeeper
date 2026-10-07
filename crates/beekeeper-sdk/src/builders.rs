@@ -5947,7 +5947,7 @@ mod tests {
         beekeeper_core::pulse::PulseEntry {
             schema: beekeeper_core::pulse::PULSE_ENTRY_SCHEMA.to_owned(),
             entry_type: beekeeper_core::pulse::PulseEntryType::Plan,
-            text: "Refactoring session creation in buzz-acp.".to_owned(),
+            text: "Refactoring session creation in beekeeper-acp.".to_owned(),
             code_areas: vec!["crates/beekeeper-acp/src/pool.rs".to_owned()],
             branch: None,
             supersedes: None,

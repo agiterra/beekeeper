@@ -10,7 +10,9 @@ pub(crate) fn keyring_service() -> &'static str {
     if cfg!(debug_assertions) {
         static DEV_SERVICE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         DEV_SERVICE
-            .get_or_init(|| dev_keyring_service(std::env::var("BUZZ_DEV_KEYRING_SERVICE").ok()))
+            .get_or_init(|| {
+                dev_keyring_service(std::env::var("BEEKEEPER_DEV_KEYRING_SERVICE").ok())
+            })
             .as_str()
     } else {
         "beekeeper-desktop"

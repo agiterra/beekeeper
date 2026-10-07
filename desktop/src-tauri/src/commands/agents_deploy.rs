@@ -22,7 +22,7 @@ pub(super) struct DeployProjections {
     pub effective_provider: Option<String>,
     pub effective_prompt: Option<String>,
     /// Effective parallelism derived from the same resolved `descriptor.command`
-    /// as `launch.policy_env["BUZZ_ACP_AGENTS"]`.
+    /// as `launch.policy_env["BEEKEEPER_ACP_AGENTS"]`.
     pub effective_parallelism: u32,
     /// Access fields projected from the same build policy that gates local starts.
     pub owner_only_access: bool,
@@ -96,25 +96,25 @@ pub(super) fn build_launch_block_with_session_policy(
             policy_env.insert("MCP_HOOK_SERVERS".into(), "*".into());
         }
     }
-    policy_env.insert("BUZZ_ACP_RELAY_OBSERVER".into(), "true".into());
-    policy_env.insert("BUZZ_ACP_LAZY_POOL".into(), "true".into());
+    policy_env.insert("BEEKEEPER_ACP_RELAY_OBSERVER".into(), "true".into());
+    policy_env.insert("BEEKEEPER_ACP_LAZY_POOL".into(), "true".into());
     policy_env.insert(
-        "BUZZ_ACP_AGENTS".into(),
+        "BEEKEEPER_ACP_AGENTS".into(),
         crate::managed_agents::acp_agents_value(&descriptor.command, record.parallelism),
     );
     crate::managed_agents::insert_acp_session_policy_env(&mut policy_env, session_policy);
 
     if let Some(value) = effective_prompt {
-        policy_env.insert("BUZZ_ACP_SYSTEM_PROMPT".into(), value.to_string());
+        policy_env.insert("BEEKEEPER_ACP_SYSTEM_PROMPT".into(), value.to_string());
     }
     if let Some(value) = effective_model {
-        policy_env.insert("BUZZ_ACP_MODEL".into(), value.to_string());
+        policy_env.insert("BEEKEEPER_ACP_MODEL".into(), value.to_string());
     }
     if let Some(value) = record.idle_timeout_seconds {
-        policy_env.insert("BUZZ_ACP_IDLE_TIMEOUT".into(), value.to_string());
+        policy_env.insert("BEEKEEPER_ACP_IDLE_TIMEOUT".into(), value.to_string());
     }
     if let Some(value) = record.max_turn_duration_seconds {
-        policy_env.insert("BUZZ_ACP_MAX_TURN_DURATION".into(), value.to_string());
+        policy_env.insert("BEEKEEPER_ACP_MAX_TURN_DURATION".into(), value.to_string());
     }
     if let Some(value) = resolve_session_title(record.display_name.as_deref(), &record.name) {
         policy_env.insert(SESSION_TITLE_ENV_VAR.into(), value.clone());
@@ -123,7 +123,7 @@ pub(super) fn build_launch_block_with_session_policy(
     if let Some(value) =
         crate::managed_agents::spawn_snapshot::effective_team_instructions(record, teams)
     {
-        policy_env.insert("BUZZ_ACP_TEAM_INSTRUCTIONS".into(), value);
+        policy_env.insert("BEEKEEPER_ACP_TEAM_INSTRUCTIONS".into(), value);
     }
 
     let launch_env: BTreeMap<_, _> = descriptor
@@ -217,7 +217,7 @@ pub(crate) fn build_deploy_payload(
 /// Pure serialization half of [`build_deploy_payload`]. Legacy top-level fields
 /// remain for display/bookkeeping; providers execute the resolved `launch` block.
 /// `projections.effective_parallelism` is pre-computed from the same resolved
-/// descriptor as `launch.policy_env["BUZZ_ACP_AGENTS"]`. Access is projected from
+/// descriptor as `launch.policy_env["BEEKEEPER_ACP_AGENTS"]`. Access is projected from
 /// the same compiled policy that gates local starts.
 pub(super) fn deploy_payload_json(
     record: &ManagedAgentRecord,
@@ -242,7 +242,7 @@ pub(super) fn deploy_payload_json(
         "idle_timeout_seconds": record.idle_timeout_seconds,
         "max_turn_duration_seconds": record.max_turn_duration_seconds,
         // Legacy top-level field: projected from the same resolved descriptor as
-        // launch.policy_env["BUZZ_ACP_AGENTS"] — the two are always consistent.
+        // launch.policy_env["BEEKEEPER_ACP_AGENTS"] — the two are always consistent.
         "parallelism": projections.effective_parallelism,
         "respond_to": respond_to,
         "respond_to_allowlist": respond_to_allowlist,
@@ -263,7 +263,7 @@ mod tests {
             "display_name": "Agent\u{0000} Name",
             "private_key_nsec": "nsec1fake",
             "relay_url": "wss://relay.example",
-            "acp_command": "buzz-acp",
+            "acp_command": "beekeeper-acp",
             "agent_command": "goose",
             "agent_args": [],
             "mcp_command": "",
@@ -310,20 +310,35 @@ mod tests {
         // policy_env is applied first, so this default remains separate from
         // the descriptor value that wins in launch.env.
         assert_eq!(launch["policy_env"]["GOOSE_MODE"], "auto");
-        assert_eq!(launch["policy_env"]["BUZZ_ACP_LAZY_POOL"], "true");
-        assert_eq!(launch["policy_env"]["BUZZ_ACP_RELAY_OBSERVER"], "true");
-        assert_eq!(launch["policy_env"]["BUZZ_ACP_SESSION_POLICY"], "channel");
+        assert_eq!(launch["policy_env"]["BEEKEEPER_ACP_LAZY_POOL"], "true");
+        assert_eq!(launch["policy_env"]["BEEKEEPER_ACP_RELAY_OBSERVER"], "true");
         assert_eq!(
-            launch["policy_env"]["BUZZ_ACP_TEAM_INSTRUCTIONS"],
+            launch["policy_env"]["BEEKEEPER_ACP_SESSION_POLICY"],
+            "channel"
+        );
+        assert_eq!(
+            launch["policy_env"]["BEEKEEPER_ACP_TEAM_INSTRUCTIONS"],
             "Coordinate"
         );
-        assert_eq!(launch["policy_env"]["BUZZ_ACP_SESSION_TITLE"], "Agent Name");
-        assert_eq!(launch["policy_env"]["BUZZ_ACP_DISPLAY_NAME"], "Agent Name");
-        assert_eq!(launch["policy_env"]["BUZZ_ACP_SYSTEM_PROMPT"], "prompt");
-        assert_eq!(launch["policy_env"]["BUZZ_ACP_MODEL"], "model");
-        assert_eq!(launch["policy_env"]["BUZZ_ACP_IDLE_TIMEOUT"], "17");
-        assert_eq!(launch["policy_env"]["BUZZ_ACP_MAX_TURN_DURATION"], "23");
-        assert_eq!(launch["policy_env"]["BUZZ_ACP_AGENTS"], "4");
+        assert_eq!(
+            launch["policy_env"]["BEEKEEPER_ACP_SESSION_TITLE"],
+            "Agent Name"
+        );
+        assert_eq!(
+            launch["policy_env"]["BEEKEEPER_ACP_DISPLAY_NAME"],
+            "Agent Name"
+        );
+        assert_eq!(
+            launch["policy_env"]["BEEKEEPER_ACP_SYSTEM_PROMPT"],
+            "prompt"
+        );
+        assert_eq!(launch["policy_env"]["BEEKEEPER_ACP_MODEL"], "model");
+        assert_eq!(launch["policy_env"]["BEEKEEPER_ACP_IDLE_TIMEOUT"], "17");
+        assert_eq!(
+            launch["policy_env"]["BEEKEEPER_ACP_MAX_TURN_DURATION"],
+            "23"
+        );
+        assert_eq!(launch["policy_env"]["BEEKEEPER_ACP_AGENTS"], "4");
         assert_eq!(launch["owner_pubkey"], "owner-hex");
     }
 
@@ -334,7 +349,7 @@ mod tests {
             command: "goose".into(),
             args: vec![],
             env: BTreeMap::from([
-                ("BUZZ_ACP_SESSION_POLICY".into(), "channel".into()),
+                ("BEEKEEPER_ACP_SESSION_POLICY".into(), "channel".into()),
                 ("KEEP_ME".into(), "yes".into()),
             ]),
         };
@@ -349,12 +364,15 @@ mod tests {
             crate::managed_agents::AcpSessionPolicy::Thread,
         );
 
-        assert_eq!(launch["policy_env"]["BUZZ_ACP_SESSION_POLICY"], "thread");
-        assert!(launch["env"]["BUZZ_ACP_SESSION_POLICY"].is_null());
+        assert_eq!(
+            launch["policy_env"]["BEEKEEPER_ACP_SESSION_POLICY"],
+            "thread"
+        );
+        assert!(launch["env"]["BEEKEEPER_ACP_SESSION_POLICY"].is_null());
         assert_eq!(launch["env"]["KEEP_ME"], "yes");
     }
 
-    /// OpenClaw descriptor: `launch.policy_env["BUZZ_ACP_AGENTS"]` must be "5"
+    /// OpenClaw descriptor: `launch.policy_env["BEEKEEPER_ACP_AGENTS"]` must be "5"
     /// even when the record's requested parallelism is 10. This is the direct
     /// `launch.policy_env` seam test — the executable contract for remote providers.
     #[test]
@@ -371,14 +389,14 @@ mod tests {
         let launch = build_launch_block(&record, &descriptor, &[], None, None, "owner-hex");
 
         assert_eq!(
-            launch["policy_env"]["BUZZ_ACP_AGENTS"],
+            launch["policy_env"]["BEEKEEPER_ACP_AGENTS"],
             crate::managed_agents::parallelism::OPENCLAW_MAX_PARALLELISM.to_string(),
-            "launch.policy_env[BUZZ_ACP_AGENTS] must be capped at {} for OpenClaw, not 10",
+            "launch.policy_env[BEEKEEPER_ACP_AGENTS] must be capped at {} for OpenClaw, not 10",
             crate::managed_agents::parallelism::OPENCLAW_MAX_PARALLELISM
         );
     }
 
-    /// Uncapped harness (goose): `launch.policy_env["BUZZ_ACP_AGENTS"]` passes
+    /// Uncapped harness (goose): `launch.policy_env["BEEKEEPER_ACP_AGENTS"]` passes
     /// the requested value through unchanged.
     #[test]
     fn launch_block_goose_policy_env_is_not_capped() {
@@ -393,8 +411,8 @@ mod tests {
         let launch = build_launch_block(&record, &descriptor, &[], None, None, "owner-hex");
 
         assert_eq!(
-            launch["policy_env"]["BUZZ_ACP_AGENTS"], "8",
-            "goose: policy_env[BUZZ_ACP_AGENTS] must pass through requested value 8"
+            launch["policy_env"]["BEEKEEPER_ACP_AGENTS"], "8",
+            "goose: policy_env[BEEKEEPER_ACP_AGENTS] must pass through requested value 8"
         );
     }
 
@@ -403,7 +421,7 @@ mod tests {
     ///
     /// Stale-persona scenario: `record.agent_command` is "goose" (created before
     /// the user switched the persona to OpenClaw), but the live descriptor resolves
-    /// OpenClaw. Both `launch.policy_env["BUZZ_ACP_AGENTS"]` and the legacy
+    /// OpenClaw. Both `launch.policy_env["BEEKEEPER_ACP_AGENTS"]` and the legacy
     /// top-level `parallelism` must be the effective OpenClaw value (5), not the
     /// record's stale Goose identity (requested 10).
     #[test]
@@ -438,9 +456,9 @@ mod tests {
         );
 
         assert_eq!(
-            launch["policy_env"]["BUZZ_ACP_AGENTS"],
+            launch["policy_env"]["BEEKEEPER_ACP_AGENTS"],
             cap.to_string(),
-            "launch.policy_env[BUZZ_ACP_AGENTS] must be capped at {cap} for live OpenClaw descriptor"
+            "launch.policy_env[BEEKEEPER_ACP_AGENTS] must be capped at {cap} for live OpenClaw descriptor"
         );
         assert_eq!(
             payload["parallelism"], cap,
@@ -483,9 +501,9 @@ mod tests {
         );
 
         assert_eq!(
-            launch["policy_env"]["BUZZ_ACP_AGENTS"],
+            launch["policy_env"]["BEEKEEPER_ACP_AGENTS"],
             "4",
-            "launch.policy_env[BUZZ_ACP_AGENTS] must pass through requested 4 for live Goose descriptor"
+            "launch.policy_env[BEEKEEPER_ACP_AGENTS] must pass through requested 4 for live Goose descriptor"
         );
         assert_eq!(
             payload["parallelism"], 4,
@@ -529,9 +547,9 @@ mod tests {
         );
 
         assert_eq!(
-            launch["policy_env"]["BUZZ_ACP_AGENTS"],
+            launch["policy_env"]["BEEKEEPER_ACP_AGENTS"],
             cap.to_string(),
-            "launch.policy_env[BUZZ_ACP_AGENTS] must be {cap} for explicit OpenClaw override"
+            "launch.policy_env[BEEKEEPER_ACP_AGENTS] must be {cap} for explicit OpenClaw override"
         );
         assert_eq!(
             payload["parallelism"], cap,

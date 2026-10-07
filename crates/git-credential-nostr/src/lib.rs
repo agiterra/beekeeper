@@ -210,7 +210,7 @@ pub fn choose_key(
 /// Resolve the key git will present: `$NOSTR_PRIVATE_KEY` first, then `keyfile`.
 ///
 /// This is the resolution every Beekeeper caller must use — a check that read
-/// `BUZZ_PRIVATE_KEY` instead would test a different identity than the one git
+/// `BEEKEEPER_PRIVATE_KEY` instead would test a different identity than the one git
 /// presents, and could report success while every push failed.
 ///
 /// `Ok(None)` means neither source holds a key. A key file that cannot be read
@@ -294,7 +294,7 @@ pub fn authorization_header(
 /// every git request fails, and a caller that quietly dropped it would report a
 /// success git will never have.
 pub fn resolve_auth_tag() -> Result<Option<Tag>, String> {
-    let raw = std::env::var("BUZZ_AUTH_TAG")
+    let raw = std::env::var("BEEKEEPER_AUTH_TAG")
         .ok()
         .filter(|value| !value.is_empty())
         .or_else(|| git_config("nostr.authtag"));

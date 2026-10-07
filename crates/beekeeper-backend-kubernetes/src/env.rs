@@ -14,24 +14,24 @@ use std::collections::BTreeMap;
 /// before writing its own values, so a key the authoritative tier has no value
 /// for is **removed** rather than left holding a lower-tier value. Plain
 /// overwrite is not enough — most of these are written conditionally
-/// (`BUZZ_ACP_AGENT_ARGS` only when `launch.args` is non-empty,
-/// `BUZZ_ACP_RESPOND_TO` only when set), and without the clear, a lower tier
+/// (`BEEKEEPER_ACP_AGENT_ARGS` only when `launch.args` is non-empty,
+/// `BEEKEEPER_ACP_RESPOND_TO` only when set), and without the clear, a lower tier
 /// could supply the value for exactly the cases the authoritative tier stays
 /// silent on. Clearing is also what the local spawn does: the desktop strips
 /// reserved keys from user env before the authoritative layer is written
 /// (`env_vars.rs:54-57`), so absent-means-absent in both paths.
 const AUTHORITATIVE_KEYS: &[&str] = &[
-    "BUZZ_RELAY_URL",
-    "BUZZ_PRIVATE_KEY",
+    "BEEKEEPER_RELAY_URL",
+    "BEEKEEPER_PRIVATE_KEY",
     "NOSTR_PRIVATE_KEY",
-    "BUZZ_AUTH_TAG",
-    "BUZZ_ACP_AGENT_OWNER",
-    "BUZZ_ACP_AGENT_COMMAND",
-    "BUZZ_ACP_AGENT_ARGS",
-    "BUZZ_ACP_RESPOND_TO",
-    "BUZZ_ACP_RESPOND_TO_ALLOWLIST",
-    "BUZZ_ACP_MCP_COMMAND",
-    "BUZZ_ACP_EXIT_AFTER_INACTIVITY",
+    "BEEKEEPER_AUTH_TAG",
+    "BEEKEEPER_ACP_AGENT_OWNER",
+    "BEEKEEPER_ACP_AGENT_COMMAND",
+    "BEEKEEPER_ACP_AGENT_ARGS",
+    "BEEKEEPER_ACP_RESPOND_TO",
+    "BEEKEEPER_ACP_RESPOND_TO_ALLOWLIST",
+    "BEEKEEPER_ACP_MCP_COMMAND",
+    "BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY",
     START_NONCE_KEY,
 ];
 
@@ -39,12 +39,12 @@ const AUTHORITATIVE_KEYS: &[&str] = &[
 /// suffix — one generation, one identity — so the reconciler restamps this on
 /// every create attempt rather than letting the caller's value persist across
 /// a retry.
-pub const START_NONCE_KEY: &str = "BUZZ_MANAGED_AGENT_START_NONCE";
+pub const START_NONCE_KEY: &str = "BEEKEEPER_MANAGED_AGENT_START_NONCE";
 
 /// Presence is the only remote liveness signal (I3), so a launch that
 /// suppresses it is non-conforming (L1 item 2) — and unlike a reserved-key
 /// collision, there is no "authoritative value" to overwrite it with. Refuse.
-const FORBIDDEN_KEY: &str = "BUZZ_ACP_NO_PRESENCE";
+const FORBIDDEN_KEY: &str = "BEEKEEPER_ACP_NO_PRESENCE";
 
 /// Kubernetes' own cap on the summed value bytes of a Secret
 /// (`MaxSecretSize`, `pkg/apis/core/types.go`). Enforced here so an oversized
@@ -83,10 +83,10 @@ fn identity_component(value: &str) -> Option<&str> {
 }
 
 /// The harness's `allowlist` gate mode, spelled as the desktop serializes
-/// `RespondTo` (kebab-case) and as `buzz-acp`'s CLI parses it.
+/// `RespondTo` (kebab-case) and as `beekeeper-acp`'s CLI parses it.
 const RESPOND_TO_ALLOWLIST: &str = "allowlist";
 
-/// Every gate mode `buzz-acp` accepts, spelled as its `clap::ValueEnum` parses
+/// Every gate mode `beekeeper-acp` accepts, spelled as its `clap::ValueEnum` parses
 /// them (`config.rs:95-101`, kebab-case via `RespondTo`'s `Display`).
 ///
 /// Deliberately the **harness's** four and not the desktop's three: the desktop
@@ -106,12 +106,12 @@ const RESPOND_TO_MODES: [&str; 4] = ["owner-only", RESPOND_TO_ALLOWLIST, "anyone
 /// sweep does, at `ORPHAN_SECRET_MIN_AGE_SECS`). The user-visible ending is
 /// "startup not confirmed", indistinguishable from a slow cluster.
 ///
-/// Mirrors `buzz-acp`'s own rules exactly (`config.rs:95-101,996-1004,629-641`),
+/// Mirrors `beekeeper-acp`'s own rules exactly (`config.rs:95-101,996-1004,629-641`),
 /// deliberately including their asymmetry: the allowlist is validated **only**
 /// in allowlist mode, and merely warned about otherwise. Validating it in
 /// every mode would refuse a deploy whose identical local spawn succeeds —
 /// and a stale list is already harmless here, since
-/// `BUZZ_ACP_RESPOND_TO_ALLOWLIST` is an authoritative key that tier 3 clears.
+/// `BEEKEEPER_ACP_RESPOND_TO_ALLOWLIST` is an authoritative key that tier 3 clears.
 fn validate_respond_to_gate(respond_to: &str, allowlist: Option<&[String]>) -> Result<(), String> {
     // Exact, untrimmed: `clap` does not trim, so `" allowlist "` is `rc=2` at
     // the harness — a parse failure even earlier than the config errors below.
@@ -225,8 +225,11 @@ pub fn build_env(
                     no relay to connect to"
             .to_string());
     };
-    env.insert("BUZZ_RELAY_URL".into(), relay_url.to_string());
-    env.insert("BUZZ_PRIVATE_KEY".into(), agent.private_key_nsec.clone());
+    env.insert("BEEKEEPER_RELAY_URL".into(), relay_url.to_string());
+    env.insert(
+        "BEEKEEPER_PRIVATE_KEY".into(),
+        agent.private_key_nsec.clone(),
+    );
     // The git credential/signing helpers read NOSTR_PRIVATE_KEY.
     env.insert("NOSTR_PRIVATE_KEY".into(), agent.private_key_nsec.clone());
 
@@ -243,10 +246,10 @@ pub fn build_env(
         }
         (tag, own) => {
             if let Some(t) = tag {
-                env.insert("BUZZ_AUTH_TAG".into(), t.to_string());
+                env.insert("BEEKEEPER_AUTH_TAG".into(), t.to_string());
             }
             if let Some(o) = own {
-                env.insert("BUZZ_ACP_AGENT_OWNER".into(), o.to_string());
+                env.insert("BEEKEEPER_ACP_AGENT_OWNER".into(), o.to_string());
             }
         }
     }
@@ -255,31 +258,37 @@ pub fn build_env(
     // A host path forwarded from the desktop is guaranteed absent in the
     // container (§Launch data, host-resolved values).
     if let Some(command) = launch.command.as_deref().filter(|c| !c.is_empty()) {
-        env.insert("BUZZ_ACP_AGENT_COMMAND".into(), command.to_string());
+        env.insert("BEEKEEPER_ACP_AGENT_COMMAND".into(), command.to_string());
     }
     if !launch.args.is_empty() {
         // Comma-joined because that is what the harness's CLI parser decodes,
         // and what the desktop's local spawn does. An argument containing a
         // comma is unrepresentable in both paths; inventing an escaping
         // scheme here would produce args the harness cannot decode.
-        env.insert("BUZZ_ACP_AGENT_ARGS".into(), launch.args.join(","));
+        env.insert("BEEKEEPER_ACP_AGENT_ARGS".into(), launch.args.join(","));
     }
-    env.insert("BUZZ_ACP_MCP_COMMAND".into(), "buzz-dev-mcp".into());
+    env.insert(
+        "BEEKEEPER_ACP_MCP_COMMAND".into(),
+        "beekeeper-dev-mcp".into(),
+    );
 
     if let Some(respond_to) = agent.respond_to.as_deref().filter(|s| !s.is_empty()) {
         validate_respond_to_gate(respond_to, agent.respond_to_allowlist.as_deref())?;
-        env.insert("BUZZ_ACP_RESPOND_TO".into(), respond_to.to_string());
+        env.insert("BEEKEEPER_ACP_RESPOND_TO".into(), respond_to.to_string());
     }
     if let Some(list) = agent
         .respond_to_allowlist
         .as_ref()
         .filter(|l| !l.is_empty())
     {
-        env.insert("BUZZ_ACP_RESPOND_TO_ALLOWLIST".into(), list.join(","));
+        env.insert("BEEKEEPER_ACP_RESPOND_TO_ALLOWLIST".into(), list.join(","));
     }
 
     if let Some(secs) = auth.inactivity_seconds {
-        env.insert("BUZZ_ACP_EXIT_AFTER_INACTIVITY".into(), secs.to_string());
+        env.insert(
+            "BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY".into(),
+            secs.to_string(),
+        );
     }
     // The generation token doubles as the lifecycle-frame correlator, so pod
     // logs and observer frames share one identity (§K8s Secrets).
@@ -329,10 +338,10 @@ mod tests {
     #[test]
     fn identity_comes_from_top_level_fields() {
         let env = build(&payload_json(serde_json::json!({}))).unwrap();
-        assert_eq!(env["BUZZ_RELAY_URL"], "wss://relay.example");
-        assert_eq!(env["BUZZ_PRIVATE_KEY"], "nsec1example");
+        assert_eq!(env["BEEKEEPER_RELAY_URL"], "wss://relay.example");
+        assert_eq!(env["BEEKEEPER_PRIVATE_KEY"], "nsec1example");
         assert_eq!(env["NOSTR_PRIVATE_KEY"], "nsec1example");
-        assert_eq!(env["BUZZ_AUTH_TAG"], "tag-1");
+        assert_eq!(env["BEEKEEPER_AUTH_TAG"], "tag-1");
     }
 
     /// Wren's amendment, and the spec's later-wins rule: a lower tier that
@@ -345,31 +354,31 @@ mod tests {
             "launch": {
                 "command": "goose",
                 "policy_env": {
-                    "BUZZ_PRIVATE_KEY": "nsec1attacker",
-                    "BUZZ_MANAGED_AGENT_START_NONCE": "forged",
+                    "BEEKEEPER_PRIVATE_KEY": "nsec1attacker",
+                    "BEEKEEPER_MANAGED_AGENT_START_NONCE": "forged",
                 },
                 "env": {
-                    "BUZZ_RELAY_URL": "wss://attacker.example",
+                    "BEEKEEPER_RELAY_URL": "wss://attacker.example",
                     "NOSTR_PRIVATE_KEY": "nsec1attacker",
-                    "BUZZ_AUTH_TAG": "forged-tag",
-                    "BUZZ_ACP_AGENT_OWNER": "cafe",
-                    "BUZZ_ACP_AGENT_COMMAND": "/bin/sh",
-                    "BUZZ_ACP_MCP_COMMAND": "/bin/sh",
-                    "BUZZ_ACP_EXIT_AFTER_INACTIVITY": "0",
+                    "BEEKEEPER_AUTH_TAG": "forged-tag",
+                    "BEEKEEPER_ACP_AGENT_OWNER": "cafe",
+                    "BEEKEEPER_ACP_AGENT_COMMAND": "/bin/sh",
+                    "BEEKEEPER_ACP_MCP_COMMAND": "/bin/sh",
+                    "BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY": "0",
                 },
                 "owner_pubkey": "beef"
             }
         }));
         let env = build(&agent).unwrap();
-        assert_eq!(env["BUZZ_PRIVATE_KEY"], "nsec1example");
+        assert_eq!(env["BEEKEEPER_PRIVATE_KEY"], "nsec1example");
         assert_eq!(env["NOSTR_PRIVATE_KEY"], "nsec1example");
-        assert_eq!(env["BUZZ_RELAY_URL"], "wss://relay.example");
-        assert_eq!(env["BUZZ_AUTH_TAG"], "tag-1");
-        assert_eq!(env["BUZZ_ACP_AGENT_OWNER"], "beef");
-        assert_eq!(env["BUZZ_ACP_AGENT_COMMAND"], "goose");
-        assert_eq!(env["BUZZ_ACP_MCP_COMMAND"], "buzz-dev-mcp");
-        assert_eq!(env["BUZZ_ACP_EXIT_AFTER_INACTIVITY"], "7200");
-        assert_eq!(env["BUZZ_MANAGED_AGENT_START_NONCE"], "gen0001");
+        assert_eq!(env["BEEKEEPER_RELAY_URL"], "wss://relay.example");
+        assert_eq!(env["BEEKEEPER_AUTH_TAG"], "tag-1");
+        assert_eq!(env["BEEKEEPER_ACP_AGENT_OWNER"], "beef");
+        assert_eq!(env["BEEKEEPER_ACP_AGENT_COMMAND"], "goose");
+        assert_eq!(env["BEEKEEPER_ACP_MCP_COMMAND"], "beekeeper-dev-mcp");
+        assert_eq!(env["BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY"], "7200");
+        assert_eq!(env["BEEKEEPER_MANAGED_AGENT_START_NONCE"], "gen0001");
     }
 
     /// Tier 1 is *overridable* — user env beats policy defaults, matching the
@@ -379,14 +388,14 @@ mod tests {
     fn user_env_overrides_policy_defaults() {
         let agent = payload_json(serde_json::json!({
             "launch": {
-                "policy_env": {"GOOSE_MODE": "auto", "BUZZ_ACP_MODEL": "sonnet"},
+                "policy_env": {"GOOSE_MODE": "auto", "BEEKEEPER_ACP_MODEL": "sonnet"},
                 "env": {"GOOSE_MODE": "chat"},
                 "owner_pubkey": "beef"
             }
         }));
         let env = build(&agent).unwrap();
         assert_eq!(env["GOOSE_MODE"], "chat");
-        assert_eq!(env["BUZZ_ACP_MODEL"], "sonnet");
+        assert_eq!(env["BEEKEEPER_ACP_MODEL"], "sonnet");
     }
 
     /// `launch.env` already contains the merged user env, so re-merging the
@@ -446,9 +455,9 @@ mod tests {
             "launch": {"owner_pubkey": "  beefcafe  "}
         }));
         let env = build(&agent).unwrap();
-        assert_eq!(env["BUZZ_RELAY_URL"], "wss://relay.example");
-        assert_eq!(env["BUZZ_AUTH_TAG"], "tag-1");
-        assert_eq!(env["BUZZ_ACP_AGENT_OWNER"], "beefcafe");
+        assert_eq!(env["BEEKEEPER_RELAY_URL"], "wss://relay.example");
+        assert_eq!(env["BEEKEEPER_AUTH_TAG"], "tag-1");
+        assert_eq!(env["BEEKEEPER_ACP_AGENT_OWNER"], "beefcafe");
     }
 
     /// L1 item 1's third identity component. The nsec arm is enforced in
@@ -471,17 +480,17 @@ mod tests {
             "launch": {"owner_pubkey": "beefcafe"}
         }));
         let env = build(&agent).unwrap();
-        assert_eq!(env["BUZZ_ACP_AGENT_OWNER"], "beefcafe");
-        assert!(!env.contains_key("BUZZ_AUTH_TAG"));
+        assert_eq!(env["BEEKEEPER_ACP_AGENT_OWNER"], "beefcafe");
+        assert!(!env.contains_key("BEEKEEPER_AUTH_TAG"));
     }
 
     #[test]
     fn refuses_presence_suppression() {
         let agent = payload_json(serde_json::json!({
-            "launch": {"env": {"BUZZ_ACP_NO_PRESENCE": "1"}, "owner_pubkey": "beef"}
+            "launch": {"env": {"BEEKEEPER_ACP_NO_PRESENCE": "1"}, "owner_pubkey": "beef"}
         }));
         let err = build(&agent).unwrap_err();
-        assert!(err.contains("BUZZ_ACP_NO_PRESENCE"), "got: {err}");
+        assert!(err.contains("BEEKEEPER_ACP_NO_PRESENCE"), "got: {err}");
     }
 
     /// `foo.bar` is a legal Secret key but not a legal env name: pre-1.30
@@ -503,12 +512,14 @@ mod tests {
             "launch": {"command": "goose", "args": ["run", "--no-session"], "owner_pubkey": "b"}
         }));
         let env = build(&agent).unwrap();
-        assert_eq!(env["BUZZ_ACP_AGENT_ARGS"], "run,--no-session");
+        assert_eq!(env["BEEKEEPER_ACP_AGENT_ARGS"], "run,--no-session");
 
         let agent = payload_json(serde_json::json!({
             "launch": {"command": "goose", "args": [], "owner_pubkey": "b"}
         }));
-        assert!(!build(&agent).unwrap().contains_key("BUZZ_ACP_AGENT_ARGS"));
+        assert!(!build(&agent)
+            .unwrap()
+            .contains_key("BEEKEEPER_ACP_AGENT_ARGS"));
     }
 
     /// The top-level `model`/`provider` fields are display inputs; their
@@ -523,8 +534,8 @@ mod tests {
         }));
         let env = build(&agent).unwrap();
         for key in [
-            "BUZZ_AGENT_PROVIDER",
-            "BUZZ_AGENT_MODEL",
+            "BEEKEEPER_AGENT_PROVIDER",
+            "BEEKEEPER_AGENT_MODEL",
             "GOOSE_PROVIDER",
             "GOOSE_MODEL",
         ] {
@@ -554,14 +565,14 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(!env.contains_key("BUZZ_ACP_EXIT_AFTER_INACTIVITY"));
+        assert!(!env.contains_key("BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY"));
     }
 
     /// Structural guard over the whole authoritative list at once: whatever
     /// the lower tiers contain, no authoritative key holds a lower-tier value
     /// — including the conditionally-written ones the authoritative tier has
     /// nothing to say about, which must be **absent** rather than spoofed.
-    /// This test caught exactly that: `BUZZ_ACP_AGENT_ARGS` is only written
+    /// This test caught exactly that: `BEEKEEPER_ACP_AGENT_ARGS` is only written
     /// when `launch.args` is non-empty, so plain later-wins overwrite left the
     /// spoofed value in place.
     #[test]
@@ -592,9 +603,9 @@ mod tests {
         // The keys the authoritative tier had no value for are gone, not
         // merely different.
         for absent in [
-            "BUZZ_ACP_AGENT_ARGS",
-            "BUZZ_ACP_RESPOND_TO",
-            "BUZZ_ACP_RESPOND_TO_ALLOWLIST",
+            "BEEKEEPER_ACP_AGENT_ARGS",
+            "BEEKEEPER_ACP_RESPOND_TO",
+            "BEEKEEPER_ACP_RESPOND_TO_ALLOWLIST",
         ] {
             assert!(!env.contains_key(absent), "{absent} survived the clear");
         }
@@ -651,9 +662,9 @@ mod tests {
             "respond_to_allowlist": [pubkey('a'), pubkey('b')],
         }));
         let env = build(&agent).unwrap();
-        assert_eq!(env["BUZZ_ACP_RESPOND_TO"], "allowlist");
+        assert_eq!(env["BEEKEEPER_ACP_RESPOND_TO"], "allowlist");
         assert_eq!(
-            env["BUZZ_ACP_RESPOND_TO_ALLOWLIST"],
+            env["BEEKEEPER_ACP_RESPOND_TO_ALLOWLIST"],
             format!("{},{}", pubkey('a'), pubkey('b'))
         );
     }
@@ -671,7 +682,7 @@ mod tests {
             }));
             let env = build(&agent)
                 .unwrap_or_else(|e| panic!("{mode} with a stale list must deploy: {e}"));
-            assert_eq!(env["BUZZ_ACP_RESPOND_TO"], mode);
+            assert_eq!(env["BEEKEEPER_ACP_RESPOND_TO"], mode);
         }
     }
 
@@ -726,7 +737,7 @@ mod tests {
             }));
             let env = build(&agent)
                 .unwrap_or_else(|e| panic!("{mode} is valid at the harness but was refused: {e}"));
-            assert_eq!(env["BUZZ_ACP_RESPOND_TO"], mode);
+            assert_eq!(env["BEEKEEPER_ACP_RESPOND_TO"], mode);
         }
     }
 }

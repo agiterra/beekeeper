@@ -111,7 +111,7 @@ fn sign_work_record(
 ) -> Result<nostr::Event, CliError> {
     // `sign_event_unchecked`, never `sign_event`. The latter injects this
     // client's NIP-OA `auth` tag into every event it signs, and a managed
-    // agent always has one (`BUZZ_AUTH_TAG`), so a seat's adopt carried a
+    // agent always has one (`BEEKEEPER_AUTH_TAG`), so a seat's adopt carried a
     // seventh tag onto a record whose contract fixes six and hive refused it
     // with `tag-count` (ledger 237). Membership delegation still reaches the
     // relay: `submit_event` sends the same tag in the `x-auth-tag` header,

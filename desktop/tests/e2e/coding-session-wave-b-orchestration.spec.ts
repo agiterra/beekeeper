@@ -8,12 +8,12 @@ import {
   type CodingSessionCommandTarget,
 } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   codingSessionMetadataSemanticKey,
   CODING_SESSION_METADATA_TAG_VERSION,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   codingSessionTranscriptSemanticKey,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -181,7 +181,7 @@ function metadata(seat: Seat, createdAt: number): RelayEvent {
         ["csm-key", codingSessionMetadataSemanticKey(seat.target)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: seat.target,
         projectRef: null,
         repoRef: null,
@@ -227,7 +227,7 @@ function transcript(seat: Seat, nowSeconds: number): RelayEvent[] {
           ],
         ],
         content: JSON.stringify({
-          schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+          schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
           session: seat.target,
           eventSeq,
           timestamp: createdAt * 1_000,

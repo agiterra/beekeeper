@@ -130,7 +130,7 @@ On a Mac, check the Apple menu > About This Mac: "Chip: Apple …" means Apple S
 The Windows build is not code-signed, so SmartScreen may show "Windows protected your PC" on first launch. If available, click **More info**, then **Run anyway**.
 
 
-By default the app connects to `ws://localhost:3000`. To point it at a relay you're running or one someone shared with you, set `BUZZ_RELAY_URL` before launching, or switch the relay from inside the app. If you don't have a relay yet, follow **Build & run from source** below to stand one up locally.
+By default the app connects to `ws://localhost:3000`. To point it at a relay you're running or one someone shared with you, set `BEEKEEPER_RELAY_URL` before launching, or switch the relay from inside the app. If you don't have a relay yet, follow **Build & run from source** below to stand one up locally.
 
 ### I want my own hosted relay
 
@@ -169,7 +169,7 @@ For a split-terminal workflow (relay logs separate from Vite output), use `just 
 
 Want a single-node / VPS relay instead of the local-dev stack? Use the production Compose bundle in [`deploy/compose/`](deploy/compose/README.md) (`docker compose` + Postgres, Redis, RustFS, optional Caddy/TLS). The root [`docker-compose.yml`](docker-compose.yml) is for day-to-day development only.
 
-For agents, set `BUZZ_PRIVATE_KEY` and use [`beekeeper-cli`](crates/beekeeper-cli) — JSON in, JSON out, designed for LLM tool calls.
+For agents, set `BEEKEEPER_PRIVATE_KEY` and use [`beekeeper-cli`](crates/beekeeper-cli) — JSON in, JSON out, designed for LLM tool calls.
 
 ---
 
@@ -179,7 +179,7 @@ The agent shell tool runs commands under bash. On macOS and Linux that's already
 
 Install [Git for Windows](https://git-scm.com/download/win) — it ships Git Bash, which is what Beekeeper resolves at runtime. Once it's installed, everything works the same as on other platforms.
 
-If you'd rather point Beekeeper at a different bash-compatible shell, set `BUZZ_SHELL` to its path (e.g. `BUZZ_SHELL=C:\path\to\bash.exe`). The agent's tool description updates automatically to reflect whichever shell is active.
+If you'd rather point Beekeeper at a different bash-compatible shell, set `BEEKEEPER_SHELL` to its path (e.g. `BEEKEEPER_SHELL=C:\path\to\bash.exe`). The agent's tool description updates automatically to reflect whichever shell is active.
 
 ---
 
@@ -191,7 +191,7 @@ If you'd rather point Beekeeper at a different bash-compatible shell, set `BUZZ_
 │  Human client         AI agent              CLI / scripts               │
 │  (Beekeeper desktop)  (Goose, Codex, ...)   (beekeeper-cli, agents)     │
 │       │               ┌──────────────┐               │                  │
-│       │               │  buzz-acp  │                 │                  │
+│       │               │  beekeeper-acp  │                 │                  │
 │       │               │  (ACP ↔ MCP) │               │                  │
 │       │               └──────┬───────┘               │                  │
 │       │                      │                       │                  │
@@ -199,7 +199,7 @@ If you'd rather point Beekeeper at a different bash-compatible shell, set `BUZZ_
         │ WebSocket            │ WS + REST             │ WS + REST
         ▼                      ▼                       ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                          buzz-relay                                     │
+│                          beekeeper-relay                                     │
 │  NIP-01 · NIP-42 auth · channel/DM/media/workflow/git REST · audit log  │
 └───┬──────────────────────────┬──────────────────────────┬───────────────┘
     │                          │                          │
@@ -215,17 +215,17 @@ A Rust workspace of focused crates. Single source of truth: the relay. See [ARCH
 <details>
 <summary><strong>Crate map</strong></summary>
 
-**Core protocol** — `beekeeper-core` (zero-I/O types, NIP-01 filters, Schnorr verify) · `buzz-relay` (Axum WS + REST)
+**Core protocol** — `beekeeper-core` (zero-I/O types, NIP-01 filters, Schnorr verify) · `beekeeper-relay` (Axum WS + REST)
 
 **Services** — `beekeeper-db` (Postgres) · `beekeeper-auth` (NIP-42/98 Schnorr auth, rate limiting) · `beekeeper-pubsub` (Redis, presence, typing) · `beekeeper-search` (Postgres FTS) · `beekeeper-audit` (hash-chain log). Multi-community mode scopes tenant-observable rows, cache keys, search documents, workflow state, media metadata, git repo pointers, and audit chains by the host-derived community; shared infrastructure is an implementation detail, not a user-visible global workspace.
 
-**Agent surface** — `beekeeper-cli` (agent-first CLI, JSON in / JSON out) · `buzz-acp` (ACP harness for Goose/Codex/Claude Code) · `buzz-agent` (ACP agent — see [VISION_AGENT.md](VISION_AGENT.md)) · `buzz-dev-mcp` (shell + file-edit tools) · `beekeeper-workflow` (YAML automation) · `beekeeper-persona` (agent persona packs)
+**Agent surface** — `beekeeper-cli` (agent-first CLI, JSON in / JSON out) · `beekeeper-acp` (ACP harness for Goose/Codex/Claude Code) · `buzz-agent` (ACP agent — see [VISION_AGENT.md](VISION_AGENT.md)) · `beekeeper-dev-mcp` (shell + file-edit tools) · `beekeeper-workflow` (YAML automation) · `beekeeper-persona` (agent persona packs)
 
-**Git & pairing** — `git-sign-nostr` / `git-credential-nostr` (nostr-signed git) · `buzz-pair-relay` / `beekeeper-pairing-cli` (relay pairing)
+**Git & pairing** — `git-sign-nostr` / `git-credential-nostr` (nostr-signed git) · `beekeeper-pair-relay` / `beekeeper-pairing-cli` (relay pairing)
 
 **Shared** — `beekeeper-sdk` (typed event builders) · `beekeeper-media` (Blossom/S3)
 
-**Tooling** — `buzz-admin` (admin CLI) · `beekeeper-test-client` (E2E)
+**Tooling** — `beekeeper-admin` (admin CLI) · `beekeeper-test-client` (E2E)
 
 </details>
 

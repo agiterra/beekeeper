@@ -5,11 +5,11 @@
 # =============================================================================
 #
 # Composes, as independent OS processes talking over real sockets:
-#   - the actual `buzz-relay` binary, against a scratch Postgres database
+#   - the actual `beekeeper-relay` binary, against a scratch Postgres database
 #     (dropped on exit) and Redis logical DB 14 — never the dev database or
 #     Redis DB 0;
 #   - the built `bee` CLI, driving every step two real operators would;
-#   - **two** real `buzz-session-provider` processes, P_A and P_B, with
+#   - **two** real `beekeeper-session-provider` processes, P_A and P_B, with
 #     distinct keys, distinct state dirs and distinct working directories,
 #     each running a minimal ACP-speaking bash script in place of a model
 #     adapter (the `scripts/ci-continuation-acceptance.sh` technique — a real
@@ -75,8 +75,8 @@ cd "${REPO_ROOT}"
 
 TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 BEE_BIN="${BEE_BIN:-${TARGET_DIR}/debug/bee}"
-RELAY_BIN="${RELAY_BIN:-${TARGET_DIR}/debug/buzz-relay}"
-PROVIDER_BIN="${PROVIDER_BIN:-${TARGET_DIR}/debug/buzz-session-provider}"
+RELAY_BIN="${RELAY_BIN:-${TARGET_DIR}/debug/beekeeper-relay}"
+PROVIDER_BIN="${PROVIDER_BIN:-${TARGET_DIR}/debug/beekeeper-session-provider}"
 CREDENTIAL_BIN="${GIT_CREDENTIAL_NOSTR_BIN:-${TARGET_DIR}/debug/git-credential-nostr}"
 
 for bin in "${BEE_BIN}" "${RELAY_BIN}" "${PROVIDER_BIN}" "${CREDENTIAL_BIN}"; do
@@ -337,16 +337,16 @@ RELAY_URL="ws://127.0.0.1:${RELAY_PORT}"
 RELAY_HTTP="http://127.0.0.1:${RELAY_PORT}"
 RELAY_KEY="$(openssl rand -hex 32)"
 
-log "starting buzz-relay on ${RELAY_HTTP} (scratch DB, Redis DB 14, git scratch under ${WORKDIR})..."
+log "starting beekeeper-relay on ${RELAY_HTTP} (scratch DB, Redis DB 14, git scratch under ${WORKDIR})..."
 DATABASE_URL="postgres://buzz:buzz_dev@localhost:5432/${DB_NAME}" \
   REDIS_URL="redis://localhost:6379/14" \
   RELAY_URL="${RELAY_URL}" \
-  BUZZ_BIND_ADDR="127.0.0.1:${RELAY_PORT}" \
-  BUZZ_RELAY_PRIVATE_KEY="${RELAY_KEY}" \
-  BUZZ_REQUIRE_AUTH_TOKEN=false \
-  BUZZ_RECONCILE_CHANNELS=true \
-  BUZZ_AUTO_MIGRATE=true \
-  BUZZ_GIT_REPO_PATH="${WORKDIR}/relay-git" \
+  BEEKEEPER_BIND_ADDR="127.0.0.1:${RELAY_PORT}" \
+  BEEKEEPER_RELAY_PRIVATE_KEY="${RELAY_KEY}" \
+  BEEKEEPER_REQUIRE_AUTH_TOKEN=false \
+  BEEKEEPER_RECONCILE_CHANNELS=true \
+  BEEKEEPER_AUTO_MIGRATE=true \
+  BEEKEEPER_GIT_REPO_PATH="${WORKDIR}/relay-git" \
   "${RELAY_BIN}" > "${WORKDIR}/relay.log" 2>&1 &
 RELAY_PID=$!
 
@@ -364,7 +364,7 @@ RELAY_SELF="$(curl -s -H 'Accept: application/nostr+json' "${RELAY_HTTP}/" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["self"])')"
 ok "relay ready at ${RELAY_HTTP} (self ${RELAY_SELF:0:16}…)"
 
-export BUZZ_RELAY_URL="${RELAY_HTTP}"
+export BEEKEEPER_RELAY_URL="${RELAY_HTTP}"
 
 # ── Two owner identities, one attestation owner, two provider identities ────
 # A and B are the two participants. `ATTEST_KEY` is the human owner whose
@@ -381,14 +381,14 @@ B_HEX="$(py -c "import bip340,sys; print(bip340.xonly_pubkey(sys.argv[1]))" "${B
 A_TAG="$(py -c "import bip340,sys; print(bip340.auth_tag(sys.argv[1], sys.argv[2], ''))" "${ATTEST_KEY}" "${A_HEX}")"
 B_TAG="$(py -c "import bip340,sys; print(bip340.auth_tag(sys.argv[1], sys.argv[2], ''))" "${ATTEST_KEY}" "${B_HEX}")"
 
-bee_a()  { BUZZ_PRIVATE_KEY="${A_KEY}" "${BEE_BIN}" "$@"; }
-bee_b()  { BUZZ_PRIVATE_KEY="${B_KEY}" "${BEE_BIN}" "$@"; }
+bee_a()  { BEEKEEPER_PRIVATE_KEY="${A_KEY}" "${BEE_BIN}" "$@"; }
+bee_b()  { BEEKEEPER_PRIVATE_KEY="${B_KEY}" "${BEE_BIN}" "$@"; }
 # The git-capable forms: `handover checkpoint` and `handover continue` shell
 # out to git, which reaches the relay through git-credential-nostr, which signs
 # with $NOSTR_PRIVATE_KEY. Same identity, two env vars, because the CLI and the
 # credential helper read different ones.
-bee_a_git() { BUZZ_PRIVATE_KEY="${A_KEY}" NOSTR_PRIVATE_KEY="${A_KEY}" "${BEE_BIN}" "$@"; }
-bee_b_git() { BUZZ_PRIVATE_KEY="${B_KEY}" NOSTR_PRIVATE_KEY="${B_KEY}" "${BEE_BIN}" "$@"; }
+bee_a_git() { BEEKEEPER_PRIVATE_KEY="${A_KEY}" NOSTR_PRIVATE_KEY="${A_KEY}" "${BEE_BIN}" "$@"; }
+bee_b_git() { BEEKEEPER_PRIVATE_KEY="${B_KEY}" NOSTR_PRIVATE_KEY="${B_KEY}" "${BEE_BIN}" "$@"; }
 
 # ── Repository, project, channel ────────────────────────────────────────────
 REPO_ID="handover-repo-$$"
@@ -417,7 +417,7 @@ CHANNEL="$(bee_a channels create --name "handover-$$" --type stream --visibility
 bee_a repos bind --id "${REPO_ID}" --channel "${CHANNEL}" --project "${PROJECT}" >/dev/null
 
 for key in "${B_KEY}" "${PROVIDER_A_KEY}" "${PROVIDER_B_KEY}"; do
-  BUZZ_PRIVATE_KEY="${key}" "${BEE_BIN}" channels join --channel "${CHANNEL}" >/dev/null
+  BEEKEEPER_PRIVATE_KEY="${key}" "${BEE_BIN}" channels join --channel "${CHANNEL}" >/dev/null
 done
 ok "fixtures ready: repo=${REPO_COORD} project=${PROJECT} channel=${CHANNEL}"
 
@@ -574,11 +574,11 @@ CWD_LOG_B="${WORKDIR}/cwd-b.log"; : > "${CWD_LOG_B}"
 spawn_provider() {
   local key="$1" state_dir="$2" projects_file="$3" runtimes_json="$4" \
         log_file="$5" methods_log="$6" acp_log="$7" cwd_log="$8"
-  BUZZ_PRIVATE_KEY="${key}" \
-    BUZZ_RELAY_URL="${RELAY_URL}" \
-    BUZZ_CSP_STATE_DIR="${state_dir}" \
-    BUZZ_CSP_PROJECTS_FILE="${projects_file}" \
-    BUZZ_CSP_RUNTIMES="${runtimes_json}" \
+  BEEKEEPER_PRIVATE_KEY="${key}" \
+    BEEKEEPER_RELAY_URL="${RELAY_URL}" \
+    BEEKEEPER_CSP_STATE_DIR="${state_dir}" \
+    BEEKEEPER_CSP_PROJECTS_FILE="${projects_file}" \
+    BEEKEEPER_CSP_RUNTIMES="${runtimes_json}" \
     FABLE_ACP_REQUEST_LOG="${acp_log}" \
     FABLE_METHODS_LOG="${methods_log}" \
     FABLE_CWD_LOG="${cwd_log}" \
@@ -693,7 +693,7 @@ found_umbrella() {
     b) key="${B_KEY}"; tag="${B_TAG}" ;;
     *) err "found_umbrella: unknown identity ${who}"; return 1 ;;
   esac
-  out="$(BUZZ_PRIVATE_KEY="${key}" BUZZ_AUTH_TAG="${tag}" "${BEE_BIN}" sessions create \
+  out="$(BEEKEEPER_PRIVATE_KEY="${key}" BEEKEEPER_AUTH_TAG="${tag}" "${BEE_BIN}" sessions create \
     --channel "${CHANNEL}" --provider-instance "${INSTANCE}" \
     --provider-authority "${provider_pubkey}" --project "${PROJECT}" --repo "${REPO_ID}" \
     --brief - --wait --timeout-secs 90 <<< "${brief}")"
@@ -730,7 +730,7 @@ print(created['target'])
 send_turn() {
   local who="$1" target="$2" text="$3" key out
   case "${who}" in a) key="${A_KEY}" ;; b) key="${B_KEY}" ;; esac
-  if ! out="$(BUZZ_PRIVATE_KEY="${key}" "${BEE_BIN}" sessions send --channel "${CHANNEL}" \
+  if ! out="$(BEEKEEPER_PRIVATE_KEY="${key}" "${BEE_BIN}" sessions send --channel "${CHANNEL}" \
     --to "${target}" --content "${text}" --no-wait 2> "${WORKDIR}/send.err")"; then
     err "the relay refused the turn itself (no provider receipt will exist): $(cat "${WORKDIR}/send.err")"
     return 1
@@ -995,7 +995,7 @@ assert 'sig' in event and event['sig'], 'the relay returned an unsigned row; not
 print(json.dumps(event))
 ")"
   # `X-Pubkey` is the relay's dev-mode bridge auth, live because this relay
-  # runs with BUZZ_REQUIRE_AUTH_TOKEN=false. It authenticates the *caller*, not
+  # runs with BEEKEEPER_REQUIRE_AUTH_TOKEN=false. It authenticates the *caller*, not
   # the event: the bytes being replayed keep their original signature, which is
   # the whole point of the step.
   curl -s -o "${WORKDIR}/replay-${event_id:0:12}.json" -w '%{http_code}' \
@@ -1290,8 +1290,8 @@ step_3() {
   local links_before links_after probe_exit
   links_before="$(authority_link_count "${G1}")"
   set +e
-  env -u BUZZ_CSP_PROJECTS_FILE \
-    BUZZ_PRIVATE_KEY="${B_KEY}" NOSTR_PRIVATE_KEY="${B_KEY}" "${BEE_BIN}" \
+  env -u BEEKEEPER_CSP_PROJECTS_FILE \
+    BEEKEEPER_PRIVATE_KEY="${B_KEY}" NOSTR_PRIVATE_KEY="${B_KEY}" "${BEE_BIN}" \
     sessions handover continue --channel "${CHANNEL}" --session-ref "${S1}" \
     --genesis "${G1}" --cwd "${CHECKOUT_B}" --body "${PROVIDER_B_HEX}" \
     --provider-instance "${INSTANCE}" --remote origin --wait-secs 120 --json \
@@ -2105,7 +2105,7 @@ for event in json.load(sys.stdin):
     # wrapper and leaves the real `bee` running. That happened, and it left a
     # `handover continue` alive for minutes after this step believed it had
     # killed it — which is the one thing this step must not get wrong.
-    BUZZ_PRIVATE_KEY="${B_KEY}" NOSTR_PRIVATE_KEY="${B_KEY}" "${BEE_BIN}" \
+    BEEKEEPER_PRIVATE_KEY="${B_KEY}" NOSTR_PRIVATE_KEY="${B_KEY}" "${BEE_BIN}" \
       sessions handover continue --channel "${CHANNEL}" --session-ref "${s4}" \
       --genesis "${g4}" --cwd "${checkout}" --body "${PROVIDER_B_HEX}" \
       --provider-instance "${INSTANCE}" --projects-file "${PROJECTS_B}" \

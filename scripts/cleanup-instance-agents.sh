@@ -10,7 +10,7 @@
 # under `<app-data>/agents/agent-pids/<pubkey>.pid`, each containing the agent's
 # PGID (agents are spawned with `process_group(0)`, so PID == PGID). Killing by
 # PGID reaches the whole agent subtree. We deliberately do NOT match the
-# `BUZZ_MANAGED_AGENT` env var from the shell: on macOS `pkill -f` matches only
+# `BEEKEEPER_MANAGED_AGENT` env var from the shell: on macOS `pkill -f` matches only
 # argv, not the environment, so an env-marker match silently reaps nothing.
 #
 # Scoping is exact because the app-data directory is keyed by the instance's

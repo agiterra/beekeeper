@@ -769,7 +769,7 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
     // for every real session. This fixture is generated from the adapter, and
     // the Desktop test decodes exactly this file, so the two sides can never
     // silently diverge again. Regenerate with
-    // `BUZZ_UPDATE_FIXTURES=1 cargo test --manifest-path desktop/src-tauri/Cargo.toml the_typescript_decoder_fixture`.
+    // `BEEKEEPER_UPDATE_FIXTURES=1 cargo test --manifest-path desktop/src-tauri/Cargo.toml the_typescript_decoder_fixture`.
     let founder = fixed_keys(0x11);
     let actor = fixed_keys(0x22);
     let assignment_event = signed(&assignment(&actor), &founder, 1);
@@ -800,7 +800,7 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
     let generated = serde_json::to_string_pretty(&response).expect("serialize response") + "\n";
 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(TS_DECODER_FIXTURE);
-    if std::env::var("BUZZ_UPDATE_FIXTURES").is_ok() {
+    if std::env::var("BEEKEEPER_UPDATE_FIXTURES").is_ok() {
         std::fs::write(&path, &generated).expect("write fixture");
     }
     let stored = std::fs::read_to_string(&path).unwrap_or_else(|error| {
@@ -808,7 +808,7 @@ fn the_typescript_decoder_fixture_is_this_adapter_s_real_output() {
     });
     assert_eq!(
         stored, generated,
-        "the Desktop decoder fixture is stale; regenerate it with BUZZ_UPDATE_FIXTURES=1"
+        "the Desktop decoder fixture is stale; regenerate it with BEEKEEPER_UPDATE_FIXTURES=1"
     );
 
     // The fixture must actually exercise all three new collections, or it

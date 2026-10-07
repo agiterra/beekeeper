@@ -56,7 +56,7 @@ import {
 
 export type { CodingSessionTurnProgress } from "./codingSessionTurnReceiptIndex";
 export {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   type BeekeeperCodingSessionMetadataV1,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
@@ -75,7 +75,7 @@ export {
   parseCodingSessionLifecycleReceipt,
 } from "./codingSessionIngressPayloads";
 export {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   type BeekeeperCodingSessionTranscriptV1,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
   codingSessionTranscriptSemanticKey,

@@ -5,23 +5,23 @@
 # that the kubelet's container runtime can resolve the same name and digest.
 set -euo pipefail
 
-: "${BUZZ_K8S_TEST_CONTEXT:?set the explicit disposable/local kubectl context}"
-: "${BUZZ_SPRIG_IMAGE:?set an immutable image reference (name@sha256:<64 hex>)}"
+: "${BEEKEEPER_K8S_TEST_CONTEXT:?set the explicit disposable/local kubectl context}"
+: "${BEEKEEPER_SPRIG_IMAGE:?set an immutable image reference (name@sha256:<64 hex>)}"
 
-if [[ ! "$BUZZ_SPRIG_IMAGE" =~ ^[^[:space:]@]+@sha256:[0-9a-fA-F]{64}$ ]]; then
-    echo "error: BUZZ_SPRIG_IMAGE must be name@sha256:<64 hex>" >&2
+if [[ ! "$BEEKEEPER_SPRIG_IMAGE" =~ ^[^[:space:]@]+@sha256:[0-9a-fA-F]{64}$ ]]; then
+    echo "error: BEEKEEPER_SPRIG_IMAGE must be name@sha256:<64 hex>" >&2
     exit 2
 fi
 
-CONTEXT="$BUZZ_K8S_TEST_CONTEXT"
-IMAGE="$BUZZ_SPRIG_IMAGE"
-PULL_POLICY="${BUZZ_K8S_TEST_PULL_POLICY:-IfNotPresent}"
+CONTEXT="$BEEKEEPER_K8S_TEST_CONTEXT"
+IMAGE="$BEEKEEPER_SPRIG_IMAGE"
+PULL_POLICY="${BEEKEEPER_K8S_TEST_PULL_POLICY:-IfNotPresent}"
 case "$PULL_POLICY" in
     Always|IfNotPresent|Never) ;;
-    *) echo "error: invalid BUZZ_K8S_TEST_PULL_POLICY: $PULL_POLICY" >&2; exit 2 ;;
+    *) echo "error: invalid BEEKEEPER_K8S_TEST_PULL_POLICY: $PULL_POLICY" >&2; exit 2 ;;
 esac
 
-MANAGED_BY="buzz-backend-kubernetes"
+MANAGED_BY="buzz-backend-kubernetes"  # label persisted in clusters; kept across the rename
 BINDING_VERSION="v1"
 NAMESPACE="buzz-k8s-sprig-$(date +%s)-$RANDOM"
 CREATED=0
@@ -38,7 +38,7 @@ cleanup() {
         return 1
     fi
     foreign="$(kubectl --context "$CONTEXT" --namespace "$NAMESPACE" get pods -o json \
-        | jq '[.items[] | select(.metadata.labels["app.kubernetes.io/managed-by"] != "buzz-backend-kubernetes" or .metadata.labels["beekeeper.agiterra.io/binding-version"] != "v1")] | length')"
+        | jq '[.items[] | select(.metadata.labels["app.kubernetes.io/managed-by"] != "beekeeper-backend-kubernetes" or .metadata.labels["beekeeper.agiterra.io/binding-version"] != "v1")] | length')"
     if [[ "$foreign" != 0 ]]; then
         echo "REFUSING cleanup: namespace contains an unowned pod: $NAMESPACE" >&2
         return 1
@@ -77,7 +77,7 @@ spec:
       imagePullPolicy: $PULL_POLICY
       command: [/bin/bash, -ceu]
       args:
-        - 'test "\$(readlink /usr/local/bin/buzz-acp)" = sprig; echo DIGEST_ABI_OK'
+        - 'test "\$(readlink /usr/local/bin/beekeeper-acp)" = sprig; echo DIGEST_ABI_OK'
 YAML
 
 if ! kubectl --context "$CONTEXT" --namespace "$NAMESPACE" wait \

@@ -1,4 +1,4 @@
-//! Thin `buzz-admin project-purge` adapter.
+//! Thin `beekeeper-admin project-purge` adapter.
 //!
 //! Operator-only and CLI-only: the deployment admin HTTP router is read-only
 //! by contract, so this destructive path is deliberately reachable only from
@@ -20,7 +20,7 @@ mod tests {
         // `--confirm` is a flag, so absence must parse but be refused at
         // runtime; presence must parse.
         let without = crate::Cli::try_parse_from([
-            "buzz-admin",
+            "beekeeper-admin",
             "project-purge",
             "run",
             "--coordinate",
@@ -32,7 +32,7 @@ mod tests {
         ]);
         assert!(without.is_ok());
         let with = crate::Cli::try_parse_from([
-            "buzz-admin",
+            "beekeeper-admin",
             "project-purge",
             "run",
             "--coordinate",
@@ -50,7 +50,7 @@ mod tests {
     fn run_requires_a_digest_and_an_operator_identity() {
         for missing in [
             vec![
-                "buzz-admin",
+                "beekeeper-admin",
                 "project-purge",
                 "run",
                 "--coordinate",
@@ -60,7 +60,7 @@ mod tests {
                 "--confirm",
             ],
             vec![
-                "buzz-admin",
+                "beekeeper-admin",
                 "project-purge",
                 "run",
                 "--coordinate",
@@ -70,7 +70,7 @@ mod tests {
                 "--confirm",
             ],
             vec![
-                "buzz-admin",
+                "beekeeper-admin",
                 "project-purge",
                 "run",
                 "--approved-digest",
@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn the_live_message_acknowledgement_is_wired_into_the_binary() {
         let mut base = vec![
-            "buzz-admin",
+            "beekeeper-admin",
             "project-purge",
             "run",
             "--coordinate",
@@ -108,7 +108,7 @@ mod tests {
         assert!(crate::Cli::try_parse_from(base).is_ok());
         // Not a valid flag on the read-only command.
         assert!(crate::Cli::try_parse_from([
-            "buzz-admin",
+            "beekeeper-admin",
             "project-purge",
             "inventory",
             "--coordinate",
@@ -121,9 +121,9 @@ mod tests {
     #[test]
     fn no_bulk_or_all_projects_form_is_exposed() {
         for command in [
-            vec!["buzz-admin", "project-purge", "run", "--all"],
-            vec!["buzz-admin", "project-purge", "drain"],
-            vec!["buzz-admin", "project-purge", "sweep"],
+            vec!["beekeeper-admin", "project-purge", "run", "--all"],
+            vec!["beekeeper-admin", "project-purge", "drain"],
+            vec!["beekeeper-admin", "project-purge", "sweep"],
         ] {
             assert!(crate::Cli::try_parse_from(command).is_err());
         }

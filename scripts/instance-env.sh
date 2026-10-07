@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Computes the full multi-instance desktop dev environment.
 # Source this file from desktop dev commands; it exports:
-#   BUZZ_VITE_PORT, BUZZ_HMR_PORT, VITE_PORT, VITE_HMR_PORT
-#   BUZZ_RELAY_PORT, BUZZ_RELAY_URL
-#   BUZZ_INSTANCE_SLUG, BUZZ_WORKTREE_LABEL, VITE_DEV_BRANCH (worktrees only)
-#   BUZZ_TAURI_CONFIG
-#   BUZZ_PRIVATE_KEY (worktrees only, when BUZZ_SHARE_IDENTITY=1)
+#   BEEKEEPER_VITE_PORT, BEEKEEPER_HMR_PORT, VITE_PORT, VITE_HMR_PORT
+#   BEEKEEPER_RELAY_PORT, BEEKEEPER_RELAY_URL
+#   BEEKEEPER_INSTANCE_SLUG, BEEKEEPER_WORKTREE_LABEL, VITE_DEV_BRANCH (worktrees only)
+#   BEEKEEPER_TAURI_CONFIG
+#   BEEKEEPER_PRIVATE_KEY (worktrees only, when BEEKEEPER_SHARE_IDENTITY=1)
 
 WORKTREE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
@@ -13,19 +13,19 @@ WORKTREE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 # gets the same ports. This keeps the Tauri dev config stable between runs and
 # preserves Cargo's build cache.
 BASE_PORT=$(python3 -c "import hashlib,sys; h=int(hashlib.sha256(sys.argv[1].encode()).hexdigest(), 16); print(10000 + h % 55000)" "$WORKTREE_ROOT")
-export BUZZ_VITE_PORT=$BASE_PORT
-export BUZZ_HMR_PORT=$((BASE_PORT + 1))
-export BUZZ_RELAY_PORT=3000
-export VITE_PORT="$BUZZ_VITE_PORT"
-export VITE_HMR_PORT="$BUZZ_HMR_PORT"
-export BUZZ_RELAY_URL="${BUZZ_RELAY_URL:-ws://localhost:3000}"
+export BEEKEEPER_VITE_PORT=$BASE_PORT
+export BEEKEEPER_HMR_PORT=$((BASE_PORT + 1))
+export BEEKEEPER_RELAY_PORT=3000
+export VITE_PORT="$BEEKEEPER_VITE_PORT"
+export VITE_HMR_PORT="$BEEKEEPER_HMR_PORT"
+export BEEKEEPER_RELAY_URL="${BEEKEEPER_RELAY_URL:-ws://localhost:3000}"
 
-DEV_URL="http://localhost:${BUZZ_VITE_PORT}"
-if [[ "${BUZZ_RESET_WEBVIEW_STATE:-0}" == "1" ]]; then
+DEV_URL="http://localhost:${BEEKEEPER_VITE_PORT}"
+if [[ "${BEEKEEPER_RESET_WEBVIEW_STATE:-0}" == "1" ]]; then
     DEV_URL="${DEV_URL}?resetDevState=1"
 fi
 
-BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev\",\"productName\":\"Beekeeper Dev\"}"
+BEEKEEPER_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BEEKEEPER_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev\",\"productName\":\"Beekeeper Dev\"}"
 unset VITE_DEV_BRANCH
 
 # Generate a badged variant of the app icon labelled $1 into
@@ -64,14 +64,14 @@ if git rev-parse --is-inside-work-tree &>/dev/null; then
     GIT_COMMON_DIR=$(cd "$GIT_COMMON_DIR" 2>/dev/null && pwd -P || true)
     if [[ -n "$GIT_DIR" && -n "$GIT_COMMON_DIR" && "$GIT_DIR" != "$GIT_COMMON_DIR" ]]; then
         BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-        export BUZZ_WORKTREE_LABEL="${BRANCH_NAME##*/}"
-        export BUZZ_INSTANCE_SLUG=$(echo "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
+        export BEEKEEPER_WORKTREE_LABEL="${BRANCH_NAME##*/}"
+        export BEEKEEPER_INSTANCE_SLUG=$(echo "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
 
-        # BUZZ_SHARE_IDENTITY=1: reuse the main dev checkout's Nostr key so
+        # BEEKEEPER_SHARE_IDENTITY=1: reuse the main dev checkout's Nostr key so
         # worktrees skip onboarding and share the same identity. The per-worktree
         # identifier is kept so concurrent instances don't collide on
         # tauri-plugin-single-instance or the app data directory.
-        if [[ "${BUZZ_SHARE_IDENTITY:-0}" == "1" ]]; then
+        if [[ "${BEEKEEPER_SHARE_IDENTITY:-0}" == "1" ]]; then
             KEYRING_SERVICE="beekeeper-desktop-dev"
             KEYRING_BLOB=""
             case "$(uname -s)" in
@@ -99,20 +99,20 @@ if git rev-parse --is-inside-work-tree &>/dev/null; then
             fi
 
             if [[ -n "$SHARED_IDENTITY" ]]; then
-                export BUZZ_PRIVATE_KEY="$SHARED_IDENTITY"
+                export BEEKEEPER_PRIVATE_KEY="$SHARED_IDENTITY"
             else
-                echo "⚠ BUZZ_SHARE_IDENTITY=1 but no identity found in keyring service $KEYRING_SERVICE, at $CANONICAL_KEY, or at $LEGACY_CANONICAL_KEY — run Beekeeper from repo root first" >&2
+                echo "⚠ BEEKEEPER_SHARE_IDENTITY=1 but no identity found in keyring service $KEYRING_SERVICE, at $CANONICAL_KEY, or at $LEGACY_CANONICAL_KEY — run Beekeeper from repo root first" >&2
             fi
         fi
 
-        if generate_badged_icon "$BUZZ_WORKTREE_LABEL"; then
-            echo "🌳 Worktree: ${BUZZ_WORKTREE_LABEL}"
-            export VITE_DEV_BRANCH="$BUZZ_WORKTREE_LABEL"
-            BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev.${BUZZ_INSTANCE_SLUG}\",\"productName\":\"Beekeeper (${BUZZ_WORKTREE_LABEL})\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
+        if generate_badged_icon "$BEEKEEPER_WORKTREE_LABEL"; then
+            echo "🌳 Worktree: ${BEEKEEPER_WORKTREE_LABEL}"
+            export VITE_DEV_BRANCH="$BEEKEEPER_WORKTREE_LABEL"
+            BEEKEEPER_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BEEKEEPER_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev.${BEEKEEPER_INSTANCE_SLUG}\",\"productName\":\"Beekeeper (${BEEKEEPER_WORKTREE_LABEL})\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
         fi
     elif generate_badged_icon "dev"; then
-        BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev\",\"productName\":\"Beekeeper Dev\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
+        BEEKEEPER_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BEEKEEPER_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev\",\"productName\":\"Beekeeper Dev\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
     fi
 fi
 
-export BUZZ_TAURI_CONFIG
+export BEEKEEPER_TAURI_CONFIG

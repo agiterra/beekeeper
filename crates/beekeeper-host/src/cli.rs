@@ -1,7 +1,7 @@
 //! The `beekeeper-host` command line.
 //!
 //! Runs in the **foreground by default**. That deliberately inverts
-//! `buzz-shell-host`, which double-forks unconditionally: a service binary
+//! `beekeeper-shell-host`, which double-forks unconditionally: a service binary
 //! must run in the foreground under systemd's `Type=simple` and in a
 //! container, where the runtime's termination signal has to reach it directly.
 //!

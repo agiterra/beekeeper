@@ -1,10 +1,10 @@
 //! Runtime descriptors for the coding-session provider.
 //!
 //! The desktop host decides which agent runtimes the sidecar offers and hands
-//! the whole list over in one environment variable, `BUZZ_CSP_RUNTIMES` — a
+//! the whole list over in one environment variable, `BEEKEEPER_CSP_RUNTIMES` — a
 //! JSON array of [`RuntimeDescriptor`]s. The definition lives here because
 //! both sides of that contract (the Tauri host that writes it and the
-//! `buzz-session-provider` sidecar that reads it) already depend on
+//! `beekeeper-session-provider` sidecar that reads it) already depend on
 //! `buzz-core`, so a single serde definition keeps them from drifting apart.
 
 use serde::{Deserialize, Serialize};
@@ -131,7 +131,7 @@ fn default_model_alias() -> String {
     "default".to_owned()
 }
 
-/// Parse and validate a `BUZZ_CSP_RUNTIMES` JSON array.
+/// Parse and validate a `BEEKEEPER_CSP_RUNTIMES` JSON array.
 ///
 /// Enforces: non-empty array, at most [`MAX_RUNTIME_DESCRIPTORS`] entries,
 /// unique non-empty `instanceRef`s, and non-empty `driver` / `runtime` /
@@ -252,7 +252,7 @@ mod tests {
     }
 
     /// The idle guard is a declared fact about the pinned adapter, so it has
-    /// to survive the trip through `BUZZ_CSP_RUNTIMES` byte-for-byte — and
+    /// to survive the trip through `BEEKEEPER_CSP_RUNTIMES` byte-for-byte — and
     /// an older host that never heard of it must produce a list an older
     /// sidecar still parses, which is why absence is *omission*, not `null`.
     #[test]

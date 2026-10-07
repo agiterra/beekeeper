@@ -35,11 +35,11 @@ const exec = promisify(execFile);
 //
 // which detaches, and does not delete, the two repositories it made.
 //
-// Requires: BUZZ_E2E_PROJECT_ARTIFACTS=1, BUZZ_E2E_CLI_BIN (a built `bee`),
-// BUZZ_E2E_RELAY_URL pointing at a running relay, and the git credential
+// Requires: BEEKEEPER_E2E_PROJECT_ARTIFACTS=1, BEEKEEPER_E2E_CLI_BIN (a built `bee`),
+// BEEKEEPER_E2E_RELAY_URL pointing at a running relay, and the git credential
 // helper (`just install-git-credentials`) — `bee packs init` pushes the
 // agents repository's seed commit over NIP-98 git.
-const enabled = process.env.BUZZ_E2E_PROJECT_ARTIFACTS === "1";
+const enabled = process.env.BEEKEEPER_E2E_PROJECT_ARTIFACTS === "1";
 
 function required(name: string, value: string | undefined): string {
   if (!value) throw new Error(`${name} is required for the live gate`);
@@ -47,21 +47,24 @@ function required(name: string, value: string | undefined): string {
 }
 
 async function runCli(args: string[], privateKey: string): Promise<string> {
-  const binary = required("BUZZ_E2E_CLI_BIN", process.env.BUZZ_E2E_CLI_BIN);
+  const binary = required(
+    "BEEKEEPER_E2E_CLI_BIN",
+    process.env.BEEKEEPER_E2E_CLI_BIN,
+  );
   const relayUrl = required(
-    "BUZZ_E2E_RELAY_URL",
-    process.env.BUZZ_E2E_RELAY_URL,
+    "BEEKEEPER_E2E_RELAY_URL",
+    process.env.BEEKEEPER_E2E_RELAY_URL,
   );
   const { stdout } = await exec(binary, args, {
     cwd: "..",
     env: {
       ...process.env,
-      BUZZ_AUTH_TAG: "",
-      BUZZ_PRIVATE_KEY: privateKey,
-      BUZZ_RELAY_URL: relayUrl,
+      BEEKEEPER_AUTH_TAG: "",
+      BEEKEEPER_PRIVATE_KEY: privateKey,
+      BEEKEEPER_RELAY_URL: relayUrl,
       // `packs init` and `agents-repo commit` spawn `git push`, and
       // git-credential-nostr resolves `NOSTR_PRIVATE_KEY` — never
-      // `BUZZ_PRIVATE_KEY`, on purpose (`git-credential-nostr::resolve_key`).
+      // `BEEKEEPER_PRIVATE_KEY`, on purpose (`git-credential-nostr::resolve_key`).
       // Without this the CLI acts as one identity while its git push signs as
       // whoever owns this machine's key file, and the relay answers
       // "repository not found" for a repository under someone else's pubkey.
@@ -118,7 +121,10 @@ async function openProject(page: Page, seed: Seed) {
 }
 
 test.describe("project artifacts (live relay)", () => {
-  test.skip(!enabled, "set BUZZ_E2E_PROJECT_ARTIFACTS=1 to run the live gate");
+  test.skip(
+    !enabled,
+    "set BEEKEEPER_E2E_PROJECT_ARTIFACTS=1 to run the live gate",
+  );
   test.setTimeout(240_000);
 
   test("a collaborator's pinned document reaches the sidebar, and the filter discloses hiding it", async ({

@@ -1,6 +1,6 @@
 //! End-to-end tests for kind:30621 multi-repo project events (NIP-MP).
 //!
-//! The ingest unit tests in `buzz-relay` pin the envelope contract in isolation.
+//! The ingest unit tests in `beekeeper-relay` pin the envelope contract in isolation.
 //! These tests cover the three behaviors that only exist once an event reaches
 //! storage, plus proof that the envelope validator is actually wired into the
 //! live write path:

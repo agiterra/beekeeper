@@ -29,7 +29,7 @@ use crate::{
     util::now_iso,
 };
 
-/// Query available models from an agent via `buzz-acp models --json`.
+/// Query available models from an agent via `beekeeper-acp models --json`.
 ///
 /// Spawns a short-lived subprocess (no relay connection needed). The subprocess
 /// starts the agent, queries its model catalog, and exits. ~2-5s total.
@@ -720,7 +720,7 @@ pub(crate) fn acp_option_label(o: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Normalize raw `buzz-acp models --json` output into a typed DTO for the frontend.
+/// Normalize raw `beekeeper-acp models --json` output into a typed DTO for the frontend.
 ///
 /// Merges models from both ACP paths (stable configOptions + unstable SessionModelState),
 /// deduplicates by ID (stable takes precedence), and returns a unified list.

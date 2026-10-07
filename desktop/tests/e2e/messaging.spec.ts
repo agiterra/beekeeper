@@ -623,20 +623,20 @@ test("link preview style defaults to compact and Rich unfurls descriptions", asy
     .locator("[data-composer-link-previews]")
     .locator('[data-link-preview="github-pull-request"]');
   await expect(composerPreview).toHaveAttribute("data-image-state", "pending");
-  if (process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR) {
+  if (process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR) {
     await waitForAnimations(page);
     await page.screenshot({
       animations: "disabled",
-      path: `${process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR}/compact-composer-loading.png`,
+      path: `${process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR}/compact-composer-loading.png`,
     });
   }
   await waitForReadyComposerSnapshots(page);
   await expect(composerPreview).toHaveAttribute("data-image-state", "none");
-  if (process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR) {
+  if (process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR) {
     await waitForAnimations(page);
     await page.screenshot({
       animations: "disabled",
-      path: `${process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR}/compact-composer-ready.png`,
+      path: `${process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR}/compact-composer-ready.png`,
     });
   }
   await page.getByTestId("send-message").click();
@@ -647,11 +647,11 @@ test("link preview style defaults to compact and Rich unfurls descriptions", asy
   );
   await expect(compactPreview).toHaveCSS("border-top-left-radius", "0px");
   await expect(compactPreview).toHaveCSS("border-left-width", "3px");
-  if (process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR) {
+  if (process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR) {
     await waitForAnimations(page);
     await page.screenshot({
       animations: "disabled",
-      path: `${process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR}/recipient-compact.png`,
+      path: `${process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR}/recipient-compact.png`,
     });
   }
 
@@ -680,11 +680,11 @@ test("link preview style defaults to compact and Rich unfurls descriptions", asy
   const richHostname = richPreview.locator("[data-link-preview-hostname]");
   await expect(richHostname).toHaveText("github.com");
   await expect(richHostname).toHaveAttribute("href", previewUrl);
-  if (process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR) {
+  if (process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR) {
     await waitForAnimations(page);
     await page.screenshot({
       animations: "disabled",
-      path: `${process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR}/recipient-rich.png`,
+      path: `${process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR}/recipient-rich.png`,
     });
     const richComposerUrl = `${previewUrl}&composer=rich`;
     await page.getByTestId("message-input").fill(richComposerUrl);
@@ -698,7 +698,7 @@ test("link preview style defaults to compact and Rich unfurls descriptions", asy
     await waitForAnimations(page);
     await page.screenshot({
       animations: "disabled",
-      path: `${process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR}/rich-composer-loading.png`,
+      path: `${process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR}/rich-composer-loading.png`,
     });
     await waitForReadyComposerSnapshots(page);
     await expect(richComposerPreview).toHaveAttribute(
@@ -708,7 +708,7 @@ test("link preview style defaults to compact and Rich unfurls descriptions", asy
     await waitForAnimations(page);
     await page.screenshot({
       animations: "disabled",
-      path: `${process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR}/rich-composer-ready.png`,
+      path: `${process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR}/rich-composer-ready.png`,
     });
     await page.getByTestId("message-input").fill("");
   }
@@ -1447,11 +1447,11 @@ test("composer link preview embeds stay attachment-sized while loading and ready
         .querySelector("[data-link-preview-thumbnail]")
         ?.getBoundingClientRect().width,
     }));
-    if (process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR) {
+    if (process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR) {
       await waitForAnimations(page);
       await page.screenshot({
         animations: "disabled",
-        path: `${process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR}/composer-${width}-loading.png`,
+        path: `${process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR}/composer-${width}-loading.png`,
       });
     }
 
@@ -1469,11 +1469,11 @@ test("composer link preview embeds stay attachment-sized while loading and ready
         .querySelector("[data-link-preview-thumbnail]")
         ?.getBoundingClientRect().width,
     }));
-    if (process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR) {
+    if (process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR) {
       await waitForAnimations(page);
       await page.screenshot({
         animations: "disabled",
-        path: `${process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR}/composer-${width}-ready.png`,
+        path: `${process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR}/composer-${width}-ready.png`,
       });
     }
 
@@ -1525,11 +1525,11 @@ test("compact link preview image geometry truncates long titles to one line", as
     )
     .toBeGreaterThan(1);
 
-  if (process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR) {
+  if (process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR) {
     await waitForAnimations(page);
     await row.screenshot({
       animations: "disabled",
-      path: `${process.env.BUZZ_LINK_PREVIEW_SCREENSHOTS_DIR}/recipient-compact-long-title.png`,
+      path: `${process.env.BEEKEEPER_LINK_PREVIEW_SCREENSHOTS_DIR}/recipient-compact-long-title.png`,
     });
   }
 });

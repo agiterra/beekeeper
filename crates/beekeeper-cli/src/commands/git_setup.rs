@@ -75,11 +75,11 @@ pub fn credential_scope(relay_url: &str) -> Result<String, CliError> {
     let trimmed = relay_url.trim();
     if trimmed.is_empty() {
         return Err(CliError::Usage(
-            "relay URL is empty (pass --relay-url or set BUZZ_RELAY_URL)".into(),
+            "relay URL is empty (pass --relay-url or set BEEKEEPER_RELAY_URL)".into(),
         ));
     }
     // Accept the ws:// forms the rest of the CLI takes, since a user will
-    // paste whatever BUZZ_RELAY_URL holds.
+    // paste whatever BEEKEEPER_RELAY_URL holds.
     let normalized = match trimmed.split_once("://") {
         Some(("ws", rest)) => format!("http://{rest}"),
         Some(("wss", rest)) => format!("https://{rest}"),
@@ -310,7 +310,7 @@ fn effective_keyfile_path(keyfile: Option<&Path>) -> Result<PathBuf, CliError> {
 /// `$NOSTR_PRIVATE_KEY` first, then `git config nostr.keyfile`.
 ///
 /// Reproducing the helper's precedence is the whole point. A check that read
-/// `BUZZ_PRIVATE_KEY` instead would test a different identity than the one git
+/// `BEEKEEPER_PRIVATE_KEY` instead would test a different identity than the one git
 /// actually presents, and could report success while every push failed.
 pub fn resolve_effective_key(keyfile: Option<&Path>) -> Result<EffectiveKey, CliError> {
     let path = effective_keyfile_path(keyfile)?;
@@ -451,7 +451,7 @@ pub struct SetupRequest<'a> {
     pub helper: Option<PathBuf>,
     pub keyfile: Option<PathBuf>,
     pub scope: ConfigScope,
-    /// Write the key to the key file. Requires `BUZZ_PRIVATE_KEY`.
+    /// Write the key to the key file. Requires `BEEKEEPER_PRIVATE_KEY`.
     pub write_key: bool,
     /// Print the commands that would run; change nothing.
     pub print_only: bool,
@@ -490,7 +490,8 @@ pub fn cmd_setup(request: SetupRequest<'_>) -> Result<(), CliError> {
     if request.write_key {
         let keys = request.keys.as_ref().ok_or_else(|| {
             CliError::Auth(
-                "--write-key needs an identity (set BUZZ_PRIVATE_KEY or pass --private-key)".into(),
+                "--write-key needs an identity (set BEEKEEPER_PRIVATE_KEY or pass --private-key)"
+                    .into(),
             )
         })?;
         if write_keyfile(&keyfile, keys)? {
@@ -700,7 +701,7 @@ pub struct ProbeAttestation {
 /// fails. An attestation signed for a *different* key is not an error — it is
 /// the shape of the two-identities-in-one-shell trap, and it is reported.
 fn probe_attestation(keys: &Keys) -> Result<ProbeAttestation, CliError> {
-    // The helper's own reader: same sources (`BUZZ_AUTH_TAG`, then
+    // The helper's own reader: same sources (`BEEKEEPER_AUTH_TAG`, then
     // `git config nostr.authtag`), same fail-closed rule on a malformed tag.
     let Some(tag) = git_credential_nostr::resolve_auth_tag().map_err(CliError::Auth)? else {
         return Ok(ProbeAttestation::default());
@@ -718,7 +719,7 @@ fn probe_attestation(keys: &Keys) -> Result<ProbeAttestation, CliError> {
             tag: Some(tag),
             owner: None,
             warning: Some(format!(
-                "BUZZ_AUTH_TAG is not signed for {}, the key git uses, so the relay will ignore it ({e})",
+                "BEEKEEPER_AUTH_TAG is not signed for {}, the key git uses, so the relay will ignore it ({e})",
                 short_pubkey(&keys.public_key())
             )),
         }),
@@ -755,7 +756,7 @@ fn repo_root_url(relay_origin: &str, owner: &str, repo: &str) -> String {
 /// The owner attestation's state, as the relay will treat it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttestationState {
-    /// No `BUZZ_AUTH_TAG` and no `nostr.authtag`: the key answers for itself.
+    /// No `BEEKEEPER_AUTH_TAG` and no `nostr.authtag`: the key answers for itself.
     Absent,
     /// Verified to cover the key git signs with — the relay will honour it.
     Present {
@@ -943,7 +944,7 @@ fn transport_verdict_for(
 
 /// What to do about a denial.
 ///
-/// **Never "unset BUZZ_AUTH_TAG".** The remedy this replaces said exactly that
+/// **Never "unset BEEKEEPER_AUTH_TAG".** The remedy this replaces said exactly that
 /// (ledger draft 92): the check denied a seat over the relay's HTTP membership
 /// path while `git push` from the same key succeeded seconds later, and a seat
 /// that followed the advice would have dropped the owner attestation its push
@@ -989,12 +990,12 @@ fn remedy(
 
 /// Drop the CLI client's generic 403 hint from a line this command prints.
 ///
-/// `client.rs` appends "(BUZZ_AUTH_TAG is set — it may be stale or revoked; try
+/// `client.rs` appends "(BEEKEEPER_AUTH_TAG is set — it may be stale or revoked; try
 /// unsetting it)" to every 403. On a *git* answer that advice is actively
-/// harmful — the attestation in `BUZZ_AUTH_TAG` is what a seat's push depends
+/// harmful — the attestation in `BEEKEEPER_AUTH_TAG` is what a seat's push depends
 /// on — so it never rides along on this command's output.
 fn strip_auth_tag_hint(message: &str) -> String {
-    match message.split_once(" (BUZZ_AUTH_TAG is set") {
+    match message.split_once(" (BEEKEEPER_AUTH_TAG is set") {
         Some((head, _)) => head.trim().to_string(),
         None => message.trim().to_string(),
     }
@@ -2889,7 +2890,7 @@ mod tests {
     /// Serialises the tests that read or write process environment.
     ///
     /// One lock for the sync and the async tests alike — two locks let a sync
-    /// test overwrite `BUZZ_AUTH_TAG` while an async probe was mid-flight, which
+    /// test overwrite `BEEKEEPER_AUTH_TAG` while an async probe was mid-flight, which
     /// failed only in the full-suite run.
     fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
         async_env_lock().blocking_lock()
@@ -3242,7 +3243,7 @@ mod tests {
 
     #[test]
     fn an_attestation_for_another_key_is_reported_not_claimed() {
-        // `BUZZ_AUTH_TAG` is attested to `BUZZ_PRIVATE_KEY`, which need not be
+        // `BEEKEEPER_AUTH_TAG` is attested to `BEEKEEPER_PRIVATE_KEY`, which need not be
         // the key git signs with. Reporting an owner from a tag that does not
         // cover the git key would claim a relationship the relay is about to
         // reject. Serialised because it reads process environment.
@@ -3254,7 +3255,7 @@ mod tests {
         let good = beekeeper_sdk::nip_oa::compute_auth_tag(&owner, &git_key.public_key(), "")
             .expect("auth tag");
         // SAFETY-EQUIVALENT: single-threaded section guarded by `env_lock`.
-        std::env::set_var("BUZZ_AUTH_TAG", &good);
+        std::env::set_var("BEEKEEPER_AUTH_TAG", &good);
         let resolved = probe_attestation(&git_key).expect("verified tag");
         assert_eq!(
             resolved.owner.as_deref(),
@@ -3266,7 +3267,7 @@ mod tests {
         let mismatched =
             beekeeper_sdk::nip_oa::compute_auth_tag(&owner, &other_key.public_key(), "")
                 .expect("auth tag");
-        std::env::set_var("BUZZ_AUTH_TAG", &mismatched);
+        std::env::set_var("BEEKEEPER_AUTH_TAG", &mismatched);
         let resolved = probe_attestation(&git_key).expect("a mismatch is a report, not an error");
         assert!(
             resolved.owner.is_none(),
@@ -3282,13 +3283,13 @@ mod tests {
             "the helper sends it regardless, so the probe must too"
         );
 
-        std::env::set_var("BUZZ_AUTH_TAG", "not-json");
+        std::env::set_var("BEEKEEPER_AUTH_TAG", "not-json");
         assert!(
             probe_attestation(&git_key).is_err(),
             "a malformed attestation fails closed, exactly as the helper does"
         );
 
-        std::env::remove_var("BUZZ_AUTH_TAG");
+        std::env::remove_var("BEEKEEPER_AUTH_TAG");
     }
 
     // ── the check answers the question it is presented as answering ──────
@@ -3348,8 +3349,8 @@ mod tests {
         // SAFETY-EQUIVALENT: single-threaded section guarded by `env_lock`.
         std::env::set_var("NOSTR_PRIVATE_KEY", keys.secret_key().to_secret_hex());
         match tag {
-            Some(tag) => std::env::set_var("BUZZ_AUTH_TAG", tag),
-            None => std::env::remove_var("BUZZ_AUTH_TAG"),
+            Some(tag) => std::env::set_var("BEEKEEPER_AUTH_TAG", tag),
+            None => std::env::remove_var("BEEKEEPER_AUTH_TAG"),
         }
         let report = run_check(&CheckRequest {
             relay_url: relay.to_string(),
@@ -3360,7 +3361,7 @@ mod tests {
         })
         .await;
         std::env::remove_var("NOSTR_PRIVATE_KEY");
-        std::env::remove_var("BUZZ_AUTH_TAG");
+        std::env::remove_var("BEEKEEPER_AUTH_TAG");
         report.expect("a probe against the stub relay")
     }
 
@@ -3704,7 +3705,7 @@ mod tests {
             state: RefPredictionState::Refused {
                 reason: refusal.reason(),
             },
-            serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
+            serving_relay: "serving relay reports beekeeper-relay 0.2.1".to_string(),
             founders: String::new(),
             enforcement: RequireVerdictEnforcement::default(),
             lookup: String::new(),
@@ -3995,7 +3996,7 @@ mod tests {
             ref_name: "refs/heads/topic".to_string(),
             sha: "2".repeat(40),
             state: RefPredictionState::Ungoverned,
-            serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
+            serving_relay: "serving relay reports beekeeper-relay 0.2.1".to_string(),
             founders: String::new(),
             enforcement: RequireVerdictEnforcement::default(),
             lookup: String::new(),
@@ -4020,7 +4021,7 @@ mod tests {
             state: RefPredictionState::Unreadable {
                 detail: "the relay refused the query".to_string(),
             },
-            serving_relay: "serving relay reports buzz-relay 0.2.1".to_string(),
+            serving_relay: "serving relay reports beekeeper-relay 0.2.1".to_string(),
             founders: String::new(),
             enforcement: RequireVerdictEnforcement::default(),
             lookup: String::new(),
@@ -4033,7 +4034,7 @@ mod tests {
 
     #[test]
     fn no_remedy_ever_advises_dropping_the_owner_attestation() {
-        // The remedy this replaces said "BUZZ_AUTH_TAG is set — it may be stale
+        // The remedy this replaces said "BEEKEEPER_AUTH_TAG is set — it may be stale
         // or revoked; try unsetting it" over a key whose `git push` worked. A
         // seat that followed it would lose the access it had.
         let states = [
@@ -4092,7 +4093,7 @@ mod tests {
 
     #[test]
     fn the_clients_generic_403_hint_never_rides_along() {
-        let raw = "relay error 403: relay_membership_required (BUZZ_AUTH_TAG is set \u{2014} it may be stale or revoked; try unsetting it)";
+        let raw = "relay error 403: relay_membership_required (BEEKEEPER_AUTH_TAG is set \u{2014} it may be stale or revoked; try unsetting it)";
         let stripped = strip_auth_tag_hint(raw);
         assert_eq!(stripped, "relay error 403: relay_membership_required");
         assert!(!stripped.contains("unsetting"));
@@ -4250,7 +4251,7 @@ mod tests {
 
         // SAFETY-EQUIVALENT: single-threaded section guarded by `env_lock`.
         std::env::set_var("NOSTR_PRIVATE_KEY", seat.secret_key().to_secret_hex());
-        std::env::remove_var("BUZZ_AUTH_TAG");
+        std::env::remove_var("BEEKEEPER_AUTH_TAG");
         let result = cmd_check(&relay, None, false, None, None, true).await;
         std::env::remove_var("NOSTR_PRIVATE_KEY");
 
@@ -4304,7 +4305,7 @@ mod tests {
             .expect("auth tag");
         // SAFETY-EQUIVALENT: single-threaded section guarded by `env_lock`.
         std::env::set_var("NOSTR_PRIVATE_KEY", seat.secret_key().to_secret_hex());
-        std::env::set_var("BUZZ_AUTH_TAG", &tag);
+        std::env::set_var("BEEKEEPER_AUTH_TAG", &tag);
 
         // 404 from the git transport on a repo that cannot exist = the
         // authorization gate let this key through. 403 from POST /query = the
@@ -4320,7 +4321,7 @@ mod tests {
         let result = cmd_check(&relay, None, false, None, None, true).await;
 
         std::env::remove_var("NOSTR_PRIVATE_KEY");
-        std::env::remove_var("BUZZ_AUTH_TAG");
+        std::env::remove_var("BEEKEEPER_AUTH_TAG");
 
         let error = result.as_ref().err().map(ToString::to_string);
         assert!(

@@ -27,7 +27,7 @@ import {
 export const CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA =
   "buzz-coding-session-lifecycle-receipt/v1" as const;
 export const CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION = "cslr1-1" as const;
-export const BUZZ_CODING_SESSION_METADATA_SCHEMA =
+export const BEEKEEPER_CODING_SESSION_METADATA_SCHEMA =
   "buzz-coding-session-metadata/v1" as const;
 export const CODING_SESSION_METADATA_TAG_VERSION = "csm1-1" as const;
 
@@ -232,7 +232,7 @@ export function isCodingSessionTurnReceipt(
  * non-null: both come from the same verification probe.
  */
 export type BeekeeperCodingSessionMetadataV1 = {
-  schema: typeof BUZZ_CODING_SESSION_METADATA_SCHEMA;
+  schema: typeof BEEKEEPER_CODING_SESSION_METADATA_SCHEMA;
   session: CodingSessionTarget;
   projectRef: string | null;
   repoRef: string | null;
@@ -506,7 +506,7 @@ export function parseBeekeeperCodingSessionMetadata(
   if (
     !isPlainRecord(value) ||
     !hasRequiredAndOptionalKeys(value, required, optional) ||
-    value.schema !== BUZZ_CODING_SESSION_METADATA_SCHEMA
+    value.schema !== BEEKEEPER_CODING_SESSION_METADATA_SCHEMA
   ) {
     return null;
   }
@@ -597,7 +597,7 @@ export function parseBeekeeperCodingSessionMetadata(
     return null;
   }
   return Object.freeze({
-    schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+    schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
     session,
     projectRef: value.projectRef,
     repoRef: value.repoRef,

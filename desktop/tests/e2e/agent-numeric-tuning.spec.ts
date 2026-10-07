@@ -261,8 +261,8 @@ test("delayed_catalog_per_agent_saved_tuning_values_visible_then_structured_cont
         status: "stopped",
         channelNames: ["agents"],
         envVars: {
-          BUZZ_AGENT_MAX_OUTPUT_TOKENS: "4096",
-          BUZZ_AGENT_MAX_ROUNDS: "25",
+          BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS: "4096",
+          BEEKEEPER_AGENT_MAX_ROUNDS: "25",
         },
       },
     ],
@@ -281,16 +281,16 @@ test("delayed_catalog_per_agent_saved_tuning_values_visible_then_structured_cont
   );
 
   // The saved tuning env vars must be visible as generic rows (not hidden)
-  // while the catalog hasn't settled: BUZZ_AGENT_MAX_OUTPUT_TOKENS and
-  // BUZZ_AGENT_MAX_ROUNDS should appear in the env-vars editor.
+  // while the catalog hasn't settled: BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS and
+  // BEEKEEPER_AGENT_MAX_ROUNDS should appear in the env-vars editor.
   await expect(
     page.locator(
-      'input[data-testid="env-vars-key"][value="BUZZ_AGENT_MAX_OUTPUT_TOKENS"]',
+      'input[data-testid="env-vars-key"][value="BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS"]',
     ),
   ).toBeVisible();
   await expect(
     page.locator(
-      'input[data-testid="env-vars-key"][value="BUZZ_AGENT_MAX_ROUNDS"]',
+      'input[data-testid="env-vars-key"][value="BEEKEEPER_AGENT_MAX_ROUNDS"]',
     ),
   ).toBeVisible();
 
@@ -327,8 +327,8 @@ test("failed_catalog_per_agent_saved_tuning_values_remain_visible_as_generic_row
         status: "stopped",
         channelNames: ["agents"],
         envVars: {
-          BUZZ_AGENT_MAX_OUTPUT_TOKENS: "8192",
-          BUZZ_AGENT_MAX_ROUNDS: "10",
+          BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS: "8192",
+          BEEKEEPER_AGENT_MAX_ROUNDS: "10",
         },
       },
     ],
@@ -349,12 +349,12 @@ test("failed_catalog_per_agent_saved_tuning_values_remain_visible_as_generic_row
   // state must never hide persisted values with no editor to replace them.
   await expect(
     page.locator(
-      'input[data-testid="env-vars-key"][value="BUZZ_AGENT_MAX_OUTPUT_TOKENS"]',
+      'input[data-testid="env-vars-key"][value="BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS"]',
     ),
   ).toBeVisible({ timeout: 5_000 });
   await expect(
     page.locator(
-      'input[data-testid="env-vars-key"][value="BUZZ_AGENT_MAX_ROUNDS"]',
+      'input[data-testid="env-vars-key"][value="BEEKEEPER_AGENT_MAX_ROUNDS"]',
     ),
   ).toBeVisible();
 });

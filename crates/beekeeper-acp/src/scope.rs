@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 /// Operator policy controlling how ACP provider sessions are scoped.
 ///
-/// Selected via `--session-policy` / `BUZZ_ACP_SESSION_POLICY`. Defaults to
+/// Selected via `--session-policy` / `BEEKEEPER_ACP_SESSION_POLICY`. Defaults to
 /// [`Channel`](SessionPolicy::Channel) so the feature ships dark and can be
 /// canaried, then flipped, then rolled back without code changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]

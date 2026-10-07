@@ -570,7 +570,7 @@ mod api_tokens_nip98_replay {
     /// client addresses the relay over HTTP/WS and observes that the response
     /// denies a cross-community oracle. This row's obligation cannot be tested
     /// that way because **the api_token mint surface does not exist on the wire
-    /// in `buzz-relay`** — there is no route by which a client can bind a token
+    /// in `beekeeper-relay`** — there is no route by which a client can bind a token
     /// to a community over HTTP, so the "mint in A, present to B" precondition
     /// has no entry point.
     ///
@@ -637,7 +637,7 @@ mod api_tokens_nip98_replay {
         // Compile-time anchor: this row is doc-only by design. The proof lives
         // in the cited storage-layer unit tests; the wire surface for minting
         // does not exist (see module doc-comment for the verified route list).
-        // If anyone adds a `/tokens` route to `buzz-relay`, this row's shape
+        // If anyone adds a `/tokens` route to `beekeeper-relay`, this row's shape
         // should be revisited and a wire-driven body added.
     }
 
@@ -723,7 +723,7 @@ mod api_tokens_nip98_replay {
     /// wrong-content-stored, not silent-absent). The wire surface is `POST
     /// /events` with `Authorization: Nostr <base64-NIP-98-event>`. Bodies are
     /// minimal valid kind:1 nostr events authored by the same NIP-98 signer
-    /// (relay-membership is open under `BUZZ_REQUIRE_AUTH_TOKEN=false`).
+    /// (relay-membership is open under `BEEKEEPER_REQUIRE_AUTH_TOKEN=false`).
     #[tokio::test]
     #[ignore]
     async fn nip98_replay_seenset_is_shared_and_community_scoped() {
@@ -965,7 +965,7 @@ mod users_profiles_nip05 {
     }
 
     /// Query latest kind:0 for `pubkey_hex` via REST `POST /query` (relay's
-    /// bridge endpoint; with `BUZZ_REQUIRE_AUTH_TOKEN=false` the dev-mode
+    /// bridge endpoint; with `BEEKEEPER_REQUIRE_AUTH_TOKEN=false` the dev-mode
     /// `X-Pubkey` header is sufficient — no NIP-98 mint needed). Returns the
     /// list of event JSON values (typically 0 or 1 since kind:0 is
     /// NIP-01-replaceable).
@@ -1442,7 +1442,7 @@ mod channels_membership {
 
     /// Query kind:9 events on a given channel via REST `POST /query`
     /// (dev-mode `X-Pubkey` auth — no NIP-98 mint needed under the
-    /// `BUZZ_REQUIRE_AUTH_TOKEN=false` recipe). Returns the events as their
+    /// `BEEKEEPER_REQUIRE_AUTH_TOKEN=false` recipe). Returns the events as their
     /// raw JSON values (typically 0 or more depending on what the
     /// host-derived community has stored against that channel id).
     async fn query_kind9_in_channel(
@@ -1691,7 +1691,7 @@ mod workflows {
     }
 
     /// Submit a signed event to the community bound to `http_base`'s host via
-    /// the REST bridge (`POST /events`). In dev mode (`BUZZ_REQUIRE_AUTH_TOKEN
+    /// the REST bridge (`POST /events`). In dev mode (`BEEKEEPER_REQUIRE_AUTH_TOKEN
     /// =false`) the `X-Pubkey` header authenticates. Returns the parsed JSON
     /// `{accepted, message, ...}` body. The community is derived from the host,
     /// never from anything in the event — that's row zero.
@@ -2697,7 +2697,7 @@ mod audit_log {
     //! audit endpoint). Audit is written as an ingest side-effect
     //! (`handlers/event.rs`, `dispatch_persistent_event`) and read only via
     //! `beekeeper_audit::AuditService::{verify_chain, get_entries}`, which are
-    //! operator-internal (consumed by `buzz-admin`). `crates/beekeeper-audit/src/
+    //! operator-internal (consumed by `beekeeper-admin`). `crates/beekeeper-audit/src/
     //! error.rs` states it directly: `AuditError` is "never relayed to a client
     //! on the wire," and "no variant embeds a `community_id`."
     //!

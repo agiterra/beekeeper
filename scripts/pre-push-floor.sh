@@ -53,7 +53,7 @@ export GIT_TERMINAL_PROMPT=0
 export GIT_ASKPASS=/usr/bin/true
 export SSH_ASKPASS=/usr/bin/true
 
-budget=${BUZZ_PRE_PUSH_FLOOR_BUDGET_SECONDS:-120}
+budget=${BEEKEEPER_PRE_PUSH_FLOOR_BUDGET_SECONDS:-120}
 started=$SECONDS
 
 ran_steps=""     # comma-joined names of what actually executed
@@ -84,13 +84,13 @@ summarise() {
   # one `git push` itself triggers) to find a stamp instead of running again.
   # A plain `git push` never sets it, so its own hook run never writes one —
   # the stamp is earned by running ahead of the connection, not by passing.
-  if [ "$status" = "0" ] && [ -z "$failed_step" ] && [ "${BUZZ_PRE_PUSH_FLOOR_STAMP_WRITE:-}" = "1" ] && [ -n "${changed_file:-}" ]; then
+  if [ "$status" = "0" ] && [ -z "$failed_step" ] && [ "${BEEKEEPER_PRE_PUSH_FLOOR_STAMP_WRITE:-}" = "1" ] && [ -n "${changed_file:-}" ]; then
     stamp_git_dir=$(git rev-parse --git-dir 2>/dev/null || true)
     stamp_sha=$(git rev-parse HEAD 2>/dev/null || true)
     if [ -n "$stamp_git_dir" ] && [ -n "$stamp_sha" ]; then
       node "$repo_root/scripts/pre-push-floor-stamp.mjs" write \
         --git-dir "$stamp_git_dir" --sha "$stamp_sha" --scope-file "$changed_file" \
-        --ttl "${BUZZ_PRE_PUSH_FLOOR_STAMP_TTL:-600}" >/dev/null 2>&1 || true
+        --ttl "${BEEKEEPER_PRE_PUSH_FLOOR_STAMP_TTL:-600}" >/dev/null 2>&1 || true
     fi
   fi
   [ -n "$changed_file" ] && rm -f "$changed_file"
@@ -107,7 +107,7 @@ summarise() {
       # measurement — which is the same move as widening a timeout to fit a
       # flake.
       echo "pre-push floor: over budget; the dominant step was ${slowest_step} at ${slowest_seconds}s"
-      if [ "${BUZZ_PRE_PUSH_FLOOR_STAMP_WRITE:-}" != "1" ]; then
+      if [ "${BEEKEEPER_PRE_PUSH_FLOOR_STAMP_WRITE:-}" != "1" ]; then
         # git already minted its NIP-98 credential before this hook ran, and
         # the relay's token window is +-900s (ledger 178(n)) — a floor this
         # long risks a green hook followed by `HTTP 401` at upload. Next time,
@@ -154,12 +154,12 @@ step() {
 changed_file=$(mktemp)
 force_full=0
 
-if [ -n "${BUZZ_PRE_PUSH_FLOOR_CHANGED_FILES:-}" ]; then
+if [ -n "${BEEKEEPER_PRE_PUSH_FLOOR_CHANGED_FILES:-}" ]; then
   # Used by scripts/test-pre-push-floor.sh, and by anyone timing the floor
   # without minting a commit. Disclosed in the summary: a floor that quietly
   # ran against a made-up change set would be the exact lie this lane removes.
-  cat "${BUZZ_PRE_PUSH_FLOOR_CHANGED_FILES}" >"$changed_file"
-  append notes " · " "changed set injected by BUZZ_PRE_PUSH_FLOOR_CHANGED_FILES"
+  cat "${BEEKEEPER_PRE_PUSH_FLOOR_CHANGED_FILES}" >"$changed_file"
+  append notes " · " "changed set injected by BEEKEEPER_PRE_PUSH_FLOOR_CHANGED_FILES"
 else
   base_ref=""
   for candidate in \

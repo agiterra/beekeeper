@@ -269,9 +269,12 @@ fn resolve_effective_agent_env_user_env_wins_over_structured_fields() {
     // any baked defaults. In OSS test builds the baked map is empty, so
     // this test validates the user-env layer is present in the output.
     let mut env_vars = BTreeMap::new();
-    env_vars.insert("BUZZ_AGENT_PROVIDER".to_string(), "anthropic".to_string());
     env_vars.insert(
-        "BUZZ_AGENT_MODEL".to_string(),
+        "BEEKEEPER_AGENT_PROVIDER".to_string(),
+        "anthropic".to_string(),
+    );
+    env_vars.insert(
+        "BEEKEEPER_AGENT_MODEL".to_string(),
         "claude-opus-4-5".to_string(),
     );
 
@@ -285,7 +288,7 @@ fn resolve_effective_agent_env_user_env_wins_over_structured_fields() {
         auth_tag: None,
         relay_url: String::new(),
         avatar_url: None,
-        acp_command: "buzz-acp".to_string(),
+        acp_command: "beekeeper-acp".to_string(),
         agent_command: "buzz-agent".to_string(),
         agent_command_override: None,
         agent_args: vec![],
@@ -344,23 +347,29 @@ fn resolve_effective_agent_env_user_env_wins_over_structured_fields() {
 
     // User env_vars must be present in the output (last-write-wins).
     assert_eq!(
-        effective.env.get("BUZZ_AGENT_PROVIDER").map(String::as_str),
+        effective
+            .env
+            .get("BEEKEEPER_AGENT_PROVIDER")
+            .map(String::as_str),
         Some("anthropic")
     );
     assert_eq!(
-        effective.env.get("BUZZ_AGENT_MODEL").map(String::as_str),
+        effective
+            .env
+            .get("BEEKEEPER_AGENT_MODEL")
+            .map(String::as_str),
         Some("claude-opus-4-5")
     );
 }
 
 #[test]
 fn buzz_agent_databricks_v2_with_databricks_model_but_no_buzz_agent_model_is_ready() {
-    // The baked buzz-releases env sets DATABRICKS_MODEL but not BUZZ_AGENT_MODEL.
+    // The baked buzz-releases env sets DATABRICKS_MODEL but not BEEKEEPER_AGENT_MODEL.
     // An agent with only DATABRICKS_MODEL must pass the readiness gate.
     let env = make_env(
         "buzz-agent",
         env_with(&[
-            ("BUZZ_AGENT_PROVIDER", "databricks_v2"),
+            ("BEEKEEPER_AGENT_PROVIDER", "databricks_v2"),
             ("DATABRICKS_MODEL", "goose-claude-4-6-sonnet"),
             ("DATABRICKS_HOST", "https://dbc.example.com"),
         ]),
@@ -378,7 +387,7 @@ fn buzz_agent_databricks_v2_hyphen_alias_with_databricks_model_is_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
-            ("BUZZ_AGENT_PROVIDER", "databricks-v2"),
+            ("BEEKEEPER_AGENT_PROVIDER", "databricks-v2"),
             ("DATABRICKS_MODEL", "goose-claude-4-6-sonnet"),
             ("DATABRICKS_HOST", "https://dbc.example.com"),
         ]),
@@ -396,7 +405,7 @@ fn buzz_agent_databricks_hyphen_alias_missing_host_returns_not_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
-            ("BUZZ_AGENT_PROVIDER", "databricks-v2"),
+            ("BEEKEEPER_AGENT_PROVIDER", "databricks-v2"),
             ("DATABRICKS_MODEL", "goose-claude-4-6-sonnet"),
             // DATABRICKS_HOST intentionally absent
         ]),
@@ -420,7 +429,7 @@ fn buzz_agent_databricks_v1_with_databricks_model_but_no_buzz_agent_model_is_rea
     let env = make_env(
         "buzz-agent",
         env_with(&[
-            ("BUZZ_AGENT_PROVIDER", "databricks"),
+            ("BEEKEEPER_AGENT_PROVIDER", "databricks"),
             ("DATABRICKS_MODEL", "dbrx-instruct"),
             ("DATABRICKS_HOST", "https://dbc.example.com"),
         ]),
@@ -436,7 +445,7 @@ fn buzz_agent_anthropic_with_anthropic_model_but_no_buzz_agent_model_is_ready() 
     let env = make_env(
         "buzz-agent",
         env_with(&[
-            ("BUZZ_AGENT_PROVIDER", "anthropic"),
+            ("BEEKEEPER_AGENT_PROVIDER", "anthropic"),
             ("ANTHROPIC_MODEL", "claude-opus-4-5"),
             ("ANTHROPIC_API_KEY", "sk-test"),
         ]),
@@ -452,7 +461,7 @@ fn buzz_agent_openai_with_openai_compat_model_but_no_buzz_agent_model_is_ready()
     let env = make_env(
         "buzz-agent",
         env_with(&[
-            ("BUZZ_AGENT_PROVIDER", "openai"),
+            ("BEEKEEPER_AGENT_PROVIDER", "openai"),
             ("OPENAI_COMPAT_MODEL", "gpt-4o"),
             ("OPENAI_COMPAT_API_KEY", "sk-test"),
         ]),
@@ -465,11 +474,11 @@ fn buzz_agent_openai_with_openai_compat_model_but_no_buzz_agent_model_is_ready()
 
 #[test]
 fn buzz_agent_empty_provider_model_fallback_key_is_not_ready() {
-    // An empty DATABRICKS_MODEL with no BUZZ_AGENT_MODEL must still be NotReady.
+    // An empty DATABRICKS_MODEL with no BEEKEEPER_AGENT_MODEL must still be NotReady.
     let env = make_env(
         "buzz-agent",
         env_with(&[
-            ("BUZZ_AGENT_PROVIDER", "databricks_v2"),
+            ("BEEKEEPER_AGENT_PROVIDER", "databricks_v2"),
             ("DATABRICKS_MODEL", ""),
             ("DATABRICKS_HOST", "https://dbc.example.com"),
         ]),
@@ -477,7 +486,7 @@ fn buzz_agent_empty_provider_model_fallback_key_is_not_ready() {
     let result = agent_readiness(&env);
     assert!(
         !result.is_ready(),
-        "empty DATABRICKS_MODEL with no BUZZ_AGENT_MODEL must be NotReady"
+        "empty DATABRICKS_MODEL with no BEEKEEPER_AGENT_MODEL must be NotReady"
     );
     assert!(result
         .requirements()
@@ -493,8 +502,8 @@ fn buzz_agent_openrouter_with_all_fields_is_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
-            ("BUZZ_AGENT_PROVIDER", "openrouter"),
-            ("BUZZ_AGENT_MODEL", "anthropic/claude-sonnet-4"),
+            ("BEEKEEPER_AGENT_PROVIDER", "openrouter"),
+            ("BEEKEEPER_AGENT_MODEL", "anthropic/claude-sonnet-4"),
             ("OPENROUTER_API_KEY", "sk-or-test-key"),
         ]),
     );
@@ -510,8 +519,8 @@ fn buzz_agent_openrouter_missing_key_returns_not_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
-            ("BUZZ_AGENT_PROVIDER", "openrouter"),
-            ("BUZZ_AGENT_MODEL", "anthropic/claude-sonnet-4"),
+            ("BEEKEEPER_AGENT_PROVIDER", "openrouter"),
+            ("BEEKEEPER_AGENT_MODEL", "anthropic/claude-sonnet-4"),
         ]),
     );
     let result = agent_readiness(&env);
@@ -526,7 +535,7 @@ fn buzz_agent_openrouter_with_provider_model_fallback_is_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
-            ("BUZZ_AGENT_PROVIDER", "openrouter"),
+            ("BEEKEEPER_AGENT_PROVIDER", "openrouter"),
             ("OPENROUTER_MODEL", "google/gemini-2.5-flash"),
             ("OPENROUTER_API_KEY", "sk-or-test-key"),
         ]),

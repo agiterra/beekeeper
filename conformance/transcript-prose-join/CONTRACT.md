@@ -4,7 +4,7 @@ A coding-session answer reaches the wire as several signed kind:44225
 `assistant_text` items: the producer cuts prose at 24 KiB
 (`COALESCE_FLUSH_BYTES`, `crates/beekeeper-session-provider/src/transcript.rs:109`)
 whether or not paragraph streaming is on, at every tool call, and — with
-`BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` — at paragraph boundaries of at least
+`BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` — at paragraph boundaries of at least
 512 bytes (`MIN_PARAGRAPH_FLUSH_BYTES`, `:122`, scanner at `:826-855`). Every
 reader must put the pieces back into the one message the agent wrote. This
 directory is that rule in executable form, and the rule every reader binds to.
@@ -84,7 +84,7 @@ differs, so a producer change that moves a cut fails there first. To
 regenerate on purpose:
 
 ```bash
-BUZZ_REGEN_PROSE_JOIN_VECTORS=1 cargo test -p beekeeper-session-provider transcript_prose_join
+BEEKEEPER_REGEN_PROSE_JOIN_VECTORS=1 cargo test -p beekeeper-session-provider transcript_prose_join
 ```
 
 then re-run every reader's binding test below. Keys are sorted and the file is
@@ -152,13 +152,13 @@ the caller's single `now`), as does mobile
 (`mobile/lib/features/coding_sessions/state/coding_session_event_store.dart`);
 S3–S5 reuse those folds rather than adding a second lease reader.
 
-Not readers for this purpose: the producer itself (`buzz-session-provider`
+Not readers for this purpose: the producer itself (`beekeeper-session-provider`
 `session.rs`, `lib.rs`, `context_projector.rs`, `config.rs`), the payload
 type registry (`beekeeper-core/src/coding_session_payload.rs`), the decoders'
 kind lists (`codingSessionTranscriptItemContract.ts`, `codingSessionDefensive.ts`,
 `transcriptItemContract.ts`, `defensive.ts`), the export engine and its
 viewer, which consume what `transcriptExportMessages.ts` hands them, and a
-`buzz-dev-mcp` test fixture. `session_history` / `search_session` return
+`beekeeper-dev-mcp` test fixture. `session_history` / `search_session` return
 pieces, not messages; a hit is still cited by event id (spec risk 4, not
 changed).
 

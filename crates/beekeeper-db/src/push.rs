@@ -1269,7 +1269,7 @@ mod tests {
     use tokio::sync::Barrier;
 
     async fn setup_pool() -> PgPool {
-        let database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+        let database_url = std::env::var("BEEKEEPER_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".into());
         let pool = PgPool::connect(&database_url)

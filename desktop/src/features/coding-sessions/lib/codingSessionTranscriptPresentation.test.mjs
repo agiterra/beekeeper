@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   buildCodingSessionTranscriptGenerationId,
   projectTrustedCodingSessionTranscriptsToTranscript,
 } from "./codingSessionTranscriptPresentation.ts";
@@ -32,7 +32,7 @@ function entry({
     targetKey: "unused-by-the-projector",
     signerPubkey,
     transcript: {
-      schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
       session: target,
       eventSeq,
       timestamp: 1_800_000_000_000 + eventSeq,

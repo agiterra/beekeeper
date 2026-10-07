@@ -17,7 +17,7 @@ fn fixtures() -> PathBuf {
 
 /// Feed one request to the binary; return `(stdout, exit code)`.
 fn run(request: &str) -> (String, i32) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_buzz-backend-kubernetes"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_beekeeper-backend-kubernetes"))
         // A kubeconfig that does not exist, so a fixture that accidentally
         // reaches the cluster fails loudly here instead of depending on
         // whatever cluster the developer is pointed at.

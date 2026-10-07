@@ -31,7 +31,7 @@ impl Default for Resources {
 }
 
 /// Default inactivity budget: the I5 opt-in (§Auto-Stop). The config field and
-/// `BUZZ_ACP_EXIT_AFTER_INACTIVITY` are one knob, not two.
+/// `BEEKEEPER_ACP_EXIT_AFTER_INACTIVITY` are one knob, not two.
 pub const DEFAULT_INACTIVITY_SECONDS: u64 = 7200;
 
 /// Fixed nonzero UID/GID for the agent container (§Pod shape hardening).
@@ -202,7 +202,7 @@ pub fn config_schema() -> serde_json::Value {
             "image": {
                 "type": "string",
                 "title": "Agent image",
-                "description": "Required; there is no default. A digest-pinned image containing the buzz-acp runtime ABI, e.g. registry.example.com/beekeeper-sprig@sha256:<digest>, built from this repository's Dockerfile.sprig. Tags alone are not accepted: this pod holds the agent's private key."
+                "description": "Required; there is no default. A digest-pinned image containing the beekeeper-acp runtime ABI, e.g. registry.example.com/beekeeper-sprig@sha256:<digest>, built from this repository's Dockerfile.sprig. Tags alone are not accepted: this pod holds the agent's private key."
             },
             "cpu_request": {
                 "type": "string", "title": "CPU request", "default": defaults.cpu_request

@@ -24,7 +24,7 @@
 //! is read live twice — before a job starts and again immediately before it
 //! signs — so only mode `agent` (or no file) publishes; `my-model` and `off`
 //! publish nothing, an unreadable file fails closed, and a person who flips
-//! to Off while the model is thinking gets no title. `BUZZ_CSP_AUTO_TITLE=off`
+//! to Off while the model is thinking gets no title. `BEEKEEPER_CSP_AUTO_TITLE=off`
 //! wins over every mode.
 //!
 //! The work is a detached task. Nothing here delays the turn that triggered
@@ -59,7 +59,7 @@ use crate::execution_scope::{
 use crate::session_title_mode::{self, SessionTitleMode, SESSION_TITLE_MODE_FILE};
 
 /// The host-wide switch. On unless set to a false spelling (`off`).
-pub const AUTO_TITLE_ENV: &str = "BUZZ_CSP_AUTO_TITLE";
+pub const AUTO_TITLE_ENV: &str = "BEEKEEPER_CSP_AUTO_TITLE";
 /// Budget for one attempt: spawn, `initialize`, `session/new`, the model
 /// switch and the prompt.
 pub(crate) const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);

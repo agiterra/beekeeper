@@ -40,5 +40,5 @@ beekeeper-media = { workspace = true }
 beekeeper-sdk = { workspace = true }
 
 [[bin]]
-name = "buzz-test-cli"
+name = "beekeeper-test-cli"
 path = "src/main.rs"

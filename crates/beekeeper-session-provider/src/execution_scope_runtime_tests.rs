@@ -135,8 +135,12 @@ fn the_pinned_settings_hold_scope_and_identity_privately_and_follow_no_link() {
     std::fs::create_dir(&config).expect("config");
     env.scope("CLAUDE_CONFIG_DIR", config.to_str().expect("utf-8"))
         .expect("scope");
-    env.identity("BUZZ_RELAY_URL", "wss://relay.example.invalid", &|_| true);
-    env.identity("BUZZ_PRIVATE_KEY", "nsec-test-value", &|_| true);
+    env.identity(
+        "BEEKEEPER_RELAY_URL",
+        "wss://relay.example.invalid",
+        &|_| true,
+    );
+    env.identity("BEEKEEPER_PRIVATE_KEY", "nsec-test-value", &|_| true);
     let foreign = state.join("foreign-file");
     std::fs::write(&foreign, "FOREIGN").expect("foreign");
     let settings = state.join("claude-settings.json");
@@ -153,11 +157,11 @@ fn the_pinned_settings_hold_scope_and_identity_privately_and_follow_no_link() {
     let value: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&settings).expect("read")).expect("json");
     assert_eq!(
-        value["env"]["BUZZ_RELAY_URL"],
+        value["env"]["BEEKEEPER_RELAY_URL"],
         "wss://relay.example.invalid"
     );
     assert_eq!(
-        value["env"]["BUZZ_PRIVATE_KEY"], "nsec-test-value",
+        value["env"]["BEEKEEPER_PRIVATE_KEY"], "nsec-test-value",
         "identity is pinned, key included"
     );
     assert_eq!(value["env"]["GIT_CONFIG_GLOBAL"], "/x/control/gitconfig");

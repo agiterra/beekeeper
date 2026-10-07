@@ -131,7 +131,7 @@ fn the_state_free_verbs_are_structurally_validated_at_ingest() {
                 "requestRef": "22".repeat(32),
                 "choice": 1,
                 "note": null,
-                "condition": "any SHA whose buzz-acp diff against origin/main is empty",
+                "condition": "any SHA whose beekeeper-acp diff against origin/main is empty",
             }),
         ),
     ];

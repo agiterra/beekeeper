@@ -19,7 +19,7 @@ use crate::{
     util::now_iso,
 };
 
-/// Read the workspace owner pubkey without holding the lock. Used to populate `BUZZ_ACP_AGENT_OWNER`
+/// Read the workspace owner pubkey without holding the lock. Used to populate `BEEKEEPER_ACP_AGENT_OWNER`
 /// as a fallback for legacy agent records that have no NIP-OA `auth_tag`.
 pub(super) fn workspace_owner_hex(state: &AppState) -> Result<String, String> {
     let keys = state.keys.lock().map_err(|e| e.to_string())?;
@@ -610,7 +610,7 @@ pub async fn create_managed_agent(
             agent_command_override,
             agent_args,
             mcp_command,
-            // BUZZ_ACP_TURN_TIMEOUT is deprecated and ignored by the harness: schema default
+            // BEEKEEPER_ACP_TURN_TIMEOUT is deprecated and ignored by the harness: schema default
             // only. idle_timeout_seconds / max_turn_duration_seconds control turn length.
             turn_timeout_seconds: DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
             // 0 or None → harness uses its own default (320s idle, 3600s max), and the CLI also clamps 0 → minimum.

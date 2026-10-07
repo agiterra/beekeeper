@@ -1,7 +1,7 @@
 //! Built-in shell sessions (the "Built-in Shell" experiment).
 //!
 //! The embedded alternative to the cmux integration. Each session's shell runs
-//! in a detached `buzz-shell-host` process that owns the PTY and outlives this
+//! in a detached `beekeeper-shell-host` process that owns the PTY and outlives this
 //! app, so a shell survives app restarts/updates; the app is a socket client
 //! that mirrors the host's output into a local scrollback + `vt100` parser for
 //! snapshot reads and streams it to the frontend over Tauri events.
@@ -44,7 +44,7 @@ pub fn session_id_from_workspace(workspace_id: &str) -> Option<&str> {
 /// The split keeps two instances on one machine from adopting each other's
 /// detached sessions at reattach and from stealing each other's broker
 /// socket bind. The `bee session` CLI defaults to the production socket;
-/// point it at a dev instance with `BUZZ_SESSION_BROKER_SOCK`.
+/// point it at a dev instance with `BEEKEEPER_SESSION_BROKER_SOCK`.
 pub fn state_dir() -> Result<std::path::PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
     let is_dev = crate::managed_agents::nest_dir()

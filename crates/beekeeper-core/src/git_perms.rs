@@ -310,7 +310,7 @@ pub struct ProtectionRule {
     ///
     /// **Enforced by the relay, not by this module.** The rule needs a stored
     /// event search, which [`evaluate_ref_update`] deliberately cannot do —
-    /// see `buzz-relay`'s `api::git::verdict_admission`. A relay predating
+    /// see `beekeeper-relay`'s `api::git::verdict_admission`. A relay predating
     /// batch 3 parses the token into
     /// [`ParsedProtection::unknown_rules`] and **ignores it**, so the rule is
     /// only ever as strong as the relay serving the repository.

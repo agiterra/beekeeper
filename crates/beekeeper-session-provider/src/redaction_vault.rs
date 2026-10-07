@@ -51,7 +51,7 @@ use serde::{Deserialize, Serialize};
 
 const REDACTION_DIRECTORY: &str = "redactions";
 
-/// Default retention window. Overridden by `BUZZ_CSP_REDACTION_RETENTION_DAYS`;
+/// Default retention window. Overridden by `BEEKEEPER_CSP_REDACTION_RETENTION_DAYS`;
 /// `0` disables recording outright.
 pub const DEFAULT_RETENTION_DAYS: u64 = 14;
 
@@ -100,7 +100,7 @@ pub struct RetentionPolicy {
 
 impl RetentionPolicy {
     /// The environment variable that sets this policy.
-    pub const ENV_VAR: &'static str = "BUZZ_CSP_REDACTION_RETENTION_DAYS";
+    pub const ENV_VAR: &'static str = "BEEKEEPER_CSP_REDACTION_RETENTION_DAYS";
 
     /// Read the policy from a raw setting value.
     ///

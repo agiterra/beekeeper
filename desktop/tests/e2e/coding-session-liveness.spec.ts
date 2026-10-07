@@ -9,12 +9,12 @@ import {
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   codingSessionMetadataSemanticKey,
   CODING_SESSION_METADATA_TAG_VERSION,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   codingSessionTranscriptSemanticKey,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -75,7 +75,7 @@ function metadata(
     KIND_CODING_SESSION_METADATA,
     createdAt,
     {
-      schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
       session: target,
       ...(sessionRef ? { sessionRef } : {}),
       projectRef: null,
@@ -140,7 +140,7 @@ function transcript(
     KIND_CODING_SESSION_TRANSCRIPT,
     Math.floor(timestampMs / 1_000),
     {
-      schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
       session: target,
       eventSeq: seq,
       timestamp: timestampMs,

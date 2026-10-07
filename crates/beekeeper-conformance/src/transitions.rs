@@ -4,7 +4,7 @@
 //! This module is the heart of the conformance gate. It is deliberately
 //! **independent** of the production reducer: it reads only the trace
 //! schema in [`crate`] and the spec text in `docs/spec/MultiTenantRelay.tla`.
-//! It does not import `buzz-relay`, `buzz-db`, `buzz-auth`, or any other
+//! It does not import `beekeeper-relay`, `buzz-db`, `buzz-auth`, or any other
 //! production crate that could share a normalization bug with the emitter.
 //!
 //! ## What an "abstract state" means here

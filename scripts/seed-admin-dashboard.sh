@@ -70,10 +70,10 @@ upload_fixture() {
   sidecar="$(printf '{"dim":"%s","blurhash":"","thumb_url":"","ext":"%s","mime_type":"%s","size":%s,"uploaded_at":0}' \
     "${dimensions}" "${extension}" "${mime}" "${size}")"
   docker exec -i buzz-minio mc pipe --quiet --attr "Content-Type=${mime}" \
-    "local/${BUZZ_S3_BUCKET:-buzz-media}/${hash}.${extension}" < "${path}"
+    "local/${BEEKEEPER_S3_BUCKET:-buzz-media}/${hash}.${extension}" < "${path}"
   printf '%s' "${sidecar}" | docker exec -i buzz-minio mc pipe --quiet \
     --attr "Content-Type=application/json" \
-    "local/${BUZZ_S3_BUCKET:-buzz-media}/_meta/${community_id}/${hash}.json"
+    "local/${BEEKEEPER_S3_BUCKET:-buzz-media}/_meta/${community_id}/${hash}.json"
 }
 
 fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/buzz-admin-feedback.XXXXXX")"
@@ -97,7 +97,7 @@ composer_diagnostics_hash="$(fixture_hash "${composer_diagnostics}")"
 workspace_diagnostics_hash="$(fixture_hash "${workspace_diagnostics}")"
 
 if ! docker exec buzz-minio mc alias set local http://localhost:9000 \
-  "${BUZZ_S3_ACCESS_KEY:-buzz_dev}" "${BUZZ_S3_SECRET_KEY:-buzz_dev_secret}" >/dev/null; then
+  "${BEEKEEPER_S3_ACCESS_KEY:-buzz_dev}" "${BEEKEEPER_S3_SECRET_KEY:-buzz_dev_secret}" >/dev/null; then
   echo "error: local MinIO is unavailable; run just setup first" >&2
   exit 1
 fi

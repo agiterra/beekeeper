@@ -42,7 +42,7 @@ const BUNDLE_VERB: Readonly<Partial<Record<AgentActivityRenderClass, string>>> =
 /**
  * Seat tool name → C2 verb, for the calls the classifier has no rule for.
  *
- * The classifier's developer-harness rules are written for `buzz-dev-mcp`
+ * The classifier's developer-harness rules are written for `beekeeper-dev-mcp`
  * names (`shell`, `read_file`, `str_replace`); a seat driven by Claude Code
  * calls the same things `Bash`, `Read`, `Edit`, `Grep`, and every one of them
  * fell through to `generic`. That is what made the 2026-09-01 live run's

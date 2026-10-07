@@ -510,7 +510,8 @@ test("a decision.answer may carry the class its ruling covers", () => {
   // Finding 21: the same ruling was asked for twice because the first answer
   // was about one SHA. `condition` names the class instead — text a reader
   // reads, never a predicate this surface evaluates.
-  const condition = "any SHA whose buzz-acp diff against origin/main is empty";
+  const condition =
+    "any SHA whose beekeeper-acp diff against origin/main is empty";
   const decoded = decode("decision.answer", {
     requestRef: REQUEST,
     choice: 0,

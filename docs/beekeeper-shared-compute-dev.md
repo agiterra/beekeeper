@@ -2,7 +2,7 @@
 
 This runbook verifies the actual desktop path used by the built-in **Fizz** agent:
 
-`Beekeeper Desktop → buzz-acp → buzz-agent → MeshLLM SDK → local/remote compute`
+`Beekeeper Desktop → beekeeper-acp → buzz-agent → MeshLLM SDK → local/remote compute`
 
 It does not use a substitute agent harness.
 
@@ -154,7 +154,7 @@ admitted. A serving target is selectable only when its endpoint signature is
 valid, its invite token decodes as a bounded Iroh endpoint, and every advertised
 relay URL matches this machine's locally configured Iroh relay policy.
 
-`BUZZ_MESH_IROH_RELAYS` defaults to Iroh's production relay set. Set it to `0`
+`BEEKEEPER_MESH_IROH_RELAYS` defaults to Iroh's production relay set. Set it to `0`
 for direct QUIC only, or to a comma-separated HTTPS allowlist for custom relays.
 Plain HTTP is accepted only for loopback development relays. Remote status notes
 cannot expand this local allowlist.

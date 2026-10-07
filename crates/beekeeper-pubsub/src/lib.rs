@@ -5,7 +5,7 @@
 //! # Architecture
 //!
 //! ```text
-//! buzz-relay process
+//! beekeeper-relay process
 //!   │
 //!   ├── deadpool-redis pool → PUBLISH, SET, ZADD, etc.
 //!   │

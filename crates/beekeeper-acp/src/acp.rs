@@ -655,7 +655,7 @@ fn build_initialize_params() -> serde_json::Value {
         "protocolVersion": 2,
         "clientCapabilities": build_client_capabilities(),
         "clientInfo": {
-            "name": "buzz-acp",
+            "name": "beekeeper-acp",
             "version": env!("CARGO_PKG_VERSION")
         },
     })
@@ -1472,7 +1472,7 @@ impl AcpClient {
         has_generated_codex_config: bool,
     ) -> Result<Self, AcpError> {
         // The open fence: the managed-agent harness *wants* its agent to
-        // inherit `BUZZ_PRIVATE_KEY` and friends, because a managed agent is a
+        // inherit `BEEKEEPER_PRIVATE_KEY` and friends, because a managed agent is a
         // Beekeeper participant acting as itself.
         Self::spawn_with_env_fence(
             command,
@@ -1523,7 +1523,7 @@ impl AcpClient {
     /// which no fence configuration can express.
     ///
     /// So it is a separate argument rather than an [`EnvFence::exempt`] entry:
-    /// exempting `BUZZ_PRIVATE_KEY` would let the *parent's* value be inherited
+    /// exempting `BEEKEEPER_PRIVATE_KEY` would let the *parent's* value be inherited
     /// (the injection loop yields to an already-set parent variable), which is
     /// exactly the forgery the fence exists to prevent. Overrides are set
     /// explicitly, so the child gets the value the caller named or nothing.
@@ -1729,7 +1729,7 @@ impl AcpClient {
             // Callers MUST still call shutdown().await for guaranteed cleanup.
             .kill_on_drop(true);
 
-        // Per-persona env vars (e.g., GOOSE_PROVIDER, BUZZ_AGENT_PROVIDER).
+        // Per-persona env vars (e.g., GOOSE_PROVIDER, BEEKEEPER_AGENT_PROVIDER).
         // For most keys, operator precedence wins: skip injection if already set
         // in the parent environment.
         //
@@ -2488,11 +2488,11 @@ impl AcpClient {
         goose_usage.or(standard_usage)
     }
 
-    /// Notify the usage tracker that buzz-acp just spawned a new session.
+    /// Notify the usage tracker that beekeeper-acp just spawned a new session.
     ///
     /// Seeds a zero baseline so the first usage notification for `session_id`
     /// produces `delta_reliable: true` (turn delta == cumulative from zero).
-    /// Must be called only when buzz-acp created the session via `session/new`;
+    /// Must be called only when beekeeper-acp created the session via `session/new`;
     /// never when attaching to a pre-existing session. [`Self::session_new_full`]
     /// calls it itself; an explicit later call is a no-op.
     pub(crate) fn notify_session_spawned(&mut self, session_id: &str) {
@@ -3808,7 +3808,7 @@ fn steer_prompt_blocks(prompt_blocks: &[&str]) -> Vec<serde_json::Value> {
 /// Serialize a request for debug logging unless it opens a session.
 ///
 /// Session-open parameters carry host-private cursors, working directories,
-/// and MCP environment such as `BUZZ_SESSION_CONTEXT_PACKAGE`. The wire still
+/// and MCP environment such as `BEEKEEPER_SESSION_CONTEXT_PACKAGE`. The wire still
 /// receives the full request; debug logs receive only the method and id at the
 /// call site.
 fn acp_request_log_payload(method: &str, message: &serde_json::Value) -> Option<String> {
@@ -4228,12 +4228,12 @@ mod tests {
     /// that crate.
     const TEST_FENCE: EnvFence = EnvFence {
         keys: &["TYPESENSE_API_KEY", "NOSTR_PRIVATE_KEY"],
-        prefixes: &["BUZZ_TEST_FENCED_"],
-        exempt: &["BUZZ_TEST_FENCED_BUT_EXEMPT"],
+        prefixes: &["BEEKEEPER_TEST_FENCED_"],
+        exempt: &["BEEKEEPER_TEST_FENCED_BUT_EXEMPT"],
     };
 
     /// The managed-agent path. A managed agent is a Beekeeper participant and is
-    /// supposed to inherit `BUZZ_PRIVATE_KEY` from the harness, so the open
+    /// supposed to inherit `BEEKEEPER_PRIVATE_KEY` from the harness, so the open
     /// fence must remove nothing at all — this is the assertion that the
     /// coding-session fix left the harness alone.
     #[test]
@@ -4299,12 +4299,12 @@ mod tests {
     fn the_fence_outranks_an_explicit_value_for_the_same_key() {
         let extra = vec![
             (
-                "BUZZ_TEST_FENCED_SECRET".to_string(),
+                "BEEKEEPER_TEST_FENCED_SECRET".to_string(),
                 "nsec1leak".to_string(),
             ),
             ("NOSTR_PRIVATE_KEY".to_string(), "nsec1leak".to_string()),
             (
-                "BUZZ_TEST_FENCED_BUT_EXEMPT".to_string(),
+                "BEEKEEPER_TEST_FENCED_BUT_EXEMPT".to_string(),
                 "kept".to_string(),
             ),
         ];
@@ -4312,7 +4312,7 @@ mod tests {
             .expect("build command");
         let plan = env_plan(&cmd);
 
-        for key in ["BUZZ_TEST_FENCED_SECRET", "NOSTR_PRIVATE_KEY"] {
+        for key in ["BEEKEEPER_TEST_FENCED_SECRET", "NOSTR_PRIVATE_KEY"] {
             assert!(
                 !plan
                     .iter()
@@ -4322,7 +4322,7 @@ mod tests {
         }
         assert!(
             plan.iter()
-                .any(|(key, value)| key == "BUZZ_TEST_FENCED_BUT_EXEMPT"
+                .any(|(key, value)| key == "BEEKEEPER_TEST_FENCED_BUT_EXEMPT"
                     && value.as_deref() == Some("kept")),
             "the exemption did not survive its own prefix: {plan:?}"
         );
@@ -4331,7 +4331,7 @@ mod tests {
     #[test]
     fn the_open_fence_covers_nothing() {
         assert!(EnvFence::OPEN.is_open());
-        assert!(!EnvFence::OPEN.covers("BUZZ_PRIVATE_KEY"));
+        assert!(!EnvFence::OPEN.covers("BEEKEEPER_PRIVATE_KEY"));
     }
 
     #[test]
@@ -4480,7 +4480,7 @@ mod tests {
                 "protocolVersion": 2,
                 "clientCapabilities": build_client_capabilities(),
                 "clientInfo": {
-                    "name": "buzz-acp",
+                    "name": "beekeeper-acp",
                     "version": "0.1.0"
                 }
             }
@@ -4488,7 +4488,7 @@ mod tests {
         assert_eq!(msg["params"]["protocolVersion"].as_u64(), Some(2));
         assert_eq!(
             msg["params"]["clientInfo"]["name"].as_str(),
-            Some("buzz-acp")
+            Some("beekeeper-acp")
         );
         assert!(msg["params"]["clientCapabilities"].is_object());
         assert_eq!(
@@ -4626,11 +4626,11 @@ mod tests {
             args: vec![],
             env: vec![
                 EnvVar {
-                    name: "BUZZ_RELAY_URL".into(),
+                    name: "BEEKEEPER_RELAY_URL".into(),
                     value: "ws://localhost:3000".into(),
                 },
                 EnvVar {
-                    name: "BUZZ_PRIVATE_KEY".into(),
+                    name: "BEEKEEPER_PRIVATE_KEY".into(),
                     value: "nsec1abc".into(),
                 },
             ],
@@ -4647,7 +4647,7 @@ mod tests {
         assert_eq!(serialized["env"].as_array().unwrap().len(), 2);
         assert_eq!(
             serialized["env"][0]["name"].as_str(),
-            Some("BUZZ_RELAY_URL")
+            Some("BEEKEEPER_RELAY_URL")
         );
     }
 
@@ -4664,7 +4664,7 @@ mod tests {
                     "command": "/private/buzz-session-context",
                     "args": [],
                     "env": [{
-                        "name": "BUZZ_SESSION_CONTEXT_PACKAGE",
+                        "name": "BEEKEEPER_SESSION_CONTEXT_PACKAGE",
                         "value": "/private/verified-package.json",
                     }],
                 }],

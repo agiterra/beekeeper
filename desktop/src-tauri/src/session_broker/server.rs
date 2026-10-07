@@ -17,9 +17,9 @@ use super::model::{BrokerSession, BrokerTerminal, SessionActivity};
 use super::protocol::{BrokerEnvelope, BrokerRequest, BrokerResponse};
 
 /// Env override for the broker socket path.
-const SOCKET_PATH_ENV: &str = "BUZZ_SESSION_BROKER_SOCK";
+const SOCKET_PATH_ENV: &str = "BEEKEEPER_SESSION_BROKER_SOCK";
 
-/// Resolve the broker socket path: `$BUZZ_SESSION_BROKER_SOCK`, else
+/// Resolve the broker socket path: `$BEEKEEPER_SESSION_BROKER_SOCK`, else
 /// `<state_dir>/session-broker.sock` (`~/.local/state/buzz` in production,
 /// `…/buzz-dev` for dev builds — so two instances on one machine don't steal
 /// each other's bind). The `bee session` CLI defaults to the production
@@ -445,7 +445,7 @@ async fn request_access(
         Decision::Full => {
             // Full control = a persisted collaborator entry on the session's
             // invite roster, which requires the agent to have identified
-            // itself with a pubkey (the CLI sends one when BUZZ_PRIVATE_KEY
+            // itself with a pubkey (the CLI sends one when BEEKEEPER_PRIVATE_KEY
             // is set). Without one there is nothing durable to grant.
             let Some(agent_pubkey) = request_caller
                 .as_deref()
@@ -454,7 +454,7 @@ async fn request_access(
             else {
                 return BrokerResponse::err(
                     "cannot enable full control: the agent did not identify itself with a \
-                     pubkey (run the CLI with BUZZ_PRIVATE_KEY set), so it cannot be added \
+                     pubkey (run the CLI with BEEKEEPER_PRIVATE_KEY set), so it cannot be added \
                      to the session's roster"
                         .to_string(),
                 );

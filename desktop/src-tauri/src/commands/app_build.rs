@@ -79,9 +79,9 @@ pub(crate) fn parse_app_build_identity(
 
 fn embedded_app_build_identity() -> AppBuildIdentity {
     parse_app_build_identity(
-        option_env!("BUZZ_DESKTOP_BUILD_SOURCE_SHA"),
-        option_env!("BUZZ_DESKTOP_BUILD_SOURCE_COMMIT_COUNT"),
-        option_env!("BUZZ_DESKTOP_BUILD_SOURCE_DIRTY"),
+        option_env!("BEEKEEPER_DESKTOP_BUILD_SOURCE_SHA"),
+        option_env!("BEEKEEPER_DESKTOP_BUILD_SOURCE_COMMIT_COUNT"),
+        option_env!("BEEKEEPER_DESKTOP_BUILD_SOURCE_DIRTY"),
     )
 }
 

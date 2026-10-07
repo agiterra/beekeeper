@@ -21,9 +21,9 @@ fn bee(args: &[&str]) -> Output {
         // No identity and no relay: every assertion below must hold without
         // either, which is the point of dispatching these ahead of the key
         // gate.
-        .env_remove("BUZZ_PRIVATE_KEY")
-        .env_remove("BUZZ_AUTH_TAG")
-        .env("BUZZ_RELAY_URL", "http://127.0.0.1:1/")
+        .env_remove("BEEKEEPER_PRIVATE_KEY")
+        .env_remove("BEEKEEPER_AUTH_TAG")
+        .env("BEEKEEPER_RELAY_URL", "http://127.0.0.1:1/")
         .args(args)
         .output()
         .expect("bee runs")
@@ -33,9 +33,9 @@ fn bee(args: &[&str]) -> Output {
 /// key gate, so a keyless run answers `auth` before it ever sees the flag.
 fn bee_with_key(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_bee"))
-        .env("BUZZ_PRIVATE_KEY", "1".repeat(64))
-        .env_remove("BUZZ_AUTH_TAG")
-        .env("BUZZ_RELAY_URL", "http://127.0.0.1:1/")
+        .env("BEEKEEPER_PRIVATE_KEY", "1".repeat(64))
+        .env_remove("BEEKEEPER_AUTH_TAG")
+        .env("BEEKEEPER_RELAY_URL", "http://127.0.0.1:1/")
         .args(args)
         .output()
         .expect("bee runs")

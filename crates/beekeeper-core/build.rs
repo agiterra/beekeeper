@@ -11,7 +11,7 @@
 //! cost this repository two defects (REVIEW-A1 F1, F12).
 //!
 //! Order, and why:
-//! 1. `BUZZ_SOURCE_SHA` + `BUZZ_SOURCE_COMMIT_COUNT`, the pair every packaging
+//! 1. `BEEKEEPER_SOURCE_SHA` + `BEEKEEPER_SOURCE_COMMIT_COUNT`, the pair every packaging
 //!    path in this repo already threads through (`Dockerfile`,
 //!    `deploy/autodeploy/autodeploy`, `scripts/app-from.sh`). Checked first because a pipeline supplying it is
 //!    *stating* the artifact identity, which should not be second-guessed by
@@ -42,8 +42,8 @@ use std::process::Command;
 include!("src/build_info.rs");
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=BUZZ_SOURCE_SHA");
-    println!("cargo:rerun-if-env-changed=BUZZ_SOURCE_COMMIT_COUNT");
+    println!("cargo:rerun-if-env-changed=BEEKEEPER_SOURCE_SHA");
+    println!("cargo:rerun-if-env-changed=BEEKEEPER_SOURCE_COMMIT_COUNT");
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     println!("cargo:rerun-if-changed={manifest_dir}/src/build_info.rs");
     watch_git_refs(&manifest_dir);
@@ -51,19 +51,19 @@ fn main() {
     let (commit, count) = resolve_stamp(&manifest_dir);
     let dirty = commit.is_some() && observed_dirty(&manifest_dir);
     if let Some(commit) = &commit {
-        println!("cargo:rustc-env=BUZZ_CORE_SOURCE_SHA={commit}");
+        println!("cargo:rustc-env=BEEKEEPER_CORE_SOURCE_SHA={commit}");
         if let Some(count) = count {
-            println!("cargo:rustc-env=BUZZ_CORE_SOURCE_COMMIT_COUNT={count}");
+            println!("cargo:rustc-env=BEEKEEPER_CORE_SOURCE_COMMIT_COUNT={count}");
         }
     }
     if dirty {
         // A dirty observation only. A clean claim is never embedded: cargo
         // cannot cheaply watch every path, so a later edit would leave a stale
         // false-clean in an incrementally rebuilt binary.
-        println!("cargo:rustc-env=BUZZ_CORE_SOURCE_DIRTY=1");
+        println!("cargo:rustc-env=BEEKEEPER_CORE_SOURCE_DIRTY=1");
     }
     println!(
-        "cargo:rustc-env=BUZZ_CORE_BUILD_TIME={}",
+        "cargo:rustc-env=BEEKEEPER_CORE_BUILD_TIME={}",
         build_time(commit.as_deref(), count, dirty)
     );
 }
@@ -71,8 +71,8 @@ fn main() {
 /// The commit this binary is stamped with, and that commit's ordinal —
 /// resolved **together**, never independently.
 fn resolve_stamp(manifest_dir: &str) -> (Option<String>, Option<u64>) {
-    if let Some(commit) = env_override("BUZZ_SOURCE_SHA") {
-        let count = std::env::var("BUZZ_SOURCE_COMMIT_COUNT")
+    if let Some(commit) = env_override("BEEKEEPER_SOURCE_SHA") {
+        let count = std::env::var("BEEKEEPER_SOURCE_COMMIT_COUNT")
             .ok()
             .and_then(|value| parse_commit_count(&value));
         return (Some(commit), count);
@@ -89,7 +89,7 @@ fn resolve_stamp(manifest_dir: &str) -> (Option<String>, Option<u64>) {
     }
 }
 
-/// `BUZZ_SOURCE_SHA`, when it is plausibly a commit. Never echoed back
+/// `BEEKEEPER_SOURCE_SHA`, when it is plausibly a commit. Never echoed back
 /// unvalidated: an unset or malformed value falls through to the checkout.
 fn env_override(var: &str) -> Option<String> {
     let value = std::env::var(var).ok()?;

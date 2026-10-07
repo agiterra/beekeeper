@@ -27,7 +27,7 @@ use crate::state::LockOwnerKind;
 use crate::terminate::{pid_is_running, terminate_gracefully_blocking};
 
 /// Lock file the provider holds inside its state directory (see
-/// `buzz-session-provider`'s `state::acquire_state_dir_lock`). Its contents
+/// `beekeeper-session-provider`'s `state::acquire_state_dir_lock`). Its contents
 /// are the owner's pid, written while holding the lock.
 pub const PROVIDER_LOCK_FILE: &str = "provider.lock";
 /// How long a stale owner's lock is given to clear after it was signalled.

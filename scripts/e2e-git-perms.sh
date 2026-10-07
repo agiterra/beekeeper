@@ -6,7 +6,7 @@
 #
 # Prerequisites:
 #   - Docker services running (postgres, redis, minio)
-#   - Relay built: cargo build --release --bin buzz-relay
+#   - Relay built: cargo build --release --bin beekeeper-relay
 #   - Credential helper built: cargo build --release --bin git-credential-nostr
 #   - Signing program built: cargo build --release --bin git-sign-nostr
 #   - Python 3 with websocket-client: pip install websocket-client
@@ -93,8 +93,8 @@ trap cleanup EXIT
 check_deps() {
     local missing=()
 
-    if [[ ! -x "${REPO_ROOT}/target/release/buzz-relay" ]]; then
-        missing+=("buzz-relay (cargo build --release --bin buzz-relay)")
+    if [[ ! -x "${REPO_ROOT}/target/release/beekeeper-relay" ]]; then
+        missing+=("beekeeper-relay (cargo build --release --bin beekeeper-relay)")
     fi
     if [[ ! -x "${REPO_ROOT}/target/release/git-credential-nostr" ]]; then
         missing+=("git-credential-nostr (cargo build --release --bin git-credential-nostr)")
@@ -335,19 +335,19 @@ if [[ -f .env ]]; then
     set +o allexport
 fi
 
-export BUZZ_GIT_REPO_PATH="${REPO_ROOT}/repos"
-export BUZZ_GIT_HOOK_HMAC_SECRET="${HMAC_SECRET}"
-export BUZZ_BIND_ADDR="${RELAY_HOST}:${RELAY_PORT}"
+export BEEKEEPER_GIT_REPO_PATH="${REPO_ROOT}/repos"
+export BEEKEEPER_GIT_HOOK_HMAC_SECRET="${HMAC_SECRET}"
+export BEEKEEPER_BIND_ADDR="${RELAY_HOST}:${RELAY_PORT}"
 export RELAY_URL="${RELAY_WS}"
 export RUST_LOG="beekeeper_relay=warn"
-export BUZZ_RELAY_PRIVATE_KEY="${BUZZ_RELAY_PRIVATE_KEY:-$(openssl rand -hex 32)}"
-export BUZZ_REQUIRE_AUTH_TOKEN=false
+export BEEKEEPER_RELAY_PRIVATE_KEY="${BEEKEEPER_RELAY_PRIVATE_KEY:-$(openssl rand -hex 32)}"
+export BEEKEEPER_REQUIRE_AUTH_TOKEN=false
 
 # Clean repos dir (isolated test state)
 rm -rf "${REPO_ROOT}/repos"
 mkdir -p "${REPO_ROOT}/repos"
 
-./target/release/buzz-relay > /tmp/buzz-relay-e2e.log 2>&1 &
+./target/release/beekeeper-relay > /tmp/buzz-relay-e2e.log 2>&1 &
 RELAY_PID=$!
 
 # Wait for relay to be ready (poll, not sleep)
@@ -724,7 +724,7 @@ fi
 
 # ── Test: Signed commit with owner attestation (NIP-OA) ──────────────────────
 
-log "Signing with owner attestation (BUZZ_AUTH_TAG)..."
+log "Signing with owner attestation (BEEKEEPER_AUTH_TAG)..."
 OA_DIR="$WORK_DIR/oa-signed"
 
 git_clone "$BOT1_PRIVKEY" "${RELAY_HTTP}/git/${OWNER_PUBKEY}/${REPO_NAME}" "$OA_DIR" \
@@ -794,7 +794,7 @@ print(json.dumps(["auth", owner_pubkey, "", sig]))
 PYEOF
 )
 
-NOSTR_PRIVATE_KEY="$BOT1_PRIVKEY" BUZZ_AUTH_TAG="$OA_TAG" \
+NOSTR_PRIVATE_KEY="$BOT1_PRIVKEY" BEEKEEPER_AUTH_TAG="$OA_TAG" \
 git -C "$OA_DIR" \
     -c user.name="Bot1" \
     -c user.email="bot1@buzz.test" \
@@ -810,7 +810,7 @@ DECODED_SIG=$(echo "$COMMIT_SIG" | base64 -d 2>/dev/null || echo "$COMMIT_SIG" |
 if echo "$DECODED_SIG" | grep -q '"oa"'; then
     success "Owner attestation (oa field) present in signature"
 else
-    fail "Owner attestation missing from signature — BUZZ_AUTH_TAG not picked up"
+    fail "Owner attestation missing from signature — BEEKEEPER_AUTH_TAG not picked up"
 fi
 
 # Push it

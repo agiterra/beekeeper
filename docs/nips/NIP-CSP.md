@@ -231,7 +231,7 @@ be the defect this rule exists to prevent.
 ## What v1 deliberately does not have
 
 - **No general enforcement.** Exactly one field binds anything:
-  **`budget.turns`**, which overrides the provider's `BUZZ_CSP_TURN_BUDGET`
+  **`budget.turns`**, which overrides the provider's `BEEKEEPER_CSP_TURN_BUDGET`
   ceiling for that umbrella and, when it is what refuses a turn, says
   "published session policy" in the `BUDGET_EXHAUSTED` message so a reader can
   tell which ceiling bound

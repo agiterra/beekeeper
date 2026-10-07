@@ -800,7 +800,7 @@ fn a_written_answer_always_carries_the_key() {
 fn decision_answer_carries_a_bounded_condition_or_null() {
     // Finding 21: the same ruling was asked for twice because the first answer
     // was given about one SHA. A condition states the class instead.
-    let condition = "any SHA whose buzz-acp diff against origin/main is empty";
+    let condition = "any SHA whose beekeeper-acp diff against origin/main is empty";
     let decoded = decode_coding_session_team_transaction(&envelope(
         "decision.answer",
         Value::Null,

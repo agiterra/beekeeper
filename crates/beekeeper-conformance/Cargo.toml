@@ -15,7 +15,7 @@ description = "Runtime trace schema + independent replay checker for MultiTenant
 #   (the no-parse-from-client rule) is preserved.
 # - The relay's emitter module converts at the seam by calling
 #   `tenant.community().as_uuid()` and wrapping into a `CommunityLabel`.
-# - NEVER depend on buzz-db, buzz-relay, buzz-pubsub, buzz-auth, buzz-search,
+# - NEVER depend on buzz-db, beekeeper-relay, buzz-pubsub, buzz-auth, buzz-search,
 #   buzz-audit, or anything that touches the production reducer / authorization
 #   / projection helpers. The checker re-implements the spec transition
 #   relation from scratch so a bug in the production code does not mechanically

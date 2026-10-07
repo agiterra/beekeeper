@@ -281,7 +281,7 @@ and that is deliberate:
   reference to resolve locally, not as a credential to carry.
 - **The env fence still strips everything by default.** Past that fence, an
   actor seat's spawned process additionally receives exactly
-  `BUZZ_PRIVATE_KEY`, `BUZZ_RELAY_URL`, `BUZZ_AUTH_TAG` (omitted when null),
+  `BEEKEEPER_PRIVATE_KEY`, `BEEKEEPER_RELAY_URL`, `BEEKEEPER_AUTH_TAG` (omitted when null),
   and a `NOSTR_PRIVATE_KEY` mirror — the same three-and-a-mirror shape managed
   agents already receive at spawn, and nothing else. A create with no `actor`
   is fenced exactly as before: the fence's exemption list does not grow.

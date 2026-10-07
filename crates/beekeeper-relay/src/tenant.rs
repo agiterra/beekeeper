@@ -123,7 +123,7 @@ pub async fn bind_deployment_community<R: HostResolver>(
 ///
 /// This is a thin re-export of [`beekeeper_core::tenant::relay_url_authority`]: the
 /// canonical implementation lives in `buzz-core` so the relay seam *and* the
-/// `buzz-admin` CLI derive a byte-identical authority (same port/IPv6 handling).
+/// `beekeeper-admin` CLI derive a byte-identical authority (same port/IPv6 handling).
 pub use beekeeper_core::tenant::relay_url_authority;
 
 /// Production [`HostResolver`]: the relay resolves hosts against the durable

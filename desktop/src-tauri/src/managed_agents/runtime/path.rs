@@ -19,7 +19,7 @@ pub(crate) use beekeeper_host_core::path_env::{
 ///
 /// Concatenates, in priority order:
 ///   1. exe parent dir — the binaries shipped beside the app itself
-///      (`Contents/MacOS/`: `bee`, `buzz-acp`, the other sidecars)
+///      (`Contents/MacOS/`: `bee`, `beekeeper-acp`, the other sidecars)
 ///   2. Beekeeper-managed npm prefix bin dir — app-private ACP adapter shims
 ///   3. Beekeeper-managed Node.js bin dir — app-private Node/npm runtime
 ///   4. `<home>/.local/bin` — the user's own CLI dir

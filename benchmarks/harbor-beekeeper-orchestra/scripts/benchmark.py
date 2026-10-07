@@ -59,7 +59,7 @@ SCHEMA_SQL = PACKAGE_ROOT / "testbed" / "sql" / "benchmark_schema.sql"
 # Linux builds of the production agent stack, uploaded into each task
 # container per trial. Built once in a rust:alpine container (musl → fully
 # static, runs on any Linux task image of the same architecture) and cached.
-AGENT_BINARIES = ("buzz-acp", "buzz-agent", "buzz-dev-mcp")
+AGENT_BINARIES = ("beekeeper-acp", "buzz-agent", "beekeeper-dev-mcp")
 # Std-only loopback forwarder (not a workspace crate): agents dial the
 # relay's canonical localhost address inside the task container and the
 # forwarder bridges to the Docker host gateway. Compiled with plain rustc
@@ -206,36 +206,36 @@ def write_env_file(state: dict[str, str]) -> Path:
     """Compose interpolation env — regenerated from state on every run."""
     env_path = STATE_DIR / ".env"
     lines = {
-        "BUZZ_DOMAIN": "localhost",
+        "BEEKEEPER_DOMAIN": "localhost",
         "RELAY_URL": f"ws://localhost:{RELAY_HTTP_PORT}",
-        "BUZZ_MEDIA_BASE_URL": f"http://localhost:{RELAY_HTTP_PORT}/media",
-        "BUZZ_MEDIA_SERVER_DOMAIN": "localhost",
-        "BUZZ_CORS_ORIGINS": f"http://localhost:{RELAY_HTTP_PORT}",
-        "BUZZ_REQUIRE_AUTH_TOKEN": "true",
-        "BUZZ_REQUIRE_RELAY_MEMBERSHIP": "true",
-        "BUZZ_ALLOW_NIP_OA_AUTH": "true",
-        "BUZZ_AUTO_MIGRATE": "true",
-        "BUZZ_GIT_CONFORMANCE_PROBE": "true",
+        "BEEKEEPER_MEDIA_BASE_URL": f"http://localhost:{RELAY_HTTP_PORT}/media",
+        "BEEKEEPER_MEDIA_SERVER_DOMAIN": "localhost",
+        "BEEKEEPER_CORS_ORIGINS": f"http://localhost:{RELAY_HTTP_PORT}",
+        "BEEKEEPER_REQUIRE_AUTH_TOKEN": "true",
+        "BEEKEEPER_REQUIRE_RELAY_MEMBERSHIP": "true",
+        "BEEKEEPER_ALLOW_NIP_OA_AUTH": "true",
+        "BEEKEEPER_AUTO_MIGRATE": "true",
+        "BEEKEEPER_GIT_CONFORMANCE_PROBE": "true",
         "RUST_LOG": "beekeeper_relay=info,beekeeper_db=info,beekeeper_auth=info",
         "RELAY_OWNER_PUBKEY": state["owner_pubkey"],
-        "BUZZ_RELAY_PRIVATE_KEY": state["relay_private_key"],
-        "BUZZ_GIT_HOOK_HMAC_SECRET": state["git_hook_hmac_secret"],
+        "BEEKEEPER_RELAY_PRIVATE_KEY": state["relay_private_key"],
+        "BEEKEEPER_GIT_HOOK_HMAC_SECRET": state["git_hook_hmac_secret"],
         "POSTGRES_DB": "buzz",
         "POSTGRES_USER": "buzz",
         "POSTGRES_PASSWORD": state["postgres_password"],
         "REDIS_PASSWORD": state["redis_password"],
-        "BUZZ_S3_ACCESS_KEY": state["s3_access_key"],
-        "BUZZ_S3_SECRET_KEY": state["s3_secret_key"],
-        "BUZZ_S3_BUCKET": "buzz-media",
-        "BUZZ_HTTP_PORT": str(RELAY_HTTP_PORT),
-        "BUZZ_PG_HOST_PORT": str(PG_HOST_PORT),
-        "BUZZ_METRICS_HOST_PORT": str(METRICS_HOST_PORT),
+        "BEEKEEPER_S3_ACCESS_KEY": state["s3_access_key"],
+        "BEEKEEPER_S3_SECRET_KEY": state["s3_secret_key"],
+        "BEEKEEPER_S3_BUCKET": "buzz-media",
+        "BEEKEEPER_HTTP_PORT": str(RELAY_HTTP_PORT),
+        "BEEKEEPER_PG_HOST_PORT": str(PG_HOST_PORT),
+        "BEEKEEPER_METRICS_HOST_PORT": str(METRICS_HOST_PORT),
     }
     # No published relay image to default to: unset, compose falls back to the
     # locally built image named in deploy/compose/compose.yml. Check it exists
     # now, or compose would try to pull it from Docker Hub and fail obscurely.
-    if image := os.environ.get("BUZZ_IMAGE"):
-        lines["BUZZ_IMAGE"] = image
+    if image := os.environ.get("BEEKEEPER_IMAGE"):
+        lines["BEEKEEPER_IMAGE"] = image
     elif (
         subprocess.run(
             ["docker", "image", "inspect", "beekeeper-relay:latest"],
@@ -244,7 +244,7 @@ def write_env_file(state: dict[str, str]) -> Path:
         != 0
     ):
         raise SystemExit(
-            "No relay image: set BUZZ_IMAGE, or build one from the repository "
+            "No relay image: set BEEKEEPER_IMAGE, or build one from the repository "
             "root with `docker build -t beekeeper-relay:latest .`"
         )
     env_path.touch(mode=0o600)
@@ -415,7 +415,7 @@ def ensure_agent_binaries() -> Path:
     """Cross-build the static Linux agent stack once, cached in .benchmark/.
 
     The agents run *inside* each Harbor task container as the real
-    buzz-acp → buzz-agent → buzz-dev-mcp stack, so the binaries must be
+    beekeeper-acp → buzz-agent → beekeeper-dev-mcp stack, so the binaries must be
     Linux ELF for the task image architecture. musl-static means they run
     on any Linux base image (glibc or not). The relay loopback forwarder
     is compiled in the same step with plain rustc (std-only, no deps).
@@ -478,7 +478,7 @@ def launch_gui(state: dict[str, str]) -> subprocess.Popen:
     """Open the Beekeeper desktop app logged in as the benchmark user.
 
     The relay runs closed (membership required), so the user pubkey is first
-    added to the relay membership list via buzz-admin inside the container —
+    added to the relay membership list via beekeeper-admin inside the container —
     NIP-OA auth tags cover the agents, but the GUI authenticates as a plain
     member, exactly like a human.
     """
@@ -487,7 +487,7 @@ def launch_gui(state: dict[str, str]) -> subprocess.Popen:
             "exec",
             "-T",
             "relay",
-            "buzz-admin",
+            "beekeeper-admin",
             "add-member",
             "--pubkey",
             state["user_pubkey"],
@@ -513,9 +513,9 @@ def launch_gui(state: dict[str, str]) -> subprocess.Popen:
     sidecar_dir.mkdir(parents=True, exist_ok=True)
     binaries = ensure_binaries()
     for name in (
-        "buzz-acp",
+        "beekeeper-acp",
         "buzz-agent",
-        "buzz-dev-mcp",
+        "beekeeper-dev-mcp",
         "git-credential-nostr",
         "bee",
     ):
@@ -532,7 +532,7 @@ def launch_gui(state: dict[str, str]) -> subprocess.Popen:
     )
     # Distinct bundle identifier: the desktop app persists workspaces (incl.
     # their relay URLs) in per-identifier WebKit localStorage, and a stored
-    # workspace's relay URL overrides BUZZ_RELAY_URL by design. Reusing the
+    # workspace's relay URL overrides BEEKEEPER_RELAY_URL by design. Reusing the
     # default identifier means any past local-dev session's ws://localhost:3000
     # workspace silently shadows the benchmark relay. An identifier of our own
     # keeps that state isolated both ways.
@@ -544,8 +544,8 @@ def launch_gui(state: dict[str, str]) -> subprocess.Popen:
         cwd=desktop_dir,
         env={
             **os.environ,
-            "BUZZ_RELAY_URL": f"ws://localhost:{RELAY_HTTP_PORT}",
-            "BUZZ_PRIVATE_KEY": state["user_secret_key"],
+            "BEEKEEPER_RELAY_URL": f"ws://localhost:{RELAY_HTTP_PORT}",
+            "BEEKEEPER_PRIVATE_KEY": state["user_secret_key"],
         },
     )
 
@@ -579,11 +579,11 @@ def leaderboard_argv(
         # The relay as reachable from inside a task container: Docker's
         # host alias, bridged to the canonical localhost address by the
         # uploaded forwarder. Override the alias with
-        # BUZZ_BENCHMARK_DOCKER_HOST if your engine exposes the host
+        # BEEKEEPER_BENCHMARK_DOCKER_HOST if your engine exposes the host
         # differently.
         "--relay-gateway",
         (
-            f"{os.environ.get('BUZZ_BENCHMARK_DOCKER_HOST', 'host.docker.internal')}"
+            f"{os.environ.get('BEEKEEPER_BENCHMARK_DOCKER_HOST', 'host.docker.internal')}"
             f":{RELAY_HTTP_PORT}"
         ),
         "--n-concurrent",

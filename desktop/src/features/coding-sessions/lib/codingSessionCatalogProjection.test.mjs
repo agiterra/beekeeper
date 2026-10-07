@@ -29,8 +29,8 @@ import { buildCodingSessionTargetKey } from "./codingSessionCommand.ts";
 import { OPEN_CODING_SESSION_INGRESS_AUTHORITY } from "./codingSessionIngressAuthority.ts";
 import { oracleMergeTrustedCodingSessionIngress } from "./codingSessionProjectionOracle.testFixtures.ts";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   CODING_SESSION_METADATA_TAG_VERSION,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
   codingSessionMetadataSemanticKey,
@@ -86,7 +86,7 @@ function transcriptEvent(
   createdAt = 1_800_000_000 + Math.floor(eventSeq / 3),
 ) {
   const value = {
-    schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+    schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
     session,
     eventSeq,
     // Provider clocks are not monotonic in eventSeq; the catalog's
@@ -120,7 +120,7 @@ function metadataEvent(
   channelId = CHANNEL,
 ) {
   const value = {
-    schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+    schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
     session,
     projectRef: null,
     repoRef: null,

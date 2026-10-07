@@ -351,7 +351,7 @@ function parseBeekeeperEntityPreview(
   };
 }
 
-const BUZZ_GIT_PATH_RE =
+const BEEKEEPER_GIT_PATH_RE =
   /^\/git\/([a-f0-9]{64})\/([a-zA-Z0-9._-]+?)(?:\.git)?\/?$/;
 
 /**
@@ -376,7 +376,7 @@ function parseBeekeeperGitLink(
     return null;
   }
 
-  const match = BUZZ_GIT_PATH_RE.exec(parsed.pathname);
+  const match = BEEKEEPER_GIT_PATH_RE.exec(parsed.pathname);
   if (!match) return null;
 
   const [, owner, repo] = match;

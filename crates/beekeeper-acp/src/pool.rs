@@ -640,7 +640,7 @@ pub struct PromptContext {
     /// the per-session core engram fetch is skipped and `core_sections`
     /// remains empty for every channel, so `format_prompt` renders no
     /// `[Agent Memory — core]` section. On by default; disabled via
-    /// `--no-memory` / `BUZZ_ACP_NO_MEMORY`.
+    /// `--no-memory` / `BEEKEEPER_ACP_NO_MEMORY`.
     pub memory_enabled: bool,
     /// Harness identity string for NIP-AM `harness` field. Derived from the
     /// configured `agent_command` at startup (e.g. `"goose"`, `"buzz-agent"`).
@@ -1177,7 +1177,7 @@ struct NewSessionChannelContext<'a> {
     channel_type: Option<&'a str>,
     /// Resolved Project Pulse coordinate, or `None` when §5.5 project
     /// resolution found zero or more than one project for this channel.
-    /// Rides onto `BUZZ_PULSE_PROJECT` for MCP servers, never onto the ACP
+    /// Rides onto `BEEKEEPER_PULSE_PROJECT` for MCP servers, never onto the ACP
     /// agent subprocess's own env (see `mcp_servers_with_git_origin`).
     pulse_project: Option<&'a str>,
 }
@@ -1337,8 +1337,8 @@ async fn create_session_and_apply_model(
 
 /// `pulse_project`, when present, is the §5.5-resolved Project Pulse
 /// coordinate for this channel session. It is pushed onto every MCP server's
-/// env as `BUZZ_PULSE_PROJECT`, the same mechanism `BUZZ_GIT_ORIGIN_CHANNEL_ID`
-/// already takes, so `buzz-dev-mcp` shell invocations (and `bee` CLI calls
+/// env as `BEEKEEPER_PULSE_PROJECT`, the same mechanism `BEEKEEPER_GIT_ORIGIN_CHANNEL_ID`
+/// already takes, so `beekeeper-dev-mcp` shell invocations (and `bee` CLI calls
 /// made through them) inherit it. This is deliberately **not** set on the ACP
 /// agent subprocess's own env — that env is fixed once at pool-process spawn
 /// (`EnvFence::OPEN`, `acp.rs:530-546`) and is identical for every channel
@@ -1354,13 +1354,13 @@ fn mcp_servers_with_git_origin(
     let mut servers = servers.to_vec();
     let origin = match (channel_id, channel_type) {
         (Some(channel_id), Some("stream")) => Some(EnvVar {
-            name: "BUZZ_GIT_ORIGIN_CHANNEL_ID".into(),
+            name: "BEEKEEPER_GIT_ORIGIN_CHANNEL_ID".into(),
             value: channel_id.to_string(),
         }),
         (Some(_), _) => agent_name
             .filter(|name| !name.trim().is_empty())
             .map(|name| EnvVar {
-                name: "BUZZ_GIT_ORIGIN_AGENT_NAME".into(),
+                name: "BEEKEEPER_GIT_ORIGIN_AGENT_NAME".into(),
                 value: name.trim().to_string(),
             }),
         (None, _) => None,
@@ -1372,7 +1372,7 @@ fn mcp_servers_with_git_origin(
     }
     if let Some(coordinate) = pulse_project.filter(|value| !value.trim().is_empty()) {
         let pulse_env = EnvVar {
-            name: "BUZZ_PULSE_PROJECT".into(),
+            name: "BEEKEEPER_PULSE_PROJECT".into(),
             value: coordinate.trim().to_string(),
         };
         for server in &mut servers {
@@ -1842,7 +1842,7 @@ pub async fn run_prompt_task(
     // happens when a session is invalidated and recreated (see
     // `SessionState::invalidate_channel`).
     //
-    // Operator opt-out: `--no-memory` / `BUZZ_ACP_NO_MEMORY` skips the fetch.
+    // Operator opt-out: `--no-memory` / `BEEKEEPER_ACP_NO_MEMORY` skips the fetch.
     if ctx.memory_enabled {
         if let (PromptSource::Channel(scope), Some(owner_pk)) =
             (&source, ctx.agent_owner_pubkey.as_ref())
@@ -1953,7 +1953,7 @@ pub async fn run_prompt_task(
 
     // The resolved Project Pulse project coordinate, if any — read separately
     // from the rendered section so it can also travel on
-    // `BUZZ_PULSE_PROJECT` for MCP servers (§5.5 "Where the coordinate
+    // `BEEKEEPER_PULSE_PROJECT` for MCP servers (§5.5 "Where the coordinate
     // travels"). Prefer the committed cache; fall back to pending.
     let pulse_coordinate: Option<String> = match &source {
         PromptSource::Channel(scope) => agent
@@ -2035,7 +2035,7 @@ pub async fn run_prompt_task(
                             .state
                             .deliveries
                             .insert(scope.clone(), ChannelDeliveryState::default());
-                        // Seed a zero usage baseline: buzz-acp spawned this session
+                        // Seed a zero usage baseline: beekeeper-acp spawned this session
                         // so prior usage is zero by definition — first turn is reliable.
                         agent.acp.notify_session_spawned(&sid);
                         // Commit canvas and pulse only after session creation succeeds (I3).
@@ -2101,7 +2101,7 @@ pub async fn run_prompt_task(
                             agent.index
                         );
                         agent.state.heartbeat_session = Some(sid.clone());
-                        // Seed a zero usage baseline: buzz-acp spawned this session.
+                        // Seed a zero usage baseline: beekeeper-acp spawned this session.
                         agent.acp.notify_session_spawned(&sid);
                         (sid, true)
                     }
@@ -4788,7 +4788,7 @@ mod tests {
     fn test_mcp_server() -> McpServer {
         McpServer {
             name: "dev".into(),
-            command: "buzz-dev-mcp".into(),
+            command: "beekeeper-dev-mcp".into(),
             args: vec![],
             env: vec![],
         }
@@ -4805,12 +4805,12 @@ mod tests {
             None,
         );
         assert!(servers[0].env.iter().any(|entry| {
-            entry.name == "BUZZ_GIT_ORIGIN_CHANNEL_ID" && entry.value == channel_id.to_string()
+            entry.name == "BEEKEEPER_GIT_ORIGIN_CHANNEL_ID" && entry.value == channel_id.to_string()
         }));
         assert!(!servers[0]
             .env
             .iter()
-            .any(|entry| entry.name == "BUZZ_GIT_ORIGIN_AGENT_NAME"));
+            .any(|entry| entry.name == "BEEKEEPER_GIT_ORIGIN_AGENT_NAME"));
     }
 
     #[test]
@@ -4823,12 +4823,12 @@ mod tests {
             Some("Builder"),
         );
         assert!(servers[0].env.iter().any(|entry| {
-            entry.name == "BUZZ_GIT_ORIGIN_AGENT_NAME" && entry.value == "Builder"
+            entry.name == "BEEKEEPER_GIT_ORIGIN_AGENT_NAME" && entry.value == "Builder"
         }));
         assert!(!servers[0]
             .env
             .iter()
-            .any(|entry| entry.name == "BUZZ_GIT_ORIGIN_CHANNEL_ID"));
+            .any(|entry| entry.name == "BEEKEEPER_GIT_ORIGIN_CHANNEL_ID"));
     }
 
     #[test]
@@ -4846,7 +4846,7 @@ mod tests {
             assert!(server
                 .env
                 .iter()
-                .any(|entry| entry.name == "BUZZ_PULSE_PROJECT" && entry.value == coordinate));
+                .any(|entry| entry.name == "BEEKEEPER_PULSE_PROJECT" && entry.value == coordinate));
         }
     }
 
@@ -4862,7 +4862,7 @@ mod tests {
         assert!(!servers[0]
             .env
             .iter()
-            .any(|entry| entry.name == "BUZZ_PULSE_PROJECT"));
+            .any(|entry| entry.name == "BEEKEEPER_PULSE_PROJECT"));
     }
 
     // These pin the initial_message dispatch path (run_prompt_task, ~line 855):

@@ -72,7 +72,7 @@ pub enum PacksCmd {
         #[arg(long, default_value = "flat")]
         layout: String,
         /// Path to the template catalog the flat seed references. Defaults
-        /// to `$BUZZ_TEMPLATES_DIR`, then the templates this `bee`'s app
+        /// to `$BEEKEEPER_TEMPLATES_DIR`, then the templates this `bee`'s app
         /// bundle ships (or, for a development build, its own checkout's)
         #[arg(long)]
         templates: Option<PathBuf>,
@@ -108,9 +108,9 @@ pub enum PacksCmd {
         #[arg(long)]
         packs_dir: Option<PathBuf>,
         /// Template catalog to compose against (`<name>/<semver>/TEMPLATE.md`).
-        /// Defaults to `$BUZZ_TEMPLATES_DIR`; without either, a role that
+        /// Defaults to `$BEEKEEPER_TEMPLATES_DIR`; without either, a role that
         /// includes a shipped template reports a compose refusal.
-        #[arg(long, env = "BUZZ_TEMPLATES_DIR")]
+        #[arg(long, env = "BEEKEEPER_TEMPLATES_DIR")]
         templates: Option<PathBuf>,
     },
 }

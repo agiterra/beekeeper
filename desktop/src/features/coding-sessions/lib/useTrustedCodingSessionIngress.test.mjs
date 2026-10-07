@@ -95,7 +95,7 @@ test("ingress re-arms when the trust set gains its first entry, and the pending 
     "./codingSessionCommand.ts"
   );
   const {
-    BUZZ_CODING_SESSION_METADATA_SCHEMA,
+    BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
     CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
     CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
     CODING_SESSION_METADATA_TAG_VERSION,
@@ -137,7 +137,7 @@ test("ingress re-arms when the trust set gains its first entry, and the pending 
         ["csm-key", codingSessionMetadataSemanticKey(TARGET)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: TARGET,
         projectRef: "30621:owner:agiterra",
         repoRef: null,

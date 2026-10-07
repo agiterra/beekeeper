@@ -295,7 +295,7 @@ fn agent(pubkey: &str, project_ref: Option<&str>, public: Option<bool>) -> Manag
         "pubkey": pubkey,
         "name": pubkey,
         "relay_url": "wss://relay.example",
-        "acp_command": "buzz-acp",
+        "acp_command": "beekeeper-acp",
         "agent_command": "goose",
         "agent_args": [],
         "mcp_command": "",

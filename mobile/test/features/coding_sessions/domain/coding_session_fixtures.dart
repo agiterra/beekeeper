@@ -104,7 +104,7 @@ NostrEvent metadataEvent({
     'repoRef': null,
     'title': title,
     'agentRef': agentRef,
-    'provider': 'buzz-session-provider',
+    'provider': 'beekeeper-session-provider',
     'runtime': runtime,
     'model': model,
     'status': status,

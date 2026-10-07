@@ -9,7 +9,7 @@
 //! Regenerate with:
 //!
 //! ```text
-//! BUZZ_UPDATE_FIXTURES=1 cargo test -p beekeeper-core --lib the_typescript_fixture_is_this_folds_real_output
+//! BEEKEEPER_UPDATE_FIXTURES=1 cargo test -p beekeeper-core --lib the_typescript_fixture_is_this_folds_real_output
 //! ```
 //!
 //! # Byte stability, and the one thing that threatened it
@@ -250,7 +250,7 @@ fn the_typescript_fixture_is_this_folds_real_output() {
         + "\n";
 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(TS_TWIN_FIXTURE);
-    if std::env::var("BUZZ_UPDATE_FIXTURES").is_ok() {
+    if std::env::var("BEEKEEPER_UPDATE_FIXTURES").is_ok() {
         std::fs::write(&path, &generated).expect("write the fixture");
     }
     let stored = std::fs::read_to_string(&path).unwrap_or_else(|error| {
@@ -263,7 +263,7 @@ fn the_typescript_fixture_is_this_folds_real_output() {
         let _ = std::fs::write(&scratch, &generated);
         panic!(
             "the Desktop twin fixture is stale; the current bytes were written to {} — \
-             regenerate with BUZZ_UPDATE_FIXTURES=1",
+             regenerate with BEEKEEPER_UPDATE_FIXTURES=1",
             scratch.display()
         );
     }

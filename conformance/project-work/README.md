@@ -1231,7 +1231,7 @@ The oracle lands first again. What is expected to go red on
    its presentation (`lib/projectWork.ts`) and its surface
    (`ui/ProjectWorkCoverage.tsx`), with the declared-vs-current line and the
    re-adopt command.
-5. The provider's work brief (`buzz-session-provider/src/work_brief.rs`) is
+5. The provider's work brief (`beekeeper-session-provider/src/work_brief.rs`) is
    the follow-on A10 § 2 names, after lane 229 lands the crate's ownership. It
    is not this pair's work, and it is not a reason to delay the surfaces.
 6. Wording, not merely plumbing: a surface may say the agents repository has

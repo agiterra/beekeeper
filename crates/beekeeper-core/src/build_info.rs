@@ -81,7 +81,7 @@ pub fn parse_commit_count(value: &str) -> Option<u64> {
 /// Every field is independently absent-able and every absence is disclosed
 /// rather than filled in. The commit and the count are resolved **together**
 /// by the build script or not at all: a count from this checkout beside a SHA
-/// from `BUZZ_SOURCE_SHA` would describe two different histories in two
+/// from `BEEKEEPER_SOURCE_SHA` would describe two different histories in two
 /// fields that look internally consistent, which no consumer could detect.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BuildInfo {
@@ -202,17 +202,17 @@ impl std::fmt::Display for BuildInfo {
 /// This crate's own build stamp — and so the stamp of anything linking it.
 ///
 /// The values come from `crates/beekeeper-core/build.rs`, which resolves them from
-/// `BUZZ_SOURCE_SHA`/`BUZZ_SOURCE_COMMIT_COUNT` (what a packaging pipeline
+/// `BEEKEEPER_SOURCE_SHA`/`BEEKEEPER_SOURCE_COMMIT_COUNT` (what a packaging pipeline
 /// states, including `scripts/app-from.sh`) when set, else from the checkout,
 /// else nothing. `option_env!` rather than `env!` throughout: a build that
 /// could answer nothing must still compile and then *say* it could answer
 /// nothing.
 pub fn build_info() -> BuildInfo {
     BuildInfo::from_stamps(
-        option_env!("BUZZ_CORE_SOURCE_SHA"),
-        option_env!("BUZZ_CORE_SOURCE_COMMIT_COUNT"),
-        option_env!("BUZZ_CORE_BUILD_TIME"),
-        option_env!("BUZZ_CORE_SOURCE_DIRTY"),
+        option_env!("BEEKEEPER_CORE_SOURCE_SHA"),
+        option_env!("BEEKEEPER_CORE_SOURCE_COMMIT_COUNT"),
+        option_env!("BEEKEEPER_CORE_BUILD_TIME"),
+        option_env!("BEEKEEPER_CORE_SOURCE_DIRTY"),
     )
 }
 

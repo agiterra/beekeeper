@@ -250,7 +250,7 @@ export function validateProjectEventEnvelope(
 
   // Beekeeper extension: invited-member `p` tags gate private-project read access.
   // Mirrors the relay's `invite-cap`/`invite-tag-arity`/`invite-role`/
-  // `invite-malformed`/`invite-duplicate` rules (buzz-relay ingest.rs).
+  // `invite-malformed`/`invite-duplicate` rules (beekeeper-relay ingest.rs).
   const inviteTags = tags.filter((tag) => tag[0] === "p");
   if (inviteTags.length > MAX_PROJECT_INVITES) {
     throw new Error(

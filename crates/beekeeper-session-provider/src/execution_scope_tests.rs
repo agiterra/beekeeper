@@ -205,7 +205,7 @@ done
 const SENTINEL_PRINTER: &str = r#"import os
 for k in ['SEAT_SENTINEL','RUNTIME_SENTINEL','PROJECT_A_ONLY','TMPDIR','GIT_CONFIG_GLOBAL','CARGO_HOME']:
     print(k+'='+os.environ.get(k,'<absent>'))
-for k in ['BUZZ_PRIVATE_KEY','CARGO_MANIFEST_DIR','CARGO_PKG_NAME']:
+for k in ['BEEKEEPER_PRIVATE_KEY','CARGO_MANIFEST_DIR','CARGO_PKG_NAME']:
     print(k+'='+('<present>' if k in os.environ else '<absent>'))"#;
 
 #[cfg(target_os = "macos")]
@@ -532,7 +532,7 @@ fn a_changed_role_contract_is_a_new_scope() {
 fn prepared_diagnostics_carry_no_values_or_paths() {
     let fx = fixture();
     let identity = vec![(
-        "BUZZ_PRIVATE_KEY".to_owned(),
+        "BEEKEEPER_PRIVATE_KEY".to_owned(),
         "nsec-secret-value".to_owned(),
     )];
     let Ok(plan) = prepare(&inputs(&fx, "s1", &fx.seat_a, &[], &identity)) else {
@@ -850,10 +850,13 @@ done
         )];
         let identity = vec![
             (
-                "BUZZ_RELAY_URL".to_owned(),
+                "BEEKEEPER_RELAY_URL".to_owned(),
                 "wss://relay.example.invalid".to_owned(),
             ),
-            ("BUZZ_PRIVATE_KEY".to_owned(), "nsec-seat-secret".to_owned()),
+            (
+                "BEEKEEPER_PRIVATE_KEY".to_owned(),
+                "nsec-seat-secret".to_owned(),
+            ),
         ];
         let mut facts = inputs(&fx, "s1", &fx.seat_a, &agent_env, &identity);
         facts.runtime = RuntimeProfile::Claude;
@@ -874,7 +877,7 @@ done
         assert_eq!(settings["disableClaudeAiConnectors"], true);
         assert_eq!(settings["sandbox"]["enabled"], false);
         assert_eq!(
-            settings["env"]["BUZZ_RELAY_URL"],
+            settings["env"]["BEEKEEPER_RELAY_URL"],
             "wss://relay.example.invalid"
         );
         assert!(
@@ -882,7 +885,7 @@ done
             "{settings}"
         );
         assert_eq!(
-            settings["env"]["BUZZ_PRIVATE_KEY"], "nsec-seat-secret",
+            settings["env"]["BEEKEEPER_PRIVATE_KEY"], "nsec-seat-secret",
             "the seat's identity is pinned, key included, in the host's private file"
         );
         assert_eq!(
@@ -1412,7 +1415,7 @@ done
         let agent_env = vec![("RUNTIME_SENTINEL".to_owned(), "runtime-a".to_owned())];
         let identity = vec![
             ("SEAT_SENTINEL".to_owned(), "seat-a".to_owned()),
-            ("BUZZ_PRIVATE_KEY".to_owned(), "nsec-seat-a".to_owned()),
+            ("BEEKEEPER_PRIVATE_KEY".to_owned(), "nsec-seat-a".to_owned()),
         ];
         let main_before = head(&fx.repo_a, "main");
         let plan =
@@ -1470,7 +1473,7 @@ done
         for expected in [
             "SEAT_SENTINEL=seat-a",
             "RUNTIME_SENTINEL=runtime-a",
-            "BUZZ_PRIVATE_KEY=<present>",
+            "BEEKEEPER_PRIVATE_KEY=<present>",
             "CARGO_MANIFEST_DIR=<absent>",
             "CARGO_PKG_NAME=<absent>",
         ] {

@@ -9,7 +9,7 @@
 //!   P3 context-fit regression — an oversized output budget (150k tokens)
 //!      must FAIL with the router's context error (proves the router's fit
 //!      gate — the failure mode the 1024 preset cap protects against).
-//!   P4 agentic tool use     — agent + buzz-dev-mcp writes a file on disk.
+//!   P4 agentic tool use     — agent + beekeeper-dev-mcp writes a file on disk.
 //!
 //! The serve node is the same `mesh_llm_sdk::serve` path Share-compute uses
 //! (publish off, mdns, loopback). The agent legs spawn the real
@@ -166,18 +166,18 @@ async fn run() -> anyhow::Result<()> {
         }
     }
 
-    // P4: agentic tool use via buzz-dev-mcp — write a real file inside the
+    // P4: agentic tool use via beekeeper-dev-mcp — write a real file inside the
     // isolated ACP working directory. The MCP sandbox intentionally rejects
     // nonexistent absolute paths outside that root.
     let marker_name = format!("mesh-e2e-{}.txt", std::process::id());
     let prompt = format!(
-        "Use your developer tools to create {marker_name} in the current working directory containing exactly the text BUZZ_OK (no quotes, no newline commentary). Then confirm."
+        "Use your developer tools to create {marker_name} in the current working directory containing exactly the text BEEKEEPER_OK (no quotes, no newline commentary). Then confirm."
     );
-    let mcp = vec![("dev".to_string(), repo_bin("buzz-dev-mcp")?)];
+    let mcp = vec![("dev".to_string(), repo_bin("beekeeper-dev-mcp")?)];
     let (r, marker) =
         agent_chat_with_marker(&base, "mesh", None, &prompt, &mcp, &marker_name).await;
     let file_ok = std::fs::read_to_string(&marker)
-        .map(|c| c.contains("BUZZ_OK"))
+        .map(|c| c.contains("BEEKEEPER_OK"))
         .unwrap_or(false);
     match r {
         Ok(text) => record(
@@ -277,16 +277,16 @@ async fn agent_chat_in_isolated_home(
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", &home)
         // The transport subset of apply_relay_mesh_env(): provider, base URL,
-        // model, key, and chat API. Not BUZZ_AGENT_REQUIRE_REPLY, which needs
+        // model, key, and chat API. Not BEEKEEPER_AGENT_REQUIRE_REPLY, which needs
         // Beekeeper's publish tools to mean anything.
-        .env("BUZZ_AGENT_PROVIDER", "openai")
-        .env("BUZZ_AGENT_MODEL", model)
+        .env("BEEKEEPER_AGENT_PROVIDER", "openai")
+        .env("BEEKEEPER_AGENT_MODEL", model)
         .env("OPENAI_COMPAT_BASE_URL", base)
         .env("OPENAI_COMPAT_MODEL", model)
         .env("OPENAI_COMPAT_API_KEY", "buzz-mesh-local")
         .env("OPENAI_COMPAT_API", "chat")
-        .env("BUZZ_AGENT_MAX_OUTPUT_TOKENS", "4096")
-        // No BUZZ_AGENT_THINKING_EFFORT: apply_relay_mesh_env() deliberately
+        .env("BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS", "4096")
+        // No BEEKEEPER_AGENT_THINKING_EFFORT: apply_relay_mesh_env() deliberately
         // leaves it unset so each model's chat template picks its own default.
         // Pinning a value here would test a config the product does not ship.
         .stdin(Stdio::piped())
@@ -296,7 +296,7 @@ async fn agent_chat_in_isolated_home(
     // router's context-fit rejection. Normal and tool turns leave it unset,
     // matching the desktop provider path.
     if let Some(value) = max_output_tokens {
-        command.env("BUZZ_AGENT_MAX_OUTPUT_TOKENS", value);
+        command.env("BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS", value);
     }
     let mut child = match command.spawn() {
         Ok(child) => child,

@@ -44,7 +44,7 @@ test("agent mode names the machine, the account, and the env switch", () => {
   assert.match(line, /another computer follows that computer's setting/);
   assert.match(
     line,
-    /BUZZ_CSP_AUTO_TITLE=off, or a runtime configured with no title model, titles nothing/,
+    /BEEKEEPER_CSP_AUTO_TITLE=off, or a runtime configured with no title model, titles nothing/,
   );
 });
 

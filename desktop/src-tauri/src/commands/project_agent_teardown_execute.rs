@@ -24,7 +24,7 @@ use tauri::AppHandle;
 /// **Disclosed, never a refusal.** The provider retires a session only on a
 /// relay-signed kind:40099 receipt naming it, or a founder-signed kind:5
 /// carrying the record's own `genesis_ref` plus a confirmed-absent read
-/// (`buzz-session-provider`'s `retirement`). A kind:5 naming the project
+/// (`beekeeper-session-provider`'s `retirement`). A kind:5 naming the project
 /// coordinate is neither, so this teardown cannot retire them and must not
 /// pretend to. Refusing on every un-retired session would refuse almost
 /// always — `!closed && !retired` means "open", not "running" — so the

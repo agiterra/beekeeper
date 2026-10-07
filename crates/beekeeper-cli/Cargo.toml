@@ -20,7 +20,7 @@ path = "src/main.rs"
 # registration. Local-only, like `bee session`: no relay, no key.
 beekeeper-host = { path = "../beekeeper-host" }
 beekeeper-host-core = { path = "../beekeeper-host-core" }
-# CLI argument parsing — derive macros + env var support (BUZZ_API_TOKEN auto-wired)
+# CLI argument parsing — derive macros + env var support (BEEKEEPER_API_TOKEN auto-wired)
 clap = { version = "4", features = ["derive", "env"] }
 
 # HTTP client — async REST calls to the relay
@@ -92,7 +92,7 @@ beekeeper-ws-client = { path = "../beekeeper-ws-client" }
 
 # Explicit rustls dep with ring provider — required to install the process-level
 # CryptoProvider at startup. Without this the standalone `bee` binary panics when
-# a multi-package release build (buzz-acp + buzz-dev-mcp + buzz-cli in one cargo
+# a multi-package release build (beekeeper-acp + beekeeper-dev-mcp + buzz-cli in one cargo
 # invocation) unifies both ring and aws-lc-rs features, leaving rustls unable to
 # auto-select a provider. See crates/beekeeper-acp/Cargo.toml for the same dependency.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }

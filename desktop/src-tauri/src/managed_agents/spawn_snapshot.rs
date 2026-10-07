@@ -97,7 +97,7 @@ pub(crate) struct SpawnConfigInputs<'a> {
 /// [`ManagedAgentProcess`]: super::ManagedAgentProcess
 #[derive(Clone, Serialize)]
 pub(crate) struct SpawnConfigSnapshot {
-    /// The ACP harness binary the desktop launches (`buzz-acp`).
+    /// The ACP harness binary the desktop launches (`beekeeper-acp`).
     pub acp_command: String,
     /// The effective agent command the harness drives.
     pub command: String,
@@ -112,7 +112,7 @@ pub(crate) struct SpawnConfigSnapshot {
     pub system_prompt: Option<String>,
     pub model: Option<String>,
     pub provider: Option<String>,
-    /// `None` when a user env override shadows `BUZZ_ACP_SESSION_TITLE`: spawn
+    /// `None` when a user env override shadows `BEEKEEPER_ACP_SESSION_TITLE`: spawn
     /// writes the title BEFORE the user env layer, so the override is what
     /// actually runs and it already reaches this snapshot through `env`.
     /// Capturing the record-derived value under an override would badge a
@@ -121,7 +121,7 @@ pub(crate) struct SpawnConfigSnapshot {
     pub auth_tag: Option<String>,
     pub respond_to: String,
     /// `None` outside allowlist mode — spawn sets
-    /// `BUZZ_ACP_RESPOND_TO_ALLOWLIST` only there, so edits to a dormant list
+    /// `BEEKEEPER_ACP_RESPOND_TO_ALLOWLIST` only there, so edits to a dormant list
     /// must not badge. Normalized (trim/lowercase/dedup) as the env receives
     /// it, so edits that don't survive normalization must not badge either.
     pub respond_to_allowlist: Option<Vec<String>>,

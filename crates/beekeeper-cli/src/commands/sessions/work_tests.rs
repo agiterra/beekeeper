@@ -1125,7 +1125,7 @@ async fn a_body_that_differs_in_its_responsible_actor_is_not_a_retry() {
 // relay's own validator, against the frozen fixture that states the refusal
 // a decorated record earns.
 
-/// The `auth` tag the ACP harness's `BUZZ_AUTH_TAG` puts on a seat's client.
+/// The `auth` tag the ACP harness's `BEEKEEPER_AUTH_TAG` puts on a seat's client.
 fn seat_auth_tag() -> (nostr::Tag, String) {
     let parts = vec![
         "auth".to_owned(),

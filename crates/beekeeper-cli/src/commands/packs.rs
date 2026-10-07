@@ -384,7 +384,7 @@ fn compose_status(cache_dir: &Path, path: &str, role: &str, templates: Option<&P
             "archived": beekeeper_persona::compose::archived_role_files(&root),
             "templates": templates.map(|dir| dir.display().to_string()),
             "note": if templates.is_none() {
-                "no template catalog was given; pass --templates or set BUZZ_TEMPLATES_DIR to \
+                "no template catalog was given; pass --templates or set BEEKEEPER_TEMPLATES_DIR to \
                  resolve ![[beekeeper/…]] includes the way the desktop host does"
             } else {
                 ""
@@ -1010,7 +1010,7 @@ fn role_directories(path: &Path) -> Vec<String> {
 pub enum CacheDirSource {
     /// `--packs-dir` named the cache root outright; nothing was derived.
     Override,
-    /// `BUZZ_MANAGED_AGENT` named the running app instance. The desktop host
+    /// `BEEKEEPER_MANAGED_AGENT` named the running app instance. The desktop host
     /// stamps this on every process it spawns for a seat
     /// (`desktop/src-tauri/src/managed_agents/runtime/process.rs`,
     /// `current_instance_id`/`buzz_marker_entry`), so a `bee` invoked from
@@ -1035,11 +1035,11 @@ impl CacheDirSource {
 }
 
 /// The app identifier `default_packs_dir` should use, and which fact it came
-/// from. Prefers `BUZZ_MANAGED_AGENT` — a fact the host already provides for
+/// from. Prefers `BEEKEEPER_MANAGED_AGENT` — a fact the host already provides for
 /// its own spawned processes — over the hard-coded release identifier, which
 /// is only ever a guess.
 fn resolve_app_identifier() -> (String, CacheDirSource) {
-    if let Ok(value) = std::env::var("BUZZ_MANAGED_AGENT") {
+    if let Ok(value) = std::env::var("BEEKEEPER_MANAGED_AGENT") {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             return (trimmed.to_string(), CacheDirSource::Env);
@@ -1061,7 +1061,7 @@ fn resolve_app_identifier() -> (String, CacheDirSource) {
 /// `<platform data dir>/<identifier>` — not the product name. A **dev** build
 /// of the desktop app uses the `.dev` suffixed identifier
 /// (`io.agiterra.beekeeper.app.dev`) and therefore a *different* packs cache.
-/// When `BUZZ_MANAGED_AGENT` names the running instance (set for every
+/// When `BEEKEEPER_MANAGED_AGENT` names the running instance (set for every
 /// process the host spawns for a seat) that identifier is used instead of the
 /// release default; otherwise point `--packs-dir` at the dev cache by hand.
 fn default_packs_dir() -> Option<(PathBuf, CacheDirSource)> {

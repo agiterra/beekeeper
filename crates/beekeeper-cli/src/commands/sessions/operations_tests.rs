@@ -687,7 +687,7 @@ async fn an_omission_is_reported_under_the_same_delivery_key_as_a_wake() {
 /// way.
 #[test]
 fn a_condition_reaches_the_signed_content_verbatim() {
-    let condition = "any SHA whose buzz-acp diff against origin/main is empty";
+    let condition = "any SHA whose beekeeper-acp diff against origin/main is empty";
     let payload = coding_session_team_transaction_payload(
         "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".to_owned(),
         GENESIS.to_owned(),

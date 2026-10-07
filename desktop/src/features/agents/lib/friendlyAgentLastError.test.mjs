@@ -18,7 +18,7 @@ test("empty/whitespace lastError → null", () => {
   assert.equal(friendlyAgentLastError("   "), null);
 });
 
-test("buzz-acp wrapped auth failure → denied copy", () => {
+test("beekeeper-acp wrapped auth failure → denied copy", () => {
   const result = friendlyAgentLastError(
     "Agent reported error: llm auth: 401 unauthorized: ...",
   );

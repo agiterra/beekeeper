@@ -5,13 +5,13 @@
 # =============================================================================
 #
 # Composes, as independent OS processes talking over a real network socket:
-#   - the actual `buzz-relay` binary, against a scratch Postgres database
+#   - the actual `beekeeper-relay` binary, against a scratch Postgres database
 #     (dropped on exit) and Redis logical DB 14 — never the dev database or
 #     Redis DB 0;
 #   - the built `bee` CLI, driving every step a real operator would: repo,
 #     project, channel, and workflow announcement, session creation, CI
 #     continuation registration, and read-only verification queries;
-#   - the real `buzz-session-provider` binary, with a minimal ACP-speaking
+#   - the real `beekeeper-session-provider` binary, with a minimal ACP-speaking
 #     bash script standing in for the model adapter (`agentCommand: bash`),
 #     the same technique `crates/beekeeper-session-provider/src/session.rs`'s own
 #     `testing::fake_agent`/`GOOD_AGENT` uses inside that crate's unit suite —
@@ -96,8 +96,8 @@ cd "${REPO_ROOT}"
 
 TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 BEE_BIN="${BEE_BIN:-${TARGET_DIR}/debug/bee}"
-RELAY_BIN="${RELAY_BIN:-${TARGET_DIR}/debug/buzz-relay}"
-PROVIDER_BIN="${PROVIDER_BIN:-${TARGET_DIR}/debug/buzz-session-provider}"
+RELAY_BIN="${RELAY_BIN:-${TARGET_DIR}/debug/beekeeper-relay}"
+PROVIDER_BIN="${PROVIDER_BIN:-${TARGET_DIR}/debug/beekeeper-session-provider}"
 
 for bin in "${BEE_BIN}" "${RELAY_BIN}" "${PROVIDER_BIN}"; do
   if [[ ! -x "${bin}" ]]; then
@@ -175,15 +175,15 @@ RELAY_URL="ws://127.0.0.1:${RELAY_PORT}"
 RELAY_HTTP="http://127.0.0.1:${RELAY_PORT}"
 RELAY_KEY="$(openssl rand -hex 32)"
 
-log "Starting buzz-relay on ${RELAY_HTTP} (scratch DB, Redis DB 14)..."
+log "Starting beekeeper-relay on ${RELAY_HTTP} (scratch DB, Redis DB 14)..."
 DATABASE_URL="postgres://buzz:buzz_dev@localhost:5432/${DB_NAME}" \
   REDIS_URL="redis://localhost:6379/14" \
   RELAY_URL="${RELAY_URL}" \
-  BUZZ_BIND_ADDR="127.0.0.1:${RELAY_PORT}" \
-  BUZZ_RELAY_PRIVATE_KEY="${RELAY_KEY}" \
-  BUZZ_REQUIRE_AUTH_TOKEN=false \
-  BUZZ_RECONCILE_CHANNELS=true \
-  BUZZ_AUTO_MIGRATE=true \
+  BEEKEEPER_BIND_ADDR="127.0.0.1:${RELAY_PORT}" \
+  BEEKEEPER_RELAY_PRIVATE_KEY="${RELAY_KEY}" \
+  BEEKEEPER_REQUIRE_AUTH_TOKEN=false \
+  BEEKEEPER_RECONCILE_CHANNELS=true \
+  BEEKEEPER_AUTO_MIGRATE=true \
   "${RELAY_BIN}" > "${WORKDIR}/relay.log" 2>&1 &
 RELAY_PID=$!
 
@@ -203,7 +203,7 @@ ok "relay ready at ${RELAY_HTTP}"
 bee() { "${BEE_BIN}" "$@"; }
 
 # ── Real fixtures: repo, project, channel, workflow — all via bee ───────────
-export BUZZ_RELAY_URL="${RELAY_HTTP}"
+export BEEKEEPER_RELAY_URL="${RELAY_HTTP}"
 
 OWNER_KEY="$(openssl rand -hex 32)"
 PROVIDER_KEY="$(openssl rand -hex 32)"
@@ -211,7 +211,7 @@ REPO_ID="ci-cont-repo-$$"
 PROJECT_SLUG="ci-cont-project-$$"
 
 log "Announcing repository, project, channel, workflow as the owner identity..."
-BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee repos create --id "${REPO_ID}" > "${WORKDIR}/repo.json"
+BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee repos create --id "${REPO_ID}" > "${WORKDIR}/repo.json"
 OWNER_HEX="$(python3 -c "
 import json,sys
 d=json.load(open('${WORKDIR}/repo.json'))
@@ -222,10 +222,10 @@ print(q['owner'][0])
 PROJECT="30621:${OWNER_HEX}:${PROJECT_SLUG}"
 REPO="30617:${OWNER_HEX}:${REPO_ID}"
 
-BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee projects create "${PROJECT_SLUG}" --repo "${REPO_ID}" --access public >/dev/null
-BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee repos bind --id "${REPO_ID}" --project "${PROJECT}" >/dev/null
+BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee projects create "${PROJECT_SLUG}" --repo "${REPO_ID}" --access public >/dev/null
+BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee repos bind --id "${REPO_ID}" --project "${PROJECT}" >/dev/null
 
-CHANNEL="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee channels create --name "ci-cont-$$" --type stream --visibility open \
+CHANNEL="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee channels create --name "ci-cont-$$" --type stream --visibility open \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["channel_id"])')"
 
 cat > "${WORKDIR}/workflow.yaml" <<EOF
@@ -246,7 +246,7 @@ steps:
     evidence_url: "{{trigger.evidence_url}}"
     summary: "{{trigger.summary}}"
 EOF
-WORKFLOW_JSON="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee workflows create --channel "${CHANNEL}" --yaml - < "${WORKDIR}/workflow.yaml")"
+WORKFLOW_JSON="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee workflows create --channel "${CHANNEL}" --yaml - < "${WORKDIR}/workflow.yaml")"
 WORKFLOW_ID="$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['workflow_id'])" "${WORKFLOW_JSON}")"
 WEBHOOK_SECRET="$(python3 -c "
 import json,sys
@@ -259,7 +259,7 @@ ok "fixtures ready: project=${PROJECT} repository=${REPO} channel=${CHANNEL} wor
 # The provider must be a channel member (kind:39002, #p) before it starts —
 # channel discovery (crates/beekeeper-acp/src/relay.rs discover_channels) runs
 # once at startup, from membership, never from the projects file alone.
-BUZZ_PRIVATE_KEY="${PROVIDER_KEY}" bee channels join --channel "${CHANNEL}" >/dev/null
+BEEKEEPER_PRIVATE_KEY="${PROVIDER_KEY}" bee channels join --channel "${CHANNEL}" >/dev/null
 
 # ── Real provider binary, fake ACP adapter (no model call) ──────────────────
 ACP_REQUEST_LOG="${WORKDIR}/acp-requests.jsonl"
@@ -376,12 +376,12 @@ METHODS_LOG_1="${WORKDIR}/methods-1.log"
 PROJECTS_FILE="${WORKDIR}/projects.json"
 PROVIDER_LOG_1="${WORKDIR}/provider.log"
 
-log "Starting buzz-session-provider (fake ACP adapter, no model)..."
-BUZZ_PRIVATE_KEY="${PROVIDER_KEY}" \
-  BUZZ_RELAY_URL="${RELAY_URL}" \
-  BUZZ_CSP_STATE_DIR="${STATE_DIR}" \
-  BUZZ_CSP_PROJECTS_FILE="${PROJECTS_FILE}" \
-  BUZZ_CSP_RUNTIMES="${RUNTIMES_JSON}" \
+log "Starting beekeeper-session-provider (fake ACP adapter, no model)..."
+BEEKEEPER_PRIVATE_KEY="${PROVIDER_KEY}" \
+  BEEKEEPER_RELAY_URL="${RELAY_URL}" \
+  BEEKEEPER_CSP_STATE_DIR="${STATE_DIR}" \
+  BEEKEEPER_CSP_PROJECTS_FILE="${PROJECTS_FILE}" \
+  BEEKEEPER_CSP_RUNTIMES="${RUNTIMES_JSON}" \
   FABLE_ACP_REQUEST_LOG="${ACP_REQUEST_LOG}" \
   FABLE_METHODS_LOG="${METHODS_LOG_1}" \
   RUST_LOG=info \
@@ -408,7 +408,7 @@ PROVIDER_PUBKEY="$(sed 's/\x1b\[[0-9;]*m//g' "${WORKDIR}/provider.log" | grep -o
 # Wait for the provider's live catalog (44222) for this channel — proves it
 # joined its subscribe/discover_channels pass, not just process liveness.
 for _ in $(seq 1 30); do
-  count="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44222 --channel "${CHANNEL}" \
+  count="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44222 --channel "${CHANNEL}" \
     | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
   [[ "${count}" -gt 0 ]] && break
   sleep 1
@@ -460,7 +460,7 @@ PY
 # monotonically increasing count, since 44222 is a regular (non-ephemeral,
 # non-replaceable) kind, so a fresh publish after a restart always grows it.
 channel_catalog_count() {
-  BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44222 --channel "${CHANNEL}" \
+  BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44222 --channel "${CHANNEL}" \
     | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'
 }
 
@@ -477,7 +477,7 @@ wait_pid_exit() {
   exit 1
 }
 
-# Spawn a buzz-session-provider generation with the given identity/state/ACP
+# Spawn a beekeeper-session-provider generation with the given identity/state/ACP
 # stub, append its pid to PROVIDER_PIDS (so cleanup always finds it), and set
 # LAST_PID. Mirrors the initial provider1 spawn above, parameterized so
 # scenarios A/B (same identity, new log file each restart) and scenario C (a
@@ -485,11 +485,11 @@ wait_pid_exit() {
 spawn_provider() {
   local key="$1" state_dir="$2" projects_file="$3" runtimes_json="$4" \
         log_file="$5" methods_log="$6" acp_log="$7"
-  BUZZ_PRIVATE_KEY="${key}" \
-    BUZZ_RELAY_URL="${RELAY_URL}" \
-    BUZZ_CSP_STATE_DIR="${state_dir}" \
-    BUZZ_CSP_PROJECTS_FILE="${projects_file}" \
-    BUZZ_CSP_RUNTIMES="${runtimes_json}" \
+  BEEKEEPER_PRIVATE_KEY="${key}" \
+    BEEKEEPER_RELAY_URL="${RELAY_URL}" \
+    BEEKEEPER_CSP_STATE_DIR="${state_dir}" \
+    BEEKEEPER_CSP_PROJECTS_FILE="${projects_file}" \
+    BEEKEEPER_CSP_RUNTIMES="${runtimes_json}" \
     FABLE_ACP_REQUEST_LOG="${acp_log}" \
     FABLE_METHODS_LOG="${methods_log}" \
     RUST_LOG=info \
@@ -604,11 +604,11 @@ to a fresh conversation. Methods observed since restart:"
     exit 1
   fi
 
-  BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}" \
+  BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}" \
     > "${WORKDIR}/${label}-receipts.json"
-  BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44223 --channel "${CHANNEL}" \
+  BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44223 --channel "${CHANNEL}" \
     > "${WORKDIR}/${label}-metadata.json"
-  BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44225 --channel "${CHANNEL}" \
+  BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44225 --channel "${CHANNEL}" \
     > "${WORKDIR}/${label}-transcript.json"
 
   python3 - "${WORKDIR}" "${label}" "${command_id}" "${target_key}" "${restart_epoch}" \
@@ -699,7 +699,7 @@ PY
 
 # ── Step 1: real session create ──────────────────────────────────────────────
 log "bee sessions create --wait ..."
-CREATE_JSON="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee sessions create --channel "${CHANNEL}" \
+CREATE_JSON="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee sessions create --channel "${CHANNEL}" \
   --provider-instance claude-primary --provider-authority "${PROVIDER_PUBKEY}" \
   --project "${PROJECT}" \
   --brief - --wait --timeout-secs 30 <<< "start the ci continuation acceptance run")"
@@ -728,7 +728,7 @@ PHASE="build"
 CONTINUATION_TEXT="CI passed; open the PR."
 EVIDENCE_URL="https://ci.example/runs/${RUN_ID}"
 RESULT_SUMMARY="all required jobs passed"
-CONTINUE_JSON="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee ci continue \
+CONTINUE_JSON="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee ci continue \
   --channel "${CHANNEL}" --provider "${PROVIDER_PUBKEY}" --target "${TARGET_KEY}" \
   --project "${PROJECT}" --repository "${REPO}" \
   --commit "${COMMIT}" --check "${CHECK_NAME}" --run "${RUN_ID}" --attempt "${ATTEMPT}" \
@@ -737,7 +737,7 @@ CONTINUE_JSON="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee ci continue \
   --expires-in 86400 --ack-timeout 30)"
 COMMAND_ID="$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['commandId'])" "${CONTINUE_JSON}")"
 printf '%s\n' "${CONTINUE_JSON}" > "${WORKDIR}/continue-output.json"
-BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44220 --channel "${CHANNEL}" \
+BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44220 --channel "${CHANNEL}" \
   > "${WORKDIR}/registration-events.json"
 pass 2 "ci continue registered ${COMMAND_ID} (exit 0 = continuation_registered; a refusal or ack timeout would have been a nonzero exit under set -e)"
 
@@ -758,7 +758,7 @@ HOOK_STATUS="$(curl -s -o "${WORKDIR}/hook-response.json" -w '%{http_code}' \
 
 for _ in $(seq 1 20); do
   # 46008 carries no h tag (workflow_ci_result.rs) — query without --channel.
-  RESULT_JSON="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 46008)"
+  RESULT_JSON="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 46008)"
   RESULT_COUNT="$(python3 -c "
 import json,sys
 events=json.loads(sys.argv[1])
@@ -787,7 +787,7 @@ pass 3 "webhook produced a real 46008 signed by ${RESULT_SIGNER} (the relay's ow
 # ── Step 4: the provider starts exactly one continuation turn ───────────────
 log "waiting for the provider to admit and start the continuation turn..."
 for _ in $(seq 1 30); do
-  RECEIPTS_JSON="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}")"
+  RECEIPTS_JSON="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}")"
   STARTED="$(python3 -c "
 import json,sys
 events=json.loads(sys.argv[1])
@@ -816,10 +816,10 @@ PY
   exit 1
 }
 
-BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44225 --channel "${CHANNEL}" \
+BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44225 --channel "${CHANNEL}" \
   > "${WORKDIR}/transcript-events.json"
 
-STATUS_JSON="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee ci continuation status \
+STATUS_JSON="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee ci continuation status \
   --channel "${CHANNEL}" --provider "${PROVIDER_PUBKEY}" --target "${TARGET_KEY}" \
   --command-id "${COMMAND_ID}")"
 printf '%s\n' "${STATUS_JSON}" > "${WORKDIR}/first-status.json"
@@ -1019,7 +1019,7 @@ sleep 2
 
 log "registering a second commandId for the same identity+target..."
 set +e
-SECOND_JSON="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee ci continue \
+SECOND_JSON="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee ci continue \
   --channel "${CHANNEL}" --provider "${PROVIDER_PUBKEY}" --target "${TARGET_KEY}" \
   --project "${PROJECT}" --repository "${REPO}" \
   --commit "${COMMIT}" --check "${CHECK_NAME}" --run "${RUN_ID}" --attempt "${ATTEMPT}" \
@@ -1053,7 +1053,7 @@ fi
 
 SECOND_STATUS_JSON=""
 for _ in $(seq 1 30); do
-  SECOND_STATUS_JSON="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee ci continuation status \
+  SECOND_STATUS_JSON="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee ci continuation status \
     --channel "${CHANNEL}" --provider "${PROVIDER_PUBKEY}" --target "${TARGET_KEY}" \
     --command-id "${SECOND_COMMAND_ID}")"
   SECOND_STATUS="$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(f\"{d['stage']}:{d.get('refusalCode') or ''}\")" "${SECOND_STATUS_JSON}")"
@@ -1065,7 +1065,7 @@ done
   exit 1
 }
 printf '%s\n' "${SECOND_STATUS_JSON}" > "${WORKDIR}/second-status.json"
-BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}" \
+BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}" \
   > "${WORKDIR}/second-receipt-events.json"
 
 AFTER_DUPLICATES="$(python3 - "${ACP_REQUEST_LOG}" <<'PY'
@@ -1145,7 +1145,7 @@ split_lines_into() {
 register_fresh_continuation() {
   local provider_pubkey="$1" acp_log="$2" brief="$3"
   local create_json target_key baseline commit continue_json command_id
-  create_json="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee sessions create --channel "${CHANNEL}" \
+  create_json="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee sessions create --channel "${CHANNEL}" \
     --provider-instance claude-primary --provider-authority "${provider_pubkey}" \
     --project "${PROJECT}" \
     --brief - --wait --timeout-secs 30 <<< "${brief}")"
@@ -1163,7 +1163,7 @@ PY
 )"
 
   commit="$(openssl rand -hex 20)"
-  continue_json="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee ci continue \
+  continue_json="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee ci continue \
     --channel "${CHANNEL}" --provider "${provider_pubkey}" --target "${target_key}" \
     --project "${PROJECT}" --repository "${REPO}" \
     --commit "${commit}" --check "${CHECK_NAME}" --run "${RUN_ID}" --attempt "${ATTEMPT}" \
@@ -1277,7 +1277,7 @@ post_ci_result_webhook "${COMMIT_A}"
 
 STARTED_A=""
 for _ in $(seq 1 30); do
-  STARTED_A="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}" \
+  STARTED_A="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}" \
     | python3 -c "
 import json, sys
 events = json.load(sys.stdin)
@@ -1355,7 +1355,7 @@ for ATTEMPT_B in 1 2 3; do
 
   STARTED_B=""
   for _ in $(seq 1 30); do
-    STARTED_B="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}" \
+    STARTED_B="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}" \
       | python3 -c "
 import json, sys
 events = json.load(sys.stdin)
@@ -1408,7 +1408,7 @@ ACP_REQUEST_LOG_C="${WORKDIR}/acp-requests-c.jsonl"
 METHODS_LOG_C="${WORKDIR}/methods-c.log"
 : > "${METHODS_LOG_C}"
 
-BUZZ_PRIVATE_KEY="${PROVIDER_KEY_C}" bee channels join --channel "${CHANNEL}" >/dev/null
+BEEKEEPER_PRIVATE_KEY="${PROVIDER_KEY_C}" bee channels join --channel "${CHANNEL}" >/dev/null
 
 PROVIDER_LOG_C="${WORKDIR}/provider-c.log"
 CATALOG_BEFORE_C_START="$(channel_catalog_count)"
@@ -1446,7 +1446,7 @@ post_ci_result_webhook "${COMMIT_C}"
 
 STAGE_C=""
 for _ in $(seq 1 30); do
-  STATUS_JSON_C="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee ci continuation status \
+  STATUS_JSON_C="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee ci continuation status \
     --channel "${CHANNEL}" --provider "${PROVIDER_PUBKEY_C}" --target "${TARGET_KEY_C}" \
     --command-id "${COMMAND_ID_C}")"
   STAGE_C="$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(f\"{d['stage']}:{d.get('refusalCode') or ''}\")" "${STATUS_JSON_C}")"
@@ -1456,7 +1456,7 @@ done
 [[ "${STAGE_C}" == "refused:NATIVE_RESTORE_REJECTED" ]] \
   || { err "scenario C: ${COMMAND_ID_C} did not reach refused/NATIVE_RESTORE_REJECTED within 30s (last: ${STAGE_C})"; cat "${PROVIDER_LOG_C_RESTART}" >&2; exit 1; }
 
-RECEIPTS_C_JSON="$(BUZZ_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}")"
+RECEIPTS_C_JSON="$(BEEKEEPER_PRIVATE_KEY="${OWNER_KEY}" bee events query --kinds 44224 --channel "${CHANNEL}")"
 python3 -c "
 import json, sys
 sys.path.insert(0, '${WORKDIR}')

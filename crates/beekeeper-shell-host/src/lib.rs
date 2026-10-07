@@ -1,6 +1,6 @@
 //! Detached PTY host for Beekeeper built-in shell sessions.
 //!
-//! This crate ships two things: the `buzz-shell-host` binary (a dtach-style
+//! This crate ships two things: the `beekeeper-shell-host` binary (a dtach-style
 //! process that owns a shell in a PTY and outlives the desktop app), and the
 //! wire protocol + receipt types the desktop app reuses to talk to and discover
 //! it. Keeping the protocol here makes it the single source of truth for both

@@ -47,7 +47,7 @@ const DEVELOPER_TOOL_BASES = new Set([
   "postcompact",
 ]);
 
-const BUZZ_CLI_GROUPS = new Set([
+const BEEKEEPER_CLI_GROUPS = new Set([
   "messages",
   "channels",
   "dms",
@@ -68,7 +68,7 @@ const BUZZ_CLI_GROUPS = new Set([
   "pack",
 ]);
 
-const BUZZ_CLI_ADMIN_VERBS = new Set([
+const BEEKEEPER_CLI_ADMIN_VERBS = new Set([
   "archive",
   "unarchive",
   "create",
@@ -79,7 +79,7 @@ const BUZZ_CLI_ADMIN_VERBS = new Set([
   "set-channel-add-policy",
 ]);
 
-const BUZZ_CLI_READ_VERBS = new Set([
+const BEEKEEPER_CLI_READ_VERBS = new Set([
   "get",
   "list",
   "thread",
@@ -525,8 +525,8 @@ function buzzOperationObject(operation: string) {
 }
 
 function buzzCliTone(group: string, verb: string): AgentActivityTone {
-  if (BUZZ_CLI_ADMIN_VERBS.has(verb)) return "admin";
-  if (BUZZ_CLI_READ_VERBS.has(verb)) return "read";
+  if (BEEKEEPER_CLI_ADMIN_VERBS.has(verb)) return "admin";
+  if (BEEKEEPER_CLI_READ_VERBS.has(verb)) return "read";
   if (group === "feed" && verb === "get") return "read";
   return "write";
 }
@@ -580,7 +580,7 @@ function findBeekeeperCommand(tokens: string[]): BeekeeperCommandRange | null {
         }
         continue;
       }
-      if (!BUZZ_CLI_GROUPS.has(tokens[j])) continue;
+      if (!BEEKEEPER_CLI_GROUPS.has(tokens[j])) continue;
       const verbIndex = j + 1;
       if (!tokens[verbIndex] || isCommandSeparator(tokens[verbIndex])) {
         return null;

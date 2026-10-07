@@ -32,7 +32,7 @@
 #   --fresh       delete the build worktree first (a cold build, ~40 min here)
 #
 # The build worktree is reused between runs (`<main worktree>-app-from`, or
-# BUZZ_APP_FROM_WORKTREE) so a second build is incremental rather than another
+# BEEKEEPER_APP_FROM_WORKTREE) so a second build is incremental rather than another
 # cold hour. It is detached and never the invoking checkout: this script must
 # never touch a tree with an app running out of it.
 set -euo pipefail
@@ -47,8 +47,8 @@ SIDECAR_PACKAGES=(
 # `tauri.conf.json`'s `externalBin` plus the provider; a name added in one
 # place and not the other fails that check rather than a morning.
 SIDECAR_BINARIES=(
-  buzz-acp buzz-agent buzz-backend-kubernetes buzz-dev-mcp
-  bee git-credential-nostr buzz-shell-host beekeeper-host buzz-session-provider
+  beekeeper-acp buzz-agent beekeeper-backend-kubernetes beekeeper-dev-mcp
+  bee git-credential-nostr beekeeper-shell-host beekeeper-host beekeeper-session-provider
 )
 
 APP_NAME="Beekeeper Dev"
@@ -93,7 +93,7 @@ SRC_MAIN="$(main_worktree_of "$SRC_ROOT")"
   echo "not a git checkout: $SRC_ROOT" >&2
   exit 1
 }
-BUILD_ROOT="${BUZZ_APP_FROM_WORKTREE:-${SRC_MAIN}-app-from}"
+BUILD_ROOT="${BEEKEEPER_APP_FROM_WORKTREE:-${SRC_MAIN}-app-from}"
 
 # ── the commit must have landed ──────────────────────────────────────────────
 # Fetch first: an ancestry test against a stale remote-tracking ref answers
@@ -164,7 +164,7 @@ done
 # build carries on from scratch.
 seed_build_tree() {
   local tree="$1" source="$2"
-  local bee="${BUZZ_BEE:-$(command -v bee 2>/dev/null || true)}"
+  local bee="${BEEKEEPER_BEE:-$(command -v bee 2>/dev/null || true)}"
   for candidate in \
       "$source/target/release/bee" \
       "$source/target/debug/bee" \
@@ -192,11 +192,11 @@ seed_build_tree "$BUILD_ROOT" "$SRC_MAIN"
 cd "$BUILD_ROOT"
 export PATH="$BUILD_ROOT/bin:$PATH"
 # The commit is known here and the build scripts should not have to re-derive
-# it. `BUZZ_SOURCE_SHA`/`BUZZ_SOURCE_COMMIT_COUNT` are the pair every build
+# it. `BEEKEEPER_SOURCE_SHA`/`BEEKEEPER_SOURCE_COMMIT_COUNT` are the pair every build
 # script in this repo already reads together or not at all
 # (`crates/beekeeper-relay/build.rs`, `crates/beekeeper-core/build.rs`).
-export BUZZ_SOURCE_SHA="$SHA"
-export BUZZ_SOURCE_COMMIT_COUNT="$COMMIT_COUNT"
+export BEEKEEPER_SOURCE_SHA="$SHA"
+export BEEKEEPER_SOURCE_COMMIT_COUNT="$COMMIT_COUNT"
 
 TARGET="$(rustc -vV | sed -n 's|host: ||p')"
 

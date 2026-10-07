@@ -1,6 +1,6 @@
-export const BUZZ_RELEASES_URL =
+export const BEEKEEPER_RELEASES_URL =
   "https://github.com/agiterra/beekeeper/releases";
-const BUZZ_RELEASES_API_URL =
+const BEEKEEPER_RELEASES_API_URL =
   "https://api.github.com/repos/agiterra/beekeeper/releases?per_page=10";
 const CACHE_KEY = "buzz.latestDownload.v1";
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -162,15 +162,15 @@ export async function resolveBeekeeperDownloadUrlForPlatform(
   }
 
   try {
-    const response = await fetch(BUZZ_RELEASES_API_URL, {
+    const response = await fetch(BEEKEEPER_RELEASES_API_URL, {
       headers: { Accept: "application/vnd.github+json" },
     });
-    if (!response.ok) return BUZZ_RELEASES_URL;
+    if (!response.ok) return BEEKEEPER_RELEASES_URL;
     const url = selectBeekeeperDownloadUrl(
       (await response.json()) as GitHubRelease[],
       platform,
     );
-    if (!url) return BUZZ_RELEASES_URL;
+    if (!url) return BEEKEEPER_RELEASES_URL;
     try {
       sessionStorage.setItem(
         CACHE_KEY,
@@ -185,7 +185,7 @@ export async function resolveBeekeeperDownloadUrlForPlatform(
     }
     return url;
   } catch {
-    return BUZZ_RELEASES_URL;
+    return BEEKEEPER_RELEASES_URL;
   }
 }
 

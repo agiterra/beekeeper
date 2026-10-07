@@ -14,7 +14,7 @@ case "$url" in
   *hive.agiterra.org*|*github.com/agiterra/*|*github.com:agiterra/*|"") exit 0 ;;
 esac
 
-[ "${BUZZ_ALLOW_OUTWARD_PUSH:-}" = "1" ] && exit 0
+[ "${BEEKEEPER_ALLOW_OUTWARD_PUSH:-}" = "1" ] && exit 0
 
 cat >&2 <<MSG
 
@@ -26,7 +26,7 @@ cat >&2 <<MSG
   documentation and should not travel upstream.
 
   If this is deliberate, push from a clone of agiterra/buzz (the near-pristine
-  mirror), or re-run with BUZZ_ALLOW_OUTWARD_PUSH=1.
+  mirror), or re-run with BEEKEEPER_ALLOW_OUTWARD_PUSH=1.
 
 MSG
 exit 1

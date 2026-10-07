@@ -13,7 +13,7 @@ const RUNTIME_OVERRIDE_PUBKEY = TEST_IDENTITIES.outsider.pubkey;
 // (matches PUBKEY_MULTI_ORIGIN in e2eBridge buildMockConfigSurface).
 const MULTI_ORIGIN_PUBKEY =
   "abc1230000000000000000000000000000000000000000000000000000000def";
-const BUZZ_AGENT_PUBKEY =
+const BEEKEEPER_AGENT_PUBKEY =
   "b0220000000000000000000000000000000000000000000000000000000000a9";
 
 const MANAGED_AGENTS = [
@@ -292,7 +292,7 @@ test.describe("config bridge screenshots", () => {
     await installMockBridge(page, {
       managedAgents: [
         {
-          pubkey: BUZZ_AGENT_PUBKEY,
+          pubkey: BEEKEEPER_AGENT_PUBKEY,
           name: "Beekeeper Agent",
           status: "running" as const,
           channelNames: ["agents"],

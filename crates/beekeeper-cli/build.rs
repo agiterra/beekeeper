@@ -8,7 +8,7 @@
 //! only honest answer is the commit, not the crate version, which moves once a
 //! release.
 //!
-//! The value is `BUZZ_CLI_GIT_SHA` when the build environment sets one and it
+//! The value is `BEEKEEPER_CLI_GIT_SHA` when the build environment sets one and it
 //! is commit-shaped (so a packaging pipeline that builds from an exported tree
 //! can supply it), then the checkout's own short commit, and finally the
 //! literal `unknown`. It is never invented, and a build from a tree with
@@ -26,18 +26,18 @@ use std::process::Command;
 include!("src/build_provenance.rs");
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=BUZZ_CLI_GIT_SHA");
+    println!("cargo:rerun-if-env-changed=BEEKEEPER_CLI_GIT_SHA");
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     // A source edit is exactly the case `-dirty` exists to disclose, so the
     // stamp is retaken when this crate's own sources move.
     println!("cargo:rerun-if-changed={manifest_dir}/src");
     watch_git_refs(&manifest_dir);
 
-    let stamped = match std::env::var("BUZZ_CLI_GIT_SHA") {
+    let stamped = match std::env::var("BEEKEEPER_CLI_GIT_SHA") {
         Ok(value) if is_plausible_stamp(value.trim()) => value.trim().to_owned(),
         Ok(value) if !value.trim().is_empty() => {
             println!(
-                "cargo:warning=BUZZ_CLI_GIT_SHA={:?} does not name a commit; falling back to the \
+                "cargo:warning=BEEKEEPER_CLI_GIT_SHA={:?} does not name a commit; falling back to the \
                  checkout",
                 value.trim()
             );
@@ -45,7 +45,7 @@ fn main() {
         }
         _ => stamp_from_checkout(&manifest_dir),
     };
-    println!("cargo:rustc-env=BUZZ_CLI_GIT_SHA={stamped}");
+    println!("cargo:rustc-env=BEEKEEPER_CLI_GIT_SHA={stamped}");
 }
 
 /// The checkout's own answer: its short commit, marked dirty when the tree it

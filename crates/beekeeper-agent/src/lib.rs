@@ -22,7 +22,7 @@ pub use types::AgentError;
 #[cfg(windows)]
 pub const WINDOWS_SHELL_RESOLUTION_ENV: &[&str] = &[
     "PATH",
-    "BUZZ_SHELL",
+    "BEEKEEPER_SHELL",
     "GIT_BASH",
     "SystemRoot",
     "ProgramFiles",
@@ -96,7 +96,7 @@ struct Session {
     /// across `session/prompt` calls until changed.
     effective_model: Option<String>,
     /// Session-cumulative input tokens across all turns. Sent in the
-    /// `_goose/unstable/session/update` usage notification so buzz-acp's
+    /// `_goose/unstable/session/update` usage notification so beekeeper-acp's
     /// `UsageTracker` can compute per-turn deltas symmetrically with goose.
     /// `TurnIOState`: `Unseen` before any turn reports; `Exact(n)` while running;
     /// `Poisoned` if any turn's sum overflowed — permanently poisons the session.
@@ -765,7 +765,7 @@ async fn run_prompt(app: Arc<App>, id: Value, params: Value, wire_tx: WireSender
         s.last_request_history_bytes = last_request_history_bytes;
     }
     // Update session-cumulative token counters and emit the usage notification
-    // BEFORE sending the session/prompt response. buzz-acp's UsageTracker
+    // BEFORE sending the session/prompt response. beekeeper-acp's UsageTracker
     // processes the notification while the turn is still in-flight (i.e. before
     // the response triggers take_turn_usage()), which is required for the
     // begin_turn gate to recognise it as publishable.

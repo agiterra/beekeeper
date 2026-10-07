@@ -29,7 +29,7 @@ const GOOSE_AVATAR_URL: &str = "https://goose-docs.ai/img/logo_dark.png";
 const CLAUDE_CODE_AVATAR_URL: &str = "https://anthropic.gallerycdn.vsassets.io/extensions/anthropic/claude-code/2.1.77/1773707456892/Microsoft.VisualStudio.Services.Icons.Default";
 const CODEX_AVATAR_URL: &str = "https://openai.gallerycdn.vsassets.io/extensions/openai/chatgpt/26.5313.41514/1773706730621/Microsoft.VisualStudio.Services.Icons.Default";
 mod avatar;
-use avatar::BUZZ_AGENT_AVATAR_URL;
+use avatar::BEEKEEPER_AGENT_AVATAR_URL;
 fn common_binary_paths() -> &'static [PathBuf] {
     static PATHS: OnceLock<Vec<PathBuf>> = OnceLock::new();
     PATHS.get_or_init(|| {
@@ -155,7 +155,7 @@ const KNOWN_ACP_RUNTIMES: &[KnownAcpRuntime] = &[
         commands: &["codex-acp"],
         aliases: &[],
         avatar_url: CODEX_AVATAR_URL,
-        mcp_command: Some("buzz-dev-mcp"),
+        mcp_command: Some("beekeeper-dev-mcp"),
         mcp_hooks: false,
         underlying_cli: Some("codex"),
         cli_install_commands: &["curl -fsSL https://chatgpt.com/codex/install.sh | sh"],
@@ -188,8 +188,8 @@ const KNOWN_ACP_RUNTIMES: &[KnownAcpRuntime] = &[
         label: "Beekeeper Agent",
         commands: &["buzz-agent"],
         aliases: &[],
-        avatar_url: BUZZ_AGENT_AVATAR_URL,
-        mcp_command: Some("buzz-dev-mcp"),
+        avatar_url: BEEKEEPER_AGENT_AVATAR_URL,
+        mcp_command: Some("beekeeper-dev-mcp"),
         mcp_hooks: true,
         underlying_cli: None,
         cli_install_commands: &[],
@@ -201,17 +201,17 @@ const KNOWN_ACP_RUNTIMES: &[KnownAcpRuntime] = &[
         adapter_install_hint: "",
         skill_dir: None,
         supports_acp_model_switching: true,
-        model_env_var: Some("BUZZ_AGENT_MODEL"),
-        provider_env_var: Some("BUZZ_AGENT_PROVIDER"),
+        model_env_var: Some("BEEKEEPER_AGENT_MODEL"),
+        provider_env_var: Some("BEEKEEPER_AGENT_PROVIDER"),
         provider_locked: false,
         default_env: &[],
         config_file_path: None,
         config_file_format: None,
         supports_acp_native_config: false,
-        thinking_env_var: Some("BUZZ_AGENT_THINKING_EFFORT"),
-        max_tokens_env_var: Some("BUZZ_AGENT_MAX_OUTPUT_TOKENS"),
-        context_limit_env_var: Some("BUZZ_AGENT_MAX_CONTEXT_TOKENS"),
-        max_rounds_env_var: Some("BUZZ_AGENT_MAX_ROUNDS"),
+        thinking_env_var: Some("BEEKEEPER_AGENT_THINKING_EFFORT"),
+        max_tokens_env_var: Some("BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS"),
+        context_limit_env_var: Some("BEEKEEPER_AGENT_MAX_CONTEXT_TOKENS"),
+        max_rounds_env_var: Some("BEEKEEPER_AGENT_MAX_ROUNDS"),
         required_normalized_fields: &["model", "provider"],
         login_hint: None,
         auth_probe_args: None,
@@ -703,7 +703,7 @@ fn path_candidates_from_env_raw(basename: &str) -> Vec<PathBuf> {
 /// Collect login shell candidates for the current platform.
 ///
 /// On Unix: `/bin/zsh`, `/bin/bash` (the historical defaults).
-/// On Windows: Git Bash via `resolve_bash_path` — skips `BUZZ_SHELL` because
+/// On Windows: Git Bash via `resolve_bash_path` — skips `BEEKEEPER_SHELL` because
 /// login-shell callers use bash-only `-l -c` syntax.
 fn login_shell_candidates() -> Vec<PathBuf> {
     #[cfg(not(windows))]

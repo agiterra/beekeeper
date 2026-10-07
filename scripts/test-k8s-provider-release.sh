@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
-PROVIDER_BINARY="$TARGET_DIR/release/buzz-backend-kubernetes"
+PROVIDER_BINARY="$TARGET_DIR/release/beekeeper-backend-kubernetes"
 
 CARGO="${CARGO:-cargo}"
 "$CARGO" build --release \

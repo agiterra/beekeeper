@@ -8,17 +8,17 @@ import { TwoRelayHarness, type RelaySpec } from "./helpers/twoRelayHarness";
 
 const exec = promisify(execFile);
 
-// Live gate: boots a REAL buzz-relay process, points the app at it, SIGTERMs
+// Live gate: boots a REAL beekeeper-relay process, points the app at it, SIGTERMs
 // the relay mid-session, restarts it on the same port, and asserts the client
 // converges back to "connected". This proves the full restart story end to
 // end: the relay's graceful-drain 1012 close broadcast (server side) and the
 // client's dial-failure retry + 1012 fast-reconnect (desktop side) — the two
 // halves that synthetic mock-websocket specs cannot compose.
 //
-// Requires: BUZZ_E2E_RELAY_RESTART=1, BUZZ_E2E_RELAY_BIN, and
-// BUZZ_E2E_DATABASE_URL (plus reachable Redis and media object store, same
+// Requires: BEEKEEPER_E2E_RELAY_RESTART=1, BEEKEEPER_E2E_RELAY_BIN, and
+// BEEKEEPER_E2E_DATABASE_URL (plus reachable Redis and media object store, same
 // infra as the agents-everywhere live gate).
-const enabled = process.env.BUZZ_E2E_RELAY_RESTART === "1";
+const enabled = process.env.BEEKEEPER_E2E_RELAY_RESTART === "1";
 
 function required(name: string, value: string | undefined): string {
   if (!value) throw new Error(`${name} is required for the live gate`);
@@ -26,14 +26,17 @@ function required(name: string, value: string | undefined): string {
 }
 
 async function runCli(args: string[], relayUrl: string, privateKey: string) {
-  const binary = required("BUZZ_E2E_CLI_BIN", process.env.BUZZ_E2E_CLI_BIN);
+  const binary = required(
+    "BEEKEEPER_E2E_CLI_BIN",
+    process.env.BEEKEEPER_E2E_CLI_BIN,
+  );
   const { stdout } = await exec(binary, args, {
     cwd: "..",
     env: {
       ...process.env,
-      BUZZ_AUTH_TAG: "",
-      BUZZ_PRIVATE_KEY: privateKey,
-      BUZZ_RELAY_URL: relayUrl,
+      BEEKEEPER_AUTH_TAG: "",
+      BEEKEEPER_PRIVATE_KEY: privateKey,
+      BEEKEEPER_RELAY_URL: relayUrl,
     },
   });
   return stdout;
@@ -134,7 +137,7 @@ async function proveLiveDelivery(
 }
 
 test.describe("relay restart live gate", () => {
-  test.skip(!enabled, "set BUZZ_E2E_RELAY_RESTART=1 to run live gate");
+  test.skip(!enabled, "set BEEKEEPER_E2E_RELAY_RESTART=1 to run live gate");
 
   test("client reconnects after the relay is SIGTERMed and restarted", async ({
     page,
@@ -149,11 +152,11 @@ test.describe("relay restart live gate", () => {
         metrics: portBase + 6_000,
       },
       databaseUrl: required(
-        "BUZZ_E2E_DATABASE_URL",
-        process.env.BUZZ_E2E_DATABASE_URL,
+        "BEEKEEPER_E2E_DATABASE_URL",
+        process.env.BEEKEEPER_E2E_DATABASE_URL,
       ),
       redisUrl:
-        process.env.BUZZ_E2E_REDIS_RESTART ?? "redis://127.0.0.1:6379/13",
+        process.env.BEEKEEPER_E2E_REDIS_RESTART ?? "redis://127.0.0.1:6379/13",
     };
     const harness = await TwoRelayHarness.create([spec]);
     try {

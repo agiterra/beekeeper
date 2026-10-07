@@ -1,4 +1,4 @@
-# Vision: buzz-agent + buzz-dev-mcp
+# Vision: buzz-agent + beekeeper-dev-mcp
 
 ## The Problem
 
@@ -10,9 +10,9 @@ We wanted something we could read in an afternoon and audit with confidence.
 
 Two binaries, two protocols, no coupling between them.
 
-**buzz-agent** is an ACP agent. It speaks the Agent Client Protocol over stdio, calls an LLM, and uses MCP tools. Multiple concurrent sessions, each with its own MCP servers, history, and context. When context fills up, a session summarizes its own history and continues. It works with Zed, JetBrains, buzz-acp, or anything else that speaks ACP.
+**buzz-agent** is an ACP agent. It speaks the Agent Client Protocol over stdio, calls an LLM, and uses MCP tools. Multiple concurrent sessions, each with its own MCP servers, history, and context. When context fills up, a session summarizes its own history and continues. It works with Zed, JetBrains, beekeeper-acp, or anything else that speaks ACP.
 
-**buzz-dev-mcp** is an MCP server. It gives any agent a shell and a file editor. Ephemeral processes with process-group kill on every exit path. Bounded output. File edits resolve against the working directory. It works with any agent or client that speaks MCP.
+**beekeeper-dev-mcp** is an MCP server. It gives any agent a shell and a file editor. Ephemeral processes with process-group kill on every exit path. Bounded output. File edits resolve against the working directory. It works with any agent or client that speaks MCP.
 
 Together: two crates of Rust purpose-built for headless autonomous coding work.
 
@@ -34,7 +34,7 @@ inherited across hosts.
 ## The Architecture
 
 ```
-Any ACP client (Zed, JetBrains, buzz-acp, custom)
+Any ACP client (Zed, JetBrains, beekeeper-acp, custom)
         |
         | stdio ACP (JSON-RPC 2.0)
         v
@@ -42,7 +42,7 @@ Any ACP client (Zed, JetBrains, buzz-acp, custom)
         |
         | stdio MCP (JSON-RPC 2.0) — one per session
         v
-  buzz-dev-mcp (or any MCP server)
+  beekeeper-dev-mcp (or any MCP server)
         |
         v
   shell, str_replace, todo; rg + tree on PATH

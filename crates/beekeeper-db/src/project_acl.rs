@@ -136,7 +136,7 @@ pub enum ProjectMemberOpRefusal {
 }
 
 /// Maximum roster size, matching the head `p`-tag invite cap in
-/// `buzz-relay`'s ingest validation (`PROJECT_INVITE_CAP`).
+/// `beekeeper-relay`'s ingest validation (`PROJECT_INVITE_CAP`).
 pub const PROJECT_ROSTER_CAP: i64 = 256;
 
 /// Outcome of an attempted project membership op.

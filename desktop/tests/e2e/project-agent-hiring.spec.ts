@@ -11,7 +11,7 @@ import { buildCodingSessionClosureEvent } from "@/features/coding-sessions/lib/c
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/codingSessionGenesis";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
@@ -279,7 +279,7 @@ function seatMetadata(input: {
         ["csm-key", codingSessionMetadataSemanticKey(input.target)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: input.target,
         projectRef: TANK.ref,
         repoRef: null,

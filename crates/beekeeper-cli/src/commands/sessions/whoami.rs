@@ -94,8 +94,8 @@ fn parse_display_name(events: &[Value]) -> Option<String> {
 /// from the relay by identity alone.
 ///
 /// There is no channel or session ref in a seat's process environment — the
-/// ACP harness injects only `BUZZ_RELAY_URL`, `BUZZ_PRIVATE_KEY`,
-/// `BUZZ_AUTH_TAG`, and optionally `BUZZ_ACP_DISPLAY_NAME`
+/// ACP harness injects only `BEEKEEPER_RELAY_URL`, `BEEKEEPER_PRIVATE_KEY`,
+/// `BEEKEEPER_AUTH_TAG`, and optionally `BEEKEEPER_ACP_DISPLAY_NAME`
 /// (`crates/beekeeper-acp/src/lib.rs:5174-5209`; confirmed empirically against
 /// this lane's own process env, which carried none of the four) — so this
 /// walks outward from the identity instead of starting from a channel it

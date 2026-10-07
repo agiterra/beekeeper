@@ -1,6 +1,6 @@
 //! Desktop host for the first-party coding-session provider.
 //!
-//! The provider (`buzz-session-provider`) is a supervised child process that
+//! The provider (`beekeeper-session-provider`) is a supervised child process that
 //! answers coding-session commands (kinds 44220/44221) on the relay and
 //! publishes transcripts back. This module owns everything the desktop must do
 //! for it to exist: mint and store its identity, seed the trust allowlist the
@@ -30,8 +30,8 @@
 //! <app-data>/session-provider/
 //!   coding-session-provider.json      # records, one per relay URL, 0o600
 //!   logs/<pubkey>.log                 # supervised child stdout+stderr
-//!   <provider-pubkey>/                # BUZZ_CSP_STATE_DIR
-//!     projects.json                   # BUZZ_CSP_PROJECTS_FILE (written later)
+//!   <provider-pubkey>/                # BEEKEEPER_CSP_STATE_DIR
+//!     projects.json                   # BEEKEEPER_CSP_PROJECTS_FILE (written later)
 //!     …                               # watermarks, outbox, seq counters
 //! ```
 //!
@@ -91,7 +91,7 @@ pub(crate) fn host_git_state_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Per-identity state directory handed to the child as `BUZZ_CSP_STATE_DIR`.
+/// Per-identity state directory handed to the child as `BEEKEEPER_CSP_STATE_DIR`.
 ///
 /// See the module docs for why this is keyed by pubkey.
 pub(crate) fn provider_state_dir(

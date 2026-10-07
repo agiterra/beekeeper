@@ -9,7 +9,7 @@
 //! # Boundaries this crate holds
 //!
 //! - **No host paths in signed content.** The working directory a session runs
-//!   in is resolved from `BUZZ_CSP_PROJECTS_FILE`, stored in local state, and
+//!   in is resolved from `BEEKEEPER_CSP_PROJECTS_FILE`, stored in local state, and
 //!   never serialized into an event. A test in this module asserts it.
 //! - **At most once per command.** A `commandId` is durably consumed before any
 //!   side effect, so a replayed subscription re-derives no state.
@@ -24,8 +24,8 @@
 //!
 //! # Environment
 //!
-//! `BUZZ_PRIVATE_KEY`, `BUZZ_RELAY_URL`, `BUZZ_AUTH_TAG`, `RUST_LOG`, plus the
-//! `BUZZ_CSP_*` surface documented on [`config::Config`].
+//! `BEEKEEPER_PRIVATE_KEY`, `BEEKEEPER_RELAY_URL`, `BEEKEEPER_AUTH_TAG`, `RUST_LOG`, plus the
+//! `BEEKEEPER_CSP_*` surface documented on [`config::Config`].
 
 #![deny(unsafe_code)]
 
@@ -451,9 +451,10 @@ pub async fn run() -> anyhow::Result<()> {
 
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
-    let filter = beekeeper_core::log_targets::read_filter_var("RUST_LOG", "buzz-session-provider")
-        .and_then(|filter| EnvFilter::try_new(filter).ok())
-        .unwrap_or_else(|| EnvFilter::new("info"));
+    let filter =
+        beekeeper_core::log_targets::read_filter_var("RUST_LOG", "beekeeper-session-provider")
+            .and_then(|filter| EnvFilter::try_new(filter).ok())
+            .unwrap_or_else(|| EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 
@@ -4521,7 +4522,7 @@ impl Provider {
                 %session_ref,
                 turns,
                 "this umbrella's published session policy sets a turn ceiling; it overrides \
-                 BUZZ_CSP_TURN_BUDGET for this session"
+                 BEEKEEPER_CSP_TURN_BUDGET for this session"
             );
         }
         self.set_policy_turn_budget(&session_ref, turns);
@@ -14046,7 +14047,7 @@ mod tests {
     }
 
     /// The relay-signed kind 40099 acceptance receipt for one transition,
-    /// with exactly the content shape `buzz-relay` emits.
+    /// with exactly the content shape `beekeeper-relay` emits.
     fn acceptance_receipt_event(
         relay_keys: &Keys,
         channel_id: Uuid,
@@ -19319,7 +19320,7 @@ mod tests {
         let refusal = receipts[2]["error"]["message"].as_str().expect("message");
         assert!(refusal.contains("this provider"), "{refusal}");
         assert!(refusal.contains("stop an execution"), "{refusal}");
-        assert!(refusal.contains("BUZZ_CSP_MAX_SESSIONS"), "{refusal}");
+        assert!(refusal.contains("BEEKEEPER_CSP_MAX_SESSIONS"), "{refusal}");
         assert_eq!(provider.state().sessions().count(), 2);
     }
 

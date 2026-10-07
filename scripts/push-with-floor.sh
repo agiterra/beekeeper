@@ -32,7 +32,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root" || exit 1
 
 echo "push-with-floor: running the floor before opening the connection..." >&2
-BUZZ_PRE_PUSH_FLOOR_STAMP_WRITE=1 ./scripts/pre-push-floor.sh
+BEEKEEPER_PRE_PUSH_FLOOR_STAMP_WRITE=1 ./scripts/pre-push-floor.sh
 floor_status=$?
 
 if [ "$floor_status" != "0" ]; then

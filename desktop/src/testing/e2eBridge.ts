@@ -2689,7 +2689,7 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     // The default a current build mints: its own nest, nothing refused.
     pack_refused_shared_home: seed.packRefusedSharedHome ?? false,
     relay_url: DEFAULT_RELAY_WS_URL,
-    acp_command: "buzz-acp",
+    acp_command: "beekeeper-acp",
     agent_command: agentCommand,
     agent_args: agentArgs,
     mcp_command: "",
@@ -2721,7 +2721,7 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     respond_to_allowlist: seed.respondToAllowlist ?? [],
     private_key_nsec: `nsec1mock${seed.pubkey.slice(0, 20)}`,
     log_lines: [
-      `buzz-acp starting: relay=${DEFAULT_RELAY_WS_URL} agent_pubkey=${seed.pubkey} parallelism=1`,
+      `beekeeper-acp starting: relay=${DEFAULT_RELAY_WS_URL} agent_pubkey=${seed.pubkey} parallelism=1`,
       "profile created; harness not started",
     ],
   };
@@ -8195,7 +8195,7 @@ function withMockRuntimeConfigMetadata(
       "model_env_var" in runtime
         ? runtime.model_env_var
         : runtime.id === "buzz-agent"
-          ? "BUZZ_AGENT_MODEL"
+          ? "BEEKEEPER_AGENT_MODEL"
           : runtime.id === "goose"
             ? "GOOSE_MODEL"
             : null,
@@ -8203,7 +8203,7 @@ function withMockRuntimeConfigMetadata(
       "provider_env_var" in runtime
         ? runtime.provider_env_var
         : runtime.id === "buzz-agent"
-          ? "BUZZ_AGENT_PROVIDER"
+          ? "BEEKEEPER_AGENT_PROVIDER"
           : runtime.id === "goose"
             ? "GOOSE_PROVIDER"
             : null,
@@ -8211,7 +8211,7 @@ function withMockRuntimeConfigMetadata(
       "thinking_env_var" in runtime
         ? runtime.thinking_env_var
         : runtime.id === "buzz-agent"
-          ? "BUZZ_AGENT_THINKING_EFFORT"
+          ? "BEEKEEPER_AGENT_THINKING_EFFORT"
           : runtime.id === "goose"
             ? "GOOSE_THINKING_EFFORT"
             : null,
@@ -8219,7 +8219,7 @@ function withMockRuntimeConfigMetadata(
       "max_tokens_env_var" in runtime
         ? runtime.max_tokens_env_var
         : runtime.id === "buzz-agent"
-          ? "BUZZ_AGENT_MAX_OUTPUT_TOKENS"
+          ? "BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS"
           : runtime.id === "goose"
             ? "GOOSE_MAX_TOKENS"
             : null,
@@ -8227,7 +8227,7 @@ function withMockRuntimeConfigMetadata(
       "context_limit_env_var" in runtime
         ? runtime.context_limit_env_var
         : runtime.id === "buzz-agent"
-          ? "BUZZ_AGENT_MAX_CONTEXT_TOKENS"
+          ? "BEEKEEPER_AGENT_MAX_CONTEXT_TOKENS"
           : runtime.id === "goose"
             ? "GOOSE_CONTEXT_LIMIT"
             : null,
@@ -8235,7 +8235,7 @@ function withMockRuntimeConfigMetadata(
       "max_rounds_env_var" in runtime
         ? runtime.max_rounds_env_var
         : runtime.id === "buzz-agent"
-          ? "BUZZ_AGENT_MAX_ROUNDS"
+          ? "BEEKEEPER_AGENT_MAX_ROUNDS"
           : null,
   };
 }
@@ -8356,7 +8356,7 @@ async function handleDiscoverAcpRuntimes(
       command: "buzz-agent",
       binary_path: "/usr/local/bin/buzz-agent",
       default_args: [],
-      mcp_command: "buzz-dev-mcp",
+      mcp_command: "beekeeper-dev-mcp",
       install_hint: "Ships with the Beekeeper desktop app.",
       install_instructions_url: "https://github.com/block/buzz",
       can_auto_install: false,
@@ -8623,10 +8623,12 @@ async function handleDiscoverManagedAgentPrereqs(
   return {
     acp: {
       command:
-        configuredPrereqs?.acp?.command ?? args.input?.acpCommand ?? "buzz-acp",
+        configuredPrereqs?.acp?.command ??
+        args.input?.acpCommand ??
+        "beekeeper-acp",
       resolved_path:
         configuredPrereqs?.acp?.resolvedPath ??
-        "/Users/wesb/dev/buzz/target/debug/buzz-acp",
+        "/Users/wesb/dev/buzz/target/debug/beekeeper-acp",
       available: configuredPrereqs?.acp?.available ?? true,
     },
     mcp: {
@@ -9346,7 +9348,7 @@ async function handleCreateManagedAgent(
     // Create never pins a harness id — the record inherits from the persona.
     runtime: null,
     relay_url: args.input.relayUrl ?? DEFAULT_RELAY_WS_URL,
-    acp_command: args.input.acpCommand ?? "buzz-acp",
+    acp_command: args.input.acpCommand ?? "beekeeper-acp",
     agent_command: agentCommand,
     agent_args: agentArgs,
     mcp_command: args.input.mcpCommand ?? "",
@@ -9377,7 +9379,7 @@ async function handleCreateManagedAgent(
     respond_to_allowlist: [...mintRespondToAllowlist],
     private_key_nsec: `nsec1mock${pubkey.slice(0, 20)}`,
     log_lines: [
-      `buzz-acp starting: relay=${args.input.relayUrl ?? DEFAULT_RELAY_WS_URL} agent_pubkey=${pubkey} parallelism=${mintParallelism}`,
+      `beekeeper-acp starting: relay=${args.input.relayUrl ?? DEFAULT_RELAY_WS_URL} agent_pubkey=${pubkey} parallelism=${mintParallelism}`,
       args.input.systemPrompt?.trim()
         ? `system prompt override configured (${args.input.systemPrompt.trim().length} chars)`
         : "system prompt override not set",

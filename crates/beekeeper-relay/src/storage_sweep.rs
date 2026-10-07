@@ -47,26 +47,26 @@ pub struct StorageSweepConfig {
 }
 
 impl StorageSweepConfig {
-    /// Reads `BUZZ_STORAGE_SWEEP_INTERVAL_SECS` (default 3600, floor 60),
-    /// `BUZZ_STORAGE_SWEEP_TIMEOUT_SECS` (default 120),
-    /// `BUZZ_STORAGE_SWEEP_MAX_OBJECTS` (default 1_000_000), and the
-    /// `BUZZ_STORAGE_METRICS` kill switch (`off` ⇒ disabled, anything else
+    /// Reads `BEEKEEPER_STORAGE_SWEEP_INTERVAL_SECS` (default 3600, floor 60),
+    /// `BEEKEEPER_STORAGE_SWEEP_TIMEOUT_SECS` (default 120),
+    /// `BEEKEEPER_STORAGE_SWEEP_MAX_OBJECTS` (default 1_000_000), and the
+    /// `BEEKEEPER_STORAGE_METRICS` kill switch (`off` ⇒ disabled, anything else
     /// including unset ⇒ enabled).
     pub fn from_env() -> Self {
-        let interval_secs = std::env::var("BUZZ_STORAGE_SWEEP_INTERVAL_SECS")
+        let interval_secs = std::env::var("BEEKEEPER_STORAGE_SWEEP_INTERVAL_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(3600)
             .max(60);
-        let timeout_secs = std::env::var("BUZZ_STORAGE_SWEEP_TIMEOUT_SECS")
+        let timeout_secs = std::env::var("BEEKEEPER_STORAGE_SWEEP_TIMEOUT_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(120);
-        let max_objects = std::env::var("BUZZ_STORAGE_SWEEP_MAX_OBJECTS")
+        let max_objects = std::env::var("BEEKEEPER_STORAGE_SWEEP_MAX_OBJECTS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(1_000_000);
-        let enabled = std::env::var("BUZZ_STORAGE_METRICS")
+        let enabled = std::env::var("BEEKEEPER_STORAGE_METRICS")
             .ok()
             .map(|v| v.trim().to_ascii_lowercase())
             .as_deref()
@@ -386,10 +386,10 @@ mod tests {
         // No env manipulation: absent vars in the test process must resolve
         // to the documented defaults.
         for key in [
-            "BUZZ_STORAGE_SWEEP_INTERVAL_SECS",
-            "BUZZ_STORAGE_SWEEP_TIMEOUT_SECS",
-            "BUZZ_STORAGE_SWEEP_MAX_OBJECTS",
-            "BUZZ_STORAGE_METRICS",
+            "BEEKEEPER_STORAGE_SWEEP_INTERVAL_SECS",
+            "BEEKEEPER_STORAGE_SWEEP_TIMEOUT_SECS",
+            "BEEKEEPER_STORAGE_SWEEP_MAX_OBJECTS",
+            "BEEKEEPER_STORAGE_METRICS",
         ] {
             if std::env::var(key).is_ok() {
                 return; // externally forced — skip rather than assert a lie

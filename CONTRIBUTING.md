@@ -36,7 +36,7 @@ If you have questions that aren't answered here, [open an issue](https://github.
 
 This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md).
 By participating you agree to uphold these standards. Please report
-unacceptable behavior to **conduct@buzz-relay.org**.
+unacceptable behavior to **conduct@beekeeper-relay.org**.
 
 ---
 

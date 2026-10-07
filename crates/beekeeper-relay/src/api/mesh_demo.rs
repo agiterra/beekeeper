@@ -1,13 +1,13 @@
 //! `POST /_mesh/demo/echo` — testbed-only join-side ingress for the mesh
 //! reliable-stream smoke.
 //!
-//! This is the *client leg* of the `BUZZ_MESH_DEMO_ECHO` evidence run: the
+//! This is the *client leg* of the `BEEKEEPER_MESH_DEMO_ECHO` evidence run: the
 //! owner-side echo consumer (see `mesh_boot::run_demo_echo`) validates and
 //! echoes frames, but nothing in the product calls
 //! [`ReliableStreamRouter::join`] yet — so cross-pod evidence needs a way to
 //! drive a join from a chosen pod. This route is that way, and nothing more:
 //!
-//! - Gated on **both** `BUZZ_MESH_DEMO_ECHO=on` and mesh enabled; 404
+//! - Gated on **both** `BEEKEEPER_MESH_DEMO_ECHO=on` and mesh enabled; 404
 //!   otherwise (the same strictness as the owner-side consumer — the route
 //!   does not exist unless the operator opted the deployment into the demo).
 //! - `Owned` result: this pod acquired the fenced lease. No renewer is
@@ -174,14 +174,14 @@ mod tests {
     /// so the skip is announced on stderr and — where Redis is supposed to be
     /// present — turned into a failure.
     ///
-    /// Set `BUZZ_TEST_REQUIRE_REDIS=1` anywhere Redis is a declared service
+    /// Set `BEEKEEPER_TEST_REQUIRE_REDIS=1` anywhere Redis is a declared service
     /// (`.woodpecker/gate.yml` does) so a missing or broken service can never
     /// again be read as a green run.
     async fn redis_directory_if_available() -> Option<SessionDirectory> {
         fn unavailable(why: &str) -> Option<SessionDirectory> {
             assert!(
-                !std::env::var("BUZZ_TEST_REQUIRE_REDIS").is_ok_and(|v| v != "0"),
-                "BUZZ_TEST_REQUIRE_REDIS is set but Redis is unusable ({why}); \
+                !std::env::var("BEEKEEPER_TEST_REQUIRE_REDIS").is_ok_and(|v| v != "0"),
+                "BEEKEEPER_TEST_REQUIRE_REDIS is set but Redis is unusable ({why}); \
                  refusing to skip and report a pass"
             );
             eprintln!("SKIP: {} needs Redis ({why})", module_path!());

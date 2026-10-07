@@ -11,12 +11,12 @@
 # the first launch after every update; that is expected and accepted.
 #
 # Builds happen in a dedicated detached worktree — a sibling of this clone's
-# main worktree named `<clone>-prod` (override with BUZZ_PROD_WORKTREE) — so
+# main worktree named `<clone>-prod` (override with BEEKEEPER_PROD_WORKTREE) — so
 # they never contend with the working checkout or a running dev instance. It is
 # derived from the main worktree rather than the invoking directory, so every
 # worktree of a clone shares one prod tree; "/Applications/Beekeeper.app" is a
 # single destination, so a second one would only fight over it. The bundle
-# additionally carries buzz-session-provider as a sidecar, via the tracked
+# additionally carries beekeeper-session-provider as a sidecar, via the tracked
 # delta config desktop/src-tauri/tauri.local-prod.conf.json.
 #
 # Usage: scripts/local-prod-build.sh [rev] [--no-install]
@@ -37,7 +37,7 @@ main_worktree_of() {
 
 SRC_MAIN="$(main_worktree_of "$SRC_ROOT")"
 [[ -n "$SRC_MAIN" ]] || { echo "not a git checkout: $SRC_ROOT" >&2; exit 1; }
-PROD_ROOT="${BUZZ_PROD_WORKTREE:-${SRC_MAIN}-prod}"
+PROD_ROOT="${BEEKEEPER_PROD_WORKTREE:-${SRC_MAIN}-prod}"
 TARGET=aarch64-apple-darwin
 
 REV=""
@@ -74,7 +74,7 @@ if [[ -e "$PROD_ROOT" ]]; then
     echo "prod worktree belongs to another clone (or is not a git worktree):" >&2
     echo "  prod tree: $PROD_ROOT -> ${PROD_MAIN:-<not a git worktree>}" >&2
     echo "  this clone: $SRC_MAIN" >&2
-    echo "Unset BUZZ_PROD_WORKTREE, or point it at a worktree of this clone." >&2
+    echo "Unset BEEKEEPER_PROD_WORKTREE, or point it at a worktree of this clone." >&2
     exit 1
   fi
 fi
@@ -85,7 +85,7 @@ fi
 # build carries on from scratch.
 seed_build_tree() {
   local tree="$1" source="$2"
-  local bee="${BUZZ_BEE:-$(command -v bee 2>/dev/null || true)}"
+  local bee="${BEEKEEPER_BEE:-$(command -v bee 2>/dev/null || true)}"
   for candidate in \
       "$source/target/release/bee" \
       "$source/target/debug/bee" \
@@ -118,7 +118,7 @@ cargo build --release -p beekeeper-acp -p beekeeper-agent -p beekeeper-backend-k
   -p beekeeper-dev-mcp -p beekeeper-cli -p git-credential-nostr -p beekeeper-session-provider \
   -p beekeeper-shell-host -p beekeeper-host
 ./scripts/bundle-sidecars.sh
-cp target/release/buzz-session-provider "desktop/src-tauri/binaries/buzz-session-provider-$TARGET"
+cp target/release/beekeeper-session-provider "desktop/src-tauri/binaries/buzz-session-provider-$TARGET"
 chmod 755 "desktop/src-tauri/binaries/buzz-session-provider-$TARGET"
 
 # ── bundle ───────────────────────────────────────────────────────────────────
@@ -132,8 +132,8 @@ APP="$PROD_ROOT/desktop/src-tauri/target/$TARGET/release/bundle/macos/Beekeeper.
 
 # ── seal + verify ────────────────────────────────────────────────────────────
 [[ -d "$APP" ]] || { echo "bundle missing: $APP" >&2; exit 1; }
-[[ -x "$APP/Contents/MacOS/buzz-session-provider" ]] \
-  || { echo "buzz-session-provider missing from bundle" >&2; exit 1; }
+[[ -x "$APP/Contents/MacOS/beekeeper-session-provider" ]] \
+  || { echo "beekeeper-session-provider missing from bundle" >&2; exit 1; }
 [[ -x "$APP/Contents/MacOS/beekeeper-host" ]] \
   || { echo "beekeeper-host missing from bundle" >&2; exit 1; }
 # An empty LoginItems/ passes `codesign --verify --deep --strict`, which walks
@@ -171,7 +171,7 @@ fi
 # recognising every app it was meant to catch, and the install would `rm -rf` a
 # running bundle. The directory is what is actually invariant here.
 # Name what is actually holding the bundle. The match is the directory, so a
-# *sidecar* that outlived the app (a buzz-shell-host serving a terminal, which
+# *sidecar* that outlived the app (a beekeeper-shell-host serving a terminal, which
 # is not reaped when the app quits) trips it too — and "Beekeeper.app is
 # running" then sends the reader to quit an app that is already quit.
 # Anchored: `pgrep -f` matches whole command lines, so an unanchored pattern
@@ -183,7 +183,7 @@ if HOLDERS="$(pgrep -lf "^/Applications/Beekeeper.app/Contents/MacOS/")"; then
        "the bundle under it would break it, so nothing was installed:" >&2
   echo "$HOLDERS" | sed 's/^/  /' >&2
   echo "Quit the app if it is running. A sidecar left over from an app that" \
-       "already quit (buzz-shell-host, buzz-session-provider) can be ended with" \
+       "already quit (beekeeper-shell-host, beekeeper-session-provider) can be ended with" \
        "\`kill <pid>\`; a shell host takes its terminal session's live process" \
        "with it." >&2
   exit 1

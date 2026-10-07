@@ -10,7 +10,7 @@ repository.workspace = true
 # called the env map "the real interface between host and provider". This is
 # that host, with the desktop taken out of it.
 #
-# Not to be confused with `buzz-shell-host`, which hosts one PTY for one
+# Not to be confused with `beekeeper-shell-host`, which hosts one PTY for one
 # built-in shell session. This hosts the machine's Beekeeper background
 # services: it owns the coding-session provider and answers a local control
 # socket about it.
@@ -41,7 +41,7 @@ tracing-subscriber = { workspace = true }
 # compile: the control socket is an `AF_UNIX` socket and the login
 # registrations are launchd and systemd. A Windows host needs named pipes and a
 # different service manager, which is separate work — the same shape
-# `buzz-shell-host` already has.
+# `beekeeper-shell-host` already has.
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", default-features = false, features = ["fs", "signal", "process", "socket", "user"] }
 

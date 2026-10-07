@@ -34,7 +34,7 @@
 //! exposed as a predicate — [`is_canonical`](ProviderInstanceAlias::is_canonical)
 //! on all four, and [`ProviderInstanceId::is_short_pubkey_prefix`] — rather than
 //! smuggled into the constructor. A provider whose operator set
-//! `BUZZ_CSP_INSTANCE_ID` to `workstation-a` publishes exactly that, and a type
+//! `BEEKEEPER_CSP_INSTANCE_ID` to `workstation-a` publishes exactly that, and a type
 //! that refused to hold it would be lying about the wire rather than validating
 //! it. **Report the odd shape; never refuse it.**
 
@@ -201,7 +201,7 @@ identity_newtype!(
     /// **Not the alias.** By default it is the first
     /// [`SHORT_PUBKEY_PREFIX_LEN`] hex characters of the provider's own
     /// signing pubkey, which is why it looks cryptographic; an operator who
-    /// sets `BUZZ_CSP_INSTANCE_ID` publishes whatever they set instead. Use
+    /// sets `BEEKEEPER_CSP_INSTANCE_ID` publishes whatever they set instead. Use
     /// [`is_short_pubkey_prefix`](Self::is_short_pubkey_prefix) to ask which
     /// of the two a given value is, and never assume.
     ProviderInstanceId,

@@ -6,7 +6,7 @@
 use super::*;
 
 /// A translator with paragraph flushing switched on, as the provider builds
-/// it when `BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` is set.
+/// it when `BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH` is set.
 fn on(include_thoughts: bool) -> TranscriptTranslator {
     TranscriptTranslator::new(include_thoughts).with_paragraph_flush(true)
 }

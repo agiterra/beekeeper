@@ -295,7 +295,7 @@ impl Fixture {
 }
 
 /// The relay's trace → outputs reconstruction, duplicated here so the engine
-/// test does not depend on `buzz-relay`.
+/// test does not depend on `beekeeper-relay`.
 fn outputs_from_trace(
     trace: &serde_json::Value,
 ) -> std::collections::HashMap<String, serde_json::Value> {

@@ -1767,7 +1767,7 @@ mod tests {
 
         // Dedicated database: the probe table and the orphaned backend must
         // stay invisible to concurrent tests in the shared database.
-        let base_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+        let base_url = std::env::var("BEEKEEPER_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| TEST_DB_URL.to_owned());
         let admin = PgPool::connect(&base_url)
@@ -1923,7 +1923,7 @@ mod tests {
     }
 
     async fn connect_test_pool() -> PgPool {
-        let database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+        let database_url = std::env::var("BEEKEEPER_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| TEST_DB_URL.to_owned());
 

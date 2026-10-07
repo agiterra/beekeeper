@@ -90,7 +90,7 @@ export function formatModelDiscoveryErrorStatus(
   }
 
   // Spec-reserved auth error text (agent-client-protocol ErrorCode::AuthRequired),
-  // surfaced verbatim through buzz-acp's stderr — generic across conformant
+  // surfaced verbatim through beekeeper-acp's stderr — generic across conformant
   // harnesses (e.g. cursor-agent when not signed in). Match the message text,
   // NOT code -32000: that code is also the catch-all fallback for unclassified
   // errors, so matching it would swallow unrelated failures into "sign in".
@@ -120,7 +120,7 @@ export function formatModelDiscoveryErrorStatus(
   if (
     message.includes("DATABRICKS_HOST required") ||
     message.includes("DATABRICKS_MODEL required") ||
-    message.includes("BUZZ_AGENT_PROVIDER is required")
+    message.includes("BEEKEEPER_AGENT_PROVIDER is required")
   ) {
     return null;
   }

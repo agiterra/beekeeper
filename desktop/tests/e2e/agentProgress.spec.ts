@@ -9,14 +9,14 @@ import {
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_METADATA_TAG_VERSION,
   codingSessionMetadataSemanticKey,
   lifecycleReceiptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
   codingSessionTranscriptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -230,7 +230,7 @@ function metadataEvent(input: {
         ["csm-key", codingSessionMetadataSemanticKey(input.target)],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: input.target,
         projectRef: PROJECT_COORDINATE,
         repoRef: null,
@@ -343,7 +343,7 @@ function transcriptEvent(input: {
         ],
       ],
       content: JSON.stringify({
-        schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
         session: input.target,
         eventSeq: input.eventSeq,
         timestamp: (nowSeconds() - 120 + input.eventSeq) * 1_000,

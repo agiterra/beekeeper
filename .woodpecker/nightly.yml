@@ -47,7 +47,7 @@ steps:
       CARGO_TARGET_DIR: /ci-target
       CARGO_INCREMENTAL: "0"
       DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
-      BUZZ_TEST_POSTGRES_PASSWORD: buzz_dev
+      BEEKEEPER_TEST_POSTGRES_PASSWORD: buzz_dev
       REDIS_URL: redis://:buzz_dev@redis:6379
     commands:
       - export PATH="$CI_WORKSPACE/bin:$PATH"

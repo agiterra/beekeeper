@@ -25,7 +25,7 @@ pub(crate) const SEAT_CWD_UNRECORDED: &str = "SEAT_CWD_UNRECORDED";
 pub(crate) const SEAT_CWD_PROJECT_ROOT: &str = "SEAT_CWD_PROJECT_ROOT";
 
 /// A hired seat's recorded tree is another seat's recorded tree. Same code the
-/// provider raises for the same condition (`buzz-session-provider`
+/// provider raises for the same condition (`beekeeper-session-provider`
 /// `session::SEAT_CWD_SHARED`).
 pub(crate) const SEAT_CWD_SHARED: &str = "SEAT_CWD_SHARED";
 

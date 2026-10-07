@@ -1,7 +1,7 @@
 """Run the production Beekeeper agent stack inside the Harbor task container.
 
-Each provisioned identity is a full ``buzz-acp`` → ``buzz-agent`` →
-``buzz-dev-mcp`` process tree launched *inside* the task container — the same
+Each provisioned identity is a full ``beekeeper-acp`` → ``buzz-agent`` →
+``beekeeper-dev-mcp`` process tree launched *inside* the task container — the same
 binaries and the same MCP toolset (shell, file tools, the ``bee`` CLI on
 PATH) that the desktop app gives a Beekeeper agent. The harness stays outside:
 it provisions, uploads the pinned binaries, posts the task as the trial
@@ -24,7 +24,7 @@ from .manifest import AgentClass, ExperimentManifest
 from .provisioning import AgentCredential, TrialHandle
 from .runtime import RuntimeResult
 
-DEFAULT_MAX_AGENT_ROUNDS = 0  # 0 = unbounded (BUZZ_AGENT_MAX_ROUNDS=0); the trial budget is the clock
+DEFAULT_MAX_AGENT_ROUNDS = 0  # 0 = unbounded (BEEKEEPER_AGENT_MAX_ROUNDS=0); the trial budget is the clock
 # Container-side layout for the uploaded Beekeeper stack.
 REMOTE_ROOT = "/opt/buzz"
 REMOTE_BIN = f"{REMOTE_ROOT}/bin"
@@ -70,9 +70,9 @@ class BeekeeperContainerRuntime:
         logs_dir: Path,
         artifact_root: Path,
         endpoints: dict[str, EndpointLaunchConfig],
-        buzz_acp_binary: str = "buzz-acp",
+        buzz_acp_binary: str = "beekeeper-acp",
         buzz_agent_binary: str = "buzz-agent",
-        buzz_dev_mcp_binary: str = "buzz-dev-mcp",
+        buzz_dev_mcp_binary: str = "beekeeper-dev-mcp",
         buzz_cli_binary: str = "bee",
         relay_gateway: str = "",
         forwarder_binary: str = "relay-forwarder",
@@ -202,9 +202,9 @@ class BeekeeperContainerRuntime:
     async def _install_stack(self, environment: BaseEnvironment) -> None:
         """Upload the pinned Linux binaries into the task container."""
         uploads = {
-            f"{REMOTE_BIN}/buzz-acp": self.buzz_acp_binary,
+            f"{REMOTE_BIN}/beekeeper-acp": self.buzz_acp_binary,
             f"{REMOTE_BIN}/buzz-agent": self.buzz_agent_binary,
-            f"{REMOTE_BIN}/buzz-dev-mcp": self.buzz_dev_mcp_binary,
+            f"{REMOTE_BIN}/beekeeper-dev-mcp": self.buzz_dev_mcp_binary,
         }
         if self.relay_gateway:
             uploads[FORWARDER] = self.forwarder_binary
@@ -336,7 +336,7 @@ class BeekeeperContainerRuntime:
             remote_prompt=remote_prompt,
         )
         command = (
-            f"{shlex.quote(f'{REMOTE_BIN}/buzz-acp')} </dev/null "
+            f"{shlex.quote(f'{REMOTE_BIN}/beekeeper-acp')} </dev/null "
             f">{shlex.quote(stdout_log)} 2>{shlex.quote(stderr_log)} & echo $!"
         )
         result = await environment.exec(command, env=env)
@@ -361,34 +361,34 @@ class BeekeeperContainerRuntime:
         """The desktop-launch environment: real acp/agent/dev-mcp wiring."""
         return {
             **endpoint.env,
-            "BUZZ_RELAY_URL": trial.relay_ws_url,
-            "BUZZ_PRIVATE_KEY": credential.nostr_secret_key,
-            # Desktop parity: the GUI also sets NOSTR_PRIVATE_KEY on buzz-acp
-            # so buzz-dev-mcp's shim can wire git auth/signing for the agent.
+            "BEEKEEPER_RELAY_URL": trial.relay_ws_url,
+            "BEEKEEPER_PRIVATE_KEY": credential.nostr_secret_key,
+            # Desktop parity: the GUI also sets NOSTR_PRIVATE_KEY on beekeeper-acp
+            # so beekeeper-dev-mcp's shim can wire git auth/signing for the agent.
             "NOSTR_PRIVATE_KEY": credential.nostr_secret_key,
-            "BUZZ_AUTH_TAG": credential.nostr_auth_tag,
-            "BUZZ_ACP_AGENT_COMMAND": f"{REMOTE_BIN}/buzz-agent",
-            "BUZZ_ACP_AGENT_ARGS": "",
-            "BUZZ_ACP_MCP_COMMAND": f"{REMOTE_BIN}/buzz-dev-mcp",
-            "BUZZ_ACP_CHANNELS": trial.channel_id,
-            "BUZZ_ACP_SUBSCRIBE": "mentions",
-            "BUZZ_ACP_RESPOND_TO": "anyone",
-            "BUZZ_ACP_NO_MEMORY": "true",
-            "BUZZ_ACP_SYSTEM_PROMPT_FILE": remote_prompt,
-            "BUZZ_AGENT_PROVIDER": endpoint.provider,
-            "BUZZ_AGENT_MODEL": credential.llm_endpoint,
-            "BUZZ_AGENT_MAX_OUTPUT_TOKENS": str(
+            "BEEKEEPER_AUTH_TAG": credential.nostr_auth_tag,
+            "BEEKEEPER_ACP_AGENT_COMMAND": f"{REMOTE_BIN}/buzz-agent",
+            "BEEKEEPER_ACP_AGENT_ARGS": "",
+            "BEEKEEPER_ACP_MCP_COMMAND": f"{REMOTE_BIN}/beekeeper-dev-mcp",
+            "BEEKEEPER_ACP_CHANNELS": trial.channel_id,
+            "BEEKEEPER_ACP_SUBSCRIBE": "mentions",
+            "BEEKEEPER_ACP_RESPOND_TO": "anyone",
+            "BEEKEEPER_ACP_NO_MEMORY": "true",
+            "BEEKEEPER_ACP_SYSTEM_PROMPT_FILE": remote_prompt,
+            "BEEKEEPER_AGENT_PROVIDER": endpoint.provider,
+            "BEEKEEPER_AGENT_MODEL": credential.llm_endpoint,
+            "BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS": str(
                 agent_class.generation.max_output_tokens
             ),
-            "BUZZ_AGENT_MAX_CONTEXT_TOKENS": str(
+            "BEEKEEPER_AGENT_MAX_CONTEXT_TOKENS": str(
                 agent_class.generation.context_window_tokens
             ),
-            "BUZZ_AGENT_MAX_ROUNDS": str(
+            "BEEKEEPER_AGENT_MAX_ROUNDS": str(
                 agent_class.budget.max_calls or self.max_agent_rounds
             ),
             # The pinned persona is the whole prompt: no hint-file or skill
             # discovery from the task filesystem (metadata reports this).
-            "BUZZ_AGENT_NO_HINTS": "1",
+            "BEEKEEPER_AGENT_NO_HINTS": "1",
             endpoint.api_key_env: credential.llm_api_key,
         }
 
@@ -558,9 +558,9 @@ class BeekeeperContainerRuntime:
             stderr=asyncio.subprocess.PIPE,
             env={
                 **os.environ,
-                "BUZZ_RELAY_URL": self._user_relay_url(trial),
-                "BUZZ_PRIVATE_KEY": credential.nostr_secret_key,
-                "BUZZ_AUTH_TAG": credential.nostr_auth_tag,
+                "BEEKEEPER_RELAY_URL": self._user_relay_url(trial),
+                "BEEKEEPER_PRIVATE_KEY": credential.nostr_secret_key,
+                "BEEKEEPER_AUTH_TAG": credential.nostr_auth_tag,
             },
         )
         stdout, stderr = await process.communicate()
@@ -675,12 +675,12 @@ class BeekeeperContainerRuntime:
     @staticmethod
     def _reject_identity_overrides(endpoint: EndpointLaunchConfig) -> None:
         forbidden = {
-            "BUZZ_RELAY_URL",
-            "BUZZ_PRIVATE_KEY",
-            "BUZZ_AUTH_TAG",
-            "BUZZ_ACP_CHANNELS",
-            "BUZZ_ACP_MCP_COMMAND",
-            "BUZZ_ACP_AGENT_COMMAND",
+            "BEEKEEPER_RELAY_URL",
+            "BEEKEEPER_PRIVATE_KEY",
+            "BEEKEEPER_AUTH_TAG",
+            "BEEKEEPER_ACP_CHANNELS",
+            "BEEKEEPER_ACP_MCP_COMMAND",
+            "BEEKEEPER_ACP_AGENT_COMMAND",
         }
         overlap = forbidden & endpoint.env.keys()
         if overlap:

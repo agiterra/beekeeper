@@ -142,7 +142,7 @@ export type CodingSessionKnownTranscriptItemV1 = { [key: string]: unknown } & (
     }
   /**
    * The agent's chain of reasoning. The donor forbade this outright; this fork
-   * allows it deliberately (default-on via `BUZZ_CSP_INCLUDE_THOUGHTS`)
+   * allows it deliberately (default-on via `BEEKEEPER_CSP_INCLUDE_THOUGHTS`)
    * because reasoning is one of the things sessions are stored to analyse.
    */
   | { kind: "reasoning"; text?: unknown; provenance?: unknown }

@@ -38,7 +38,7 @@ use beekeeper_core::coding_session_authority_transition::{
 use beekeeper_core::kind::{KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_SYSTEM_MESSAGE};
 
 /// The system-message `type` the relay stamps on authority-transition
-/// acceptance receipts (see `buzz-relay`'s
+/// acceptance receipts (see `beekeeper-relay`'s
 /// `handle_coding_session_authority_transition_accepted`).
 pub const ACCEPTANCE_RECEIPT_TYPE: &str = "coding_session_authority_transition_accepted";
 

@@ -2,15 +2,15 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "externalBin": [
-      "binaries/buzz-acp",
+      "binaries/beekeeper-acp",
       "binaries/buzz-agent",
-      "binaries/buzz-backend-kubernetes",
-      "binaries/buzz-dev-mcp",
+      "binaries/beekeeper-backend-kubernetes",
+      "binaries/beekeeper-dev-mcp",
       "binaries/git-credential-nostr",
       "binaries/bee",
-      "binaries/buzz-shell-host",
+      "binaries/beekeeper-shell-host",
       "binaries/beekeeper-host",
-      "binaries/buzz-session-provider"
+      "binaries/beekeeper-session-provider"
     ],
     "macOS": {
       "files": {

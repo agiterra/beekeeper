@@ -19,7 +19,7 @@ const CATALOG = [
     command: "buzz-agent",
     binary_path: "/usr/local/bin/buzz-agent",
     default_args: [],
-    mcp_command: "buzz-dev-mcp",
+    mcp_command: "beekeeper-dev-mcp",
     install_hint: "",
     install_instructions_url: "https://github.com/block/buzz",
     can_auto_install: false,

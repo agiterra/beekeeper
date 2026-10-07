@@ -540,7 +540,7 @@ pub(super) struct ProjectsBinding {
 
 /// The environment variable the provider is launched with, and the one this
 /// command defaults `--projects-file` to.
-pub(super) const PROJECTS_FILE_ENV: &str = "BUZZ_CSP_PROJECTS_FILE";
+pub(super) const PROJECTS_FILE_ENV: &str = "BEEKEEPER_CSP_PROJECTS_FILE";
 
 /// The directory of one-shot hints, beside the projects file.
 pub(super) const PENDING_HINTS_DIR: &str = "pending-hints";
