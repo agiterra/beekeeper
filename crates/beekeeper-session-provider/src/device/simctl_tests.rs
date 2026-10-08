@@ -76,7 +76,7 @@ fn choosing_prefers_booted_then_the_default_model_then_any_iphone() {
 
 #[test]
 fn a_machine_without_xcode_probes_missing_with_a_reason() {
-    let simctl = Simctl::new(Arc::new(FakeRunner::new()));
+    let simctl = Simctl::with_developer_dirs(Arc::new(FakeRunner::new()), no_developer_dir());
     let XcodeProbe::Missing(reason) = simctl.probe() else {
         panic!("no xcrun must be missing");
     };
