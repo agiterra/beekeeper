@@ -238,7 +238,11 @@ test("saved launch is read on mount without replay and does not label relay acce
     view.queryByRole("button", { name: "Open authoring session" }),
     null,
   );
-  assert.equal(observed.at(-1)?.status, "awaiting_receipt");
+  // The observation is reported from an effect, which can land after the
+  // status text under a loaded test run (pre-push floor, 2026-10-08).
+  await waitFor(() =>
+    assert.equal(observed.at(-1)?.status, "awaiting_receipt"),
+  );
   assert.equal(
     calls.some((call) =>
       /start_authoring|reserve_authoring|provision_coding/.test(call.command),
@@ -279,10 +283,12 @@ test("failed durable read blocks Start until explicit status check recovers both
   await waitFor(() =>
     assert.ok(view.getByText("Saved reservation unreadable")),
   );
-  assert.equal(
-    observed.at(-1),
-    "unreadable",
-    "a failed read is not 'no launch'",
+  await waitFor(() =>
+    assert.equal(
+      observed.at(-1),
+      "unreadable",
+      "a failed read is not 'no launch'",
+    ),
   );
   assert.equal(
     view.getByRole("button", { name: "Start authoring session" }).disabled,
