@@ -233,6 +233,21 @@ The prompt text a runtime adapter receives for such a turn is prefixed with a
 **original** text the sender signed — the framing is presentation for the
 model, never a rewrite of the signed record.
 
+## Fork amendment: `model_switched` status (SV-35)
+
+After a [NIP-CSC](NIP-CSC.md) `thread.model.set` is applied, the provider
+publishes, at the boundary and before the next turn's items, a status item
+with no `turnId` and exactly these keys:
+
+```json
+{"kind":"status","status":"model_switched","model":"opus[1m][high]","requested":"opus[1m][xhigh]","commandId":"<44220 commandId>"}
+```
+
+`model` is what the adapter acknowledged (the value `kind:44223` `model` now
+carries), `requested` the selection verbatim, and `commandId` names the
+command whose signer asked. A reader that does not know the slug renders a
+generic status row.
+
 ## Authority and immutable reconciliation
 
 The relay requires `messages:write`, an `h` channel scope, and **active channel

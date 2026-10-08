@@ -377,6 +377,39 @@ void main() {
       expect(blocks.single.items.last.text, 'something_new');
     });
 
+    test(
+      'SV-35 model_switched names what took effect, and the ask if it differs',
+      () {
+        final blocks = projectCodingSessionTranscript([
+          _envelope(
+            eventSeq: 1,
+            item: {
+              'kind': 'status',
+              'status': 'model_switched',
+              'model': 'opus[1m]',
+              'requested': 'opus[1m][high]',
+              'commandId': 'model-1',
+            },
+          ),
+          _envelope(
+            eventSeq: 2,
+            item: {
+              'kind': 'status',
+              'status': 'model_switched',
+              'model': 'opus[1m][high]',
+              'requested': 'opus[1m][high]',
+              'commandId': 'model-2',
+            },
+          ),
+        ]);
+        final items = blocks.single.items;
+        expect(items.first.title, 'Switched to opus[1m]');
+        expect(items.first.text, 'Asked opus[1m][high] · running opus[1m]');
+        expect(items.last.title, 'Switched to opus[1m][high]');
+        expect(items.last.text, '');
+      },
+    );
+
     test('boundary statuses name the protection and its reason', () {
       final blocks = projectCodingSessionTranscript([
         _envelope(

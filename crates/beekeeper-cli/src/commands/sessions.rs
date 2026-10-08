@@ -83,6 +83,10 @@ mod crew_tests;
 #[cfg(test)]
 mod crew_wire_tests;
 pub mod display_name;
+// `thread.model.set` from a terminal: switch a model at the next boundary.
+pub mod model;
+#[cfg(test)]
+mod model_tests;
 // `session.stop` from a terminal: an unattended controller's deadline stop.
 pub mod stop;
 #[cfg(test)]
@@ -2895,6 +2899,25 @@ pub async fn dispatch(
                 reply_to.as_deref(),
                 &image,
                 no_wait,
+            )
+            .await
+        }
+        SessionsCmd::Model {
+            channel,
+            to,
+            session_ref,
+            model,
+            timeout_secs,
+            no_wait,
+        } => {
+            model::cmd_model(
+                client,
+                &channel,
+                &to,
+                session_ref.as_deref(),
+                &model,
+                no_wait,
+                timeout_secs,
             )
             .await
         }

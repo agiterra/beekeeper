@@ -32,6 +32,7 @@ import {
 import { formatRedactedBytes } from "@/shared/lib/redactionMarker";
 
 import { codingSessionBoundaryRow } from "./codingSessionBoundaryStatus";
+import { codingSessionModelSwitchedRow } from "./codingSessionModelSwitchedStatus";
 import { normalizeOperatorPubkey } from "./codingSessionPromptAttribution";
 import { codingSessionToolOutputGapField } from "./codingSessionToolOutputCompleteness";
 import type { CodingSessionQuarantineItemV1 } from "./codingSessionTranscriptItemContract";
@@ -849,9 +850,11 @@ function buildStatusLifecycleItem(
     typeof item.status === "string" ? item.status : "",
     200,
   );
-  const boundary = codingSessionBoundaryRow(status, item.reason);
-  if (boundary !== undefined) {
-    return buildSimpleLifecycleItem(ctx, boundary.title, boundary.text);
+  const row =
+    codingSessionBoundaryRow(status, item.reason) ??
+    codingSessionModelSwitchedRow(item, ctx.bridgeSource?.label);
+  if (row !== undefined) {
+    return buildSimpleLifecycleItem(ctx, row.title, row.text);
   }
   const continuity = CODING_SESSION_CONTINUITY_STATUSES.get(status);
   if (!continuity) {

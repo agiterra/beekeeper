@@ -36,6 +36,11 @@ export type CodingSessionCapabilities = {
    * reading of a provider that never claimed image support.
    */
   promptImage: boolean;
+  /**
+   * SV-35: this execution accepts `thread.model.set` (44223 only; omitted
+   * when false, so absent reads as "cannot switch").
+   */
+  modelSwitch?: boolean;
 };
 
 /** Provider-neutral catalog record consumed by coding-session surfaces. */

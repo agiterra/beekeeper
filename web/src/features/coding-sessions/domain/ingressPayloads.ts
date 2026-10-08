@@ -130,7 +130,10 @@ export type CodingSessionLifecycleReceipt =
   | {
       schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
       commandId: string;
-      status: "interrupt_delivered" | "continuation_registered";
+      status:
+        | "interrupt_delivered"
+        | "continuation_registered"
+        | "model_applied";
       session: CodingSessionTarget;
       error: null;
     };
@@ -177,6 +180,11 @@ export const CODING_SESSION_TURN_RECEIPT_STATUSES = [
   // A stage of one 44220 saying a CI continuation was stored. It creates,
   // confirms and ends nothing, exactly as a queued turn does.
   "continuation_registered",
+  // SV-35: a `thread.model.set` was accepted at the boundary. Terminal, no
+  // turn; the model in effect is read from 44223, never from this receipt.
+  // Its refusals are `turn_refused` with `MODEL_SWITCH_UNSUPPORTED`,
+  // `MODEL_NOT_OFFERED` or `MODEL_SWITCH_FAILED`, read as bounded codes.
+  "model_applied",
 ] as const;
 
 /** A per-stage turn status, as opposed to a generation lifecycle status. */
@@ -402,7 +410,8 @@ function parseTurnReceipt(
     // A registration carries no error for the same reason a queued turn does
     // not: everything a CI continuation can be refused for happens later, as
     // a turn stage of this same command.
-    status === "continuation_registered"
+    status === "continuation_registered" ||
+    status === "model_applied"
   ) {
     if (value.error !== null) return null;
     return Object.freeze({
@@ -768,12 +777,16 @@ function decodeCapabilities(value: unknown): CodingSessionCapabilities | null {
   // sessions into `null`, which reads as "this execution can do nothing" —
   // finding 34, and the disagreement Astra measured in this copy on
   // 2026-09-21.
-  const optionalKeys = ["promptImage"] as const;
+  // `modelSwitch` (SV-35) is optional for the same reason; it is omitted
+  // when false, so only a switchable execution carries it.
+  const optionalKeys = ["promptImage", "modelSwitch"] as const;
   if (
     !isPlainRecord(value) ||
     !hasRequiredAndOptionalKeys(value, keys, optionalKeys) ||
     !keys.every((key) => typeof value[key] === "boolean") ||
-    (hasOwnKey(value, "promptImage") && typeof value.promptImage !== "boolean")
+    optionalKeys.some(
+      (key) => hasOwnKey(value, key) && typeof value[key] !== "boolean",
+    )
   ) {
     return null;
   }
@@ -785,6 +798,7 @@ function decodeCapabilities(value: unknown): CodingSessionCapabilities | null {
     diff: value.diff as boolean,
     plan: value.plan as boolean,
     promptImage: value.promptImage === true,
+    ...(value.modelSwitch === true ? { modelSwitch: true } : {}),
   });
 }
 

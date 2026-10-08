@@ -141,6 +141,7 @@ test("both new statuses are turn statuses, so their keys name the stage", () => 
       "turn_refused",
       "interrupt_delivered",
       "continuation_registered",
+      "model_applied",
     ],
   );
   // Literal, not a call compared to itself: the earlier form was true for any

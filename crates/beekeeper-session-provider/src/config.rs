@@ -167,6 +167,14 @@ pub struct Config {
     /// only where the readers join consecutive prose.
     /// See `BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH`.
     pub transcript_paragraph_flush: bool,
+    /// SV-35: advertise `capabilities.modelSwitch` and accept
+    /// `thread.model.set`.
+    ///
+    /// Defaults to [`crate::model_switch::MODEL_SWITCH_ENABLED`] (off): older
+    /// exact-key readers reject the unseen capability key, so only a canary
+    /// host whose readers all accept it turns it on. Read once at start; see
+    /// `BUZZ_CSP_MODEL_SWITCH`.
+    pub model_switch: bool,
     /// Ask the adapter to forward raw SDK messages to the local log.
     ///
     /// Off by default. This is a debugging instrument, not a setting: the
@@ -335,6 +343,11 @@ impl Config {
         let include_thoughts = parse_bool(&lookup, "BUZZ_CSP_INCLUDE_THOUGHTS", true)?;
         let transcript_paragraph_flush =
             parse_bool(&lookup, "BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", false)?;
+        let model_switch = parse_bool(
+            &lookup,
+            "BUZZ_CSP_MODEL_SWITCH",
+            crate::model_switch::MODEL_SWITCH_ENABLED,
+        )?;
         let emit_raw_sdk_frames = parse_bool(&lookup, "BUZZ_CSP_EMIT_RAW_SDK_FRAMES", false)?;
         let auto_title = parse_bool(&lookup, crate::auto_title::AUTO_TITLE_ENV, true)?;
         let session_isolation = crate::session_isolation::SessionIsolation::from_lookup(&lookup)?;
@@ -360,6 +373,7 @@ impl Config {
             turn_budget,
             include_thoughts,
             transcript_paragraph_flush,
+            model_switch,
             emit_raw_sdk_frames,
             redaction_retention,
             command_horizon,
@@ -877,6 +891,21 @@ mod tests {
         vars.insert("BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", "1".into());
         assert!(load(&vars).unwrap().transcript_paragraph_flush);
         vars.insert("BUZZ_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", "sometimes".into());
+        assert!(load(&vars).is_err());
+    }
+
+    /// SV-35's emission ships off (older exact-key readers reject the
+    /// `modelSwitch` key); a canary host turns it on by environment.
+    #[test]
+    fn model_switch_is_off_unless_switched_on() {
+        const { assert!(!crate::model_switch::MODEL_SWITCH_ENABLED) };
+        assert!(!load(&minimal()).unwrap().model_switch);
+        let mut vars = minimal();
+        vars.insert("BUZZ_CSP_MODEL_SWITCH", "1".into());
+        assert!(load(&vars).unwrap().model_switch);
+        vars.insert("BUZZ_CSP_MODEL_SWITCH", "0".into());
+        assert!(!load(&vars).unwrap().model_switch);
+        vars.insert("BUZZ_CSP_MODEL_SWITCH", "sometimes".into());
         assert!(load(&vars).is_err());
     }
 

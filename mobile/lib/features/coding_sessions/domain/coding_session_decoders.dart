@@ -599,7 +599,9 @@ Map<String, bool>? _decodeCapabilities(Object? value) {
   // amendment (all of them, since 2026-09) decoded as corruption: no status,
   // no title, no model — a session list of "unknown" chips over live
   // sessions (live finding 2026-09-08, phone vs desktop on the same relay).
-  const optional = ['promptImage'];
+  // `modelSwitch` (SV-35) is optional for the same reason: it is omitted when
+  // false, so only a switchable execution's 44223 carries it.
+  const optional = ['promptImage', 'modelSwitch'];
   if (!isPlainRecord(value)) return null;
   final record = value! as Map<String, dynamic>;
   if (!hasRequiredAndOptionalKeys(record, keys, optional)) return null;
@@ -796,6 +798,7 @@ _ReceiptErrorExpectation? _receiptErrorExpectation(
   CodingSessionReceiptStatus.continuationRegistered ||
   CodingSessionReceiptStatus.turnQueued ||
   CodingSessionReceiptStatus.turnStarted ||
+  CodingSessionReceiptStatus.modelApplied ||
   CodingSessionReceiptStatus.turnInjected => const _ReceiptErrorExpectation(
     mustHaveError: false,
   ),

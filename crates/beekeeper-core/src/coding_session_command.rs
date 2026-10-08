@@ -293,7 +293,27 @@ pub enum CodingSessionAction {
         /// for "never expires".
         expires_at: u64,
     },
+    /// Switch the selected generation's model (and effort) at its next turn
+    /// boundary (NIP-CSC, SV-35).
+    ///
+    /// Not a turn: no budget is spent and nothing is prompted. It waits in the
+    /// execution's mailbox behind any running or queued turn and is applied
+    /// between turns, in order. Its one terminal answer is `model_applied` or
+    /// a `turn_refused`/`turn_dropped`; the model that actually took effect is
+    /// published only in that generation's metadata (44223 `model`).
+    #[serde(rename = "thread.model.set")]
+    ThreadModelSet {
+        /// `<base>[<token>]…` — the grammar the create's `model` takes: a base
+        /// from the provider instance's catalog `allowedModels`, then optional
+        /// bracketed effort / context / `fast` tokens.
+        selection: String,
+    },
 }
+
+/// Maximum UTF-8 byte length of a `thread.model.set` selection: the same
+/// ceiling a lifecycle create puts on its `model` reference.
+pub const MAX_MODEL_SELECTION_BYTES: usize =
+    crate::coding_session_lifecycle_command::MAX_LIFECYCLE_REFERENCE_BYTES;
 
 /// Durable coding-session command JSON payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -367,6 +387,19 @@ impl CodingSessionCommandPayload {
                 }
                 if *expires_at == 0 {
                     return Err("action.expiresAt must be a positive Unix timestamp".into());
+                }
+            }
+            CodingSessionAction::ThreadModelSet { selection } => {
+                if selection.trim().is_empty() {
+                    return Err("action.selection must not be empty".into());
+                }
+                if selection.len() > MAX_MODEL_SELECTION_BYTES {
+                    return Err(format!(
+                        "action.selection exceeds {MAX_MODEL_SELECTION_BYTES} bytes"
+                    ));
+                }
+                if selection.chars().any(char::is_control) {
+                    return Err("action.selection must not contain control characters".into());
                 }
             }
         }
@@ -547,7 +580,8 @@ mod tests {
             match &payload.action {
                 CodingSessionAction::ThreadTurnStart { text, .. } => text.len(),
                 CodingSessionAction::ThreadTurnInterrupt
-                | CodingSessionAction::ThreadTurnContinueOnCi { .. } => unreachable!(),
+                | CodingSessionAction::ThreadTurnContinueOnCi { .. }
+                | CodingSessionAction::ThreadModelSet { .. } => unreachable!(),
             },
             MAX_TURN_TEXT_BYTES
         );
@@ -1000,6 +1034,48 @@ mod tests {
                 .is_err(),
             "accepted an unknown identity key"
         );
+    }
+
+    /// SV-35: `thread.model.set` round-trips with exactly its two keys and is
+    /// refused blank, oversized, or carrying a control character.
+    #[test]
+    fn coding_session_model_set_round_trips_and_validates_its_selection() {
+        let mut payload = valid_payload();
+        payload.action = CodingSessionAction::ThreadModelSet {
+            selection: "opus[1m][high]".into(),
+        };
+        assert!(payload.validate().is_ok());
+        let wire = serde_json::to_value(&payload).expect("encode");
+        assert_eq!(
+            wire["action"],
+            serde_json::json!({"type": "thread.model.set", "selection": "opus[1m][high]"})
+        );
+        let decoded: CodingSessionCommandPayload =
+            serde_json::from_value(wire.clone()).expect("decode");
+        assert_eq!(decoded, payload);
+        let mut extra = wire;
+        extra["action"]["deliver"] = serde_json::json!("boundary");
+        assert!(
+            serde_json::from_value::<CodingSessionCommandPayload>(extra).is_err(),
+            "a model switch carries no deliver class"
+        );
+
+        let at_limit = "m".repeat(MAX_MODEL_SELECTION_BYTES);
+        for (selection, ok) in [
+            ("".to_owned(), false),
+            ("   ".to_owned(), false),
+            ("opus\n[high]".to_owned(), false),
+            ("opus\u{7}".to_owned(), false),
+            (format!("{at_limit}m"), false),
+            (at_limit, true),
+            ("é".repeat(MAX_MODEL_SELECTION_BYTES / 2), true),
+        ] {
+            payload.action = CodingSessionAction::ThreadModelSet {
+                selection: selection.clone(),
+            };
+            assert_eq!(payload.validate().is_ok(), ok, "{selection:?}");
+        }
+        assert_eq!(MAX_MODEL_SELECTION_BYTES, 2048);
     }
 
     #[test]

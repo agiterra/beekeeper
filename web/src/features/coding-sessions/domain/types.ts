@@ -58,6 +58,11 @@ export type CodingSessionCapabilities = {
    * desktop readers until lane 223 taught this copy the shared vectors.
    */
   promptImage: boolean;
+  /**
+   * SV-35: this execution accepts `thread.model.set` (44223 only; omitted
+   * when false, so absent reads as "cannot switch").
+   */
+  modelSwitch?: boolean;
 };
 
 /**

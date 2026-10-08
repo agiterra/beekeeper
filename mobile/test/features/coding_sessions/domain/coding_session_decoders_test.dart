@@ -143,6 +143,7 @@ void main() {
         'turn_dropped',
         'turn_refused',
         'interrupt_delivered',
+        'model_applied',
       ]) {
         final decoded = decodeCodingSessionReceipt(
           receiptEvent(
@@ -166,6 +167,48 @@ void main() {
           isFalse,
           reason: status,
         );
+      }
+    });
+
+    test('SV-35 model_applied: five keys, no error, no turn', () {
+      final applied = decodeCodingSessionReceipt(
+        receiptEvent(commandId: 'model-1', status: 'model_applied'),
+      );
+      expect(applied.value!.status, CodingSessionReceiptStatus.modelApplied);
+      expect(applied.value!.turnId, isNull);
+      expect(
+        decodeCodingSessionReceipt(
+          receiptEvent(
+            commandId: 'model-1',
+            status: 'model_applied',
+            turnId: 'turn-1',
+          ),
+        ).reason,
+        CodingSessionDecodeReason.malformedPayload,
+      );
+      expect(
+        decodeCodingSessionReceipt(
+          receiptEvent(
+            commandId: 'model-1',
+            status: 'model_applied',
+            error: {'code': 'X', 'message': 'x'},
+          ),
+        ).reason,
+        CodingSessionDecodeReason.malformedPayload,
+      );
+      for (final code in [
+        'MODEL_SWITCH_UNSUPPORTED',
+        'MODEL_NOT_OFFERED',
+        'MODEL_SWITCH_FAILED',
+      ]) {
+        final refused = decodeCodingSessionReceipt(
+          receiptEvent(
+            commandId: 'model-1',
+            status: 'turn_refused',
+            error: {'code': code, 'message': 'the execution keeps its model'},
+          ),
+        );
+        expect(refused.value!.error!.code, code);
       }
     });
 
@@ -851,6 +894,26 @@ void _promptImageAmendment() {
       expect(decoded.value, isNotNull, reason: decoded.reason.toString());
       expect(decoded.value!.capabilities['promptImage'], isTrue);
       expect(decoded.value!.capabilities['plan'], isNotNull);
+    });
+
+    test('SV-35 modelSwitch is optional: absent and true both decode', () {
+      final absent = decodeCodingSessionMetadata(metadataEvent());
+      expect(absent.value!.capabilities['modelSwitch'], isNull);
+      final source = metadataEvent();
+      final payload = jsonDecode(source.content) as Map<String, dynamic>;
+      (payload['capabilities'] as Map<String, dynamic>)['modelSwitch'] = true;
+      final decoded = decodeCodingSessionMetadata(
+        _withContent(source, jsonEncode(payload)),
+      );
+      expect(decoded.value, isNotNull, reason: decoded.reason.toString());
+      expect(decoded.value!.capabilities['modelSwitch'], isTrue);
+      (payload['capabilities'] as Map<String, dynamic>)['modelSwitch'] = 'yes';
+      expect(
+        decodeCodingSessionMetadata(
+          _withContent(source, jsonEncode(payload)),
+        ).reason,
+        CodingSessionDecodeReason.malformedPayload,
+      );
     });
 
     test('a non-boolean promptImage is still corruption', () {

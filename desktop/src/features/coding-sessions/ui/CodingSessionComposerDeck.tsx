@@ -16,10 +16,18 @@ import {
   codingSessionTraitsSummary,
 } from "@/features/coding-sessions/lib/codingSessionModelDisplay";
 import { formatCodingSessionModelDisplay } from "@/features/coding-sessions/lib/codingSessionLabels";
+import {
+  CODING_SESSION_MODEL_SWITCH_OPERATORS_ONLY_TEXT,
+  CODING_SESSION_MODEL_SWITCH_UNSUPPORTED_TEXT,
+} from "@/features/coding-sessions/lib/codingSessionModelSwitchRows";
 import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
+import {
+  CodingSessionComposerModelChips,
+  type CodingSessionModelSwitchBinding,
+} from "./CodingSessionComposerModelChips";
 import {
   CodingSessionComposerProviderMark,
   codingSessionProviderMarkKind,
@@ -38,6 +46,8 @@ export type CodingSessionComposerControlContext = {
     context: boolean;
     diff: boolean;
     plan: boolean;
+    /** SV-35: metadata says this execution accepts `thread.model.set`. */
+    modelSwitch?: boolean;
   } | null;
   model: string | null;
   providerLabel: string | null;
@@ -57,6 +67,11 @@ export type CodingSessionComposerControlContext = {
    * to read it from; the chip is then not drawn at all rather than guessed.
    */
   sandbox?: CodingSessionComposerSandbox | null;
+  /**
+   * Where a model switch is addressed (SV-35). Absent where the caller has no
+   * exact target; the chips then stay display-only rather than guess one.
+   */
+  modelSwitch?: CodingSessionModelSwitchBinding | null;
 };
 
 type CodingSessionComposerDeckProps = {
@@ -181,6 +196,29 @@ export function CodingSessionComposerDeck({
   const availableCapabilities = context
     ? capabilityLabels(context.capabilities)
     : [];
+  // SV-35: the chips switch only when metadata says this execution can, the
+  // caller named the exact target, and this viewer may control it. Every
+  // other case keeps the display-only identity chip and says which it is.
+  const executionSwitches = context?.capabilities?.modelSwitch === true;
+  const switchBinding =
+    executionSwitches && canControl && accessCopy === null
+      ? (context?.modelSwitch ?? null)
+      : null;
+  const identityDisclosure = !executionSwitches
+    ? CODING_SESSION_MODEL_SWITCH_UNSUPPORTED_TEXT
+    : !canControl || accessCopy !== null
+      ? CODING_SESSION_MODEL_SWITCH_OPERATORS_ONLY_TEXT
+      : "Open this execution's own session view to change its model.";
+  const modelChips = switchBinding ? (
+    <CodingSessionComposerModelChips
+      binding={switchBinding}
+      chipClassName={COMPOSER_CHIP_CLASS}
+      model={context?.model ?? null}
+      providerLabel={context?.providerLabel ?? null}
+      providerMark={providerMark}
+      runtimeLabel={context?.runtimeLabel ?? null}
+    />
+  ) : null;
 
   return (
     <div className="flex min-w-0 flex-col">
@@ -189,78 +227,91 @@ export function CodingSessionComposerDeck({
         data-testid="coding-session-control-deck"
       >
         <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-          {recipientControl ?? (
-            <Popover>
-              <PopoverTrigger asChild>
-                <button
-                  aria-label="Show execution identity"
-                  className={cn(
-                    COMPOSER_CHIP_CLASS,
-                    "min-w-0 text-foreground/75",
-                  )}
-                  data-testid="coding-session-control-identity"
-                  title={identityLabel}
-                  type="button"
-                >
-                  <CodingSessionComposerProviderMark kind={providerMark} />
-                  <span className="max-w-48 truncate">{identityChipLabel}</span>
-                  <ChevronDown
-                    aria-hidden
-                    className="size-3 shrink-0 opacity-60"
-                  />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-72" side="top">
-                <p className="text-sm font-medium">Execution identity</p>
-                <dl className="mt-3 grid gap-2 text-xs">
-                  {context?.providerLabel ? (
-                    <ComposerDefinition
-                      label="Provider"
-                      value={context.providerLabel}
+          {recipientControl && modelChips ? (
+            <>
+              {recipientControl}
+              <ComposerChipSeparator />
+              {modelChips}
+            </>
+          ) : (
+            (recipientControl ??
+            modelChips ?? (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    aria-label="Show execution identity"
+                    className={cn(
+                      COMPOSER_CHIP_CLASS,
+                      "min-w-0 text-foreground/75",
+                    )}
+                    data-testid="coding-session-control-identity"
+                    title={identityLabel}
+                    type="button"
+                  >
+                    <CodingSessionComposerProviderMark kind={providerMark} />
+                    <span className="max-w-48 truncate">
+                      {identityChipLabel}
+                    </span>
+                    <ChevronDown
+                      aria-hidden
+                      className="size-3 shrink-0 opacity-60"
                     />
-                  ) : null}
-                  {context?.runtimeLabel ? (
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-72" side="top">
+                  <p className="text-sm font-medium">Execution identity</p>
+                  <dl className="mt-3 grid gap-2 text-xs">
+                    {context?.providerLabel ? (
+                      <ComposerDefinition
+                        label="Provider"
+                        value={context.providerLabel}
+                      />
+                    ) : null}
+                    {context?.runtimeLabel ? (
+                      <ComposerDefinition
+                        label="Runtime"
+                        value={context.runtimeLabel}
+                      />
+                    ) : null}
+                    {modelName ? (
+                      <ComposerDefinition label="Model" value={modelName} />
+                    ) : null}
+                    {traits ? (
+                      <ComposerDefinition label="Model traits" value={traits} />
+                    ) : null}
                     <ComposerDefinition
-                      label="Runtime"
-                      value={context.runtimeLabel}
+                      label="Capabilities"
+                      value={
+                        availableCapabilities.length > 0
+                          ? availableCapabilities.join(", ")
+                          : "Not declared"
+                      }
                     />
-                  ) : null}
-                  {modelName ? (
-                    <ComposerDefinition label="Model" value={modelName} />
-                  ) : null}
-                  {traits ? (
-                    <ComposerDefinition label="Model traits" value={traits} />
-                  ) : null}
-                  <ComposerDefinition
-                    label="Capabilities"
-                    value={
-                      availableCapabilities.length > 0
-                        ? availableCapabilities.join(", ")
-                        : "Not declared"
-                    }
-                  />
-                  {context?.turnBudget ? (
-                    <ComposerDefinition
-                      label="Team turns"
-                      testId="coding-session-control-turn-budget"
-                      value={codingSessionTurnBudgetUsage(context.turnBudget)}
-                    />
-                  ) : null}
-                </dl>
-                <p className="mt-3 text-xs text-muted-foreground">
-                  This identifies the signed execution. Its model and traits are
-                  fixed for this execution.
-                </p>
-                {context?.turnBudget ? (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    The turn count is the whole team session's, shared by every
-                    execution under it. At the limit the provider refuses
-                    further turns from the agents; only the execution's founder
-                    is exempt.
+                    {context?.turnBudget ? (
+                      <ComposerDefinition
+                        label="Team turns"
+                        testId="coding-session-control-turn-budget"
+                        value={codingSessionTurnBudgetUsage(context.turnBudget)}
+                      />
+                    ) : null}
+                  </dl>
+                  <p
+                    className="mt-3 text-xs text-muted-foreground"
+                    data-testid="coding-session-model-switch-disclosure"
+                  >
+                    This identifies the signed execution. {identityDisclosure}
                   </p>
-                ) : null}
-              </PopoverContent>
-            </Popover>
+                  {context?.turnBudget ? (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      The turn count is the whole team session's, shared by
+                      every execution under it. At the limit the provider
+                      refuses further turns from the agents; only the
+                      execution's founder is exempt.
+                    </p>
+                  ) : null}
+                </PopoverContent>
+              </Popover>
+            ))
           )}
 
           <ComposerChipSeparator />
@@ -300,12 +351,12 @@ export function CodingSessionComposerDeck({
             </>
           ) : null}
 
-          {deckTraits ? <ComposerChipSeparator /> : null}
-          {deckTraits ? (
+          {deckTraits && !modelChips ? <ComposerChipSeparator /> : null}
+          {deckTraits && !modelChips ? (
             <span
               className="hidden shrink-0 rounded-full px-2 py-0.5 sm:inline"
               data-testid="coding-session-control-traits"
-              title="Fixed model traits for this execution; the identity chip lists them in full"
+              title="Model traits as this execution's metadata records them; the identity chip lists them in full"
             >
               {deckTraits}
             </span>
@@ -581,6 +632,7 @@ function capabilityLabels(
     capabilities.context ? "Context" : null,
     capabilities.diff ? "Diff" : null,
     capabilities.plan ? "Plan" : null,
+    capabilities.modelSwitch ? "Model switch" : null,
   ].filter((value): value is string => value !== null);
 }
 

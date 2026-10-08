@@ -456,6 +456,23 @@ CodingSessionTranscriptItem _status(CodingSessionTranscriptEnvelope envelope) {
           : '$boundary (${_bounded(reason, 80)})',
     );
   }
+  if (slug == 'model_switched') {
+    final model = _stringOrNull(envelope.item['model']);
+    if (model != null && model.isNotEmpty) {
+      // `model` is what took effect (the adapter's acknowledgement); the
+      // request is named beside it only when the two differ.
+      final requested = _stringOrNull(envelope.item['requested']);
+      final shown = _bounded(model, 120);
+      return _base(
+        envelope,
+        type: CodingSessionItemType.lifecycle,
+        title: 'Switched to $shown',
+        text: requested == null || requested == model
+            ? ''
+            : 'Asked ${_bounded(requested, 120)} · running $shown',
+      );
+    }
+  }
   final continuity = codingSessionContinuityStatuses[slug];
   if (continuity == null) {
     return _base(

@@ -422,6 +422,14 @@ function ExecutionComposer({
         sandbox,
         status,
         turnBudget: record.turnBudget,
+        modelSwitch: target
+          ? {
+              channelId,
+              target,
+              providerAuthorityPubkey: participant.execution.signerPubkey,
+              providerInstanceRef: record.provider,
+            }
+          : null,
       }}
       currentUserPubkey={currentUserPubkey}
       immersive

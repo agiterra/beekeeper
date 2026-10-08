@@ -462,6 +462,8 @@ impl Provider {
             .insert(record.session_id.clone(), startup.steering_supported);
         self.prompt_image
             .insert(record.session_id.clone(), startup.prompt_image_supported);
+        self.model_switch
+            .witness(&record.session_id, startup.model_switch_supported);
 
         // The one write a restore is allowed to make, and the two fields it
         // may touch. `generation`, `generation_command_id`, `next_seq`,

@@ -1060,6 +1060,25 @@ Provider outboxes fence each publication by semantic key, current provider
 signing pubkey, and exact event kind, so a signing-key rotation cannot reuse an
 event signed by the previous key.
 
+### Fork amendment: `model_applied` (SV-35)
+
+`model_applied` answers a [NIP-CSC](NIP-CSC.md) `thread.model.set` the
+execution applied at its turn boundary. It is a turn stage
+(`is_turn_stage`), terminal, and keeps the exact five-key object with
+`session` set and `error: null`; it carries no `turnId` and does not name the
+model — `kind:44223` `model` does, so the two cannot disagree. A switch has no
+`turn_queued`: until its one terminal receipt arrives it is pending, not
+applied. Its refusals are `turn_refused` with:
+
+| Code | Meaning (the execution keeps its model in every case) |
+|---|---|
+| `MODEL_SWITCH_UNSUPPORTED` | the execution's adapter offered no model control at open, or the provider build does not switch |
+| `MODEL_NOT_OFFERED` | the base is not in the instance's `allowedModels`, or the live adapter does not offer it |
+| `MODEL_SWITCH_FAILED` | the adapter answered the set call with an error, or a mode the host boundary requires could not be re-asserted afterwards (the execution is then shut down) |
+
+`turn_dropped` with `QUEUE_FULL` or `NO_LIVE_EXECUTION` (including a process
+that exited with the switch still queued) is unchanged.
+
 ## Ephemeral generation leases
 
 Kind `24223` (`KIND_CODING_SESSION_LEASE`) is a provider-signed, channel-scoped

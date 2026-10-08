@@ -295,6 +295,17 @@ impl SessionActor {
         match command {
             Some(SessionCommand::GuardedCiTurn { .. }) => None,
             None | Some(SessionCommand::Shutdown) => Some(AutonomousEnd::Shutdown),
+            // A switch waits for this turn's boundary like any queued command.
+            Some(switch @ SessionCommand::SetModel { .. }) => {
+                super::model_switch::queue_model_switch(
+                    &self.events,
+                    &self.session_id,
+                    queued,
+                    switch,
+                )
+                .await;
+                None
+            }
             Some(SessionCommand::Interrupt { command_id }) => {
                 // Stop is honoured on a turn nobody prompted too. There is no
                 // prompt to drain, so the cancel is the whole of it; anything

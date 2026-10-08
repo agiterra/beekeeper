@@ -8671,6 +8671,58 @@ mod tests {
         assert!(validate_coding_session_command_envelope(&registration(bad_identity)).is_err());
     }
 
+    /// SV-35: `thread.model.set` is a 44220 like any other — stored, never
+    /// executed by the relay — and a malformed selection is refused at ingest.
+    #[test]
+    fn coding_session_command_admits_a_model_switch_and_refuses_a_malformed_one() {
+        let channel = Uuid::new_v4().to_string();
+        let target = "coding-session/v1|10:provider-a10:instance-19:session-11:2";
+        let switch = |action: serde_json::Value| {
+            let content = serde_json::json!({
+                "schema": "buzz-coding-session-command/v1",
+                "commandId": "model-1",
+                "target": {
+                    "driver": "provider-a",
+                    "instanceId": "instance-1",
+                    "sessionId": "session-1",
+                    "generation": 2,
+                },
+                "action": action,
+            })
+            .to_string();
+            make_event_with_tags(
+                KIND_CODING_SESSION_COMMAND,
+                &content,
+                &[
+                    &["h", &channel],
+                    &["cs-v", "csc1-1"],
+                    &["cs-target", target],
+                ],
+            )
+        };
+        let valid = serde_json::json!({"type": "thread.model.set", "selection": "opus[1m][high]"});
+        assert!(validate_coding_session_command_envelope(&switch(valid.clone())).is_ok());
+
+        for selection in [
+            serde_json::json!(""),
+            serde_json::json!("  "),
+            serde_json::json!("opus\u{0}"),
+            serde_json::json!("m".repeat(2049)),
+            serde_json::json!(null),
+        ] {
+            let action = serde_json::json!({"type": "thread.model.set", "selection": selection});
+            assert!(
+                validate_coding_session_command_envelope(&switch(action)).is_err(),
+                "{selection}"
+            );
+        }
+        let missing = serde_json::json!({"type": "thread.model.set"});
+        assert!(validate_coding_session_command_envelope(&switch(missing)).is_err());
+        let mut unknown_key = valid;
+        unknown_key["deliver"] = serde_json::json!("boundary");
+        assert!(validate_coding_session_command_envelope(&switch(unknown_key)).is_err());
+    }
+
     fn lifecycle_content(project_ref: serde_json::Value) -> String {
         serde_json::json!({
             "schema": "buzz-coding-session-lifecycle-command/v1",

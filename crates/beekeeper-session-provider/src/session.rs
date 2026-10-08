@@ -33,8 +33,7 @@ mod steer_guard;
 use tokio::sync::broadcast;
 
 use beekeeper_acp::acp::{
-    AcpClient, AcpError, EnvVar, McpServer, ModelSwitchMethod, StopReason, SystemPromptTransport,
-    TurnWireSummary,
+    AcpClient, AcpError, EnvVar, McpServer, StopReason, SystemPromptTransport, TurnWireSummary,
 };
 use beekeeper_acp::observer::{context_for, ObserverEvent, ObserverHandle};
 use beekeeper_acp::steer::{
@@ -52,6 +51,8 @@ use crate::transcript::TranscriptTranslator;
 
 #[path = "session_autonomous.rs"]
 mod autonomous;
+#[path = "session_model_switch.rs"]
+mod model_switch;
 
 /// Mailbox depth for one session. Turns beyond this are refused rather than
 /// buffered without bound — an operator who cannot see a queue cannot reason
@@ -399,6 +400,11 @@ pub struct SessionStartup {
     /// behind *this* generation answered, and it gates whether an operator is
     /// offered an attach control at all.
     pub prompt_image_supported: bool,
+    /// Whether this execution's `session/new` offered a model control, so a
+    /// `thread.model.set` can be applied to it (SV-35).
+    pub model_switch_supported: bool,
+    /// The model-control snapshot the actor applies switches against.
+    pub(crate) model_controls: model_switch::ModelControls,
 }
 
 /// How the rehydration continuity bootstrap reached the agent.
@@ -601,6 +607,14 @@ pub enum SessionCommand {
     Interrupt {
         /// The command that requested it.
         command_id: String,
+    },
+    /// Switch the model at the next boundary (SV-35 `thread.model.set`):
+    /// applied when dequeued, in mailbox order, never during a turn.
+    SetModel {
+        /// The command that requested it.
+        command_id: String,
+        /// The validated `<base>[<token>]…` selection.
+        selection: String,
     },
     /// Retire the session and release its resources.
     Shutdown,
@@ -858,6 +872,15 @@ pub enum SessionEvent {
         /// the dequeue boundary for holding the wrong commit is not that
         /// (Astra's Wave 2 re-check, R2).
         reason: TurnDropReason,
+    },
+    /// A `thread.model.set` was applied, refused, or dropped at the boundary.
+    ModelSwitch {
+        /// Which session.
+        session_id: String,
+        /// The command it answers.
+        command_id: String,
+        /// What became of it.
+        outcome: crate::model_switch::ModelSwitchOutcome,
     },
     /// The actor stopped and the subprocess is gone.
     Exited {
@@ -1341,6 +1364,7 @@ impl SessionManager {
             late_sink_closed: false,
             steer_commands: HashMap::new(),
             cwd: request.cwd.clone(),
+            model_controls: startup.model_controls.clone(),
         };
         let task = tokio::spawn(actor.run(rx, shutdown_rx));
         Ok(StartedSession {
@@ -2083,9 +2107,16 @@ async fn start_agent(
     // as the model is the "default label hiding the real model" bug (§2 item
     // 39). A successful switch is the one case the request *is* the truth —
     // the response predates it.
-    let model = apply_model(&mut client, &response, request.model.as_deref())
-        .await
-        .or_else(|| beekeeper_acp::acp::reported_model(&response.raw));
+    let mut model_controls =
+        model_switch::ModelControls::new(response.raw.clone(), bounded_codex_mode(request));
+    let model = model_switch::apply_model_at_open(
+        &mut client,
+        &response.session_id,
+        &mut model_controls,
+        request.model.as_deref(),
+    )
+    .await
+    .or_else(|| beekeeper_acp::acp::reported_model(&response.raw));
     if request.strict_native
         && request
             .model
@@ -2117,6 +2148,8 @@ async fn start_agent(
             // the ACP client that performed the handshake.
             steering_supported,
             prompt_image_supported,
+            model_switch_supported: model_controls.offered(),
+            model_controls,
         },
     ))
 }
@@ -2126,39 +2159,31 @@ async fn assert_bounded_codex_mode(
     request: &CreateRequest,
     response: &beekeeper_acp::acp::SessionNewResponse,
 ) -> Result<(), CreateFailure> {
-    let crate::execution_scope::ExecutionPlan::Prepared(prepared) = &request.execution else {
+    let Some(mode) = bounded_codex_mode(request) else {
         return Ok(());
     };
-    if prepared.runtime != crate::execution_scope::RuntimeProfile::Codex
-        || !matches!(
+    model_switch::assert_mode(client, &response.session_id, &response.raw, mode)
+        .await
+        .map_err(|detail| CreateFailure {
+            code: crate::execution_scope::EXECUTION_BOUNDARY_UNAVAILABLE,
+            message: format!(
+                "Codex could not be placed in the {mode} mode the project boundary requires              ({detail}); nothing was started"
+            ),
+        })
+}
+
+/// The mode the verified host boundary requires this execution's runtime to
+/// stay in: Codex's bounded mode under an enforced boundary, else nothing.
+fn bounded_codex_mode(request: &CreateRequest) -> Option<&'static str> {
+    let crate::execution_scope::ExecutionPlan::Prepared(prepared) = &request.execution else {
+        return None;
+    };
+    (prepared.runtime == crate::execution_scope::RuntimeProfile::Codex
+        && matches!(
             prepared.state(),
             crate::execution_scope::BoundaryState::Enforced { .. }
-        )
-    {
-        return Ok(());
-    }
-    let mode = crate::execution_scope::CODEX_BOUNDED_MODE;
-    let offered = response
-        .raw
-        .pointer("/modes/availableModes")
-        .and_then(serde_json::Value::as_array)
-        .is_none_or(|modes| modes.iter().any(|m| m["id"] == mode));
-    let refused = |detail: String| {
-        CreateFailure {
-        code: crate::execution_scope::EXECUTION_BOUNDARY_UNAVAILABLE,
-        message: format!(
-            "Codex could not be placed in the {mode} mode the project boundary requires              ({detail}); nothing was started"
-        ),
-    }
-    };
-    if !offered {
-        return Err(refused("the adapter does not offer it".to_owned()));
-    }
-    client
-        .session_set_mode(&response.session_id, mode)
-        .await
-        .map(|_| ())
-        .map_err(|error| refused(error.to_string()))
+        ))
+    .then_some(crate::execution_scope::CODEX_BOUNDED_MODE)
 }
 
 /// One opened ACP session, with everything the caller must remember about how
@@ -2721,164 +2746,6 @@ fn rehydration_mcp_servers(request: &CreateRequest) -> Result<Vec<McpServer>, Ac
     }])
 }
 
-/// Ask the adapter to use `desired`, best effort.
-///
-/// A model the adapter does not offer is reported as "not applied" rather than
-/// failing the create: the session is perfectly usable on the adapter's own
-/// default, and metadata says which model actually took effect.
-async fn apply_model(
-    client: &mut AcpClient,
-    response: &beekeeper_acp::acp::SessionNewResponse,
-    desired: Option<&str>,
-) -> Option<String> {
-    let desired = desired?;
-    let method = beekeeper_acp::acp::resolve_model_switch_method(&response.raw, desired);
-    if method.is_none() {
-        if let Some(plan) =
-            beekeeper_acp::model_options::resolve_model_selection(&response.raw, desired)
-        {
-            return apply_model_selection(client, &response.session_id, desired, plan).await;
-        }
-    }
-    let outcome = match method {
-        Some(ModelSwitchMethod::ConfigOption {
-            config_id,
-            option_value,
-        }) => {
-            client
-                .session_set_config_option(&response.session_id, &config_id, &option_value)
-                .await
-        }
-        Some(ModelSwitchMethod::SetModel { model_id }) => {
-            client
-                .session_set_model(&response.session_id, &model_id)
-                .await
-        }
-        None => {
-            // Which values it does offer, so a mismatch (a full model id
-            // asked of an adapter that offers aliases) is readable from the
-            // startup log without spending a turn.
-            let offered: Vec<String> =
-                beekeeper_acp::acp::extract_model_config_options(&response.raw)
-                    .iter()
-                    .flat_map(|option| option["options"].as_array().cloned().unwrap_or_default())
-                    .chain(
-                        beekeeper_acp::acp::extract_model_state(&response.raw)
-                            .and_then(|models| models["availableModels"].as_array().cloned())
-                            .unwrap_or_default(),
-                    )
-                    .filter_map(|entry| {
-                        entry["value"]
-                            .as_str()
-                            .or_else(|| entry["modelId"].as_str())
-                            .map(str::to_owned)
-                    })
-                    .collect();
-            tracing::warn!(
-                target: "csp::session",
-                offered = ?offered,
-                "agent does not offer model {desired} — using its default"
-            );
-            return None;
-        }
-    };
-    match outcome {
-        Ok(_) => Some(desired.to_owned()),
-        Err(error) => {
-            tracing::warn!(target: "csp::session", "model switch to {desired} failed: {error}");
-            None
-        }
-    }
-}
-
-/// Apply a selection the adapter does not advertise whole: its advertised
-/// base model, then each modifier against the controls the adapter returns
-/// *for that model*.
-///
-/// `[fast]` turns the fast-mode switch on; any other token is applied only
-/// when it is one of that model's reasoning-effort values. A token that is
-/// neither is not guessed at — it is logged with what was on offer, exactly
-/// as an unofferable model is — and left out of the returned selection, so
-/// what the session records is what was applied (`opus[1m][fast]` for a
-/// request of `opus[1m][ultra][fast]` on a model without `ultra`).
-async fn apply_model_selection(
-    client: &mut AcpClient,
-    session_id: &str,
-    desired: &str,
-    plan: beekeeper_acp::model_options::ModelSelectionPlan,
-) -> Option<String> {
-    use beekeeper_acp::model_options::{
-        config_option_id, config_option_values, extract_fast_mode_option,
-        extract_thought_level_option, fast_mode_on_value, FAST_MODIFIER,
-    };
-    let mut controls = match client
-        .session_set_config_option(session_id, &plan.config_id, &plan.base)
-        .await
-    {
-        Ok(controls) => controls,
-        Err(error) => {
-            tracing::warn!(
-                target: "csp::session",
-                "model switch to {} (for {desired}) failed: {error}",
-                plan.base
-            );
-            return None;
-        }
-    };
-    let mut applied = plan.base.clone();
-    for token in &plan.modifiers {
-        let (option, value) = if token == FAST_MODIFIER {
-            let option = extract_fast_mode_option(&controls);
-            (option, option.and_then(fast_mode_on_value))
-        } else {
-            let option = extract_thought_level_option(&controls);
-            let offered = option.is_some_and(|option| {
-                config_option_values(option)
-                    .iter()
-                    .any(|value| value == token)
-            });
-            (
-                option,
-                offered.then(|| serde_json::Value::String(token.clone())),
-            )
-        };
-        let target = option.and_then(|option| config_option_id(option).map(str::to_owned));
-        let (Some(config_id), Some(value)) = (target, value) else {
-            let offered: Vec<String> = extract_thought_level_option(&controls)
-                .map(config_option_values)
-                .unwrap_or_default();
-            tracing::warn!(
-                target: "csp::session",
-                offered_efforts = ?offered,
-                fast_mode = extract_fast_mode_option(&controls).is_some(),
-                "agent does not offer [{token}] with model {} — not applied",
-                plan.base
-            );
-            continue;
-        };
-        match client
-            .session_set_config_value(session_id, &config_id, value)
-            .await
-        {
-            Ok(fresh) => {
-                applied.push_str(&format!("[{token}]"));
-                // A later token is judged against what the adapter now says.
-                if beekeeper_acp::model_options::has_config_options(&fresh) {
-                    controls = fresh;
-                }
-            }
-            Err(error) => {
-                tracing::warn!(
-                    target: "csp::session",
-                    "setting [{token}] on model {} failed: {error}",
-                    plan.base
-                );
-            }
-        }
-    }
-    Some(applied)
-}
-
 /// Map an ACP startup failure onto a receipt error code.
 ///
 /// The auth split is what an operator acts on: `PROVIDER_AUTH_REQUIRED` means
@@ -2978,6 +2845,8 @@ struct SessionActor {
     /// The working directory, so a turn outside any repository asks for no
     /// checkpoint baseline (SV-28).
     cwd: std::path::PathBuf,
+    /// What a `thread.model.set` is applied against (SV-35).
+    model_controls: model_switch::ModelControls,
 }
 
 /// What the actor keeps about one dispatched steer while its answer is
@@ -3228,6 +3097,14 @@ impl SessionActor {
             match next {
                 Some(SessionCommand::GuardedCiTurn { .. }) => continue,
                 None | Some(SessionCommand::Shutdown) => break 'actor,
+                Some(SessionCommand::SetModel {
+                    command_id,
+                    selection,
+                }) => {
+                    if self.apply_model_switch(command_id, selection).await {
+                        break 'actor;
+                    }
+                }
                 Some(SessionCommand::Interrupt { command_id }) => {
                     tracing::debug!(
                         target: "csp::session",
@@ -3712,6 +3589,15 @@ impl SessionActor {
                     None | Some(SessionCommand::Shutdown) => break PromptInterruption::Shutdown,
                     Some(SessionCommand::Interrupt { .. }) => {
                         break PromptInterruption::Interrupted
+                    }
+                    Some(switch @ SessionCommand::SetModel { .. }) => {
+                        model_switch::queue_model_switch(
+                            &self.events,
+                            &self.session_id,
+                            queued,
+                            switch,
+                        )
+                        .await;
                     }
                     Some(SessionCommand::Steer {
                         command_id,

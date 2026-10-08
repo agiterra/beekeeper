@@ -65,6 +65,11 @@ class CodingSessionProviderCapabilities {
   /// published before the field existed, which reads as `false`.
   final bool promptImage;
 
+  /// SV-35: whether the instance switches models mid-session. Never set in a
+  /// 44222 in iteration 1 (it is per-execution, in 44223), but accepted
+  /// optionally; absent reads as `false`.
+  final bool modelSwitch;
+
   const CodingSessionProviderCapabilities({
     required this.threadTurnStart,
     required this.threadTurnInterrupt,
@@ -73,6 +78,7 @@ class CodingSessionProviderCapabilities {
     required this.diff,
     required this.plan,
     required this.promptImage,
+    this.modelSwitch = false,
   });
 }
 
@@ -368,14 +374,17 @@ CodingSessionProviderCapabilities? _parseCapabilities(
     'diff',
     'plan',
   ];
-  if (!hasRequiredAndOptionalKeys(value, required, const ['promptImage'])) {
+  const optional = ['promptImage', 'modelSwitch'];
+  if (!hasRequiredAndOptionalKeys(value, required, optional)) {
     return null;
   }
   for (final key in required) {
     if (value[key] is! bool) return null;
   }
+  for (final key in optional) {
+    if (value.containsKey(key) && value[key] is! bool) return null;
+  }
   final promptImage = value['promptImage'];
-  if (value.containsKey('promptImage') && promptImage is! bool) return null;
   return CodingSessionProviderCapabilities(
     threadTurnStart: value['threadTurnStart'] as bool,
     threadTurnInterrupt: value['threadTurnInterrupt'] as bool,
@@ -384,6 +393,7 @@ CodingSessionProviderCapabilities? _parseCapabilities(
     diff: value['diff'] as bool,
     plan: value['plan'] as bool,
     promptImage: promptImage == true,
+    modelSwitch: value['modelSwitch'] == true,
   );
 }
 
@@ -545,6 +555,7 @@ Map<String, Object?> _canonicalCatalog(Map<String, dynamic> payload) =>
                       'diff',
                       'plan',
                       'promptImage',
+                      'modelSwitch',
                     ], const {}),
                 'models': (models) => [
                   for (final model in models as List)

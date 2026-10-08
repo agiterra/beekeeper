@@ -724,3 +724,57 @@ test("every record in the shared fixture is read by this decoder", () => {
     assert.deepEqual(parsed?.routing, entry.routing, entry.name);
   }
 });
+
+test("SV-35: model_applied is a five-key terminal turn stage with no error", () => {
+  assert.equal(isCodingSessionTurnReceiptStatus("model_applied"), true);
+  const applied = parseCodingSessionLifecycleReceipt(
+    receiptJson({ status: "model_applied" }),
+  );
+  assert.equal(applied?.status, "model_applied");
+  assert.equal(applied.error, null);
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receiptJson({ status: "model_applied", turnId: "t1" }),
+    ),
+    null,
+    "a model switch starts no turn",
+  );
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receiptJson({
+        status: "model_applied",
+        error: { code: "X", message: "x" },
+      }),
+    ),
+    null,
+  );
+  for (const code of [
+    "MODEL_SWITCH_UNSUPPORTED",
+    "MODEL_NOT_OFFERED",
+    "MODEL_SWITCH_FAILED",
+  ]) {
+    const refused = parseCodingSessionLifecycleReceipt(
+      receiptJson({
+        status: "turn_refused",
+        error: { code, message: "the execution keeps its model" },
+      }),
+    );
+    assert.equal(refused?.error.code, code);
+  }
+});
+
+test("SV-35: capabilities.modelSwitch is optional, absent reads as false", () => {
+  const absent = parseBeekeeperCodingSessionMetadata(metadataJson({}));
+  assert.ok(absent);
+  assert.equal(absent.capabilities.modelSwitch ?? false, false);
+  const present = parseBeekeeperCodingSessionMetadata(
+    metadataJson({ capabilities: { ...capabilities(), modelSwitch: true } }),
+  );
+  assert.equal(present?.capabilities.modelSwitch, true);
+  assert.equal(
+    parseBeekeeperCodingSessionMetadata(
+      metadataJson({ capabilities: { ...capabilities(), modelSwitch: "yes" } }),
+    ),
+    null,
+  );
+});

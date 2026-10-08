@@ -238,6 +238,48 @@ The consequence for a person is that a published turn cannot be recalled — the
 `turn_dropped`/`turn_refused` receipts are what say a turn will not run, and
 there is no client-side unsend.
 
+### Fork amendment: `thread.model.set` (SV-35)
+
+A fourth action switches the addressed generation's model, and with it its
+reasoning effort, between turns:
+
+```json
+{"type": "thread.model.set", "selection": "opus[1m][high]"}
+```
+
+- The action has exactly the keys `type` and `selection`. There is no
+  `deliver`: a switch always waits for the turn boundary, in mailbox order —
+  behind a running turn and anything queued before it, ahead of anything sent
+  after it.
+- `selection` uses the create's `model` grammar,
+  `<base>[<token>]…`: `base` is one entry of the provider instance's catalog
+  `allowedModels` (ids may themselves contain brackets, `opus[1m]`), and each
+  `token` is an effort value, `fast`, or a context token. Validation at ingest
+  and at the provider: not blank, at most 2048 UTF-8 bytes, no control
+  characters. The base is matched by the provider (the whole string, then
+  peeling trailing groups).
+- Authority is `thread.turn.start`'s; no turn budget is spent and no turn is
+  created. The one terminal answer is a [NIP-CSL](NIP-CSL.md) `model_applied`,
+  `turn_refused` (`MODEL_SWITCH_UNSUPPORTED`, `MODEL_NOT_OFFERED`,
+  `MODEL_SWITCH_FAILED`, or an existing authority code), or `turn_dropped`
+  (`QUEUE_FULL`, `NO_LIVE_EXECUTION`). There is no `turn_queued`.
+- What took effect is published only in the generation's `kind:44223`
+  `model`, republished for the **same** generation, after a
+  [NIP-CST](NIP-CST.md) `model_switched` status item and the receipt. That
+  value is the adapter's acknowledgement, never the request: a token the
+  adapter does not offer is left out, and an adapter that reports a different
+  base model is believed. The next turn's `result.usage.model` is the runtime's
+  own report of what answered. **Effort has no turn-level evidence**: the
+  `[effort]` part is the adapter's acknowledgement only.
+- A provider honours it for an execution exactly when that execution's
+  metadata carries `capabilities.modelSwitch: true` (see
+  [NIP-CSPC](NIP-CSPC.md)); a client offers the control only then.
+- **Off by default.** The reference provider honours it only when the host
+  sets `BUZZ_CSP_MODEL_SWITCH=1` (read once at start; default off, because
+  readers older than SV-35 decode capabilities exact-key and reject the
+  `modelSwitch` key). Off, no metadata carries `modelSwitch` and every
+  `thread.model.set` is refused `MODEL_SWITCH_UNSUPPORTED` at admission.
+
 ## Authority
 
 The relay requires `messages:write`, a valid `h` channel scope, and an actual

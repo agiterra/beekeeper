@@ -362,6 +362,16 @@ pub enum TurnDecision {
         /// SHA-256 of the registration event content, the idempotence fence.
         payload_digest: String,
     },
+    /// Switch the execution's model at its next boundary (SV-35). Not a
+    /// turn: no budget, no operation fence, no `turn_queued`.
+    SetModel {
+        /// The command being answered.
+        command_id: String,
+        /// The fenced target.
+        target: CodingSessionTarget,
+        /// The selection, whose base is in this instance's `allowedModels`.
+        selection: String,
+    },
 }
 
 /// Read-only view of everything a decision depends on.
@@ -444,6 +454,10 @@ pub struct CommandContext<'a> {
     /// provider that has never recovered, so nothing that does not restart
     /// pays for this. See [`AUTHORITY_NOT_REVERIFIED`].
     pub claims_pending_reverification: &'a HashSet<String>,
+    /// Whether this provider accepts `thread.model.set` (SV-35's emission
+    /// switch, `Config::model_switch`). Off, every switch is refused
+    /// `MODEL_SWITCH_UNSUPPORTED` at admission.
+    pub model_switch_enabled: bool,
 }
 
 impl CommandContext<'_> {
@@ -1166,6 +1180,13 @@ pub fn decide_turn_command(
         // registration promises a turn and only somebody who may steer now
         // may promise one. What is deliberately absent is the budget spend
         // (nothing has run) and the operation ledger (nothing has started).
+        TurnAction::SetModel { selection } => crate::model_switch::decide(
+            context,
+            record,
+            command.command_id,
+            command.target,
+            selection,
+        ),
         TurnAction::ContinueOnCi {
             identity,
             continuation,
@@ -1798,6 +1819,11 @@ pub enum TurnAction {
         /// Unix seconds after which the registration is refused.
         expires_at: u64,
     },
+    /// Switch the model at the next boundary.
+    SetModel {
+        /// The `<base>[<token>]…` selection.
+        selection: String,
+    },
 }
 
 /// Strictly decode a 44220 payload of either action.
@@ -1825,6 +1851,7 @@ pub fn decode_turn_command(content: &str) -> Result<TurnCommand, String> {
             continuation,
             expires_at,
         },
+        CodingSessionAction::ThreadModelSet { selection } => TurnAction::SetModel { selection },
     };
     Ok(TurnCommand {
         command_id: payload.command_id,
@@ -2340,6 +2367,7 @@ mod tests {
             in_flight: no_commands_in_flight(),
             delivered_cancels: no_delivered_cancels(),
             claims_pending_reverification: no_pending_reverification(),
+            model_switch_enabled: crate::model_switch::MODEL_SWITCH_ENABLED,
         }
     }
 

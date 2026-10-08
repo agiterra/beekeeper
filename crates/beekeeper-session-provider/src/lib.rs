@@ -79,6 +79,7 @@ pub mod host_command;
 pub mod host_result_wake;
 mod lease;
 mod model_catalog;
+pub mod model_switch;
 mod native_output;
 pub mod native_restore;
 mod native_steer_authority;
@@ -1102,6 +1103,8 @@ pub struct Provider {
     /// Per execution for the same reason as [`Self::steering`]: absent means no
     /// live process was witnessed, which publishes as `promptImage: false`.
     prompt_image: HashMap<String, bool>,
+    /// SV-35: witnessed model controls and switches still in a mailbox.
+    model_switch: model_switch::ModelSwitchState,
     /// Reads turn attachments back from this provider's relay. Built once: the
     /// relay URL and signing key are fixed for the process's lifetime.
     media: Option<attachments::MediaFetcher>,
@@ -1337,6 +1340,7 @@ impl Provider {
             delivered_cancels: VecDeque::new(),
             steering: HashMap::new(),
             prompt_image: HashMap::new(),
+            model_switch: Default::default(),
             media,
             replay: ReplayWindow::default(),
         })
@@ -3816,6 +3820,8 @@ impl Provider {
             .insert(target.session_id.clone(), startup.steering_supported);
         self.prompt_image
             .insert(target.session_id.clone(), startup.prompt_image_supported);
+        self.model_switch
+            .witness(&target.session_id, startup.model_switch_supported);
 
         // Cloned before the plan is partially moved into the record below.
         let hire_ref = plan.hire_ref.clone();
@@ -4945,6 +4951,8 @@ impl Provider {
             .insert(record.session_id.clone(), startup.steering_supported);
         self.prompt_image
             .insert(record.session_id.clone(), startup.prompt_image_supported);
+        self.model_switch
+            .witness(&record.session_id, startup.model_switch_supported);
 
         if let Err(error) = self.state.update_session(&record.session_id, |record| {
             record.generation = generation;
@@ -5905,6 +5913,14 @@ impl Provider {
                     )?;
                 }
                 return Ok(TurnDisposition::Answered(code.to_owned()));
+            }
+            TurnDecision::SetModel {
+                command_id,
+                target,
+                selection,
+            } => {
+                return self
+                    .deliver_model_switch(channel_id, created_at, command_id, target, selection);
             }
             TurnDecision::RegisterCiContinuation {
                 command_id,
@@ -7205,7 +7221,8 @@ impl Provider {
                             .iter()
                             .filter(|held| held.channel_id == channel_id)
                             .map(|held| held.created_at),
-                    ),
+                    )
+                    .chain(self.model_switch.floor_for(channel_id)),
             )
             .min()
     }
@@ -8200,6 +8217,7 @@ impl Provider {
             in_flight: &self.in_flight,
             delivered_cancels: &self.delivered_cancels,
             claims_pending_reverification: &self.claims_pending_reverification,
+            model_switch_enabled: self.config.model_switch,
         }
     }
 
@@ -8322,7 +8340,8 @@ impl Provider {
                             .get(&target.session_id)
                             .copied()
                             .unwrap_or(false),
-                ),
+                )
+                .with_model_switch(self.model_switch_capable(&target.session_id)),
             // Echoed only when the create claimed one; the struct then omits
             // the key entirely, so unclaimed sessions keep the exact 12-key
             // shape pre-amendment consumers require.
@@ -10652,6 +10671,11 @@ impl Provider {
                     Priority::High,
                 )?;
             }
+            SessionEvent::ModelSwitch {
+                session_id,
+                command_id,
+                outcome,
+            } => self.fold_model_switch(&session_id, &command_id, outcome)?,
             SessionEvent::Exited { session_id, reason } => {
                 // The process is gone and its mailbox with it. Turns it had
                 // taken custody of and not started are owed an answer, and they
@@ -10663,6 +10687,7 @@ impl Provider {
                 self.report_lost_mailbox(&session_id)?;
                 self.steering.remove(&session_id);
                 self.prompt_image.remove(&session_id);
+                self.report_lost_model_switches(&session_id)?;
                 // A half-paired gate call whose result this process will now
                 // never see is not a gate anybody ran: forgotten, never
                 // resolved into a row. A start it published is closed (SV-41),
@@ -12774,6 +12799,8 @@ mod tests {
     mod hire_requester_tests;
     #[path = "host_result_wake_tests.rs"]
     mod host_result_wake_tests;
+    #[path = "model_switch_tests.rs"]
+    mod model_switch_tests;
     #[path = "observed_gate_row_tests.rs"]
     mod observed_gate_row_tests;
     #[path = "operation_fence_tests.rs"]
@@ -13625,6 +13652,7 @@ mod tests {
             max_turn_duration: Duration::from_secs(7200),
             include_thoughts: true,
             transcript_paragraph_flush: false,
+            model_switch: false,
             command_horizon: Duration::from_secs(86_400),
             // These fixtures launch shell doubles, not Claude or Codex: they
             // opt into the test runtime profile here, so the provider still

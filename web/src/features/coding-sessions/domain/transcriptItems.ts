@@ -52,6 +52,9 @@ const KNOWN_STATUS_SLUGS = new Map<string, string>([
   ["idle", "Session idle"],
   ["running", "Session running"],
   ["waiting_for_input", "Waiting for input"],
+  // SV-35. The item's own `model` is shown as meta; the signer is the
+  // command's author, not something this projection knows.
+  ["model_switched", "Model switched"],
 ]);
 
 function blankItem(identity: TranscriptItemIdentity): ProjectedTranscriptItem {
@@ -289,6 +292,21 @@ export function buildNonToolItem(
   }
   if (kind === "status") {
     const slug = typeof item.status === "string" ? item.status : "";
+    if (slug === "model_switched" && typeof item.model === "string") {
+      // What took effect is `model` (the adapter's acknowledgement); the
+      // request is shown beside it only when the two differ.
+      const model = safeString(item.model);
+      const requested =
+        typeof item.requested === "string" ? safeString(item.requested) : null;
+      return {
+        ...base,
+        title: `Switched to ${model}`,
+        meta:
+          requested && requested !== model
+            ? [`Asked ${requested} · running ${model}`]
+            : [],
+      };
+    }
     const known = KNOWN_STATUS_SLUGS.get(slug);
     return {
       ...base,

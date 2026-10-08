@@ -70,7 +70,13 @@ enum CodingSessionReceiptStatus {
   turnDeliveryUnknown('turn_delivery_unknown'),
   turnDropped('turn_dropped'),
   turnRefused('turn_refused'),
-  interruptDelivered('interrupt_delivered');
+  interruptDelivered('interrupt_delivered'),
+
+  /// SV-35: a `thread.model.set` the adapter accepted at the boundary.
+  /// Terminal, five keys, no error, no turn. The model in effect is read from
+  /// 44223 `model`, never from this receipt; its refusals are `turn_refused`
+  /// (`MODEL_SWITCH_UNSUPPORTED`, `MODEL_NOT_OFFERED`, `MODEL_SWITCH_FAILED`).
+  modelApplied('model_applied');
 
   const CodingSessionReceiptStatus(this.wire);
 
@@ -96,7 +102,8 @@ enum CodingSessionReceiptStatus {
       this == CodingSessionReceiptStatus.turnDeliveryUnknown ||
       this == CodingSessionReceiptStatus.turnDropped ||
       this == CodingSessionReceiptStatus.turnRefused ||
-      this == CodingSessionReceiptStatus.interruptDelivered;
+      this == CodingSessionReceiptStatus.interruptDelivered ||
+      this == CodingSessionReceiptStatus.modelApplied;
 
   /// True for the two six-key statuses: `turn_started` names the turn that
   /// began, `turn_injected` the running turn the input joined.

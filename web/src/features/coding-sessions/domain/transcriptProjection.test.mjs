@@ -360,3 +360,26 @@ test("the driver's own context occupancy item still projects", () => {
   assert.equal(items[0].unknownKind, null);
   assert.deepEqual(items[0].meta, ["size=1000000", "used=137498"]);
 });
+
+test("SV-35: a model_switched status names what took effect, and the ask when it differs", () => {
+  const items = projectCodingSessionTranscript([
+    envelope(1, {
+      kind: "status",
+      status: "model_switched",
+      model: "opus[1m]",
+      requested: "opus[1m][high]",
+      commandId: "model-1",
+    }),
+    envelope(2, {
+      kind: "status",
+      status: "model_switched",
+      model: "opus[1m][high]",
+      requested: "opus[1m][high]",
+      commandId: "model-2",
+    }),
+  ]);
+  assert.equal(items[0].title, "Switched to opus[1m]");
+  assert.deepEqual(items[0].meta, ["Asked opus[1m][high] · running opus[1m]"]);
+  assert.equal(items[1].title, "Switched to opus[1m][high]");
+  assert.deepEqual(items[1].meta, []);
+});

@@ -224,6 +224,7 @@ CodingSessionPendingTurnView settleCodingSessionPendingTurn(
         queued = true;
       case CodingSessionReceiptStatus.interruptDelivered:
       case CodingSessionReceiptStatus.continuationRegistered:
+      case CodingSessionReceiptStatus.modelApplied:
       case CodingSessionReceiptStatus.created:
       case CodingSessionReceiptStatus.createdWithFailedInitialTurn:
       case CodingSessionReceiptStatus.failed:

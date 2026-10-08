@@ -58,6 +58,16 @@ Content is exactly this JSON shape:
 }
 ```
 
+`capabilities.modelSwitch` (SV-35) is optional and **omitted when false**. In
+this iteration it is never set in the catalog: it appears only in a
+generation's `kind:44223` metadata, true when this provider build honours
+[NIP-CSC](NIP-CSC.md) `thread.model.set` and that execution's adapter offered a
+model control at open. The reference provider honours it only when the host
+sets `BUZZ_CSP_MODEL_SWITCH=1` (default off): readers older than SV-35 decode
+capabilities exact-key and would reject the whole metadata event over it. Readers MUST accept the key as optional in both the
+catalog and metadata decoders and read it from metadata before offering a
+model control.
+
 `revision` is a positive JavaScript-safe integer, monotonic per (channel,
 signer); consumers keep the highest revision they have seen from a given signer
 in a given channel and discard the rest. The kind is **not** replaceable — the

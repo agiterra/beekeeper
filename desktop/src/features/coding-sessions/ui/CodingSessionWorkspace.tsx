@@ -929,6 +929,15 @@ function ReadyCodingSessionWorkspace({
                           sandbox: sessionFacts.sandbox,
                           status,
                           turnBudget: session.turnBudget,
+                          modelSwitch: session.commandTarget
+                            ? {
+                                channelId,
+                                target: session.commandTarget,
+                                providerAuthorityPubkey:
+                                  session.providerAuthorityPubkey,
+                                providerInstanceRef: session.provider,
+                              }
+                            : null,
                         }}
                         contextWindow={contextWindow}
                         currentUserPubkey={currentUserPubkey}

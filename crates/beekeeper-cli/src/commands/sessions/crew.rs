@@ -403,7 +403,8 @@ impl TurnCommand {
         match &self.action {
             CodingSessionAction::ThreadTurnStart { text, .. } => Some(text),
             CodingSessionAction::ThreadTurnInterrupt
-            | CodingSessionAction::ThreadTurnContinueOnCi { .. } => None,
+            | CodingSessionAction::ThreadTurnContinueOnCi { .. }
+            | CodingSessionAction::ThreadModelSet { .. } => None,
         }
     }
 
@@ -414,7 +415,10 @@ impl TurnCommand {
         match &self.action {
             CodingSessionAction::ThreadTurnStart { deliver, .. } => *deliver,
             CodingSessionAction::ThreadTurnInterrupt => CodingSessionDelivery::Interrupt,
-            CodingSessionAction::ThreadTurnContinueOnCi { .. } => CodingSessionDelivery::Boundary,
+            // A model switch always applies at the turn boundary; it carries no
+            // `deliver` of its own on the wire.
+            CodingSessionAction::ThreadTurnContinueOnCi { .. }
+            | CodingSessionAction::ThreadModelSet { .. } => CodingSessionDelivery::Boundary,
         }
     }
 }
@@ -837,6 +841,9 @@ fn stage_rank(status: ReceiptStatus) -> u8 {
         | ReceiptStatus::TurnRefused
         | ReceiptStatus::TurnDeliveryUnknown => 5,
         ReceiptStatus::InterruptDelivered => 6,
+        // A `thread.model.set`'s one success answer; terminal, and never
+        // preceded by a queued/started stage of its own.
+        ReceiptStatus::ModelApplied => 5,
         _ => 0,
     }
 }
@@ -987,6 +994,15 @@ pub fn fold_delivery(
         ReceiptStatus::InterruptDelivered => (
             Some(true),
             format!("{asked} delivered; the running turn was cancelled"),
+        ),
+        // A `thread.model.set` the adapter accepted at the boundary. The
+        // receipt deliberately names no model: what took effect is only in
+        // the generation's metadata (`bee sessions model` reads it there).
+        ReceiptStatus::ModelApplied => (
+            Some(true),
+            "model switch applied at the turn boundary; the model now in effect is in this \
+             generation's metadata"
+                .to_owned(),
         ),
         ReceiptStatus::TurnDropped => (
             Some(false),
@@ -1261,6 +1277,12 @@ pub fn plan_readdress(
             return Err(CliError::Usage(format!(
                 "command '{command_id}' is a thread.turn.continue_on_ci — it registers a turn \
                  rather than carrying one to re-address"
+            )))
+        }
+        CodingSessionAction::ThreadModelSet { .. } => {
+            return Err(CliError::Usage(format!(
+                "command '{command_id}' is a thread.model.set — it carries no turn text to \
+                 re-address; run `bee sessions model` against the current generation instead"
             )))
         }
     };

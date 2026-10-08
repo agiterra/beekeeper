@@ -3390,6 +3390,53 @@ pub enum SessionsCmd {
         #[arg(long = "no-wait")]
         no_wait: bool,
     },
+    /// Switch one execution's model and effort at its next turn boundary
+    /// (kind 44220 `thread.model.set`).
+    ///
+    /// `--to` resolves exactly as `bee sessions send` does. The switch waits
+    /// behind any running or queued turn; it spends no turn budget and starts
+    /// no turn. `--model` uses the create's grammar,
+    /// `<base>[<context>][<effort>][fast]`; the provider checks the base
+    /// against its catalog `allowedModels` and applies only the modifiers the
+    /// adapter offers for that model.
+    ///
+    /// Three facts, never collapsed: `accepted` (the relay stored it),
+    /// `deliveryStatus` (the provider's one receipt: `model_applied`,
+    /// `turn_refused` with MODEL_SWITCH_UNSUPPORTED / MODEL_NOT_OFFERED /
+    /// MODEL_SWITCH_FAILED, `turn_dropped`, or `unconfirmed`), and `model`,
+    /// read only from the generation's metadata republished after the
+    /// receipt — `null` with `modelStatus: unconfirmed` when none arrived.
+    /// Effort has no per-turn evidence: the `[effort]` part of `model` is the
+    /// adapter's acknowledgement only.
+    ///
+    /// Exits 0 once the relay accepted the command, refusal included, exactly
+    /// like `bee sessions send`; read `deliveryStatus`. A refusal also sets
+    /// `accepted: false` and says "not switched" in `message` and on stderr.
+    #[command(
+        after_help = "Examples:\n  bee sessions model --channel <uuid> --to builder --session-ref <uuid> --model 'opus[1m][high]'\n  bee sessions model --channel <uuid> --to '<cs-target>' --model 'gpt-5.6-sol[high]' --timeout-secs 120\n\nOutput: {event_id, accepted, message, commandId, target, seat, requested, waited, deliveryStatus, delivery, receipt, model, modelStatus, metadataEventId}. modelStatus is confirmed, unconfirmed, or not_switched. On a refusal or drop (not_switched) the exit code is still 0, but accepted is false, message and stderr say \"not switched: ...\", and relayAccepted keeps the relay's answer.\n\nA switch applies at the next turn boundary: one sent while a turn is running is answered only when that turn ends, so it may report deliveryStatus unconfirmed (still pending, not failed) within the wait.\n\nRecipe:\n  bee sessions model --channel <uuid> --session-ref <uuid> --to builder --model <selection>"
+    )]
+    Model {
+        /// Channel UUID the session lives in
+        #[arg(long)]
+        channel: String,
+        /// Addressee: a `cs-target` key, a provider session id, or a role slug
+        #[arg(long)]
+        to: String,
+        /// Umbrella session reference (lowercase UUID) scoping a role lookup
+        #[arg(long = "session-ref")]
+        session_ref: Option<String>,
+        /// Model selection: `<base>[<context>][<effort>][fast]`
+        #[arg(long)]
+        model: String,
+        /// Maximum seconds to wait for the provider's receipt (1..=300,
+        /// default 30). A switch queued behind a running turn is answered
+        /// only when that turn ends, so it may report `unconfirmed`.
+        #[arg(long = "timeout-secs", conflicts_with = "no_wait")]
+        timeout_secs: Option<u64>,
+        /// Print the relay's acceptance without waiting for the receipt
+        #[arg(long = "no-wait")]
+        no_wait: bool,
+    },
     /// Create a coding-session execution (kind 44221 `session.create`).
     ///
     /// The brief becomes the create's `initialTurn`. Seated (agent) creates
@@ -6963,6 +7010,7 @@ mod tests {
                 "inbox",
                 "list",
                 "measure",
+                "model",
                 "note",
                 "observations",
                 "observe",
@@ -7184,7 +7232,7 @@ mod tests {
             // appended here and two of them independently wrote 35 (item 108's
             // exact-count trap); the finalizer set it once, after every lane,
             // and both tests re-run green.
-            ("sessions", 44),
+            ("sessions", 45),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

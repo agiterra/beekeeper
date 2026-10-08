@@ -271,8 +271,19 @@ export const CODING_SESSION_CI_IDENTITY_KEYS = [
   "phase",
 ] as const;
 
+/** SV-35's 44220 action: change this execution's model at the next boundary. */
+export const CODING_SESSION_MODEL_SET_ACTION_TYPE = "thread.model.set" as const;
+
+/** `MAX_LIFECYCLE_REFERENCE_BYTES`, the bound core puts on `selection`. */
+export const MAX_CODING_SESSION_MODEL_SELECTION_BYTES = 2 * 1024;
+
 /** Actions supported by the governed coding-session command contract. */
 export type CodingSessionCommandAction =
+  | {
+      type: typeof CODING_SESSION_MODEL_SET_ACTION_TYPE;
+      /** `<base>[<context>][<effort>][fast]`, the create's own grammar. */
+      selection: string;
+    }
   | {
       type: "thread.turn.start";
       text: string;
@@ -422,6 +433,30 @@ export function buildCodingSessionInterruptEvent(input: {
   });
 }
 
+/**
+ * Build an exact generation-fenced `thread.model.set` (SV-35).
+ *
+ * Built like an interrupt, only the action differs. It carries no `deliver`:
+ * the provider applies it at the next turn boundary, in mailbox order, and
+ * answers with one terminal receipt (`model_applied` or `turn_refused`).
+ */
+export function buildCodingSessionModelSetEvent(input: {
+  channelId: string;
+  commandId: string;
+  target: CodingSessionCommandTarget;
+  selection: string;
+}): CodingSessionCommandEventInput {
+  return buildCodingSessionActionEvent({
+    channelId: input.channelId,
+    commandId: input.commandId,
+    target: input.target,
+    action: {
+      type: CODING_SESSION_MODEL_SET_ACTION_TYPE,
+      selection: input.selection,
+    },
+  });
+}
+
 function buildCodingSessionActionEvent(input: {
   channelId: string;
   commandId: string;
@@ -517,6 +552,19 @@ export function validateCodingSessionCommandInput(input: {
     // failing here is what lets the composer say which image was wrong.
     if (input.action.attachments !== undefined) {
       validateCodingSessionAttachments(input.action.attachments);
+    }
+  }
+  // The three checks core's `validate` runs on `selection`; the grammar past
+  // them is the provider's (`MODEL_NOT_OFFERED`), never guessed here.
+  if (input.action.type === CODING_SESSION_MODEL_SET_ACTION_TYPE) {
+    validateBoundedNonemptyUtf8(
+      input.action.selection,
+      "action.selection",
+      MAX_CODING_SESSION_MODEL_SELECTION_BYTES,
+    );
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the rule itself.
+    if (/[\u0000-\u001f\u007f-\u009f]/.test(input.action.selection)) {
+      throw new Error("action.selection must not contain control characters");
     }
   }
   // A registration is checked here for the same reason a turn is: the bounds
@@ -677,6 +725,21 @@ export async function publishCodingSessionCommand(
 ): Promise<PublishedCodingSessionCommand> {
   return publishCodingSessionEvent(
     buildCodingSessionCommandEvent(input),
+    input.commandId,
+    dependencies,
+  );
+}
+
+/** Publish a signed `thread.model.set` for the exact governed target. */
+export async function publishCodingSessionModelSet(
+  input: Parameters<typeof buildCodingSessionModelSetEvent>[0],
+  dependencies: {
+    publisher?: CommandPublisher;
+    signer?: CommandSigner;
+  } = {},
+): Promise<PublishedCodingSessionCommand> {
+  return publishCodingSessionEvent(
+    buildCodingSessionModelSetEvent(input),
     input.commandId,
     dependencies,
   );

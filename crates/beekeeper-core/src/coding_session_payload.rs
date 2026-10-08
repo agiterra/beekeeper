@@ -267,6 +267,20 @@ pub const HANDOVER_FENCED: &str = "HANDOVER_FENCED";
 /// requests and restaging, and answers this to every command. Nothing is
 /// republished or reconstructed to make a deleted session resumable.
 pub const SESSION_RETIRED: &str = "SESSION_RETIRED";
+/// `thread.model.set` refused: this execution cannot change models mid-session
+/// — its adapter offered no model control at `session/new`, or this provider
+/// build does not switch models. The execution keeps its model.
+pub const MODEL_SWITCH_UNSUPPORTED: &str = "MODEL_SWITCH_UNSUPPORTED";
+/// `thread.model.set` refused: the selection's base model is not offered — not
+/// in this provider instance's catalog `allowedModels`, or not offered by the
+/// live adapter. The execution keeps its model.
+pub const MODEL_NOT_OFFERED: &str = "MODEL_NOT_OFFERED";
+/// `thread.model.set` refused: the adapter answered the switch with an error
+/// (or a required mode could not be re-asserted after it). The execution keeps
+/// its previous model.
+pub const MODEL_SWITCH_FAILED: &str = "MODEL_SWITCH_FAILED";
+/// Transcript status slug published after a successful `thread.model.set`.
+pub const MODEL_SWITCHED_STATUS: &str = "model_switched";
 
 /// Ceiling on a receipt error code, in UTF-8 bytes.
 ///
@@ -395,6 +409,15 @@ pub enum ReceiptStatus {
     /// by anything.
     #[serde(rename = "continuation_registered")]
     ContinuationRegistered,
+    /// A `thread.model.set` was applied at the execution's turn boundary: the
+    /// adapter accepted the switch. Terminal, and the command's only success
+    /// receipt — there is no `turn_queued`/`turn_started` for a switch.
+    ///
+    /// It deliberately does not name the model: what took effect is published
+    /// in the generation's metadata (44223 `model`), so the two can never
+    /// disagree.
+    #[serde(rename = "model_applied")]
+    ModelApplied,
 }
 
 impl ReceiptStatus {
@@ -416,6 +439,7 @@ impl ReceiptStatus {
             Self::TurnDeliveryUnknown => "turn_delivery_unknown",
             Self::InterruptDelivered => "interrupt_delivered",
             Self::ContinuationRegistered => "continuation_registered",
+            Self::ModelApplied => "model_applied",
         }
     }
 
@@ -443,6 +467,7 @@ impl ReceiptStatus {
                 | Self::TurnDeliveryUnknown
                 | Self::InterruptDelivered
                 | Self::ContinuationRegistered
+                | Self::ModelApplied
         )
     }
 }
@@ -714,6 +739,18 @@ impl LifecycleReceipt {
         }
     }
 
+    /// A `thread.model.set` was applied at the turn boundary.
+    pub fn model_applied(command_id: &str, target: &CodingSessionTarget) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::ModelApplied,
+            session: Some(target.clone()),
+            error: None,
+            turn_id: None,
+        }
+    }
+
     /// The turn was refused before it reached the execution.
     ///
     /// `code` is documented in NIP-CSL — [`UNAUTHORIZED_OPERATOR`],
@@ -895,7 +932,7 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
         // A registration names the execution its eventual turn would address
         // and carries no failure: the refusals a continuation can earn all
         // arrive later, as turn stages of the same command.
-        ReceiptStatus::ContinuationRegistered => {
+        ReceiptStatus::ContinuationRegistered | ReceiptStatus::ModelApplied => {
             receipt.session.is_some() && receipt.error.is_none()
         }
     };
@@ -974,6 +1011,21 @@ pub struct Capabilities {
     /// never claimed image support.
     #[serde(default)]
     pub prompt_image: bool,
+    /// `thread.model.set` is honoured by *this* execution (SV-35).
+    ///
+    /// Per execution, like [`thread_steer`](Self::thread_steer): true only when
+    /// the provider build switches models and the adapter behind this
+    /// generation offered a model control at `session/new`. Published in 44223
+    /// only; never set in the catalog (44222) in this iteration.
+    ///
+    /// **Omitted when false**, so every execution that cannot switch — and the
+    /// whole catalog — keeps the exact bytes older exact-key readers accept.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub model_switch: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl Capabilities {
@@ -996,6 +1048,7 @@ impl Capabilities {
             diff: false,
             plan: true,
             prompt_image: false,
+            model_switch: false,
         }
     }
 
@@ -1011,6 +1064,7 @@ impl Capabilities {
             diff: false,
             plan: false,
             prompt_image: false,
+            model_switch: false,
         }
     }
 
@@ -1039,6 +1093,15 @@ impl Capabilities {
     pub const fn with_prompt_image(self, prompt_image: bool) -> Self {
         Self {
             prompt_image,
+            ..self
+        }
+    }
+
+    /// The same vector with `modelSwitch` set to whether *this* execution
+    /// honours `thread.model.set`. False omits the key from the wire.
+    pub const fn with_model_switch(self, model_switch: bool) -> Self {
+        Self {
+            model_switch,
             ..self
         }
     }
@@ -2374,6 +2437,18 @@ pub const CONTEXT_UNAVAILABLE_REASONS: &[&str] = &[
 /// Build a bounded `status` item — the projector renders it as a lifecycle row.
 pub fn status_item(status: &str) -> serde_json::Value {
     status_item_with_reason(status, None)
+}
+
+/// The `model_switched` status item (NIP-CST): what was applied, what was
+/// asked for verbatim, and the `thread.model.set` command that asked.
+pub fn model_switched_item(model: &str, requested: &str, command_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "status",
+        "status": MODEL_SWITCHED_STATUS,
+        "model": model,
+        "requested": requested,
+        "commandId": command_id,
+    })
 }
 
 /// Build a status item that may name why continuity was lost.
@@ -4633,6 +4708,99 @@ mod tests {
         )
         .expect("metadata predating promptImage must still decode");
         assert!(!legacy.prompt_image);
+    }
+
+    /// SV-35: `modelSwitch` is omitted when false, so a vector that cannot
+    /// switch serializes byte-identically to the shape before the key existed;
+    /// when true it is the one additional key, and both forms decode.
+    #[test]
+    fn coding_session_model_switch_capability_is_omitted_when_false() {
+        let base = Capabilities::v1_claude();
+        assert!(!base.model_switch, "a static vector never claims a switch");
+        let legacy = r#"{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true,"promptImage":false}"#;
+        assert_eq!(serde_json::to_string(&base).expect("serialize"), legacy);
+        assert_eq!(
+            serde_json::to_string(&base.with_model_switch(false)).expect("serialize"),
+            legacy
+        );
+        let switching = base.with_model_switch(true);
+        assert_eq!(
+            serde_json::to_string(&switching).expect("serialize"),
+            legacy.replace('}', r#","modelSwitch":true}"#)
+        );
+        assert_eq!(
+            Capabilities {
+                model_switch: false,
+                ..switching
+            },
+            base
+        );
+        let decoded: Capabilities = serde_json::from_str(legacy).expect("legacy decodes");
+        assert!(!decoded.model_switch);
+        let decoded: Capabilities =
+            serde_json::from_str(&legacy.replace('}', r#","modelSwitch":true}"#))
+                .expect("switching decodes");
+        assert!(decoded.model_switch);
+    }
+
+    /// SV-35: `model_applied` is a terminal turn stage with the five-key shape,
+    /// and the three refusal codes are well-formed open codes on `turn_refused`.
+    #[test]
+    fn coding_session_model_applied_receipt_holds_its_exact_shape() {
+        let receipt = LifecycleReceipt::model_applied("model-1", &target());
+        let encoded = serde_json::to_value(&receipt).expect("encode");
+        assert_eq!(encoded["status"], "model_applied");
+        assert_eq!(
+            encoded.as_object().map(|object| object.len()),
+            Some(5),
+            "{encoded}"
+        );
+        assert!(encoded["error"].is_null());
+        let wire = serde_json::to_string(&receipt).expect("encode");
+        assert_eq!(
+            decode_coding_session_lifecycle_receipt(&wire).expect("decodes"),
+            receipt
+        );
+        assert!(ReceiptStatus::ModelApplied.is_turn_stage());
+        assert!(!ReceiptStatus::ModelApplied.carries_turn_id());
+        assert_eq!(ReceiptStatus::ModelApplied.as_str(), "model_applied");
+        // An applied switch carries no error.
+        let mut errored = receipt.clone();
+        errored.error = Some(ReceiptError {
+            code: MODEL_SWITCH_FAILED.into(),
+            message: "x".into(),
+        });
+        assert!(decode_coding_session_lifecycle_receipt(
+            &serde_json::to_string(&errored).expect("e")
+        )
+        .is_err());
+        for code in [
+            MODEL_SWITCH_UNSUPPORTED,
+            MODEL_NOT_OFFERED,
+            MODEL_SWITCH_FAILED,
+        ] {
+            let refused = LifecycleReceipt::turn_refused("model-1", &target(), code, "kept");
+            let wire = serde_json::to_string(&refused).expect("encode");
+            decode_coding_session_lifecycle_receipt(&wire)
+                .unwrap_or_else(|error| panic!("{code} rejected: {error}"));
+        }
+    }
+
+    /// SV-35: the `model_switched` row carries exactly its five keys.
+    #[test]
+    fn coding_session_model_switched_item_has_its_exact_keys() {
+        let item = model_switched_item("opus[1m][high]", "opus[1m][xhigh]", "model-1");
+        let mut keys: Vec<&str> = item
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["commandId", "kind", "model", "requested", "status"]);
+        assert_eq!(item["status"], MODEL_SWITCHED_STATUS);
+        assert_eq!(item["model"], "opus[1m][high]");
+        assert_eq!(item["requested"], "opus[1m][xhigh]");
     }
 
     /// The `usage` block is optional and additive: a result item built without

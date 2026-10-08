@@ -98,7 +98,16 @@ export type CodingSessionKnownTranscriptItemV1 = { [key: string]: unknown } & (
         contextWindow?: number;
       };
     }
-  | { kind: "status"; status?: string }
+  | {
+      kind: "status";
+      status?: string;
+      /** `model_switched` only (SV-35): what took effect. */
+      model?: string;
+      /** `model_switched` only: the selection as sent. */
+      requested?: string;
+      /** `model_switched` only: the switching 44220's commandId. */
+      commandId?: string;
+    }
   | {
       kind: "system_init";
       provider?: string;

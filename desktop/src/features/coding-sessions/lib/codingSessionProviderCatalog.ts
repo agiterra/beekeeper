@@ -48,6 +48,8 @@ export type CodingSessionProviderCapabilities = {
    * draws.
    */
   promptImage?: boolean;
+  /** SV-35, optional and trailing; a 44222 does not carry it in iteration 1. */
+  modelSwitch?: boolean;
 };
 
 /**
@@ -650,7 +652,7 @@ function parseProvider(
       ],
       // Additive and trailing: a catalog published before this field existed
       // omits it, and `hasOrderedKeys` only accepts it in this position.
-      ["promptImage"],
+      ["promptImage", "modelSwitch"],
     )
   ) {
     return null;
@@ -673,7 +675,9 @@ function parseProvider(
     // Additive: a catalog published before this field existed simply omits it,
     // and omission reads as `false`.
     (Object.hasOwn(capabilities, "promptImage") &&
-      typeof capabilities.promptImage !== "boolean")
+      typeof capabilities.promptImage !== "boolean") ||
+    (Object.hasOwn(capabilities, "modelSwitch") &&
+      typeof capabilities.modelSwitch !== "boolean")
   ) {
     return null;
   }
@@ -700,6 +704,10 @@ function parseProvider(
       // make every pre-`promptImage` catalog fail to decode at all.
       ...(Object.hasOwn(capabilities, "promptImage")
         ? { promptImage: capabilities.promptImage as boolean }
+        : {}),
+      // SV-35: never published in 44222 in iteration 1, accepted if it is.
+      ...(Object.hasOwn(capabilities, "modelSwitch")
+        ? { modelSwitch: capabilities.modelSwitch as boolean }
         : {}),
     },
     ...(described ? { models: described } : {}),

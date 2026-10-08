@@ -120,6 +120,26 @@ void main() {
       expect(decoded.value?.providers.single.capabilities.promptImage, false);
     });
 
+    test('SV-35 modelSwitch is accepted optionally, absent reads false', () {
+      const withSwitch =
+          '{"schema":"buzz-coding-session-provider-catalog/v1","revision":1,'
+          '"providers":[{"providerInstanceRef":"claude-primary",'
+          '"driver":"claude-agent-acp","runtime":"claude",'
+          '"defaultModel":"default","allowedModels":["default"],'
+          '"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,'
+          '"threadSteer":false,"context":false,"diff":false,"plan":true,'
+          '"promptImage":false,"modelSwitch":true}}]}';
+      final decoded = decodeCodingSessionProviderCatalog(
+        signedCatalog(content: withSwitch, revision: 1),
+      );
+      expect(decoded.value, isNotNull, reason: decoded.reason.toString());
+      expect(decoded.value!.providers.single.capabilities.modelSwitch, isTrue);
+      final plain = decodeCodingSessionProviderCatalog(
+        signedCatalog(content: rustCatalogContent, revision: 3),
+      );
+      expect(plain.value!.providers.single.capabilities.modelSwitch, isFalse);
+    });
+
     test('a projects narrowing filters offers per coordinate', () {
       const narrowed =
           '{"schema":"buzz-coding-session-provider-catalog/v1","revision":2,'
