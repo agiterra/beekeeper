@@ -339,14 +339,40 @@ run_desktop_tests_scoped() {
 # is budget-conscious) and, only on failure, hand it to
 # scripts/mobile-test-failure-summary.mjs so the disclosure names the test
 # and its file:line instead of just "mobile tests FAILED" (item 208).
+#
+# A file that "Failed to load … Unable to connect to flutter_tester process:
+# WebSocketException: Invalid WebSocket upgrade request" is not a failed test:
+# no test in it ran. flutter_tester attaches to the tool over a fresh loopback
+# listener, and the tool hands the FIRST connection to the WebSocket
+# upgrader; on this Mac T3 Code's preview port scanner polls `lsof -sTCP:LISTEN`
+# every 3 s and GETs every loopback listener it sees, so under load (slower
+# flutter_tester startup, wider window) a few random files lose that race.
+# Those files, and only those, are run once more; the first run's result is
+# disclosed in the notes either way. A real assertion failure in the same run
+# is never retried and still fails the step.
 run_mobile_test() {
   local log status=0
   log=$(mktemp)
   just mobile-test 2>&1 | tee "$log" || status=1
   if [ "$status" != "0" ]; then
-    local names
+    local names load_failed failed_count load_count
     names=$(node "$repo_root/scripts/mobile-test-failure-summary.mjs" "$log" 2>/dev/null | tr '\n' ';' | sed 's/;$//; s/;/; /g')
-    if [ -n "$names" ]; then
+    load_failed=$(node "$repo_root/scripts/mobile-test-failure-summary.mjs" --load-failures "$log" 2>/dev/null)
+    failed_count=$(node "$repo_root/scripts/mobile-test-failure-summary.mjs" "$log" 2>/dev/null | grep -c .)
+    load_count=$(printf '%s\n' "$load_failed" | grep -c .)
+    if [ "$load_count" -gt 0 ] && [ "$load_count" = "$failed_count" ]; then
+      local -a files=()
+      while IFS= read -r f; do [ -n "$f" ] && files+=("$f"); done <<<"$load_failed"
+      echo "==> floor: ${load_count} mobile test file(s) never attached to flutter_tester (harness socket taken by a foreign HTTP probe); running those files once more" >&2
+      if (unset GIT_DIR GIT_WORK_TREE; cd mobile && flutter test --reporter expanded "${files[@]}" 2>&1 | tee "$log"); then
+        status=0
+        append notes "; " "mobile: ${load_count} file(s) failed to load on the first run (flutter_tester harness socket probed), passed on rerun"
+      else
+        names=$(node "$repo_root/scripts/mobile-test-failure-summary.mjs" "$log" 2>/dev/null | tr '\n' ';' | sed 's/;$//; s/;/; /g')
+        append notes "; " "mobile: ${load_count} file(s) failed to load twice"
+      fi
+    fi
+    if [ "$status" != "0" ] && [ -n "$names" ]; then
       append notes "; " "$names"
     fi
   fi
