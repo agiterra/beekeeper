@@ -12,6 +12,12 @@
 //! event naming the hash and the relay's authority. The relay's `/upload`
 //! route accepts non-image files; only the legacy `/media/upload` refuses
 //! them, so no fallback is attempted here.
+//!
+//! Images ([`ArtifactUploader::upload_image`], the device surface's durable
+//! snapshots) are decoded and re-encoded first: the relay's media validation
+//! accepts only metadata-free PNG/JPEG (`beekeeper-media/src/validation.rs`),
+//! and a re-encode is also what guarantees no EXIF/ancillary chunk carries
+//! anything host-local. The published `x` is the hash of the re-encoded bytes.
 
 use std::time::Duration;
 
@@ -68,13 +74,61 @@ impl ArtifactUploader {
     pub async fn upload_log(&self, name: &str, bytes: Vec<u8>) -> Result<HostStepArtifact, String> {
         let sha256 = hex::encode(Sha256::digest(&bytes));
         let size = bytes.len() as u64;
-        let auth = self.sign_upload_auth(&sha256)?;
+        let url = self.put_blob(name, bytes, LOG_MIME, &sha256).await?;
+        Ok(HostStepArtifact {
+            name: name.to_owned(),
+            url,
+            sha256,
+            bytes: size,
+        })
+    }
+
+    /// Upload an image prepared by [`prepare_image`], returning where the
+    /// relay serves it.
+    pub async fn upload_prepared(
+        &self,
+        name: &str,
+        image: &PreparedImage,
+    ) -> Result<UploadedImage, String> {
+        let url = self
+            .put_blob(name, image.bytes.clone(), image.mime, &image.sha256)
+            .await?;
+        Ok(UploadedImage {
+            url,
+            sha256: image.sha256.clone(),
+            bytes: image.bytes.len() as u64,
+            mime: image.mime,
+            width: image.width,
+            height: image.height,
+        })
+    }
+
+    /// Re-encode `bytes` as `mime` (`image/png` or `image/jpeg`) and upload
+    /// the result. See [`prepare_image`].
+    pub async fn upload_image(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        mime: &str,
+    ) -> Result<UploadedImage, String> {
+        let image = prepare_image(bytes, mime)?;
+        self.upload_prepared(name, &image).await
+    }
+
+    async fn put_blob(
+        &self,
+        name: &str,
+        bytes: Vec<u8>,
+        mime: &str,
+        sha256: &str,
+    ) -> Result<String, String> {
+        let auth = self.sign_upload_auth(sha256)?;
         let mut request = self
             .http
             .put(format!("{}/upload", self.base))
             .header("Authorization", auth)
-            .header("Content-Type", LOG_MIME)
-            .header("X-SHA-256", &sha256)
+            .header("Content-Type", mime)
+            .header("X-SHA-256", sha256)
             .body(bytes);
         if let Some(json) = &self.auth_tag_json {
             request = request.header("x-auth-tag", json);
@@ -95,17 +149,11 @@ impl ArtifactUploader {
         let descriptor: serde_json::Value = response.json().await.map_err(|error| {
             format!("the relay's upload answer for {name} is not JSON: {error}")
         })?;
-        let url = descriptor
+        descriptor
             .get("url")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| format!("the relay's upload answer for {name} names no url"))?
-            .to_owned();
-        Ok(HostStepArtifact {
-            name: name.to_owned(),
-            url,
-            sha256,
-            bytes: size,
-        })
+            .map(str::to_owned)
+            .ok_or_else(|| format!("the relay's upload answer for {name} names no url"))
     }
 
     fn sign_upload_auth(&self, sha256: &str) -> Result<String, String> {
@@ -129,9 +177,121 @@ impl ArtifactUploader {
     }
 }
 
+/// An image re-encoded for upload: metadata-free bytes and their facts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedImage {
+    /// The re-encoded bytes — exactly what is uploaded and hashed.
+    pub bytes: Vec<u8>,
+    /// Lowercase hex SHA-256 of [`Self::bytes`].
+    pub sha256: String,
+    /// `image/png` or `image/jpeg`.
+    pub mime: &'static str,
+    /// Pixel width.
+    pub width: u32,
+    /// Pixel height.
+    pub height: u32,
+}
+
+/// Where an uploaded image is served, and what it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UploadedImage {
+    /// The relay's Blossom URL.
+    pub url: String,
+    /// SHA-256 of the uploaded bytes.
+    pub sha256: String,
+    /// Uploaded size.
+    pub bytes: u64,
+    /// MIME type.
+    pub mime: &'static str,
+    /// Pixel width.
+    pub width: u32,
+    /// Pixel height.
+    pub height: u32,
+}
+
+/// Decode any supported image and re-encode it as `mime` with no metadata.
+/// Blocking (CPU): call it off the run loop.
+pub fn prepare_image(bytes: &[u8], mime: &str) -> Result<PreparedImage, String> {
+    use image::ImageEncoder;
+    let decoded =
+        image::load_from_memory(bytes).map_err(|error| format!("not a readable image: {error}"))?;
+    let (width, height) = (decoded.width(), decoded.height());
+    let mut out = Vec::new();
+    let mime: &'static str = match mime {
+        "image/png" => {
+            let rgba = decoded.to_rgba8();
+            image::codecs::png::PngEncoder::new(&mut out)
+                .write_image(
+                    rgba.as_raw(),
+                    width,
+                    height,
+                    image::ExtendedColorType::Rgba8,
+                )
+                .map_err(|error| format!("png encode: {error}"))?;
+            "image/png"
+        }
+        "image/jpeg" => {
+            let rgb = decoded.to_rgb8();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85)
+                .write_image(rgb.as_raw(), width, height, image::ExtendedColorType::Rgb8)
+                .map_err(|error| format!("jpeg encode: {error}"))?;
+            "image/jpeg"
+        }
+        other => return Err(format!("{other} is not an uploadable image type")),
+    };
+    Ok(PreparedImage {
+        sha256: hex::encode(Sha256::digest(&out)),
+        bytes: out,
+        mime,
+        width,
+        height,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn png_with_text_chunk() -> Vec<u8> {
+        let img =
+            image::RgbImage::from_fn(12, 7, |x, y| image::Rgb([x as u8 * 20, y as u8 * 30, 9]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .expect("encode");
+        // Splice a tEXt chunk (with a host path) in after IHDR (8 + 25 bytes).
+        let mut chunk = Vec::new();
+        let data = b"Comment\0/Users/brian/secret.png";
+        chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        chunk.extend_from_slice(b"tEXt");
+        chunk.extend_from_slice(data);
+        chunk.extend_from_slice(&[0, 0, 0, 0]);
+        let mut out = png[..33].to_vec();
+        out.extend_from_slice(&chunk);
+        out.extend_from_slice(&png[33..]);
+        out
+    }
+
+    #[test]
+    fn images_are_reencoded_without_metadata_and_hashed_after() {
+        let source = png_with_text_chunk();
+        assert!(source.windows(7).any(|w| w == b"/Users/"));
+        let png = prepare_image(&source, "image/png").expect("png");
+        assert_eq!((png.mime, png.width, png.height), ("image/png", 12, 7));
+        assert!(!png.bytes.windows(4).any(|w| w == b"tEXt"));
+        assert_eq!(png.sha256, hex::encode(Sha256::digest(&png.bytes)));
+        let jpeg = prepare_image(&source, "image/jpeg").expect("jpeg");
+        assert_eq!(&jpeg.bytes[..2], &[0xFF, 0xD8]);
+        assert!(prepare_image(&source, "image/gif").is_err());
+        assert!(prepare_image(b"not an image", "image/png").is_err());
+        // Deterministic: the same pixels re-encode to the same bytes.
+        assert_eq!(
+            prepare_image(&png.bytes, "image/png")
+                .expect("again")
+                .sha256,
+            png.sha256
+        );
+    }
 
     #[test]
     fn the_media_base_follows_the_relay_scheme_and_needs_an_authority() {

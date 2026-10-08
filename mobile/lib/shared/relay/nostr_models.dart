@@ -114,6 +114,31 @@ abstract final class EventKind {
   /// input bytes for the owner's PTY, ≤ 8 KiB of base64 per event.
   static const shellInput = 24312;
 
+  // --- Shared observation (NIP-SW, NIP-SP, NIP-SDV) --------------------------
+  // Keep in sync with `crates/beekeeper-core/src/kind.rs` and
+  // `desktop/src/shared/constants/kinds.ts`. Mobile neither reads nor writes
+  // these yet; the integers are mirrored so the tables cannot drift.
+
+  /// Kind:24320 surface watch (ephemeral, member → producer), shared by the
+  /// preview and device surfaces (`surface` tag).
+  static const surfaceWatch = 24320;
+
+  /// Kind:24321 surface frame (ephemeral, producer → session channel): a
+  /// base64 JPEG, accepted only from the announced producer.
+  static const surfaceFrame = 24321;
+
+  /// Kind:30626 session preview announce (addressable, `d` = sessionRef).
+  static const sessionPreviewAnnounce = 30626;
+
+  /// Kind:44253 surface snapshot record (preview or device).
+  static const surfaceSnapshot = 44253;
+
+  /// Kind:44254 session device command.
+  static const sessionDeviceCommand = 44254;
+
+  /// Kind:44255 provider-signed session device record.
+  static const sessionDeviceRecord = 44255;
+
   // --- Coding sessions (44220-44231, 44244-44247, 44252, 24223) -------------
   // Keep in sync with `desktop/src/shared/constants/kinds.ts`. Mobile reads
   // the fact kinds and, since 2026-09-07, also publishes the member-signed

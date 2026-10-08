@@ -405,6 +405,33 @@ pub async fn filter_fanout_by_access(
     // connections (plus the sender's, for echo/diagnostics). Never widened
     // by project membership — input is a sender→owner stream, and the owner
     // host re-verifies the sender against the roster before the PTY.
+    // NIP-SW watch (24320): a watcher → producer request, delivered only to
+    // its `p` (the producer) and its author. The channel ACL below still
+    // applies on top; a watch is never widened to the channel.
+    let matches = if event_kind_u32(&stored_event.event) == beekeeper_core::kind::KIND_SURFACE_WATCH
+    {
+        let author = stored_event.event.pubkey.to_bytes();
+        let p = nostr::SingleLetterTag::lowercase(nostr::Alphabet::P);
+        let producer: Option<[u8; 32]> = stored_event
+            .event
+            .tags
+            .filter(nostr::TagKind::SingleLetter(p))
+            .find_map(|t| t.content())
+            .and_then(|hex| nostr::PublicKey::from_hex(hex).ok())
+            .map(|pk| pk.to_bytes());
+        matches
+            .into_iter()
+            .filter(|(conn_id, _)| {
+                let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                    return false;
+                };
+                pk == author || producer.is_some_and(|producer| pk == producer)
+            })
+            .collect()
+    } else {
+        matches
+    };
+
     let matches = if event_kind_u32(&stored_event.event) == beekeeper_core::kind::KIND_SHELL_INPUT {
         let author = stored_event.event.pubkey.to_bytes();
         let p = nostr::SingleLetterTag::lowercase(nostr::Alphabet::P);
@@ -1194,6 +1221,23 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                 ));
                 return;
             }
+        }
+        // NIP-SW shared surface watch/frame: strict validation, the h-path
+        // membership gate and (frames) the announced-producer authority.
+        if kind_u32 == beekeeper_core::kind::KIND_SURFACE_WATCH
+            || kind_u32 == beekeeper_core::kind::KIND_SURFACE_FRAME
+        {
+            super::surface_watch::handle_surface_event(
+                event,
+                conn_id,
+                pubkey_bytes,
+                channel_ids,
+                &event_id_hex,
+                conn,
+                state,
+            )
+            .await;
+            return;
         }
         if kind_u32 == beekeeper_core::kind::KIND_CODING_SESSION_LEASE {
             super::session_lease::handle_session_lease_event(

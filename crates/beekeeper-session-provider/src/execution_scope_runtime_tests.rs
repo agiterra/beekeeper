@@ -268,6 +268,7 @@ mod preflight {
             ],
             policy_dir: case.own.parent().expect("root").join("host"),
             egress: Default::default(),
+            extra_loopback_ports: Vec::new(),
             probe_readable: case.own.join("probe"),
         })
         .expect("boundary");

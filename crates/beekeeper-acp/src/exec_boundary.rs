@@ -306,6 +306,11 @@ pub struct BoundarySpec {
     pub probe_readable: PathBuf,
     /// What outbound network the execution may open.
     pub egress: Egress,
+    /// Further loopback TCP ports the execution may connect to under
+    /// [`Egress::LoopbackProxy`] (the provider's agent-device daemon for a
+    /// session with a device open). Ignored under [`Egress::Unrestricted`],
+    /// which already allows the connect.
+    pub extra_loopback_ports: Vec<u16>,
 }
 
 /// Why a boundary could not be prepared.
@@ -459,6 +464,25 @@ pub fn render_policy(grants: &[Grant]) -> Result<String, BoundaryError> {
 /// contains a character the policy language cannot carry safely, or when the
 /// egress proxy is not a loopback address with a port.
 pub fn render_policy_with(grants: &[Grant], egress: Egress) -> Result<String, BoundaryError> {
+    render_policy_with_ports(grants, egress, &[])
+}
+
+/// [`render_policy_with`], admitting `extra_ports` on loopback beside the
+/// proxy's under [`Egress::LoopbackProxy`] (see
+/// [`BoundarySpec::extra_loopback_ports`]).
+///
+/// # Errors
+/// As [`render_policy_with`], and [`BoundaryError::InvalidSpec`] for port 0.
+pub fn render_policy_with_ports(
+    grants: &[Grant],
+    egress: Egress,
+    extra_ports: &[u16],
+) -> Result<String, BoundaryError> {
+    if extra_ports.contains(&0) {
+        return Err(BoundaryError::InvalidSpec(
+            "an extra loopback port must be non-zero".to_owned(),
+        ));
+    }
     let mut out = String::new();
     out.push_str(&format!(
         ";; Beekeeper project execution boundary, policy v{POLICY_VERSION}\n"
@@ -547,6 +571,18 @@ pub fn render_policy_with(grants: &[Grant], egress: Egress) -> Result<String, Bo
             "(allow network-outbound (remote tcp \"localhost:{}\"))\n",
             addr.port()
         ));
+        let mut extra: Vec<u16> = extra_ports
+            .iter()
+            .copied()
+            .filter(|port| *port != addr.port())
+            .collect();
+        extra.sort_unstable();
+        extra.dedup();
+        for port in extra {
+            out.push_str(&format!(
+                "(allow network-outbound (remote tcp \"localhost:{port}\"))\n"
+            ));
+        }
         // Each granted Unix-domain socket, by exact resolved path. Only here:
         // unrestricted egress already allows the connect.
         for grant in sockets {
@@ -651,7 +687,7 @@ pub fn prepare(spec: BoundarySpec) -> Result<PreparedBoundary, BoundaryError> {
             )));
         }
     }
-    let rendered = render_policy_with(&spec.grants, spec.egress)?;
+    let rendered = render_policy_with_ports(&spec.grants, spec.egress, &spec.extra_loopback_ports)?;
     let digest = hex::encode(Sha256::digest(rendered.as_bytes()));
     let policy_file = policy_dir.join(format!("{digest}.sb"));
     install_once(policy_dir, &policy_file, &rendered)?;

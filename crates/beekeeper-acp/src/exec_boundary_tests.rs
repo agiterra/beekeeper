@@ -91,6 +91,7 @@ fn the_policy_may_not_live_inside_a_grant() {
         grants: vec![Grant::tree(&own, Access::ReadWrite, "own checkout")],
         policy_dir: own.join("policies"),
         egress: Default::default(),
+        extra_loopback_ports: Vec::new(),
         probe_readable: own.join("f"),
     };
     assert!(matches!(prepare(spec), Err(BoundaryError::InvalidSpec(_))));
@@ -103,6 +104,7 @@ fn no_backend_is_claimed_off_macos() {
         grants: Vec::new(),
         policy_dir: PathBuf::from("/tmp/policies"),
         egress: Default::default(),
+        extra_loopback_ports: Vec::new(),
         probe_readable: PathBuf::from("/etc/hosts"),
     };
     assert!(matches!(prepare(spec), Err(BoundaryError::Unsupported(_))));
@@ -141,6 +143,7 @@ mod macos {
             grants: vec![Grant::tree(&a, Access::ReadWrite, "own checkout")],
             policy_dir: root.join("host"),
             egress: Default::default(),
+            extra_loopback_ports: Vec::new(),
             probe_readable: a.join("own.txt"),
         })
         .expect("boundary prepared and self-tested");
@@ -330,6 +333,7 @@ mod macos {
             ],
             policy_dir: host.clone(),
             egress: Default::default(),
+            extra_loopback_ports: Vec::new(),
             probe_readable: own.join("f"),
         };
         assert!(
@@ -347,6 +351,7 @@ mod macos {
             ],
             policy_dir: host,
             egress: Default::default(),
+            extra_loopback_ports: Vec::new(),
             probe_readable: own.join("f"),
         };
         assert!(
@@ -399,6 +404,7 @@ mod macos {
             ],
             policy_dir: root.join("host"),
             egress: Default::default(),
+            extra_loopback_ports: Vec::new(),
             probe_readable: target.clone(),
         })
         .expect("prepared");
@@ -444,6 +450,7 @@ mod macos {
                     grants: vec![Grant::tree(&own, Access::ReadWrite, "own")],
                     policy_dir: host,
                     egress: Default::default(),
+                    extra_loopback_ports: Vec::new(),
                     probe_readable: own.join("f"),
                 })
                 .expect("prepared")
@@ -525,6 +532,43 @@ fn an_egress_proxy_that_is_not_loopback_is_refused() {
     assert!(Egress::loopback_proxy("[::1]:8080".parse().expect("v6")).is_ok());
 }
 
+/// C5 (SV-34): a device seat's agent-device daemon port rides beside the
+/// proxy's, only under a proxy egress, once each, and never as port 0.
+#[test]
+fn extra_loopback_ports_are_allowed_only_under_a_proxy_egress() {
+    let grants = vec![Grant::tree("/work/a", Access::ReadWrite, "own checkout")];
+    let open = render_policy_with_ports(&grants, Egress::Unrestricted, &[40123]).expect("renders");
+    assert!(
+        !open.contains("network-outbound"),
+        "unrestricted egress renders no network rule:\n{open}"
+    );
+    let addr: std::net::SocketAddr = "127.0.0.1:18080".parse().expect("addr");
+    let egress = Egress::loopback_proxy(addr).expect("loopback");
+    let policy =
+        render_policy_with_ports(&grants, egress, &[40123, 40123, 18080]).expect("renders");
+    let deny = policy
+        .find("(deny network-outbound)\n")
+        .expect("outbound denied");
+    let daemon = policy
+        .find("(allow network-outbound (remote tcp \"localhost:40123\"))\n")
+        .expect("the daemon port allowed");
+    assert!(deny < daemon, "the exception follows the denial");
+    assert_eq!(
+        policy.matches("allow network-outbound").count(),
+        2,
+        "the proxy and the daemon port, each once:\n{policy}"
+    );
+    assert_eq!(
+        render_policy_with(&grants, egress).expect("renders"),
+        render_policy_with_ports(&grants, egress, &[]).expect("renders"),
+        "no extra ports renders exactly the old policy"
+    );
+    assert!(matches!(
+        render_policy_with_ports(&grants, egress, &[0]),
+        Err(BoundaryError::InvalidSpec(_))
+    ));
+}
+
 /// Live, under the real policy: the proxy's loopback port connects; another
 /// loopback port, an external address and a Unix-domain socket are refused,
 /// each beside an unconfined positive control where one is possible.
@@ -543,6 +587,7 @@ fn live_egress_reaches_only_the_proxy_port() {
         grants: vec![Grant::tree(&own, Access::ReadWrite, "own")],
         policy_dir: root.join("host"),
         egress: Egress::loopback_proxy(proxy_addr).expect("loopback"),
+        extra_loopback_ports: Vec::new(),
         probe_readable: own.join("f"),
     })
     .expect("prepare verifies the egress rule");
@@ -684,6 +729,7 @@ fn live_socket_grant_reaches_only_that_socket() {
         ],
         policy_dir: root.join("host"),
         egress: Egress::loopback_proxy(proxy_addr).expect("loopback"),
+        extra_loopback_ports: Vec::new(),
         probe_readable: own.join("f"),
     })
     .expect("prepare");

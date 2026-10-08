@@ -31,6 +31,7 @@
 // compiled but never called there.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
+pub mod broadcast;
 #[cfg(unix)]
 pub mod broker;
 pub mod commands;
@@ -468,6 +469,7 @@ pub fn emit_state(app: &AppHandle, channel_id: &str) -> PreviewState {
     if let Err(error) = app.emit(STATE_EVENT, &state) {
         eprintln!("session-preview: emit state failed: {error}");
     }
+    broadcast::on_preview_state(app, channel_id);
     state
 }
 

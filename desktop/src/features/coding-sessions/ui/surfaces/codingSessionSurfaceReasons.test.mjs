@@ -23,7 +23,6 @@ const SECTION_3_REASONS = {
   landing: "This session has no repository to land into.",
   people: "This session predates sharing and has no roster.",
   pulse: "This session belongs to no project.",
-  device: "Arrives with device support.",
 };
 
 function emptyCtx(overrides = {}) {
@@ -167,8 +166,57 @@ test("each surface opens when its §3 condition holds", () => {
   assert.deepEqual(definition("plan").availability(emptyPlan), {
     available: true,
   });
-  // Device never opens in Wave B; Browser opens on macOS (its own test).
-  assert.equal(definition("device").availability(someone).available, false);
+  // C5: Device opens with any session and says itself what the provider
+  // offers; Browser opens on macOS (its own test).
+  assert.deepEqual(definition("device").availability(someone), {
+    available: true,
+  });
+});
+
+test("Device (SV-34): opens with a session; without one it says so; the Wave B sentence is gone", () => {
+  assert.deepEqual(definition("device").availability(emptyCtx()), {
+    available: true,
+  });
+  const none = definition("device").availability(emptyCtx({ channelId: "" }));
+  assert.deepEqual(none, {
+    available: false,
+    reason: "Open a session to see its device.",
+  });
+  assert.notEqual(none.reason, "Arrives with device support.");
+  // With no 44255 availability the panel says "not offered", never "no devices".
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      QueryClientProvider,
+      { client: new QueryClient() },
+      React.createElement(definition("device").Panel, {
+        ctx: emptyCtx({
+          extensions: {
+            device: {
+              fold: {
+                availabilityByTarget: new Map(),
+                slots: new Map(),
+                shots: [],
+                snapshots: [],
+                unanswered: [],
+              },
+              targetKey: null,
+              providerPubkey: null,
+              localProviderPubkey: null,
+              isLoading: false,
+              errorMessage: null,
+            },
+          },
+        }),
+      }),
+    ),
+  );
+  assert.match(markup, /data-testid="coding-session-surface-panel-device"/);
+  assert.match(markup, /data-state="not-offered"/);
+  assert.ok(
+    markup.includes("This machine&#x27;s provider does not offer devices."),
+    markup,
+  );
+  assert.doesNotMatch(markup, /no devices/i);
 });
 
 test("a panel left open after its surface became unavailable shows the same reason", () => {
@@ -203,11 +251,21 @@ test("Browser (SV-33): its WIRE-C4 § 4 reasons word for word, open on macOS wit
   const { codingSessionSurfaceBrowserAvailability } = await import(
     "./CodingSessionSurfaceBrowser.tsx"
   );
-  const ctx = emptyCtx();
+  // The agent's machine is unknown or this one: off macOS, no Browser.
+  const ctx = emptyCtx({ isLocalProvider: null });
   assert.deepEqual(codingSessionSurfaceBrowserAvailability(ctx, false), {
     available: false,
     reason: "The Browser runs on macOS in this version.",
   });
+  // C5: the agent runs elsewhere, so the Browser is the remote view, which
+  // needs no native view and opens on any platform.
+  assert.deepEqual(
+    codingSessionSurfaceBrowserAvailability(
+      emptyCtx({ isLocalProvider: false }),
+      false,
+    ),
+    { available: true },
+  );
   assert.deepEqual(codingSessionSurfaceBrowserAvailability(ctx, true), {
     available: true,
   });
@@ -309,7 +367,7 @@ test("Mission's three surfaces are a lens choice, listed only in Mission", () =>
   for (const id of ["mission-inspector", "mission-context", "mission-audit"]) {
     assert.deepEqual([...definition(id).lenses], ["mission"], id);
   }
-  for (const id of [...Object.keys(SECTION_3_REASONS), "browser"]) {
+  for (const id of [...Object.keys(SECTION_3_REASONS), "browser", "device"]) {
     assert.deepEqual(
       [...definition(id).lenses],
       ["conversation", "mission"],

@@ -1,18 +1,23 @@
+import type * as React from "react";
 import { Bot, HardDrive } from "lucide-react";
 
 import { SESSION_PREVIEW_LOCAL_ONLY_LABEL } from "../lib/previewModel";
 
 /**
  * The honesty strip under every preview: who is driving (when an agent is),
- * and that the page stays on this computer. `bindingNote` names what the
- * preview is bound to, when that needs saying.
+ * and whether the page is shared (`share`, C5's share strip) or stays on
+ * this computer. `bindingNote` names what the preview is bound to, when that
+ * needs saying.
  */
 export function SessionPreviewStrip({
   bindingNote,
   drivingText,
+  share,
 }: {
   bindingNote: string | null;
   drivingText: string | null;
+  /** The share strip; absent, the C4 "local only" label stands. */
+  share?: React.ReactNode;
 }) {
   return (
     <div
@@ -28,13 +33,15 @@ export function SessionPreviewStrip({
           {drivingText}
         </span>
       ) : null}
-      <span
-        className="flex items-center gap-1"
-        data-testid="session-preview-local-only"
-      >
-        <HardDrive aria-hidden className="size-3" />
-        {SESSION_PREVIEW_LOCAL_ONLY_LABEL}
-      </span>
+      {share ?? (
+        <span
+          className="flex items-center gap-1"
+          data-testid="session-preview-local-only"
+        >
+          <HardDrive aria-hidden className="size-3" />
+          {SESSION_PREVIEW_LOCAL_ONLY_LABEL}
+        </span>
+      )}
       {bindingNote ? (
         <span data-testid="session-preview-binding-note">{bindingNote}</span>
       ) : null}

@@ -95,6 +95,23 @@ export const KIND_SHELL_SESSION = 30623;
 export const KIND_SHELL_WATCH = 24310;
 export const KIND_SHELL_FRAME = 24311;
 export const KIND_SHELL_INPUT = 24312;
+// NIP-SW / NIP-SP / NIP-SDV shared observation (SV-33 preview, SV-34 device).
+// 24320 surface watch (ephemeral, member → producer; delivered only to its
+// `p` and author) and 24321 surface frame (ephemeral, producer → session
+// channel; relay accepts it only from the announced producer of
+// (h, surface, d)) are shared by both surfaces via a `surface` tag
+// (`preview` | `device`). 30626 is the preview announce (addressable,
+// d = sessionRef), 44253 the surface snapshot record (both surfaces), 44254
+// the device command and 44255 the provider-signed device record.
+// Wire contract: docs/nips/NIP-SW.md, NIP-SP.md, NIP-SDV.md.
+// Keep in sync: crates/beekeeper-core/src/kind.rs and mobile
+// lib/shared/relay/nostr_models.dart.
+export const KIND_SURFACE_WATCH = 24320;
+export const KIND_SURFACE_FRAME = 24321;
+export const KIND_SESSION_PREVIEW_ANNOUNCE = 30626;
+export const KIND_SURFACE_SNAPSHOT = 44253;
+export const KIND_SESSION_DEVICE_COMMAND = 44254;
+export const KIND_SESSION_DEVICE_RECORD = 44255;
 // LANE-L23: a project's persona-pack source. Addressable, d = the project
 // coordinate `30621:<owner-hex>:<slug>`. Author must be a founder of one of
 // the project's repositories (L18's RepositoryFounders) or the project

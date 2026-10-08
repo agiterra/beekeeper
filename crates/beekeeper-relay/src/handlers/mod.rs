@@ -53,6 +53,9 @@ pub mod session_lease;
 pub mod shell_observe;
 /// NIP-29 and NIP-25 side-effect handlers.
 pub mod side_effects;
+/// NIP-SW shared surface watch/frame kinds (24320/24321) — validation,
+/// channel membership, frame-producer authority, channel fan-out.
+pub mod surface_watch;
 
 /// Extract an optional TTL (in seconds) from a Nostr event's `ttl` tag,
 /// applying the server-side override when configured.

@@ -22,6 +22,7 @@ pub mod coding_session_team_transaction;
 pub mod mentions;
 pub mod nip_oa;
 pub mod project_work;
+pub mod surface;
 
 pub use builders::*;
 

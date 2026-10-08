@@ -38,6 +38,7 @@ import {
 } from "../lib/previewRecents";
 import { SessionPreviewEmptyState } from "./SessionPreviewEmptyState";
 import { SessionPreviewFloating } from "./SessionPreviewFloating";
+import { SessionPreviewShareStrip } from "./SessionPreviewShareStrip";
 import { SessionPreviewSlot } from "./SessionPreviewSlot";
 import { SessionPreviewStrip } from "./SessionPreviewStrip";
 import { SessionPreviewToolbar } from "./SessionPreviewToolbar";
@@ -53,6 +54,11 @@ export type SessionPreviewSurfaceProps = {
    * the strip: that agent cannot reach this computer's Browser.
    */
   isLocalProvider: boolean | null;
+  /**
+   * The umbrella sessionRef the preview is shared under (C5). `null`: the
+   * share strip says the Browser cannot be shared. Absent: no share strip.
+   */
+  sessionRef?: string | null;
 };
 
 function Notice({ children }: { children: React.ReactNode }) {
@@ -78,6 +84,7 @@ export function SessionPreviewSurface({
   focusedExecutionKey,
   isLocalProvider,
   options,
+  sessionRef,
 }: SessionPreviewSurfaceProps) {
   const { state, error, drivingEvent, apply } =
     useSessionPreviewState(channelId);
@@ -169,7 +176,18 @@ export function SessionPreviewSurface({
           ? `Only ${binding.option.label} may drive it.`
           : null;
   const strip = (
-    <SessionPreviewStrip bindingNote={bindingNote} drivingText={drivingText} />
+    <SessionPreviewStrip
+      bindingNote={bindingNote}
+      drivingText={drivingText}
+      share={
+        sessionRef === undefined ? undefined : (
+          <SessionPreviewShareStrip
+            channelId={channelId}
+            sessionRef={sessionRef}
+          />
+        )
+      }
+    />
   );
 
   if (!open) {

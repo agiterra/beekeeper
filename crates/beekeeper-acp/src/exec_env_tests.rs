@@ -232,6 +232,7 @@ async fn a_bounded_launch_gives_the_child_exactly_the_resolved_environment() {
         )],
         policy_dir: root.join("host"),
         egress: Default::default(),
+        extra_loopback_ports: Vec::new(),
         probe_readable: {
             std::fs::write(own.join("probe"), "p").expect("probe");
             own.join("probe")
@@ -297,6 +298,7 @@ async fn a_full_access_launch_reaches_outside_with_exactly_the_resolved_environm
         )],
         policy_dir: root.join("host"),
         egress: Default::default(),
+        extra_loopback_ports: Vec::new(),
         probe_readable: {
             std::fs::write(own.join("probe"), "p").expect("probe");
             own.join("probe")

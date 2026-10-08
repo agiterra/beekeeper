@@ -300,23 +300,13 @@ test("SV-21, SV-23 and SV-38: launcher, tabs, dimmed reasons, a fake surface", a
   await rest();
   await shoot("SV21-launcher", host);
 
-  // SV-23: Device is dimmed, present, and says why on hover. (The Browser
-  // is live since C4 — `session-preview-local.spec.ts` covers its states.)
-  for (const [id, reason] of [
-    ["device", "Arrives with device support."],
-  ] as const) {
-    const row = page.getByTestId(`coding-session-surface-launcher-row-${id}`);
-    await expect(row).toHaveAttribute("aria-disabled", "true");
-    await expect(row).toHaveAccessibleDescription(reason);
-  }
-  await page.getByTestId("coding-session-surface-launcher-row-device").hover();
-  const deviceTip = page
-    .getByTestId("coding-session-surface-reason-tooltip-device")
-    .first();
-  await expect(deviceTip).toContainText("Arrives with device support.");
-  await shootHostWithTooltip("SV23-dimmed-tooltip", deviceTip);
-  await rest();
-
+  // SV-23: no built-in is dimmed any more — the Browser is live since C4
+  // (`session-preview-local.spec.ts`) and the Device since C5
+  // (`coding-session-device.spec.ts`). The dimmed-row tooltip is still
+  // covered below by the fake surface (SV-38).
+  await expect(
+    page.getByTestId("coding-session-surface-launcher-row-device"),
+  ).not.toHaveAttribute("aria-disabled", "true");
   // SV-38: the fake surface's row, dimmed reason and activity badge.
   await expect(memoryRow).toHaveAttribute("aria-disabled", "true");
   await expect(
@@ -460,7 +450,6 @@ test("SV-21, SV-23 and SV-38: launcher, tabs, dimmed reasons, a fake surface", a
     "SV21-expanded",
     "SV21-launcher",
     "SV21-tabs",
-    "SV23-dimmed-tooltip",
     "SV38-fake-surface",
   ]);
 });

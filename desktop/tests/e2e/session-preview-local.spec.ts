@@ -240,9 +240,13 @@ test("S1: empty state, docked, floating, an overlay freezes it, and the driving 
   await expect(empty.getByTestId("session-preview-server")).toHaveCount(2);
   await expect(empty).toContainText("Local servers");
   await expect(empty).toContainText("Recently used");
-  await expect(panel.getByTestId("session-preview-local-only")).toHaveText(
-    "Local only · not shared yet",
+  // C5: the strip is the share strip now. This mock session carries no
+  // sessionRef, so it says it cannot be shared rather than claim a share;
+  // `session-preview-share.spec.ts` covers the shared states.
+  await expect(panel.getByTestId("session-preview-share-strip")).toHaveText(
+    "This session has no session reference, so its Browser cannot be shared.",
   );
+  await expect(panel.getByTestId("session-preview-share-error")).toHaveCount(0);
   await shoot(page, testInfo, "browser-empty-state", panel);
 
   // Click docks it, bound to this session (the composer's target).

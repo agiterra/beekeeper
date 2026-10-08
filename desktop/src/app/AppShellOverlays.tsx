@@ -3,6 +3,7 @@ import * as React from "react";
 
 import { ShellAccessRequestDialog } from "@/features/builtin-shell/ui/ShellAccessRequestDialog";
 import { ShellBroadcastPump } from "@/features/builtin-shell/ui/ShellBroadcastPump";
+import { SessionPreviewBroadcastPump } from "@/features/session-preview/ui/SessionPreviewBroadcastPump";
 import type { CreateChannelInput } from "@/features/sidebar/lib/useCreateChannelForm";
 import type { Channel } from "@/shared/api/types";
 import { FeatureGate } from "@/shared/features";
@@ -132,6 +133,7 @@ export function AppShellOverlays({
         <ShellAccessRequestDialog />
         <ShellBroadcastPump />
       </FeatureGate>
+      <SessionPreviewBroadcastPump />
     </>
   );
 }

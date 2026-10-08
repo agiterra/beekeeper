@@ -379,6 +379,15 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         | KIND_CODING_SESSION_OBSERVATION
         | KIND_CODING_SESSION_HANDOVER
         | KIND_CODING_SESSION_GENERATED_TITLE => Ok(Scope::MessagesWrite),
+        // NIP-SP / NIP-SW / NIP-SDV shared observation: the preview announce,
+        // the surface snapshot and the device command/record are member- or
+        // provider-authored session records inside the session channel. The
+        // relay validates structure and the host-local rule; standing is the
+        // reader's (snapshot, announce) or the provider's (command) decision.
+        beekeeper_core::kind::KIND_SESSION_PREVIEW_ANNOUNCE
+        | beekeeper_core::kind::KIND_SURFACE_SNAPSHOT
+        | beekeeper_core::kind::KIND_SESSION_DEVICE_COMMAND
+        | beekeeper_core::kind::KIND_SESSION_DEVICE_RECORD => Ok(Scope::MessagesWrite),
         // NIP-56 reports are ordinary member writes into the mod-only queue.
         // Ingest persists them to `moderation_reports` and suppresses public
         // storage/fanout; reports are signals, never enforcement triggers.
@@ -847,6 +856,12 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             // NIP-PW: a work record's `h` is its membership gate, exactly as
             // for 44244. Its `a` tag is a selector and never a substitute.
             | beekeeper_core::kind::KIND_PROJECT_WORK_RECORD
+            // NIP-SP / NIP-SW / NIP-SDV: a preview, a snapshot or a device
+            // belongs to one session; its channel is its whole ACL.
+            | beekeeper_core::kind::KIND_SESSION_PREVIEW_ANNOUNCE
+            | beekeeper_core::kind::KIND_SURFACE_SNAPSHOT
+            | beekeeper_core::kind::KIND_SESSION_DEVICE_COMMAND
+            | beekeeper_core::kind::KIND_SESSION_DEVICE_RECORD
     )
 }
 
@@ -875,6 +890,10 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_OBSERVATION
             | KIND_CODING_SESSION_HANDOVER
             | beekeeper_core::kind::KIND_PROJECT_WORK_RECORD
+            | beekeeper_core::kind::KIND_SESSION_PREVIEW_ANNOUNCE
+            | beekeeper_core::kind::KIND_SURFACE_SNAPSHOT
+            | beekeeper_core::kind::KIND_SESSION_DEVICE_COMMAND
+            | beekeeper_core::kind::KIND_SESSION_DEVICE_RECORD
     )
 }
 
@@ -4211,6 +4230,11 @@ async fn ingest_event_inner(
             .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
     }
 
+    // NIP-SP / NIP-SW / NIP-SDV: structure and the host-local rule only
+    // (`surface_shared_record_envelope`). The relay checks no signer standing.
+    surface_shared_record_envelope(kind_u32, &event)
+        .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+
     if kind_u32 == KIND_CODING_SESSION_CLOSURE {
         let payload =
             beekeeper_core::coding_session_closure::validate_coding_session_closure_envelope(
@@ -5218,6 +5242,38 @@ mod coding_session_title_tests;
 #[cfg(test)]
 #[path = "ingest_coding_session_rewind_tests.rs"]
 mod coding_session_rewind_tests;
+
+#[cfg(test)]
+#[path = "ingest_surface_tests.rs"]
+mod surface_tests;
+
+/// Run the core envelope validator of a stored shared-observation kind
+/// (30626, 44253, 44254, 44255); every other kind passes untouched.
+///
+/// Each validator enforces the exact ordered tags and refuses host-local
+/// facts — UUID-shaped values (a simulator UDID) and home, temp or
+/// simulator paths — so a producer that forgets to redact is refused rather
+/// than published (`docs/nips/NIP-SW.md` § Never on the relay).
+pub(crate) fn surface_shared_record_envelope(kind: u32, event: &Event) -> Result<(), String> {
+    match kind {
+        beekeeper_core::kind::KIND_SESSION_PREVIEW_ANNOUNCE => {
+            beekeeper_core::session_preview::validate_session_preview_announce_envelope(event)
+                .map(|_| ())
+        }
+        beekeeper_core::kind::KIND_SURFACE_SNAPSHOT => {
+            beekeeper_core::surface_snapshot::validate_surface_snapshot_envelope(event).map(|_| ())
+        }
+        beekeeper_core::kind::KIND_SESSION_DEVICE_COMMAND => {
+            beekeeper_core::session_device::validate_session_device_command_envelope(event)
+                .map(|_| ())
+        }
+        beekeeper_core::kind::KIND_SESSION_DEVICE_RECORD => {
+            beekeeper_core::session_device::validate_session_device_record_envelope(event)
+                .map(|_| ())
+        }
+        _ => Ok(()),
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -8202,7 +8258,7 @@ mod tests {
 
     /// Every coding-session kind, in kind order. Kept next to the tests that
     /// sweep it so the next kind lands in the sweep the moment it exists.
-    const CODING_SESSION_TEST_KINDS: [u32; 18] = [
+    const CODING_SESSION_TEST_KINDS: [u32; 22] = [
         KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -8221,6 +8277,10 @@ mod tests {
         KIND_CODING_SESSION_HANDOVER,
         beekeeper_core::kind::KIND_PROJECT_WORK_RECORD,
         KIND_CODING_SESSION_GENERATED_TITLE,
+        beekeeper_core::kind::KIND_SESSION_PREVIEW_ANNOUNCE,
+        beekeeper_core::kind::KIND_SURFACE_SNAPSHOT,
+        beekeeper_core::kind::KIND_SESSION_DEVICE_COMMAND,
+        beekeeper_core::kind::KIND_SESSION_DEVICE_RECORD,
     ];
 
     #[test]
@@ -8239,7 +8299,11 @@ mod tests {
                     || kind == beekeeper_core::kind::KIND_PROJECT_WORK_RECORD
                     // NIP-CSG generated titles (44252): `h`-gated like the
                     // 44229 name they rank below.
-                    || kind == KIND_CODING_SESSION_GENERATED_TITLE,
+                    || kind == KIND_CODING_SESSION_GENERATED_TITLE
+                    // NIP-SP/SW/SDV shared observation (30626, 44253–44255):
+                    // one session's records, gated by its channel.
+                    || kind == beekeeper_core::kind::KIND_SESSION_PREVIEW_ANNOUNCE
+                    || (44253..=44255).contains(&kind),
                 "is_coding_session_kind disagrees at kind {kind}"
             );
         }

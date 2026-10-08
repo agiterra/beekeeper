@@ -192,6 +192,16 @@ pub mod seat_commit_identity;
 /// The git hooks a seat's checkout gets so its local commits reach Pulse
 /// without anyone being asked to report them.
 pub mod seat_git_hooks;
+/// NIP-SDV: session device command (44254) and record (44255), and the
+/// opaque slot id that names a device on the wire.
+pub mod session_device;
+/// NIP-SP: session preview announce (30626), page redaction, owner fold.
+pub mod session_preview;
+/// NIP-SW § Snapshot: the surface snapshot record (44253) for both surfaces.
+pub mod surface_snapshot;
+/// NIP-SW: the shared surface watch (24320) / frame (24321) pair and the
+/// host-local rule every shared-observation kind enforces.
+pub mod surface_watch;
 /// The team-fold vocabulary, carried in the binary rather than in the source
 /// tree — the words `bee sessions explain` answers with.
 pub mod team_vocabulary;

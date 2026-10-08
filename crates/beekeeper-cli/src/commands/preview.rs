@@ -95,6 +95,13 @@ pub enum PreviewCmd {
         /// Capture the aria text only.
         #[arg(long)]
         no_image: bool,
+        /// Also publish the PNG to the session as a signed snapshot (kind
+        /// 44253) everyone in it sees; needs the Browser shared.
+        #[arg(long, conflicts_with = "no_image")]
+        share: bool,
+        /// Alt text for the shared snapshot.
+        #[arg(long, requires = "share")]
+        alt: Option<String>,
     },
     /// Click an element.
     Click {
@@ -397,7 +404,8 @@ impl PreviewFailure {
 pub fn exit_code_for(code: &str) -> i32 {
     match code {
         "preview_url_refused" | "preview_bad_request" | "preview_too_large" => 1,
-        "preview_no_browser" => 2,
+        "preview_no_browser" | "preview_share_no_relay" => 2,
+        "preview_share_no_identity" => 3,
         "preview_no_grant"
         | "preview_grant_malformed"
         | "preview_grant_invalid"
@@ -459,14 +467,52 @@ impl PreviewContext {
     }
 }
 
+/// Whether this verb publishes to the relay (`snapshot --share`), so the
+/// caller must build a relay client for [`run_with_client`].
+pub fn wants_relay(cmd: &PreviewCmd) -> bool {
+    matches!(cmd, PreviewCmd::Snapshot { share: true, .. })
+}
+
 /// Run one `bee preview` verb against this process's environment, print its
-/// output, and return the exit code.
-pub async fn run(cmd: &PreviewCmd, caller: Option<String>) -> i32 {
+/// output, and return the exit code. `client` is the relay client `snapshot
+/// --share` needs to publish its 44253; without one, `--share` fails
+/// `preview_share_no_relay` (exit 2) before the broker is asked for anything.
+pub async fn run_with_client(
+    cmd: &PreviewCmd,
+    caller: Option<String>,
+    client: Option<&crate::client::BeekeeperClient>,
+) -> i32 {
     let outcome = match PreviewContext::from_env(caller) {
-        Ok(context) => execute(cmd, &context),
+        Ok(context) => execute_with_client(cmd, &context, client).await,
         Err(failure) => Err(failure),
     };
     report(outcome)
+}
+
+/// [`execute`], then publish the snapshot when `--share` was given.
+pub async fn execute_with_client(
+    cmd: &PreviewCmd,
+    context: &PreviewContext,
+    client: Option<&crate::client::BeekeeperClient>,
+) -> Result<Value, PreviewFailure> {
+    let PreviewCmd::Snapshot {
+        share: true, alt, ..
+    } = cmd
+    else {
+        return execute(cmd, context);
+    };
+    if client.is_none() {
+        return Err(PreviewFailure::new(
+            "preview_share_no_relay",
+            "`--share` needs a relay connection, and this invocation has none.",
+        ));
+    }
+    match execute(cmd, context)? {
+        Value::Object(output) => {
+            share::share_snapshot(output, alt.as_deref(), context, client).await
+        }
+        other => Ok(other),
+    }
 }
 
 /// Print an outcome in the wire shape and return its exit code.
@@ -846,6 +892,10 @@ pub fn parse_response(line: &str) -> Result<Value, PreviewFailure> {
         .unwrap_or("preview_unavailable");
     Err(PreviewFailure::new(code, error))
 }
+
+/// `snapshot --share`: publish the snapshot as a kind 44253.
+#[path = "preview_share.rs"]
+pub mod share;
 
 #[cfg(test)]
 #[path = "preview_tests.rs"]

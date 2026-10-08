@@ -15,6 +15,7 @@ import {
   type MockFilter,
 } from "./e2eBridgeSessionFacts.ts";
 import { handleWaveBMockCommand } from "./e2eBridgeWaveBRegistry.ts";
+import * as surfaceObservation from "./e2eBridgeSurfaceObservation.ts";
 import { handleMockProjectTeamSetupCommand } from "./e2eBridgeProjectTeamSetup.ts";
 import {
   associateMockManagedAgent,
@@ -4797,12 +4798,17 @@ function filterMockSessionLeases(filter: MockFilter): RelayEvent[] {
 }
 
 function emitMockLiveEvent(channelId: string, event: RelayEvent) {
+  surfaceObservation.noteMockSurfaceLiveEvent(event);
   for (const socket of mockSockets.values()) {
     for (const [subId, subscription] of socket.subscriptions) {
       if (
         (subscription.channelId === channelId ||
           subscription.channelId === GLOBAL_MOCK_SUBSCRIPTION) &&
-        (!subscription.kinds || subscription.kinds.includes(event.kind))
+        (!subscription.kinds || subscription.kinds.includes(event.kind)) &&
+        surfaceObservation.mockSurfaceLiveFilterAllows(
+          subscription.filters,
+          event,
+        )
       ) {
         sendWsText(socket.handler, ["EVENT", subId, event]);
       }
@@ -10860,6 +10866,18 @@ function sendToMockSocket(
     }
 
     if (
+      surfaceObservation.respondToMockSurfaceObservationQuery(
+        filter,
+        subId,
+        (id) =>
+          id ? getMockMessageStore(id) : [...mockMessages.values()].flat(),
+        (message) => sendWsText(socket.handler, message),
+      )
+    ) {
+      return;
+    }
+
+    if (
       respondToMockMultiChannelSessionFacts(
         filter,
         subId,
@@ -11443,6 +11461,13 @@ export function maybeInstallE2eTauriMocks() {
     emitMockLiveEvent(channel.id, event);
     return event;
   };
+  surfaceObservation.installMockSurfaceObservationRelay({
+    resolveChannelId: (name) =>
+      mockChannels.find((candidate) => candidate.name === name)?.id ?? null,
+    emitLive: emitMockLiveEvent,
+    seedStored: (channelName, event) =>
+      window.__BEEKEEPER_E2E_SEED_MOCK_SIGNED_EVENT__?.({ channelName, event }),
+  });
   window.__BEEKEEPER_E2E_SEED_MOCK_PROJECT_EVENT__ = (event) => {
     getMockProjectEventStore().push(event);
   };

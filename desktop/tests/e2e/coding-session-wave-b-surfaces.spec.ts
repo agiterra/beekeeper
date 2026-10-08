@@ -876,38 +876,23 @@ test("SV-24, SV-23 and SV-41: every surface's contents, both localities, Landing
   ).toBe(true);
   await shoot(page, "SV24-pulse", pulse);
 
-  // Device: dimmed; its letter opens nothing. Its panel, if a tab is left
-  // open, says the same reason — reached through the stored panel state,
-  // which is how a stale tab would survive. (The Browser is live since C4;
-  // `session-preview-local.spec.ts` covers it.)
+  // Device (C5): its letter opens it. This mock relay holds no 44255
+  // availability record, so the panel says the provider does not offer
+  // devices — never "no devices". (`coding-session-device.spec.ts` covers
+  // the rest of its states; the Browser is `session-preview-local.spec.ts`.)
   await page.getByTestId("coding-session-surface-add").click();
   await page.keyboard.press("m");
   await expect(
     page.getByTestId("coding-session-surface-tab-device"),
-  ).toHaveCount(0);
-  await page.keyboard.press("Escape");
-  await page.evaluate(() => {
-    for (let index = 0; index < window.localStorage.length; index += 1) {
-      const key = window.localStorage.key(index);
-      if (!key?.startsWith("beekeeper:session-panels:v1:")) continue;
-      const state = JSON.parse(window.localStorage.getItem(key) ?? "{}");
-      window.localStorage.setItem(
-        key,
-        JSON.stringify({
-          ...state,
-          rightOpen: true,
-          tabs: ["device"],
-          active: "device",
-        }),
-      );
-    }
-  });
-  await page.reload();
-  await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
-  await page.getByTestId("channel-coding-sessions-trigger").click();
-  await page.getByTestId("channel-coding-session-open").first().click();
+  ).toHaveAttribute("aria-selected", "true");
   const devicePanel = page.getByTestId("coding-session-surface-panel-device");
-  await expect(devicePanel).toContainText("Arrives with device support.");
+  await expect(
+    devicePanel.getByTestId("device-surface-status"),
+  ).toHaveAttribute("data-state", "not-offered");
+  await expect(devicePanel).toContainText(
+    "This machine's provider does not offer devices.",
+  );
+  await expect(devicePanel).not.toContainText("No device");
   await shoot(page, "SV24-device", devicePanel);
   await page.close();
 

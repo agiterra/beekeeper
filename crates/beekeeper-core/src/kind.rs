@@ -1075,6 +1075,53 @@ pub const KIND_PROJECT_ARTIFACT_PIN_OP: u32 = 44251;
 /// this tree matched nothing on 2026-10-04.
 pub const KIND_CODING_SESSION_GENERATED_TITLE: u32 = 44252;
 
+// SV-33 / SV-34 shared observation (NIP-SW, NIP-SP, NIP-SDV).
+//
+// **Allocation.** One registry for the session-view parity work
+// (`SESSION_VIEW_PARITY_PLAN.md` § "Kind allocation"): 24320/24321 are the
+// surface watch/frame pair shared by the live preview and the device surface
+// (a `surface` tag says which), 30626 is the preview announce, 44253 the
+// surface snapshot record (both surfaces), 44254/44255 the device command and
+// record. 24322 (device touch) is reserved for a later slice and deliberately
+// not allocated. `git grep -n -w` over crates, desktop, mobile, web, docs,
+// schema and migrations on 2026-10-07 matched none of 24320, 24321, 24322,
+// 30626 or 44254, and 44253/44255 only in the 44252 allocation note above.
+
+/// NIP-SW: surface watch (ephemeral, channel member → producer).
+///
+/// Ordered tags: `h`, `surface` (`preview`|`device`), `d` (preview: the
+/// sessionRef; device: the opaque 16-hex `sdv-slot`), `p` (the producer).
+/// Content `{"action":"watch"|"stop"|"resync"|"snapshot"}`. Delivered only to
+/// the `p` and the author. Never stored. See [`crate::surface_watch`] and
+/// `docs/nips/NIP-SW.md`.
+pub const KIND_SURFACE_WATCH: u32 = 24320;
+/// NIP-SW: surface frame (ephemeral, producer → session channel).
+///
+/// Ordered tags: `h`, `surface`, `d`, `t` (`frame`|`paused`|`end`), `seq`,
+/// `epoch`, `cadence-ms`, `dim`, `captured-at`, optional `actor`, optional
+/// `commit`. Content is a base64 JPEG (≤ 200 KiB). The relay accepts a frame
+/// only from the announced producer of `(h, surface, d)`. Never stored.
+pub const KIND_SURFACE_FRAME: u32 = 24321;
+/// NIP-SP: session preview announce (addressable, `d` = sessionRef), signed by
+/// the desktop identity of the machine hosting the preview. The earliest open
+/// announce with no later close from its signer owns the preview. See
+/// [`crate::session_preview`] and `docs/nips/NIP-SP.md`.
+pub const KIND_SESSION_PREVIEW_ANNOUNCE: u32 = 30626;
+/// NIP-SW § Snapshot: surface snapshot record (regular stored, `h`-scoped) for
+/// both the preview and the device surface — one card, one fold, one verdict
+/// token (`snapshot:<id>`). Signed by the capturing producer. See
+/// [`crate::surface_snapshot`].
+pub const KIND_SURFACE_SNAPSHOT: u32 = 44253;
+/// NIP-SDV: session device command (regular stored, `h`-scoped), signed by a
+/// seat of the targeted generation or a session person. The relay checks
+/// structure only; the provider decides standing and answers every command
+/// with exactly one terminal [`KIND_SESSION_DEVICE_RECORD`]. See
+/// [`crate::session_device`] and `docs/nips/NIP-SDV.md`.
+pub const KIND_SESSION_DEVICE_COMMAND: u32 = 44254;
+/// NIP-SDV: session device record (regular stored, provider-signed):
+/// `availability`, `state`, `refused`, or a `shot` pointer to a 44253.
+pub const KIND_SESSION_DEVICE_RECORD: u32 = 44255;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -1963,6 +2010,12 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_SHELL_WATCH,
     KIND_SHELL_FRAME,
     KIND_SHELL_INPUT,
+    KIND_SURFACE_WATCH,
+    KIND_SURFACE_FRAME,
+    KIND_SESSION_PREVIEW_ANNOUNCE,
+    KIND_SURFACE_SNAPSHOT,
+    KIND_SESSION_DEVICE_COMMAND,
+    KIND_SESSION_DEVICE_RECORD,
 ];
 
 /// Returns `true` if `kind` is in the ephemeral range (20000–29999).
@@ -2230,6 +2283,26 @@ const _: () = assert!(!is_project_a_scoped_kind(
     KIND_CODING_SESSION_GENERATED_TITLE
 ));
 const _: () = assert!(!is_relay_only_kind(KIND_CODING_SESSION_GENERATED_TITLE));
+// Shared observation (NIP-SW/SP/SDV): the watch/frame pair is never stored;
+// the announce is addressable per signer; snapshots and device facts are
+// append-only history.
+const _: () = assert!(is_ephemeral(KIND_SURFACE_WATCH)); // 24320 ∈ 20000–29999, never stored
+const _: () = assert!(is_ephemeral(KIND_SURFACE_FRAME)); // 24321 ∈ 20000–29999, never stored
+const _: () = assert!(is_parameterized_replaceable(KIND_SESSION_PREVIEW_ANNOUNCE)); // 30626
+const _: () = assert!(!is_ephemeral(KIND_SESSION_PREVIEW_ANNOUNCE));
+const _: () = assert!(!is_ephemeral(KIND_SURFACE_SNAPSHOT));
+const _: () = assert!(!is_replaceable(KIND_SURFACE_SNAPSHOT));
+const _: () = assert!(!is_parameterized_replaceable(KIND_SURFACE_SNAPSHOT));
+const _: () = assert!(!is_ephemeral(KIND_SESSION_DEVICE_COMMAND));
+const _: () = assert!(!is_replaceable(KIND_SESSION_DEVICE_COMMAND));
+const _: () = assert!(!is_parameterized_replaceable(KIND_SESSION_DEVICE_COMMAND));
+const _: () = assert!(!is_ephemeral(KIND_SESSION_DEVICE_RECORD));
+const _: () = assert!(!is_replaceable(KIND_SESSION_DEVICE_RECORD));
+const _: () = assert!(!is_parameterized_replaceable(KIND_SESSION_DEVICE_RECORD));
+const _: () = assert!(!is_relay_only_kind(KIND_SURFACE_SNAPSHOT));
+const _: () = assert!(!is_relay_only_kind(KIND_SESSION_DEVICE_RECORD));
+const _: () = assert!(!is_shell_observe_kind(KIND_SURFACE_WATCH));
+const _: () = assert!(!is_shell_observe_kind(KIND_SURFACE_FRAME));
 // Closure revisions are append-only history, never a NIP-16/NIP-33 head.
 const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_CLOSURE));
 const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_CLOSURE));
@@ -2369,6 +2442,28 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    /// The shared-observation kinds are registered once each, at the numbers
+    /// the parity registry assigned, and none is a project-`a`-scoped kind:
+    /// their gate is the session channel's `h`.
+    #[test]
+    fn shared_observation_kinds_are_registered_once_and_channel_gated() {
+        let kinds = [
+            (KIND_SURFACE_WATCH, 24320),
+            (KIND_SURFACE_FRAME, 24321),
+            (KIND_SESSION_PREVIEW_ANNOUNCE, 30626),
+            (KIND_SURFACE_SNAPSHOT, 44253),
+            (KIND_SESSION_DEVICE_COMMAND, 44254),
+            (KIND_SESSION_DEVICE_RECORD, 44255),
+        ];
+        for (kind, number) in kinds {
+            assert_eq!(kind, number);
+            assert_eq!(ALL_KINDS.iter().filter(|&&k| k == kind).count(), 1);
+            assert!(!is_project_a_scoped_kind(kind));
+            assert!(!is_relay_only_kind(kind));
+        }
+        assert!(!ALL_KINDS.contains(&24322), "device touch is not allocated");
     }
 
     #[test]

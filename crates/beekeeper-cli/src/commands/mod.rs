@@ -11,6 +11,7 @@ pub mod agents_repo_git;
 pub mod channel_templates;
 pub mod channels;
 pub mod ci;
+pub mod device;
 pub mod dms;
 pub mod emoji;
 pub mod events;

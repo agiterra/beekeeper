@@ -14,7 +14,10 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use beekeeper_auth::{LimitType, RateLimiter};
-use beekeeper_core::kind::{is_ephemeral, KIND_PRESENCE_UPDATE, KIND_TYPING_INDICATOR};
+use beekeeper_core::kind::{
+    is_ephemeral, KIND_PRESENCE_UPDATE, KIND_SURFACE_FRAME, KIND_SURFACE_WATCH,
+    KIND_TYPING_INDICATOR,
+};
 use beekeeper_core::{CommunityId, TenantContext};
 use nostr::PublicKey;
 
@@ -290,6 +293,10 @@ pub(crate) fn ephemeral_kind_limit(kind: u32) -> u32 {
     match kind {
         KIND_PRESENCE_UPDATE => EPHEMERAL_PRESENCE_PER_SEC,
         KIND_TYPING_INDICATOR => EPHEMERAL_TYPING_PER_SEC,
+        // NIP-SW: a watcher keepalives every 15 s; a producer sends at most
+        // 20 frames a minute, so 2/s leaves room for a resync and no more.
+        KIND_SURFACE_WATCH => beekeeper_core::surface_watch::SURFACE_WATCH_RATE_PER_SEC,
+        KIND_SURFACE_FRAME => beekeeper_core::surface_watch::SURFACE_FRAME_RATE_PER_SEC,
         _ => EPHEMERAL_OTHER_PER_SEC,
     }
 }
@@ -594,6 +601,8 @@ pub(crate) mod tests {
             EPHEMERAL_TYPING_PER_SEC
         );
         assert_eq!(ephemeral_kind_limit(24223), EPHEMERAL_OTHER_PER_SEC);
+        assert_eq!(ephemeral_kind_limit(KIND_SURFACE_WATCH), 10);
+        assert_eq!(ephemeral_kind_limit(KIND_SURFACE_FRAME), 2);
     }
 
     #[test]

@@ -192,7 +192,7 @@ test("Browser (without a session) and Device are dimmed with their reasons, neve
     const markup = launcherMarkup(registry, emptyCtx({ lens, channelId: "" }));
     for (const [id, reason] of [
       ["browser", "Open a session to use the Browser."],
-      ["device", "Arrives with device support."],
+      ["device", "Open a session to see its device."],
     ]) {
       const row = markup.match(
         new RegExp(

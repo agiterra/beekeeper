@@ -295,6 +295,10 @@ export default defineConfig({
         "**/coding-session-sv29-rewind.spec.ts",
         // SV-33 S1/S2 (session-view Wave C, C4): the Browser surface (mock).
         "**/session-preview-local.spec.ts",
+        // SV-34 S1/S2 and SV-33 S3/S4 (session-view Wave C, C5): the Device
+        // surface and Browser sharing (mock relay, mock share commands).
+        "**/coding-session-device.spec.ts",
+        "**/session-preview-share.spec.ts",
       ],
       use: SMOKE_USE,
     },
@@ -411,6 +415,9 @@ export default defineConfig({
         // against real WebKit (the driver spec runs in this project only).
         "**/session-preview-local.spec.ts",
         "**/session-preview-driver.spec.ts",
+        // SV-34 S1/S2 and SV-33 S3/S4 (C5): Device and Browser sharing.
+        "**/coding-session-device.spec.ts",
+        "**/session-preview-share.spec.ts",
       ],
       use: { ...devices["Desktop Safari"] },
     },

@@ -96,7 +96,19 @@ where
             .as_ref()
             .and_then(|k| Keys::parse(k).ok())
             .map(|keys| keys.public_key().to_hex());
-        return commands::preview::run(sub, caller).await;
+        let client = if commands::preview::wants_relay(sub) {
+            match commands::preview::share::relay_client(
+                &cli.relay,
+                cli.private_key.as_deref(),
+                cli.auth_tag.as_deref(),
+            ) {
+                Ok(c) => Some(c),
+                Err(f) => return commands::preview::report(Err(f)),
+            }
+        } else {
+            None
+        };
+        return commands::preview::run_with_client(sub, caller, client.as_ref()).await;
     }
 
     match run(cli).await {
@@ -379,6 +391,10 @@ enum Cmd {
     /// session broker, authorized by the execution's preview grant)
     #[command(subcommand)]
     Preview(commands::preview::PreviewCmd),
+    /// This session's simulator (provider-owned, NIP-SDV) and the shared
+    /// device/preview stream probe (NIP-SW)
+    #[command(subcommand)]
+    Device(commands::device::DeviceCmd),
     /// Community moderation — reports queue, bans, timeouts, audit trail
     #[command(subcommand)]
     Moderation(ModerationCmd),
@@ -6100,6 +6116,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
     match cli.command {
         Cmd::Agents(sub) => commands::agents::dispatch(sub, &client).await,
         Cmd::Ci(sub) => commands::ci::dispatch(sub, &client, &cli.format).await,
+        Cmd::Device(sub) => commands::device::dispatch(&sub, &client).await,
         Cmd::Messages(sub) => commands::messages::dispatch(sub, &client, &cli.format).await,
         Cmd::Channels(sub) => commands::channels::dispatch(sub, &client, &cli.format).await,
         Cmd::Canvas(sub) => commands::channels::dispatch_canvas(sub, &client).await,
@@ -6787,6 +6804,7 @@ mod tests {
             "canvas",
             "channels",
             "ci",
+            "device",
             "dms",
             "docs",
             "emoji",
@@ -7276,6 +7294,8 @@ mod tests {
             ("agents", 5),
             ("canvas", 2),
             ("channels", 16),
+            // C5 (SV-34): list, open, screenshot, close, watch.
+            ("device", 5),
             ("dms", 4),
             ("emoji", 5),
             ("feed", 1),

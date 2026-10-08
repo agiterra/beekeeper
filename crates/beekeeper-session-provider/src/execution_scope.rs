@@ -965,6 +965,34 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
             "xcrun tool-lookup cache written by Apple's developer-tool shims",
         ));
     }
+    // C5 (SV-34): a session's seat reads its own device slot files and
+    // snapshots and the pinned agent-device install (never another
+    // session's), and runs the Node the shim names. Granted before the first
+    // `bee device open`, so a device opened mid-execution is reachable; the
+    // Node and the daemon port are known only once one has been opened.
+    let device = session.then(|| {
+        crate::device::seat_access(
+            &crate::device::slot::DevicePaths::new(&state_dir),
+            inputs.session_id,
+        )
+    });
+    if let Some(device) = &device {
+        for tree in &device.read_trees {
+            if let Some(path) = prospective(tree) {
+                grants.push(Grant::tree(
+                    path,
+                    Access::ReadOnly,
+                    "this session's device slots and snapshots, and the pinned agent-device",
+                ));
+            }
+        }
+        if let Some(node) = &device.node {
+            grants.extend(executable_grants(
+                node,
+                "the Node the agent-device shim runs",
+            ));
+        }
+    }
     if let Some(sock) = std::env::var_os("SSH_AUTH_SOCK")
         .filter(|_| !withhold_git)
         .map(PathBuf::from)
@@ -1062,6 +1090,11 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         policy_dir: state_dir.join(BOUNDARIES_DIR),
         probe_readable,
         egress,
+        extra_loopback_ports: device
+            .as_ref()
+            .and_then(|device| device.daemon_port)
+            .into_iter()
+            .collect(),
     })
     .map_err(|error| boundary_failure(&error))?;
 
@@ -1075,6 +1108,7 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         hermit_state: hermit_state.as_deref(),
         withhold_git,
         egress,
+        device: device.as_ref(),
     };
     let env = resolve_env(&boundary, inputs, &scope_env, tool_dir.as_deref())?;
     let mut claude_options = None;
@@ -1909,6 +1943,8 @@ struct ScopeEnv<'a> {
     withhold_git: bool,
     /// The proxy every proxy variable names, when egress is confined.
     egress: Egress,
+    /// C5: the session's device paths (shim dir on `PATH`, `BEEKEEPER_DEVICE_DIR`).
+    device: Option<&'a crate::device::SeatDeviceAccess>,
 }
 
 /// The child's environment: baseline by source; the runtime's own values
@@ -2038,6 +2074,19 @@ fn resolve_env(
                 &bee.display().to_string(),
                 &usable,
             );
+        }
+    }
+    // C5: the session's pinned `agent-device` shim, behind the host's tool
+    // directory (and its `bee`), and where `bee device` finds its slots.
+    if let Some(device) = scope.device {
+        env.prepend_path(
+            &device.shim_dir.display().to_string(),
+            EnvSource::Scope,
+            &usable,
+        );
+        if let Some(dir) = device.shim_dir.parent() {
+            env.scope(crate::device::DEVICE_DIR_ENV, &dir.display().to_string())
+                .map_err(invalid)?;
         }
     }
     // The host's tool directory first, for sessions and host commands; the

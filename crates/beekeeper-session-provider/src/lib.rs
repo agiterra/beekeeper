@@ -69,6 +69,8 @@ pub mod context_projector;
 mod context_store;
 mod context_window;
 pub mod deferred_turns;
+pub mod device;
+mod device_wiring;
 mod gate_cwd;
 mod gate_observer;
 mod gate_start_store;
@@ -557,6 +559,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     provider.recover_action_steps_on_start()?;
     provider.start_action_step_listener();
     let mut action_step_events = provider.take_action_step_events();
+    provider.start_device_service();
     // Held out here for the same borrow reason: finished team-wake reads,
     // which run on their own task so a slow relay never holds this loop.
     let mut team_wake_fetches = provider.take_team_wake_fetches();
@@ -711,6 +714,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 // to the file starts receiving host step requests on the
                 // next tick. A no-op when nothing changed.
                 provider.sync_action_step_listener();
+                provider.sync_device_service();
                 if let Err(error) = provider.queue_initial_live_leases() {
                     tracing::error!(target: "csp::lease", "initial lease construction failed: {error}");
                 }
@@ -886,6 +890,9 @@ pub struct Provider {
     action_step_listener: Option<action_step_listener::ActionStepListener>,
     /// That listener's queue, merged into the run loop's `select!`.
     action_step_events: Option<mpsc::Receiver<action_step_listener::ActionStepEvent>>,
+    /// C5 (SV-34): the provider-owned iOS Simulator service. `None` until
+    /// [`Provider::start_device_service`] runs.
+    device_service: Option<device::DeviceService>,
     team_wakes: team_wake::WakeIntentStore,
     /// Trigger routing and at-most-once custody for host-result wakes.
     host_result_wakes: host_result_wake::HostResultWakeStore,
@@ -1332,6 +1339,7 @@ impl Provider {
             action_steps,
             action_step_listener: None,
             action_step_events: None,
+            device_service: None,
             team_wakes,
             host_result_wakes,
             team_wake_scanned_channels: HashSet::new(),
