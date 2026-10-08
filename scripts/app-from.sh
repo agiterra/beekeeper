@@ -270,7 +270,18 @@ done
 }
 # Tauri leaves the bundle unsigned (per-binary linker ad-hoc signatures, no
 # CodeResources seal). Sign the whole bundle once so it verifies as a unit.
-codesign --force --deep --sign - "$APP"
+# With the local signing identity (`just dev-signing-identity`), every build
+# keeps the same designated requirement, so the Keychain's "Always Allow"
+# survives the install. Ad-hoc changes with every build and the Keychain asks
+# again (ledger 368). So the script says which one it used.
+SIGN_IDENTITY="${BEEKEEPER_DEV_SIGNING_IDENTITY:-Beekeeper Dev Local Signing}"
+if security find-identity -p codesigning | grep -qF "\"$SIGN_IDENTITY\""; then
+  echo "==> signing with \"$SIGN_IDENTITY\""
+  codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
+else
+  echo "==> no \"$SIGN_IDENTITY\" identity: signing ad-hoc, so the Keychain will ask for the password again after install (create it with: just dev-signing-identity)" >&2
+  codesign --force --deep --sign - "$APP"
+fi
 codesign --verify --deep --strict "$APP" || {
   echo "bundle signature verification failed" >&2
   exit 1
