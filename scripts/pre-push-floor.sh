@@ -414,6 +414,15 @@ if [ "$FLOOR_DESKTOP" = "1" ]; then
   # nothing to run, already disclosed via FLOOR_DESKTOP_UNTESTED above.
 fi
 
+# Tauri's build script refuses to compile when an externalBin placeholder is
+# missing, so a checkout made before a sidecar joined the list (beekeeper-host)
+# failed the floor here (2026-10-08) though `just desktop-tauri-clippy`, which
+# depends on the stubs, passed. Same placeholders, created before any Tauri cargo
+# step.
+if [ "$FLOOR_FULL" = "1" ] || [ -n "$FLOOR_LINT_TAURI" ] || [ -n "$FLOOR_CHANGED_TAURI" ]; then
+  step "sidecar stubs" just _ensure-sidecar-stubs
+fi
+
 if [ "$FLOOR_FULL" = "1" ]; then
   step "clippy (workspace)" cargo clippy --workspace --all-targets -- -D warnings
   step "tauri clippy (workspace)" cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
