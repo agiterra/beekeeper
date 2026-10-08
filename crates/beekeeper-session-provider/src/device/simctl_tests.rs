@@ -220,3 +220,15 @@ fn no_developer_dir_means_xcrun_is_never_run() {
     assert_eq!(simctl.probe(), XcodeProbe::Found);
     assert!(runner.calls().iter().any(|c| c == "xcrun --find simctl"));
 }
+
+#[test]
+fn a_host_that_is_not_macos_is_never_offered_and_never_runs_xcrun() {
+    let runner = Arc::new(FakeRunner::new());
+    let simctl =
+        Simctl::with_developer_dirs(runner.clone(), super::super::test_support::not_macos());
+    match simctl.probe() {
+        XcodeProbe::Missing(reason) => assert_eq!(reason, "the iOS Simulator needs macOS"),
+        other => panic!("expected Missing, got {other:?}"),
+    }
+    assert!(runner.calls().is_empty(), "no command may run off macOS");
+}

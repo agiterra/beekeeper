@@ -163,6 +163,10 @@ pub struct DeveloperDirs {
     /// Known install locations, checked when `xcode-select -p` names none
     /// that exists.
     pub fallbacks: Vec<PathBuf>,
+    /// Whether this host is macOS, the only place the iOS Simulator runs.
+    /// Injected rather than read at the call site so the macOS paths are
+    /// testable on every CI host.
+    pub macos: bool,
 }
 
 impl DeveloperDirs {
@@ -189,6 +193,7 @@ impl DeveloperDirs {
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from),
             fallbacks,
+            macos: cfg!(target_os = "macos"),
         }
     }
 }

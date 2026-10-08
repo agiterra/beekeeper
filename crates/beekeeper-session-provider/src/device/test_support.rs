@@ -33,6 +33,7 @@ pub fn present_developer_dir() -> DeveloperDirs {
     DeveloperDirs {
         env: Some(std::env::temp_dir()),
         fallbacks: Vec::new(),
+        macos: true,
     }
 }
 
@@ -42,6 +43,15 @@ pub fn no_developer_dir() -> DeveloperDirs {
     DeveloperDirs {
         env: None,
         fallbacks: vec![std::path::PathBuf::from("/nonexistent/beekeeper/Xcode.app")],
+        macos: true,
+    }
+}
+
+/// A host that is not macOS: the simulator is never offered there.
+pub fn not_macos() -> DeveloperDirs {
+    DeveloperDirs {
+        macos: false,
+        ..present_developer_dir()
     }
 }
 

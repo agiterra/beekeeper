@@ -312,7 +312,7 @@ impl Simctl {
     /// runs `xcrun` on a Mac with no developer directory: there it is
     /// Apple's shim, which pops an install dialog at the person.
     pub fn probe(&self) -> XcodeProbe {
-        if !cfg!(target_os = "macos") {
+        if !self.developer_dirs.macos {
             return XcodeProbe::Missing("the iOS Simulator needs macOS".into());
         }
         if find_developer_dir(self.runner.as_ref(), &self.developer_dirs).is_none() {
