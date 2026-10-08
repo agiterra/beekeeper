@@ -41,6 +41,11 @@ import { formatCodingSessionBlockTime } from "./CodingSessionTranscriptRhythm";
 import { CodingSessionClampedUserMessage } from "./CodingSessionTranscriptUserMessage";
 import { CodingSessionLastTranscriptEventContext } from "./CodingSessionTranscriptWorking";
 import { useCodingSessionLiveShimmer } from "./CodingSessionTranscriptWorkingShimmer";
+import {
+  CodingSessionRewindAction,
+  CodingSessionRewoundRow,
+} from "./CodingSessionRewindDialog";
+import { isCodingSessionRewoundRow } from "@/features/coding-sessions/lib/codingSessionRewindRows";
 
 /**
  * One transcript item — a prompt, the agent's prose, a tool call, a plan, a
@@ -253,7 +258,10 @@ export const CodingSessionItem = React.memo(function CodingSessionItem({
             <CodingSessionPromptMeta
               copyText={wakeLine ?? item.text}
               timestamp={item.timestamp}
-            />
+            >
+              {/* SV-29: "Edit from here" — rewind to before this prompt. */}
+              <CodingSessionRewindAction item={item} />
+            </CodingSessionPromptMeta>
           </div>
         </div>
       );
@@ -301,6 +309,12 @@ export const CodingSessionItem = React.memo(function CodingSessionItem({
     if (planModel) {
       return <CodingSessionPlanRow itemId={item.id} model={planModel} />;
     }
+  }
+
+  // SV-29: a rewound generation's opening row — before the error check, since
+  // the provider's sentence may name a failure without being one.
+  if (isCodingSessionRewoundRow(item)) {
+    return <CodingSessionRewoundRow item={item} />;
   }
 
   if (isCodingSessionTranscriptError(item)) {
@@ -427,15 +441,18 @@ export function CodingSessionToolRow({
  * technology still reach them; on a touch screen they are always shown.
  */
 function CodingSessionPromptMeta({
+  children,
   copyText,
   timestamp,
 }: {
+  /** Further hover actions after copy (SV-29's "Edit from here"). */
+  children?: React.ReactNode;
   copyText: string;
   timestamp: string;
 }) {
   const time = formatCodingSessionBlockTime(timestamp);
   const text = copyText.trim();
-  if (!time && !text) return null;
+  if (!time && !text && !children) return null;
   return (
     <span
       className="coding-session-prompt-meta flex items-center gap-1 text-xs tabular-nums text-muted-foreground"
@@ -462,6 +479,7 @@ function CodingSessionPromptMeta({
           <Copy aria-hidden className="size-3" />
         </button>
       ) : null}
+      {children}
     </span>
   );
 }

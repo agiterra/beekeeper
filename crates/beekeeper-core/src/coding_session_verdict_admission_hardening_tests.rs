@@ -148,8 +148,9 @@ fn resume(
     )
 }
 
-/// A resume-shaped command of `action_type` (`session.resume` or
-/// `session.restart`, which mint the next generation alike).
+/// A resume-shaped command of `action_type` (`session.resume`,
+/// `session.restart` or `session.rewind`, which mint the next generation
+/// alike).
 fn next_generation(
     action_type: &str,
     command_id: &str,
@@ -158,7 +159,7 @@ fn next_generation(
     provider: &Keys,
     keys: &Keys,
 ) -> Event {
-    let content = json!({
+    let mut content = json!({
         "schema": CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
         "commandId": command_id,
         "action": {
@@ -167,6 +168,10 @@ fn next_generation(
             "providerAuthorityPubkey": provider.public_key().to_hex(),
         },
     });
+    if action_type == "session.rewind" {
+        content["action"]["checkpoint"] = json!("ab".repeat(32));
+        content["action"]["files"] = json!("keep");
+    }
     signed(
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         content.to_string(),
@@ -753,6 +758,57 @@ fn a_restart_extends_the_provider_set_like_a_resume() {
         receipt("restart-1", "resumed", "session-1", 2, &second),
         receipt("resume-2", "resumed", "session-1", 3, &third),
         receipt("restart-x", "resumed", "session-1", 4, &stranger),
+    ];
+    let providers = mission_provider_pubkeys_from_lifecycle(
+        SESSION,
+        GENESIS,
+        &watched.commissioners(),
+        &commands,
+        &receipts,
+    );
+    assert_eq!(
+        providers,
+        vec![
+            watched.provider.public_key().to_hex(),
+            second.public_key().to_hex(),
+            third.public_key().to_hex(),
+        ]
+    );
+}
+
+/// SV-29: a `session.rewind` mints the next generation exactly as a resume
+/// does, so the chain walks through it under the same commissioning rule.
+#[test]
+fn a_rewind_extends_the_provider_set_like_a_resume() {
+    let watched = watched();
+    let second = Keys::generate();
+    let third = Keys::generate();
+    let stranger = Keys::generate();
+    let commands = vec![
+        create("create-1", GENESIS, &watched.provider, &watched.founder),
+        next_generation(
+            "session.rewind",
+            "rewind-1",
+            "session-1",
+            1,
+            &second,
+            &watched.founder,
+        ),
+        resume("resume-2", "session-1", 2, &third, &watched.founder),
+        next_generation(
+            "session.rewind",
+            "rewind-x",
+            "session-1",
+            3,
+            &stranger,
+            &stranger,
+        ),
+    ];
+    let receipts = vec![
+        receipt("create-1", "created", "session-1", 1, &watched.provider),
+        receipt("rewind-1", "resumed", "session-1", 2, &second),
+        receipt("resume-2", "resumed", "session-1", 3, &third),
+        receipt("rewind-x", "resumed", "session-1", 4, &stranger),
     ];
     let providers = mission_provider_pubkeys_from_lifecycle(
         SESSION,

@@ -159,7 +159,7 @@ pub fn mission_provider_pubkeys_from_lifecycle(
     while changed {
         changed = false;
         for pair in &pairs {
-            // A restart mints the next generation exactly as a resume does.
+            // A restart or a rewind mints the next generation exactly as a resume does.
             let (CodingSessionLifecycleAction::SessionResume {
                 session: previous,
                 provider_authority_pubkey,
@@ -167,6 +167,11 @@ pub fn mission_provider_pubkeys_from_lifecycle(
             | CodingSessionLifecycleAction::SessionRestart {
                 session: previous,
                 provider_authority_pubkey,
+            }
+            | CodingSessionLifecycleAction::SessionRewind {
+                session: previous,
+                provider_authority_pubkey,
+                ..
             }) = &pair.action
             else {
                 continue;
@@ -246,10 +251,11 @@ fn accepted_lifecycle_pairs<'a>(
                 receipt_payload.status,
                 ReceiptStatus::Created | ReceiptStatus::CreatedWithFailedInitialTurn
             ),
-            // A restart is a resume that detached first; the provider answers
-            // both with the resume receipts.
+            // A restart (and a rewind) is a resume that detached first; the
+            // provider answers each with the resume receipts.
             CodingSessionLifecycleAction::SessionResume { .. }
-            | CodingSessionLifecycleAction::SessionRestart { .. } => matches!(
+            | CodingSessionLifecycleAction::SessionRestart { .. }
+            | CodingSessionLifecycleAction::SessionRewind { .. } => matches!(
                 receipt_payload.status,
                 ReceiptStatus::Resumed | ReceiptStatus::ResumedWithoutContext
             ),
@@ -302,6 +308,10 @@ fn lifecycle_authority(action: &CodingSessionLifecycleAction) -> Option<&str> {
             ..
         }
         | CodingSessionLifecycleAction::SessionRestart {
+            provider_authority_pubkey,
+            ..
+        }
+        | CodingSessionLifecycleAction::SessionRewind {
             provider_authority_pubkey,
             ..
         }

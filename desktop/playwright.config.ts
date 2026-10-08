@@ -291,6 +291,8 @@ export default defineConfig({
         "**/coding-session-sv28-sv30-checkpoints.spec.ts",
         // SV-35 (session-view Wave C, C3a).
         "**/coding-session-sv35-model-switch.spec.ts",
+        // SV-29 (session-view Wave C, C3b): Edit from here.
+        "**/coding-session-sv29-rewind.spec.ts",
         // SV-33 S1/S2 (session-view Wave C, C4): the Browser surface (mock).
         "**/session-preview-local.spec.ts",
       ],
@@ -403,6 +405,8 @@ export default defineConfig({
         "**/coding-session-file-chips.spec.ts",
         "**/coding-session-sv28-sv30-checkpoints.spec.ts",
         "**/coding-session-sv35-model-switch.spec.ts",
+        // SV-29 (session-view Wave C, C3b): Edit from here.
+        "**/coding-session-sv29-rewind.spec.ts",
         // SV-33 S1/S2 (C4): the Browser surface, and the preview driver
         // against real WebKit (the driver spec runs in this project only).
         "**/session-preview-local.spec.ts",

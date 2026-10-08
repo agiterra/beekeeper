@@ -19,6 +19,7 @@ export 'coding_session_models.dart';
 export 'coding_session_pending_create.dart';
 export 'coding_session_pending_turn.dart';
 export 'coding_session_provider_catalog.dart';
+export 'coding_session_rewind.dart';
 export 'coding_session_session_decoders.dart';
 export 'coding_session_signature.dart';
 export 'coding_session_target.dart';

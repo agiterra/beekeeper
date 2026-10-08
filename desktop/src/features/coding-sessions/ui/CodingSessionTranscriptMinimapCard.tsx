@@ -84,6 +84,11 @@ export function CodingSessionTranscriptMinimapCard({
             ? codingSessionMinimapGateLine(marks?.gate ?? null)
             : facts.gates.reason}
         </span>
+        {marks?.rewound ? (
+          <span data-testid="coding-session-minimap-card-rewind">
+            Rewound just before this turn · seeded from the record
+          </span>
+        ) : null}
         {marks?.failed ? (
           <span className="text-destructive">This turn failed</span>
         ) : null}

@@ -106,6 +106,8 @@ mod diff;
 mod omit;
 #[path = "turn_checkpoint_git_pin.rs"]
 mod pin;
+#[path = "turn_checkpoint_restore.rs"]
+pub(crate) mod restore;
 #[path = "turn_checkpoint_git_run.rs"]
 mod run;
 
@@ -131,6 +133,12 @@ pub(crate) const BASELINE_CAPTURE_TIMEOUT: Duration = Duration::from_secs(3);
 /// Nothing waits on it — it is spawned — so it is generous enough for a cold
 /// checkout full of new files while still bounding a wedged `git`.
 pub(crate) const END_CAPTURE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Ceiling on the capture a rewind takes before it touches any file.
+///
+/// The rewind waits on it (off the loop) and refuses `files: restore` when it
+/// fails, so it is bounded tighter than a turn end and looser than a baseline.
+pub(crate) const PRE_REWIND_CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Ceiling on listing the files changed between two captured trees.
 pub(crate) const DIFF_TIMEOUT: Duration = Duration::from_secs(20);
@@ -193,6 +201,8 @@ pub(crate) enum CapturePhase {
     Baseline,
     /// After the turn's terminal result ([`END_CAPTURE_TIMEOUT`]).
     TurnEnd,
+    /// Before a rewind touches anything ([`PRE_REWIND_CAPTURE_TIMEOUT`]).
+    PreRewind,
 }
 
 impl CapturePhase {
@@ -202,6 +212,7 @@ impl CapturePhase {
         match self {
             Self::Baseline => BASELINE_CAPTURE_TIMEOUT,
             Self::TurnEnd => END_CAPTURE_TIMEOUT,
+            Self::PreRewind => PRE_REWIND_CAPTURE_TIMEOUT,
         }
     }
 }
@@ -224,8 +235,6 @@ pub(crate) enum RefLeaf<'a> {
     /// command, so a second rewind attempt of the same generation — after the
     /// first restored some files and failed — cannot overwrite the capture
     /// that holds the state before either touched anything.
-    // SV-29's `session.rewind` is the first production caller.
-    #[cfg_attr(not(test), allow(dead_code))]
     PreRewind {
         /// The last transcript seq the rewound generation wrote.
         through_seq: u64,

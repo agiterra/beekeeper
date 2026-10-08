@@ -73,6 +73,9 @@ pub mod coding_session_policy;
 /// NIP-CSAT: the narrow, owner-signed project-action delegation carried in a
 /// session's authority chain, and the fold that says whether one is live.
 pub mod coding_session_project_action_grant;
+/// SV-29 rewind: the `rewind` object a kind:44224 receipt carries when it
+/// answers a `session.rewind`.
+pub mod coding_session_rewind;
 /// The model registry and the router: which execution target a class, a risk
 /// tier and the live catalog select, and why.
 pub mod coding_session_routing;

@@ -93,6 +93,7 @@ fn signed_hire() -> (
         session: Some(target.clone()),
         error: None,
         turn_id: None,
+        rewind: None,
     };
     let receipt = build_coding_session_lifecycle_receipt(
         channel,

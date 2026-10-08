@@ -781,6 +781,7 @@ pub async fn fetch_scope_package(
             allow_no_executions: false,
             generated_at: crate::state::now_ms(),
             limits: ContextProjectionLimits::default(),
+            cuts: Vec::new(),
         },
     )
     .await?)

@@ -212,6 +212,7 @@ fn receipt_event(
             message: message.to_owned(),
         }),
         turn_id: turn_id.map(str::to_owned),
+        rewind: None,
     };
     json!({
         "id": id,
@@ -1483,6 +1484,7 @@ fn receipt_event_signed_by(
         session: target.cloned(),
         error: None,
         turn_id: None,
+        rewind: None,
     };
     json!({
         "id": id,
@@ -4122,6 +4124,7 @@ fn signed_hire_with_status(command_id: &str, status: ReceiptStatus) -> SignedHir
             message: "no key for that actor".into(),
         }),
         turn_id: None,
+        rewind: None,
     };
     let receipt = build_coding_session_lifecycle_receipt(
         channel,
@@ -4274,6 +4277,7 @@ fn rival_seated_create(
             session: Some(target.clone()),
             error: None,
             turn_id: None,
+            rewind: None,
         };
         let receipt = build_coding_session_lifecycle_receipt(
             channel,
@@ -4480,6 +4484,7 @@ fn unbound_receipt(channel: &str, command_id: &str, created_at_offset: u64) -> V
             message: "no key for that actor".into(),
         }),
         turn_id: None,
+        rewind: None,
     };
     let channel = Uuid::parse_str(channel).expect("channel UUID");
     let mut event = serde_json::to_value(

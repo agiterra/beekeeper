@@ -16,6 +16,10 @@ import {
   readPackRef,
 } from "./codingSessionPackRef";
 import { readSeatBeeStamp, type SeatBeeStamp } from "./codingSessionSeatBee";
+import {
+  decodeWithSessionRewind,
+  type SessionRewindReceiptFacts,
+} from "@/shared/coordination/sessionCoordinationRewind";
 import type {
   CodingSessionCapabilities,
   CodingSessionStatus,
@@ -77,6 +81,12 @@ const MAX_LABEL_BYTES = 2 * 1024;
  * `result{error}`, not this.
  */
 export type CodingSessionLifecycleReceipt =
+  CodingSessionLifecycleReceiptEnvelope & {
+    /** SV-29: present only on a `session.rewind`'s answer (WIRE-C3b §2). */
+    rewind?: Readonly<SessionRewindReceiptFacts>;
+  };
+
+type CodingSessionLifecycleReceiptEnvelope =
   | {
       schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
       commandId: string;
@@ -429,8 +439,18 @@ const RECEIPT_ENVELOPE_KEYS = [
 export function parseCodingSessionLifecycleReceipt(
   content: unknown,
 ): Readonly<CodingSessionLifecycleReceipt> | null {
-  const value = parseBoundedJson(content, MAX_RECEIPT_CONTENT_BYTES);
-  if (!isPlainRecord(value) || typeof value.status !== "string") return null;
+  // SV-29: an optional `rewind`, checked whole and set aside for the envelope.
+  const raw = parseBoundedJson(content, MAX_RECEIPT_CONTENT_BYTES);
+  return decodeWithSessionRewind<CodingSessionLifecycleReceiptEnvelope>(
+    raw,
+    parseReceiptEnvelope,
+  );
+}
+
+function parseReceiptEnvelope(
+  value: Record<string, unknown>,
+): Readonly<CodingSessionLifecycleReceiptEnvelope> | null {
+  if (typeof value.status !== "string") return null;
   const expectedKeys =
     value.status === "turn_started" || value.status === "turn_injected"
       ? [...RECEIPT_ENVELOPE_KEYS, "turnId"]

@@ -677,10 +677,11 @@ fn lifecycle_status_succeeded(
             status,
             ReceiptStatus::Created | ReceiptStatus::CreatedWithFailedInitialTurn
         ),
-        // A restart is a resume that detached first; the provider answers
-        // both with the resume receipts.
+        // A restart (and a rewind) is a resume that detached first; the
+        // provider answers each with the resume receipts.
         CodingSessionLifecycleAction::SessionResume { .. }
-        | CodingSessionLifecycleAction::SessionRestart { .. } => matches!(
+        | CodingSessionLifecycleAction::SessionRestart { .. }
+        | CodingSessionLifecycleAction::SessionRewind { .. } => matches!(
             status,
             ReceiptStatus::Resumed | ReceiptStatus::ResumedWithoutContext
         ),
@@ -703,6 +704,10 @@ fn lifecycle_authority(action: &CodingSessionLifecycleAction) -> &str {
             ..
         }
         | CodingSessionLifecycleAction::SessionRestart {
+            provider_authority_pubkey,
+            ..
+        }
+        | CodingSessionLifecycleAction::SessionRewind {
             provider_authority_pubkey,
             ..
         }
@@ -880,7 +885,7 @@ fn fold_sessions(project: &str, now: i64, events: &[Value]) -> Vec<PulseDigestSe
         let mut resume_candidates: HashMap<(String, String), Vec<AcceptedGenerationRow>> =
             HashMap::new();
         for (command, receipt) in &pairs {
-            // A restart mints the next generation exactly as a resume does.
+            // A restart or a rewind mints the next generation exactly as a resume does.
             let (CodingSessionLifecycleAction::SessionResume {
                 session,
                 provider_authority_pubkey,
@@ -888,6 +893,11 @@ fn fold_sessions(project: &str, now: i64, events: &[Value]) -> Vec<PulseDigestSe
             | CodingSessionLifecycleAction::SessionRestart {
                 session,
                 provider_authority_pubkey,
+            }
+            | CodingSessionLifecycleAction::SessionRewind {
+                session,
+                provider_authority_pubkey,
+                ..
             }) = &command.payload.action
             else {
                 continue;
@@ -1377,5 +1387,54 @@ mod tests {
                 vector.name
             );
         }
+    }
+
+    /// SV-29: a `session.rewind` mints the next generation exactly as a
+    /// restart does, so the shared restart vector with every restart
+    /// rewritten as a rewind folds to the same digest.
+    #[test]
+    fn a_rewind_chain_folds_like_the_restart_vector() {
+        let file: FoldVectorFile = serde_json::from_str(FOLD_VECTORS).expect("vectors parse");
+        let vector = file
+            .vectors
+            .into_iter()
+            .find(|vector| vector.name == "restart-generation-isolation-and-continuity")
+            .expect("restart vector");
+        let mut rewrote = 0;
+        let events: Vec<Value> = vector
+            .input
+            .events
+            .iter()
+            .cloned()
+            .map(|mut event| {
+                let Some(content) = event.get("content").and_then(Value::as_str) else {
+                    return event;
+                };
+                let Ok(mut payload) = serde_json::from_str::<Value>(content) else {
+                    return event;
+                };
+                if payload["action"]["type"] == "session.restart" {
+                    payload["action"]["type"] = Value::from("session.rewind");
+                    payload["action"]["checkpoint"] = Value::from("ab".repeat(32));
+                    payload["action"]["files"] = Value::from("keep");
+                    event["content"] = Value::from(payload.to_string());
+                    rewrote += 1;
+                }
+                event
+            })
+            .collect();
+        assert!(rewrote >= 1);
+        let actual = fold_pulse_digest(
+            &vector.input.project,
+            vector.input.now,
+            vector.input.source_errors,
+            &events,
+        );
+        let expected: PulseDigest =
+            serde_json::from_value(vector.expected).expect("expected digest decodes");
+        assert_eq!(
+            serde_json::to_string(&actual).expect("actual serializes"),
+            serde_json::to_string(&expected).expect("expected serializes"),
+        );
     }
 }

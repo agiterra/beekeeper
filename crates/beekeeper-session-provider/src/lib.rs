@@ -93,6 +93,7 @@ mod reachability;
 pub mod redaction_vault;
 mod relay_identity_witness;
 pub mod retirement;
+mod rewind;
 pub mod seat_bee;
 pub mod seat_requests;
 pub mod session;
@@ -567,6 +568,9 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     let mut claim_reverify_answers = provider.take_claim_reverify_answers();
     let mut ci_restore_answers = provider.take_ci_restore_answers();
     provider.restore_off_loop = true;
+    // SV-29: a rewind's checkpoint read, capture and restore, the same way.
+    let mut rewind_answers = provider.take_rewind_answers();
+    provider.rewind_off_loop = true;
 
     provider.start_project_deletion_listener();
     let mut project_deletion_events = provider.project_deletion_events.take();
@@ -680,6 +684,14 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
             }
             answer = off_loop::next(&mut claim_reverify_answers) => {
                 provider.finish_claim_reverification(answer).await;
+            }
+            done = off_loop::next(&mut rewind_answers) => {
+                if let Err(error) = provider.finish_rewind_step(done, Some(&relay)).await {
+                    tracing::error!(target: "csp::rewind", "rewind step failed: {error}");
+                }
+                if let Err(error) = provider.flush_pending_leases(&publisher).await {
+                    tracing::warn!(target: "csp::lease", "lease handoff after a rewind failed: {error}");
+                }
             }
             done = off_loop::next(&mut ci_restore_answers) => {
                 if let Err(error) = provider.finish_ci_restore(done).await {
@@ -903,6 +915,22 @@ pub struct Provider {
     /// The one CI-continuation generation reopen that may be out (SV-76).
     /// See [`ci_restore_off_loop`].
     ci_restore: ci_restore_off_loop::CiRestoreSlot,
+    /// SV-29: the one rewind whose slow step is running off the loop.
+    rewind: rewind::RewindSlot,
+    /// The session that rewind is for, while [`Self::rewind`] is busy.
+    rewind_session: Option<String>,
+    /// The command id of the rewind in flight off the loop, from its first
+    /// spawn until its last step is applied: a redelivery of it is dropped.
+    rewind_command: Option<String>,
+    /// Whether a rewind's slow steps run off the loop (the run loop sets it;
+    /// unit tests drive them inline).
+    pub(crate) rewind_off_loop: bool,
+    /// Test-only: checkpoint events a rewind reads instead of the relay.
+    #[cfg(test)]
+    pub(crate) rewind_checkpoints: HashMap<String, Event>,
+    /// Test-only: the next rewound generation's open fails.
+    #[cfg(test)]
+    pub(crate) rewind_fail_next_open: bool,
     /// Whether a CI continuation's reopen runs off the run loop. Set by
     /// [`run_with`]; `false` keeps the inline reopen unit tests drive.
     pub(crate) restore_off_loop: bool,
@@ -1256,6 +1284,10 @@ struct ContextRefreshState {
     /// been launched. Attempts rather than successes: a failing relay must not
     /// turn every turn start into a fetch.
     last_refresh_ms: i64,
+    /// Rewind cuts every refresh applies (SV-29): the generation a rewind
+    /// opened must not have the rewound turns brought back by a refresh that
+    /// runs before the rewind's own receipt is on the relay.
+    cuts: Vec<context_projector::ContextCut>,
 }
 
 impl ContextRefreshState {
@@ -1265,6 +1297,7 @@ impl ContextRefreshState {
             package_id,
             next_seq: context_store::OPEN_TIME_CONTEXT_PACKAGE_GENERATION + 1,
             last_refresh_ms: 0,
+            cuts: Vec::new(),
         }
     }
 }
@@ -1311,6 +1344,14 @@ impl Provider {
             claim_reverify_fetch: claim_reverify_fetch::new_slot(),
             ci_restore: ci_restore_off_loop::new_slot(),
             restore_off_loop: false,
+            rewind: rewind::new_slot(),
+            rewind_session: None,
+            rewind_command: None,
+            rewind_off_loop: false,
+            #[cfg(test)]
+            rewind_checkpoints: HashMap::new(),
+            #[cfg(test)]
+            rewind_fail_next_open: false,
             sessions: SessionManager::new(events_tx.clone()),
             session_events,
             session_events_tx: events_tx,
@@ -2015,6 +2056,7 @@ impl Provider {
                     channel_id,
                     created_at,
                     &operator_pubkey,
+                    &event.id.to_hex(),
                     &event.content,
                     relay,
                 )
@@ -3143,6 +3185,7 @@ impl Provider {
         channel_id: Uuid,
         created_at: u64,
         operator_pubkey: &str,
+        event_id: &str,
         content: &str,
         relay: Option<&HarnessRelay>,
     ) -> anyhow::Result<()> {
@@ -3332,8 +3375,20 @@ impl Provider {
                 }
                 self.create_session(plan, relay).await
             }
+            LifecycleDecision::Resume(plan) if self.rewind_in_flight(&plan.target.session_id) => {
+                self.refuse_during_rewind(&plan.command_id, plan.channel_id)
+            }
+            LifecycleDecision::Restart(plan) if self.rewind_in_flight(&plan.target.session_id) => {
+                self.refuse_during_rewind(&plan.command_id, plan.channel_id)
+            }
+            LifecycleDecision::Stop(plan) if self.rewind_in_flight(&plan.target.session_id) => {
+                self.refuse_during_rewind(&plan.command_id, plan.channel_id)
+            }
             LifecycleDecision::Resume(plan) => self.resume_session(plan, relay).await,
             LifecycleDecision::Restart(plan) => self.restart_session(plan, relay).await,
+            LifecycleDecision::Rewind(plan) => {
+                Box::pin(self.start_rewind(plan, event_id, relay)).await
+            }
             LifecycleDecision::Stop(plan) => self.stop_session(plan),
         }
     }
@@ -4304,6 +4359,18 @@ impl Provider {
         target: RehydrationTarget<'_>,
         relay: Option<&HarnessRelay>,
     ) -> RehydrationOutcome {
+        self.prepare_rehydration_context_cut(target, Vec::new(), relay)
+            .await
+    }
+
+    /// [`Self::prepare_rehydration_context`] with rewind cuts (SV-29): the
+    /// package forgets what the cuts name — see `context_projector_cut.rs`.
+    async fn prepare_rehydration_context_cut(
+        &self,
+        target: RehydrationTarget<'_>,
+        cuts: Vec<context_projector::ContextCut>,
+        relay: Option<&HarnessRelay>,
+    ) -> RehydrationOutcome {
         let RehydrationTarget {
             scope,
             command_id,
@@ -4366,6 +4433,7 @@ impl Provider {
             allow_no_executions: scope.allows_an_empty_umbrella(),
             generated_at: now_ms(),
             limits: ContextProjectionLimits::default(),
+            cuts,
         };
         let package = match context_projector::fetch_and_project_session_context(
             &relay.rest_client(),
@@ -4661,6 +4729,21 @@ impl Provider {
         plan: ResumePlan,
         relay: Option<&HarnessRelay>,
     ) -> anyhow::Result<()> {
+        self.resume_generation(plan, relay, None).await
+    }
+
+    /// The resume path, shared by `session.resume`, `session.restart` and —
+    /// with `rewind` — `session.rewind` (SV-29). A rewind opens the next
+    /// generation with **no** native cursor (`session/new`) and a context
+    /// package cut at the rewind, answers with its `rewind` object, and turns
+    /// every failure to open into `REWIND_NOT_RESTARTED`
+    /// ([`Self::rewind_not_restarted`]) rather than a bare refusal.
+    pub(crate) async fn resume_generation(
+        &mut self,
+        plan: ResumePlan,
+        relay: Option<&HarnessRelay>,
+        rewind: Option<crate::rewind::RewindOpen>,
+    ) -> anyhow::Result<()> {
         let outbox_before = self.outbox.pending_keys();
         // Every refusal below consumes the command, so the seat the desktop
         // staged for it will never be read: it goes with the refusal, the same
@@ -4684,7 +4767,9 @@ impl Provider {
                 SESSION_ALREADY_ATTACHED,
                 "the execution is already attached on this provider",
             );
-            return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+            return self
+                .answer_resume_failure(&plan, rewind, receipt, relay)
+                .await;
         }
 
         let Some(record) = self.state.session(&plan.target.session_id).cloned() else {
@@ -4702,7 +4787,9 @@ impl Provider {
                 payload::ACTOR_UNAVAILABLE,
                 &format!("{reason}, so this execution will not be resumed"),
             );
-            return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+            return self
+                .answer_resume_failure(&plan, rewind, receipt, relay)
+                .await;
         }
         let Some(descriptor) = self.config.runtime(&record.provider_instance_ref).cloned() else {
             self.state.consume_command(&plan.command_id, now_secs())?;
@@ -4714,7 +4801,9 @@ impl Provider {
                 PROVIDER_UNAVAILABLE,
                 "the execution's runtime is no longer installed",
             );
-            return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+            return self
+                .answer_resume_failure(&plan, rewind, receipt, relay)
+                .await;
         };
         let Some(generation) = record
             .generation
@@ -4730,7 +4819,9 @@ impl Provider {
                 PROVIDER_UNAVAILABLE,
                 "the execution generation cannot advance further",
             );
-            return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+            return self
+                .answer_resume_failure(&plan, rewind, receipt, relay)
+                .await;
         };
         let target = CodingSessionTarget {
             driver: record.driver.clone(),
@@ -4740,8 +4831,11 @@ impl Provider {
         };
         let previous_semantic_key = coding_session_target_key(&self.target_for(&record));
         let package_id = Uuid::new_v4().to_string();
+        // A rewind's package is cut at the rewind; everything else's is whole.
+        let cuts: Vec<context_projector::ContextCut> =
+            rewind.iter().map(|open| open.cut.clone()).collect();
         let rehydration = self
-            .prepare_rehydration_context(
+            .prepare_rehydration_context_cut(
                 RehydrationTarget {
                     scope: RehydrationScope::Resume,
                     command_id: &plan.command_id,
@@ -4750,9 +4844,17 @@ impl Provider {
                     genesis_ref: record.genesis_ref.as_deref(),
                     package_id: &package_id,
                 },
+                cuts.clone(),
                 relay,
             )
             .await;
+        // A rewound generation never reattaches the native cursor: it still
+        // remembers the rewound turns. `session/new`, seeded from the record.
+        let resume_cursor = if rewind.is_some() {
+            None
+        } else {
+            record.resume_cursor.clone()
+        };
         let context_package_id = rehydration
             .descriptor
             .as_ref()
@@ -4781,67 +4883,68 @@ impl Provider {
         // generation whose 44223 still says `agentRef: <seat>` while the
         // process behind it holds no credentials at all, which is precisely the
         // "control that lies about what it enforces" class of bug.
-        let (seat_identity, post_fence_env, seat_skills, seat_pack_ref) = match record
-            .actor
-            .as_deref()
-        {
-            None => (None, Vec::new(), None, None),
-            Some(actor) => {
-                let seats = crate::actor_seats::ActorSeatsFile::load(
-                    self.config.actor_seats_file.as_deref(),
-                );
-                match seats.seat(&plan.command_id) {
-                    Some(seat) if seat.pubkey == actor => {
-                        let identity = session::SeatIdentity {
-                            actor_pubkey: seat.pubkey.clone(),
-                            role: record.role.clone().unwrap_or_default(),
-                            relay_url: seat.relay_url.clone(),
-                        };
-                        // A resume re-materializes the pack's skills: the
-                        // workdir may have moved on since the create, and the
-                        // write is a no-op when it has not.
-                        let skills = seat_skills(seat, &self.config.state_dir, &record.session_id);
-                        // …and re-states which pack that was, because a resume
-                        // may have been staged from a moved ref. The new
-                        // generation's 44223 must describe the pack it is
-                        // actually running, not the one the create ran.
-                        let pack_ref = seat.pack_ref.clone();
-                        (
-                            Some(identity),
-                            // Same coordinate the create carried: a resumed
-                            // generation writes the same project's pulse — and
-                            // the same host-chosen `bee`, so a reconnect does
-                            // not quietly change which binary the seat runs.
-                            seat.post_fence_env_with_bee(
-                                record.role.as_deref(),
-                                record.project_ref.as_deref(),
-                                crate::seat_bee::host_seat_bee().map(|(bee, _)| bee),
-                                std::env::var_os("PATH").as_ref(),
-                            ),
-                            skills,
-                            pack_ref,
-                        )
-                    }
-                    _ => {
-                        self.state.consume_command(&plan.command_id, now_secs())?;
-                        self.forget_actor_seat(&plan.command_id);
-                        self.discard_orphaned_context_package(context_package_id.as_deref());
-                        // Precise about which fact is missing: this host may
-                        // well hold the agent's key and simply have staged
-                        // nothing under *this* command. Saying "this host does
-                        // not hold the key" on the machine that does is the
-                        // falsehood class this project treats as a bug.
-                        let receipt = LifecycleReceipt::failed(
+        let (seat_identity, post_fence_env, seat_skills, seat_pack_ref) =
+            match record.actor.as_deref() {
+                None => (None, Vec::new(), None, None),
+                Some(actor) => {
+                    let seats = crate::actor_seats::ActorSeatsFile::load(
+                        self.config.actor_seats_file.as_deref(),
+                    );
+                    match seats.seat(&plan.command_id) {
+                        Some(seat) if seat.pubkey == actor => {
+                            let identity = session::SeatIdentity {
+                                actor_pubkey: seat.pubkey.clone(),
+                                role: record.role.clone().unwrap_or_default(),
+                                relay_url: seat.relay_url.clone(),
+                            };
+                            // A resume re-materializes the pack's skills: the
+                            // workdir may have moved on since the create, and the
+                            // write is a no-op when it has not.
+                            let skills =
+                                seat_skills(seat, &self.config.state_dir, &record.session_id);
+                            // …and re-states which pack that was, because a resume
+                            // may have been staged from a moved ref. The new
+                            // generation's 44223 must describe the pack it is
+                            // actually running, not the one the create ran.
+                            let pack_ref = seat.pack_ref.clone();
+                            (
+                                Some(identity),
+                                // Same coordinate the create carried: a resumed
+                                // generation writes the same project's pulse — and
+                                // the same host-chosen `bee`, so a reconnect does
+                                // not quietly change which binary the seat runs.
+                                seat.post_fence_env_with_bee(
+                                    record.role.as_deref(),
+                                    record.project_ref.as_deref(),
+                                    crate::seat_bee::host_seat_bee().map(|(bee, _)| bee),
+                                    std::env::var_os("PATH").as_ref(),
+                                ),
+                                skills,
+                                pack_ref,
+                            )
+                        }
+                        _ => {
+                            self.state.consume_command(&plan.command_id, now_secs())?;
+                            self.forget_actor_seat(&plan.command_id);
+                            self.discard_orphaned_context_package(context_package_id.as_deref());
+                            // Precise about which fact is missing: this host may
+                            // well hold the agent's key and simply have staged
+                            // nothing under *this* command. Saying "this host does
+                            // not hold the key" on the machine that does is the
+                            // falsehood class this project treats as a bug.
+                            let receipt = LifecycleReceipt::failed(
                             &plan.command_id,
                             payload::ACTOR_UNAVAILABLE,
                             "no key material was staged for this reconnect; reconnect from the \
                              host that holds this agent's key",
                         );
-                        return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+                            return self
+                                .answer_resume_failure(&plan, rewind, receipt, relay)
+                                .await;
+                        }
                     }
                 }
-            }
-        };
+            };
         // SV-33: every execution, seated or not, may drive its own preview.
         let mut post_fence_env = post_fence_env;
         crate::preview_grant::push_preview_env(
@@ -4895,10 +4998,7 @@ impl Provider {
                     seat_skills: seat_skills.as_ref(),
                     role: record.role.as_deref(),
                     rehydration: rehydration_mcp.as_ref(),
-                    prior: Some((
-                        record.execution_binding.as_ref(),
-                        record.resume_cursor.as_deref(),
-                    )),
+                    prior: Some((record.execution_binding.as_ref(), resume_cursor.as_deref())),
                 })
             }) {
             Ok(execution) => execution,
@@ -4910,7 +5010,9 @@ impl Provider {
                 self.discard_orphaned_context_package(context_package_id.as_deref());
                 let receipt =
                     LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+                return self
+                    .answer_resume_failure(&plan, rewind, receipt, relay)
+                    .await;
             }
         };
         let execution_binding = execution.binding().cloned();
@@ -4924,7 +5026,7 @@ impl Provider {
             cwd: record.cwd.clone(),
             title: record.title.clone(),
             model: record.model.clone(),
-            resume_cursor: record.resume_cursor.clone(),
+            resume_cursor: resume_cursor.clone(),
             // Never strict: an ordinary create or resume may legitimately
             // end up in a fresh conversation, and says so on the wire.
             strict_native: false,
@@ -4944,10 +5046,30 @@ impl Provider {
             transcript_paragraph_flush: self.config.transcript_paragraph_flush,
         };
         let events = self.sessions.event_sender();
-        let startup_future = SessionManager::start(request, events);
-        let started = self
-            .await_with_lease_maintenance(startup_future, relay.map(HarnessRelay::event_publisher))
-            .await;
+        #[cfg(test)]
+        let started = if rewind.is_some() && std::mem::take(&mut self.rewind_fail_next_open) {
+            drop(request);
+            Err(session::CreateFailure {
+                code: PROVIDER_UNAVAILABLE,
+                message: "injected: the rewound generation's adapter did not start".into(),
+            })
+        } else {
+            let startup_future = SessionManager::start(request, events);
+            self.await_with_lease_maintenance(
+                startup_future,
+                relay.map(HarnessRelay::event_publisher),
+            )
+            .await
+        };
+        #[cfg(not(test))]
+        let started = {
+            let startup_future = SessionManager::start(request, events);
+            self.await_with_lease_maintenance(
+                startup_future,
+                relay.map(HarnessRelay::event_publisher),
+            )
+            .await
+        };
         if record.actor.is_some() {
             self.forget_actor_seat(&plan.command_id);
         }
@@ -4962,7 +5084,9 @@ impl Provider {
                 self.discard_orphaned_context_package(context_package_id.as_deref());
                 let receipt =
                     LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+                return self
+                    .answer_resume_failure(&plan, rewind, receipt, relay)
+                    .await;
             }
         };
         let startup = self.sessions.attach(started);
@@ -5021,10 +5145,10 @@ impl Provider {
         // leaking one package directory per resume.
         self.discard_context_packages(&target.session_id);
         if let Some(package_id) = context_package_id {
-            self.context_refresh.insert(
-                target.session_id.clone(),
-                ContextRefreshState::opened(package_id),
-            );
+            let mut refresh = ContextRefreshState::opened(package_id);
+            refresh.cuts = cuts;
+            self.context_refresh
+                .insert(target.session_id.clone(), refresh);
         }
 
         // Only the two restarted arms can carry a package reason. On a native
@@ -5032,45 +5156,51 @@ impl Provider {
         // whether a verified package could also be built is irrelevant to what
         // the agent can see, and naming a failure there would imply a loss that
         // did not happen. `session_rehydrated` lost nothing either.
-        let (receipt, status, reason) = match startup.continuity {
-            SessionContinuity::Resumed => (
-                LifecycleReceipt::resumed(&plan.command_id, &target),
-                "session_resumed",
-                None,
-            ),
-            SessionContinuity::Loaded => (
-                LifecycleReceipt::resumed(&plan.command_id, &target),
-                "session_loaded",
-                None,
-            ),
-            SessionContinuity::Rehydrated => (
-                LifecycleReceipt::resumed(&plan.command_id, &target),
-                "session_rehydrated",
-                None,
-            ),
-            SessionContinuity::RestartedWithoutContext { reason } => (
-                LifecycleReceipt::resumed_without_context(&plan.command_id, &target, reason),
-                "session_restarted_without_context",
+        // A rewind answers with its own receipt and opening row (SV-29).
+        let (receipt, opening_item) = if let Some(open) = rewind {
+            crate::rewind::rewound_answer(
+                &plan.command_id,
+                &target,
+                open,
+                &startup.continuity,
                 unavailable_reason,
-            ),
-            SessionContinuity::Fresh => (
-                LifecycleReceipt::resumed_without_context(
-                    &plan.command_id,
-                    &target,
-                    "the provider had no saved session cursor",
+            )
+        } else {
+            let (receipt, status, reason) = match startup.continuity {
+                SessionContinuity::Resumed => (
+                    LifecycleReceipt::resumed(&plan.command_id, &target),
+                    "session_resumed",
+                    None,
                 ),
-                "session_restarted_without_context",
-                unavailable_reason,
-            ),
+                SessionContinuity::Loaded => (
+                    LifecycleReceipt::resumed(&plan.command_id, &target),
+                    "session_loaded",
+                    None,
+                ),
+                SessionContinuity::Rehydrated => (
+                    LifecycleReceipt::resumed(&plan.command_id, &target),
+                    "session_rehydrated",
+                    None,
+                ),
+                SessionContinuity::RestartedWithoutContext { reason } => (
+                    LifecycleReceipt::resumed_without_context(&plan.command_id, &target, reason),
+                    "session_restarted_without_context",
+                    unavailable_reason,
+                ),
+                SessionContinuity::Fresh => (
+                    LifecycleReceipt::resumed_without_context(
+                        &plan.command_id,
+                        &target,
+                        "the provider had no saved session cursor",
+                    ),
+                    "session_restarted_without_context",
+                    unavailable_reason,
+                ),
+            };
+            (receipt, payload::status_item_with_reason(status, reason))
         };
         self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt)?;
-        self.enqueue_transcript(
-            plan.channel_id,
-            &target,
-            None,
-            payload::status_item_with_reason(status, reason),
-            Priority::High,
-        )?;
+        self.enqueue_transcript(plan.channel_id, &target, None, opening_item, Priority::High)?;
         self.enqueue_transcript(
             plan.channel_id,
             &target,
@@ -8766,6 +8896,7 @@ impl Provider {
         let seq = state.next_seq;
         state.next_seq = seq.saturating_add(1);
         let package_id = state.package_id.clone();
+        let cuts = state.cuts.clone();
         let session_id = session_id.to_owned();
 
         tokio::spawn(async move {
@@ -8780,6 +8911,7 @@ impl Provider {
                 allow_no_executions: false,
                 generated_at: now_ms(),
                 limits: ContextProjectionLimits::default(),
+                cuts,
             };
             let package = match context_projector::fetch_and_project_session_context(
                 &rest_client,
@@ -12845,6 +12977,9 @@ mod tests {
     // SV-28 turn checkpoints through the real provider.
     #[path = "turn_checkpoint_tests.rs"]
     mod turn_checkpoint_tests;
+    // SV-29 rewind through the real provider.
+    #[path = "rewind_tests.rs"]
+    mod rewind_tests;
     #[path = "verification_input_tests.rs"]
     mod verification_input_tests;
     // Stops are shown by process groups disappearing: Unix only.

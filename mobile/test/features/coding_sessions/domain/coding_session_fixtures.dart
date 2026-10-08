@@ -140,6 +140,7 @@ NostrEvent receiptEvent({
   String? id,
   Map<String, Object?>? error,
   String? turnId,
+  Map<String, Object?>? rewind,
 }) {
   final resolved = status == 'failed' ? null : (forTarget ?? target());
   final payload = <String, Object?>{
@@ -149,6 +150,7 @@ NostrEvent receiptEvent({
     'session': resolved?.toJson(),
     'error': error,
     'turnId': ?turnId,
+    'rewind': ?rewind,
   };
   final receiptStatus = CodingSessionReceiptStatus.fromWire(status)!;
   return event(
@@ -263,6 +265,7 @@ NostrEvent resumeEvent({
   int createdAt = 800,
   String? id,
   String type = 'session.resume',
+  Map<String, Object?> extraAction = const {},
 }) {
   final resolved = forTarget ?? target();
   return event(
@@ -282,6 +285,7 @@ NostrEvent resumeEvent({
         'type': type,
         'session': resolved.toJson(),
         'providerAuthorityPubkey': authority,
+        ...extraAction,
       },
     }),
   );

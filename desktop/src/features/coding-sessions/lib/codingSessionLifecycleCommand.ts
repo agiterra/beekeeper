@@ -131,6 +131,20 @@ export type CodingSessionRestartAction = {
   providerAuthorityPubkey: string;
 };
 
+/**
+ * SV-29: rewind to before one turn — detach generation N and open N+1
+ * seeded from the record up to that turn, optionally restoring the working
+ * tree to the turn's base. Exactly five keys (WIRE-C3b §1).
+ */
+export type CodingSessionRewindAction = {
+  type: "session.rewind";
+  session: CodingSessionCommandTarget;
+  providerAuthorityPubkey: string;
+  /** The 44231 turn checkpoint to cut at: the turn being edited. */
+  checkpoint: string;
+  files: "keep" | "restore";
+};
+
 export type CodingSessionStopAction = {
   type: "session.stop";
   session: CodingSessionCommandTarget;
@@ -141,6 +155,7 @@ export type CodingSessionLifecycleAction =
   | CodingSessionCreateAction
   | CodingSessionResumeAction
   | CodingSessionRestartAction
+  | CodingSessionRewindAction
   | CodingSessionStopAction;
 
 export type CodingSessionLifecycleCommandPayload = {
@@ -411,6 +426,34 @@ export function buildCodingSessionRestartEvent(input: {
   return buildCodingSessionTargetLifecycleEvent(input, "session.restart");
 }
 
+/**
+ * Build an exact-generation rewind (SV-29). Like a restart it mints the next
+ * generation and is refused while a turn is open (`SESSION_BUSY`); unlike
+ * one, the new generation is seeded only from the record before
+ * `checkpoint`'s turn, and `files: "restore"` also puts the working tree
+ * back to that turn's base. The old native session is detached, never
+ * truncated.
+ */
+export function buildCodingSessionRewindEvent(input: {
+  channelId: string;
+  commandId: string;
+  target: CodingSessionCommandTarget;
+  providerAuthorityPubkey: string;
+  checkpoint: string;
+  files: "keep" | "restore";
+}): CodingSessionLifecycleCommandEventInput {
+  if (!isCodingSessionLifecycleHex64(input.checkpoint)) {
+    throw new Error("action.checkpoint must be a lowercase 64-hex event id");
+  }
+  if (input.files !== "keep" && input.files !== "restore") {
+    throw new Error('action.files must be "keep" or "restore"');
+  }
+  return buildCodingSessionTargetLifecycleEvent(input, "session.rewind", {
+    checkpoint: input.checkpoint,
+    files: input.files,
+  });
+}
+
 /** Build an exact-generation durable stop request. */
 export function buildCodingSessionStopEvent(input: {
   channelId: string;
@@ -428,17 +471,30 @@ function buildCodingSessionTargetLifecycleEvent(
     target: CodingSessionCommandTarget;
     providerAuthorityPubkey: string;
   },
-  type: "session.resume" | "session.restart" | "session.stop",
+  type:
+    | "session.resume"
+    | "session.restart"
+    | "session.rewind"
+    | "session.stop",
+  rewind?: Pick<CodingSessionRewindAction, "checkpoint" | "files">,
 ): CodingSessionLifecycleCommandEventInput {
   validateTargetLifecycleInput(input);
+  const target = {
+    session: input.target,
+    providerAuthorityPubkey: input.providerAuthorityPubkey,
+  };
+  let action: CodingSessionLifecycleAction;
+  if (type === "session.rewind") {
+    if (!rewind) throw new Error("a session.rewind needs checkpoint and files");
+    // Key order is the wire's: type, session, authority, checkpoint, files.
+    action = { type, ...target, ...rewind };
+  } else {
+    action = { type, ...target };
+  }
   const payload: CodingSessionLifecycleCommandPayload = {
     schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
     commandId: input.commandId,
-    action: {
-      type,
-      session: input.target,
-      providerAuthorityPubkey: input.providerAuthorityPubkey,
-    },
+    action,
   };
   const content = JSON.stringify(payload);
   validateUtf8Limit(
@@ -550,6 +606,22 @@ export async function publishCodingSessionRestart(
     buildCodingSessionRestartEvent(input),
     "Timed out while restarting the coding session.",
     "Failed to restart the coding session.",
+    dependencies,
+  );
+}
+
+/** Publish an exact-generation rewind (SV-29). */
+export async function publishCodingSessionRewind(
+  input: Parameters<typeof buildCodingSessionRewindEvent>[0],
+  dependencies: {
+    publisher?: LifecyclePublisher;
+    signer?: LifecycleSigner;
+  } = {},
+): Promise<PublishedCodingSessionLifecycleCommand> {
+  return publishLifecycleEvent(
+    buildCodingSessionRewindEvent(input),
+    "Timed out while rewinding the coding session.",
+    "Failed to rewind the coding session.",
     dependencies,
   );
 }

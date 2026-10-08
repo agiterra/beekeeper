@@ -224,6 +224,13 @@ fn valid_command(
         | CodingSessionLifecycleAction::SessionRestart {
             session,
             provider_authority_pubkey,
+        }
+        // A rewind (SV-29) detaches and reopens exactly as a restart does,
+        // under the rewind command's id and a `Resumed*` receipt.
+        | CodingSessionLifecycleAction::SessionRewind {
+            session,
+            provider_authority_pubkey,
+            ..
         } if same_execution_next_generation(&session, target) => {
             (provider_authority_pubkey, MintAction::Resume)
         }
@@ -368,7 +375,7 @@ mod tests {
         previous: &CodingSessionTarget,
         action_type: &str,
     ) -> Event {
-        let content = serde_json::json!({
+        let mut content = serde_json::json!({
             "schema": "buzz-coding-session-lifecycle-command/v1",
             "commandId": id,
             "action": {
@@ -377,6 +384,10 @@ mod tests {
                 "providerAuthorityPubkey": provider.to_hex()
             }
         });
+        if action_type == "session.rewind" {
+            content["action"]["checkpoint"] = serde_json::json!("ab".repeat(32));
+            content["action"]["files"] = serde_json::json!("restore");
+        }
         EventBuilder::new(Kind::Custom(44_221), content.to_string())
             .tags([
                 tag(&["h", &channel.to_string()]),
@@ -421,6 +432,7 @@ mod tests {
             session: Some(target.clone()),
             error: None,
             turn_id: None,
+            rewind: None,
         };
         EventBuilder::new(
             Kind::Custom(44_224),
@@ -453,6 +465,7 @@ mod tests {
             session: Some(target.clone()),
             error: None,
             turn_id: None,
+            rewind: None,
         };
         EventBuilder::new(
             Kind::Custom(44_224),
@@ -745,6 +758,63 @@ mod tests {
                 vec![receipt],
                 channel,
                 "restart-1",
+                &target(2),
+                &Keys::generate().public_key(),
+            ),
+            Err(GenerationAuthorityError::AuthorityMismatch)
+        ));
+    }
+
+    #[test]
+    fn rewind_command_mints_the_next_generation_like_resume() {
+        let operator = Keys::generate();
+        let provider = Keys::generate();
+        let channel = Uuid::new_v4();
+        let command = next_generation_command(
+            &operator,
+            &provider.public_key(),
+            channel,
+            "rewind-1",
+            &target(1),
+            "session.rewind",
+        );
+        let receipt = receipt_with_status(
+            &provider,
+            channel,
+            "rewind-1",
+            &target(2),
+            ReceiptStatus::Resumed,
+        );
+        let proof = select_unique_generation_authority(
+            vec![command.clone()],
+            vec![receipt.clone()],
+            channel,
+            "rewind-1",
+            &target(2),
+            &provider.public_key(),
+        )
+        .unwrap();
+        assert_eq!(proof.command_event_id, command.id);
+        assert_eq!(proof.receipt_event_id, receipt.id);
+        // Same fences as resume: a skipped generation and a stranger's lease
+        // are still refused.
+        assert!(matches!(
+            select_unique_generation_authority(
+                vec![command.clone()],
+                vec![receipt.clone()],
+                channel,
+                "rewind-1",
+                &target(3),
+                &provider.public_key(),
+            ),
+            Err(GenerationAuthorityError::MissingCommand)
+        ));
+        assert!(matches!(
+            select_unique_generation_authority(
+                vec![command],
+                vec![receipt],
+                channel,
+                "rewind-1",
                 &target(2),
                 &Keys::generate().public_key(),
             ),

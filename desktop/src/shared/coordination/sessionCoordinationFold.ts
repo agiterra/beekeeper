@@ -9,10 +9,9 @@
  *   receipt is signed by the command's declared `providerAuthorityPubkey`, and
  *   the receipt's status is a success for that action. Two commands, two
  *   receipts, or a receipt from anyone else proves nothing.
- * - **Generations.** `session.create` opens generation 1; each `session.resume`
- *   or `session.restart` (one step here) extends the chain by exactly one,
- *   against the same execution key, from an accepted predecessor. An execution
- *   may span several generations; `executionKey` is the identity callers count.
+ * - **Generations.** `session.create` opens generation 1; each resume, restart
+ *   or rewind adds exactly one, from an accepted predecessor, to the same
+ *   `executionKey` — the identity callers count.
  * - **Leases.** Reachability comes from kind 24223 and from nothing else. The
  *   winning lease is the unique event at the highest sequence for that exact
  *   target, signed by the same provider authority, under the same command id.
@@ -70,6 +69,7 @@ import {
   hasStrictLifecycleReceiptValues,
   hasStrictMetadataJson,
   hasStrictSessionTargetValues,
+  isSessionNextGenerationAction,
 } from "./sessionCoordinationStrictJson.ts";
 import {
   type CoordinatedNameWitness,
@@ -323,7 +323,7 @@ function readLifecycleCommand(
       hireRef: nullableString(action.hireRef),
     };
   }
-  if (action.type === "session.resume" || action.type === "session.restart") {
+  if (isSessionNextGenerationAction(action.type)) {
     const previousTarget = readCodingSessionTarget(action.session);
     if (!previousTarget) return null;
     return {

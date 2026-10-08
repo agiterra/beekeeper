@@ -473,6 +473,23 @@ CodingSessionTranscriptItem _status(CodingSessionTranscriptEnvelope envelope) {
       );
     }
   }
+  if (slug == 'session_rewound') {
+    // SV-29: the first item of a rewound generation, in the provider's own
+    // closed words. The rewound turns stay in the record above it.
+    final files = envelope.item['files'];
+    final memory = envelope.item['memory'];
+    if ((files == 'kept' || files == 'restored') &&
+        (memory == 'seeded' || memory == 'none')) {
+      return _base(
+        envelope,
+        type: CodingSessionItemType.lifecycle,
+        title: 'Rewound',
+        text:
+            'Rewound to before this turn · files $files · '
+            '${memory == 'seeded' ? 'new conversation seeded from the record' : 'restarted with no memory'}',
+      );
+    }
+  }
   final continuity = codingSessionContinuityStatuses[slug];
   if (continuity == null) {
     return _base(

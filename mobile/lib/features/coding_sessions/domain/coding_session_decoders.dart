@@ -2,6 +2,7 @@ import '../../../shared/relay/nostr_models.dart';
 import 'coding_session_decode_result.dart';
 import 'coding_session_keys.dart';
 import 'coding_session_models.dart';
+import 'coding_session_rewind.dart';
 import 'coding_session_signature.dart';
 import 'coding_session_target.dart';
 import 'coding_session_wire.dart';
@@ -267,7 +268,8 @@ CodingSessionDecoded<CodingSessionMetadata> decodeCodingSessionMetadata(
 ///
 /// Exactly five keys — `{schema, commandId, status, session, error}` — or six
 /// with `turnId` when and only when the status is `turn_started` or
-/// `turn_injected`. An unexpected key is a rejection, never a partial accept.
+/// `turn_injected` — plus SV-29's optional `rewind` on a rewind's answer
+/// ([codingSessionRewindReceiptAcceptable]). An unexpected key is a rejection, never a partial accept.
 /// An unrecognised status string fails closed, as it always has.
 CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
   NostrEvent event, {
@@ -310,7 +312,13 @@ CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
     );
   }
   const envelope = ['schema', 'commandId', 'status', 'session', 'error'];
-  final expected = status.carriesTurnId ? [...envelope, 'turnId'] : envelope;
+  // SV-29: an optional `rewind`, checked whole once the receipt is decoded.
+  final hasRewind = payload.containsKey('rewind');
+  final expected = [
+    ...envelope,
+    if (status.carriesTurnId) 'turnId',
+    if (hasRewind) 'rewind',
+  ];
   if (!hasExactKeys(payload, expected) ||
       payload['schema'] != codingSessionReceiptSchema ||
       !boundedNonempty(payload['commandId'], _maxIdentifierBytes)) {
@@ -363,6 +371,17 @@ CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
         CodingSessionDecodeReason.malformedPayload,
       );
     }
+  }
+  if (hasRewind &&
+      !codingSessionRewindReceiptAcceptable(
+        payload['rewind'],
+        status: status,
+        session: target,
+        errorCode: error?.code,
+      )) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
   }
   String? turnId;
   if (status.carriesTurnId) {

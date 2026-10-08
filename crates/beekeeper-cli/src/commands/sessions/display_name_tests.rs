@@ -95,6 +95,7 @@ fn execution(session_id: &str, provider: &str, at: i64, title: Option<&str>) -> 
         session: Some(target.clone()),
         error: None,
         turn_id: None,
+        rewind: None,
     };
     let metadata = SessionMetadata {
         schema: METADATA_SCHEMA.to_owned(),

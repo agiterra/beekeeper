@@ -355,6 +355,7 @@ fn wire(options: WireOptions) -> Wire {
             message: "this computer holds no identity for that role".into(),
         }),
         turn_id: None,
+        rewind: None,
     };
     let receipt_keys = options.receipt_signer.clone().unwrap_or(provider.clone());
     let receipt = build_coding_session_lifecycle_receipt(
@@ -918,6 +919,7 @@ fn add_seat(wire: &mut Wire, extra: ExtraSeat) -> String {
                 message: "this computer holds no identity for that role".into(),
             }),
             turn_id: None,
+            rewind: None,
         };
         let keys = extra
             .receipt_signer
@@ -1047,6 +1049,7 @@ async fn a_forged_later_receipt_cannot_deny_the_repair() {
         session: Some(target()),
         error: None,
         turn_id: None,
+        rewind: None,
     };
     let forged = build_coding_session_lifecycle_receipt(
         channel,

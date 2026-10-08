@@ -571,7 +571,8 @@ function MinimapMarks({
     !marks.failed &&
     glyph === null &&
     marks.handovers === 0 &&
-    marks.waitingRulings === 0
+    marks.waitingRulings === 0 &&
+    !marks.rewound
   ) {
     return null;
   }
@@ -583,6 +584,14 @@ function MinimapMarks({
       data-testid="coding-session-minimap-marks"
       style={{ top }}
     >
+      {marks.rewound ? (
+        <span
+          className="text-muted-foreground"
+          data-testid="coding-session-minimap-mark-rewind"
+        >
+          ↶
+        </span>
+      ) : null}
       {marks.failed ? (
         <span
           className="size-1 rounded-full bg-destructive"

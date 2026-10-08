@@ -108,6 +108,7 @@ fn receipt_content(
         session,
         error,
         turn_id: None,
+        rewind: None,
     })
     .expect("receipt")
 }

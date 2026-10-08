@@ -108,6 +108,7 @@ import { useCodingSessionSurfaceShell } from "./surfaces/useCodingSessionSurface
 import { useCodingSessionSurfaceTeamRead } from "./surfaces/useCodingSessionSurfaceTeamRead";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { UmbrellaCodingSessionWorkspace } from "./CodingSessionUmbrellaWorkspace";
+import { CodingSessionRewindScope } from "./CodingSessionRewindDialog";
 import { useCodingSessionClosureDialog } from "../hooks/useCodingSessionClosureDialog";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { normalizeRelayUrl } from "@/shared/lib/normalizeRelayUrl";
@@ -336,73 +337,74 @@ export function CodingSessionWorkspace({
         </div>
       ) : null}
       {/* The umbrella surface is a render branch, not a mode: an umbrella with
-          no collapsed history falls through to exactly today's single-session
-          tree. Routing on collapsed history rather than execution count is
-          what lets a resumed session — one execution, several generations —
-          reach the only view that renders its earlier turns. */}
-      {umbrellaHasCollapsedHistory(umbrella) ? (
-        <UmbrellaCodingSessionWorkspace
-          catalogSettled={!catalog.isLoading}
-          resolveReachability={resolveHandoverReachability}
-          channelId={channelId}
-          channelName={channel?.name ?? null}
-          communityScope={communityScope}
-          focusedExecution={resolution.focusedExecution}
-          generationId={generationId}
-          channelAccess={channelAccess}
-          currentUserPubkey={identity.data?.pubkey ?? null}
-          key={`${channelId}:${umbrella.umbrellaKey}`}
-          acceptedOperators={acceptedOperators}
-          onAddProvider={onAddProvider}
-          onCloseSession={
-            canCloseSession ? () => requestClosure("closed") : undefined
-          }
-          onReopenSession={
-            canReopenSession ? () => requestClosure("open") : undefined
-          }
-          onClose={onClose}
-          onOpenPeople={onOpenPeople}
-          peopleCount={peopleCount}
-          surface={surface}
-          umbrella={umbrella}
-          goal={goal}
-          goalReader={goalReader}
-          sessionName={sessionName}
-          sessionClosed={sessionClosed}
-          turnStartedAtFor={catalog.turnStartedAtFor}
-        />
-      ) : (
-        <ReadyCodingSessionWorkspace
-          channelId={channelId}
-          communityScope={communityScope}
-          resolveReachability={resolveHandoverReachability}
-          channelName={channel?.name ?? null}
-          generationId={generationId}
-          channelAccess={channelAccess}
-          key={`${channelId}:${generationId}`}
-          acceptedOperators={acceptedOperators}
-          onAddProvider={onAddProvider}
-          onCloseSession={
-            canCloseSession ? () => requestClosure("closed") : undefined
-          }
-          onReopenSession={
-            canReopenSession ? () => requestClosure("open") : undefined
-          }
-          onClose={onClose}
-          onOpenPeople={onOpenPeople}
-          peopleCount={peopleCount}
-          founderPubkey={umbrella.founderPubkey}
-          genesisRef={umbrella.genesisRef}
-          goal={goal}
-          sessionName={sessionName}
-          sessionClosed={sessionClosed}
-          currentUserPubkey={identity.data?.pubkey ?? null}
-          sessionRef={umbrella.sessionRef}
-          session={resolution.session}
-          surface={surface}
-          umbrella={umbrella}
-        />
-      )}
+          no collapsed history falls through to today's single-session tree.
+          Routing on collapsed history, not execution count, lets a resumed
+          session (one execution, several generations) reach its earlier turns. */}
+      <CodingSessionRewindScope acceptedOperators={acceptedOperators}>
+        {umbrellaHasCollapsedHistory(umbrella) ? (
+          <UmbrellaCodingSessionWorkspace
+            catalogSettled={!catalog.isLoading}
+            resolveReachability={resolveHandoverReachability}
+            channelId={channelId}
+            channelName={channel?.name ?? null}
+            communityScope={communityScope}
+            focusedExecution={resolution.focusedExecution}
+            generationId={generationId}
+            channelAccess={channelAccess}
+            currentUserPubkey={identity.data?.pubkey ?? null}
+            key={`${channelId}:${umbrella.umbrellaKey}`}
+            acceptedOperators={acceptedOperators}
+            onAddProvider={onAddProvider}
+            onCloseSession={
+              canCloseSession ? () => requestClosure("closed") : undefined
+            }
+            onReopenSession={
+              canReopenSession ? () => requestClosure("open") : undefined
+            }
+            onClose={onClose}
+            onOpenPeople={onOpenPeople}
+            peopleCount={peopleCount}
+            surface={surface}
+            umbrella={umbrella}
+            goal={goal}
+            goalReader={goalReader}
+            sessionName={sessionName}
+            sessionClosed={sessionClosed}
+            turnStartedAtFor={catalog.turnStartedAtFor}
+          />
+        ) : (
+          <ReadyCodingSessionWorkspace
+            channelId={channelId}
+            communityScope={communityScope}
+            resolveReachability={resolveHandoverReachability}
+            channelName={channel?.name ?? null}
+            generationId={generationId}
+            channelAccess={channelAccess}
+            key={`${channelId}:${generationId}`}
+            acceptedOperators={acceptedOperators}
+            onAddProvider={onAddProvider}
+            onCloseSession={
+              canCloseSession ? () => requestClosure("closed") : undefined
+            }
+            onReopenSession={
+              canReopenSession ? () => requestClosure("open") : undefined
+            }
+            onClose={onClose}
+            onOpenPeople={onOpenPeople}
+            peopleCount={peopleCount}
+            founderPubkey={umbrella.founderPubkey}
+            genesisRef={umbrella.genesisRef}
+            goal={goal}
+            sessionName={sessionName}
+            sessionClosed={sessionClosed}
+            currentUserPubkey={identity.data?.pubkey ?? null}
+            sessionRef={umbrella.sessionRef}
+            session={resolution.session}
+            surface={surface}
+            umbrella={umbrella}
+          />
+        )}
+      </CodingSessionRewindScope>
       {/* Deliberately a sibling of both branches: the first join flips the
           workspace from the single-session tree to the umbrella surface, and
           a dialog owned by either branch would unmount mid-create — losing the

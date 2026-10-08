@@ -103,6 +103,7 @@ fn signed_receipt(
         session,
         error,
         turn_id: None,
+        rewind: None,
     };
     let event = build_coding_session_lifecycle_receipt(
         uuid::Uuid::parse_str(CHANNEL).expect("channel"),

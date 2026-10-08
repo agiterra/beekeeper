@@ -5,6 +5,7 @@ import type { CodingSessionMinimapItem } from "@/features/coding-sessions/lib/co
 import {
   codingSessionMinimapOpenDecisionRulings,
   codingSessionMinimapOpenDecisionSource,
+  codingSessionMinimapRewinds,
   codingSessionMinimapRulingNote,
   type CodingSessionMinimapDecisionReads,
   deriveCodingSessionMinimapMarks,
@@ -110,6 +111,13 @@ export function useCodingSessionTranscriptMinimapFacts(
     [decisionSource],
   );
 
+  // SV-29: rewinds from the same projected transcript the shared model reads.
+  const transcript = ctx?.transcript ?? null;
+  const rewindInputs = React.useMemo(
+    () => codingSessionMinimapRewinds(transcript),
+    [transcript],
+  );
+
   const marks = React.useMemo(
     () =>
       deriveCodingSessionMinimapMarks({
@@ -121,8 +129,9 @@ export function useCodingSessionTranscriptMinimapFacts(
         gates: gateInputs,
         handovers: handoverInputs,
         rulings: rulingInputs,
+        rewinds: rewindInputs,
       }),
-    [gateInputs, handoverInputs, items, rulingInputs],
+    [gateInputs, handoverInputs, items, rewindInputs, rulingInputs],
   );
 
   const gates = React.useMemo<CodingSessionMinimapFacts["gates"]>(() => {

@@ -91,6 +91,10 @@ mod model_tests;
 pub mod stop;
 #[cfg(test)]
 mod stop_wire_tests;
+// `session.rewind` from a terminal: SV-29, cut the record at a turn.
+pub mod rewind;
+#[cfg(test)]
+mod rewind_tests;
 // `sessions create --cwd --project` writes a hint the provider can bind.
 #[cfg(test)]
 mod create_hint_tests;
@@ -2975,6 +2979,25 @@ pub async fn dispatch(
                 &session,
                 &provider_authority,
                 wait,
+                timeout_secs,
+            )
+            .await
+        }
+        SessionsCmd::Rewind(crate::SessionsRewindArgs {
+            channel,
+            to,
+            session_ref,
+            checkpoint,
+            files,
+            timeout_secs,
+        }) => {
+            rewind::cmd_rewind(
+                client,
+                &channel,
+                &to,
+                session_ref.as_deref(),
+                &checkpoint,
+                &files,
                 timeout_secs,
             )
             .await

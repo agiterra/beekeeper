@@ -55,6 +55,8 @@ const KNOWN_STATUS_SLUGS = new Map<string, string>([
   // SV-35. The item's own `model` is shown as meta; the signer is the
   // command's author, not something this projection knows.
   ["model_switched", "Model switched"],
+  // SV-29: the first item of a rewound generation (its own closed shape).
+  ["session_rewound", "Rewound"],
 ]);
 
 function blankItem(identity: TranscriptItemIdentity): ProjectedTranscriptItem {
@@ -305,6 +307,23 @@ export function buildNonToolItem(
           requested && requested !== model
             ? [`Asked ${requested} · running ${model}`]
             : [],
+      };
+    }
+    if (
+      slug === "session_rewound" &&
+      (item.files === "kept" || item.files === "restored") &&
+      (item.memory === "seeded" || item.memory === "none")
+    ) {
+      // The provider's own closed fields; the turns cut stay in the record.
+      const memory =
+        item.memory === "seeded"
+          ? "new conversation seeded from the record"
+          : "restarted with no memory";
+      return {
+        ...base,
+        title: "Rewound",
+        text: `Rewound to before this turn · files ${item.files} · ${memory}`,
+        meta: [],
       };
     }
     const known = KNOWN_STATUS_SLUGS.get(slug);

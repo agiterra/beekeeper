@@ -23,6 +23,10 @@ import {
   isStrictRoutingRecord,
   parseBoundedJson,
 } from "./wireDecode.ts";
+import {
+  decodeWithSessionRewind,
+  type SessionRewindReceiptFacts,
+} from "./sessionRewind.ts";
 
 export const CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA =
   "buzz-coding-session-lifecycle-receipt/v1" as const;
@@ -282,11 +286,23 @@ const RECEIPT_ENVELOPE_KEYS = [
   "error",
 ] as const;
 
-export function parseCodingSessionLifecycleReceipt(
-  content: unknown,
+export function parseCodingSessionLifecycleReceipt(content: unknown): Readonly<
+  CodingSessionLifecycleReceipt & {
+    /** SV-29: present only on a `session.rewind`'s answer. */
+    rewind?: Readonly<SessionRewindReceiptFacts>;
+  }
+> | null {
+  // SV-29: an optional `rewind`, checked whole and set aside for the envelope.
+  return decodeWithSessionRewind<CodingSessionLifecycleReceipt>(
+    parseBoundedJson(content, MAX_RECEIPT_CONTENT_BYTES),
+    parseReceiptEnvelope,
+  );
+}
+
+function parseReceiptEnvelope(
+  value: Record<string, unknown>,
 ): Readonly<CodingSessionLifecycleReceipt> | null {
-  const value = parseBoundedJson(content, MAX_RECEIPT_CONTENT_BYTES);
-  if (!isPlainRecord(value) || typeof value.status !== "string") return null;
+  if (typeof value.status !== "string") return null;
   const expectedKeys =
     value.status === "turn_started" || value.status === "turn_injected"
       ? [...RECEIPT_ENVELOPE_KEYS, "turnId"]

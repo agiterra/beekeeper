@@ -305,6 +305,28 @@ pub enum CodingSessionLifecycleAction {
         /// Signing pubkey of the provider authority that owns the target.
         provider_authority_pubkey: String,
     },
+    /// Detach a live execution and open a new generation whose context is
+    /// cut at the start of a recorded turn (SV-29, **Edit from here**).
+    ///
+    /// `checkpoint` is the kind:44231 `turn` checkpoint of the first turn to
+    /// forget: the transcript is cut at its `coverage.fromSeq − 1`, and with
+    /// [`RewindFiles::Restore`] the working tree is returned to its
+    /// `git.baseTree`. The same shape and authority as a restart plus those
+    /// two keys; a provider refuses it while a turn is open (`SESSION_BUSY`).
+    /// The new generation is a fresh conversation seeded from the signed
+    /// record, never the native cursor, which still remembers the turns.
+    #[serde(rename = "session.rewind")]
+    SessionRewind {
+        /// Exact current generation being rewound.
+        session: CodingSessionTarget,
+        /// Signing pubkey of the provider authority that owns the target.
+        provider_authority_pubkey: String,
+        /// Event id (64 lowercase hex) of the kind:44231 checkpoint whose
+        /// turn is the first one rewound.
+        checkpoint: String,
+        /// Whether the working tree is left alone or restored.
+        files: RewindFiles,
+    },
     /// Durably stop an execution so a provider restart cannot revive it.
     #[serde(rename = "session.stop")]
     SessionStop {
@@ -313,6 +335,16 @@ pub enum CodingSessionLifecycleAction {
         /// Signing pubkey of the provider authority that owns the target.
         provider_authority_pubkey: String,
     },
+}
+
+/// What a `session.rewind` does to the working tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RewindFiles {
+    /// Rewind the conversation only; the files stay as they are.
+    Keep,
+    /// Also return the working tree to the checkpoint's `baseTree`.
+    Restore,
 }
 
 impl CodingSessionLifecycleAction {
@@ -343,9 +375,10 @@ impl CodingSessionLifecycleAction {
             } => provider_instance_ref
                 .as_ref()
                 .map(ProviderInstanceAlias::as_str),
-            Self::SessionResume { .. } | Self::SessionRestart { .. } | Self::SessionStop { .. } => {
-                None
-            }
+            Self::SessionResume { .. }
+            | Self::SessionRestart { .. }
+            | Self::SessionRewind { .. }
+            | Self::SessionStop { .. } => None,
         };
         // The field carries the newtype since B2, but `#[serde(transparent)]`
         // decoding does not run `from_wire` — a signed create may still carry
@@ -561,6 +594,16 @@ impl CodingSessionLifecycleCommandPayload {
                 validate_target(session)?;
                 validate_provider_authority_pubkey(provider_authority_pubkey)?;
             }
+            CodingSessionLifecycleAction::SessionRewind {
+                session,
+                provider_authority_pubkey,
+                checkpoint,
+                files: _,
+            } => {
+                validate_target(session)?;
+                validate_provider_authority_pubkey(provider_authority_pubkey)?;
+                validate_event_id_hex("action.checkpoint", checkpoint)?;
+            }
         }
         Ok(())
     }
@@ -707,6 +750,17 @@ pub fn decode_coding_session_lifecycle_command(
         Some("session.resume" | "session.restart" | "session.stop") => require_exact_fields(
             action,
             &["type", "session", "providerAuthorityPubkey"],
+            "action",
+        )?,
+        Some("session.rewind") => require_exact_fields(
+            action,
+            &[
+                "type",
+                "session",
+                "providerAuthorityPubkey",
+                "checkpoint",
+                "files",
+            ],
             "action",
         )?,
         _ => return Err("coding-session lifecycle command action type is unsupported".into()),
@@ -1469,6 +1523,67 @@ mod tests {
 
         let nulls = lifecycle_content("null");
         assert!(decode_coding_session_lifecycle_command(&nulls).is_ok());
+    }
+
+    /// SV-29: a rewind is the restart's three keys plus `checkpoint` and
+    /// `files`, exactly. A missing or extra key, a non-hex checkpoint, and a
+    /// `files` outside the closed pair are refused.
+    #[test]
+    fn coding_session_rewind_decodes_exactly_and_refuses_malformed() {
+        let target = CodingSessionTarget {
+            driver: "codex-acp".into(),
+            instance_id: "instance-1".into(),
+            session_id: "session-1".into(),
+            generation: 3,
+        };
+        for files in [RewindFiles::Keep, RewindFiles::Restore] {
+            let payload = CodingSessionLifecycleCommandPayload {
+                schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.into(),
+                command_id: "rewind-1".into(),
+                action: CodingSessionLifecycleAction::SessionRewind {
+                    session: target.clone(),
+                    provider_authority_pubkey: "ab".repeat(32),
+                    checkpoint: "cd".repeat(32),
+                    files,
+                },
+            };
+            let content = serde_json::to_string(&payload).unwrap();
+            assert_eq!(
+                decode_coding_session_lifecycle_command(&content).unwrap(),
+                payload
+            );
+        }
+        let content = |extra: &str, checkpoint: &str, files: &str| {
+            format!(
+                r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"rewind-1","action":{{"type":"session.rewind","session":{{"driver":"codex-acp","instanceId":"instance-1","sessionId":"session-1","generation":3}},"providerAuthorityPubkey":"{}"{checkpoint}{files}{extra}}}}}"#,
+                "ab".repeat(32)
+            )
+        };
+        let good_checkpoint = format!(r#","checkpoint":"{}""#, "cd".repeat(32));
+        assert!(decode_coding_session_lifecycle_command(&content(
+            "",
+            &good_checkpoint,
+            r#","files":"keep""#
+        ))
+        .is_ok());
+        for bad in [
+            content("", "", r#","files":"keep""#),
+            content("", &good_checkpoint, ""),
+            content(r#","extra":1"#, &good_checkpoint, r#","files":"keep""#),
+            content("", r#","checkpoint":"not-hex""#, r#","files":"keep""#),
+            content(
+                "",
+                &format!(r#","checkpoint":"{}""#, "CD".repeat(32)),
+                r#","files":"keep""#,
+            ),
+            content("", &good_checkpoint, r#","files":"all""#),
+            content("", &good_checkpoint, r#","files":null"#),
+        ] {
+            assert!(
+                decode_coding_session_lifecycle_command(&bad).is_err(),
+                "accepted {bad}"
+            );
+        }
     }
 
     #[test]

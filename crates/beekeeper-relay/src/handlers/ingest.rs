@@ -5216,6 +5216,10 @@ mod coding_session_checkpoint_tests;
 mod coding_session_title_tests;
 
 #[cfg(test)]
+#[path = "ingest_coding_session_rewind_tests.rs"]
+mod coding_session_rewind_tests;
+
+#[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 

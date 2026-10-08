@@ -62,6 +62,11 @@ use crate::turn_checkpoint_git::{
     ChangedFile, DiffResult, FileChange, OmittedPath, RefLeaf, UnavailableCode, DIFF_TIMEOUT,
 };
 
+/// Whether this build implements `session.rewind` (SV-29). A turn checkpoint
+/// says `restorable: true` only when this holds and it has the `git` facts
+/// and the `baseTree` a rewind restores to.
+pub(crate) const BUILD_IMPLEMENTS_REWIND: bool = true;
+
 /// How long an actor holds a turn's prompt for its baseline. Above the
 /// capture's own 3 s ceiling, so a capture that makes its ceiling is used;
 /// a cold boundary preparation in front of it can still miss, and then the
@@ -694,6 +699,89 @@ impl crate::Provider {
     }
 }
 
+/// What a rewind measured before it touched anything, for its `pre_rewind`
+/// 44231 (NIP-CSCK § `pre_rewind`).
+pub(crate) struct PreRewindCapture {
+    /// Channel the generation publishes into.
+    pub(crate) channel_id: Uuid,
+    /// The generation being rewound.
+    pub(crate) target: CodingSessionTarget,
+    /// The rewound checkpoint's `fromSeq`: the first item the rewind forgets.
+    pub(crate) from_seq: u64,
+    /// The last seq the rewound generation wrote.
+    pub(crate) through_seq: u64,
+    /// The rewound checkpoint's `baseTree`, so `files` lists what a restore
+    /// would undo.
+    pub(crate) base_tree: Option<String>,
+    /// The capture and its files from `base_tree`, or why there is none.
+    pub(crate) measured: Result<(CapturedTree, Option<DiffResult>), CaptureFailure>,
+}
+
+impl crate::Provider {
+    /// Sign and durably queue a rewind's `pre_rewind` checkpoint at high
+    /// priority, before any file is written. Returns its event id.
+    pub(crate) fn publish_pre_rewind_checkpoint(
+        &mut self,
+        capture: PreRewindCapture,
+    ) -> anyhow::Result<String> {
+        let PreRewindCapture {
+            channel_id,
+            target,
+            from_seq,
+            through_seq,
+            base_tree,
+            measured,
+        } = capture;
+        let measured = match measured {
+            Ok((tree, files)) => Measured::Captured { tree, files },
+            Err(failure) => Measured::Failed(failure),
+        };
+        let shaped = TurnCheckpointCapture {
+            channel_id,
+            target: target.clone(),
+            turn_id: String::new(),
+            from_seq: from_seq.min(through_seq),
+            through_seq,
+            base_tree,
+            previous: None,
+            measured,
+            overlapped: Arc::default(),
+        };
+        let mut payload = checkpoint_payload(&shaped, None);
+        payload.reason = CodingSessionCheckpointReason::PreRewind;
+        payload.turn_id = None;
+        // A pre_rewind is the undo point, not a turn a rewind can name.
+        payload.restorable = false;
+        let (event, _) = fit_checkpoint(channel_id, payload)?;
+        let event = event.sign_with_keys(&self.config.keys)?;
+        let id = event.id.to_hex();
+        let key = coding_session_checkpoint_semantic_key(
+            &target,
+            CodingSessionCheckpointReason::PreRewind,
+            through_seq,
+        );
+        // NIP-CSCK § `pre_rewind`: a second capture at the same `throughSeq`
+        // would share the first's `csck-key` and be dropped by every reader,
+        // so it is not published; the first is the undo point that matters.
+        if self
+            .outbox
+            .accepted_content(KIND_CODING_SESSION_CHECKPOINT, &key)
+            .is_some()
+        {
+            anyhow::bail!(
+                "a pre_rewind checkpoint at this point of the record was already published"
+            );
+        }
+        let queued =
+            self.outbox
+                .enqueue(KIND_CODING_SESSION_CHECKPOINT, &key, Priority::High, event)?;
+        if !queued {
+            anyhow::bail!("the pre_rewind checkpoint was not queued");
+        }
+        Ok(id)
+    }
+}
+
 fn not_measured() -> CaptureFailure {
     CaptureFailure {
         code: UnavailableCode::GitFailed,
@@ -863,6 +951,7 @@ fn checkpoint_payload(
                     }
                 }
             }
+            payload.restorable = BUILD_IMPLEMENTS_REWIND && base_tree.is_some();
             payload.git = Some(CodingSessionCheckpointGit {
                 head: tree.head.clone(),
                 branch: tree.branch.clone(),

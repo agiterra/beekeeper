@@ -51,9 +51,9 @@ use beekeeper_core::coding_session_name::{
     latest_coding_session_name, validate_coding_session_name_envelope,
 };
 use beekeeper_core::coding_session_payload::{
-    decode_coding_session_metadata, LifecycleReceipt, ReceiptStatus, SessionMetadata,
-    SessionStatus, TranscriptEnvelope, LIFECYCLE_RECEIPT_SCHEMA, METADATA_SCHEMA,
-    TRANSCRIPT_SCHEMA,
+    decode_coding_session_lifecycle_receipt, decode_coding_session_metadata, LifecycleReceipt,
+    ReceiptStatus, SessionMetadata, SessionStatus, TranscriptEnvelope, LIFECYCLE_RECEIPT_SCHEMA,
+    METADATA_SCHEMA, TRANSCRIPT_SCHEMA,
 };
 use beekeeper_core::coding_session_policy::{
     CodingSessionPolicyExclusionCode, CodingSessionPolicyGrant as Grant,
@@ -269,7 +269,16 @@ pub struct ContextProjectionRequest {
     pub generated_at: i64,
     /// Local package bounds.
     pub limits: ContextProjectionLimits,
+    /// Rewind cuts to apply on top of the ones the chain's own rewind
+    /// receipts prove (SV-29). The generation a rewind is opening has no
+    /// receipt yet, so its cut is passed here.
+    pub cuts: Vec<ContextCut>,
 }
+
+pub use cut::ContextCut;
+
+#[path = "context_projector_cut.rs"]
+mod cut;
 
 /// A projection failure. No partial package is returned.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -754,7 +763,16 @@ fn group_and_project_session_context_events(
     )?;
 
     let authority_links = group_authority_links(request, events)?;
-    let executions = group_executions(request, events)?;
+    let mut executions = group_executions(request, events)?;
+    let mut turn_commands = turn_commands;
+    let mut turn_receipts = turn_receipts;
+    cut::apply_rewind_cuts(
+        &request.cuts,
+        &mut executions,
+        &mut turn_commands,
+        &mut turn_receipts,
+        &mut coverage.notes,
+    );
     if executions.is_empty() && !request.allow_no_executions {
         return Err(ContextProjectionError::InvalidFact(
             "no successful create chain links this session and genesis".into(),
@@ -1020,7 +1038,7 @@ fn group_executions(
         loop {
             let mut established_resumes = Vec::new();
             for (resume_event, resume) in commands.iter().filter(|(_, command)| {
-                // A restart mints the next generation exactly as a resume does.
+                // A restart or a rewind mints the next generation exactly as a resume does.
                 matches!(
                     &command.action,
                     CodingSessionLifecycleAction::SessionResume {
@@ -1029,6 +1047,10 @@ fn group_executions(
                     } | CodingSessionLifecycleAction::SessionRestart {
                         session,
                         provider_authority_pubkey: authority,
+                    } | CodingSessionLifecycleAction::SessionRewind {
+                        session,
+                        provider_authority_pubkey: authority,
+                        ..
                     } if session == &current && authority == provider_authority_pubkey
                 )
             }) {
@@ -2413,6 +2435,11 @@ fn verify_generation(
                 | CodingSessionLifecycleAction::SessionRestart {
                     session,
                     provider_authority_pubkey,
+                }
+                | CodingSessionLifecycleAction::SessionRewind {
+                    session,
+                    provider_authority_pubkey,
+                    ..
                 },
                 Some(previous),
             ) => {
@@ -2438,9 +2465,10 @@ fn verify_generation(
             }
             _ => {
                 return Err(ContextProjectionError::InvalidFact(
-                "first generation must be create and later generations must be resume or restart"
-                    .into(),
-            ));
+                    "first generation must be create and later generations must be resume, \
+                     restart or rewind"
+                        .into(),
+                ));
             }
         };
 
@@ -2538,12 +2566,25 @@ fn verify_receipt(
         MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES,
         "lifecycle receipt",
     )?;
-    require_exact_json_fields(
-        &event.content,
-        &["schema", "commandId", "status", "session", "error"],
-        "lifecycle receipt",
-    )?;
-    let receipt: LifecycleReceipt = serde_json::from_str(&event.content).map_err(|_| {
+    // A rewind's receipt carries its `rewind` object (SV-29), exactly then.
+    let rewinds = matches!(
+        &command.action,
+        CodingSessionLifecycleAction::SessionRewind { .. }
+    );
+    let fields: &[&str] = if rewinds {
+        &[
+            "schema",
+            "commandId",
+            "status",
+            "session",
+            "error",
+            "rewind",
+        ]
+    } else {
+        &["schema", "commandId", "status", "session", "error"]
+    };
+    require_exact_json_fields(&event.content, fields, "lifecycle receipt")?;
+    let receipt = decode_coding_session_lifecycle_receipt(&event.content).map_err(|_| {
         ContextProjectionError::InvalidFact("lifecycle receipt content is malformed".into())
     })?;
     if receipt.schema != LIFECYCLE_RECEIPT_SCHEMA || receipt.command_id != command.command_id {
@@ -2559,7 +2600,8 @@ fn verify_receipt(
             None,
         ) | (
             CodingSessionLifecycleAction::SessionResume { .. }
-                | CodingSessionLifecycleAction::SessionRestart { .. },
+                | CodingSessionLifecycleAction::SessionRestart { .. }
+                | CodingSessionLifecycleAction::SessionRewind { .. },
             ReceiptStatus::Resumed | ReceiptStatus::ResumedWithoutContext,
             Some(_),
         )
@@ -3885,6 +3927,7 @@ mod tests {
             relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
             generated_at: fixture.input.generated_at,
             limits: ContextProjectionLimits::default(),
+            cuts: Vec::new(),
         };
 
         let package = project_session_context_events(&request, &events).unwrap();
@@ -3976,6 +4019,7 @@ mod tests {
             relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
             generated_at: fixture.input.generated_at,
             limits: ContextProjectionLimits::default(),
+            cuts: Vec::new(),
         };
 
         let package = project_session_context_events(&request, &events).unwrap();
@@ -3983,6 +4027,240 @@ mod tests {
         assert_eq!(package.history.len(), 3);
         assert!(package.history.iter().any(|item| item.target == next));
         assert!(package.roster.iter().any(|seat| seat.target == next));
+    }
+
+    /// SV-29: a `session.rewind` mints generation 2 like a restart, and its
+    /// receipt's cut keeps generation 1 only through `cutAfterSeq`: the
+    /// rewound turn's items are not in the package any reader projects.
+    #[test]
+    fn a_rewind_generation_is_followed_and_cuts_the_rewound_items() {
+        use beekeeper_core::coding_session_lifecycle_command::RewindFiles;
+        use beekeeper_core::coding_session_rewind::{ReceiptRewind, RewindFilesOutcome};
+        let fixture = fixture(4);
+        let channel_id = fixture.input.channel_id;
+        let generation = &fixture.input.executions[0].generations[0];
+        let next = CodingSessionTarget {
+            generation: 2,
+            ..fixture.target.clone()
+        };
+        let rewind = CodingSessionLifecycleCommandPayload {
+            schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.into(),
+            command_id: "rewind-1".into(),
+            action: CodingSessionLifecycleAction::SessionRewind {
+                session: fixture.target.clone(),
+                provider_authority_pubkey: fixture.provider.public_key().to_hex(),
+                checkpoint: "cd".repeat(32),
+                files: RewindFiles::Keep,
+            },
+        };
+        let rewind_event = build_coding_session_lifecycle_command(channel_id, &rewind)
+            .unwrap()
+            .sign_with_keys(&fixture.founder)
+            .unwrap();
+        let mut receipt = LifecycleReceipt::resumed("rewind-1", &next);
+        receipt.rewind = Some(ReceiptRewind {
+            checkpoint: "cd".repeat(32),
+            cut_generation: 1,
+            cut_after_seq: 2,
+            previous_generation: 1,
+            files: RewindFilesOutcome::Kept,
+            pre_rewind_checkpoint: None,
+            head: None,
+        });
+        let receipt_event = build_coding_session_lifecycle_receipt(
+            channel_id,
+            "rewind-1",
+            &serde_json::to_string(&receipt).unwrap(),
+        )
+        .unwrap()
+        .sign_with_keys(&fixture.provider)
+        .unwrap();
+        let mut metadata: SessionMetadata =
+            serde_json::from_str(&generation.metadata.content).unwrap();
+        metadata.session = next.clone();
+        let metadata_event = build_coding_session_metadata(
+            channel_id,
+            &next,
+            &serde_json::to_string(&metadata).unwrap(),
+        )
+        .unwrap()
+        .sign_with_keys(&fixture.provider)
+        .unwrap();
+        let envelope = TranscriptEnvelope::new(
+            &next,
+            1,
+            9_000,
+            None,
+            serde_json::json!({"kind": "status", "status": "session_rewound"}),
+        );
+        let transcript_event = build_coding_session_transcript_item(
+            channel_id,
+            &next,
+            1,
+            &serde_json::to_string(&envelope).unwrap(),
+        )
+        .unwrap()
+        .custom_created_at(Timestamp::from(9))
+        .sign_with_keys(&fixture.provider)
+        .unwrap();
+        let mut events = vec![
+            fixture.input.genesis.clone(),
+            generation.lifecycle_command.clone(),
+            generation.receipt.clone(),
+            generation.metadata.clone(),
+            rewind_event,
+            receipt_event,
+            metadata_event,
+            transcript_event,
+        ];
+        events.extend(generation.transcript.iter().cloned());
+        let request = ContextProjectionRequest {
+            allow_no_executions: false,
+            channel_id,
+            session_ref: fixture.input.session_ref.clone(),
+            genesis_ref: fixture.input.genesis_ref.clone(),
+            relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
+            generated_at: fixture.input.generated_at,
+            limits: ContextProjectionLimits::default(),
+            cuts: Vec::new(),
+        };
+
+        let package = project_session_context_events(&request, &events).unwrap();
+        package.validate().unwrap();
+
+        let first: Vec<u64> = package
+            .history
+            .iter()
+            .filter(|item| item.target == fixture.target)
+            .map(|item| item.event_seq)
+            .collect();
+        assert_eq!(first, vec![1, 2], "generation 1 kept through the cut");
+        assert!(package.history.iter().any(|item| item.target == next));
+        assert!(package.roster.iter().any(|seat| seat.target == next));
+        assert!(package
+            .provenance
+            .notes
+            .iter()
+            .any(|note| note.starts_with("Rewound:")));
+
+        // The same cut passed explicitly (the generation a rewind is opening
+        // has no receipt yet) applies to the chain without the rewind.
+        let mut before: Vec<Event> = vec![
+            fixture.input.genesis.clone(),
+            generation.lifecycle_command.clone(),
+            generation.receipt.clone(),
+            generation.metadata.clone(),
+        ];
+        before.extend(generation.transcript.iter().cloned());
+        let mut explicit = request.clone();
+        explicit.cuts = vec![ContextCut {
+            target: fixture.target.clone(),
+            after_seq: 2,
+        }];
+        let package = project_session_context_events(&explicit, &before).unwrap();
+        assert_eq!(package.history.len(), 2);
+    }
+
+    /// SV-29: the rewound prompts' 44220 commands and turn-stage receipts go
+    /// with the items; another execution's command of the same id stays.
+    #[test]
+    fn a_rewind_cut_drops_the_rewound_prompts_commands_and_receipts() {
+        let fixture = fixture(4);
+        let channel_id = fixture.input.channel_id;
+        let mut executions = fixture.input.executions.clone();
+        let target = fixture.target.clone();
+        let prompt = |seq: u64, command_id: &str| {
+            let envelope = TranscriptEnvelope::new(
+                &target,
+                seq,
+                seq as i64 * 1_000,
+                Some("turn-1"),
+                serde_json::json!({"kind": "user_prompt", "content": "p", "steered": false, "commandId": command_id}),
+            );
+            build_coding_session_transcript_item(
+                channel_id,
+                &target,
+                seq,
+                &serde_json::to_string(&envelope).unwrap(),
+            )
+            .unwrap()
+            .sign_with_keys(&fixture.provider)
+            .unwrap()
+        };
+        let transcript = &mut executions[0].generations[0].transcript;
+        transcript[0] = prompt(1, "csc-1");
+        transcript[2] = prompt(3, "csc-3");
+        let other = CodingSessionTarget {
+            session_id: "session-other".into(),
+            ..target.clone()
+        };
+        let mut commands = vec![
+            turn_command(
+                channel_id,
+                "csc-1",
+                &target,
+                "kept",
+                CodingSessionDelivery::Boundary,
+                1,
+                &fixture.founder,
+            ),
+            turn_command(
+                channel_id,
+                "csc-3",
+                &target,
+                "rewound",
+                CodingSessionDelivery::Boundary,
+                2,
+                &fixture.founder,
+            ),
+            turn_command(
+                channel_id,
+                "csc-3",
+                &other,
+                "elsewhere",
+                CodingSessionDelivery::Boundary,
+                3,
+                &fixture.founder,
+            ),
+        ];
+        let mut receipts = vec![
+            turn_stage(
+                channel_id,
+                LifecycleReceipt::turn_queued("csc-1", &target),
+                1,
+                &fixture.provider,
+            ),
+            turn_stage(
+                channel_id,
+                LifecycleReceipt::turn_queued("csc-3", &target),
+                2,
+                &fixture.provider,
+            ),
+        ];
+        let mut notes = Vec::new();
+        cut::apply_rewind_cuts(
+            &[ContextCut {
+                target: target.clone(),
+                after_seq: 2,
+            }],
+            &mut executions,
+            &mut commands,
+            &mut receipts,
+            &mut notes,
+        );
+        assert_eq!(executions[0].generations[0].transcript.len(), 2);
+        let texts: Vec<String> = commands
+            .iter()
+            .map(|event| {
+                serde_json::from_str::<Value>(&event.content).unwrap()["action"]["text"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(texts, vec!["kept".to_owned(), "elsewhere".to_owned()]);
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(notes.len(), 1);
     }
 
     /// A create with a first turn now publishes turn receipts under the
@@ -4033,6 +4311,7 @@ mod tests {
             relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
             generated_at: fixture.input.generated_at,
             limits: ContextProjectionLimits::default(),
+            cuts: Vec::new(),
         };
 
         let package = project_session_context_events(&request, &events)
@@ -4249,6 +4528,7 @@ mod tests {
             relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
             generated_at: fixture.input.generated_at,
             limits: ContextProjectionLimits::default(),
+            cuts: Vec::new(),
         };
 
         let package = group_and_project_session_context_events(
@@ -4323,6 +4603,7 @@ mod tests {
             relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
             generated_at: fixture.input.generated_at,
             limits: ContextProjectionLimits::default(),
+            cuts: Vec::new(),
         };
 
         let package = group_and_project_session_context_events(
@@ -4364,6 +4645,7 @@ mod tests {
             relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
             generated_at: fixture.input.generated_at,
             limits: ContextProjectionLimits::default(),
+            cuts: Vec::new(),
         };
 
         let package = group_and_project_session_context_events(
@@ -4795,6 +5077,7 @@ mod tests {
             relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
             generated_at: fixture.input.generated_at,
             limits: ContextProjectionLimits::default(),
+            cuts: Vec::new(),
         };
         let package = project_session_context_events(&request, &events)
             .expect("turn volume must not refuse a verified create chain");

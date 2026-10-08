@@ -28,8 +28,8 @@ Provider-neutral rendering after creation uses the signed
 >    client-minted UUID added after v1 shipped. Authority-aware creates also
 >    carry `genesisRef`, the exact founder event id. The action has exactly the
 >    historical 8-key, 9-key `sessionRef`, or 10-key linked form. See below.
-> 5. **Continuation is generation-fenced.** `session.resume`, `session.restart`
->    and `session.stop` address an exact published `cs-target`. Resume never carries
+> 5. **Continuation is generation-fenced.** `session.resume`, `session.restart`,
+>    `session.rewind` and `session.stop` address an exact published `cs-target`. Resume never carries
 >    the provider's opaque ACP cursor; that cursor remains host-private. A
 >    successful reattachment publishes a new generation, while stop is durable
 >    intent that survives provider restart.
@@ -143,6 +143,68 @@ MUST treat a successful restart exactly as a successful resume; a reader that
 does not stops the chain at the detached generation, whose last metadata is
 `disconnected`, and reports a healthy session as gone. A provider refuses a
 restart while a turn is open (`SESSION_BUSY`).
+
+`session.rewind` (SV-29, **Edit from here**) addresses the exact **current**
+generation with the restart's three keys plus exactly two more — five in all:
+
+```json
+{"type": "session.rewind", "session": { "…": "exact current target" },
+ "providerAuthorityPubkey": "64-lowercase-hex",
+ "checkpoint": "64-lowercase-hex kind:44231 event id",
+ "files": "keep"}
+```
+
+`checkpoint` names the [NIP-CSCK](NIP-CSCK.md) `turn` checkpoint of the first
+turn to forget; `files` is `keep` (chat only) or `restore` (also return the
+working tree to that checkpoint's `git.baseTree`). The tags are the
+restart's. Authority is the restart's (the founder or a granted operator).
+Like a restart it detaches the live child and mints generation `N+1` under its
+own `commandId`; unlike a restart, `N+1` is a **new conversation**
+(`session/new`) seeded from the signed record cut at the checkpoint's
+`coverage.fromSeq − 1` — the native cursor still remembers the rewound turns,
+so it is never resumed. Generation `N` is detached, never truncated, and the
+rewound turns stay on the relay. Every chain reader MUST follow a successful
+rewind exactly as a resume or restart.
+
+Before any file is written the provider captures and durably queues a
+`pre_rewind` checkpoint (NIP-CSCK), so every rewind is undoable. A `restore`
+then runs `git restore --source=<baseTree> --worktree --overlay` against an
+empty scratch index (the real index, `HEAD` and branches are not touched;
+hooks off, filters on) and removes exactly the paths the pre-rewind tree has
+and `baseTree` lacks. It never runs `git clean`: ignored paths and paths the
+capture omitted are untouched.
+
+Refusals are `failed` receipts carrying no `rewind` object: `SESSION_BUSY` (a
+turn is open, or another rewind runs on the provider), `TREE_BUSY` (another
+execution **of this provider** in the same canonical working tree has a turn
+open; the message names it and says the scope), `CHECKPOINT_UNAVAILABLE` (not
+on the relay, not a checkpoint, its objects are missing, or the pre-rewind
+capture of a `restore` failed — nothing was touched),
+`CHECKPOINT_NOT_THIS_EXECUTION` (another signer, execution, or an earlier
+generation: in this version only the current generation's turns can be
+rewound), and `NOT_RESTORABLE` (`reason` is not `turn`, `restorable` is
+`false`, or a `restore` without a `baseTree`).
+
+Success is `resumed` (seeded from the record) or `resumed_without_context`
+(`CONTEXT_NOT_RECOVERED`, "restarted with no memory": no context package could
+be attached), plus the receipt's `rewind` object (Lifecycle facts, below). The
+new generation's first transcript item is the status `session_rewound`.
+
+If the new generation does not open, or the restore failed part way, the
+provider reopens `N` in place when it can (strict native reattach; it then
+still remembers the rewound turns) and answers `failed` with
+`REWIND_NOT_RESTARTED`, `session: null`, and the `rewind` object whose `files`
+says what became of the files; otherwise `N` stays detached and the message
+says it needs a Restart.
+
+### Lineage
+
+Each generation's context is a list of segments: `seg(1) = [(1, all)]`; a
+resume or restart of `N` gives `seg(N+1) = seg(N) + [(N+1, all)]`; a rewind with
+cut `(g, s)` gives `seg(N+1) = truncate(seg(N), g, s) + [(N+1, all)]`. In this
+version `g = N` always. A context projection drops generation `g`'s items with
+`eventSeq > s`, and the kind:44220 commands and turn-stage kind:44224 receipts
+whose `commandId` is on a dropped `user_prompt` item.
 
 `session.stop` addresses the exact current generation. Once consumed, the
 provider records the execution as closed before releasing its process. Restart
@@ -1059,6 +1121,35 @@ ephemeral register.
 Provider outboxes fence each publication by semantic key, current provider
 signing pubkey, and exact event kind, so a signing-key rotation cannot reuse an
 event signed by the previous key.
+
+### Fork amendment: the receipt's `rewind` object (SV-29)
+
+A receipt answering a `session.rewind` that passed its checks carries one
+additive key, `rewind`, after the five (or six) others:
+
+```json
+"rewind": {"checkpoint": "64-hex", "cutGeneration": 3, "cutAfterSeq": 40,
+           "previousGeneration": 3, "files": "kept",
+           "preRewindCheckpoint": "64-hex", "head": "40-or-64-hex"}
+```
+
+All seven keys are required (absent is not `null`) and no other is allowed.
+`files` is `kept`, `restored` or `restore_failed`; `preRewindCheckpoint` is the
+`pre_rewind` kind:44231 (`null` only for a chat-only rewind outside a
+repository); `head` is `HEAD`'s oid, which the rewind did not move (`null`
+when unborn or not a repository). `cutGeneration ≤ previousGeneration`. The
+key is present exactly on `resumed`/`resumed_without_context` (whose
+`session.generation` is `previousGeneration + 1`, and whose `files` is not
+`restore_failed`) or on `failed` with `REWIND_NOT_RESTARTED`. A strict reader
+MUST accept it there and reject it anywhere else. Codes: `TREE_BUSY`,
+`CHECKPOINT_UNAVAILABLE`, `CHECKPOINT_NOT_THIS_EXECUTION`, `NOT_RESTORABLE`,
+`REWIND_NOT_RESTARTED`.
+
+The `session_rewound` status item has its own exact shape (the closed reason
+set of other status items cannot carry a cut): `kind`, `status`, `commandId`,
+`checkpoint`, `cutGeneration`, `cutAfterSeq`, `previousGeneration`, `files`
+(`kept`|`restored`), `memory` (`seeded`|`none`), and `reason` only when
+`memory` is `none` and a context-unavailable class is known.
 
 ### Fork amendment: `model_applied` (SV-35)
 

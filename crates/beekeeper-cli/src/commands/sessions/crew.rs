@@ -469,8 +469,8 @@ pub struct ResumeRecord {
     pub previous: CodingSessionTarget,
 }
 
-/// Decode every `session.resume` and `session.restart` among a channel's
-/// 44221 events.
+/// Decode every `session.resume`, `session.restart` and `session.rewind`
+/// among a channel's 44221 events.
 pub fn decode_resumes(events: &[Value]) -> Vec<ResumeRecord> {
     let mut records = Vec::new();
     for event in events {
@@ -493,10 +493,11 @@ pub fn decode_resumes(events: &[Value]) -> Vec<ResumeRecord> {
         else {
             continue;
         };
-        // A restart reattaches as N+1 exactly like a resume, so its signer is
-        // who last resumed the execution.
+        // A restart or a rewind reattaches as N+1 exactly like a resume, so
+        // its signer is who last resumed the execution.
         if let CodingSessionLifecycleAction::SessionResume { session, .. }
-        | CodingSessionLifecycleAction::SessionRestart { session, .. } = payload.action
+        | CodingSessionLifecycleAction::SessionRestart { session, .. }
+        | CodingSessionLifecycleAction::SessionRewind { session, .. } = payload.action
         {
             records.push(ResumeRecord {
                 signer,

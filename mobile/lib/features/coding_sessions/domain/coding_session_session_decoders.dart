@@ -207,7 +207,7 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
   );
 }
 
-/// Decode a 44221 `session.resume` or `session.restart`.
+/// Decode a 44221 `session.resume`, `session.restart` or `session.rewind`.
 ///
 /// Read for authority only: the resume names the provider that may answer it,
 /// and that provider's lifecycle receipt names the generation the resume
@@ -256,14 +256,28 @@ CodingSessionDecoded<CodingSessionResume> decodeCodingSessionResume(
   }
   final action = payload['action']! as Map<String, dynamic>;
   // A restart is a resume of a live execution: same shape, same authority,
-  // and its receipt mints the next generation the same way.
-  if (action['type'] != 'session.resume' &&
-      action['type'] != 'session.restart') {
+  // and its receipt mints the next generation the same way. A rewind (SV-29)
+  // mints it the same way too, and adds only `checkpoint` and `files`.
+  final type = action['type'];
+  if (type != 'session.resume' &&
+      type != 'session.restart' &&
+      type != 'session.rewind') {
     return const CodingSessionDecoded.failed(
       CodingSessionDecodeReason.wrongKind,
     );
   }
-  if (!hasExactKeys(action, ['type', 'session', 'providerAuthorityPubkey'])) {
+  final shapeOk = type == 'session.rewind'
+      ? hasExactKeys(action, [
+              'type',
+              'session',
+              'providerAuthorityPubkey',
+              'checkpoint',
+              'files',
+            ]) &&
+            isHex64(action['checkpoint']) &&
+            (action['files'] == 'keep' || action['files'] == 'restore')
+      : hasExactKeys(action, ['type', 'session', 'providerAuthorityPubkey']);
+  if (!shapeOk) {
     return const CodingSessionDecoded.failed(
       CodingSessionDecodeReason.malformedPayload,
     );

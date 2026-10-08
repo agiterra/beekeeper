@@ -16,6 +16,12 @@ import {
   hasStrictRoutingRecord,
   isPlainObject,
 } from "./sessionCoordinationJsonShapes.ts";
+import {
+  hasAcceptableSessionRewindReceiptKey,
+  hasStrictSessionRewindActionFields,
+  hasStrictSessionRewindActionValues,
+  withoutSessionRewindReceiptKey,
+} from "./sessionCoordinationRewind.ts";
 
 // Re-exported so every existing importer of this module keeps working: the
 // lane-216 split moved where these live, not what they mean.
@@ -23,6 +29,7 @@ export {
   hasExactFields,
   hasStrictRoutingRecord,
 } from "./sessionCoordinationJsonShapes.ts";
+export { isSessionNextGenerationAction } from "./sessionCoordinationRewind.ts";
 
 const MAX_IDENTIFIER_BYTES = 256;
 /** `1024 + '…'.len_utf8()` — the exact bound `validate_lifecycle_receipt`
@@ -154,6 +161,12 @@ export function hasStrictLifecycleCommandJson(
   // names no `providerAuthorityPubkey` at all — it asks a host to choose one —
   // so it is read by the sibling decoder `readLifecycleHire`
   // (`sessionCoordinationCommissioning.ts`), which says so in its own words.
+  //
+  // `session.rewind` (SV-29) is the restart's target form plus `checkpoint`
+  // and `files` — exactly five keys (`sessionCoordinationRewind.ts`).
+  if (action.type === "session.rewind") {
+    return hasStrictSessionRewindActionFields(action);
+  }
   return (
     (action.type === "session.resume" ||
       action.type === "session.restart" ||
@@ -216,6 +229,12 @@ export function hasStrictLifecycleCommandValues(
         hasStrictRoutingRecord(action.routing))
     );
   }
+  if (
+    action.type === "session.rewind" &&
+    !hasStrictSessionRewindActionValues(action)
+  ) {
+    return false;
+  }
   return hasStrictSessionTargetValues(action.session);
 }
 
@@ -224,9 +243,13 @@ export function hasStrictLifecycleReceiptJson(
   source: string,
   content: unknown,
 ): content is Record<string, unknown> {
+  // The optional SV-29 `rewind` key is checked whole on its own, then set
+  // aside so the five-key envelope stays exactly five keys.
   return (
     !hasDuplicateJsonKeys(source) &&
-    hasExactFields(content, [
+    isPlainObject(content) &&
+    hasAcceptableSessionRewindReceiptKey(content) &&
+    hasExactFields(withoutSessionRewindReceiptKey(content), [
       ["schema", "commandId", "status", "session", "error"],
     ]) &&
     (content.session === null ||

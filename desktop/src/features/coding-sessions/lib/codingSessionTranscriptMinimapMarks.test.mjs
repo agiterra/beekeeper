@@ -232,3 +232,44 @@ test("the ruling note says not read, unplaced, or nothing", () => {
     null,
   );
 });
+
+test("SV-29: a rewind marks the first turn that began at or after it", async () => {
+  const { codingSessionMinimapRewinds } = await import(
+    "./codingSessionTranscriptMinimapMarks.ts"
+  );
+  const rewinds = codingSessionMinimapRewinds([
+    {
+      id: "r1",
+      type: "lifecycle",
+      renderClass: "status",
+      title: "Rewound",
+      text: "Rewound to before this turn · files kept · new conversation seeded from the record",
+      timestamp: new Date(2_500).toISOString(),
+    },
+    // An ordinary status row is not a rewind.
+    {
+      id: "s1",
+      type: "lifecycle",
+      renderClass: "status",
+      title: "Status",
+      text: "session_rewound",
+      timestamp: new Date(1_200).toISOString(),
+    },
+  ]);
+  assert.deepEqual(rewinds, [{ atMs: 2_500 }]);
+  const marks = deriveCodingSessionMinimapMarks({ turns, rewinds });
+  // Not the turn the rewind happened "during" (t2), but the one after it.
+  assert.equal(marks.get("t2").rewound, false);
+  assert.equal(marks.get("t3").rewound, true);
+  assert.equal(marks.get("t1").rewound, false);
+});
+
+test("SV-29: a rewind after every turn, or undated, marks nothing", () => {
+  const marks = deriveCodingSessionMinimapMarks({
+    turns,
+    rewinds: [{ atMs: 9_000 }, { atMs: null }],
+  });
+  for (const id of ["t1", "t2", "t3"]) {
+    assert.equal(marks.get(id).rewound, false);
+  }
+});

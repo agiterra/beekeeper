@@ -179,6 +179,9 @@ pub enum LifecycleDecision {
     /// Detach a live session and reattach it at once as a new generation
     /// with a freshly staged seat (spec § 4.9).
     Restart(RestartPlan),
+    /// Detach a live session and open a new generation cut at a recorded
+    /// turn, optionally returning its files there too (SV-29).
+    Rewind(RewindPlan),
     /// Durably stop a session.
     Stop(StopPlan),
 }
@@ -279,6 +282,25 @@ pub struct RestartPlan {
     pub channel_id: Uuid,
     /// Exact current generation the operator observed.
     pub target: CodingSessionTarget,
+}
+
+/// A validated request to rewind one exact current generation (SV-29).
+///
+/// Authority is the restart's; everything the rewind itself checks — the
+/// open turn, a sibling on the same tree, the checkpoint — is decided later
+/// by [`crate::rewind`], each a named refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewindPlan {
+    /// Lifecycle command being answered.
+    pub command_id: String,
+    /// Channel the execution belongs to.
+    pub channel_id: Uuid,
+    /// Exact current generation the operator observed.
+    pub target: CodingSessionTarget,
+    /// The kind:44231 checkpoint of the first turn to rewind.
+    pub checkpoint: String,
+    /// Whether the working tree is restored too.
+    pub files: beekeeper_core::coding_session_lifecycle_command::RewindFiles,
 }
 
 /// A validated request to durably stop one exact current generation.
@@ -490,6 +512,10 @@ pub fn decide_lifecycle(
             provider_authority_pubkey,
             ..
         }
+        | CodingSessionLifecycleAction::SessionRewind {
+            provider_authority_pubkey,
+            ..
+        }
         | CodingSessionLifecycleAction::SessionStop {
             provider_authority_pubkey,
             ..
@@ -517,6 +543,7 @@ pub fn decide_lifecycle(
 
     if let CodingSessionLifecycleAction::SessionResume { session, .. }
     | CodingSessionLifecycleAction::SessionRestart { session, .. }
+    | CodingSessionLifecycleAction::SessionRewind { session, .. }
     | CodingSessionLifecycleAction::SessionStop { session, .. } = &payload.action
     {
         if session.instance_id != context.instance_id {
@@ -548,12 +575,14 @@ pub fn decide_lifecycle(
                 ),
             };
         }
-        // A restart reattaches too: it takes the resume's fence and the
-        // resume's authority, never the stop's exemption.
+        // A restart (and a rewind, SV-29) reattaches too: it takes the
+        // resume's fence and the resume's authority, never the stop's
+        // exemption.
         let is_resume = matches!(
             &payload.action,
             CodingSessionLifecycleAction::SessionResume { .. }
                 | CodingSessionLifecycleAction::SessionRestart { .. }
+                | CodingSessionLifecycleAction::SessionRewind { .. }
         );
         // A chain this process has not re-read yet cannot answer whether the
         // session has been handed over, and "not known" must not read as "not
@@ -618,6 +647,7 @@ pub fn decide_lifecycle(
         return match &payload.action {
             CodingSessionLifecycleAction::SessionResume { .. }
             | CodingSessionLifecycleAction::SessionRestart { .. }
+            | CodingSessionLifecycleAction::SessionRewind { .. }
                 if record.closed =>
             {
                 LifecycleDecision::Fail {
@@ -640,6 +670,15 @@ pub fn decide_lifecycle(
                     target: session.clone(),
                 })
             }
+            CodingSessionLifecycleAction::SessionRewind {
+                checkpoint, files, ..
+            } => LifecycleDecision::Rewind(RewindPlan {
+                command_id: payload.command_id.clone(),
+                channel_id,
+                target: session.clone(),
+                checkpoint: checkpoint.clone(),
+                files: *files,
+            }),
             CodingSessionLifecycleAction::SessionStop { .. } => LifecycleDecision::Stop(StopPlan {
                 command_id: payload.command_id,
                 channel_id,

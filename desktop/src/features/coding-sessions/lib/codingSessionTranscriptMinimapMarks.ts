@@ -13,8 +13,15 @@
  * waiting ruling. Gate and handover marks are glyphs, never colours, so
  * identity (the dash) and state (the mark) never share a hue.
  *
- * The rewind-point mark belongs to SV-29 (CHECKPOINTS slice S4c adds it here).
+ * The rewind mark (SV-29) is the one fact placed forward rather than inside
+ * a window: a rewind lands between turns, so it marks the first turn that
+ * began at or after it — the turn the rewound conversation resumed with —
+ * and never the last rewound turn, which it did not happen "during". It is a
+ * glyph (↶), never a hue.
  */
+
+import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
+import { isCodingSessionRewoundRow } from "./codingSessionRewindRows";
 
 export type CodingSessionMinimapGateOutcome = "passed" | "failed" | "not-run";
 
@@ -155,6 +162,26 @@ export function codingSessionMinimapRulingNote(
     : `${undated.length} open ruling requests are not marked: their signed requests were not read in this view`;
 }
 
+/** One `session_rewound` row: when the rewound generation opened. */
+export type CodingSessionMinimapRewindInput = {
+  /** The row's time in ms; null when nothing dates it. */
+  readonly atMs: number | null;
+};
+
+/**
+ * The rewinds the minimap marks, read off the same projected transcript the
+ * shared model is built from: one per `session_rewound` row (WIRE-C3b §3).
+ */
+export function codingSessionMinimapRewinds(
+  items: readonly TranscriptItem[] | null | undefined,
+): CodingSessionMinimapRewindInput[] {
+  if (!items) return [];
+  return items.filter(isCodingSessionRewoundRow).map((item) => {
+    const atMs = Date.parse(item.timestamp);
+    return { atMs: Number.isFinite(atMs) ? atMs : null };
+  });
+}
+
 export type CodingSessionMinimapTurnWindowInput = {
   readonly id: string;
   readonly startedAtMs: number | null;
@@ -179,10 +206,18 @@ export type CodingSessionMinimapMarks = {
   readonly gate: CodingSessionMinimapGateMark | null;
   readonly handovers: number;
   readonly waitingRulings: number;
+  /** The conversation was rewound just before this turn (SV-29). */
+  readonly rewound: boolean;
 };
 
 export const CODING_SESSION_MINIMAP_NO_MARKS: CodingSessionMinimapMarks =
-  Object.freeze({ failed: false, gate: null, handovers: 0, waitingRulings: 0 });
+  Object.freeze({
+    failed: false,
+    gate: null,
+    handovers: 0,
+    waitingRulings: 0,
+    rewound: false,
+  });
 
 type Window = { id: string; start: number; end: number };
 
@@ -236,7 +271,27 @@ type MutableMarks = {
   gates: { gate: string; outcome: CodingSessionMinimapGateOutcome }[];
   handovers: number;
   waitingRulings: number;
+  rewound: boolean;
 };
+
+/** The first window starting at or after `at`, by binary search. */
+function windowFrom(windows: readonly Window[], at: number): Window | null {
+  let low = 0;
+  let high = windows.length - 1;
+  let found: Window | null = null;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    const candidate = windows[middle];
+    if (candidate === undefined) break;
+    if (candidate.start >= at) {
+      found = candidate;
+      high = middle - 1;
+    } else {
+      low = middle + 1;
+    }
+  }
+  return found;
+}
 
 /** Each turn's marks, keyed by the turn's id. Every turn has an entry. */
 export function deriveCodingSessionMinimapMarks(input: {
@@ -244,6 +299,7 @@ export function deriveCodingSessionMinimapMarks(input: {
   gates?: readonly CodingSessionMinimapGateInput[];
   handovers?: readonly CodingSessionMinimapHandoverInput[];
   rulings?: readonly CodingSessionMinimapRulingInput[];
+  rewinds?: readonly CodingSessionMinimapRewindInput[];
 }): ReadonlyMap<string, CodingSessionMinimapMarks> {
   const marks = new Map<string, MutableMarks>();
   for (const turn of input.turns) {
@@ -252,6 +308,7 @@ export function deriveCodingSessionMinimapMarks(input: {
       gates: [],
       handovers: 0,
       waitingRulings: 0,
+      rewound: false,
     });
   }
   const windows = turnWindows(input.turns);
@@ -277,6 +334,12 @@ export function deriveCodingSessionMinimapMarks(input: {
     const target = place(ruling.sinceAtMs);
     if (target) target.waitingRulings += 1;
   }
+  for (const rewind of input.rewinds ?? []) {
+    if (rewind.atMs === null || !Number.isFinite(rewind.atMs)) continue;
+    const window = windowFrom(windows, rewind.atMs);
+    const target = window === null ? null : marks.get(window.id);
+    if (target) target.rewound = true;
+  }
   const result = new Map<string, CodingSessionMinimapMarks>();
   for (const [id, mutable] of marks) {
     result.set(id, {
@@ -284,6 +347,7 @@ export function deriveCodingSessionMinimapMarks(input: {
       gate: summarizeGates(mutable.gates),
       handovers: mutable.handovers,
       waitingRulings: mutable.waitingRulings,
+      rewound: mutable.rewound,
     });
   }
   return result;

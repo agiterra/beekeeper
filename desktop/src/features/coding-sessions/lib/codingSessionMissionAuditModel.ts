@@ -33,7 +33,7 @@ import { tokenizeShellCommand } from "@/features/agents/ui/agentSessionToolClass
  * coding_session_payload.rs` `TurnUsageReport`, typed at
  * `codingSessionTranscriptItemContract.ts:120-140`) and, since batch 2, the
  * desktop transcript projection carries it through
- * (`codingSessionTranscriptItems.ts` `buildResultUsage`). So an empty column
+ * (`codingSessionResultUsage.ts` `buildResultUsage`). So an empty column
  * is now a statement about the *driver*, not about this client: the turns
  * closed without any driver publishing a count.
  *

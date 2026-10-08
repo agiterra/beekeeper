@@ -118,6 +118,7 @@ export type CodingSessionLifecycleResolution =
       state: "failed";
       commandId: string;
       error: { code: string; message: string };
+      rewind?: CodingSessionLifecycleReceipt["rewind"]; // SV-29, on a cut
     }
   | {
       state: "awaiting-metadata";
@@ -763,7 +764,8 @@ export class TrustedCodingSessionIngressStore {
     if (receipt === undefined) return { state: "pending", commandId };
     if (!receipt) return { state: "conflict", commandId };
     if (receipt.status === "failed") {
-      return { state: "failed", commandId, error: receipt.error };
+      const { error, rewind } = receipt;
+      return { state: "failed", commandId, error, ...(rewind && { rewind }) };
     }
     const target = receipt.session;
     const failedInitialTurn =

@@ -88,7 +88,10 @@ fn turn_checkpoint_maps_coverage_files_and_git() {
         (payload.coverage.from_seq, payload.coverage.through_seq),
         (41, 58)
     );
-    assert!(!payload.restorable);
+    assert!(
+        payload.restorable,
+        "git and a baseTree from a build that rewinds"
+    );
     assert_eq!(payload.summary, None);
     assert_eq!(payload.unavailable, None);
     let git = payload.git.expect("git");
@@ -358,4 +361,19 @@ async fn turn_checkpoint_outside_a_repository_asks_for_no_baseline() {
     };
     await_baseline(&events, &shutdown, &mailbox, turn).await;
     assert!(inbox.try_recv().is_err(), "no baseline request");
+}
+
+/// SV-29: `restorable` needs the trees a rewind restores to. No baseline, or
+/// no git facts at all, and the checkpoint says it cannot be rewound to.
+#[test]
+fn turn_checkpoint_is_restorable_only_with_git_and_a_base_tree() {
+    let without_base = checkpoint_payload(&captured(None, Vec::new(), 0), None);
+    encodes(&without_base);
+    assert!(!without_base.restorable);
+    let failed = checkpoint_payload(
+        &capture(Some(&oid('b')), Measured::Failed(not_measured())),
+        None,
+    );
+    encodes(&failed);
+    assert!(!failed.restorable);
 }

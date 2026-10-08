@@ -60,6 +60,28 @@ pub const SESSION_ALREADY_ATTACHED: &str = "SESSION_ALREADY_ATTACHED";
 /// provider will not kill work in flight. Wait for the turn to end, or
 /// interrupt it, then restart.
 pub const SESSION_BUSY: &str = "SESSION_BUSY";
+/// A `session.rewind` was refused because another execution this provider
+/// runs works in the same canonical working tree and has a turn open. The
+/// message names that execution; the check covers this provider only.
+pub const TREE_BUSY: &str = "TREE_BUSY";
+/// A `session.rewind` named a checkpoint this provider could not fetch,
+/// decode, or find the git objects of; or its pre-rewind capture failed
+/// before any file was touched.
+pub const CHECKPOINT_UNAVAILABLE: &str = "CHECKPOINT_UNAVAILABLE";
+/// A `session.rewind` named a checkpoint that is not this run's: signed by
+/// another key, of another execution, or of an earlier generation. Only the
+/// turns of the generation being rewound can be rewound (iteration 1).
+pub const CHECKPOINT_NOT_THIS_EXECUTION: &str = "CHECKPOINT_NOT_THIS_EXECUTION";
+/// A `session.rewind` named a checkpoint that cannot be rewound to: not a
+/// turn checkpoint, `restorable: false`, or `files: restore` without the git
+/// trees a restore needs.
+pub const NOT_RESTORABLE: &str = "NOT_RESTORABLE";
+/// A `session.rewind` got past its checks but the new generation was not
+/// opened. The receipt's `rewind.files` says what happened to the files; the
+/// previous generation still remembers the turns, or needs a Restart.
+pub const REWIND_NOT_RESTARTED: &str = "REWIND_NOT_RESTARTED";
+/// Transcript status slug that opens the generation a rewind minted.
+pub const SESSION_REWOUND_STATUS: &str = "session_rewound";
 /// A new generation started, but the provider could not recover prior context.
 pub const CONTEXT_NOT_RECOVERED: &str = "CONTEXT_NOT_RECOVERED";
 /// A create named a genesis event that could not be resolved and verified.
@@ -336,6 +358,11 @@ pub struct LifecycleReceipt {
     /// `turn_started`. Omitted entirely otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
+    /// What a `session.rewind` did, present exactly on the receipt that
+    /// answers one that passed its checks: `resumed`/`resumed_without_context`,
+    /// or `failed` with [`REWIND_NOT_RESTARTED`]. Omitted otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewind: Option<crate::coding_session_rewind::ReceiptRewind>,
 }
 
 /// Receipt outcomes recognized by current consumers.
@@ -492,6 +519,7 @@ impl LifecycleReceipt {
             session: Some(target.clone()),
             error: None,
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -511,6 +539,7 @@ impl LifecycleReceipt {
                 message: bounded_message(message),
             }),
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -526,6 +555,7 @@ impl LifecycleReceipt {
                 message: bounded_message(message),
             }),
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -538,6 +568,7 @@ impl LifecycleReceipt {
             session: Some(target.clone()),
             error: None,
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -557,6 +588,7 @@ impl LifecycleReceipt {
                 message: bounded_message(message),
             }),
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -569,6 +601,7 @@ impl LifecycleReceipt {
             session: Some(target.clone()),
             error: None,
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -585,6 +618,7 @@ impl LifecycleReceipt {
             session: Some(target.clone()),
             error: None,
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -601,6 +635,7 @@ impl LifecycleReceipt {
             session: Some(target.clone()),
             error: None,
             turn_id: Some(turn_id.to_owned()),
+            rewind: None,
         }
     }
 
@@ -618,6 +653,7 @@ impl LifecycleReceipt {
             session: Some(target.clone()),
             error: None,
             turn_id: Some(turn_id.to_owned()),
+            rewind: None,
         }
     }
 
@@ -645,6 +681,7 @@ impl LifecycleReceipt {
                 message: bounded_message(message),
             }),
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -672,6 +709,7 @@ impl LifecycleReceipt {
                 message: bounded_message(message),
             }),
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -702,6 +740,7 @@ impl LifecycleReceipt {
                 message: bounded_message(message),
             }),
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -719,6 +758,7 @@ impl LifecycleReceipt {
             session: Some(target.clone()),
             error: None,
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -736,6 +776,7 @@ impl LifecycleReceipt {
             session: Some(target.clone()),
             error: None,
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -748,6 +789,7 @@ impl LifecycleReceipt {
             session: Some(target.clone()),
             error: None,
             turn_id: None,
+            rewind: None,
         }
     }
 
@@ -775,6 +817,7 @@ impl LifecycleReceipt {
                 message: bounded_message(message),
             }),
             turn_id: None,
+            rewind: None,
         }
     }
 }
@@ -799,15 +842,20 @@ pub fn decode_coding_session_lifecycle_receipt(content: &str) -> Result<Lifecycl
         .ok_or_else(|| "coding-session lifecycle receipt must be an object".to_owned())?;
     const FIELDS: [&str; 5] = ["schema", "commandId", "status", "session", "error"];
     const TURN_ID_FIELD: &str = "turnId";
+    const REWIND_FIELD: &str = "rewind";
     let carries_turn_id = object.contains_key(TURN_ID_FIELD);
-    let expected_len = FIELDS.len() + usize::from(carries_turn_id);
+    let carries_rewind = object.contains_key(REWIND_FIELD);
+    let expected_len = FIELDS.len() + usize::from(carries_turn_id) + usize::from(carries_rewind);
     if object.len() != expected_len
         || FIELDS.iter().any(|field| !object.contains_key(*field))
-        || object
-            .keys()
-            .any(|field| !FIELDS.contains(&field.as_str()) && field != TURN_ID_FIELD)
+        || object.keys().any(|field| {
+            !FIELDS.contains(&field.as_str()) && field != TURN_ID_FIELD && field != REWIND_FIELD
+        })
     {
         return Err("coding-session lifecycle receipt has missing or unsupported fields".into());
+    }
+    if let Some(rewind) = object.get(REWIND_FIELD) {
+        crate::coding_session_rewind::require_receipt_rewind_shape(rewind)?;
     }
     let receipt: LifecycleReceipt = serde_json::from_str(content)
         .map_err(|error| format!("malformed coding-session lifecycle receipt: {error}"))?;
@@ -938,6 +986,9 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
     };
     if !valid_shape {
         return Err("lifecycle receipt status/session/error shape is inconsistent".into());
+    }
+    if let Some(rewind) = &receipt.rewind {
+        crate::coding_session_rewind::validate_receipt_rewind(receipt, rewind)?;
     }
     Ok(())
 }

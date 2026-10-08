@@ -3562,6 +3562,33 @@ pub enum SessionsCmd {
         #[arg(long = "timeout-secs")]
         timeout_secs: Option<u64>,
     },
+    /// Rewind one execution to the start of a recorded turn (kind 44221
+    /// `session.rewind`, SV-29).
+    ///
+    /// Detaches the current generation of `--to` and asks its provider to open
+    /// the next one with the record cut just before the turn whose kind 44231
+    /// `turn` checkpoint `--checkpoint` names: that turn and every later one
+    /// are forgotten by the new generation. The old generation is detached,
+    /// not truncated. `--files keep` leaves the working tree alone; `--files
+    /// restore` also returns it to the checkpoint's pre-turn tree (HEAD,
+    /// branches and the index are never moved; a `pre_rewind` checkpoint is
+    /// published first so the rewind can be undone).
+    ///
+    /// Refused with exit 1 and nothing published when the execution is
+    /// stopped, or the checkpoint is not on the relay, does not verify, is not
+    /// this execution's, is not a restorable turn checkpoint, or (with
+    /// `restore`) recorded no pre-turn tree.
+    ///
+    /// Always waits for the provider's signed receipt and reports `outcome`:
+    /// `rewound` (exit 0; `restarted` is `restarted` or
+    /// `restarted_without_context`), `not_restarted` (exit 1: the checks
+    /// passed, the new generation did not open, `files` says what became of
+    /// the files), `refused` (exit 1, nothing changed), or `unconfirmed`
+    /// (exit 5: nothing is known; no second rewind is sent).
+    #[command(
+        after_help = "Examples:\n  bee sessions rewind --channel <uuid> --to <session-id> --checkpoint <44231-event-id> --files keep\n  bee sessions rewind --channel <uuid> --to <role-slug> --session-ref <uuid> --checkpoint <44231-event-id> --files restore --timeout-secs 120\n\nOutput: {event_id, accepted, message, commandId, target, checkpoint, filesRequested, waited, outcome, restarted, files, session, summary, receipt, rewind}. rewind is the receipt's signed rewind{} object (checkpoint, cutGeneration, cutAfterSeq, previousGeneration, files, preRewindCheckpoint, head), or null.\n\n`bee sessions checkpoints --channel <uuid>` lists the checkpoints a rewind can name.\n\nRecipe:\n  bee sessions rewind --channel <uuid> --to <session-id> --checkpoint <44231-event-id> --files keep"
+    )]
+    Rewind(SessionsRewindArgs),
     /// Ask an umbrella's host to seat a new agent on a role (kind 44221
     /// `session.hire`).
     ///
@@ -4059,6 +4086,31 @@ pub struct TeamTransactionWriteArgs {
     /// Agents repository checkout the adopted plan's criteria are read from
     #[arg(long = "agents-repo")]
     pub agents_repo: Option<String>,
+}
+
+/// `bee sessions rewind`'s arguments (SV-29), a struct of their own so the
+/// `SessionsCmd` builder's frame stays small enough for a test thread.
+#[derive(clap::Args, Clone)]
+pub struct SessionsRewindArgs {
+    /// Channel UUID the execution lives in
+    #[arg(long)]
+    pub channel: String,
+    /// Addressee: a `cs-target` key, a provider session id, or a role slug
+    #[arg(long)]
+    pub to: String,
+    /// Umbrella session reference (lowercase UUID) scoping a role lookup
+    #[arg(long = "session-ref")]
+    pub session_ref: Option<String>,
+    /// Event id (64-char hex) of the kind 44231 turn checkpoint of the
+    /// first turn to forget
+    #[arg(long)]
+    pub checkpoint: String,
+    /// `keep` (conversation only) or `restore` (also the working tree)
+    #[arg(long, value_parser = ["keep", "restore"])]
+    pub files: String,
+    /// Maximum seconds to wait after relay acceptance (1..=300).
+    #[arg(long = "timeout-secs")]
+    pub timeout_secs: Option<u64>,
 }
 
 /// Input for one signed `note` — the state-free verb.
@@ -7038,6 +7090,7 @@ mod tests {
                 "report",
                 "revoke",
                 "revoke-seat",
+                "rewind",
                 "roster",
                 "route",
                 "seat-repair",
@@ -7253,7 +7306,8 @@ mod tests {
             // appended here and two of them independently wrote 35 (item 108's
             // exact-count trap); the finalizer set it once, after every lane,
             // and both tests re-run green.
-            ("sessions", 45),
+            // C3b lane C: `rewind` (SV-29).
+            ("sessions", 46),
             ("social", 7),
             ("terminals", 6),
             ("upload", 1),

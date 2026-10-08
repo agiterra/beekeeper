@@ -164,9 +164,12 @@ At most 32 KiB of strict JSON:
   known", never "nothing changed": a reader MUST say the baseline was not
   captured (for example "Baseline not captured") and MUST NOT render it as
   "0 files changed".
-- `restorable` is `false` until a provider implements `session.rewind`
-  (SV-29). It is per-checkpoint truth: a reader offers a rewind only from a
-  checkpoint whose provider said it can perform one.
+- `restorable` is `true` exactly when the provider build implements
+  `session.rewind` (SV-29) **and** the checkpoint has `git` with a non-null
+  `baseTree`; a `pre_rewind` checkpoint is never restorable. Checkpoints
+  published before that build stay `false`. It is per-checkpoint truth: a
+  reader offers a rewind only from a checkpoint whose provider said it can
+  perform one.
 - `unavailable.code` is one of `NOT_A_REPOSITORY`, `BOUNDARY_UNPREPARED`,
   `TIMED_OUT`, `GIT_FAILED`. `unavailable.sentence` is one line of at most 512
   UTF-8 bytes naming no host path.
@@ -279,9 +282,17 @@ them; the command-keyed ref leaf keeps the second attempt's commit alive on
 the host regardless. "Undo rewind" is then a rewind to that checkpoint, and
 needs no new wire.
 
-Until a provider implements `session.rewind`, every checkpoint carries
-`restorable: false`, and a reader shows the rewind control disabled with the
-reason rather than hiding it.
+A `pre_rewind` checkpoint's `coverage.fromSeq` is the rewound checkpoint's
+`fromSeq` and its `git.baseTree` is that checkpoint's `baseTree`, so its
+`files` list what a `restore` undoes. It is queued at high priority before
+any file is written; with `files: restore` a failed capture refuses the
+rewind (`CHECKPOINT_UNAVAILABLE`) and nothing is touched, while a chat-only
+rewind still publishes it with `unavailable` set. A provider that would
+repeat a published `pre_rewind` key publishes none (see above).
+
+A checkpoint from a provider that does not implement `session.rewind`
+carries `restorable: false`, and a reader shows the rewind control disabled
+with the reason rather than hiding it.
 
 ## Reader guidance
 

@@ -41,7 +41,7 @@ export type CodingSessionLifecycleCommand = {
   /** The human who signed it. */
   signerPubkey: string;
   commandId: string;
-  action: "create" | "resume" | "stop";
+  action: "create" | "resume" | "restart" | "rewind" | "stop";
   /** The provider this command names — the only signer its answers may carry. */
   providerAuthorityPubkey: string;
   /** Create only. */
@@ -51,9 +51,17 @@ export type CodingSessionLifecycleCommand = {
   repoRef: string | null;
   model: string | null;
   title: string | null;
-  /** Resume/stop only: the target the command addresses. */
+  /** Resume/restart/rewind/stop only: the target the command addresses. */
   previousTarget: CodingSessionTarget | null;
+  /**
+   * Rewind only (SV-29): the 44231 turn checkpoint it cuts at, and whether
+   * the working tree is kept or restored. A rewind mints the next
+   * generation exactly as a resume or restart does.
+   */
+  rewind?: { checkpoint: string; files: "keep" | "restore" };
 };
+
+const HEX64 = /^[0-9a-f]{64}$/;
 
 /**
  * Decode one 44221, or null.
@@ -101,7 +109,41 @@ export function parseCodingSessionLifecycleCommand(
   if (action.type === "session.create") {
     return decodeCreate(base, action);
   }
-  if (action.type === "session.resume" || action.type === "session.stop") {
+  if (action.type === "session.rewind") {
+    const previousTarget = decodeTarget(action.session);
+    if (
+      !previousTarget ||
+      !hasExactKeys(action, [
+        "type",
+        "session",
+        "providerAuthorityPubkey",
+        "checkpoint",
+        "files",
+      ]) ||
+      typeof action.checkpoint !== "string" ||
+      !HEX64.test(action.checkpoint) ||
+      (action.files !== "keep" && action.files !== "restore")
+    ) {
+      return null;
+    }
+    return {
+      ...base,
+      action: "rewind",
+      sessionRef: null,
+      genesisRef: null,
+      projectRef: null,
+      repoRef: null,
+      model: null,
+      title: null,
+      previousTarget,
+      rewind: { checkpoint: action.checkpoint, files: action.files },
+    };
+  }
+  if (
+    action.type === "session.resume" ||
+    action.type === "session.restart" ||
+    action.type === "session.stop"
+  ) {
     const previousTarget = decodeTarget(action.session);
     if (
       !previousTarget ||
@@ -111,7 +153,12 @@ export function parseCodingSessionLifecycleCommand(
     }
     return {
       ...base,
-      action: action.type === "session.resume" ? "resume" : "stop",
+      action:
+        action.type === "session.resume"
+          ? "resume"
+          : action.type === "session.restart"
+            ? "restart"
+            : "stop",
       sessionRef: null,
       genesisRef: null,
       projectRef: null,
