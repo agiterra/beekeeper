@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><head><title>Driver Fixture</title></head><body>
+<h1>Local dev server</h1>
+<form id="f" onsubmit="event.preventDefault(); document.title='submitted:' + document.getElementById('email').value;">
+<label for="email">Email</label><input id="email" placeholder="you@x">
+<label>Name <input id="name"></label>
+<textarea aria-label="Notes" id="notes"></textarea>
+<button type="button" id="save" onclick="document.title='clicked'">Save</button>
+<button type="button" data-testid="dup">Dup</button><button type="button" data-testid="dup2">Dup</button>
+<button type="submit">Submit</button>
+</form>
+<div id="later"></div>
+<div style="height:3000px"></div>
+<script>
+window.pageSecret = 42;
+const keys = []; document.addEventListener('keydown', e => keys.push(e.key + (e.metaKey?'+M':'')));
+window.__keys = keys;
+setTimeout(() => { document.getElementById('later').innerHTML = '<button>Appeared</button>'; }, 400);
+</script></body></html>

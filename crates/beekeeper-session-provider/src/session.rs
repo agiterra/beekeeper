@@ -282,10 +282,17 @@ pub struct CreateRequest {
     pub seat: Option<SeatIdentity>,
     /// Environment applied to the child **after** the credential fence.
     ///
-    /// Empty for every execution that is not an agent seat, which is what
-    /// keeps an unseated spawn byte-for-byte what it was. For a seat it is
-    /// exactly [`crate::actor_seats::ActorSeat::post_fence_env`] — the four
-    /// variables that give the seat its own identity and nothing else.
+    /// For a seat it starts as exactly
+    /// [`crate::actor_seats::ActorSeat::post_fence_env`] — the four variables
+    /// that give the seat its own identity. Every execution, seated or not,
+    /// then also receives the two preview variables
+    /// (`crate::preview_grant::push_preview_env`, SV-33):
+    /// `BEEKEEPER_PREVIEW_GRANT`, a provider-signed bearer token that lets it
+    /// drive its own session's local Browser preview and nothing else, and
+    /// `BUZZ_SESSION_BROKER_SOCK`, the absolute path of this machine's desktop
+    /// session-broker socket (a location, not a credential). An unseated
+    /// execution therefore still holds no `BUZZ_*` identity credential; if
+    /// minting fails neither preview variable is pushed.
     ///
     /// Never logged: [`CreateRequest`]'s hand-written `Debug` reports only
     /// whether it is empty.
@@ -1975,10 +1982,13 @@ async fn start_agent(
     //
     // Minus the fence: the provider's signing key and the secrets it inherited
     // from the launching shell are removed first. See `crate::agent_fence`.
-    // The fence is unchanged and unconditional. `post_fence_env` is empty for
-    // every execution that is not an agent seat; for a seat it is the four
-    // variables that give it *its own* identity, applied after the fence has
-    // removed the provider's.
+    // The fence is unchanged and unconditional. `post_fence_env` carries, for
+    // a seat, the four variables that give it *its own* identity, applied
+    // after the fence has removed the provider's; and for every execution,
+    // seated or not, the preview grant (`BEEKEEPER_PREVIEW_GRANT`, a bearer
+    // token scoped to this session's local Browser) and the broker socket
+    // path (`BUZZ_SESSION_BROKER_SOCK`, a path, not a credential). An
+    // unseated execution gets no identity credential from it.
     //
     // A prepared scope replaces all of that: the adapter starts inside the
     // host's boundary with exactly the environment the host resolved by
@@ -5908,9 +5918,11 @@ done
         manager.shutdown("s1");
     }
 
-    /// The other half of the same guarantee: an execution with no seat spawns
-    /// with exactly today's environment. `post_fence_env` is empty, so the
-    /// fence is the last word, as it was before seats existed.
+    /// The other half of the same guarantee: with an empty `post_fence_env`
+    /// the fence is the last word, as it was before seats existed. (The
+    /// provider's unseated spawns pass only the two SV-33 preview variables
+    /// there — a grant and a socket path, no identity credential; see
+    /// `crate::preview_grant`. This test pins the fence itself.)
     #[tokio::test]
     async fn an_unseated_execution_still_receives_no_buzz_variable_at_all() {
         let dir = tempfile::tempdir().expect("tempdir");

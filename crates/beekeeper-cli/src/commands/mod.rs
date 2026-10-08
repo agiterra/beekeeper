@@ -30,6 +30,7 @@ pub mod patches;
 pub mod pins;
 pub mod plans_example;
 pub mod pr;
+pub mod preview;
 pub mod project_agents;
 pub mod projects;
 pub mod projects_cascade;

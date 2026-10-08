@@ -56,8 +56,17 @@ objc2 = { version = "0.6.4", default-features = false }
 # `NSMenu`/`NSMenuItem`/`NSStatusItem` are deliberately absent: the tray is
 # the menu bar app's. `NSEvent` is mouse back/forward, `NSHapticFeedback` is
 # the trackpad.
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSEvent", "NSHapticFeedback", "block2"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSDictionary", "NSError", "NSBundle", "NSObject", "NSProcessInfo", "NSString"] }
+# `NSImage`/`NSBitmapImageRep`/`NSImageRep`/`NSGraphics` encode a session
+# preview snapshot to PNG; `NSView`/`NSResponder`/`NSWindow` hand focus back.
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSEvent", "NSHapticFeedback", "block2", "std", "objc2-core-foundation", "NSImage", "NSBitmapImageRep", "NSImageRep", "NSGraphics", "NSView", "NSResponder", "NSWindow"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSDictionary", "NSError", "NSBundle", "NSObject", "NSProcessInfo", "NSString", "NSData", "NSValue", "NSURL", "block2"] }
+# The session preview (`src/session_preview/`): a localhost page in a native
+# child WKWebView built through wry directly, so Tauri never sees it and no
+# Tauri IPC is attached to it. Pinned to the exact wry tauri-runtime-wry links
+# (bump in lockstep), and the WebKit classes the driver, the snapshot, and the
+# subresource rule list call.
+wry = { version = "=0.55.1", default-features = false, features = ["protocol", "os-webview"] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-app-kit", "objc2-core-foundation", "WKWebView", "WKWebViewConfiguration", "WKSnapshotConfiguration", "WKContentWorld", "WKFrameInfo", "WKUserScript", "WKUserContentController", "WKContentRuleList", "WKContentRuleListStore", "WKWebsiteDataStore"] }
 objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "vendored"], optional = true }
 security-framework = { version = "3.7.0", features = ["OSX_10_15"] }

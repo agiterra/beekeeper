@@ -183,14 +183,15 @@ test("a duplicate id or letter throws at registration", () => {
 // SV-23 mechanics: dimmed, never absent, with the reason in the DOM.
 // ---------------------------------------------------------------------------
 
-test("Browser and Device are dimmed with their reasons, never absent", () => {
+test("Browser (without a session) and Device are dimmed with their reasons, never absent", () => {
   const registry = createCodingSessionSurfaceRegistry(
     CODING_SESSION_BUILTIN_SURFACES,
   );
   for (const lens of ["conversation", "mission"]) {
-    const markup = launcherMarkup(registry, emptyCtx({ lens }));
+    // C4: the Browser is live; with no session it says what to do instead.
+    const markup = launcherMarkup(registry, emptyCtx({ lens, channelId: "" }));
     for (const [id, reason] of [
-      ["browser", "Arrives with live preview."],
+      ["browser", "Open a session to use the Browser."],
       ["device", "Arrives with device support."],
     ]) {
       const row = markup.match(

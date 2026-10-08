@@ -323,6 +323,15 @@ impl Provider {
             }
         };
 
+        // SV-33: a restored execution drives its preview with a fresh grant.
+        let mut post_fence_env = post_fence_env;
+        crate::preview_grant::push_preview_env(
+            &mut post_fence_env,
+            &self.config,
+            record.channel_id,
+            &target,
+            &seat_command_id,
+        );
         let agent_env: Vec<(String, String)> = descriptor
             .cli_env
             .iter()

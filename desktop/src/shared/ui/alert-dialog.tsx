@@ -24,6 +24,7 @@ const AlertDialogOverlay = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Overlay>
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Overlay
+    data-native-view-occluder="backdrop"
     className={cn(
       "fixed inset-0 z-50 bg-black/60",
       MODAL_OVERLAY_MOTION_CLASS,
@@ -71,6 +72,7 @@ const AlertDialogContent = React.forwardRef<
         )}
       >
         <AlertDialogPrimitive.Content
+          data-native-view-occluder=""
           className={cn(
             "pointer-events-auto grid w-[calc(100vw-2rem)] max-w-md gap-4 outline-hidden",
             surface === "default" && "rounded-3xl bg-background p-6 shadow-2xl",

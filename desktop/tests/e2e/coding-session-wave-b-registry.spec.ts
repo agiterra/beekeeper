@@ -300,9 +300,9 @@ test("SV-21, SV-23 and SV-38: launcher, tabs, dimmed reasons, a fake surface", a
   await rest();
   await shoot("SV21-launcher", host);
 
-  // SV-23: Browser and Device are dimmed, present, and say why on hover.
+  // SV-23: Device is dimmed, present, and says why on hover. (The Browser
+  // is live since C4 — `session-preview-local.spec.ts` covers its states.)
   for (const [id, reason] of [
-    ["browser", "Arrives with live preview."],
     ["device", "Arrives with device support."],
   ] as const) {
     const row = page.getByTestId(`coding-session-surface-launcher-row-${id}`);

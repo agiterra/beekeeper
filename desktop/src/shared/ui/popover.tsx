@@ -47,6 +47,7 @@ const PopoverContent = React.forwardRef<
   ) => (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content
+        data-native-view-occluder=""
         ref={ref}
         align={align}
         sideOffset={sideOffset ?? (surface === "textured" ? 24 : 4)}

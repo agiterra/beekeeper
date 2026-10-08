@@ -9,8 +9,9 @@ import type { CodingSessionSurfaceIcon } from "./codingSessionSurfaceRegistry";
  *
  * T3 Code's empty panel chrome (`device/DevicePanel.tsx`,
  * `RightPanelTabs.tsx:548-570`): the surface's icon in a muted tile, its
- * name, and one sentence. Device and Browser use it as their whole panel
- * (dimmed: they arrive with SV-33 and SV-34); every other surface uses it
+ * name, and one sentence. Device uses it as its whole panel (dimmed: it
+ * arrives with SV-34); the Browser uses it when it cannot open here (no
+ * session, not macOS); every other surface uses it
  * when a tab stays open after the surface stopped being available, so the
  * reason a person reads in the launcher's tooltip is the reason the panel
  * shows. The reason is never shortened or reworded here.

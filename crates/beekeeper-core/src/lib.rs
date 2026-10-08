@@ -124,6 +124,9 @@ pub mod observer;
 pub mod pairing;
 /// Presence status types shared across crates.
 pub mod presence;
+/// SV-33: the provider-signed per-session preview grant the desktop broker
+/// verifies before an execution may drive a local Browser preview.
+pub mod preview_grant;
 /// NIP-PMA owner-encrypted private managed-agent wire codec.
 pub mod private_managed_agent;
 pub mod project_agent_association;

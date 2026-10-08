@@ -26,6 +26,7 @@ const DialogOverlay = React.forwardRef<
 
   return (
     <DialogPrimitive.Overlay
+      data-native-view-occluder="backdrop"
       className={cn(
         "fixed inset-0 z-50",
         MODAL_OVERLAY_MOTION_CLASS,
@@ -99,6 +100,7 @@ const DialogContent = React.forwardRef<
         )}
       >
         <DialogPrimitive.Content
+          data-native-view-occluder=""
           className={cn(
             "pointer-events-auto relative grid w-[calc(100vw-2rem)] max-w-2xl gap-4 outline-hidden",
             surface === "default" && "rounded-2xl bg-background p-6 shadow-2xl",

@@ -969,6 +969,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-user-notifications",
+ "objc2-web-kit",
  "opus",
  "percent-encoding",
  "plist",
@@ -1015,6 +1016,7 @@ dependencies = [
  "webkit2gtk",
  "window-vibrancy",
  "windows-sys 0.61.2",
+ "wry",
  "zeroize",
  "zip 8.6.0",
 ]

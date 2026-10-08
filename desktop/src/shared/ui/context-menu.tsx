@@ -48,6 +48,7 @@ const ContextMenuSubContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.SubContent>
 >(({ className, style, ...props }, ref) => (
   <ContextMenuPrimitive.SubContent
+    data-native-view-occluder=""
     ref={ref}
     className={cn(
       "z-50 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-xl p-1",
@@ -69,6 +70,7 @@ const ContextMenuContent = React.forwardRef<
 >(({ className, style, ...props }, ref) => (
   <ContextMenuPrimitive.Portal>
     <ContextMenuPrimitive.Content
+      data-native-view-occluder=""
       ref={ref}
       className={cn(
         "z-50 max-h-[var(--radix-context-menu-content-available-height)] overflow-y-auto overflow-x-hidden rounded-xl p-1",

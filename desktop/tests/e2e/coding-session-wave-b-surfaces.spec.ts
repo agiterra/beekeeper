@@ -876,13 +876,14 @@ test("SV-24, SV-23 and SV-41: every surface's contents, both localities, Landing
   ).toBe(true);
   await shoot(page, "SV24-pulse", pulse);
 
-  // Browser and Device: dimmed; their letters open nothing. Their panels,
-  // if a tab is left open, say the same reason — reached through the stored
-  // panel state, which is how a stale tab would survive.
+  // Device: dimmed; its letter opens nothing. Its panel, if a tab is left
+  // open, says the same reason — reached through the stored panel state,
+  // which is how a stale tab would survive. (The Browser is live since C4;
+  // `session-preview-local.spec.ts` covers it.)
   await page.getByTestId("coding-session-surface-add").click();
-  await page.keyboard.press("b");
+  await page.keyboard.press("m");
   await expect(
-    page.getByTestId("coding-session-surface-tab-browser"),
+    page.getByTestId("coding-session-surface-tab-device"),
   ).toHaveCount(0);
   await page.keyboard.press("Escape");
   await page.evaluate(() => {
@@ -895,8 +896,8 @@ test("SV-24, SV-23 and SV-41: every surface's contents, both localities, Landing
         JSON.stringify({
           ...state,
           rightOpen: true,
-          tabs: ["browser", "device"],
-          active: "browser",
+          tabs: ["device"],
+          active: "device",
         }),
       );
     }
@@ -905,10 +906,6 @@ test("SV-24, SV-23 and SV-41: every surface's contents, both localities, Landing
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
   await page.getByTestId("channel-coding-sessions-trigger").click();
   await page.getByTestId("channel-coding-session-open").first().click();
-  const browserPanel = page.getByTestId("coding-session-surface-panel-browser");
-  await expect(browserPanel).toContainText("Arrives with live preview.");
-  await shoot(page, "SV24-browser", browserPanel);
-  await page.getByTestId("coding-session-surface-tab-device").click();
   const devicePanel = page.getByTestId("coding-session-surface-panel-device");
   await expect(devicePanel).toContainText("Arrives with device support.");
   await shoot(page, "SV24-device", devicePanel);
@@ -1035,7 +1032,6 @@ test("SV-24, SV-23 and SV-41: every surface's contents, both localities, Landing
   ).toBe(hashes.size);
   expect([...hashes.keys()].sort()).toEqual([
     "SV24-agents",
-    "SV24-browser",
     "SV24-device",
     "SV24-diff",
     "SV24-files",

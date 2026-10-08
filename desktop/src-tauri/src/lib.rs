@@ -44,6 +44,7 @@ mod reset;
 mod secret_store;
 #[cfg(unix)]
 mod session_broker;
+mod session_preview;
 mod session_provider;
 #[cfg(unix)]
 mod shell_sessions;

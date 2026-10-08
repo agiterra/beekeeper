@@ -88,6 +88,17 @@ where
         *explicit = format_explicit;
     }
 
+    // Local-only and self-reporting: `bee preview` prints its own wire-shaped
+    // result or refusal and owns its exit codes (0/1/2/3/4, WIRE-C4 § 6).
+    if let Cmd::Preview(ref sub) = cli.command {
+        let caller = cli
+            .private_key
+            .as_ref()
+            .and_then(|k| Keys::parse(k).ok())
+            .map(|keys| keys.public_key().to_hex());
+        return commands::preview::run(sub, caller).await;
+    }
+
     match run(cli).await {
         Ok(()) => 0,
         Err(e) => {
@@ -364,6 +375,10 @@ enum Cmd {
     /// desktop session broker, gated by per-session agent consent)
     #[command(subcommand)]
     Session(commands::session::SessionCmd),
+    /// Drive this session's local Browser preview (local; via the desktop
+    /// session broker, authorized by the execution's preview grant)
+    #[command(subcommand)]
+    Preview(commands::preview::PreviewCmd),
     /// Community moderation — reports queue, bans, timeouts, audit trail
     #[command(subcommand)]
     Moderation(ModerationCmd),
@@ -6066,7 +6081,9 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Packs(sub) => commands::packs_cli::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
         Cmd::Git(_) => unreachable!("handled above"),
-        Cmd::Host(_) | Cmd::Session(_) | Cmd::Sandbox(_) => unreachable!("handled above"),
+        Cmd::Host(_) | Cmd::Session(_) | Cmd::Sandbox(_) | Cmd::Preview(_) => {
+            unreachable!("handled above")
+        }
     }
 }
 
@@ -6737,6 +6754,7 @@ mod tests {
             "pins",
             "plans",
             "pr",
+            "preview",
             "projects",
             "pulse",
             "reactions",
@@ -7216,6 +7234,9 @@ mod tests {
             ("pack", 5),
             ("patches", 4),
             ("pr", 5),
+            // C4 (SV-33): status, open, navigate, snapshot, click, type,
+            // press, scroll, eval, wait-for, servers, close.
+            ("preview", 12),
             ("projects", 12),
             // 4 on the base tree, plus L9's `missions` and `prune-wip`.
             ("pulse", 6),

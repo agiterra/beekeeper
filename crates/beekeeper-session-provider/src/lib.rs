@@ -86,6 +86,7 @@ mod native_steer_authority;
 mod off_loop;
 pub mod payload;
 pub mod pending_completion;
+mod preview_grant;
 mod price_table;
 pub mod publish;
 mod reachability;
@@ -3686,6 +3687,15 @@ impl Provider {
                 }
             }
         };
+        // SV-33: every execution, seated or not, may drive its own preview.
+        let mut post_fence_env = post_fence_env;
+        crate::preview_grant::push_preview_env(
+            &mut post_fence_env,
+            &self.config,
+            plan.channel_id,
+            &target,
+            &plan.command_id,
+        );
         let seat_compose_ref = seat_skills
             .as_ref()
             .and_then(|skills| skills.compose_ref.clone());
@@ -4832,6 +4842,15 @@ impl Provider {
                 }
             }
         };
+        // SV-33: every execution, seated or not, may drive its own preview.
+        let mut post_fence_env = post_fence_env;
+        crate::preview_grant::push_preview_env(
+            &mut post_fence_env,
+            &self.config,
+            record.channel_id,
+            &target,
+            &plan.command_id,
+        );
         let seat_compose_ref = seat_skills
             .as_ref()
             .and_then(|skills| skills.compose_ref.clone());

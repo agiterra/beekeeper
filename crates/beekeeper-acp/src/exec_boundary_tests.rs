@@ -612,3 +612,107 @@ fn live_egress_reaches_only_the_proxy_port() {
     );
     drop((proxy, other));
 }
+
+/// SV-33 S2: a granted Unix-domain socket is the one exception the proxy
+/// egress makes for Unix connects — rendered after the denial, by exact path,
+/// granting no file access — and unrestricted egress renders nothing for it.
+#[test]
+fn a_socket_grant_is_one_unix_exception_under_the_proxy_only() {
+    let grants = vec![
+        Grant::tree("/work/a", Access::ReadWrite, "own checkout"),
+        Grant::unix_socket("/home/u/.local/state/buzz/session-broker.sock", "broker"),
+    ];
+    let open = render_policy(&grants).expect("renders");
+    assert!(
+        !open.contains("network-outbound") && !open.contains("session-broker.sock"),
+        "unrestricted egress already allows the connect, so nothing is rendered:\n{open}"
+    );
+    let addr: std::net::SocketAddr = "127.0.0.1:18080".parse().expect("addr");
+    let policy = render_policy_with(&grants, Egress::loopback_proxy(addr).expect("loopback"))
+        .expect("renders");
+    let deny = policy
+        .find("(deny network-outbound)\n")
+        .expect("outbound denied");
+    let rule = "(allow network-outbound (remote unix-socket (path-literal \
+                \"/home/u/.local/state/buzz/session-broker.sock\")))\n";
+    let socket = policy.find(rule).expect("the socket allowed");
+    assert!(deny < socket, "the exception follows the denial:\n{policy}");
+    assert_eq!(
+        policy.matches("session-broker.sock").count(),
+        1,
+        "a connect right only, never a file right:\n{policy}"
+    );
+    assert!(!permits_read(
+        &grants,
+        Path::new("/home/u/.local/state/buzz/session-broker.sock")
+    ));
+    assert!(matches!(
+        render_policy_with(
+            &[Grant::unix_socket("relative.sock", "broker")],
+            Egress::LoopbackProxy(addr)
+        ),
+        Err(BoundaryError::InvalidSpec(_))
+    ));
+    assert!(matches!(
+        render_policy_with(
+            &[Grant::unix_socket("/a\"b.sock", "broker")],
+            Egress::Unrestricted
+        ),
+        Err(BoundaryError::InvalidSpec(_))
+    ));
+}
+
+/// Live: under the proxy egress, the granted socket connects and another
+/// socket in the same directory is still refused.
+#[cfg(target_os = "macos")]
+#[test]
+fn live_socket_grant_reaches_only_that_socket() {
+    let (_dir, root) = canonical_tempdir();
+    let own = root.join("own");
+    std::fs::create_dir_all(&own).expect("own");
+    std::fs::write(own.join("f"), "x").expect("probe file");
+    let proxy = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("proxy listener");
+    let proxy_addr = proxy.local_addr().expect("proxy addr");
+    let granted = root.join("broker.sock");
+    let other = root.join("other.sock");
+    let _granted = std::os::unix::net::UnixListener::bind(&granted).expect("granted listener");
+    let _other = std::os::unix::net::UnixListener::bind(&other).expect("other listener");
+    let boundary = prepare(BoundarySpec {
+        grants: vec![
+            Grant::tree(&own, Access::ReadWrite, "own"),
+            Grant::unix_socket(&granted, "broker"),
+        ],
+        policy_dir: root.join("host"),
+        egress: Egress::loopback_proxy(proxy_addr).expect("loopback"),
+        probe_readable: own.join("f"),
+    })
+    .expect("prepare");
+    let policy = boundary.policy_file.clone();
+    let nc = |socket: &Path, bounded: bool| {
+        let mut command = if bounded {
+            let mut command = std::process::Command::new(SANDBOX_EXEC);
+            command.arg("-f").arg(&policy).arg("/usr/bin/nc");
+            command
+        } else {
+            std::process::Command::new("/usr/bin/nc")
+        };
+        command
+            .args(["-w", "1", "-U"])
+            .arg(socket)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("nc")
+            .status
+            .success()
+    };
+    assert!(
+        nc(&other, false),
+        "control: the other socket accepts unconfined"
+    );
+    assert!(
+        nc(&granted, true),
+        "the granted socket connects under the policy"
+    );
+    assert!(!nc(&other, true), "any other Unix socket is still refused");
+    drop(proxy);
+}

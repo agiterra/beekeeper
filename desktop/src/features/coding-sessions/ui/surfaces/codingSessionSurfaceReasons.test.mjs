@@ -23,7 +23,6 @@ const SECTION_3_REASONS = {
   landing: "This session has no repository to land into.",
   people: "This session predates sharing and has no roster.",
   pulse: "This session belongs to no project.",
-  browser: "Arrives with live preview.",
   device: "Arrives with device support.",
 };
 
@@ -168,10 +167,8 @@ test("each surface opens when its §3 condition holds", () => {
   assert.deepEqual(definition("plan").availability(emptyPlan), {
     available: true,
   });
-  // Browser and Device never open in Wave B.
-  for (const id of ["browser", "device"]) {
-    assert.equal(definition(id).availability(someone).available, false, id);
-  }
+  // Device never opens in Wave B; Browser opens on macOS (its own test).
+  assert.equal(definition("device").availability(someone).available, false);
 });
 
 test("a panel left open after its surface became unavailable shows the same reason", () => {
@@ -202,11 +199,117 @@ test("a panel left open after its surface became unavailable shows the same reas
   }
 });
 
+test("Browser (SV-33): its WIRE-C4 § 4 reasons word for word, open on macOS with a session", async () => {
+  const { codingSessionSurfaceBrowserAvailability } = await import(
+    "./CodingSessionSurfaceBrowser.tsx"
+  );
+  const ctx = emptyCtx();
+  assert.deepEqual(codingSessionSurfaceBrowserAvailability(ctx, false), {
+    available: false,
+    reason: "The Browser runs on macOS in this version.",
+  });
+  assert.deepEqual(codingSessionSurfaceBrowserAvailability(ctx, true), {
+    available: true,
+  });
+  const noSession = emptyCtx({ channelId: "" });
+  for (const isMac of [true, false]) {
+    assert.deepEqual(
+      codingSessionSurfaceBrowserAvailability(noSession, isMac),
+      {
+        available: false,
+        reason: "Open a session to use the Browser.",
+      },
+    );
+  }
+  // The retired Wave B sentence is gone for good.
+  for (const isMac of [true, false]) {
+    const availability = codingSessionSurfaceBrowserAvailability(ctx, isMac);
+    assert.notEqual(availability.reason, "Arrives with live preview.");
+  }
+  // A Browser tab left open without a session says the same sentence, and
+  // is not dimmed: the surface exists now.
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      QueryClientProvider,
+      { client: new QueryClient() },
+      React.createElement(definition("browser").Panel, { ctx: noSession }),
+    ),
+  );
+  assert.match(markup, /data-testid="coding-session-surface-panel-browser"/);
+  assert.match(markup, /data-available="false"/);
+  assert.ok(markup.includes("Open a session to use the Browser."), markup);
+  assert.doesNotMatch(markup, /opacity-60/);
+});
+
+test("Browser binds a person's preview to one execution, or asks", async () => {
+  const { codingSessionBrowserBindingOptions } = await import(
+    "./CodingSessionSurfaceBrowser.tsx"
+  );
+  const { sessionPreviewBinding } = await import(
+    "../../../session-preview/lib/previewModel.ts"
+  );
+  const execution = (key, sessionId, runtime) => ({
+    executionKey: key,
+    signerPubkey: "aa".repeat(32),
+    activeGeneration: {
+      runtime,
+      model: null,
+      agentRef: null,
+      role: null,
+      commandTarget: {
+        driver: runtime,
+        instanceId: `inst-${key}`,
+        sessionId,
+        generation: 1,
+      },
+    },
+    priorGenerations: [],
+  });
+  const ctx = emptyCtx({
+    umbrella: {
+      ...emptyCtx().umbrella,
+      executions: [
+        execution("x1", "S1", "claude-agent-acp"),
+        execution("x2", "S2", "codex-acp"),
+      ],
+    },
+  });
+  const options = codingSessionBrowserBindingOptions(ctx);
+  assert.deepEqual(
+    options.map((option) => [option.executionKey, option.target.sessionId]),
+    [
+      ["x1", "S1"],
+      ["x2", "S2"],
+    ],
+  );
+  assert.equal(
+    sessionPreviewBinding({
+      options,
+      focusedExecutionKey: null,
+      chosenExecutionKey: null,
+    }).kind,
+    "choose",
+  );
+  const focused = sessionPreviewBinding({
+    options,
+    focusedExecutionKey: "x2",
+    chosenExecutionKey: null,
+  });
+  assert.equal(focused.kind, "bound");
+  assert.equal(focused.option.target.sessionId, "S2");
+  const picked = sessionPreviewBinding({
+    options,
+    focusedExecutionKey: "x2",
+    chosenExecutionKey: "x1",
+  });
+  assert.equal(picked.option.target.sessionId, "S1");
+});
+
 test("Mission's three surfaces are a lens choice, listed only in Mission", () => {
   for (const id of ["mission-inspector", "mission-context", "mission-audit"]) {
     assert.deepEqual([...definition(id).lenses], ["mission"], id);
   }
-  for (const id of Object.keys(SECTION_3_REASONS)) {
+  for (const id of [...Object.keys(SECTION_3_REASONS), "browser"]) {
     assert.deepEqual(
       [...definition(id).lenses],
       ["conversation", "mission"],

@@ -154,6 +154,15 @@ pub enum GrantTarget {
         /// The fixed start of every scratch file name.
         name_prefix: String,
     },
+    /// A connect to exactly this Unix-domain socket path (its resolved
+    /// form: Seatbelt matches the path after symlinks are followed).
+    ///
+    /// Grants no file access at all: a Unix-domain connect needs none under
+    /// the policy's file denial (measured 2026-10-07, macOS 27.0). It matters
+    /// only under [`Egress::LoopbackProxy`], which otherwise refuses every
+    /// Unix-domain connect; with egress unrestricted the connect is already
+    /// allowed and the grant renders nothing.
+    UnixSocket(PathBuf),
 }
 
 impl GrantTarget {
@@ -161,7 +170,7 @@ impl GrantTarget {
     #[must_use]
     pub fn path(&self) -> &Path {
         match self {
-            Self::Tree(path) | Self::File(path) => path,
+            Self::Tree(path) | Self::File(path) | Self::UnixSocket(path) => path,
             Self::ScratchFiles { root, .. } => root,
         }
     }
@@ -176,6 +185,8 @@ impl GrantTarget {
                         .file_name()
                         .is_some_and(|name| name.to_string_lossy().starts_with(name_prefix))
             }
+            // A connect right, not a file right: nothing is readable through it.
+            Self::UnixSocket(_) => false,
         }
     }
 }
@@ -206,6 +217,16 @@ impl Grant {
         Self {
             target: GrantTarget::File(path.into()),
             access,
+            reason: reason.into(),
+        }
+    }
+
+    /// A connect to the Unix-domain socket at `path`, which must already be
+    /// resolved (no symlinks). See [`GrantTarget::UnixSocket`].
+    pub fn unix_socket(path: impl Into<PathBuf>, reason: impl Into<String>) -> Self {
+        Self {
+            target: GrantTarget::UnixSocket(path.into()),
+            access: Access::ReadWrite,
             reason: reason.into(),
         }
     }
@@ -241,11 +262,13 @@ pub enum Egress {
     /// Seatbelt can name a remote only as `localhost:<port>` (or `*`), so the
     /// rule admits that port on every loopback address — `127.0.0.1` and
     /// `::1` alike — not the one address given. Unix-domain socket connects
-    /// are denied with no exception: nothing a bounded runtime is known to
-    /// need reaches the network through one, and the system resolver's socket
-    /// (`mDNSResponder`) is exactly the DNS path an allowlisting proxy exists
-    /// to remove. A runtime that needs one fails loudly with `EPERM`; it is
-    /// never silently granted.
+    /// are denied except to a socket the host names with
+    /// [`Grant::unix_socket`] (the desktop's session broker, which `bee
+    /// preview` drives a local Browser through): nothing else a bounded
+    /// runtime is known to need reaches the network through one, and the
+    /// system resolver's socket (`mDNSResponder`) is exactly the DNS path an
+    /// allowlisting proxy exists to remove. A runtime that needs another
+    /// fails loudly with `EPERM`; it is never silently granted.
     LoopbackProxy(SocketAddr),
 }
 
@@ -452,8 +475,11 @@ pub fn render_policy_with(grants: &[Grant], egress: Egress) -> Result<String, Bo
         quote(DEVICE_ROOT)?
     ));
     // Denials last, so no earlier grant of the same operation outranks them.
-    let (denials, allows): (Vec<&Grant>, Vec<&Grant>) = grants
+    let (sockets, file_grants): (Vec<&Grant>, Vec<&Grant>) = grants
         .iter()
+        .partition(|grant| matches!(grant.target, GrantTarget::UnixSocket(_)));
+    let (denials, allows): (Vec<&Grant>, Vec<&Grant>) = file_grants
+        .into_iter()
         .partition(|grant| matches!(grant.access, Access::NoUnlink | Access::NoWrite));
     for grant in allows.into_iter().chain(denials) {
         let path = grant.target.path();
@@ -486,6 +512,8 @@ pub fn render_policy_with(grants: &[Grant], egress: Egress) -> Result<String, Bo
                     regex_escape(name_prefix)?
                 )
             }
+            // Partitioned out above; rendered with the egress rules.
+            GrantTarget::UnixSocket(_) => continue,
         };
         let rule = match grant.access {
             Access::ReadOnly => "allow file-read*",
@@ -519,6 +547,25 @@ pub fn render_policy_with(grants: &[Grant], egress: Egress) -> Result<String, Bo
             "(allow network-outbound (remote tcp \"localhost:{}\"))\n",
             addr.port()
         ));
+        // Each granted Unix-domain socket, by exact resolved path. Only here:
+        // unrestricted egress already allows the connect.
+        for grant in sockets {
+            let path = grant.target.path();
+            if !path.is_absolute() {
+                return Err(BoundaryError::InvalidSpec(format!(
+                    "socket grant for {} is not an absolute path",
+                    grant.reason
+                )));
+            }
+            out.push_str(&format!(
+                "(allow network-outbound (remote unix-socket (path-literal {})))\n",
+                quote(&path.to_string_lossy())?
+            ));
+        }
+    } else {
+        for grant in sockets {
+            check_policy_text(&grant.target.path().to_string_lossy())?;
+        }
     }
     Ok(out)
 }
@@ -594,6 +641,8 @@ pub fn prepare(spec: BoundarySpec) -> Result<PreparedBoundary, BoundaryError> {
                 grant.target.covers(policy_dir) || policy_dir.starts_with(grant.target.path())
             }
             GrantTarget::ScratchFiles { .. } => grant.target.covers(policy_dir),
+            // A connect right exposes no file.
+            GrantTarget::UnixSocket(_) => false,
         };
         if !matches!(grant.access, Access::NoUnlink | Access::NoWrite) && reaches_policy {
             return Err(BoundaryError::InvalidSpec(format!(

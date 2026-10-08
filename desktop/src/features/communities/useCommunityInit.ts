@@ -58,6 +58,7 @@ import { resetProjectRouteMemory } from "@/features/projects-container/lib/proje
 import { resetProjectOrderStore } from "@/features/projects-container/lib/projectOrderStore";
 import { resetVideoPlayerState } from "@/shared/ui/videoPlayerState";
 import { relaySelfQueryKey } from "@/features/moderation/lib/relaySelf";
+import { sessionPreviewCloseAll } from "@/shared/api/tauriSessionPreview";
 
 import {
   initFirstCommunity,
@@ -138,6 +139,11 @@ async function resetCommunityState({
   // Which subagent page each session view has open, and the row it returns
   // to, are keyed by the old relay's channel and call ids.
   resetCodingSessionSubagentPages();
+  // Native Browser previews (SV-33) live in Rust, keyed by the old relay's
+  // channel ids; close them (and their pop-out windows) rather than leave a
+  // page from one community on screen in the next. Not awaited: a slow or
+  // absent native side must not hold up the switch.
+  if (isTauri()) void sessionPreviewCloseAll().catch(() => {});
   // Which coding-session conversation lanes are openable is per-relay: keeping
   // the old community's refs would hide chat in the new one (channel ids are
   // UUIDs, but a hidden message with no lane to render in is the one outcome

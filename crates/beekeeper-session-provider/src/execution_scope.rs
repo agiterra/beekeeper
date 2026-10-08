@@ -976,6 +976,23 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
             "ssh agent socket for Git transport",
         ));
     }
+    // SV-33: `bee preview` reaches this machine's desktop session broker at
+    // the path the session was given. A connect right, not a file grant: a
+    // Unix-domain connect needs no file access under the boundary (measured),
+    // and the right renders only under a proxy egress, which otherwise refuses
+    // every Unix-domain connect.
+    if let Some(sock) = inputs
+        .identity_env
+        .iter()
+        .filter(|_| session)
+        .find(|(name, _)| name == beekeeper_core::preview_grant::SESSION_BROKER_SOCK_ENV)
+        .and_then(|(_, value)| prospective(Path::new(value)))
+    {
+        grants.push(Grant::unix_socket(
+            sock,
+            "this machine's desktop session broker, for `bee preview`",
+        ));
+    }
 
     let binding = ExecutionBinding {
         scope_digest: digest.clone(),
@@ -2262,6 +2279,10 @@ mod prep_tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "execution_scope_isolation_tests.rs"]
 mod isolation_tests;
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "execution_scope_preview_tests.rs"]
+mod preview_tests;
 
 #[cfg(all(test, target_os = "macos"))]
 #[path = "execution_scope_live_tests.rs"]

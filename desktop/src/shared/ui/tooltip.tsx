@@ -15,6 +15,7 @@ const TooltipContent = React.forwardRef<
 >(({ className, sideOffset = 4, ...props }, ref) => (
   <TooltipPrimitive.Portal>
     <TooltipPrimitive.Content
+      data-native-view-occluder=""
       ref={ref}
       sideOffset={sideOffset}
       className={cn(

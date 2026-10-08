@@ -105,6 +105,14 @@ async fn handle_connection(stream: UnixStream, app: tauri::AppHandle) -> Result<
     }
 
     let response = match serde_json::from_str::<BrokerEnvelope>(line.trim_end()) {
+        Ok(envelope)
+            if matches!(envelope.request, BrokerRequest::Preview { .. })
+                && line.len() > crate::session_preview::broker::MAX_REQUEST_BYTES =>
+        {
+            let mut response = BrokerResponse::err("The request is too large.");
+            response.code = Some("preview_too_large".to_string());
+            response
+        }
         Ok(envelope) => dispatch(envelope, &app).await,
         Err(e) => BrokerResponse::err(format!("malformed request: {e}")),
     };
@@ -240,6 +248,11 @@ async fn dispatch(envelope: BrokerEnvelope, app: &tauri::AppHandle) -> BrokerRes
         } => {
             eprintln!("session-broker: caller={caller} op=request_access workspace={workspace_id}");
             request_access(app, &workspace_id, command, reason, envelope.caller.clone()).await
+        }
+        // `caller` is only logged for previews: the grant, not the
+        // self-declared pubkey, says which session a call speaks for.
+        BrokerRequest::Preview { grant, action } => {
+            crate::session_preview::broker::handle(app, grant, action).await
         }
     }
 }

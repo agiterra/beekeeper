@@ -64,6 +64,16 @@ pub enum BrokerRequest {
         #[serde(default)]
         reason: Option<String>,
     },
+    /// Drive this session's local Browser preview (`bee preview`). Authorized
+    /// by the per-session preview grant, not the roster; the session comes
+    /// only from the grant. `action` stays raw JSON here so a malformed one is
+    /// answered `preview_bad_request` by `session_preview::broker` rather
+    /// than as an unparseable envelope.
+    Preview {
+        #[serde(default)]
+        grant: Option<String>,
+        action: Value,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -73,6 +83,10 @@ pub struct BrokerResponse {
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Stable machine code for a refusal (`preview_*` ops set it; other ops
+    /// leave it out, so their responses are unchanged).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 impl BrokerResponse {
@@ -81,6 +95,7 @@ impl BrokerResponse {
             ok: true,
             result: Some(result),
             error: None,
+            code: None,
         }
     }
 
@@ -89,6 +104,7 @@ impl BrokerResponse {
             ok: false,
             result: None,
             error: Some(message.into()),
+            code: None,
         }
     }
 }
@@ -116,6 +132,41 @@ mod tests {
             }
             _ => panic!("expected send"),
         }
+    }
+
+    #[test]
+    fn parses_preview_with_raw_action() {
+        let preview: BrokerEnvelope = serde_json::from_str(
+            r#"{"request":{"op":"preview","grant":"bkpg1.x.y","action":{"verb":"click","target":{"role":"button","name":"Save"}}}}"#,
+        )
+        .expect("preview");
+        match preview.request {
+            BrokerRequest::Preview { grant, action } => {
+                assert_eq!(grant.as_deref(), Some("bkpg1.x.y"));
+                assert_eq!(action["verb"], "click");
+                assert_eq!(action["target"]["name"], "Save");
+            }
+            _ => panic!("expected preview"),
+        }
+        // No grant still parses: the broker answers `preview_no_grant`.
+        let bare: BrokerEnvelope =
+            serde_json::from_str(r#"{"request":{"op":"preview","action":{"verb":"status"}}}"#)
+                .expect("bare preview");
+        assert!(matches!(
+            bare.request,
+            BrokerRequest::Preview { grant: None, .. }
+        ));
+    }
+
+    #[test]
+    fn response_code_is_serialized_only_when_set() {
+        let mut refused = BrokerResponse::err("No preview is open.");
+        refused.code = Some("preview_not_open".into());
+        let text = serde_json::to_string(&refused).expect("ser");
+        assert!(text.contains("\"code\":\"preview_not_open\""));
+        assert!(!serde_json::to_string(&BrokerResponse::err("x"))
+            .expect("ser")
+            .contains("code"));
     }
 
     #[test]

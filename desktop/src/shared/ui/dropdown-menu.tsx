@@ -49,6 +49,7 @@ const DropdownMenuSubContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
 >(({ className, style, ...props }, ref) => (
   <DropdownMenuPrimitive.SubContent
+    data-native-view-occluder=""
     ref={ref}
     className={cn(
       "z-50 origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-xl p-1",
@@ -71,6 +72,7 @@ const DropdownMenuContent = React.forwardRef<
 >(({ className, sideOffset = 4, style, ...props }, ref) => (
   <DropdownMenuPrimitive.Portal>
     <DropdownMenuPrimitive.Content
+      data-native-view-occluder=""
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
