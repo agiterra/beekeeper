@@ -330,6 +330,33 @@ if [[ -d "$DEST" ]]; then
 fi
 ditto "$APP" "$DEST"
 echo "==> installed $SHORT -> $DEST (previous kept as ${DEST}.prev)"
+# `kickstart` returning 0 means launchd accepted the request, not that the
+# process is running. A kickstart issued the moment `ditto` finishes can be
+# killed by AMFI as a Launch Constraint Violation (OS_REASON_CODESIGNING) while
+# the new bundle is still being assessed; launchd then gives up on the service
+# and the host stays dead until someone kickstarts it by hand (2026-10-08: the
+# host and menu bar were down from 02:47 until 07:19, with "restarted" printed).
+# So wait for a pid that survives a few seconds, retry with a pause, and say so
+# when it never comes up.
+restart_login_item() {
+  local label="$1" target="gui/$(id -u)/$1" attempt pid
+  for attempt in 1 2 3 4; do
+    if ! launchctl kickstart -k "$target" 2>/dev/null; then
+      echo "==> ${label} is registered but not loaded; left as it is" >&2
+      return 0
+    fi
+    sleep 3
+    pid="$(launchctl print "$target" 2>/dev/null | awk '$1 == "pid" { print $3; exit }')"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "==> restarted ${label} on the new bundle (pid ${pid})"
+      return 0
+    fi
+    echo "==> ${label} did not stay up after restart attempt ${attempt}; retrying" >&2
+    sleep $((attempt * 2))
+  done
+  echo "==> ${label} is NOT running: launchd reports $(launchctl print "$target" 2>/dev/null | awk -F' = ' '/last exit reason/ { print $2; exit }'). Run: launchctl kickstart -k ${target}" >&2
+  return 0
+}
 # Restart this user's login items that run from the bundle just replaced —
 # the agent host and the menu bar app — so they, and the provider the host
 # supervises, run the new binaries rather than the moved-aside ones. The host
@@ -340,11 +367,7 @@ for plist in "$HOME"/Library/LaunchAgents/io.agiterra.beekeeper.*.plist; do
   program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist" 2>/dev/null || true)"
   [[ "$program" == "${DEST}/"* ]] || continue
   label="$(basename "$plist" .plist)"
-  if launchctl kickstart -k "gui/$(id -u)/${label}" 2>/dev/null; then
-    echo "==> restarted ${label} on the new bundle"
-  else
-    echo "==> ${label} is registered but not loaded; left as it is" >&2
-  fi
+  restart_login_item "$label"
 done
 for plist in /Library/LaunchDaemons/io.agiterra.beekeeper.*.plist; do
   [[ -f "$plist" ]] || continue
