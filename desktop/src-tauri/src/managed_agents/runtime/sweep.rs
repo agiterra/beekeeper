@@ -315,7 +315,7 @@ const HOST_OWNED_CHILD_VAR: &str = "BEEKEEPER_HOST_CHILD";
 /// The buffer layout is: `[i32 argc][exec_path\0][null-pad][argv\0…][env\0…]`.
 /// The exec path is therefore the first null-terminated string immediately
 /// after the leading `i32` — no argv traversal is needed, unlike
-/// `extract_buzz_marker_value` / `process_has_buzz_marker` which must skip
+/// `extract_beekeeper_marker_value` / `process_has_beekeeper_marker` which must skip
 /// past both argv and the exec path to reach the environment entries.
 ///
 /// Returns `None` if the buffer is unreadable or malformed.
@@ -598,7 +598,7 @@ mod tests {
     // ── select_untracked_bundle_harnesses ────────────────────────────────
 
     const BUNDLE_HARNESS: &str = "/Applications/Beekeeper.app/Contents/MacOS/beekeeper-acp";
-    const DEV_HARNESS: &str = "/Users/dev/buzz/.worktrees/main/target/debug/beekeeper-acp";
+    const DEV_HARNESS: &str = "/Users/dev/beekeeper/.worktrees/main/target/debug/beekeeper-acp";
 
     fn snap(pid: u32, path: &str) -> ProcessSnapshot {
         ProcessSnapshot {

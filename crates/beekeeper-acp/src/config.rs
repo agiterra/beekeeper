@@ -1773,7 +1773,7 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_buzz_agent_args_to_empty() {
+    fn normalizes_beekeeper_agent_args_to_empty() {
         // Both binary names: the current one, and the pre-rename one a stored
         // record or an older install still names.
         for command in [
@@ -3160,8 +3160,8 @@ channels = "ALL"
     #[test]
     fn compose_session_title_qualifies_the_agent_name_with_the_channel() {
         assert_eq!(
-            compose_session_title("Fizz", Some("buzz-dev")),
-            "Fizz · #buzz-dev"
+            compose_session_title("Fizz", Some("beekeeper-dev")),
+            "Fizz · #beekeeper-dev"
         );
     }
 
@@ -3182,23 +3182,23 @@ channels = "ALL"
     #[test]
     fn compose_session_title_drops_the_channel_when_the_agent_name_fills_the_cap() {
         let agent = "a".repeat(SESSION_TITLE_MAX_CHARS);
-        assert_eq!(compose_session_title(&agent, Some("buzz-dev")), agent);
+        assert_eq!(compose_session_title(&agent, Some("beekeeper-dev")), agent);
     }
 
     #[test]
     fn scoped_session_title_keeps_short_root_even_when_names_fill_the_cap() {
         let root = "abcdef01".repeat(8);
         assert_eq!(
-            compose_scoped_session_title("Fizz", Some("buzz-dev"), Some(&root)),
-            "Fizz · #buzz-dev · abcdef01"
+            compose_scoped_session_title("Fizz", Some("beekeeper-dev"), Some(&root)),
+            "Fizz · #beekeeper-dev · abcdef01"
         );
         assert_eq!(
             compose_scoped_session_title("Fizz", None, Some(&root)),
             "Fizz · abcdef01"
         );
         assert_eq!(
-            compose_scoped_session_title("Fizz", Some("buzz-dev"), Some("abc")),
-            "Fizz · #buzz-dev · abc"
+            compose_scoped_session_title("Fizz", Some("beekeeper-dev"), Some("abc")),
+            "Fizz · #beekeeper-dev · abc"
         );
         for (agent, channel) in [
             ("🐝".repeat(80), "work".into()),
@@ -3209,8 +3209,8 @@ channels = "ALL"
             assert!(title.ends_with(" · abcdef01"));
         }
         assert_eq!(
-            compose_scoped_session_title("Fizz", Some("buzz-dev"), None),
-            "Fizz · #buzz-dev"
+            compose_scoped_session_title("Fizz", Some("beekeeper-dev"), None),
+            "Fizz · #beekeeper-dev"
         );
         assert_eq!(compose_scoped_session_title("Fizz", None, None), "Fizz");
     }

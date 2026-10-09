@@ -6,7 +6,7 @@
 //! In-crate unit tests: the crate-owned [`StaticIssuerKeySource`] and the
 //! crate-private `AssertionKeySet::new` constructor are the only way to supply
 //! key material to the verifier, and both are `cfg(test)`-only — reachable
-//! here because this module compiles inside `buzz_auth` under `cargo test`, but
+//! here because this module compiles inside `beekeeper_auth` under `cargo test`, but
 //! not exposed to any dependent crate under any Cargo feature. That keeps the
 //! issuer→JWKS authority entirely crate-owned.
 
@@ -845,7 +845,7 @@ fn cross_issuer_token_cannot_mint_through_any_seam() {
     //    the snapshot from the trusted source keyed by the authenticated `iss`,
     //    so B's keys can never authenticate a token claiming issuer A.
     //
-    // 2. Authority-construction seam: an external `buzz_auth` consumer cannot
+    // 2. Authority-construction seam: an external `beekeeper_auth` consumer cannot
     //    even build the relabelling authority. `AssertionKeySet` has no public
     //    constructor and `IssuerKeySource` is sealed, so external code can
     //    neither put B's JWKS into a snapshot labelled A nor supply its own

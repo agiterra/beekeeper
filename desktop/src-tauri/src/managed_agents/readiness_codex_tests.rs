@@ -363,7 +363,7 @@ fn resolve_effective_agent_env_user_env_wins_over_structured_fields() {
 }
 
 #[test]
-fn buzz_agent_databricks_v2_with_databricks_model_but_no_buzz_agent_model_is_ready() {
+fn beekeeper_agent_databricks_v2_with_databricks_model_but_no_beekeeper_agent_model_is_ready() {
     // The baked buzz-releases env sets DATABRICKS_MODEL but not BEEKEEPER_AGENT_MODEL.
     // An agent with only DATABRICKS_MODEL must pass the readiness gate.
     let env = make_env(
@@ -381,7 +381,7 @@ fn buzz_agent_databricks_v2_with_databricks_model_but_no_buzz_agent_model_is_rea
 }
 
 #[test]
-fn buzz_agent_databricks_v2_hyphen_alias_with_databricks_model_is_ready() {
+fn beekeeper_agent_databricks_v2_hyphen_alias_with_databricks_model_is_ready() {
     // buzz-agent accepts both "databricks_v2" and "databricks-v2". The
     // readiness gate must recognize the hyphen alias and accept DATABRICKS_MODEL.
     let env = make_env(
@@ -399,7 +399,7 @@ fn buzz_agent_databricks_v2_hyphen_alias_with_databricks_model_is_ready() {
 }
 
 #[test]
-fn buzz_agent_databricks_hyphen_alias_missing_host_returns_not_ready() {
+fn beekeeper_agent_databricks_hyphen_alias_missing_host_returns_not_ready() {
     // The hyphen alias "databricks-v2" requires DATABRICKS_HOST just like
     // the underscore variants. Without it the agent cannot reach the endpoint.
     let env = make_env(
@@ -424,7 +424,7 @@ fn buzz_agent_databricks_hyphen_alias_missing_host_returns_not_ready() {
 }
 
 #[test]
-fn buzz_agent_databricks_v1_with_databricks_model_but_no_buzz_agent_model_is_ready() {
+fn beekeeper_agent_databricks_v1_with_databricks_model_but_no_beekeeper_agent_model_is_ready() {
     // V1 (Model Serving) also resolves DATABRICKS_MODEL — same fallback applies.
     let env = make_env(
         "buzz-agent",
@@ -441,7 +441,7 @@ fn buzz_agent_databricks_v1_with_databricks_model_but_no_buzz_agent_model_is_rea
 }
 
 #[test]
-fn buzz_agent_anthropic_with_anthropic_model_but_no_buzz_agent_model_is_ready() {
+fn beekeeper_agent_anthropic_with_anthropic_model_but_no_beekeeper_agent_model_is_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -457,7 +457,7 @@ fn buzz_agent_anthropic_with_anthropic_model_but_no_buzz_agent_model_is_ready() 
 }
 
 #[test]
-fn buzz_agent_openai_with_openai_compat_model_but_no_buzz_agent_model_is_ready() {
+fn beekeeper_agent_openai_with_openai_compat_model_but_no_beekeeper_agent_model_is_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -473,7 +473,7 @@ fn buzz_agent_openai_with_openai_compat_model_but_no_buzz_agent_model_is_ready()
 }
 
 #[test]
-fn buzz_agent_empty_provider_model_fallback_key_is_not_ready() {
+fn beekeeper_agent_empty_provider_model_fallback_key_is_not_ready() {
     // An empty DATABRICKS_MODEL with no BEEKEEPER_AGENT_MODEL must still be NotReady.
     let env = make_env(
         "buzz-agent",
@@ -498,7 +498,7 @@ fn buzz_agent_empty_provider_model_fallback_key_is_not_ready() {
 // ── OpenRouter readiness ─────────────────────────────────────────────
 
 #[test]
-fn buzz_agent_openrouter_with_all_fields_is_ready() {
+fn beekeeper_agent_openrouter_with_all_fields_is_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -515,7 +515,7 @@ fn buzz_agent_openrouter_with_all_fields_is_ready() {
 }
 
 #[test]
-fn buzz_agent_openrouter_missing_key_returns_not_ready() {
+fn beekeeper_agent_openrouter_missing_key_returns_not_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -531,7 +531,7 @@ fn buzz_agent_openrouter_missing_key_returns_not_ready() {
 }
 
 #[test]
-fn buzz_agent_openrouter_with_provider_model_fallback_is_ready() {
+fn beekeeper_agent_openrouter_with_provider_model_fallback_is_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[

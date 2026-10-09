@@ -95,13 +95,13 @@ impl Db {
                         .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
             })
             && read_state_t_tag_count == 1;
-        let is_buzz_mesh_status = kind_i32 == beekeeper_core::kind::KIND_BOOKMARK_SET as i32
+        let is_beekeeper_mesh_status = kind_i32 == beekeeper_core::kind::KIND_BOOKMARK_SET as i32
             && d_tag.starts_with("buzz-mesh-member-status:")
             && event.tags.iter().any(|tag| {
                 let parts = tag.as_slice();
                 parts.len() == 2 && parts[0] == "k" && parts[1] == "buzz-mesh-status"
             });
-        let hard_delete_superseded = is_nip_rs || is_buzz_mesh_status;
+        let hard_delete_superseded = is_nip_rs || is_beekeeper_mesh_status;
 
         // Check the live head and, for NIP-RS, the compact historical ordering
         // watermark. The watermark remains after a NIP-09 coordinate deletion,

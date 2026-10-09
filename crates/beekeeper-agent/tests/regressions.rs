@@ -1679,7 +1679,7 @@ async fn cancel_kills_inflight_tool_via_mcp_notification() {
 
     // Use a unique marker (PID + timestamp) to avoid stale-file collisions.
     let marker = format!(
-        "buzz_cancel_test_{}_{:x}",
+        "beekeeper_cancel_test_{}_{:x}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1787,7 +1787,7 @@ async fn cancel_kills_inflight_tool_via_mcp_notification() {
 async fn cancel_sends_notifications_cancelled_to_any_mcp_server() {
     let cancel_log = std::env::temp_dir()
         .join(format!(
-            "buzz_cancel_proto_{}_{:x}.log",
+            "beekeeper_cancel_proto_{}_{:x}.log",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

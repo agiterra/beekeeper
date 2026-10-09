@@ -622,7 +622,7 @@ mod tests {
         let checkout_templates = checkout.join("personas/templates");
         std::fs::create_dir_all(&checkout_templates).unwrap();
         let output = root.join("ci-target/debug");
-        let out_dir = output.join("build/buzz-cli-1a2b3c/out");
+        let out_dir = output.join("build/beekeeper-cli-1a2b3c/out");
         std::fs::create_dir_all(&out_dir).unwrap();
         assert_eq!(cargo_output_dir(&out_dir), Some(output.as_path()));
         let build = BuildProvenance {
@@ -632,7 +632,7 @@ mod tests {
 
         for exe in [
             output.join("bee"),
-            output.join("deps/buzz_cli-8379c3326b7b4338"),
+            output.join("deps/beekeeper_cli-8379c3326b7b4338"),
         ] {
             write(&exe, "#!/bin/sh\n");
             assert_eq!(
@@ -645,8 +645,8 @@ mod tests {
         // The same binary copied anywhere else: refused, even beside a
         // `personas/templates` of its own or under a `debug` of another tree.
         for copy in [
-            root.join("elsewhere/deps/buzz_cli-8379c3326b7b4338"),
-            root.join("other-target/debug/deps/buzz_cli-8379c3326b7b4338"),
+            root.join("elsewhere/deps/beekeeper_cli-8379c3326b7b4338"),
+            root.join("other-target/debug/deps/beekeeper_cli-8379c3326b7b4338"),
             root.join("ci-target/release/bee"),
         ] {
             write(&copy, "#!/bin/sh\n");
@@ -683,17 +683,17 @@ mod tests {
     #[test]
     fn only_a_cargo_out_dir_names_the_build_output() {
         assert_eq!(
-            cargo_output_dir(Path::new("/ci-target/debug/build/buzz-cli-1a2b/out")),
+            cargo_output_dir(Path::new("/ci-target/debug/build/beekeeper-cli-1a2b/out")),
             Some(Path::new("/ci-target/debug"))
         );
         assert_eq!(
             cargo_output_dir(Path::new(
-                "/ci-target/x86_64-unknown-linux-gnu/release/build/buzz-cli-9f/out"
+                "/ci-target/x86_64-unknown-linux-gnu/release/build/beekeeper-cli-9f/out"
             )),
             Some(Path::new("/ci-target/x86_64-unknown-linux-gnu/release"))
         );
         for other in [
-            "/ci-target/debug/build/buzz-cli-1a2b",
+            "/ci-target/debug/build/beekeeper-cli-1a2b",
             "/x/out",
             "/a/notbuild/p/out",
             "out",

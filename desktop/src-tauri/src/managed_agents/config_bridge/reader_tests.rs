@@ -208,11 +208,11 @@ fn surface_reports_mcp_specific_config_path() {
 fn goose_mcp_config_path_follows_path_root_override() {
     let record = test_record();
     let runtime = test_runtime();
-    let surface = with_goose_path_root(Some("/tmp/buzz-goose-root"), || {
+    let surface = with_goose_path_root(Some("/tmp/beekeeper-goose-root"), || {
         read_config_surface(&record, Some(runtime), None, &no_tiers())
     });
 
-    let expected_path = Path::new("/tmp/buzz-goose-root")
+    let expected_path = Path::new("/tmp/beekeeper-goose-root")
         .join("config")
         .join("config.yaml");
     assert_eq!(
@@ -624,7 +624,7 @@ fn extra_env_var_skipped_when_already_in_file_config_extra() {
 // when the env var is present in record.env_vars, and must not double-surface
 // them in the advanced tier.
 
-fn buzz_agent_runtime() -> &'static KnownAcpRuntime {
+fn beekeeper_agent_runtime() -> &'static KnownAcpRuntime {
     &KnownAcpRuntime {
         id: "buzz-agent",
         label: "Beekeeper Agent",
@@ -661,13 +661,13 @@ fn buzz_agent_runtime() -> &'static KnownAcpRuntime {
 }
 
 #[test]
-fn buzz_agent_max_output_tokens_from_env_is_buzz_explicit() {
+fn beekeeper_agent_max_output_tokens_from_env_is_buzz_explicit() {
     let mut record = test_record();
     record.env_vars.insert(
         "BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS".to_string(),
         "8192".to_string(),
     );
-    let runtime = buzz_agent_runtime();
+    let runtime = beekeeper_agent_runtime();
 
     let surface = read_config_surface(&record, Some(runtime), None, &no_tiers());
 
@@ -682,13 +682,13 @@ fn buzz_agent_max_output_tokens_from_env_is_buzz_explicit() {
 }
 
 #[test]
-fn buzz_agent_context_limit_from_env_is_buzz_explicit() {
+fn beekeeper_agent_context_limit_from_env_is_buzz_explicit() {
     let mut record = test_record();
     record.env_vars.insert(
         "BEEKEEPER_AGENT_MAX_CONTEXT_TOKENS".to_string(),
         "100000".to_string(),
     );
-    let runtime = buzz_agent_runtime();
+    let runtime = beekeeper_agent_runtime();
 
     let surface = read_config_surface(&record, Some(runtime), None, &no_tiers());
 
@@ -703,10 +703,10 @@ fn buzz_agent_context_limit_from_env_is_buzz_explicit() {
 }
 
 #[test]
-fn buzz_agent_max_tokens_absent_when_no_env_var_or_file() {
+fn beekeeper_agent_max_tokens_absent_when_no_env_var_or_file() {
     // buzz-agent has no config file, and env var is not set.
     let record = test_record();
-    let runtime = buzz_agent_runtime();
+    let runtime = beekeeper_agent_runtime();
 
     let surface = read_config_surface(&record, Some(runtime), None, &no_tiers());
 
@@ -721,7 +721,7 @@ fn buzz_agent_max_tokens_absent_when_no_env_var_or_file() {
 }
 
 #[test]
-fn buzz_agent_max_tokens_env_var_not_double_surfaced_in_advanced() {
+fn beekeeper_agent_max_tokens_env_var_not_double_surfaced_in_advanced() {
     let mut record = test_record();
     record.env_vars.insert(
         "BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS".to_string(),
@@ -731,7 +731,7 @@ fn buzz_agent_max_tokens_env_var_not_double_surfaced_in_advanced() {
         "BEEKEEPER_AGENT_MAX_CONTEXT_TOKENS".to_string(),
         "50000".to_string(),
     );
-    let runtime = buzz_agent_runtime();
+    let runtime = beekeeper_agent_runtime();
 
     let surface = read_config_surface(&record, Some(runtime), None, &no_tiers());
 
@@ -747,13 +747,13 @@ fn buzz_agent_max_tokens_env_var_not_double_surfaced_in_advanced() {
 }
 
 #[test]
-fn buzz_agent_thinking_effort_from_env_is_buzz_explicit() {
+fn beekeeper_agent_thinking_effort_from_env_is_buzz_explicit() {
     let mut record = test_record();
     record.env_vars.insert(
         "BEEKEEPER_AGENT_THINKING_EFFORT".to_string(),
         "high".to_string(),
     );
-    let runtime = buzz_agent_runtime();
+    let runtime = beekeeper_agent_runtime();
 
     let surface = read_config_surface(&record, Some(runtime), None, &no_tiers());
 
@@ -768,13 +768,13 @@ fn buzz_agent_thinking_effort_from_env_is_buzz_explicit() {
 }
 
 #[test]
-fn buzz_agent_thinking_effort_env_var_not_double_surfaced_in_advanced() {
+fn beekeeper_agent_thinking_effort_env_var_not_double_surfaced_in_advanced() {
     let mut record = test_record();
     record.env_vars.insert(
         "BEEKEEPER_AGENT_THINKING_EFFORT".to_string(),
         "medium".to_string(),
     );
-    let runtime = buzz_agent_runtime();
+    let runtime = beekeeper_agent_runtime();
 
     let surface = read_config_surface(&record, Some(runtime), None, &no_tiers());
 
@@ -824,7 +824,7 @@ fn missing_optional_provider_stays_hidden() {
 // The plan's acceptance criteria for effort tier resolution.
 // Tier ordering: record env > ACP > persona env > global env > config file.
 
-fn buzz_agent_rt() -> &'static KnownAcpRuntime {
+fn beekeeper_agent_rt() -> &'static KnownAcpRuntime {
     crate::managed_agents::discovery::known_acp_runtime_exact("buzz-agent")
         .expect("buzz-agent must be in catalog")
 }
@@ -835,7 +835,7 @@ fn buzz_agent_rt() -> &'static KnownAcpRuntime {
 #[test]
 fn global_effort_surfaces_as_global_default_when_record_has_none() {
     let record = test_record();
-    let runtime = buzz_agent_rt();
+    let runtime = beekeeper_agent_rt();
     let tiers = global_env_tiers("BEEKEEPER_AGENT_THINKING_EFFORT", "high");
 
     let surface = read_config_surface(&record, Some(runtime), None, &tiers);
@@ -852,7 +852,7 @@ fn global_effort_surfaces_as_global_default_when_record_has_none() {
 #[test]
 fn persona_effort_shadows_global_and_tags_persona_default() {
     let record = test_record();
-    let runtime = buzz_agent_rt();
+    let runtime = beekeeper_agent_rt();
     let tiers = persona_and_global_env_tiers("BEEKEEPER_AGENT_THINKING_EFFORT", "medium", "high");
 
     let surface = read_config_surface(&record, Some(runtime), None, &tiers);
@@ -876,7 +876,7 @@ fn record_effort_outranks_persona_and_global_keeps_buzz_explicit() {
         "BEEKEEPER_AGENT_THINKING_EFFORT".to_string(),
         "xhigh".to_string(),
     );
-    let runtime = buzz_agent_rt();
+    let runtime = beekeeper_agent_rt();
     let tiers = persona_and_global_env_tiers("BEEKEEPER_AGENT_THINKING_EFFORT", "medium", "high");
 
     let surface = read_config_surface(&record, Some(runtime), None, &tiers);
@@ -893,7 +893,7 @@ fn record_effort_outranks_persona_and_global_keeps_buzz_explicit() {
 #[test]
 fn no_effort_anywhere_yields_no_thinking_effort_field() {
     let record = test_record();
-    let runtime = buzz_agent_rt();
+    let runtime = beekeeper_agent_rt();
 
     let surface = read_config_surface(&record, Some(runtime), None, &no_tiers());
 
@@ -908,7 +908,7 @@ fn no_effort_anywhere_yields_no_thinking_effort_field() {
 #[test]
 fn acp_effort_wins_over_inherited_global_effort_as_secondary() {
     let record = test_record();
-    let runtime = buzz_agent_rt();
+    let runtime = beekeeper_agent_rt();
     let cache = SessionConfigCache {
         config_options: vec![AcpConfigOptionEntry {
             config_id: "effort".to_string(),
@@ -947,7 +947,7 @@ fn acp_effort_wins_over_inherited_global_effort_as_secondary() {
 #[test]
 fn numeric_max_tokens_inherits_from_global_env() {
     let record = test_record();
-    let runtime = buzz_agent_runtime();
+    let runtime = beekeeper_agent_runtime();
     let tiers = global_env_tiers("BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS", "16384");
 
     let surface = read_config_surface(&record, Some(runtime), None, &tiers);

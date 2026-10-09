@@ -40,20 +40,20 @@ async fn live_nip11_probe_discovers_configured_pairing_relay() {
 #[test]
 fn configured_pairing_relay_takes_precedence_over_legacy_path() {
     let document = serde_json::json!({
-        "pairing_relay_url": "wss://pairing.buzz.xyz",
+        "pairing_relay_url": "wss://pairing.beekeeper.xyz",
         "supported_nips": [43]
     });
 
     assert_eq!(
         pairing_relay_from_nip11(&document),
-        PairingRelay::Configured("wss://pairing.buzz.xyz".to_string())
+        PairingRelay::Configured("wss://pairing.beekeeper.xyz".to_string())
     );
 }
 
 #[test]
 fn invalid_pairing_relay_url_falls_back_to_legacy_path() {
     let document = serde_json::json!({
-        "pairing_relay_url": "https://pairing.buzz.xyz",
+        "pairing_relay_url": "https://pairing.beekeeper.xyz",
         "supported_nips": [43]
     });
 
@@ -73,23 +73,26 @@ fn document_without_pairing_configuration_uses_main_relay() {
 #[test]
 fn configured_pairing_relay_resolves_to_configured_url() {
     let resolved = resolve_pairing_relay_url(
-        "wss://flint.communities.buzz.xyz",
-        PairingRelay::Configured("wss://pairing.buzz.xyz".to_string()),
+        "wss://flint.communities.beekeeper.xyz",
+        PairingRelay::Configured("wss://pairing.beekeeper.xyz".to_string()),
     )
     .expect("resolve configured pairing relay");
 
-    assert_eq!(resolved, "wss://pairing.buzz.xyz");
+    assert_eq!(resolved, "wss://pairing.beekeeper.xyz");
 }
 
 #[test]
 fn legacy_pairing_relay_appends_pair_path() {
     let resolved = resolve_pairing_relay_url(
-        "wss://flint.communities.buzz.xyz/community",
+        "wss://flint.communities.beekeeper.xyz/community",
         PairingRelay::LegacyPath,
     )
     .expect("resolve legacy pairing relay");
 
-    assert_eq!(resolved, "wss://flint.communities.buzz.xyz/community/pair");
+    assert_eq!(
+        resolved,
+        "wss://flint.communities.beekeeper.xyz/community/pair"
+    );
 }
 
 #[test]

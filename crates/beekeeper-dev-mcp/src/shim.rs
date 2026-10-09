@@ -151,7 +151,7 @@ fn write_keyfile_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
 }
 
 /// Derive a NIP-05-style email from the pubkey and relay URL.
-/// Format: `<hex_pubkey>@<relay_host>` (e.g., `ab12...cd@relay.buzz.dev`).
+/// Format: `<hex_pubkey>@<relay_host>` (e.g., `ab12...cd@relay.example.com`).
 /// Falls back to `<hex_pubkey>@buzz` if no relay URL is configured.
 fn derive_git_email(pubkey_hex: &str) -> String {
     let host = std::env::var("BEEKEEPER_RELAY_URL")

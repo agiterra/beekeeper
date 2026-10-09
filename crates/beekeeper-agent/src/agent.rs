@@ -96,13 +96,13 @@ If you already posted, or if silence is genuinely correct for this turn, ignore 
 /// and never executed — cannot disarm the guard. They must stay *before*
 /// [`is_reply_shaped`]: together with them, and only with them, the `__shell`
 /// suffix is exactly equivalent to "the bare tool name is `shell`".
-fn is_buzz_reply_call(call: &ToolCall, mcp: &McpRegistry) -> bool {
+fn is_beekeeper_reply_call(call: &ToolCall, mcp: &McpRegistry) -> bool {
     mcp.has(&call.name) && !mcp.is_hook(&call.name) && is_reply_shaped(&call.name, &call.arguments)
 }
 
 /// Whether a tool name and arguments have the shape of a Beekeeper publish command.
 ///
-/// Split from [`is_buzz_reply_call`] only so the matcher is testable without a
+/// Split from [`is_beekeeper_reply_call`] only so the matcher is testable without a
 /// live [`McpRegistry`]; callers must apply the registry checks first.
 ///
 /// On the name: `ends_with("__shell")` is exact rather than approximate *given*
@@ -338,8 +338,8 @@ impl RunCtx<'_> {
         // `stop_rejections` above.
         //
         // Named for what it proves: a *recognized attempt* to publish, not a
-        // successful publish. See `is_buzz_reply_call`.
-        let mut buzz_reply_call_seen = false;
+        // successful publish. See `is_beekeeper_reply_call`.
+        let mut beekeeper_reply_call_seen = false;
         let mut reply_nags = 0u32;
         // Per-`run()` reactive context-recovery budget. Per-turn, not
         // per-session: a fresh prompt deserves a fresh chance to recover, and
@@ -711,7 +711,7 @@ impl RunCtx<'_> {
                     // carrying both a hook objection and a reply reminder costs
                     // one rejection and delivers both texts.
                     if self.cfg.require_reply
-                        && !buzz_reply_call_seen
+                        && !beekeeper_reply_call_seen
                         && reply_nags < MAX_REPLY_NAGS
                     {
                         reply_nags += 1;
@@ -737,8 +737,9 @@ impl RunCtx<'_> {
             }
             // Deliberately after truncation: a publish-shaped call that was
             // discarded never runs, so it must not suppress the reminder.
-            if self.cfg.require_reply && !buzz_reply_call_seen {
-                buzz_reply_call_seen = calls.iter().any(|c| is_buzz_reply_call(c, self.mcp));
+            if self.cfg.require_reply && !beekeeper_reply_call_seen {
+                beekeeper_reply_call_seen =
+                    calls.iter().any(|c| is_beekeeper_reply_call(c, self.mcp));
             }
             self.history.push(HistoryItem::Assistant {
                 text: response.text,

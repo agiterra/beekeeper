@@ -11,12 +11,12 @@ description = "Runtime trace schema + independent replay checker for MultiTenant
 # - Depend on NO production Beekeeper crate. The schema carries its own opaque
 #   `CommunityLabel` UUID newtype rather than reusing `beekeeper_core::CommunityId`
 #   so the checker cannot inherit a bug from production type machinery, AND so
-#   buzz-core's deliberate "no Serde, no From<Uuid>" fence on `CommunityId`
+#   beekeeper-core's deliberate "no Serde, no From<Uuid>" fence on `CommunityId`
 #   (the no-parse-from-client rule) is preserved.
 # - The relay's emitter module converts at the seam by calling
 #   `tenant.community().as_uuid()` and wrapping into a `CommunityLabel`.
-# - NEVER depend on buzz-db, beekeeper-relay, buzz-pubsub, buzz-auth, buzz-search,
-#   buzz-audit, or anything that touches the production reducer / authorization
+# - NEVER depend on beekeeper-db, beekeeper-relay, beekeeper-pubsub, beekeeper-auth, beekeeper-search,
+#   beekeeper-audit, or anything that touches the production reducer / authorization
 #   / projection helpers. The checker re-implements the spec transition
 #   relation from scratch so a bug in the production code does not mechanically
 #   become a bug in the checker.

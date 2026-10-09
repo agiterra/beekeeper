@@ -1013,7 +1013,7 @@ pub enum CacheDirSource {
     /// `BEEKEEPER_MANAGED_AGENT` named the running app instance. The desktop host
     /// stamps this on every process it spawns for a seat
     /// (`desktop/src-tauri/src/managed_agents/runtime/process.rs`,
-    /// `current_instance_id`/`buzz_marker_entry`), so a `bee` invoked from
+    /// `current_instance_id`/`beekeeper_marker_entry`), so a `bee` invoked from
     /// inside a seat — or by a caller that exported the same value by hand —
     /// reads its own host's cache rather than the release default.
     Env,

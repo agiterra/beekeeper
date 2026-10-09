@@ -13,7 +13,7 @@
 //!
 //! Beekeeper extension: a `p` tag carrying the pusher's pubkey (or the repo
 //! owner on creation events) so subscribers can filter by author of state
-//! transition. Not part of NIP-34 but consistent with the rest of buzz's
+//! transition. Not part of NIP-34 but consistent with the rest of Beekeeper's
 //! event-publishing conventions.
 
 use std::collections::BTreeMap;

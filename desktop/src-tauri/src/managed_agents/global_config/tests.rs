@@ -55,7 +55,7 @@ fn validate_rejects_derived_key_goose_model() {
 }
 
 #[test]
-fn validate_rejects_derived_key_buzz_agent_provider() {
+fn validate_rejects_derived_key_beekeeper_agent_provider() {
     let config = config_with_env(&[("BEEKEEPER_AGENT_PROVIDER", "anthropic")]);
     let err = validate_global_config(&config).unwrap_err();
     assert!(

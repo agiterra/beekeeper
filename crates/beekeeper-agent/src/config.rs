@@ -538,7 +538,7 @@ impl Config {
         // env vars (ANTHROPIC_MODEL, OPENAI_COMPAT_MODEL, DATABRICKS_MODEL) when
         // present. Set by the desktop from the persona/record to express explicit
         // user intent; provider-specific vars serve as defaults for CLI/standalone use.
-        let buzz_agent_model = env("BEEKEEPER_AGENT_MODEL");
+        let beekeeper_agent_model = env("BEEKEEPER_AGENT_MODEL");
 
         // OPENAI_COMPAT_API is only read when provider=openai, so a stray
         // bad value can't break an Anthropic-only deployment.
@@ -550,7 +550,7 @@ impl Config {
             Provider::Anthropic => (
                 req("ANTHROPIC_API_KEY")?,
                 resolve_model(
-                    buzz_agent_model.as_deref(),
+                    beekeeper_agent_model.as_deref(),
                     env("ANTHROPIC_MODEL").as_deref(),
                 )
                 .ok_or_else(|| "config: ANTHROPIC_MODEL required".to_string())?,
@@ -560,7 +560,7 @@ impl Config {
             Provider::OpenAi => (
                 req("OPENAI_COMPAT_API_KEY")?,
                 resolve_model(
-                    buzz_agent_model.as_deref(),
+                    beekeeper_agent_model.as_deref(),
                     env("OPENAI_COMPAT_MODEL").as_deref(),
                 )
                 .ok_or_else(|| "config: OPENAI_COMPAT_MODEL required".to_string())?,
@@ -569,15 +569,18 @@ impl Config {
             ),
             Provider::Databricks | Provider::DatabricksV2 => (
                 env("DATABRICKS_TOKEN").unwrap_or_default(),
-                resolve_model(buzz_agent_model.as_deref(), databricks_model.as_deref())
-                    .ok_or_else(|| "config: DATABRICKS_MODEL required".to_string())?,
+                resolve_model(
+                    beekeeper_agent_model.as_deref(),
+                    databricks_model.as_deref(),
+                )
+                .ok_or_else(|| "config: DATABRICKS_MODEL required".to_string())?,
                 databricks_host.ok_or_else(|| "config: DATABRICKS_HOST required".to_string())?,
                 OpenAiApi::Chat, // only read by OpenAI/legacy Databricks dispatch
             ),
             Provider::OpenRouter => (
                 req("OPENROUTER_API_KEY")?,
                 resolve_model(
-                    buzz_agent_model.as_deref(),
+                    beekeeper_agent_model.as_deref(),
                     env("OPENROUTER_MODEL").as_deref(),
                 )
                 .ok_or_else(|| "config: OPENROUTER_MODEL required".to_string())?,

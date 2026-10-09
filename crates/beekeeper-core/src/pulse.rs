@@ -763,8 +763,8 @@ mod tests {
             "crates\\buzz-core\\src",
             "crates//buzz-core",
             "crates/beekeeper-core/",
-            "crates/buzz\0core",
-            "crates/buzz\ncore",
+            "crates/beekeeper\0core",
+            "crates/beekeeper\ncore",
             "./",
         ] {
             assert!(

@@ -67,7 +67,7 @@ impl Parse for DatastoreArgs {
 
 /// Instruments an async logical datastore operation according to Beekeeper policy.
 ///
-/// PostgreSQL spans always omit function arguments, use the `buzz_datastore`
+/// PostgreSQL spans always omit function arguments, use the `beekeeper_datastore`
 /// target, and expose only canonical semantic fields plus explicitly supplied
 /// safe fields. An `Err` sets `otel.status_code` without inspecting the error.
 #[proc_macro_attribute]

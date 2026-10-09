@@ -287,7 +287,7 @@ fn no_env_marker_falls_back_to_the_release_identifier_and_says_so() {
 }
 
 /// `BEEKEEPER_MANAGED_AGENT` is the fact the desktop host stamps on every process
-/// it spawns for a seat (`current_instance_id`/`buzz_marker_entry` in
+/// it spawns for a seat (`current_instance_id`/`beekeeper_marker_entry` in
 /// `desktop/src-tauri/src/managed_agents/runtime/process.rs`); a dev bundle's
 /// value must be used verbatim, not folded into the release identifier.
 #[test]

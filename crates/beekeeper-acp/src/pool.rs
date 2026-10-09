@@ -5079,13 +5079,13 @@ mod tests {
 
     #[test]
     fn test_framed_system_prompt_absolute_cwd_prepends_workspace_before_base() {
-        let framed = framed_system_prompt("/Users/me/.buzz", Some("base text"), None)
+        let framed = framed_system_prompt("/Users/me/.beekeeper", Some("base text"), None)
             .expect("base yields Some");
         assert!(
             framed.starts_with("[Workspace]\n"),
             "workspace section must lead: {framed}"
         );
-        assert!(framed.contains("`/Users/me/.buzz`"));
+        assert!(framed.contains("`/Users/me/.beekeeper`"));
         assert!(
             framed.contains("\n\n[Base]\nbase text"),
             "base must follow the workspace section: {framed}"
@@ -5096,7 +5096,7 @@ mod tests {
     fn test_framed_system_prompt_persona_only_omits_workspace() {
         // The workspace section grounds the base prompt's layout; a persona-only
         // agent never received that layout, so no [Workspace] anchor is emitted.
-        let framed = framed_system_prompt("/Users/me/.buzz", None, Some("persona text"))
+        let framed = framed_system_prompt("/Users/me/.beekeeper", None, Some("persona text"))
             .expect("persona yields Some");
         assert_eq!(framed, "[System]\npersona text");
     }
@@ -8144,7 +8144,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
     /// A buzz-agent-commanded context must not panic — verifies the harness
     /// field flows through encrypt/sign without error.
     #[tokio::test]
-    async fn test_publish_agent_turn_metric_buzz_agent_harness_name() {
+    async fn test_publish_agent_turn_metric_beekeeper_agent_harness_name() {
         let agent_keys = nostr::Keys::generate();
         let owner_keys = nostr::Keys::generate();
         let mut ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
@@ -8879,18 +8879,18 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         use std::sync::atomic::Ordering;
 
         let id = Uuid::new_v4();
-        let response = channel_metadata_response(id, &[["name", "buzz-dev"], ["t", "stream"]]);
+        let response = channel_metadata_response(id, &[["name", "beekeeper-dev"], ["t", "stream"]]);
         let (resolver, requests, server) = counting_resolver(response).await;
 
         let (is_dm, title_channel, channel_type) =
             resolve_new_session_channel_context(&resolver, id).await;
         assert!(!is_dm, "a stream channel is not a DM");
-        assert_eq!(title_channel.as_deref(), Some("buzz-dev"));
+        assert_eq!(title_channel.as_deref(), Some("beekeeper-dev"));
         assert_eq!(channel_type.as_deref(), Some("stream"));
         assert_eq!(requests.load(Ordering::SeqCst), 1);
 
         let (_, again, _) = resolve_new_session_channel_context(&resolver, id).await;
-        assert_eq!(again.as_deref(), Some("buzz-dev"));
+        assert_eq!(again.as_deref(), Some("beekeeper-dev"));
         assert_eq!(
             requests.load(Ordering::SeqCst),
             1,
@@ -8923,7 +8923,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
     #[tokio::test]
     async fn test_channel_resolver_absent_description_when_no_about_tag() {
         let id = Uuid::new_v4();
-        let response = channel_metadata_response(id, &[["name", "buzz-dev"], ["t", "stream"]]);
+        let response = channel_metadata_response(id, &[["name", "beekeeper-dev"], ["t", "stream"]]);
         let (resolver, _requests, server) = counting_resolver(response).await;
 
         let info = resolver.resolve(id).await.expect("should resolve");

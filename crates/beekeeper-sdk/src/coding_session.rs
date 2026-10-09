@@ -164,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn cs_target_key_agrees_with_the_buzz_core_definition() {
+    fn cs_target_key_agrees_with_the_beekeeper_core_definition() {
         let target = target();
         assert_eq!(
             coding_session_target_key(&target),

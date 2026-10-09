@@ -447,7 +447,7 @@ async fn git_concurrent_push_one_wins_and_repo_recovers() {
     post_event(&announce).await;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    let tmp = tempdir_named("buzz-e2e-git-concurrent");
+    let tmp = tempdir_named("beekeeper-e2e-git-concurrent");
     let url = format!("{}/git/{}/{}", relay_http_url(), owner_hex, repo);
 
     git(&["clone", "--quiet", &url, "seed"], tmp.path(), &owner_nsec);
@@ -559,7 +559,7 @@ impl Drop for TempDir {
     }
 }
 fn tempdir() -> TempDir {
-    tempdir_named("buzz-e2e-git")
+    tempdir_named("beekeeper-e2e-git")
 }
 
 fn tempdir_named(prefix: &str) -> TempDir {

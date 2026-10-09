@@ -1448,7 +1448,7 @@ mod tests {
                     (0, 0),
                     "{} embeds or runs a SQLx migrator outside the schema/destruction \
                      lock contract; route migration execution through \
-                     buzz_db migration::run_migrations",
+                     beekeeper_db migration::run_migrations",
                     path.display()
                 );
             }
@@ -1773,7 +1773,7 @@ mod tests {
         let admin = PgPool::connect(&base_url)
             .await
             .expect("connect admin database");
-        let probe_db = format!("buzz_lock_cancel_{}", uuid::Uuid::new_v4().simple());
+        let probe_db = format!("beekeeper_lock_cancel_{}", uuid::Uuid::new_v4().simple());
         sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {probe_db}")))
             .execute(&admin)
             .await

@@ -71,28 +71,28 @@ fn identifier_empty_returns_false() {
 
 #[test]
 fn marker_entry_is_namespaced_by_instance_id() {
-    // The spawn stamp and sweep matcher both go through buzz_marker_entry, pinning the on-the-wire
+    // The spawn stamp and sweep matcher both go through beekeeper_marker_entry, pinning the on-the-wire
     // format and guards against a dev build (`...app.dev`) matching a
     // release build's (`...app`) agents.
     assert_eq!(
-        super::buzz_marker_entry("io.agiterra.beekeeper.app"),
+        super::beekeeper_marker_entry("io.agiterra.beekeeper.app"),
         b"BEEKEEPER_MANAGED_AGENT=io.agiterra.beekeeper.app".to_vec()
     );
     assert_ne!(
-        super::buzz_marker_entry("io.agiterra.beekeeper.app"),
-        super::buzz_marker_entry("io.agiterra.beekeeper.app.dev")
+        super::beekeeper_marker_entry("io.agiterra.beekeeper.app"),
+        super::beekeeper_marker_entry("io.agiterra.beekeeper.app.dev")
     );
 }
 
 #[test]
-fn buzz_agent_has_mcp_hooks() {
+fn beekeeper_agent_has_mcp_hooks() {
     let p = known_acp_runtime("buzz-agent").expect("should resolve");
     assert!(p.mcp_hooks);
     assert_eq!(p.mcp_command, Some("beekeeper-dev-mcp"));
 }
 
 #[test]
-fn buzz_agent_resolved_via_path() {
+fn beekeeper_agent_resolved_via_path() {
     assert!(known_acp_runtime("/usr/local/bin/buzz-agent").is_some_and(|p| p.mcp_hooks));
 }
 
@@ -988,7 +988,7 @@ fn invalid_pubkey_resolves_no_pair_key() {
 //
 // Previously: macOS used a two-check OR+AND pattern (equivalent to just marker),
 //             Linux used an AND-gate (name + marker) — wrong for custom harnesses.
-// Fix: all platforms gate on `process_has_buzz_marker` alone; the receipt path
+// Fix: all platforms gate on `process_has_beekeeper_marker` alone; the receipt path
 //      is verified below via `valid_agent_runtime_receipt_with` (injectable),
 //      which no longer takes a name-check predicate at all — reinstating an
 //      AND-gate would be a signature change these tests would catch.

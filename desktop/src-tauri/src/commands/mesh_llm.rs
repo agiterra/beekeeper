@@ -151,7 +151,7 @@ fn restart_to_share(
 
 pub type CmdResult<T> = Result<T, String>;
 
-fn buzz_mesh_name_for_relay(relay_url: &str) -> String {
+fn beekeeper_mesh_name_for_relay(relay_url: &str) -> String {
     let normalized = url::Url::parse(relay_url.trim())
         .map(|url| url.origin().ascii_serialization())
         .unwrap_or_else(|_| relay_url.trim().trim_end_matches('/').to_ascii_lowercase());
@@ -159,8 +159,8 @@ fn buzz_mesh_name_for_relay(relay_url: &str) -> String {
     format!("buzz-community-{}", &digest[..32])
 }
 
-pub(super) fn buzz_mesh_name(state: &AppState) -> String {
-    buzz_mesh_name_for_relay(&relay::relay_ws_url_with_override(state))
+pub(super) fn beekeeper_mesh_name(state: &AppState) -> String {
+    beekeeper_mesh_name_for_relay(&relay::relay_ws_url_with_override(state))
 }
 
 fn advance_mesh_status_cursor(
@@ -261,7 +261,7 @@ pub(crate) async fn resolve_trusted_owner_ids_or_self_only(state: &AppState) -> 
 /// Choose validated live endpoints from other runtimes in this Beekeeper community.
 /// The stable relay-derived mesh name gives every runtime the same MeshLLM mesh
 /// identity; these endpoints supply transport bootstrap only.
-fn buzz_mesh_join_targets(
+fn beekeeper_mesh_join_targets(
     mut targets: Vec<mesh_llm::MeshServeTarget>,
     self_owner_id: &str,
 ) -> Vec<mesh_llm::MeshServeTarget> {
@@ -287,7 +287,7 @@ fn buzz_mesh_join_targets(
 /// Resolve the validated member endpoint this runtime should join to enter the
 /// existing Beekeeper community mesh. `Ok(None)` means this machine is the first
 /// live serving member (or is itself the shared bootstrap contact).
-pub(crate) async fn resolve_buzz_mesh_join_targets_at(
+pub(crate) async fn resolve_beekeeper_mesh_join_targets_at(
     state: &AppState,
     relay_url: &str,
 ) -> Result<Vec<mesh_llm::MeshServeTarget>, String> {
@@ -295,7 +295,7 @@ pub(crate) async fn resolve_buzz_mesh_join_targets_at(
     let self_owner_id = mesh_llm::ensure_owner_identity()
         .map_err(|error| format!("failed to load mesh owner identity: {error}"))?
         .owner_id;
-    Ok(buzz_mesh_join_targets(
+    Ok(beekeeper_mesh_join_targets(
         mesh_llm::availability_from_events(events).serve_targets,
         &self_owner_id,
     ))
@@ -305,7 +305,7 @@ pub(crate) async fn resolve_buzz_mesh_join_targets_at(
 /// snapshot. A node start used to repeat the full membership + status query
 /// for each value, making Share Compute startup both slower and more exposed
 /// to inconsistent snapshots.
-async fn resolve_buzz_mesh_startup_at(
+async fn resolve_beekeeper_mesh_startup_at(
     state: &AppState,
     relay_url: &str,
 ) -> (Vec<String>, Option<String>) {
@@ -315,7 +315,7 @@ async fn resolve_buzz_mesh_startup_at(
             let join_token = mesh_llm::ensure_owner_identity()
                 .ok()
                 .and_then(|identity| {
-                    buzz_mesh_join_targets(
+                    beekeeper_mesh_join_targets(
                         mesh_llm::availability_from_events(events).serve_targets,
                         &identity.owner_id,
                     )
@@ -352,7 +352,8 @@ pub(crate) async fn restore_mesh_sharing(app: &AppHandle, state: &AppState) -> C
         .relay_url
         .clone()
         .unwrap_or_else(|| relay::relay_ws_url_with_override(state));
-    let (trusted_owner_ids, join_token) = resolve_buzz_mesh_startup_at(state, &relay_url).await;
+    let (trusted_owner_ids, join_token) =
+        resolve_beekeeper_mesh_startup_at(state, &relay_url).await;
     let mut runtime = state.mesh_llm_runtime.lock().await;
     if runtime.is_some() {
         return Ok(());
@@ -371,7 +372,7 @@ pub(crate) async fn restore_mesh_sharing(app: &AppHandle, state: &AppState) -> C
         model_id: Some(config.model_id.clone()),
         max_vram_gb: config.max_vram_gb,
         join_token,
-        mesh_name: Some(buzz_mesh_name_for_relay(&relay_url)),
+        mesh_name: Some(beekeeper_mesh_name_for_relay(&relay_url)),
         relay_url: Some(relay_url),
         trusted_owner_ids: Some(trusted_owner_ids),
     };
@@ -448,13 +449,13 @@ pub async fn mesh_start_node(
     // endpoint from one snapshot so UI startup does not repeat relay probes.
     if request.trusted_owner_ids.is_none() || request.join_token.is_none() {
         let (trusted_owner_ids, join_token) =
-            resolve_buzz_mesh_startup_at(&state, &relay_url).await;
+            resolve_beekeeper_mesh_startup_at(&state, &relay_url).await;
         request.trusted_owner_ids.get_or_insert(trusted_owner_ids);
         if request.join_token.is_none() {
             request.join_token = join_token;
         }
     }
-    request.mesh_name = Some(buzz_mesh_name_for_relay(&relay_url));
+    request.mesh_name = Some(beekeeper_mesh_name_for_relay(&relay_url));
     let mut runtime = state.mesh_llm_runtime.lock().await;
 
     let plan = match runtime.as_ref() {
@@ -588,7 +589,7 @@ pub(crate) async fn ensure_client_node_for_model(
         model_id: None,
         max_vram_gb: None,
         join_token: Some(join_token.clone()),
-        mesh_name: Some(buzz_mesh_name(state)),
+        mesh_name: Some(beekeeper_mesh_name(state)),
         relay_url: Some(relay::relay_ws_url_with_override(state)),
         trusted_owner_ids: Some(resolve_trusted_owner_ids_or_self_only(state).await),
     };

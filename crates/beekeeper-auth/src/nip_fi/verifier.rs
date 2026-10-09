@@ -45,7 +45,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 /// Sealing for [`IssuerKeySource`]: only types defined in this crate can name
-/// this private supertrait, so no external `buzz_auth` consumer can implement
+/// this private supertrait, so no external `beekeeper_auth` consumer can implement
 /// the key-source trait. Combined with the crate-private [`AssertionKeySet`]
 /// constructor, this makes the accepted issuer→JWKS authority impossible to
 /// synthesize outside the crate's trusted configuration path.
@@ -157,7 +157,7 @@ impl fmt::Debug for AssertionKeySet {
 /// is a trusted startup act, not per-request input.
 ///
 /// This trait is sealed via a private supertrait, so it cannot be implemented
-/// outside `buzz_auth`. That closes the authority-construction seam: an
+/// outside `beekeeper_auth`. That closes the authority-construction seam: an
 /// external consumer cannot supply its own source that returns issuer B's JWKS
 /// labelled as issuer A, because it can neither implement this trait nor build
 /// an [`AssertionKeySet`]. The accepted issuer→JWKS authority is entirely

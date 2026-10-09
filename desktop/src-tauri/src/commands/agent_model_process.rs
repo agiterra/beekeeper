@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use crate::managed_agents::{
-    build_buzz_agent_provider_defaults, default_agent_workdir, known_acp_runtime,
+    build_beekeeper_agent_provider_defaults, default_agent_workdir, known_acp_runtime,
     redact_env_values_in, AgentModelsResponse,
 };
 
@@ -49,7 +49,7 @@ pub(crate) async fn run_agent_models_command(
         }
         // Mirror runtime spawn: internal builds may bake provider/model
         // defaults. User-provided env below still wins.
-        build_buzz_agent_provider_defaults(&mut cmd);
+        build_beekeeper_agent_provider_defaults(&mut cmd);
         // User env layering — written LAST so it overrides any Beekeeper-set env above.
         for (k, v) in &merged_env {
             cmd.env(k, v);

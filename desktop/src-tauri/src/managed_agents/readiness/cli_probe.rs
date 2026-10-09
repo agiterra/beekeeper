@@ -147,7 +147,11 @@ mod tests {
     #[test]
     fn append_inherited_path_appends_after_augmented() {
         let sep = if cfg!(windows) { ';' } else { ':' };
-        let augmented = format!("{0}buzz-bin{1}{0}exe-dir", std::path::MAIN_SEPARATOR, sep);
+        let augmented = format!(
+            "{0}beekeeper-bin{1}{0}exe-dir",
+            std::path::MAIN_SEPARATOR,
+            sep
+        );
         let inherited = format!(
             "{0}user-bin{1}{0}system-bin",
             std::path::MAIN_SEPARATOR,

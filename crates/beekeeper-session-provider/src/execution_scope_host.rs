@@ -405,7 +405,8 @@ pub(crate) const UNBOUNDED_FOR_TESTS: HostLaunchPlan = HostLaunchPlan::Unenforce
 pub(crate) fn test_state_dir() -> PathBuf {
     static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("buzz-csp-host-tests-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("beekeeper-csp-host-tests-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         dir.canonicalize().unwrap_or(dir)
     })

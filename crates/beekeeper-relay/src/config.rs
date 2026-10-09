@@ -1532,7 +1532,7 @@ mod tests {
         );
         std::env::set_var(
             "RELAY_OPERATOR_API_ORIGIN",
-            "http://buzz.mesh.bb-production.com",
+            "http://beekeeper.mesh.example.com",
         );
         let config = Config::from_env().expect("config");
         std::env::remove_var("RELAY_OPERATOR_PUBKEYS");
@@ -1580,7 +1580,10 @@ mod tests {
     #[test]
     fn relay_operator_api_origin_rejects_paths() {
         let _guard = ENV_MUTEX.lock().unwrap();
-        std::env::set_var("RELAY_OPERATOR_API_ORIGIN", "https://buzz.example/operator");
+        std::env::set_var(
+            "RELAY_OPERATOR_API_ORIGIN",
+            "https://beekeeper.example/operator",
+        );
         let result = Config::from_env();
         std::env::remove_var("RELAY_OPERATOR_API_ORIGIN");
 
@@ -1690,14 +1693,17 @@ mod tests {
     #[test]
     fn pairing_relay_url_accepts_websocket_urls_and_rejects_http() {
         let _guard = ENV_MUTEX.lock().unwrap();
-        std::env::set_var("BEEKEEPER_PAIRING_RELAY_URL", "wss://pairing.buzz.xyz");
+        std::env::set_var("BEEKEEPER_PAIRING_RELAY_URL", "wss://pairing.beekeeper.xyz");
         let config = Config::from_env().expect("config");
         assert_eq!(
             config.pairing_relay_url.as_deref(),
-            Some("wss://pairing.buzz.xyz")
+            Some("wss://pairing.beekeeper.xyz")
         );
 
-        std::env::set_var("BEEKEEPER_PAIRING_RELAY_URL", "https://pairing.buzz.xyz");
+        std::env::set_var(
+            "BEEKEEPER_PAIRING_RELAY_URL",
+            "https://pairing.beekeeper.xyz",
+        );
         let result = Config::from_env();
         std::env::remove_var("BEEKEEPER_PAIRING_RELAY_URL");
         assert!(matches!(
@@ -1720,7 +1726,7 @@ mod tests {
         let _guard = ENV_MUTEX.lock().unwrap();
         // Pick a path under temp_dir that definitely doesn't exist yet.
         let base = std::env::temp_dir().join(format!(
-            "buzz-test-git-repo-path-{}-{}",
+            "beekeeper-test-git-repo-path-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

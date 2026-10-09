@@ -40,7 +40,7 @@ pub(crate) const KNOWN_AGENT_BINARIES: &[&str] = &[
 /// Script interpreters that may host managed agent wrappers (e.g. npm shims).
 /// A process whose name matches here is NOT immediately claimed — it must also
 /// carry `BEEKEEPER_MANAGED_AGENT` in its environment (checked by the caller via
-/// `process_has_buzz_marker()`). This avoids sweeping unrelated node processes.
+/// `process_has_beekeeper_marker()`). This avoids sweeping unrelated node processes.
 pub(crate) const KNOWN_SCRIPT_INTERPRETERS: &[&str] = &["node"];
 
 /// Check if a process name matches any of our known agent binaries.
@@ -100,7 +100,7 @@ pub(crate) fn process_belongs_to_us(pid: u32) -> bool {
     }
     let name = String::from_utf8_lossy(&buf[..len as usize]);
     // Fall through for script interpreters (e.g. `node` hosting an npm shim):
-    // the caller's `process_has_buzz_marker()` check decides true ownership.
+    // the caller's `process_has_beekeeper_marker()` check decides true ownership.
     name_matches_known_binary(&name) || name_matches_interpreter(&name)
 }
 
@@ -152,13 +152,13 @@ pub(crate) fn current_instance_id(app: &AppHandle) -> String {
 /// against when scanning processes. Kept here so the spawn stamp and the sweep
 /// matcher can never drift apart.
 #[cfg(test)]
-pub(super) fn buzz_marker_entry(instance_id: &str) -> Vec<u8> {
+pub(super) fn beekeeper_marker_entry(instance_id: &str) -> Vec<u8> {
     format!("BEEKEEPER_MANAGED_AGENT={instance_id}").into_bytes()
 }
 
 /// The null-delimited environment block of a running process, or `None`.
 ///
-/// Extracted from `process_has_buzz_marker` so that more than one question can
+/// Extracted from `process_has_beekeeper_marker` so that more than one question can
 /// be asked of a process's environment without a second copy of this walk.
 /// The second question is [`process_has_env_key`], which is what keeps a
 /// process another launcher owns out of this app's sweeps.
@@ -217,7 +217,7 @@ fn process_env_block(_pid: u32) -> Option<Vec<u8>> {
 /// `BEEKEEPER_MANAGED_AGENT=<instance_id>` in its environment, where `instance_id`
 /// is this desktop instance's id. A process stamped with a *different*
 /// instance id belongs to another live Beekeeper app and must never be reaped here.
-pub(crate) fn process_has_buzz_marker(pid: u32, instance_id: &str) -> bool {
+pub(crate) fn process_has_beekeeper_marker(pid: u32, instance_id: &str) -> bool {
     let Some(block) = process_env_block(pid) else {
         return false;
     };
@@ -471,7 +471,7 @@ pub(crate) fn valid_agent_runtime_receipt(
         receipt,
         instance_id,
         process_is_running,
-        process_has_buzz_marker,
+        process_has_beekeeper_marker,
     )
 }
 

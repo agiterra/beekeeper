@@ -389,7 +389,7 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
     let mut nudged_event_ids: HashSet<EventId> = HashSet::new();
 
     loop {
-        let Some(buzz_event) = relay.next_event().await else {
+        let Some(beekeeper_event) = relay.next_event().await else {
             tracing::warn!("setup-mode: relay event stream ended — requesting reconnect");
             if let Err(e) = relay.reconnect().await {
                 tracing::error!("setup-mode: relay background task is gone: {e} — exiting");
@@ -398,14 +398,15 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
             continue;
         };
 
-        let kind_u32 = buzz_event.event.kind.as_u16() as u32;
+        let kind_u32 = beekeeper_event.event.kind.as_u16() as u32;
 
         // Handle membership notifications so we subscribe to new channels
         // and drop removed ones — no session/queue drain needed (no pool).
         if kind_u32 == KIND_MEMBER_ADDED_NOTIFICATION
             || kind_u32 == KIND_MEMBER_REMOVED_NOTIFICATION
         {
-            handle_setup_membership(&mut relay, &buzz_event, &config, &rules, &channel_ids).await;
+            handle_setup_membership(&mut relay, &beekeeper_event, &config, &rules, &channel_ids)
+                .await;
             continue;
         }
 
@@ -415,21 +416,21 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
         }
 
         // ignore_self: don't react to our own messages.
-        if buzz_event.event.pubkey.to_hex() == pubkey_hex {
+        if beekeeper_event.event.pubkey.to_hex() == pubkey_hex {
             continue;
         }
 
         // Require an explicit @mention of this agent — setup mode must not
         // nudge on every channel event even if subscribe_mode is "all".
-        if !event_mentions_agent(&buzz_event.event, &pubkey_hex) {
+        if !event_mentions_agent(&beekeeper_event.event, &pubkey_hex) {
             continue;
         }
 
         // Apply the same author gate as normal mode so the nudge only goes
         // to authors the real agent would have answered. Same DM hardening:
         // in DMs only owner/siblings get a nudge (fail-closed on unknown type).
-        let author_hex = buzz_event.event.pubkey.to_hex();
-        let is_dm = crate::is_dm_channel(buzz_event.channel_id, &channel_info).await;
+        let author_hex = beekeeper_event.event.pubkey.to_hex();
+        let is_dm = crate::is_dm_channel(beekeeper_event.channel_id, &channel_info).await;
         let allowed = author_allowed(
             &config.respond_to,
             &config.respond_to_allowlist,
@@ -442,8 +443,8 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
 
         // Apply channel/kind filter rules.
         let filter_matched = filter::match_event(
-            &buzz_event.event,
-            buzz_event.channel_id,
+            &beekeeper_event.event,
+            beekeeper_event.channel_id,
             &rules,
             &pubkey_hex,
         )
@@ -452,7 +453,7 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
 
         // Pure gate: author gate verdict + event-id dedup.
         if !should_nudge_for_event(
-            buzz_event.event.id,
+            beekeeper_event.event.id,
             allowed,
             filter_matched,
             &mut nudged_event_ids,
@@ -464,8 +465,8 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
         if let Err(e) = publish_setup_nudge(
             &publisher,
             &config.keys,
-            buzz_event.channel_id,
-            &buzz_event.event,
+            beekeeper_event.channel_id,
+            &beekeeper_event.event,
             &payload,
         )
         .await
@@ -473,8 +474,8 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
             tracing::warn!("setup-mode: failed to publish nudge: {e}");
         } else {
             tracing::info!(
-                channel_id = %buzz_event.channel_id,
-                event_id = %buzz_event.event.id,
+                channel_id = %beekeeper_event.channel_id,
+                event_id = %beekeeper_event.event.id,
                 "setup-mode: nudge published"
             );
         }
@@ -562,13 +563,13 @@ fn mentions_rule(kinds: Vec<u32>) -> filter::SubscriptionRule {
 /// teardown — there is no pool.
 async fn handle_setup_membership(
     relay: &mut HarnessRelay,
-    buzz_event: &crate::relay::BeekeeperEvent,
+    beekeeper_event: &crate::relay::BeekeeperEvent,
     config: &Config,
     rules: &[filter::SubscriptionRule],
     _initial_channel_ids: &[Uuid],
 ) {
-    let kind_u32 = buzz_event.event.kind.as_u16() as u32;
-    let channel_id = buzz_event.channel_id;
+    let kind_u32 = beekeeper_event.event.kind.as_u16() as u32;
+    let channel_id = beekeeper_event.channel_id;
 
     if kind_u32 == KIND_MEMBER_ADDED_NOTIFICATION {
         // Subscribe to the newly-joined channel.
@@ -873,7 +874,7 @@ mod tests {
     }
 
     #[test]
-    fn nudge_body_all_buzz_managed_retains_original_footer() {
+    fn nudge_body_all_beekeeper_managed_retains_original_footer() {
         // Pure Beekeeper-managed requirements → original "Open Edit Agent" footer unchanged.
         let payload = SetupPayload {
             agent_name: "Fizz".to_string(),

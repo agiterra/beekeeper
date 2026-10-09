@@ -153,11 +153,19 @@ mod compose_tests {
 
     #[test]
     fn managed_entries_appear_first() {
-        let managed = vec![p("/buzz/node/bin"), p("/buzz/npm/bin")];
+        let managed = vec![p("/beekeeper/node/bin"), p("/beekeeper/npm/bin")];
         let login = vec![p("/usr/local/bin"), p("/usr/bin")];
         let result = compose_path_entries(managed, login, vec![], false);
-        assert_eq!(result[0], p("/buzz/node/bin"), "managed[0] must be first");
-        assert_eq!(result[1], p("/buzz/npm/bin"), "managed[1] must be second");
+        assert_eq!(
+            result[0],
+            p("/beekeeper/node/bin"),
+            "managed[0] must be first"
+        );
+        assert_eq!(
+            result[1],
+            p("/beekeeper/npm/bin"),
+            "managed[1] must be second"
+        );
         assert_eq!(
             result[2],
             p("/usr/local/bin"),
@@ -178,10 +186,10 @@ mod compose_tests {
 
     #[test]
     fn inherited_appended_last_when_use_inherited_true() {
-        let managed = vec![p("/buzz/npm/bin")];
+        let managed = vec![p("/beekeeper/npm/bin")];
         let inherited = vec![p("C:/windows/node"), p("C:/windows/npm")];
         let result = compose_path_entries(managed, vec![], inherited.clone(), true);
-        assert_eq!(result[0], p("/buzz/npm/bin"), "managed must be first");
+        assert_eq!(result[0], p("/beekeeper/npm/bin"), "managed must be first");
         assert_eq!(
             &result[1..],
             &inherited[..],
@@ -193,7 +201,7 @@ mod compose_tests {
     /// entries, not None and not a phantom segment.
     #[test]
     fn windows_policy_on_empty_inherited_produces_managed_only() {
-        let managed = vec![p("/buzz/npm/bin")];
+        let managed = vec![p("/beekeeper/npm/bin")];
         let result = compose_path_entries(managed.clone(), vec![], vec![], true);
         assert_eq!(
             result, managed,
@@ -206,7 +214,7 @@ mod compose_tests {
     #[test]
     fn windows_policy_on_unset_inherited_path_produces_managed_only() {
         // Simulates std::env::var_os("PATH") returning None → empty vec.
-        let managed = vec![p("/buzz/npm/bin")];
+        let managed = vec![p("/beekeeper/npm/bin")];
         let inherited: Vec<PathBuf> = vec![]; // empty, as if PATH is unset
         let result = compose_path_entries(managed.clone(), vec![], inherited, true);
         assert_eq!(result, managed);
@@ -238,14 +246,14 @@ mod compose_tests {
     #[cfg(unix)]
     #[test]
     fn unix_use_inherited_false_output_unchanged() {
-        let managed = vec![p("/buzz/npm/bin")];
+        let managed = vec![p("/beekeeper/npm/bin")];
         let login = vec![p("/usr/local/bin"), p("/usr/bin"), p("/bin")];
         let inherited = vec![p("/proc/ambient/PATH")]; // would be real proc PATH on Unix
         let result = compose_path_entries(managed, login, inherited, false);
         assert_eq!(
             result,
             vec![
-                p("/buzz/npm/bin"),
+                p("/beekeeper/npm/bin"),
                 p("/usr/local/bin"),
                 p("/usr/bin"),
                 p("/bin")

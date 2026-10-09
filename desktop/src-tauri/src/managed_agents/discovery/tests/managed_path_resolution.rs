@@ -28,7 +28,7 @@ fn common_binary_paths_probes_legacy_goose_install_dir() {
 
 #[cfg(unix)]
 #[test]
-fn resolve_command_prefers_buzz_managed_npm_shim_over_path() {
+fn resolve_command_prefers_beekeeper_managed_npm_shim_over_path() {
     use std::os::unix::fs::PermissionsExt;
 
     let _guard = crate::managed_agents::lock_path_mutex();

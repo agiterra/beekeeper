@@ -1598,7 +1598,7 @@ mod tests {
     fn notification_deserializes_without_used_and_context_limit() {
         // buzz-agent emits usage_update without used/contextLimit.
         let raw = serde_json::json!({
-            "sessionId": "buzz-sess",
+            "sessionId": "beekeeper-sess",
             "update": {
                 "sessionUpdate": "usage_update",
                 "accumulatedInputTokens": 500,
@@ -1656,11 +1656,11 @@ mod tests {
     }
 
     #[test]
-    fn buzz_agent_notification_flows_through_tracker() {
+    fn beekeeper_agent_notification_flows_through_tracker() {
         // End-to-end: a buzz-agent-shaped usage_update (no used/contextLimit)
         // deserializes and flows through UsageTracker to produce correct TurnUsage.
         let raw1 = serde_json::json!({
-            "sessionId": "buzz-s1",
+            "sessionId": "beekeeper-s1",
             "update": {
                 "sessionUpdate": "usage_update",
                 "accumulatedInputTokens": 300,
@@ -1668,7 +1668,7 @@ mod tests {
             }
         });
         let raw2 = serde_json::json!({
-            "sessionId": "buzz-s1",
+            "sessionId": "beekeeper-s1",
             "update": {
                 "sessionUpdate": "usage_update",
                 "accumulatedInputTokens": 700,
@@ -1679,20 +1679,20 @@ mod tests {
         let mut tracker = UsageTracker::default();
 
         // Turn 1 — first turn, delta unreliable.
-        tracker.begin_turn("buzz-s1");
+        tracker.begin_turn("beekeeper-s1");
         let notif1: GooseSessionUpdateNotification = serde_json::from_value(raw1).expect("deser");
         if let GooseSessionUpdateVariant::UsageUpdate(p) = notif1.update {
-            tracker.record("buzz-s1", &p);
+            tracker.record("beekeeper-s1", &p);
         }
         let t1 = tracker.take().expect("turn 1");
         assert!(!t1.delta_reliable, "first turn: unreliable");
         assert_eq!(t1.cumulative_input_tokens, Some(300));
 
         // Turn 2 — delta reliable.
-        tracker.begin_turn("buzz-s1");
+        tracker.begin_turn("beekeeper-s1");
         let notif2: GooseSessionUpdateNotification = serde_json::from_value(raw2).expect("deser");
         if let GooseSessionUpdateVariant::UsageUpdate(p) = notif2.update {
-            tracker.record("buzz-s1", &p);
+            tracker.record("beekeeper-s1", &p);
         }
         let t2 = tracker.take().expect("turn 2");
         assert!(t2.delta_reliable, "second turn: reliable");
@@ -1701,7 +1701,7 @@ mod tests {
     }
 
     #[test]
-    fn buzz_agent_payload_no_context_fields_processes_correctly() {
+    fn beekeeper_agent_payload_no_context_fields_processes_correctly() {
         // UsageTracker handles payloads with used=0 / context_limit=0 correctly.
         let mut tracker = UsageTracker::default();
         tracker.begin_turn("s");

@@ -947,7 +947,7 @@ pub enum ChannelsCmd {
     },
     /// Search channels by human-readable name
     #[command(
-        after_help = "Examples:\n  bee channels search --query composer\n  bee channels search --query buzz-chat-composer --exact\n  bee channels search --query design --include-archived"
+        after_help = "Examples:\n  bee channels search --query composer\n  bee channels search --query beekeeper-chat-composer --exact\n  bee channels search --query design --include-archived"
     )]
     Search {
         /// Search query (case-insensitive substring of channel name)
@@ -1925,7 +1925,7 @@ pub enum ProjectsCmd {
         /// Project identifier (slug), up to 1024 bytes; without --repo it must
         /// also be a valid repository id (1–64 of [A-Za-z0-9._-])
         slug: String,
-        /// Member repository coordinate: bare Beekeeper repo id (e.g. `buzz`) or full
+        /// Member repository coordinate: bare Beekeeper repo id (e.g. `beekeeper`) or full
         /// `30617:<owner-hex>:<repo-d>` for cross-owner or colon-bearing repo ids.
         /// Repeatable. Omit to create the project's own repositories.
         #[arg(long = "repo")]
@@ -6548,7 +6548,7 @@ mod tests {
     #[test]
     fn set_status_clear_rejects_text_and_emoji() {
         for extra in [["--text", "busy"], ["--emoji", "🎶"]] {
-            let args = ["buzz", "users", "set-status", "--clear"]
+            let args = ["bee", "users", "set-status", "--clear"]
                 .into_iter()
                 .chain(extra);
             assert!(
@@ -6561,12 +6561,12 @@ mod tests {
 
     #[test]
     fn set_status_requires_text_or_clear() {
-        assert!(Cli::try_parse_from(["buzz", "users", "set-status"]).is_err());
+        assert!(Cli::try_parse_from(["bee", "users", "set-status"]).is_err());
         assert!(
-            Cli::try_parse_from(["buzz", "users", "set-status", "--emoji", "🎶"]).is_err(),
+            Cli::try_parse_from(["bee", "users", "set-status", "--emoji", "🎶"]).is_err(),
             "--emoji alone must not imply a status"
         );
-        assert!(Cli::try_parse_from(["buzz", "users", "set-status", "--clear"]).is_ok());
+        assert!(Cli::try_parse_from(["bee", "users", "set-status", "--clear"]).is_ok());
     }
 
     /// A seat must be able to say which `bee` it ran. `bee --version` is that
@@ -7638,7 +7638,7 @@ mod tests {
     fn projects_update_multi_field_is_accepted() {
         assert!(
             Cli::try_parse_from([
-                "buzz",
+                "bee",
                 "projects",
                 "update",
                 "my-slug",
@@ -7657,7 +7657,7 @@ mod tests {
     fn projects_update_setter_with_other_clearer_is_accepted() {
         assert!(
             Cli::try_parse_from([
-                "buzz",
+                "bee",
                 "projects",
                 "update",
                 "my-slug",
@@ -7675,7 +7675,7 @@ mod tests {
     fn projects_update_setter_with_own_clearer_is_rejected() {
         assert!(
             Cli::try_parse_from([
-                "buzz",
+                "bee",
                 "projects",
                 "update",
                 "my-slug",
@@ -7697,7 +7697,7 @@ mod tests {
         // kind is not a runtime/auth failure — Cli::try_parse_from returns Err
         // immediately for argument violations.
         assert!(
-            Cli::try_parse_from(["buzz", "projects", "update", "my-slug"]).is_err(),
+            Cli::try_parse_from(["bee", "projects", "update", "my-slug"]).is_err(),
             "update with no setters or clearers must be rejected at parse time"
         );
     }
@@ -7709,12 +7709,12 @@ mod tests {
     #[test]
     fn pulse_update_requires_content() {
         assert!(
-            Cli::try_parse_from(["buzz", "pulse", "update", "--kind", "plan"]).is_err(),
+            Cli::try_parse_from(["bee", "pulse", "update", "--kind", "plan"]).is_err(),
             "update without --content must be rejected at parse time"
         );
         assert!(
             Cli::try_parse_from([
-                "buzz",
+                "bee",
                 "pulse",
                 "update",
                 "--kind",
@@ -7732,7 +7732,7 @@ mod tests {
     #[test]
     fn pulse_update_invalid_kind_is_rejected_by_clap() {
         assert!(Cli::try_parse_from([
-            "buzz",
+            "bee",
             "pulse",
             "update",
             "--kind",
@@ -7743,7 +7743,7 @@ mod tests {
         .is_err());
         for kind in ["plan", "milestone", "note", "handoff", "blocker"] {
             assert!(
-                Cli::try_parse_from(["buzz", "pulse", "update", "--kind", kind, "--content", "x"])
+                Cli::try_parse_from(["bee", "pulse", "update", "--kind", kind, "--content", "x"])
                     .is_ok(),
                 "--kind {kind} must be accepted"
             );
@@ -7757,7 +7757,7 @@ mod tests {
     fn pulse_reads_parse_without_an_explicit_project() {
         for command in ["list", "sessions", "digest"] {
             assert!(
-                Cli::try_parse_from(["buzz", "pulse", command]).is_ok(),
+                Cli::try_parse_from(["bee", "pulse", command]).is_ok(),
                 "pulse {command} must parse without --project"
             );
         }
@@ -7772,24 +7772,24 @@ mod tests {
         let owner = "a".repeat(64);
         let coordinate = format!("30621:{owner}:alpha");
         for argv in [
-            vec!["buzz", "projects", "agents"],
-            vec!["buzz", "projects", "agents", "alpha"],
-            vec!["buzz", "projects", "agents", "alpha", "--owner", &owner],
-            vec!["buzz", "projects", "agents", "--project", &coordinate],
-            vec!["buzz", "--format", "compact", "projects", "agents"],
+            vec!["bee", "projects", "agents"],
+            vec!["bee", "projects", "agents", "alpha"],
+            vec!["bee", "projects", "agents", "alpha", "--owner", &owner],
+            vec!["bee", "projects", "agents", "--project", &coordinate],
+            vec!["bee", "--format", "compact", "projects", "agents"],
         ] {
             assert!(Cli::try_parse_from(&argv).is_ok(), "{argv:?} must parse");
         }
         for argv in [
             vec![
-                "buzz",
+                "bee",
                 "projects",
                 "agents",
                 "alpha",
                 "--project",
                 &coordinate,
             ],
-            vec!["buzz", "projects", "agents", "--owner", &owner],
+            vec!["bee", "projects", "agents", "--owner", &owner],
         ] {
             assert!(
                 Cli::try_parse_from(&argv).is_err(),
@@ -7803,12 +7803,12 @@ mod tests {
     fn projects_create_invalid_visibility_is_rejected_by_clap() {
         assert!(
             Cli::try_parse_from([
-                "buzz",
+                "bee",
                 "projects",
                 "create",
                 "my-slug",
                 "--repo",
-                "buzz",
+                "beekeeper",
                 "--visibility",
                 "chartreuse",
             ])
@@ -7822,7 +7822,7 @@ mod tests {
     fn projects_update_invalid_visibility_is_rejected_by_clap() {
         assert!(
             Cli::try_parse_from([
-                "buzz",
+                "bee",
                 "projects",
                 "update",
                 "my-slug",

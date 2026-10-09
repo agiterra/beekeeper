@@ -28,7 +28,7 @@ fn reported_target(
 }
 
 #[test]
-fn buzz_mesh_join_uses_the_same_live_member_from_every_other_node() {
+fn beekeeper_mesh_join_uses_the_same_live_member_from_every_other_node() {
     let targets = vec![
         reported_target("member-c", "model-c", "addr-c"),
         reported_target("member-a", "model-a", "addr-a"),
@@ -36,14 +36,14 @@ fn buzz_mesh_join_uses_the_same_live_member_from_every_other_node() {
     ];
 
     assert_eq!(
-        buzz_mesh_join_targets(targets.clone(), "member-b")
+        beekeeper_mesh_join_targets(targets.clone(), "member-b")
             .into_iter()
             .next()
             .map(|target| target.endpoint_addr),
         Some("addr-a".to_string())
     );
     assert_eq!(
-        buzz_mesh_join_targets(targets, "member-c")
+        beekeeper_mesh_join_targets(targets, "member-c")
             .into_iter()
             .next()
             .map(|target| target.endpoint_addr),
@@ -52,14 +52,14 @@ fn buzz_mesh_join_uses_the_same_live_member_from_every_other_node() {
 }
 
 #[test]
-fn buzz_mesh_bootstrap_member_does_not_dial_itself() {
+fn beekeeper_mesh_bootstrap_member_does_not_dial_itself() {
     let targets = vec![
         reported_target("member-b", "model-b", "addr-b"),
         reported_target("member-a", "model-a", "addr-a"),
     ];
 
     assert_eq!(
-        buzz_mesh_join_targets(targets, "MEMBER-A")
+        beekeeper_mesh_join_targets(targets, "MEMBER-A")
             .into_iter()
             .next(),
         Some(reported_target("member-b", "model-b", "addr-b"))
@@ -67,14 +67,14 @@ fn buzz_mesh_bootstrap_member_does_not_dial_itself() {
 }
 
 #[test]
-fn buzz_mesh_join_ignores_targets_without_a_validated_reporter() {
+fn beekeeper_mesh_join_ignores_targets_without_a_validated_reporter() {
     let targets = vec![
         target("unbound-model", "unbound-addr"),
         reported_target("member-b", "model-b", "addr-b"),
     ];
 
     assert_eq!(
-        buzz_mesh_join_targets(targets, "member-c")
+        beekeeper_mesh_join_targets(targets, "member-c")
             .into_iter()
             .next()
             .map(|target| target.endpoint_addr),
@@ -83,14 +83,14 @@ fn buzz_mesh_join_ignores_targets_without_a_validated_reporter() {
 }
 
 #[test]
-fn buzz_mesh_join_keeps_other_device_with_the_same_member_key() {
+fn beekeeper_mesh_join_keeps_other_device_with_the_same_member_key() {
     let mut self_target = reported_target("same-member", "model-a", "self-addr");
     self_target.owner_id = Some("owner-self".to_string());
     let mut other_device = reported_target("same-member", "model-b", "other-addr");
     other_device.owner_id = Some("owner-other".to_string());
 
     assert_eq!(
-        buzz_mesh_join_targets(vec![self_target, other_device], "owner-self")
+        beekeeper_mesh_join_targets(vec![self_target, other_device], "owner-self")
             .into_iter()
             .next()
             .map(|target| target.endpoint_addr),
@@ -99,10 +99,10 @@ fn buzz_mesh_join_keeps_other_device_with_the_same_member_key() {
 }
 
 #[test]
-fn buzz_mesh_name_is_stable_and_does_not_expose_the_relay() {
-    let first = buzz_mesh_name_for_relay("WSS://EXAMPLE.COM/");
-    let second = buzz_mesh_name_for_relay("wss://example.com:443/some/path?ignored=yes");
-    let other_relay = buzz_mesh_name_for_relay("wss://other.example.com");
+fn beekeeper_mesh_name_is_stable_and_does_not_expose_the_relay() {
+    let first = beekeeper_mesh_name_for_relay("WSS://EXAMPLE.COM/");
+    let second = beekeeper_mesh_name_for_relay("wss://example.com:443/some/path?ignored=yes");
+    let other_relay = beekeeper_mesh_name_for_relay("wss://other.example.com");
 
     assert_eq!(first, second);
     assert_ne!(first, other_relay);

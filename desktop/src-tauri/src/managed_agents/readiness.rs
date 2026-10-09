@@ -413,7 +413,7 @@ fn collect_missing_requirements(
     };
 
     match rt.id {
-        "buzz-agent" => buzz_agent_requirements(effective),
+        "buzz-agent" => beekeeper_agent_requirements(effective),
         "goose" => {
             // Read the file config once at the call site so the inner fn is
             // pure and unit-testable by injection.
@@ -431,7 +431,7 @@ fn collect_missing_requirements(
 }
 
 /// Requirements for buzz-agent (provider + model + provider-specific creds).
-fn buzz_agent_requirements(effective: &EffectiveAgentEnv) -> Vec<Requirement> {
+fn beekeeper_agent_requirements(effective: &EffectiveAgentEnv) -> Vec<Requirement> {
     let mut missing = Vec::new();
 
     #[cfg(windows)]
@@ -541,7 +541,7 @@ fn goose_requirements(
 ) -> Vec<Requirement> {
     let mut missing = Vec::new();
 
-    // Empty string treated as absent — same as buzz_agent_requirements.
+    // Empty string treated as absent — same as beekeeper_agent_requirements.
     let provider = effective
         .env
         .get("GOOSE_PROVIDER")

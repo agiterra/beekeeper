@@ -619,8 +619,10 @@ pub async fn cmd_registry_measure(
         .map_err(|error| CliError::Usage(format!("{}/{}: {error}", role, task.id)))?;
     }
 
-    let scratch_root =
-        std::env::temp_dir().join(format!("buzz-registry-bench-{role}-{}", std::process::id()));
+    let scratch_root = std::env::temp_dir().join(format!(
+        "beekeeper-registry-bench-{role}-{}",
+        std::process::id()
+    ));
     let manifest = read_role_bench_files(&bench_root, role)?;
     let (results, per_run) = run_bench(
         &AdapterRunner,

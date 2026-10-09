@@ -33,7 +33,7 @@ fn package() -> CodingSessionContextPackage {
             channel_id: Uuid::nil(),
             name: Some("Rehydrated context".into()),
             goal: Some("Continue from verified durable facts".into()),
-            project_ref: Some(format!("30621:{}:buzz", "ef".repeat(32))),
+            project_ref: Some(format!("30621:{}:beekeeper", "ef".repeat(32))),
         },
         provenance: CodingSessionContextProvenance {
             generated_at: 1,

@@ -503,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn test_effective_buzz_shell_override_marks_agent_ready() {
+    fn test_effective_beekeeper_shell_override_marks_agent_ready() {
         let temp = tempdir().expect("tempdir");
         let shell = temp.path().join("pwsh.exe");
         std::fs::write(&shell, []).expect("shell");
@@ -527,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn test_buzz_shell_override_wins_over_git_bash_discovery() {
+    fn test_beekeeper_shell_override_wins_over_git_bash_discovery() {
         let temp = tempdir().expect("tempdir");
         let shell = temp.path().join("pwsh.exe");
         let bash = temp.path().join("bash.exe");
@@ -556,7 +556,7 @@ mod tests {
     /// bash.exe on PATH. The readiness gate (`shell_override=Some`) still
     /// returns pwsh — both contracts hold simultaneously.
     #[test]
-    fn test_install_path_skips_buzz_shell_pwsh() {
+    fn test_install_path_skips_beekeeper_shell_pwsh() {
         let temp = tempdir().expect("tempdir");
         let pwsh = temp.path().join("pwsh.exe");
         let bash = temp.path().join("bash.exe");
@@ -583,7 +583,7 @@ mod tests {
 
     /// Same as above but with BEEKEEPER_SHELL=cmd.exe.
     #[test]
-    fn test_install_path_skips_buzz_shell_cmd() {
+    fn test_install_path_skips_beekeeper_shell_cmd() {
         let temp = tempdir().expect("tempdir");
         let cmd = temp.path().join("cmd.exe");
         let bash = temp.path().join("bash.exe");

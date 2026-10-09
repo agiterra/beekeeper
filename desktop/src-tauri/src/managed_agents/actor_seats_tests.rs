@@ -660,7 +660,7 @@ fn clearing_reports_whether_the_provider_beat_us_to_it() {
 #[test]
 fn the_file_round_trips_through_disk_owner_only() {
     let dir = std::env::temp_dir().join(format!(
-        "buzz-actor-seats-{}-{}",
+        "beekeeper-actor-seats-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

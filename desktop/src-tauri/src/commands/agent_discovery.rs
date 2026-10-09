@@ -758,8 +758,8 @@ fn install_shell_command(command: &str) -> Result<std::process::Command, String>
     let login_path = crate::managed_agents::login_shell_path();
     let had_login = login_path.is_some();
     let managed: Vec<std::path::PathBuf> = [
-        crate::managed_agents::buzz_managed_node_bin_dir(),
-        crate::managed_agents::buzz_managed_npm_bin_dir(),
+        crate::managed_agents::beekeeper_managed_node_bin_dir(),
+        crate::managed_agents::beekeeper_managed_npm_bin_dir(),
     ]
     .into_iter()
     .flatten()
@@ -864,7 +864,7 @@ fn apply_npm_env(cmd: &mut std::process::Command) {
     cmd.env_remove("NPM_CONFIG_CACHE");
     cmd.env_remove("COREPACK_HOME");
 
-    if let Some(prefix) = crate::managed_agents::buzz_managed_npm_prefix() {
+    if let Some(prefix) = crate::managed_agents::beekeeper_managed_npm_prefix() {
         cmd.env("NPM_CONFIG_PREFIX", &prefix);
         cmd.env("npm_config_prefix", &prefix);
         cmd.env("COREPACK_HOME", prefix.join("corepack"));
@@ -951,8 +951,8 @@ fn install_powershell_command(command: &str) -> std::process::Command {
     // No login-shell path: login_shell_path() always returns None on Windows,
     // and we deliberately skip it here to avoid POSIX-shaped entries.
     let managed: Vec<std::path::PathBuf> = [
-        crate::managed_agents::buzz_managed_node_bin_dir(),
-        crate::managed_agents::buzz_managed_npm_bin_dir(),
+        crate::managed_agents::beekeeper_managed_node_bin_dir(),
+        crate::managed_agents::beekeeper_managed_npm_bin_dir(),
     ]
     .into_iter()
     .flatten()
@@ -1422,8 +1422,8 @@ mod tests {
     /// always fires. See `install_shell_args` for the full reasoning.
     #[test]
     fn test_install_shell_args_shape_per_platform() {
-        let composed = std::ffi::OsString::from("/buzz/node/bin:/usr/bin");
-        let windows_composed = std::ffi::OsString::from(r"C:\buzz\node;C:\Windows\system32");
+        let composed = std::ffi::OsString::from("/beekeeper/node/bin:/usr/bin");
+        let windows_composed = std::ffi::OsString::from(r"C:\beekeeper\node;C:\Windows\system32");
         let bare = ["-l", "-c", "set -o pipefail; echo hi"].map(std::ffi::OsString::from);
 
         assert_eq!(
@@ -1433,7 +1433,7 @@ mod tests {
                 "-c",
                 "export PATH=\"$1\"; set -o pipefail; echo hi",
                 "buzz-install",
-                "/buzz/node/bin:/usr/bin",
+                "/beekeeper/node/bin:/usr/bin",
             ]
             .map(std::ffi::OsString::from),
             "Unix must re-export the composed PATH after login init"
@@ -1461,7 +1461,7 @@ mod tests {
         let home = tempfile::tempdir().expect("temp HOME");
         std::fs::write(home.path().join(".bash_profile"), "export PATH=\n")
             .expect("plant a hostile login profile");
-        let composed = std::ffi::OsString::from("/buzz/sentinel/bin:/usr/bin:/bin");
+        let composed = std::ffi::OsString::from("/beekeeper/sentinel/bin:/usr/bin:/bin");
 
         // `echo` is a shell builtin, so the child needs no PATH to report one.
         let out = std::process::Command::new("/bin/bash")
@@ -1478,7 +1478,7 @@ mod tests {
 
         let path = String::from_utf8_lossy(&out.stdout);
         assert!(
-            path.contains("/buzz/sentinel/bin"),
+            path.contains("/beekeeper/sentinel/bin"),
             "the composed PATH must survive login init; got: {path:?}"
         );
     }
@@ -1611,10 +1611,10 @@ mod tests {
 
     /// buzz-agent has no install commands on any platform.
     #[test]
-    fn test_buzz_agent_has_no_install_commands() {
-        let buzz = crate::managed_agents::known_acp_runtime_exact("buzz-agent").unwrap();
+    fn test_beekeeper_agent_has_no_install_commands() {
+        let agent = crate::managed_agents::known_acp_runtime_exact("buzz-agent").unwrap();
         assert!(
-            buzz.cli_install_commands_for_os().is_empty(),
+            agent.cli_install_commands_for_os().is_empty(),
             "buzz-agent ships with the app — must never have install commands"
         );
     }

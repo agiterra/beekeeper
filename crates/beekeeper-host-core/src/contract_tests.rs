@@ -167,7 +167,7 @@ fn sample_runtimes() -> Vec<beekeeper_core::coding_session_runtime::RuntimeDescr
             instance_ref: "claude-primary".into(),
             driver: "claude-agent-acp".into(),
             runtime: "claude".into(),
-            agent_command: "/opt/buzz/bin/claude-agent-acp".into(),
+            agent_command: "/opt/beekeeper/bin/claude-agent-acp".into(),
             agent_args: Vec::new(),
             cli_env: Some(CliEnvVar {
                 name: "CLAUDE_CODE_EXECUTABLE".into(),
@@ -200,11 +200,11 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         record,
         relay_url: RELAY,
         state_dir: Path::new("/tmp/session-provider/aaaa"),
-        agent_command: Some(PathBuf::from("/opt/buzz/bin/claude-agent-acp")),
-        context_mcp_command: Some(PathBuf::from("/opt/buzz/bin/beekeeper-dev-mcp")),
+        agent_command: Some(PathBuf::from("/opt/beekeeper/bin/claude-agent-acp")),
+        context_mcp_command: Some(PathBuf::from("/opt/beekeeper/bin/beekeeper-dev-mcp")),
         claude_code_executable: Some(PathBuf::from("/usr/local/bin/claude")),
         runtimes: sample_runtimes(),
-        augmented_path: Some("/opt/buzz/bin:/usr/bin".into()),
+        augmented_path: Some("/opt/beekeeper/bin:/usr/bin".into()),
         max_sessions: None,
         turn_idle_timeout_secs: None,
         rust_log: None,
@@ -246,12 +246,12 @@ fn env_carries_the_required_provider_contract() {
     );
     assert_eq!(
         env.get("BEEKEEPER_CSP_AGENT_COMMAND").map(String::as_str),
-        Some("/opt/buzz/bin/claude-agent-acp")
+        Some("/opt/beekeeper/bin/claude-agent-acp")
     );
     assert_eq!(
         env.get("BEEKEEPER_CSP_CONTEXT_MCP_COMMAND")
             .map(String::as_str),
-        Some("/opt/buzz/bin/beekeeper-dev-mcp")
+        Some("/opt/beekeeper/bin/beekeeper-dev-mcp")
     );
     assert_eq!(
         env.get("CLAUDE_CODE_EXECUTABLE").map(String::as_str),
@@ -262,7 +262,7 @@ fn env_carries_the_required_provider_contract() {
     // they find `node` when the desktop was launched with a bare GUI PATH.
     assert_eq!(
         env.get("PATH").map(String::as_str),
-        Some("/opt/buzz/bin:/usr/bin")
+        Some("/opt/beekeeper/bin:/usr/bin")
     );
 }
 

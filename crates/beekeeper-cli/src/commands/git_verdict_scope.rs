@@ -6,7 +6,7 @@
 //! green, in its own channel.
 //!
 //! The three steps are
-//! [`buzz_relay`'s](../../../buzz_relay/api/git/verdict_admission_scope/index.html)
+//! [`beekeeper_relay`'s](../../../beekeeper_relay/api/git/verdict_admission_scope/index.html)
 //! in the same order: the pusher's own seats, then the project's session
 //! channels, then the repository's bound channel. What differs is the
 //! **inputs**, and both differences under-promise rather than over-promise:

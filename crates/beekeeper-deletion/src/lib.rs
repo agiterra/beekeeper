@@ -549,8 +549,8 @@ pub(crate) async fn connect_db() -> Result<Db> {
     .await?)
 }
 
-fn resolve_s3_region(buzz_region: Option<String>, aws_region: Option<String>) -> String {
-    buzz_region
+fn resolve_s3_region(beekeeper_region: Option<String>, aws_region: Option<String>) -> String {
+    beekeeper_region
         .and_then(nonempty_s3_region)
         .or_else(|| aws_region.and_then(nonempty_s3_region))
         .unwrap_or_else(|| "us-east-1".to_string())

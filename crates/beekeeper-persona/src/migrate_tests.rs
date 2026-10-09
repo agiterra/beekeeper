@@ -18,8 +18,10 @@ impl TempDir {
         // converts the other's packs.
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let base =
-            std::env::temp_dir().join(format!("buzz-migrate-{tag}-{}-{seq}", std::process::id()));
+        let base = std::env::temp_dir().join(format!(
+            "beekeeper-migrate-{tag}-{}-{seq}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&base).expect("create temp dir");
         Self(base)
     }

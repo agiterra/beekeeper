@@ -38,7 +38,7 @@ pub(crate) use beekeeper_host_core::path_env::{
 /// split into individual entries before joining. Pushing it as a single segment
 /// would make `join_paths` reject it (a segment containing the separator is an
 /// error), collapsing the entire augmented `PATH` to `None` — the bug this
-/// guards against, which left managed agents unable to find `buzz`. Returns
+/// guards against, which left managed agents unable to find `bee`. Returns
 /// `None` only when no entries exist.
 ///
 /// # Why the app's own directory comes first
@@ -74,10 +74,10 @@ pub(in crate::managed_agents) fn build_augmented_path(
     // This keeps tests/utility callers that intentionally pass no local context
     // from manufacturing a PATH out of ambient platform dirs alone.
     if has_local_context {
-        if let Some(managed_npm_bin) = crate::managed_agents::buzz_managed_npm_bin_dir() {
+        if let Some(managed_npm_bin) = crate::managed_agents::beekeeper_managed_npm_bin_dir() {
             managed.push(managed_npm_bin);
         }
-        if let Some(managed_node_bin) = crate::managed_agents::buzz_managed_node_bin_dir() {
+        if let Some(managed_node_bin) = crate::managed_agents::beekeeper_managed_node_bin_dir() {
             managed.push(managed_node_bin);
         }
     }
@@ -145,7 +145,7 @@ mod tests {
         // Regression: the shell PATH arrives as one colon-delimited string. It
         // must be split into segments before join_paths, or join_paths rejects
         // it and the whole augmented PATH collapses to None (managed agents then
-        // lose `buzz`).
+        // lose `bee`).
         let result = build_augmented_path(
             Some(PathBuf::from("/home/agent")),
             Some(PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS")),
