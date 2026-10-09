@@ -1,7 +1,7 @@
 # The team-fold vocabulary, as data.
 #
 # Every word this repository's typed team fold puts in front of a seat is
-# defined here, and `include_str!`-ed into `buzz-core` at compile time
+# defined here, and `include_str!`-ed into `beekeeper-core` at compile time
 # (`crates/beekeeper-core/src/team_vocabulary.rs`). The binary therefore carries the
 # words with or without a checkout: `bee sessions explain <word>` answers from
 # this file, not from a source tree the reader may not have.

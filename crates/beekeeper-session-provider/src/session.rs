@@ -5906,11 +5906,11 @@ done
         // And nothing else in the fenced namespaces came back with it: exactly
         // the seat's own three, each in both spellings (the legacy one for a
         // `bee` older than the BUZZ_ → BEEKEEPER_ rename).
-        let buzz_keys: Vec<String> = dumped_env_names(&dump)
+        let fenced_keys: Vec<String> = dumped_env_names(&dump)
             .into_iter()
             .filter(|name| crate::agent_fence::FENCE.covers(name))
             .collect();
-        let mut sorted = buzz_keys.clone();
+        let mut sorted = fenced_keys.clone();
         sorted.sort_unstable();
         assert_eq!(
             sorted,
@@ -5923,7 +5923,7 @@ done
                 "BUZZ_RELAY_URL",
                 "NOSTR_PRIVATE_KEY",
             ],
-            "a seat received more than its own identity: {buzz_keys:?}"
+            "a seat received more than its own identity: {fenced_keys:?}"
         );
         assert!(dumped.contains("BUZZ_PRIVATE_KEY=nsec1seat"), "{dumped}");
 
@@ -5953,7 +5953,7 @@ done
     /// there — a grant and a socket path, no identity credential; see
     /// `crate::preview_grant`. This test pins the fence itself.)
     #[tokio::test]
-    async fn an_unseated_execution_still_receives_no_buzz_variable_at_all() {
+    async fn an_unseated_execution_still_receives_no_beekeeper_variable_at_all() {
         let dir = tempfile::tempdir().expect("tempdir");
         let dump = dir.path().join("child-env");
         let agent = fake_agent(

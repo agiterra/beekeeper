@@ -62,7 +62,7 @@ pub(super) fn buffer_contains_identifier(buf: &[u8], id: &[u8]) -> bool {
 /// value from a process's environment.
 /// Returns `None` if the process doesn't have the marker or can't be read.
 #[cfg(target_os = "macos")]
-fn extract_buzz_marker_value(pid: u32) -> Option<String> {
+fn extract_beekeeper_marker_value(pid: u32) -> Option<String> {
     let buf = sweep::procargs2_buffer(pid)?;
 
     if buf.len() < std::mem::size_of::<libc::c_int>() {
@@ -101,13 +101,13 @@ fn extract_buzz_marker_value(pid: u32) -> Option<String> {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn extract_buzz_marker_value(pid: u32) -> Option<String> {
+fn extract_beekeeper_marker_value(pid: u32) -> Option<String> {
     let data = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
     super::process::marker_value(data.split(|&b| b == 0))
 }
 
 #[cfg(not(unix))]
-fn extract_buzz_marker_value(_pid: u32) -> Option<String> {
+fn extract_beekeeper_marker_value(_pid: u32) -> Option<String> {
     None
 }
 
@@ -277,7 +277,7 @@ pub(crate) fn reap_dead_instance_agents(our_instance_id: &str, skip_pids: &[u32]
         // Do NOT name-gate via process_belongs_to_us — custom harnesses use
         // arbitrary binary names and BEEKEEPER_MANAGED_AGENT is the authoritative
         // ownership proof.
-        let Some(agent_instance_id) = extract_buzz_marker_value(upid) else {
+        let Some(agent_instance_id) = extract_beekeeper_marker_value(upid) else {
             continue;
         };
         // Skip agents belonging to our own instance (handled by sweep_system_agent_processes).
@@ -337,7 +337,7 @@ pub(crate) fn reap_dead_instance_agents(our_instance_id: &str, skip_pids: &[u32]
         // Do NOT name-gate via process_belongs_to_us — custom harnesses use
         // arbitrary binary names and BEEKEEPER_MANAGED_AGENT is the authoritative
         // ownership proof.
-        let Some(agent_instance_id) = extract_buzz_marker_value(upid) else {
+        let Some(agent_instance_id) = extract_beekeeper_marker_value(upid) else {
             continue;
         };
         if agent_instance_id == our_instance_id {

@@ -197,7 +197,7 @@ mod tests {
             "https://www.youtube.com/",
             "https://www.youtube.com/watch",
             "https://www.youtube.com/watch?v=",
-            "https://www.youtube.com/@buzz",
+            "https://www.youtube.com/@beekeeper",
             "https://youtube.com.evil.example/watch?v=hLFs9JtMaRg",
             "https://notyoutube.com/watch?v=hLFs9JtMaRg",
         ] {

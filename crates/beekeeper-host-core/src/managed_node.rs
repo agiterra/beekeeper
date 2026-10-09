@@ -11,17 +11,17 @@ use std::path::PathBuf;
 
 use crate::command_paths::is_executable_file;
 
-pub fn buzz_managed_npm_prefix() -> Option<PathBuf> {
+pub fn beekeeper_managed_npm_prefix() -> Option<PathBuf> {
     dirs::data_dir().map(|dir| dir.join("Beekeeper").join("node-tools"))
 }
 
 const BEEKEEPER_MANAGED_NODE_VERSION: &str = "v24.18.0";
 
-pub fn buzz_managed_node_root() -> Option<PathBuf> {
+pub fn beekeeper_managed_node_root() -> Option<PathBuf> {
     dirs::data_dir().map(|dir| dir.join("Beekeeper").join("runtimes").join("node"))
 }
 
-pub fn buzz_managed_node_bin_dir() -> Option<PathBuf> {
+pub fn beekeeper_managed_node_bin_dir() -> Option<PathBuf> {
     let (platform, bin_subdir): (&str, Option<&str>) =
         match (std::env::consts::OS, std::env::consts::ARCH) {
             ("macos", "aarch64") => ("darwin-arm64", Some("bin")),
@@ -33,7 +33,7 @@ pub fn buzz_managed_node_bin_dir() -> Option<PathBuf> {
             ("windows", "aarch64") => ("win-arm64", None),
             _ => return None,
         };
-    buzz_managed_node_root().map(|root| {
+    beekeeper_managed_node_root().map(|root| {
         let dir = root.join(BEEKEEPER_MANAGED_NODE_VERSION).join(platform);
         match bin_subdir {
             Some(sub) => dir.join(sub),
@@ -42,8 +42,8 @@ pub fn buzz_managed_node_bin_dir() -> Option<PathBuf> {
     })
 }
 
-pub fn buzz_managed_node_bin_path() -> Option<PathBuf> {
-    buzz_managed_node_bin_dir().map(|bin| {
+pub fn beekeeper_managed_node_bin_path() -> Option<PathBuf> {
+    beekeeper_managed_node_bin_dir().map(|bin| {
         #[cfg(windows)]
         {
             bin.join("node.exe")
@@ -55,8 +55,8 @@ pub fn buzz_managed_node_bin_path() -> Option<PathBuf> {
     })
 }
 
-pub fn buzz_managed_npm_bin_dir() -> Option<PathBuf> {
-    buzz_managed_npm_prefix().map(|prefix| {
+pub fn beekeeper_managed_npm_bin_dir() -> Option<PathBuf> {
+    beekeeper_managed_npm_prefix().map(|prefix| {
         #[cfg(windows)]
         {
             prefix
@@ -68,7 +68,7 @@ pub fn buzz_managed_npm_bin_dir() -> Option<PathBuf> {
     })
 }
 
-pub fn buzz_managed_command_path(command: &str, basename: &str) -> Option<PathBuf> {
+pub fn beekeeper_managed_command_path(command: &str, basename: &str) -> Option<PathBuf> {
     if command.contains(std::path::MAIN_SEPARATOR)
         || !matches!(
             command,
@@ -79,10 +79,10 @@ pub fn buzz_managed_command_path(command: &str, basename: &str) -> Option<PathBu
     }
 
     let mut dirs = Vec::new();
-    if let Some(managed_bin) = buzz_managed_npm_bin_dir() {
+    if let Some(managed_bin) = beekeeper_managed_npm_bin_dir() {
         dirs.push(managed_bin);
     }
-    if let Some(managed_node_bin) = buzz_managed_node_bin_dir() {
+    if let Some(managed_node_bin) = beekeeper_managed_node_bin_dir() {
         dirs.push(managed_node_bin);
     }
 

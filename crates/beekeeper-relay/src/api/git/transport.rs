@@ -2444,7 +2444,7 @@ mod track_c_tests {
         assert_git_success(
             run_test_git(
                 source.as_path(),
-                &["config", "user.email", "buzz-test@example.com"],
+                &["config", "user.email", "beekeeper-test@example.com"],
                 &[],
             ),
             "configure user email",

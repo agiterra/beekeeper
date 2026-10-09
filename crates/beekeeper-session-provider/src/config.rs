@@ -737,11 +737,11 @@ mod tests {
         let mut vars = minimal();
         vars.insert(
             "BEEKEEPER_CSP_CONTEXT_MCP_COMMAND",
-            " /opt/buzz/bin/beekeeper-dev-mcp ".into(),
+            " /opt/beekeeper/bin/beekeeper-dev-mcp ".into(),
         );
         assert_eq!(
             load(&vars).unwrap().context_mcp_command,
-            Some(PathBuf::from("/opt/buzz/bin/beekeeper-dev-mcp"))
+            Some(PathBuf::from("/opt/beekeeper/bin/beekeeper-dev-mcp"))
         );
     }
 

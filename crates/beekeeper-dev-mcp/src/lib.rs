@@ -210,6 +210,11 @@ impl ServerHandler for SessionContextMcp {
     }
 }
 
+/// Whether this multicall name is the `bee` CLI (`buzz` is its old name).
+fn is_bee_personality(cmd: &str) -> bool {
+    matches!(cmd, "bee" | "buzz")
+}
+
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let argv0 = std::env::args().next().unwrap_or_default();
     let cmd = Path::new(&argv0)
@@ -240,8 +245,11 @@ async fn async_main(cmd: String) -> Result<(), Box<dyn std::error::Error>> {
     // repeated installation is harmless.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    // `bee` CLI needs tokio (async HTTP client).
-    if cmd == "bee" {
+    // `bee` CLI needs tokio (async HTTP client). `buzz` is its pre-rename name,
+    // still the name of a shim link (`shim.rs`) and of muscle memory; without
+    // this arm it fell through to MCP server mode and an agent that typed
+    // `buzz` waited on stdin forever.
+    if is_bee_personality(&cmd) {
         std::process::exit(beekeeper_cli::run_from_args(std::env::args()).await);
     }
 
@@ -297,6 +305,14 @@ pub(crate) fn configure_no_window_async(cmd: &mut tokio::process::Command) {
 
 #[cfg(test)]
 mod personality_tests {
+    #[test]
+    fn the_old_cli_name_runs_the_cli_instead_of_the_mcp_server() {
+        assert!(super::is_bee_personality("bee"));
+        assert!(super::is_bee_personality("buzz"));
+        assert!(!super::is_bee_personality("beekeeper-dev-mcp"));
+        assert!(!super::is_bee_personality("rg"));
+    }
+
     use super::*;
 
     fn tool_names<S: Send + Sync + 'static>(router: ToolRouter<S>) -> Vec<String> {

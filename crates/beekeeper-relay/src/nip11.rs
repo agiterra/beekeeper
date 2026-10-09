@@ -586,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn build_advertises_buzz_repository_url() {
+    fn build_advertises_beekeeper_repository_url() {
         let info = RelayInfo::build(
             None,
             None,
@@ -694,14 +694,14 @@ mod tests {
             None,
             false,
             DEFAULT_MAX_FRAME_BYTES,
-            Some("wss://pairing.buzz.xyz"),
+            Some("wss://pairing.beekeeper.xyz"),
             test_rate_limits(),
         );
         let json = serde_json::to_value(&info).expect("serialize");
         assert_eq!(
             json.get("pairing_relay_url")
                 .and_then(|value| value.as_str()),
-            Some("wss://pairing.buzz.xyz")
+            Some("wss://pairing.beekeeper.xyz")
         );
 
         let info = RelayInfo::build(

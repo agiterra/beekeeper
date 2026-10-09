@@ -241,7 +241,7 @@ fn a_failed_project_pack_source_read_skips_the_row_and_stages_nothing() {
 #[test]
 fn a_missing_seat_requests_file_reads_as_empty() {
     let dir = std::env::temp_dir().join(format!(
-        "buzz-seat-requests-{}-{}",
+        "beekeeper-seat-requests-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -279,7 +279,7 @@ fn the_restaged_seats_file_is_written_owner_only() {
     assert_eq!(report.staged, 1);
 
     let dir = std::env::temp_dir().join(format!(
-        "buzz-actor-seats-restage-{}-{}",
+        "beekeeper-actor-seats-restage-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

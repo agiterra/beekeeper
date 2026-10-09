@@ -1060,7 +1060,7 @@ mod tests {
 
     #[test]
     fn detached_repo_coords_unions_head_members_and_back_refs() {
-        let head = vec![format!("30617:{OWNER}:buzz")];
+        let head = vec![format!("30617:{OWNER}:beekeeper")];
         let repos = vec![
             json!({ "kind": 30617, "pubkey": OTHER, "tags": [["d", "infra"], ["project", COORD]] }),
             json!({ "kind": 30617, "pubkey": OTHER, "tags": [["d", "unrelated"]] }),
@@ -1069,7 +1069,7 @@ mod tests {
         assert_eq!(
             coords,
             vec![
-                format!("30617:{OWNER}:buzz"),
+                format!("30617:{OWNER}:beekeeper"),
                 format!("30617:{OTHER}:infra")
             ]
         );
@@ -1081,7 +1081,7 @@ mod tests {
         // (persona / team / managed agent). Counting those as detached repos
         // would report "repos_detached: 4" for a project with one repo.
         let head = vec![
-            format!("30617:{OWNER}:buzz"),
+            format!("30617:{OWNER}:beekeeper"),
             format!("30618:{OWNER}:reviewer"),
             format!("30619:{OWNER}:build-team"),
             format!("31337:{OWNER}:managed-agent"),
@@ -1089,7 +1089,7 @@ mod tests {
         let coords = detached_repo_coords(&head, &[], COORD);
         assert_eq!(
             coords,
-            vec![format!("30617:{OWNER}:buzz")],
+            vec![format!("30617:{OWNER}:beekeeper")],
             "only kind:30617 coordinates are repositories"
         );
     }
@@ -1188,7 +1188,7 @@ mod tests {
     #[test]
     fn detached_repos_warn_that_they_are_never_deleted() {
         let mut plan = plan_with(Vec::new(), Vec::new());
-        plan.detached_repos = vec![format!("30617:{OWNER}:buzz")];
+        plan.detached_repos = vec![format!("30617:{OWNER}:beekeeper")];
         let warnings = cascade_warnings(&plan);
         assert!(warnings.iter().any(|w| w.contains("DETACHED")));
     }

@@ -29,7 +29,7 @@ fn env_with(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 // ── buzz-agent tests ──────────────────────────────────────────────────
 
 #[test]
-fn buzz_agent_missing_provider_returns_not_ready_with_normalized_field() {
+fn beekeeper_agent_missing_provider_returns_not_ready_with_normalized_field() {
     let env = make_env(
         "buzz-agent",
         env_with(&[("BEEKEEPER_AGENT_MODEL", "claude-opus-4-5")]),
@@ -49,7 +49,7 @@ fn buzz_agent_missing_provider_returns_not_ready_with_normalized_field() {
 }
 
 #[test]
-fn buzz_agent_missing_model_returns_not_ready_with_normalized_field() {
+fn beekeeper_agent_missing_model_returns_not_ready_with_normalized_field() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -67,7 +67,7 @@ fn buzz_agent_missing_model_returns_not_ready_with_normalized_field() {
 }
 
 #[test]
-fn buzz_agent_missing_anthropic_key_returns_not_ready_with_env_key() {
+fn beekeeper_agent_missing_anthropic_key_returns_not_ready_with_env_key() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -83,7 +83,7 @@ fn buzz_agent_missing_anthropic_key_returns_not_ready_with_env_key() {
 }
 
 #[test]
-fn buzz_agent_missing_openai_key_returns_not_ready() {
+fn beekeeper_agent_missing_openai_key_returns_not_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -99,7 +99,7 @@ fn buzz_agent_missing_openai_key_returns_not_ready() {
 }
 
 #[test]
-fn buzz_agent_anthropic_with_all_fields_is_ready() {
+fn beekeeper_agent_anthropic_with_all_fields_is_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -112,7 +112,7 @@ fn buzz_agent_anthropic_with_all_fields_is_ready() {
 }
 
 #[test]
-fn buzz_agent_databricks_with_host_and_model_is_ready_without_token() {
+fn beekeeper_agent_databricks_with_host_and_model_is_ready_without_token() {
     // DATABRICKS_TOKEN is NOT required — OAuth PKCE is the normal path.
     // No token present, no OAuth cache present → still Ready because we
     // cannot evaluate OAuth state from the env map alone.
@@ -132,7 +132,7 @@ fn buzz_agent_databricks_with_host_and_model_is_ready_without_token() {
 }
 
 #[test]
-fn buzz_agent_databricks_missing_host_returns_not_ready() {
+fn beekeeper_agent_databricks_missing_host_returns_not_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -149,7 +149,7 @@ fn buzz_agent_databricks_missing_host_returns_not_ready() {
 }
 
 #[test]
-fn buzz_agent_databricks_v2_missing_host_returns_not_ready() {
+fn beekeeper_agent_databricks_v2_missing_host_returns_not_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -208,7 +208,7 @@ fn goose_with_provider_and_model_and_key_is_ready() {
 // match the dialog's (envVars[key] ?? "").length === 0 emptiness check.
 
 #[test]
-fn buzz_agent_empty_string_provider_is_not_ready() {
+fn beekeeper_agent_empty_string_provider_is_not_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -229,7 +229,7 @@ fn buzz_agent_empty_string_provider_is_not_ready() {
 }
 
 #[test]
-fn buzz_agent_empty_string_model_is_not_ready() {
+fn beekeeper_agent_empty_string_model_is_not_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -251,7 +251,7 @@ fn buzz_agent_empty_string_model_is_not_ready() {
 }
 
 #[test]
-fn buzz_agent_empty_string_anthropic_key_is_not_ready() {
+fn beekeeper_agent_empty_string_anthropic_key_is_not_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[
@@ -271,7 +271,7 @@ fn buzz_agent_empty_string_anthropic_key_is_not_ready() {
 }
 
 #[test]
-fn buzz_agent_empty_string_databricks_host_is_not_ready() {
+fn beekeeper_agent_empty_string_databricks_host_is_not_ready() {
     let env = make_env(
         "buzz-agent",
         env_with(&[

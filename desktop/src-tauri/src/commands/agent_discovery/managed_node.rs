@@ -103,7 +103,7 @@ fn managed_node_failed_step(stderr: String) -> InstallStepResult {
 }
 
 pub(super) fn managed_node_runtime_ready() -> bool {
-    let Some(node) = crate::managed_agents::buzz_managed_node_bin_path() else {
+    let Some(node) = crate::managed_agents::beekeeper_managed_node_bin_path() else {
         return false;
     };
     if !node.is_file() {
@@ -241,9 +241,10 @@ pub(super) fn resolve_adapter_path(
         .iter()
         .any(|cmd| is_npm_global_install(cmd));
     if needs_managed_npm {
-        if let (Some(ref path), Some(ref managed_bin)) =
-            (&resolved, crate::managed_agents::buzz_managed_npm_bin_dir())
-        {
+        if let (Some(ref path), Some(ref managed_bin)) = (
+            &resolved,
+            crate::managed_agents::beekeeper_managed_npm_bin_dir(),
+        ) {
             if should_invalidate_adapter(path, managed_bin, managed_node_orphaned()) {
                 return None;
             }
@@ -259,7 +260,8 @@ fn managed_node_install_lock() -> &'static Mutex<()> {
 }
 
 pub(super) fn managed_node_runtime_supported() -> bool {
-    MANAGED_NODE_ARTIFACT.is_some() && crate::managed_agents::buzz_managed_node_bin_dir().is_some()
+    MANAGED_NODE_ARTIFACT.is_some()
+        && crate::managed_agents::beekeeper_managed_node_bin_dir().is_some()
 }
 
 pub(super) fn ensure_managed_node_runtime_blocking() -> Result<(), Box<InstallStepResult>> {
@@ -270,7 +272,7 @@ pub(super) fn ensure_managed_node_runtime_blocking() -> Result<(), Box<InstallSt
     let Some(artifact) = MANAGED_NODE_ARTIFACT else {
         return Err(Box::new(managed_node_unsupported_step()));
     };
-    let Some(root) = crate::managed_agents::buzz_managed_node_root() else {
+    let Some(root) = crate::managed_agents::beekeeper_managed_node_root() else {
         return Err(Box::new(managed_node_failed_step(
             "failed to resolve Beekeeper app-data directory for private Node.js runtime"
                 .to_string(),
@@ -605,7 +607,7 @@ pub(super) fn managed_npm_command(command: &str) -> Result<Option<String>, Box<I
         return Ok(None);
     }
 
-    let Some(prefix) = crate::managed_agents::buzz_managed_npm_prefix() else {
+    let Some(prefix) = crate::managed_agents::beekeeper_managed_npm_prefix() else {
         return Err(Box::new(InstallStepResult {
             step: "adapter".to_string(),
             command: command.to_string(),

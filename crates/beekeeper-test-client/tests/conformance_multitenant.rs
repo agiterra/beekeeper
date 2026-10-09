@@ -905,7 +905,7 @@ mod membership_allowlist {
     #[ignore]
     async fn archive_in_a_does_not_affect_b() {
         pending_lane(
-            "buzz-auth",
+            "beekeeper-auth",
             "archived_identities (community_id, pubkey) — A's archive invisible to B",
         );
     }
@@ -1294,7 +1294,7 @@ mod channelless_global_events_dms {
     #[ignore]
     async fn same_event_id_and_dtag_coexist_across_communities() {
         pending_lane(
-            "buzz-db",
+            "beekeeper-db",
             "same id/d-tag in A and B both retrievable, each scoped; no cross-fetch",
         );
     }
@@ -1304,7 +1304,7 @@ mod channelless_global_events_dms {
     #[ignore]
     async fn dm_does_not_cross_deliver_between_communities() {
         pending_lane(
-            "buzz-pubsub",
+            "beekeeper-pubsub",
             "DM addressed in A never fans out to the same pubkey's B subscription",
         );
     }

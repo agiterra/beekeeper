@@ -18,7 +18,7 @@ pub enum CliError {
     #[error("auth error: {0}")]
     Auth(String),
 
-    /// Nostr key error (NIP-98 signing in `buzz auth`)
+    /// Nostr key error (NIP-98 signing in `bee auth`)
     #[error("key error: {0}")]
     Key(String),
 

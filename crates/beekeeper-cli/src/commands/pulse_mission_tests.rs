@@ -100,7 +100,7 @@ fn a_read_error_is_printed_rather_than_rendering_a_quiet_project() {
 }
 
 #[test]
-fn no_sentence_in_this_module_is_composed_outside_buzz_core() {
+fn no_sentence_in_this_module_is_composed_outside_beekeeper_core() {
     // Every human sentence lives in `buzz-core::pulse_mission`. This file may
     // print them and join a scope to a message; it may not write English.
     let source = include_str!("pulse_mission.rs");

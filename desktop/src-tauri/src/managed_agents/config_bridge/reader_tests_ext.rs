@@ -13,7 +13,7 @@ use super::*;
 #[test]
 fn numeric_context_limit_inherits_from_persona_env() {
     let record = test_record();
-    let runtime = buzz_agent_runtime();
+    let runtime = beekeeper_agent_runtime();
     let tiers = persona_env_tiers("BEEKEEPER_AGENT_MAX_CONTEXT_TOKENS", "200000");
 
     let surface = read_config_surface(&record, Some(runtime), None, &tiers);
@@ -30,7 +30,7 @@ fn record_max_tokens_overrides_global_env_with_secondary() {
         "BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS".to_string(),
         "8192".to_string(),
     );
-    let runtime = buzz_agent_runtime();
+    let runtime = beekeeper_agent_runtime();
     let tiers = global_env_tiers("BEEKEEPER_AGENT_MAX_OUTPUT_TOKENS", "16384");
 
     let surface = read_config_surface(&record, Some(runtime), None, &tiers);
@@ -126,7 +126,7 @@ fn structured_fallback_intact_when_no_env_representation() {
 #[test]
 fn post_sanitization_empty_global_env_falls_through_to_persona_tier() {
     let record = test_record();
-    let runtime = buzz_agent_rt();
+    let runtime = beekeeper_agent_rt();
     // No global env (stripped); persona provides the valid fallback.
     let tiers = persona_env_tiers("BEEKEEPER_AGENT_THINKING_EFFORT", "medium");
 
@@ -291,7 +291,7 @@ fn current_key_wins_over_legacy_key_in_the_same_tier() {
         "BEEKEEPER_AGENT_MAX_CONTEXT_TOKENS".to_string(),
         "2000".to_string(),
     );
-    let runtime = buzz_agent_runtime();
+    let runtime = beekeeper_agent_runtime();
 
     let surface = read_config_surface(&record, Some(runtime), None, &Default::default());
 

@@ -78,7 +78,7 @@ pub async fn start_coordinator(app: AppHandle) {
         let mut sleep_for = MESH_JOIN_POLL_INTERVAL;
         loop {
             tokio::time::sleep(sleep_for).await;
-            match reconcile_buzz_mesh_join(&join_app).await {
+            match reconcile_beekeeper_mesh_join(&join_app).await {
                 Ok(()) => sleep_for = MESH_JOIN_POLL_INTERVAL,
                 Err(error) => {
                     eprintln!("beekeeper-mesh: community mesh join reconcile failed: {error}");
@@ -130,7 +130,7 @@ pub async fn start_coordinator(app: AppHandle) {
 /// Join an isolated runtime to the existing Beekeeper community mesh. The relay is
 /// discovery only: the selected endpoint is member-signed and validated, then
 /// MeshLLM establishes the encrypted peer transport itself.
-async fn reconcile_buzz_mesh_join(app: &AppHandle) -> Result<(), String> {
+async fn reconcile_beekeeper_mesh_join(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let (peer_ids, relay_url) = {
         let runtime = state.mesh_llm_runtime.lock().await;
@@ -150,7 +150,8 @@ async fn reconcile_buzz_mesh_join(app: &AppHandle) -> Result<(), String> {
     };
 
     let targets =
-        crate::commands::mesh_llm::resolve_buzz_mesh_join_targets_at(&state, &relay_url).await?;
+        crate::commands::mesh_llm::resolve_beekeeper_mesh_join_targets_at(&state, &relay_url)
+            .await?;
     let Some(target) = targets
         .into_iter()
         .find(|target| !target_is_visible(target, &peer_ids))

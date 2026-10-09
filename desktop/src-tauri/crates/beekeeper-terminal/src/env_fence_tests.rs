@@ -36,7 +36,7 @@ const CANARY: &str = "SAMI_CANARY_MUST_NOT_LEAK";
 
 /// Uniquely-named executable seeded into Beekeeper's own PATH; the child must not
 /// be able to run it.
-const CANARY_BIN: &str = "buzz-hermit-canary-tool";
+const CANARY_BIN: &str = "beekeeper-hermit-canary-tool";
 
 /// Creates a fixture file at `name` with `mode`, replacing any leftover from
 /// a previous run.
@@ -173,8 +173,8 @@ fn fence_excludes_keys_it_has_never_heard_of() {
 /// legitimately contained the substring; `command -v` asks the question the
 /// user actually asks by typing a command name.
 #[test]
-fn child_path_is_free_of_buzz_toolchain() {
-    let dir = std::env::temp_dir().join("buzz-terminal-path-canary");
+fn child_path_is_free_of_beekeeper_toolchain() {
+    let dir = std::env::temp_dir().join("beekeeper-terminal-path-canary");
     std::fs::create_dir_all(&dir).expect("canary dir");
     let canary = dir.join(CANARY_BIN);
     std::fs::write(&canary, "#!/bin/sh\necho canary\n").expect("write canary");
@@ -202,7 +202,7 @@ fn child_path_is_free_of_buzz_toolchain() {
         .find(|line| line.starts_with("PATH="))
         .expect("child has a PATH");
     assert!(
-        !path_line.contains("buzz-terminal-path-canary"),
+        !path_line.contains("beekeeper-terminal-path-canary"),
         "Beekeeper's toolchain leaked into the child PATH: {path_line}"
     );
 
@@ -274,7 +274,11 @@ fn resolve_shell_rejects_a_directory_that_passes_x_ok() {
 fn resolve_shell_rejects_a_file_the_user_cannot_execute() {
     use std::os::unix::fs::PermissionsExt;
 
-    let path = fixture_file("buzz-terminal-group-only-exec", "#!/bin/sh\ntrue\n", 0o010);
+    let path = fixture_file(
+        "beekeeper-terminal-group-only-exec",
+        "#!/bin/sh\ntrue\n",
+        0o010,
+    );
     let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
     assert!(
         mode & 0o111 != 0,
@@ -292,7 +296,7 @@ fn resolve_shell_rejects_a_file_the_user_cannot_execute() {
 /// A non-executable regular file falls through as well.
 #[test]
 fn resolve_shell_rejects_a_non_executable_file() {
-    let path = fixture_file("buzz-terminal-not-a-shell", "not a shell", 0o644);
+    let path = fixture_file("beekeeper-terminal-not-a-shell", "not a shell", 0o644);
     assert_ne!(resolve_shell(path.to_str()), path.to_str().unwrap());
 }
 

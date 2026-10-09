@@ -172,7 +172,7 @@ fn cooperative_child_exits_on_term_not_kill() {
 /// bounded, reportable failure.
 #[test]
 fn signal_ignoring_child_is_killed_after_the_grace_period() {
-    let dir = tempdir("buzz-terminal-trap");
+    let dir = tempdir("beekeeper-terminal-trap");
     let ready = dir.join("armed");
 
     let pair = open_pty();
@@ -246,7 +246,7 @@ fn signal_ignoring_child_is_killed_after_the_grace_period() {
 /// `SIGKILL` because that is the one signal the fixture does not trap.
 #[test]
 fn grandchild_does_not_outlive_the_session() {
-    let dir = tempdir("buzz-terminal-orphan");
+    let dir = tempdir("beekeeper-terminal-orphan");
     let pidfile = dir.join("grandchild.pid");
     let armed = dir.join("armed");
 
@@ -332,7 +332,7 @@ fn shutdown_of_an_exited_child_is_a_reap_not_a_signal() {
 /// only variable: same shell, same PTY, same fence, no `-` prefix.
 #[test]
 fn default_prog_child_observes_the_login_argv0() {
-    let dir = tempdir("buzz-terminal-argv0");
+    let dir = tempdir("beekeeper-terminal-argv0");
     let shell = "/bin/sh";
 
     let default_prog = observe_argv0(&dir.join("default"), shell, true);

@@ -37,7 +37,7 @@ ignore unknown fields.
   "author": "Meadow Engineering",
   "license": "MIT",
   "homepage": "https://github.com/example/meadow-security-team",
-  "keywords": ["security", "code-review", "buzz"],
+  "keywords": ["security", "code-review", "beekeeper"],
   "engines": {
     "buzz": ">=0.9.0"
   },

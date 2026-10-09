@@ -366,19 +366,21 @@ mod tests {
     fn requires_the_executable_to_use_the_app_bundle_layout() {
         assert!(is_application_bundle_layout(
             Path::new("/Applications/Beekeeper.app"),
-            Path::new("/Applications/Beekeeper.app/Contents/MacOS/buzz-desktop"),
+            Path::new("/Applications/Beekeeper.app/Contents/MacOS/beekeeper-desktop"),
         ));
         assert!(!is_application_bundle_layout(
             Path::new("/tmp/Fake.app"),
-            Path::new("/tmp/Fake.app/buzz-desktop"),
+            Path::new("/tmp/Fake.app/beekeeper-desktop"),
         ));
         assert!(!is_application_bundle_layout(
-            Path::new("/Users/developer/buzz/desktop/src-tauri/target/debug"),
-            Path::new("/Users/developer/buzz/desktop/src-tauri/target/debug/buzz-desktop"),
+            Path::new("/Users/developer/beekeeper/desktop/src-tauri/target/debug"),
+            Path::new(
+                "/Users/developer/beekeeper/desktop/src-tauri/target/debug/beekeeper-desktop"
+            ),
         ));
         assert!(!is_application_bundle_layout(
             Path::new("/Applications/Beekeeper.app"),
-            Path::new("/Applications/Other.app/Contents/MacOS/buzz-desktop"),
+            Path::new("/Applications/Other.app/Contents/MacOS/beekeeper-desktop"),
         ));
     }
 

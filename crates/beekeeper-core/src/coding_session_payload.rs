@@ -15,8 +15,8 @@
 //! provider's own state module; a test there asserts it never appears in signed
 //! bytes.
 //!
-//! These live in `buzz-core` rather than in the provider that authors them
-//! because they are also what every *reader* has to agree with — `buzz
+//! These live in `beekeeper-core` rather than in the provider that authors them
+//! because they are also what every *reader* has to agree with — `bee
 //! sessions` parses all three, and the provider crate it would otherwise have
 //! to depend on drags the whole ACP stack behind it. One definition, two
 //! directions.
@@ -3638,7 +3638,7 @@ mod tests {
     fn a_shipped_defaults_pack_ref_carries_the_app_version_and_says_so() {
         let mut event = pack_ref_base();
         event["packRef"] = serde_json::json!({
-            "repo": buzz_shipped_repo(),
+            "repo": beekeeper_shipped_repo(),
             "sha": "0.5.16",
             "role": "builder",
             "path": "personas/roles/builder"
@@ -3656,7 +3656,7 @@ mod tests {
         // which" is exactly the unknown-as-empty this key exists to prevent.
         let mut blank = pack_ref_base();
         blank["packRef"] = serde_json::json!({
-            "repo": buzz_shipped_repo(),
+            "repo": beekeeper_shipped_repo(),
             "sha": "   ",
             "role": "builder",
             "path": "personas/roles/builder"
@@ -3678,7 +3678,7 @@ mod tests {
     }
 
     /// The one place the shipped sentinel is spelled, read back.
-    fn buzz_shipped_repo() -> &'static str {
+    fn beekeeper_shipped_repo() -> &'static str {
         crate::project_pack_source::PACK_REF_SHIPPED_REPO
     }
 

@@ -4604,7 +4604,7 @@ mod postgres_tests {
         let admin = PgPool::connect(&base_url)
             .await
             .expect("connect admin database");
-        let probe_db = format!("buzz_lock_probe_{}", Uuid::new_v4().simple());
+        let probe_db = format!("beekeeper_lock_probe_{}", Uuid::new_v4().simple());
         sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {probe_db}")))
             .execute(&admin)
             .await
@@ -4789,7 +4789,7 @@ mod postgres_tests {
         let admin = PgPool::connect(&base_url)
             .await
             .expect("connect admin database");
-        let probe_db = format!("buzz_desired_state_{}", Uuid::new_v4().simple());
+        let probe_db = format!("beekeeper_desired_state_{}", Uuid::new_v4().simple());
         sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {probe_db}")))
             .execute(&admin)
             .await

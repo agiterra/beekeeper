@@ -114,7 +114,7 @@ pub(crate) fn discovery_env_with_baked_floor(
 /// Call this BEFORE writing record/persona metadata env vars so that the
 /// record's explicit choices (written after) override the baked defaults.
 /// User-supplied `record.env_vars` (written last) always win.
-pub(crate) fn build_buzz_agent_provider_defaults(cmd: &mut std::process::Command) {
+pub(crate) fn build_beekeeper_agent_provider_defaults(cmd: &mut std::process::Command) {
     for (key, value) in baked_build_env() {
         cmd.env(key, value);
     }
@@ -144,17 +144,17 @@ pub(crate) fn parse_agent_env_lines(raw: &str) -> Vec<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        baked_build_env, build_buzz_agent_provider_defaults, build_env_map,
+        baked_build_env, build_beekeeper_agent_provider_defaults, build_env_map,
         discovery_env_with_baked_floor, parse_agent_env_lines,
     };
 
     #[test]
-    fn buzz_agent_provider_defaults_empty_in_oss_build() {
+    fn beekeeper_agent_provider_defaults_empty_in_oss_build() {
         // OSS (and normal test) builds set neither BEEKEEPER_BUILD_BEEKEEPER_AGENT_*,
         // so nothing is baked in and no BEEKEEPER_AGENT_* is injected on spawn.
         let mut cmd = std::process::Command::new("env");
         cmd.env_clear();
-        build_buzz_agent_provider_defaults(&mut cmd);
+        build_beekeeper_agent_provider_defaults(&mut cmd);
         let output = cmd.output().expect("env should run");
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
@@ -253,7 +253,7 @@ mod tests {
 
     // ── baked defaults ordering regression ───────────────────────────────
     //
-    // `build_buzz_agent_provider_defaults` must run BEFORE
+    // `build_beekeeper_agent_provider_defaults` must run BEFORE
     // `runtime_metadata_env_vars` writes the record's provider/model so that
     // record values win (last-write-wins). This test simulates the ordering by
     // writing the baked default first, then overwriting with the record value.

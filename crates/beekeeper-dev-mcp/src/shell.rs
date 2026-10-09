@@ -74,7 +74,7 @@ impl SharedState {
 
 fn build_bootstrap(cwd: &Path, shell_hint: &str) -> String {
     let stack = detect_stack(cwd);
-    let buzz_hint = if std::env::var("BEEKEEPER_RELAY_URL").is_ok()
+    let beekeeper_hint = if std::env::var("BEEKEEPER_RELAY_URL").is_ok()
         && std::env::var("BEEKEEPER_PRIVATE_KEY").is_ok()
     {
         "\nBuzz relay configured. Run `bee --help` to see available commands.\n"
@@ -86,7 +86,7 @@ fn build_bootstrap(cwd: &Path, shell_hint: &str) -> String {
          Detected stack: {}\n\
          Shell: {shell_hint} (set BEEKEEPER_SHELL to override) — write command strings in that shell's syntax.\n\
          Pass `workdir` per call rather than `cd`.\n\
-         {buzz_hint}",
+         {beekeeper_hint}",
         cwd.display(),
         stack,
     )
@@ -1157,7 +1157,7 @@ mod windows_resolver_tests {
     }
 
     #[test]
-    fn buzz_shell_override_wins_over_everything() {
+    fn beekeeper_shell_override_wins_over_everything() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         // BEEKEEPER_SHELL pointing at a real file must be returned without probing
         // the standard Git-for-Windows locations or PATH.
@@ -1173,7 +1173,7 @@ mod windows_resolver_tests {
     }
 
     #[test]
-    fn buzz_shell_override_skipped_when_path_absent() {
+    fn beekeeper_shell_override_skipped_when_path_absent() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         // If BEEKEEPER_SHELL points at a non-existent path the resolver must fall
         // through rather than returning a dead path.
@@ -1195,7 +1195,7 @@ mod windows_resolver_tests {
     /// Explicit BEEKEEPER_SHELL bare name resolves through PATH and uses NO System32
     /// exclusion — cmd/pwsh live in System32 legitimately.
     #[test]
-    fn buzz_shell_explicit_bare_name_resolves_from_system32() {
+    fn beekeeper_shell_explicit_bare_name_resolves_from_system32() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         // Simulate cmd.exe living in a dir that would be excluded by the WSL guard.
         // The explicit BEEKEEPER_SHELL branch must NOT skip System32.
@@ -1290,7 +1290,7 @@ mod windows_resolver_tests {
     /// F3: BEEKEEPER_SHELL bare command name (e.g. "pwsh") resolved through PATH.
     /// When pwsh.exe is on PATH, resolve_bash must return it and report "pwsh".
     #[test]
-    fn buzz_shell_bare_name_resolved_through_path_when_present() {
+    fn beekeeper_shell_bare_name_resolved_through_path_when_present() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         let dir = tempdir().expect("tempdir");
         let fake_pwsh = dir.path().join("pwsh.exe");
@@ -1309,20 +1309,20 @@ mod windows_resolver_tests {
     /// F3: BEEKEEPER_SHELL bare command name absent from PATH → fall through, do not
     /// report pwsh as the active shell.
     #[test]
-    fn buzz_shell_bare_name_absent_from_path_falls_through() {
+    fn beekeeper_shell_bare_name_absent_from_path_falls_through() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         // Set BEEKEEPER_SHELL to a command that won't be on any real PATH.
-        env::set_var("BEEKEEPER_SHELL", "buzz-shell-does-not-exist-xyz");
+        env::set_var("BEEKEEPER_SHELL", "beekeeper-shell-does-not-exist-xyz");
         let result = resolve_bash("");
         env::remove_var("BEEKEEPER_SHELL");
         if let Ok((resolved, name)) = result {
             assert_ne!(
                 resolved.file_name().and_then(|n| n.to_str()).unwrap_or(""),
-                "buzz-shell-does-not-exist-xyz.exe",
+                "beekeeper-shell-does-not-exist-xyz.exe",
                 "absent BEEKEEPER_SHELL must not be returned as the resolved path"
             );
             assert_ne!(
-                name, "buzz-shell-does-not-exist-xyz",
+                name, "beekeeper-shell-does-not-exist-xyz",
                 "absent BEEKEEPER_SHELL must not be reported as the shell name"
             );
         }
@@ -1339,14 +1339,14 @@ mod windows_resolver_tests {
         touch(&bash);
 
         let path_env = env::join_paths([git.parent().expect("cmd dir")]).expect("join");
-        let old_buzz_shell = env::var_os("BEEKEEPER_SHELL");
+        let old_beekeeper_shell = env::var_os("BEEKEEPER_SHELL");
         let old_git_bash = env::var_os("GIT_BASH");
         env::remove_var("BEEKEEPER_SHELL");
         env::remove_var("GIT_BASH");
 
         let result = resolve_bash(path_env.to_str().expect("utf8"));
 
-        match old_buzz_shell {
+        match old_beekeeper_shell {
             Some(value) => env::set_var("BEEKEEPER_SHELL", value),
             None => env::remove_var("BEEKEEPER_SHELL"),
         }

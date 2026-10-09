@@ -2730,18 +2730,18 @@ async fn tokio_main() -> Result<()> {
                     None
                 }
                 // Remaining branches don't touch pool — evaluated when pool is idle.
-                buzz_event = relay.next_event() => {
+                beekeeper_event = relay.next_event() => {
                     let _ = result_rx; // end split borrow before relay handling
-                    match buzz_event {
-                        Some(buzz_event) => {
-                            let kind_u32 = buzz_event.event.kind.as_u16() as u32;
+                    match beekeeper_event {
+                        Some(beekeeper_event) => {
+                            let kind_u32 = beekeeper_event.event.kind.as_u16() as u32;
 
                             if kind_u32 == KIND_MEMBER_ADDED_NOTIFICATION
                                 || kind_u32 == KIND_MEMBER_REMOVED_NOTIFICATION
                             {
-                                let ch = buzz_event.channel_id;
-                                let ts = buzz_event.event.created_at.as_secs();
-                                let eid = buzz_event.event.id.to_hex();
+                                let ch = beekeeper_event.channel_id;
+                                let ts = beekeeper_event.event.created_at.as_secs();
+                                let eid = beekeeper_event.event.id.to_hex();
 
                                 // Two-layer membership dedup:
                                 //
@@ -2854,14 +2854,14 @@ async fn tokio_main() -> Result<()> {
                                 continue;
                             }
 
-                            if config.ignore_self && buzz_event.event.pubkey.to_hex() == pubkey_hex {
-                                tracing::debug!(channel_id = %buzz_event.channel_id, "dropping self-authored event");
+                            if config.ignore_self && beekeeper_event.event.pubkey.to_hex() == pubkey_hex {
+                                tracing::debug!(channel_id = %beekeeper_event.channel_id, "dropping self-authored event");
                                 continue;
                             }
 
                             // Check: kind:9, content "!shutdown", from owner, mentions THIS agent.
                             let is_shutdown = is_owner_control_command(
-                                &buzz_event.event,
+                                &beekeeper_event.event,
                                 kind_u32,
                                 "!shutdown",
                                 &pubkey_hex,
@@ -2869,10 +2869,10 @@ async fn tokio_main() -> Result<()> {
                             if is_shutdown {
                                 let owner = owner_cache.get();
                                 if let Some(owner) = owner {
-                                    if buzz_event.event.pubkey.to_hex() == *owner {
+                                    if beekeeper_event.event.pubkey.to_hex() == *owner {
                                         tracing::info!(
-                                            channel_id = %buzz_event.channel_id,
-                                            sender = %buzz_event.event.pubkey.to_hex(),
+                                            channel_id = %beekeeper_event.channel_id,
+                                            sender = %beekeeper_event.event.pubkey.to_hex(),
                                             "shutdown command from owner — exiting gracefully"
                                         );
                                         let _ = shutdown_tx.send(());
@@ -2892,14 +2892,14 @@ async fn tokio_main() -> Result<()> {
                             // --multiple-event-handling. It is explicit user
                             // intent, not an automatic policy decision.
                             let is_cancel = is_owner_control_command(
-                                &buzz_event.event,
+                                &beekeeper_event.event,
                                 kind_u32,
                                 "!cancel",
                                 &pubkey_hex,
                             );
                             if is_cancel {
                                 let from_owner = owner_cache.get().is_some_and(|owner| {
-                                    buzz_event.event.pubkey.to_hex() == *owner
+                                    beekeeper_event.event.pubkey.to_hex() == *owner
                                 });
                                 if from_owner {
                                     // Scope-exact: an owner's !cancel in thread A
@@ -2910,10 +2910,10 @@ async fn tokio_main() -> Result<()> {
                                     // byte-for-byte the prior behavior.
                                     let scope = scope::SessionScope::derive(
                                         config.session_policy,
-                                        buzz_event.channel_id,
-                                        is_dm_channel(buzz_event.channel_id, &ctx.channel_info)
+                                        beekeeper_event.channel_id,
+                                        is_dm_channel(beekeeper_event.channel_id, &ctx.channel_info)
                                             .await,
-                                        &buzz_event.event,
+                                        &beekeeper_event.event,
                                     );
                                     let fired = signal_in_flight_task_for_scope(
                                         &mut pool,
@@ -2922,7 +2922,7 @@ async fn tokio_main() -> Result<()> {
                                     );
                                     if !fired {
                                         tracing::warn!(
-                                            channel_id = %buzz_event.channel_id,
+                                            channel_id = %beekeeper_event.channel_id,
                                             scope = %scope.telemetry_label(),
                                             "!cancel received but no in-flight task — no-op"
                                         );
@@ -2945,14 +2945,14 @@ async fn tokio_main() -> Result<()> {
                             // session immediately. Queued future events remain
                             // queued and will create a fresh session on dispatch.
                             let is_rotate = is_owner_control_command(
-                                &buzz_event.event,
+                                &beekeeper_event.event,
                                 kind_u32,
                                 "!rotate",
                                 &pubkey_hex,
                             );
                             if is_rotate {
                                 let from_owner = owner_cache.get().is_some_and(|owner| {
-                                    buzz_event.event.pubkey.to_hex() == *owner
+                                    beekeeper_event.event.pubkey.to_hex() == *owner
                                 });
                                 if from_owner {
                                     // Scope-exact: rotate only the thread the
@@ -2962,10 +2962,10 @@ async fn tokio_main() -> Result<()> {
                                     // prior channel-wide rotate.
                                     let scope = scope::SessionScope::derive(
                                         config.session_policy,
-                                        buzz_event.channel_id,
-                                        is_dm_channel(buzz_event.channel_id, &ctx.channel_info)
+                                        beekeeper_event.channel_id,
+                                        is_dm_channel(beekeeper_event.channel_id, &ctx.channel_info)
                                             .await,
-                                        &buzz_event.event,
+                                        &beekeeper_event.event,
                                     );
                                     let fired = signal_in_flight_task_for_scope(
                                         &mut pool,
@@ -2974,7 +2974,7 @@ async fn tokio_main() -> Result<()> {
                                     );
                                     if fired {
                                         tracing::info!(
-                                            channel_id = %buzz_event.channel_id,
+                                            channel_id = %beekeeper_event.channel_id,
                                             scope = %scope.telemetry_label(),
                                             "!rotate received — cancelling in-flight turn and rotating session"
                                         );
@@ -2982,7 +2982,7 @@ async fn tokio_main() -> Result<()> {
                                         let invalidated =
                                             pool.invalidate_scope_session(&scope);
                                         tracing::info!(
-                                            channel_id = %buzz_event.channel_id,
+                                            channel_id = %beekeeper_event.channel_id,
                                             scope = %scope.telemetry_label(),
                                             invalidated,
                                             "!rotate received — invalidated idle session for scope"
@@ -3016,25 +3016,25 @@ async fn tokio_main() -> Result<()> {
                                 // See `workflow_attributed_author`
                                 // for the recognition + trust argument.
                                 let author = match workflow_attributed_author(
-                                    &buzz_event.event,
+                                    &beekeeper_event.event,
                                     relay_self.as_deref(),
                                 ) {
                                     Some(attributed) => {
                                         tracing::debug!(
-                                            channel_id = %buzz_event.channel_id,
-                                            relay_author = %buzz_event.event.pubkey.to_hex(),
+                                            channel_id = %beekeeper_event.channel_id,
+                                            relay_author = %beekeeper_event.event.pubkey.to_hex(),
                                             attributed_author = %attributed,
                                             "relay-signed workflow message — gating on attributed author"
                                         );
                                         attributed
                                     }
-                                    None => buzz_event.event.pubkey.to_hex(),
+                                    None => beekeeper_event.event.pubkey.to_hex(),
                                 };
                                 // DM hardening: resolve channel type (fail-closed
                                 // to DM) so allowlist/anyone modes cannot be
                                 // exercised by non-owner authors inside DMs.
                                 let is_dm =
-                                    is_dm_channel(buzz_event.channel_id, &ctx.channel_info).await;
+                                    is_dm_channel(beekeeper_event.channel_id, &ctx.channel_info).await;
                                 let allowed = author_allowed(
                                     &config.respond_to,
                                     &config.respond_to_allowlist,
@@ -3046,8 +3046,8 @@ async fn tokio_main() -> Result<()> {
                                 .await;
                                 if !allowed {
                                     tracing::debug!(
-                                        channel_id = %buzz_event.channel_id,
-                                        author = %buzz_event.event.pubkey.to_hex(),
+                                        channel_id = %beekeeper_event.channel_id,
+                                        author = %beekeeper_event.event.pubkey.to_hex(),
                                         mode = %config.respond_to,
                                         is_dm,
                                         "inbound author gate — dropping event"
@@ -3056,19 +3056,19 @@ async fn tokio_main() -> Result<()> {
                                 }
                             }
 
-                            let matched = filter::match_event(&buzz_event.event, buzz_event.channel_id, &rules, &pubkey_hex).await;
+                            let matched = filter::match_event(&beekeeper_event.event, beekeeper_event.channel_id, &rules, &pubkey_hex).await;
                             let prompt_tag = match matched {
                                 Some(m) => m.prompt_tag,
                                 None => {
-                                    tracing::debug!(channel_id = %buzz_event.channel_id, kind = buzz_event.event.kind.as_u16(), "event matched no rule — dropping");
+                                    tracing::debug!(channel_id = %beekeeper_event.channel_id, kind = beekeeper_event.event.kind.as_u16(), "event matched no rule — dropping");
                                     continue;
                                 }
                             };
                             let session_scope = scope::SessionScope::derive(
                                 config.session_policy,
-                                buzz_event.channel_id,
-                                is_dm_channel(buzz_event.channel_id, &ctx.channel_info).await,
-                                &buzz_event.event,
+                                beekeeper_event.channel_id,
+                                is_dm_channel(beekeeper_event.channel_id, &ctx.channel_info).await,
+                                &beekeeper_event.event,
                             );
                             tracing::debug!(
                                 channel_id = %session_scope.channel_id(),
@@ -3079,9 +3079,9 @@ async fn tokio_main() -> Result<()> {
                                 "admitted event — resolved session scope"
                             );
                             // Capture author pubkey before queue.push() moves
-                            // buzz_event.event (needed for mode gate below).
-                            let author_hex = buzz_event.event.pubkey.to_hex();
-                            let event_id_hex = buzz_event.event.id.to_hex();
+                            // beekeeper_event.event (needed for mode gate below).
+                            let author_hex = beekeeper_event.event.pubkey.to_hex();
+                            let event_id_hex = beekeeper_event.event.id.to_hex();
                             // Clone for the non-cancelling steer fork, which
                             // needs the event to render the steer body. The
                             // clone is unconditional because we don't know
@@ -3092,12 +3092,12 @@ async fn tokio_main() -> Result<()> {
                             // accepted event goes through `queue.push`
                             // first. `nostr::Event::clone` is cheap (Arc-
                             // backed payload) so the cost is negligible.
-                            let event_for_steer = buzz_event.event.clone();
+                            let event_for_steer = beekeeper_event.event.clone();
                             let prompt_tag_for_steer = prompt_tag.clone();
                             let accepted = queue.push(QueuedEvent {
-                                channel_id: buzz_event.channel_id,
+                                channel_id: beekeeper_event.channel_id,
                                 scope: session_scope.clone(),
-                                event: buzz_event.event,
+                                event: beekeeper_event.event,
                                 received_at: std::time::Instant::now(),
                                 prompt_tag,
                             });
@@ -7853,7 +7853,7 @@ mod build_mcp_servers_tests {
     }
 
     #[test]
-    fn session_new_mcp_server_forwards_buzz_auth_tag() {
+    fn session_new_mcp_server_forwards_beekeeper_auth_tag() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("BEEKEEPER_AUTH_TAG", "test-attestation-tag");
         let config = test_config();
@@ -7870,7 +7870,7 @@ mod build_mcp_servers_tests {
     }
 
     #[test]
-    fn session_new_mcp_server_skips_empty_buzz_auth_tag() {
+    fn session_new_mcp_server_skips_empty_beekeeper_auth_tag() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("BEEKEEPER_AUTH_TAG", "");
         let config = test_config();

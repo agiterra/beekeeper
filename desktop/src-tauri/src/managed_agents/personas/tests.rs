@@ -395,7 +395,7 @@ fn fizz_builtin_has_no_pinned_runtime() {
 }
 
 #[test]
-fn fizz_builtin_resolves_to_buzz_agent() {
+fn fizz_builtin_resolves_to_beekeeper_agent() {
     // With no runtime pin, effective_agent_command must fall through to
     // default_agent_command(), which resolves the bundled agent binary of the
     // `buzz-agent` runtime.

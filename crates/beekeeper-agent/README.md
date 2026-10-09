@@ -1,17 +1,17 @@
-# buzz-agent
+# beekeeper-agent
 
 > Minimal, unbreakable ACP-compliant LLM agent. Stdio in, tool calls out. Non-streaming. No persistence. No cleverness.
 
 [ACP](https://agentclientprotocol.com) is the Agent Client Protocol — JSON-RPC 2.0 over stdio between a client (Zed, JetBrains, beekeeper-acp, …) and an agent. [MCP](https://modelcontextprotocol.io) is how the agent talks to its tools.
 
-`buzz-agent` is the agent.
+`beekeeper-agent` is the agent (its desktop runtime id is still `buzz-agent`).
 
 ## What It Is
 
 ```
-        +--------+   stdio (JSON-RPC 2.0)   +---------------+
-        | client | <----------------------> |  buzz-agent |
-        +--------+        ACP frames        +---------------+
+        +--------+   stdio (JSON-RPC 2.0)   +-----------------+
+        | client | <----------------------> | beekeeper-agent |
+        +--------+        ACP frames        +-----------------+
                                               │            │
                                               │            │ rmcp (stdio)
                                               │            ▼
@@ -41,26 +41,26 @@ cargo build --release -p beekeeper-agent
 BEEKEEPER_AGENT_PROVIDER=anthropic \
 ANTHROPIC_API_KEY=sk-ant-... \
 ANTHROPIC_MODEL=claude-sonnet-4-5 \
-  ./target/release/buzz-agent
+  ./target/release/beekeeper-agent
 
 # Or any OpenAI-compatible endpoint
 BEEKEEPER_AGENT_PROVIDER=openai \
 OPENAI_COMPAT_API_KEY=sk-... \
 OPENAI_COMPAT_MODEL=gpt-5 \
 OPENAI_COMPAT_BASE_URL=https://api.openai.com/v1 \
-  ./target/release/buzz-agent
+  ./target/release/beekeeper-agent
 
 # Or OpenRouter
 BEEKEEPER_AGENT_PROVIDER=openrouter \
 OPENROUTER_API_KEY=sk-or-v1-... \
 OPENROUTER_MODEL=anthropic/claude-sonnet-4.5 \
-  ./target/release/buzz-agent
+  ./target/release/beekeeper-agent
 
 # Or Databricks model serving via OAuth 2.0 PKCE
 BEEKEEPER_AGENT_PROVIDER=databricks \
 DATABRICKS_HOST=https://dbc-...cloud.databricks.com \
 DATABRICKS_MODEL=goose-claude-4-6-sonnet \
-  ./target/release/buzz-agent
+  ./target/release/beekeeper-agent
 ```
 
 That's the whole setup. The agent reads JSON-RPC frames from stdin, writes them to stdout, and logs to stderr.
@@ -79,7 +79,7 @@ A complete round-trip. Lines starting with `→` are client→agent (stdin); `�
       "promptCapabilities":{"image":false,"audio":false,"embeddedContext":false},
       "mcpCapabilities":{"http":false,"sse":false}
     },
-    "agentInfo":{"name":"buzz-agent","version":"0.1.0"}
+    "agentInfo":{"name":"beekeeper-agent","version":"0.1.0"}
   }}
 
 // 2. Open a session. The client passes the MCP servers to spawn.
@@ -229,7 +229,7 @@ lifecycle hook — see [MCP_DRIVEN_HOOKS.md](../../docs/MCP_DRIVEN_HOOKS.md).
 
 ## Providers
 
-`buzz-agent` speaks a few HTTP dialects. Pick with `BEEKEEPER_AGENT_PROVIDER`.
+`beekeeper-agent` speaks a few HTTP dialects. Pick with `BEEKEEPER_AGENT_PROVIDER`.
 
 | Provider | `BEEKEEPER_AGENT_PROVIDER` | Endpoint (auto) | Tested with |
 |---|---|---|---|

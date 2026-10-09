@@ -11,7 +11,7 @@ use super::workdir_store::{
 use crate::session_provider::store::{CodingSessionProviderRecord, CodingSessionProviderStore};
 
 const PROJECT_REF: &str =
-    "30621:aa00000000000000000000000000000000000000000000000000000000000000:buzz";
+    "30621:aa00000000000000000000000000000000000000000000000000000000000000:beekeeper";
 const CHANNEL_ID: &str = "11111111-2222-3333-4444-555555555555";
 
 fn store_with_choices() -> CodingSessionWorkdirStore {
@@ -19,14 +19,14 @@ fn store_with_choices() -> CodingSessionWorkdirStore {
     store.set(
         CodingSessionWorkdirScope::Project,
         PROJECT_REF,
-        PathBuf::from("/src/buzz"),
+        PathBuf::from("/src/beekeeper"),
     );
     store.set(
         CodingSessionWorkdirScope::Channel,
         CHANNEL_ID,
         PathBuf::from("/src/side-quest"),
     );
-    store.record_use(PathBuf::from("/src/buzz"));
+    store.record_use(PathBuf::from("/src/beekeeper"));
     store.stage_hint("create-1", PathBuf::from("/src/one-shot"));
     store
 }
@@ -190,7 +190,10 @@ fn a_hint_lives_from_staging_until_its_receipt_clears_it() {
 fn pending_hints_are_bounded_when_receipts_never_arrive() {
     let mut store = CodingSessionWorkdirStore::default();
     for index in 0..MAX_PENDING_HINTS + 5 {
-        store.stage_hint(&format!("create-{index:04}"), PathBuf::from("/src/buzz"));
+        store.stage_hint(
+            &format!("create-{index:04}"),
+            PathBuf::from("/src/beekeeper"),
+        );
     }
     assert_eq!(store.pending.len(), MAX_PENDING_HINTS);
 }
@@ -202,7 +205,7 @@ fn the_provider_view_carries_paths_and_nothing_else() {
     assert_eq!(view.version, PROJECTS_VIEW_VERSION);
     assert_eq!(
         view.projects.get(PROJECT_REF),
-        Some(&PathBuf::from("/src/buzz")),
+        Some(&PathBuf::from("/src/beekeeper")),
     );
     assert_eq!(
         view.channels.get(CHANNEL_ID),
@@ -287,7 +290,7 @@ fn validation_reports_absolute_existing_directories() {
     let missing = validate_workdir(&dir.path().join("nope"));
     assert!(!missing.exists && !missing.is_dir);
 
-    let relative = validate_workdir(std::path::Path::new("src/buzz"));
+    let relative = validate_workdir(std::path::Path::new("src/beekeeper"));
     assert!(
         !relative.is_absolute,
         "the provider treats a relative path as unconfigured, so the picker must say so",

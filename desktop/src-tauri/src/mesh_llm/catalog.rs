@@ -32,7 +32,7 @@ const CURATED_SMALL_ALIAS: &str = "Gemma-4-E4B-it-Q4_K_M";
 const CURATED_LARGE_MIN_RATED_GB: u64 = 64;
 
 /// The Beekeeper-curated recommendation for a machine's rated memory capacity.
-fn buzz_recommended_model(rated_gb: Option<u64>) -> &'static str {
+fn beekeeper_recommended_model(rated_gb: Option<u64>) -> &'static str {
     match rated_gb {
         Some(gb) if gb >= CURATED_LARGE_MIN_RATED_GB => CURATED_LARGE,
         _ => CURATED_SMALL,
@@ -190,7 +190,7 @@ fn build_catalog(
         });
     }
 
-    let recommended = Some(buzz_recommended_model(rated_capacity_gb(vram_bytes)).to_string());
+    let recommended = Some(beekeeper_recommended_model(rated_capacity_gb(vram_bytes)).to_string());
     for entry in &mut entries {
         entry.recommended = recommended.as_deref() == Some(entry.name.as_str());
         // Both curated tiers are always offered: the recommended one for this
@@ -269,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn recommendation_follows_buzz_curated_tiers() {
+    fn recommendation_follows_beekeeper_curated_tiers() {
         assert_eq!(CURATED_SMALL, "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M");
         assert_eq!(CURATED_LARGE, "unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_M");
         // 64GB+ rated machines get the large curated pick.

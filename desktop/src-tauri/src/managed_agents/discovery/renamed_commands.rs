@@ -100,7 +100,7 @@ mod tests {
     }
 
     #[test]
-    fn the_buzz_agent_runtime_answers_to_its_id_its_binary_and_its_old_binary_name() {
+    fn the_beekeeper_agent_runtime_answers_to_its_id_its_binary_and_its_old_binary_name() {
         use super::super::{
             known_acp_runtime, managed_agent_avatar_url, normalize_agent_args,
             BEEKEEPER_AGENT_AVATAR_URL,

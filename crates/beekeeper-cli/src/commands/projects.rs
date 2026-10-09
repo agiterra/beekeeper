@@ -1433,7 +1433,8 @@ mod tests {
 
     #[test]
     fn expand_repo_coord_rejects_uppercase_owner() {
-        let upper = "30617:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:buzz";
+        let upper =
+            "30617:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:beekeeper";
         assert!(expand_repo_coord(upper, OWNER_HEX).is_err());
     }
 
@@ -1542,7 +1543,7 @@ mod tests {
 
     #[test]
     fn bare_repo_id_accepts_valid() {
-        assert!(is_bare_repo_id("buzz"));
+        assert!(is_bare_repo_id("beekeeper"));
         assert!(is_bare_repo_id("my-repo_1.0"));
     }
 
@@ -1574,7 +1575,7 @@ mod tests {
     #[test]
     fn rebuild_project_preserves_hinted_member_tags() {
         // A member 'a' tag with a relay hint must survive RMW untouched.
-        let coord = format!("30617:{OWNER_HEX}:buzz");
+        let coord = format!("30617:{OWNER_HEX}:beekeeper");
         let hint = "wss://relay.example.com";
         let tags = vec![
             make_test_tag(&["d", "platform"]),
@@ -1787,7 +1788,7 @@ mod tests {
 
     #[test]
     fn duplicate_member_in_foreign_head_fails_rebuild() {
-        let coord = format!("30617:{OWNER_HEX}:buzz");
+        let coord = format!("30617:{OWNER_HEX}:beekeeper");
         let tags = vec![
             make_test_tag(&["d", "platform"]),
             make_test_tag(&["a", &coord]),
@@ -1801,7 +1802,7 @@ mod tests {
 
     #[test]
     fn validate_project_envelope_accepts_hinted_member() {
-        let coord = format!("30617:{OWNER_HEX}:buzz");
+        let coord = format!("30617:{OWNER_HEX}:beekeeper");
         let tags = vec![
             make_test_tag(&["d", "platform"]),
             Tag::parse(["a", &coord, "wss://relay.example.com"]).unwrap(),
@@ -1811,7 +1812,7 @@ mod tests {
 
     #[test]
     fn validate_project_envelope_rejects_four_element_member() {
-        let coord = format!("30617:{OWNER_HEX}:buzz");
+        let coord = format!("30617:{OWNER_HEX}:beekeeper");
         let tags = vec![
             make_test_tag(&["d", "platform"]),
             Tag::parse(["a", &coord, "wss://relay.example.com", "extra"]).unwrap(),
@@ -1825,7 +1826,7 @@ mod tests {
         let keys = nostr::Keys::generate();
         let tags = vec![
             make_test_tag(&["d", "platform"]),
-            make_test_tag(&["a", &format!("30617:{OWNER_HEX}:buzz")]),
+            make_test_tag(&["a", &format!("30617:{OWNER_HEX}:beekeeper")]),
         ];
         rebuild_project("", tags, Timestamp::from(created_at))
             .expect("valid head envelope")
@@ -1920,7 +1921,7 @@ mod tests {
         let err = cmd_create(
             &client,
             "my-slug",
-            &["buzz".to_string()],
+            &["beekeeper".to_string()],
             None,
             None,
             None,
@@ -1944,7 +1945,7 @@ mod tests {
         let err = cmd_create(
             &client,
             "my-slug",
-            &["buzz".to_string()],
+            &["beekeeper".to_string()],
             Some(&long_name),
             None,
             None,
@@ -2016,7 +2017,7 @@ mod tests {
     #[tokio::test]
     async fn create_duplicate_repo_returns_usage_before_any_network_call() {
         let client = discard_client();
-        let coord = format!("30617:{OWNER_HEX}:buzz");
+        let coord = format!("30617:{OWNER_HEX}:beekeeper");
         let err = cmd_create(
             &client,
             "my-slug",
@@ -2036,7 +2037,7 @@ mod tests {
         );
         // Error message must name the duplicate coordinate.
         assert!(
-            format!("{err}").contains("buzz"),
+            format!("{err}").contains("beekeeper"),
             "Usage message must name the duplicate coordinate, got {err:?}"
         );
     }
@@ -2046,7 +2047,7 @@ mod tests {
     #[tokio::test]
     async fn add_repo_duplicate_coord_returns_usage_before_any_network_call() {
         let client = discard_client();
-        let coord = format!("30617:{OWNER_HEX}:buzz");
+        let coord = format!("30617:{OWNER_HEX}:beekeeper");
         let err = cmd_add_repo(&client, "my-slug", &[coord.clone(), coord.clone()])
             .await
             .expect_err("duplicate repo must fail");
@@ -2291,8 +2292,11 @@ mod cascade_relay_tests {
     fn head_event(keys: &Keys, slug: &str, extra_tags: Vec<Tag>) -> Event {
         let mut tags = vec![
             Tag::parse(["d", slug]).expect("d tag"),
-            Tag::parse(["a", &format!("30617:{}:buzz", keys.public_key().to_hex())])
-                .expect("a tag"),
+            Tag::parse([
+                "a",
+                &format!("30617:{}:beekeeper", keys.public_key().to_hex()),
+            ])
+            .expect("a tag"),
         ];
         tags.extend(extra_tags);
         build_project_with_tags("", tags)

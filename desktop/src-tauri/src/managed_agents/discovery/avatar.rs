@@ -1,11 +1,11 @@
 //! The Beekeeper Agent avatar, bundled rather than fetched: a 128px JPEG of
-//! `crates/beekeeper-agent/sprout-agent.png` (`buzz-agent-avatar.jpg`), inlined as a
+//! `crates/beekeeper-agent/sprout-agent.png` (`beekeeper-agent-avatar.jpg`), inlined as a
 //! base64 data URL. It becomes the agent's kind:0 `picture`, so it must render
 //! in any client without reaching a host we do not control, and it is kept
 //! small (~10 KB) because it travels inside that event.
 
 pub(super) const BEEKEEPER_AGENT_AVATAR_URL: &str =
-    include_str!("buzz-agent-avatar.data-url").trim_ascii();
+    include_str!("beekeeper-agent-avatar.data-url").trim_ascii();
 
 #[cfg(test)]
 mod tests {
@@ -14,7 +14,7 @@ mod tests {
     /// It must be a data URL of exactly the JPEG committed beside it, so the
     /// two cannot drift apart.
     #[test]
-    fn buzz_agent_avatar_is_the_bundled_jpeg() {
+    fn beekeeper_agent_avatar_is_the_bundled_jpeg() {
         use base64::Engine as _;
 
         let payload = BEEKEEPER_AGENT_AVATAR_URL
@@ -23,7 +23,7 @@ mod tests {
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(payload)
             .expect("bundled avatar payload must be valid base64");
-        assert_eq!(decoded, include_bytes!("buzz-agent-avatar.jpg"));
+        assert_eq!(decoded, include_bytes!("beekeeper-agent-avatar.jpg"));
         assert!(
             BEEKEEPER_AGENT_AVATAR_URL.len() < 16 * 1024,
             "the avatar travels in a kind:0 event; keep it small"

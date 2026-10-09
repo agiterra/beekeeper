@@ -134,8 +134,8 @@ async fn test_project_publish_and_query_returns_cross_owner_members() {
     let d_tag = unique("project");
 
     let members = vec![
-        member_coord(&owner, "buzz"),
-        member_coord(&other, "buzz-infra"),
+        member_coord(&owner, "beekeeper"),
+        member_coord(&other, "beekeeper-infra"),
     ];
 
     let mut client = BeekeeperTestClient::connect(&url, &owner)
@@ -186,7 +186,7 @@ async fn test_project_replacement_keeps_only_newest_for_same_author_and_d() {
     let ok = client.send_event(first).await.expect("send old");
     assert!(ok.accepted, "relay rejected old project: {}", ok.message);
 
-    let members = vec![member_coord(&owner, "buzz")];
+    let members = vec![member_coord(&owner, "beekeeper")];
     let second = project_event(&owner, &d_tag, "New", &members, Some(now));
     let ok = client.send_event(second).await.expect("send new");
     assert!(ok.accepted, "relay rejected new project: {}", ok.message);
@@ -436,7 +436,7 @@ async fn test_project_malformed_envelope_rejected_by_relay() {
         .await
         .expect("connect");
 
-    let duplicate = member_coord(&owner, "buzz");
+    let duplicate = member_coord(&owner, "beekeeper");
     // Each case pairs a malformed event with the substring its rejection must
     // carry, so a refusal for an unrelated reason cannot satisfy the assertion.
     let cases: Vec<(&str, nostr::Event, &str)> = vec![
@@ -457,7 +457,7 @@ async fn test_project_malformed_envelope_rejected_by_relay() {
                 &owner,
                 &unique("project-badkind"),
                 "Bad kind",
-                &[format!("30618:{}:buzz", owner.public_key().to_hex())],
+                &[format!("30618:{}:beekeeper", owner.public_key().to_hex())],
                 None,
             ),
             "member `a` tag must be",
@@ -468,7 +468,10 @@ async fn test_project_malformed_envelope_rejected_by_relay() {
                 &owner,
                 &unique("project-upper"),
                 "Uppercase",
-                &[format!("{REPO_ANNOUNCEMENT_KIND}:{}:buzz", "A".repeat(64))],
+                &[format!(
+                    "{REPO_ANNOUNCEMENT_KIND}:{}:beekeeper",
+                    "A".repeat(64)
+                )],
                 None,
             ),
             "member `a` tag must be",

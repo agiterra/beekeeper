@@ -51,24 +51,24 @@ fn parse_entity_deep_link_rejects_malformed_and_non_canonical_links() {
     for raw in [
         // Missing or malformed identifiers.
         format!("beekeeper://repo?owner={owner}"),
-        "beekeeper://repo?owner=nope&d=buzz-world".to_owned(),
+        "beekeeper://repo?owner=nope&d=beekeeper-world".to_owned(),
         format!("beekeeper://repo?owner={owner}&d=.hidden"),
         format!("beekeeper://repo?owner={owner}&d=has%20space"),
-        format!("beekeeper://pr?owner={owner}&d=buzz-world"),
-        format!("beekeeper://pr?id=short&owner={owner}&d=buzz-world"),
+        format!("beekeeper://pr?owner={owner}&d=beekeeper-world"),
+        format!("beekeeper://pr?id=short&owner={owner}&d=beekeeper-world"),
         // Coordinate links take no event id.
-        format!("beekeeper://repo?id={event_id}&owner={owner}&d=buzz-world"),
+        format!("beekeeper://repo?id={event_id}&owner={owner}&d=beekeeper-world"),
         // Non-canonical: unknown param, duplicate param, path, fragment.
-        format!("beekeeper://repo?owner={owner}&d=buzz-world&relay=wss%3A%2F%2Fx.example"),
-        format!("beekeeper://repo?owner={owner}&owner={owner}&d=buzz-world"),
+        format!("beekeeper://repo?owner={owner}&d=beekeeper-world&relay=wss%3A%2F%2Fx.example"),
+        format!("beekeeper://repo?owner={owner}&owner={owner}&d=beekeeper-world"),
         // Unknown tab value, duplicate tab, and tab on an event link.
-        format!("beekeeper://repo?owner={owner}&d=buzz-world&tab=overview"),
-        format!("beekeeper://repo?owner={owner}&d=buzz-world&tab=prs&tab=prs"),
-        format!("beekeeper://pr?id={event_id}&owner={owner}&d=buzz-world&tab=prs"),
-        format!("beekeeper://repo/extra?owner={owner}&d=buzz-world"),
-        format!("beekeeper://repo?owner={owner}&d=buzz-world#top"),
+        format!("beekeeper://repo?owner={owner}&d=beekeeper-world&tab=overview"),
+        format!("beekeeper://repo?owner={owner}&d=beekeeper-world&tab=prs&tab=prs"),
+        format!("beekeeper://pr?id={event_id}&owner={owner}&d=beekeeper-world&tab=prs"),
+        format!("beekeeper://repo/extra?owner={owner}&d=beekeeper-world"),
+        format!("beekeeper://repo?owner={owner}&d=beekeeper-world#top"),
         // Not an entity host.
-        format!("beekeeper://message?owner={owner}&d=buzz-world"),
+        format!("beekeeper://message?owner={owner}&d=beekeeper-world"),
     ] {
         assert!(
             parse_entity_deep_link(&Url::parse(&raw).unwrap()).is_none(),
@@ -226,7 +226,7 @@ fn pending_entity_links_survive_until_acknowledged_in_order() {
 #[test]
 fn pending_entity_links_dedupe_launch_and_open_callbacks() {
     let queue = PendingEntityDeepLinks::default();
-    let href = "beekeeper://project?owner=aa&d=buzz".to_owned();
+    let href = "beekeeper://project?owner=aa&d=beekeeper".to_owned();
     let first = queue.enqueue(href.clone());
     let duplicate = queue.enqueue(href);
 
@@ -245,11 +245,11 @@ fn valid_nostr_bind_url() -> Url {
 #[test]
 fn parse_add_community_deep_link_extracts_relay_and_name() {
     let url = Url::parse(
-        "beekeeper://add-community?relay=wss%3A%2F%2Facme.communities.buzz.xyz&name=Acme%20Team&ignored=value",
+        "beekeeper://add-community?relay=wss%3A%2F%2Facme.communities.beekeeper.xyz&name=Acme%20Team&ignored=value",
     )
     .unwrap();
     let payload = parse_add_community_deep_link(&url).unwrap();
-    assert_eq!(payload.relay_url, "wss://acme.communities.buzz.xyz");
+    assert_eq!(payload.relay_url, "wss://acme.communities.beekeeper.xyz");
     assert_eq!(payload.name.as_deref(), Some("Acme Team"));
 }
 
@@ -448,23 +448,23 @@ fn parse_nostr_bind_deep_link_accepts_valid_url() {
 
 #[test]
 fn parse_nostr_bind_deep_link_accepts_same_origin_callback_url() {
-    let url = Url::parse("beekeeper://nostr-bind?challenge_id=550e8400-e29b-41d4-a716-446655440000&nonce=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi01234567&verification_code=123456&audience=buzz%3Anostr-identity&action=bind_nostr_identity&protocol=buzz-nostr-identity&version=1&origin=https%3A%2F%2Fexample.com&expires_at=2999-01-01T00%3A00%3A00Z&return=clipboard&callback_url=https%3A%2F%2Fexample.com%2Fbuzz%3FmockSession%3D1").unwrap();
+    let url = Url::parse("beekeeper://nostr-bind?challenge_id=550e8400-e29b-41d4-a716-446655440000&nonce=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi01234567&verification_code=123456&audience=buzz%3Anostr-identity&action=bind_nostr_identity&protocol=buzz-nostr-identity&version=1&origin=https%3A%2F%2Fexample.com&expires_at=2999-01-01T00%3A00%3A00Z&return=clipboard&callback_url=https%3A%2F%2Fexample.com%2Fbeekeeper%3FmockSession%3D1").unwrap();
     let payload = parse_nostr_bind_deep_link(&url).unwrap();
     assert_eq!(
         payload.callback_url.as_deref(),
-        Some("https://example.com/buzz?mockSession=1")
+        Some("https://example.com/beekeeper?mockSession=1")
     );
 }
 
 #[test]
 fn parse_nostr_bind_deep_link_accepts_browser_fragment_return() {
-    let url = Url::parse("beekeeper://nostr-bind?challenge_id=550e8400-e29b-41d4-a716-446655440000&nonce=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi01234567&verification_code=123456&audience=buzz%3Anostr-identity&action=bind_nostr_identity&protocol=buzz-nostr-identity&version=1&origin=https%3A%2F%2Fexample.com&expires_at=2999-01-01T00%3A00%3A00Z&return=browser_fragment_v1&callback_url=https%3A%2F%2Fexample.com%2Fbuzz").unwrap();
+    let url = Url::parse("beekeeper://nostr-bind?challenge_id=550e8400-e29b-41d4-a716-446655440000&nonce=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi01234567&verification_code=123456&audience=buzz%3Anostr-identity&action=bind_nostr_identity&protocol=buzz-nostr-identity&version=1&origin=https%3A%2F%2Fexample.com&expires_at=2999-01-01T00%3A00%3A00Z&return=browser_fragment_v1&callback_url=https%3A%2F%2Fexample.com%2Fbeekeeper").unwrap();
     let payload = parse_nostr_bind_deep_link(&url).unwrap();
 
     assert_eq!(payload.return_mode, "browser_fragment_v1");
     assert_eq!(
         payload.callback_url.as_deref(),
-        Some("https://example.com/buzz")
+        Some("https://example.com/beekeeper")
     );
 }
 
@@ -486,7 +486,7 @@ fn parse_nostr_bind_deep_link_rejects_cross_origin_callback_url() {
 
 #[test]
 fn parse_nostr_bind_deep_link_rejects_http_callback_url() {
-    let url = Url::parse("beekeeper://nostr-bind?challenge_id=550e8400-e29b-41d4-a716-446655440000&nonce=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi01234567&verification_code=123456&audience=buzz%3Anostr-identity&action=bind_nostr_identity&protocol=buzz-nostr-identity&version=1&origin=https%3A%2F%2Fexample.com&expires_at=2999-01-01T00%3A00%3A00Z&return=clipboard&callback_url=http%3A%2F%2Fexample.com%2Fbuzz").unwrap();
+    let url = Url::parse("beekeeper://nostr-bind?challenge_id=550e8400-e29b-41d4-a716-446655440000&nonce=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi01234567&verification_code=123456&audience=buzz%3Anostr-identity&action=bind_nostr_identity&protocol=buzz-nostr-identity&version=1&origin=https%3A%2F%2Fexample.com&expires_at=2999-01-01T00%3A00%3A00Z&return=clipboard&callback_url=http%3A%2F%2Fexample.com%2Fbeekeeper").unwrap();
     assert!(parse_nostr_bind_deep_link(&url).is_err());
 }
 

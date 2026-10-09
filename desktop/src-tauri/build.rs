@@ -194,7 +194,7 @@ fn main() {
     let reconnect_cmd = prefixed_input("BUILD_RELAY_RECONNECT_CMD");
     let agent_access_owner_only = prefixed_input("BUILD_AGENT_ACCESS_OWNER_ONLY");
     let auto_connect_default_relay = prefixed_input("BUILD_AUTO_CONNECT_DEFAULT_RELAY");
-    println!("cargo:rustc-check-cfg=cfg(buzz_updater_enabled)");
+    println!("cargo:rustc-check-cfg=cfg(beekeeper_updater_enabled)");
 
     // Explicit owner-only agent-access capability. Release packaging sets this
     // presence-only marker; OSS/custom builds leave agent access configurable.
@@ -289,7 +289,7 @@ fn main() {
         .filter(|value| !value.is_empty());
 
     if updater_public_key.is_some() && updater_endpoint.is_some() {
-        println!("cargo:rustc-cfg=buzz_updater_enabled");
+        println!("cargo:rustc-cfg=beekeeper_updater_enabled");
     }
 
     // Cargo test executables get no embedded Windows manifest (tauri_build

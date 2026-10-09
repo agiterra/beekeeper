@@ -68,7 +68,7 @@ pub async fn connect_acp_runtime(
 }
 
 fn discover_acp_auth_methods_blocking(runtime_id: &str) -> Result<AcpAuthMethodsResult, String> {
-    let output = run_buzz_acp_auth_command(runtime_id, ["auth-methods", "--json"])?;
+    let output = run_beekeeper_acp_auth_command(runtime_id, ["auth-methods", "--json"])?;
     if !output.status.success() {
         return Err(command_error("beekeeper-acp auth-methods", &output));
     }
@@ -96,7 +96,7 @@ fn connect_acp_runtime_blocking(
         return Ok(ConnectAcpRuntimeResult { launched: true });
     }
 
-    let output = run_buzz_acp_auth_command(
+    let output = run_beekeeper_acp_auth_command(
         &request.runtime_id,
         ["authenticate", "--method-id", request.method_id.as_str()],
     )?;
@@ -107,7 +107,7 @@ fn connect_acp_runtime_blocking(
     Ok(ConnectAcpRuntimeResult { launched: true })
 }
 
-fn run_buzz_acp_auth_command<const N: usize>(
+fn run_beekeeper_acp_auth_command<const N: usize>(
     runtime_id: &str,
     args: [&str; N],
 ) -> Result<std::process::Output, String> {
@@ -127,7 +127,7 @@ fn run_buzz_acp_auth_command<const N: usize>(
         .ok_or_else(|| "beekeeper-acp helper not found".to_string())?;
 
     let augmented_path = auth_command_path();
-    run_buzz_acp_auth_command_with_paths(
+    run_beekeeper_acp_auth_command_with_paths(
         &acp_path,
         adapter_command.0,
         &adapter_command.1,
@@ -145,7 +145,7 @@ fn auth_command_path() -> Option<String> {
     crate::managed_agents::readiness::cli_probe::augmented_path_with_inherited()
 }
 
-fn run_buzz_acp_auth_command_with_paths<const N: usize>(
+fn run_beekeeper_acp_auth_command_with_paths<const N: usize>(
     acp_path: &Path,
     adapter_name: &str,
     adapter_path: &Path,
@@ -434,8 +434,9 @@ fn shell_escape(arg: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        adapter_terminal_argv, is_claude_subscription_login, run_buzz_acp_auth_command_with_paths,
-        shell_escape, shell_join, uses_terminal_auth, windows_terminal_args, AcpAuthMethod,
+        adapter_terminal_argv, is_claude_subscription_login,
+        run_beekeeper_acp_auth_command_with_paths, shell_escape, shell_join, uses_terminal_auth,
+        windows_terminal_args, AcpAuthMethod,
     };
 
     #[cfg(unix)]
@@ -479,7 +480,7 @@ mod tests {
             .expect("join augmented PATH")
             .to_string_lossy()
             .into_owned();
-        let output = run_buzz_acp_auth_command_with_paths(
+        let output = run_beekeeper_acp_auth_command_with_paths(
             &acp_path,
             "claude-agent-acp",
             &adapter_path,
@@ -607,7 +608,7 @@ mod tests {
             method_type: Some("terminal".into()),
             args: vec!["should-not".into(), "be-used".into()],
             command: vec![
-                "definitely-not-on-path-buzz-test".into(),
+                "definitely-not-on-path-beekeeper-test".into(),
                 "auth".into(),
                 "login".into(),
             ],
@@ -616,7 +617,7 @@ mod tests {
         assert_eq!(
             adapter_terminal_argv("Claude Code", &method, "claude-agent-acp").unwrap(),
             vec![
-                "definitely-not-on-path-buzz-test".to_string(),
+                "definitely-not-on-path-beekeeper-test".to_string(),
                 "auth".to_string(),
                 "login".to_string()
             ]
@@ -664,9 +665,13 @@ mod tests {
             meta: None,
         };
         assert_eq!(
-            adapter_terminal_argv("Claude Code", &method, "definitely-not-on-path-buzz-test")
-                .unwrap(),
-            vec!["definitely-not-on-path-buzz-test".to_string()]
+            adapter_terminal_argv(
+                "Claude Code",
+                &method,
+                "definitely-not-on-path-beekeeper-test"
+            )
+            .unwrap(),
+            vec!["definitely-not-on-path-beekeeper-test".to_string()]
         );
     }
 }

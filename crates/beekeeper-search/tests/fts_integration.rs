@@ -173,7 +173,7 @@ async fn search_finds_event_in_same_community() {
         evt_id,
         pk,
         9,
-        "hello wonderland — buzz everyone",
+        "hello wonderland — beekeeper everyone",
         None,
         1700000000,
     )
@@ -281,14 +281,14 @@ async fn kind0_search_by_display_name_works_without_flattening() {
         rand_bytes32(),
         pk,
         0,
-        r#"{"display_name":"Alice Wonderland","name":"alice","nip05":"alice@buzz.app","about":"hello"}"#,
+        r#"{"display_name":"Alice Wonderland","name":"alice","nip05":"alice@beekeeper.app","about":"hello"}"#,
         None,
         1700000000,
     )
     .await;
 
     let svc = SearchService::new(pool.clone());
-    for q in ["wonderland", "alice", "alice@buzz.app"] {
+    for q in ["wonderland", "alice", "alice@beekeeper.app"] {
         let r = svc
             .search(&SearchQuery {
                 community: c,

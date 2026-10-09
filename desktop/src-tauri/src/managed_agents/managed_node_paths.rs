@@ -7,6 +7,7 @@
 //! not otherwise — reads as a relay problem rather than a `PATH` one.
 
 pub(crate) use beekeeper_host_core::managed_node::{
-    buzz_managed_command_path, buzz_managed_node_bin_dir, buzz_managed_node_bin_path,
-    buzz_managed_node_root, buzz_managed_npm_bin_dir, buzz_managed_npm_prefix,
+    beekeeper_managed_command_path, beekeeper_managed_node_bin_dir,
+    beekeeper_managed_node_bin_path, beekeeper_managed_node_root, beekeeper_managed_npm_bin_dir,
+    beekeeper_managed_npm_prefix,
 };

@@ -91,7 +91,7 @@ You are a test bot.
 }
 
 #[test]
-fn resolve_pack_buzz_agent_persona_emits_buzz_agent_vars() {
+fn resolve_pack_beekeeper_agent_persona_emits_beekeeper_agent_vars() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
 
@@ -229,7 +229,7 @@ fn full_pipeline_two_runtimes_different_env_vars() {
   "version": "1.0.0",
   "personas": [
     "agents/goose-bot.persona.md",
-    "agents/buzz-bot.persona.md"
+    "agents/beekeeper-bot.persona.md"
   ],
   "defaults": {}
 }"#,
@@ -252,15 +252,15 @@ You are a goose bot.
 
     // `buzz-agent` persona
     fs::write(
-        root.join("agents/buzz-bot.persona.md"),
+        root.join("agents/beekeeper-bot.persona.md"),
         r#"---
-name: "buzz-bot"
+name: "beekeeper-bot"
 display_name: "Beekeeper Bot"
 description: "A buzz-agent runtime bot"
 runtime: "buzz-agent"
 model: "openai:gpt-4o"
 ---
-You are a buzz bot.
+You are a beekeeper bot.
 "#,
     )
     .unwrap();
@@ -273,11 +273,11 @@ You are a buzz bot.
         .iter()
         .find(|p| p.name == "goose-bot")
         .expect("goose-bot should exist");
-    let buzz = pack
+    let beekeeper = pack
         .personas
         .iter()
-        .find(|p| p.name == "buzz-bot")
-        .expect("buzz-bot should exist");
+        .find(|p| p.name == "beekeeper-bot")
+        .expect("beekeeper-bot should exist");
 
     // Goose persona gets GOOSE_* env vars
     let goose_env: std::collections::HashMap<_, _> = goose
@@ -300,19 +300,22 @@ You are a buzz bot.
     );
 
     // `buzz-agent` persona gets BEEKEEPER_AGENT_* env vars
-    let buzz_env: std::collections::HashMap<_, _> = buzz
+    let beekeeper_env: std::collections::HashMap<_, _> = beekeeper
         .runtime_env_vars
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    assert_eq!(buzz_env.get("BEEKEEPER_AGENT_MODEL"), Some(&"gpt-4o"));
-    assert_eq!(buzz_env.get("BEEKEEPER_AGENT_PROVIDER"), Some(&"openai"));
+    assert_eq!(beekeeper_env.get("BEEKEEPER_AGENT_MODEL"), Some(&"gpt-4o"));
+    assert_eq!(
+        beekeeper_env.get("BEEKEEPER_AGENT_PROVIDER"),
+        Some(&"openai")
+    );
     assert!(
-        !buzz_env.contains_key("GOOSE_MODEL"),
+        !beekeeper_env.contains_key("GOOSE_MODEL"),
         "buzz-agent persona must not emit GOOSE_MODEL"
     );
     assert!(
-        !buzz_env.contains_key("GOOSE_PROVIDER"),
+        !beekeeper_env.contains_key("GOOSE_PROVIDER"),
         "buzz-agent persona must not emit GOOSE_PROVIDER"
     );
 }

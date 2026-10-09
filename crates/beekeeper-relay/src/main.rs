@@ -26,7 +26,7 @@ use beekeeper_relay::telemetry;
 use beekeeper_workflow::WorkflowEngine;
 use tokio_util::sync::CancellationToken;
 
-fn buzz_auto_migrate_enabled(value: Option<&str>) -> bool {
+fn beekeeper_auto_migrate_enabled(value: Option<&str>) -> bool {
     value.map(str::trim).is_some_and(|value| {
         matches!(
             value.to_ascii_lowercase().as_str(),
@@ -210,7 +210,7 @@ async fn async_main() -> anyhow::Result<()> {
     }
 
     let auto_migrate =
-        buzz_auto_migrate_enabled(std::env::var("BEEKEEPER_AUTO_MIGRATE").ok().as_deref());
+        beekeeper_auto_migrate_enabled(std::env::var("BEEKEEPER_AUTO_MIGRATE").ok().as_deref());
     if auto_migrate {
         db.migrate().await.map_err(|e| {
             error!("Failed to run database migrations: {e}");
@@ -2024,7 +2024,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        buzz_auto_migrate_enabled, dropped_in_memory_keys, idle_timeout_secs,
+        beekeeper_auto_migrate_enabled, dropped_in_memory_keys, idle_timeout_secs,
         refresh_legacy_active_gauge_recency, relay_keypair_from_config,
         run_periodic_until_cancelled, EmissionScope, InMemoryMetricKey,
     };
@@ -2060,18 +2060,18 @@ mod tests {
     }
 
     #[test]
-    fn buzz_auto_migrate_is_opt_in() {
-        assert!(!buzz_auto_migrate_enabled(None));
-        assert!(!buzz_auto_migrate_enabled(Some("")));
-        assert!(!buzz_auto_migrate_enabled(Some("false")));
-        assert!(!buzz_auto_migrate_enabled(Some("0")));
-        assert!(!buzz_auto_migrate_enabled(Some("no")));
+    fn beekeeper_auto_migrate_is_opt_in() {
+        assert!(!beekeeper_auto_migrate_enabled(None));
+        assert!(!beekeeper_auto_migrate_enabled(Some("")));
+        assert!(!beekeeper_auto_migrate_enabled(Some("false")));
+        assert!(!beekeeper_auto_migrate_enabled(Some("0")));
+        assert!(!beekeeper_auto_migrate_enabled(Some("no")));
 
-        assert!(buzz_auto_migrate_enabled(Some("true")));
-        assert!(buzz_auto_migrate_enabled(Some("TRUE")));
-        assert!(buzz_auto_migrate_enabled(Some(" 1 ")));
-        assert!(buzz_auto_migrate_enabled(Some("yes")));
-        assert!(buzz_auto_migrate_enabled(Some("on")));
+        assert!(beekeeper_auto_migrate_enabled(Some("true")));
+        assert!(beekeeper_auto_migrate_enabled(Some("TRUE")));
+        assert!(beekeeper_auto_migrate_enabled(Some(" 1 ")));
+        assert!(beekeeper_auto_migrate_enabled(Some("yes")));
+        assert!(beekeeper_auto_migrate_enabled(Some("on")));
     }
 
     #[test]

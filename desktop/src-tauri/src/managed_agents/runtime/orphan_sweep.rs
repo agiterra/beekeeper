@@ -36,7 +36,7 @@ pub(crate) fn sweep_orphaned_agent_processes(app: &AppHandle, skip_pids: &[u32])
             // Receipt/PID-file entries were written by this instance at spawn
             // time — they are Beekeeper-owned by construction; no name gate needed.
             // Kill live processes; dead ones fall through to receipt cleanup.
-            (process_is_running(*pid) && process_has_buzz_marker(*pid, &instance_id))
+            (process_is_running(*pid) && process_has_beekeeper_marker(*pid, &instance_id))
                 || !process_is_running(*pid)
         })
         .map(|pid| pid as i32)
@@ -51,7 +51,7 @@ pub(crate) fn sweep_orphaned_agent_processes(app: &AppHandle, skip_pids: &[u32])
         if skip_pids.contains(pid) {
             continue;
         }
-        if !process_is_running(*pid) || !process_has_buzz_marker(*pid, &instance_id) {
+        if !process_is_running(*pid) || !process_has_beekeeper_marker(*pid, &instance_id) {
             super::super::remove_agent_pid_file(app, pubkey);
         }
     }
@@ -59,7 +59,9 @@ pub(crate) fn sweep_orphaned_agent_processes(app: &AppHandle, skip_pids: &[u32])
         if skip_pids.contains(&receipt.pid) {
             continue;
         }
-        if !process_is_running(receipt.pid) || !process_has_buzz_marker(receipt.pid, &instance_id) {
+        if !process_is_running(receipt.pid)
+            || !process_has_beekeeper_marker(receipt.pid, &instance_id)
+        {
             super::super::remove_agent_runtime_receipt(app, &receipt.key);
         }
     }
@@ -115,7 +117,7 @@ pub(super) const PROC_PIDTBSDINFO: libc::c_int = 3;
 // and a name-gated predicate would silently leak their orphans (the old Linux
 // AND-gate bug). `process_belongs_to_us` remains in use only as a cheap
 // pre-check on paths that already know the binary (see runtime/stop.rs).
-// On Windows no `/proc`-based sweep runs, so `process_has_buzz_marker`
+// On Windows no `/proc`-based sweep runs, so `process_has_beekeeper_marker`
 // always returns `false`.
 
 /// Enumerate all processes on the system owned by the current user and kill any
@@ -162,7 +164,7 @@ pub(crate) fn sweep_system_agent_processes(instance_id: &str, skip_pids: &[u32])
         }
         // Custom harnesses don't match KNOWN_AGENT_BINARIES by name; the
         // BEEKEEPER_MANAGED_AGENT env marker is the authoritative ownership proof.
-        if !process_has_buzz_marker(upid, instance_id) {
+        if !process_has_beekeeper_marker(upid, instance_id) {
             continue;
         }
         // Live descendants of a tracked harness are exempt — see sweep::is_live_descendant_*.
@@ -215,7 +217,7 @@ pub(crate) fn sweep_system_agent_processes(instance_id: &str, skip_pids: &[u32])
         }
         // Same ownership rule as macOS: the marker is the authoritative gate.
         // Fixes custom-harness orphan cleanup on Linux.
-        if !process_has_buzz_marker(upid, instance_id) {
+        if !process_has_beekeeper_marker(upid, instance_id) {
             continue;
         }
         // Live descendants of a tracked harness are exempt — see sweep::is_live_descendant_*.
@@ -318,7 +320,7 @@ pub(crate) fn collect_same_instance_orphans(
         }
         // Custom harnesses don't match KNOWN_AGENT_BINARIES by name; the
         // BEEKEEPER_MANAGED_AGENT env marker is the authoritative ownership proof.
-        if !process_has_buzz_marker(upid, instance_id) {
+        if !process_has_beekeeper_marker(upid, instance_id) {
             continue;
         }
         // Live descendants of a tracked harness are exempt — see sweep::is_live_descendant_*.
@@ -366,7 +368,7 @@ pub(crate) fn collect_same_instance_orphans(
         }
         // Same ownership rule as macOS: the marker is the authoritative gate.
         // Fixes custom-harness orphan cleanup on Linux.
-        if !process_has_buzz_marker(upid, instance_id) {
+        if !process_has_beekeeper_marker(upid, instance_id) {
             continue;
         }
         // Live descendants of a tracked harness are exempt — see sweep::is_live_descendant_*.

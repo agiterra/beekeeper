@@ -261,7 +261,7 @@ pub fn run() {
     });
 
     // Register the updater only in configured release builds; omit it locally.
-    #[cfg(buzz_updater_enabled)]
+    #[cfg(beekeeper_updater_enabled)]
     let builder = if cfg!(debug_assertions) {
         builder
     } else {

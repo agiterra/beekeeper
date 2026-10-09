@@ -66,7 +66,7 @@ pub const NO_MODEL_REGISTRY_CODE: &str = "no-model-registry";
 /// refuses anything that resolves outside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HostModelRegistryCandidate {
-    /// The place, as every reader names it (`buzz_core`).
+    /// The place, as every reader names it (`beekeeper_core`).
     pub candidate: ModelRegistryCandidate,
     /// The directory the file is read relative to.
     pub root: PathBuf,

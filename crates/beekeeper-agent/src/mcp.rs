@@ -1037,7 +1037,7 @@ mod content_tests {
     use super::*;
 
     #[test]
-    fn passthrough_includes_buzz_owner_attestation() {
+    fn passthrough_includes_beekeeper_owner_attestation() {
         assert!(PASSTHROUGH_ENV.contains(&"BEEKEEPER_AUTH_TAG"));
     }
 

@@ -49,7 +49,7 @@ fn returns_none_for_unknown_commands() {
 }
 
 #[test]
-fn default_agent_command_resolves_bundled_buzz_agent() {
+fn default_agent_command_resolves_bundled_beekeeper_agent() {
     // The bundled binary of the `buzz-agent` runtime, never bare `goose`.
     assert_eq!(default_agent_command(), "beekeeper-agent");
     assert_eq!(
@@ -75,7 +75,7 @@ fn normalizes_claude_and_codex_args_to_empty() {
 }
 
 #[test]
-fn resolves_buzz_agent_avatar() {
+fn resolves_beekeeper_agent_avatar() {
     assert_eq!(
         managed_agent_avatar_url("buzz-agent"),
         Some(BEEKEEPER_AGENT_AVATAR_URL.to_string())
@@ -87,7 +87,7 @@ fn resolves_buzz_agent_avatar() {
 }
 
 #[test]
-fn normalizes_buzz_agent_args_to_empty() {
+fn normalizes_beekeeper_agent_args_to_empty() {
     assert_eq!(
         normalize_agent_args("buzz-agent", Vec::new()),
         Vec::<String>::new()
@@ -100,8 +100,7 @@ fn normalizes_buzz_agent_args_to_empty() {
 
 #[test]
 fn login_shell_lookup_treats_command_as_data() {
-    let marker =
-        std::env::temp_dir().join(format!("buzz-discovery-marker-{}", uuid::Uuid::new_v4()));
+    let marker = std::env::temp_dir().join(format!("bk-discovery-marker-{}", uuid::Uuid::new_v4()));
     let payload = format!("doesnotexist; touch {} #", marker.display());
 
     let resolved = find_via_login_shell(&payload);
@@ -121,7 +120,7 @@ fn login_shell_lookup_treats_command_as_data() {
 fn explicit_path_resolution_ignores_non_executable_files() {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = std::env::temp_dir().join(format!("buzz-discovery-path-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("bk-discovery-path-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     let bin = dir.join("beekeeper-acp");
     std::fs::write(&bin, "").expect("write placeholder");
@@ -288,7 +287,7 @@ fn try_record_agent_command_dangling_persona_runtime_returns_err() {
 /// When neither the record nor persona has any runtime id, `try_record_agent_command`
 /// falls back to `default_agent_command()` — this is the legacy-agent path.
 #[test]
-fn try_record_agent_command_no_runtime_id_defaults_to_buzz_agent() {
+fn try_record_agent_command_no_runtime_id_defaults_to_beekeeper_agent() {
     let record = record_with(None, None, None);
     let result = try_record_agent_command(&record, &[]);
     assert_eq!(
@@ -612,7 +611,7 @@ fn probe_codex_acp_version_parses_full_semver_output() {
     use std::os::unix::fs::PermissionsExt;
 
     // Simulate a current `@agentclientprotocol/codex-acp` output.
-    let dir = std::env::temp_dir().join(format!("buzz-probe-1x-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("beekeeper-probe-1x-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     let bin = dir.join("codex-acp");
     std::fs::write(
@@ -640,7 +639,7 @@ fn probe_codex_acp_version_returns_none_for_nonzero_exit() {
     use std::os::unix::fs::PermissionsExt;
 
     // Simulate old 0.16.x adapter: `--version` is unrecognised, exits non-zero
-    let dir = std::env::temp_dir().join(format!("buzz-probe-0x-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("beekeeper-probe-0x-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     let bin = dir.join("codex-acp");
     std::fs::write(&bin, "#!/bin/sh\nexit 1\n").expect("write script");
@@ -673,7 +672,7 @@ fn probe_codex_acp_version_returns_none_for_missing_binary() {
 fn codex_adapter_availability_available_for_minimum_supported_binary() {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = std::env::temp_dir().join(format!("buzz-avail-1x-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("beekeeper-avail-1x-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     let bin = dir.join("codex-acp");
     std::fs::write(
@@ -699,7 +698,7 @@ fn codex_adapter_availability_outdated_for_0x_binary() {
     use std::os::unix::fs::PermissionsExt;
 
     // Simulate old 0.16.x: `--version` exits non-zero (unrecognised flag)
-    let dir = std::env::temp_dir().join(format!("buzz-avail-0x-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("beekeeper-avail-0x-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     let bin = dir.join("codex-acp");
     std::fs::write(&bin, "#!/bin/sh\nexit 1\n").expect("write script");
@@ -787,7 +786,7 @@ fn probe_codex_acp_version_returns_none_for_hung_direct_child() {
     // Simulate a process that writes version to stdout then blocks forever.
     // The probe reads stdout only after the child exits, so it will time out.
     // `exec sleep 300` replaces the shell so killing the child reaps `sleep` too.
-    let dir = std::env::temp_dir().join(format!("buzz-probe-hung-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("beekeeper-probe-hung-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     let bin = dir.join("codex-acp");
     std::fs::write(
@@ -829,7 +828,7 @@ fn probe_codex_acp_version_returns_version_when_descendant_holds_pipe_open() {
     //
     // `sleep 60 &` starts a descendant that inherits the parent's stdout fd
     // without making the direct child wait for a nested subshell to exit.
-    let dir = std::env::temp_dir().join(format!("buzz-probe-descendant-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("bk-probe-descendant-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     let bin = dir.join("codex-acp");
     std::fs::write(

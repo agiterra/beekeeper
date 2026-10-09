@@ -5711,7 +5711,7 @@ mod tests {
     #[test]
     fn build_project_emitted_envelope_has_correct_shape() {
         // slug, name, description, channel, visibility, and one member.
-        let m = member_coord("buzz");
+        let m = member_coord("beekeeper");
         let ev = sign(
             build_project(
                 "my-proj",
@@ -5759,7 +5759,7 @@ mod tests {
         // member a tag.
         let a_tags: Vec<_> = all_tags.iter().filter(|t| t[0] == "a").collect();
         assert_eq!(a_tags.len(), 1);
-        assert_eq!(a_tags[0][1], format!("30617:{OWNER64}:buzz"));
+        assert_eq!(a_tags[0][1], format!("30617:{OWNER64}:beekeeper"));
     }
 
     #[test]
@@ -6012,7 +6012,7 @@ mod tests {
     /// Every rejection below is buzz-core's, reached through the builder — the
     /// point of the test is that the builder owns no second copy of the rules.
     #[test]
-    fn pulse_entry_delegates_every_rejection_to_buzz_core() {
+    fn pulse_entry_delegates_every_rejection_to_beekeeper_core() {
         // Non-canonical coordinate (upper-case owner hex).
         let upper = format!(
             "30621:{}:platform",

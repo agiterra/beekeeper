@@ -2915,15 +2915,15 @@ mod tests {
         let call = translator.on_update(&update(json!({
             "sessionUpdate": "tool_call",
             "toolCallId": "t1",
-            "title": "Read /Users/brian/Projects/buzz/secret.rs",
+            "title": "Read /Users/brian/Projects/beekeeper/secret.rs",
             "kind": "read",
             "status": "in_progress",
-            "rawInput": { "file_path": "/Users/brian/Projects/buzz/secret.rs" },
+            "rawInput": { "file_path": "/Users/brian/Projects/beekeeper/secret.rs" },
         })));
         let done = translator.on_update(&tool_done(
             "t1",
             "completed",
-            "opened /Users/brian/Projects/buzz/secret.rs",
+            "opened /Users/brian/Projects/beekeeper/secret.rs",
         ));
 
         for item in call.iter().chain(done.iter()) {

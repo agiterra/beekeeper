@@ -36,7 +36,7 @@ serde_json = { workspace = true }
 # Structured error types with exit code mapping
 thiserror = { workspace = true }
 
-# Nostr event signing — used in `buzz auth`, auto-mint, and signed event writes
+# Nostr event signing — used in `bee auth`, auto-mint, and signed event writes
 nostr = { workspace = true }
 
 # UUID parsing for validate_uuid + event building
@@ -92,7 +92,7 @@ beekeeper-ws-client = { path = "../beekeeper-ws-client" }
 
 # Explicit rustls dep with ring provider — required to install the process-level
 # CryptoProvider at startup. Without this the standalone `bee` binary panics when
-# a multi-package release build (beekeeper-acp + beekeeper-dev-mcp + buzz-cli in one cargo
+# a multi-package release build (beekeeper-acp + beekeeper-dev-mcp + beekeeper-cli in one cargo
 # invocation) unifies both ring and aws-lc-rs features, leaving rustls unable to
 # auto-select a provider. See crates/beekeeper-acp/Cargo.toml for the same dependency.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
@@ -103,7 +103,7 @@ rand = { workspace = true }
 [dev-dependencies]
 # The provider's own hint reader, so the CLI's `--cwd --project` hint is proven
 # against `ProjectsFile::hint_binds_project` rather than a copy of its rules
-# (sessions/create_hint_tests.rs). Test-only: buzz-cli never runs a provider.
+# (sessions/create_hint_tests.rs). Test-only: beekeeper-cli never runs a provider.
 beekeeper-session-provider = { path = "../beekeeper-session-provider" }
 # Scratch files for channel-templates.json fixtures in tests
 tempfile = "3"

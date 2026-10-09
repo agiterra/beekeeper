@@ -590,7 +590,7 @@ fn reconcile_mcp_commands_clears_stale_buzz_mcp_server() {
 }
 
 #[test]
-fn reconcile_mcp_commands_sets_canonical_for_buzz_agent() {
+fn reconcile_mcp_commands_sets_canonical_for_beekeeper_agent() {
     let dir = tempfile::tempdir().unwrap();
     write_agents_json(
         dir.path(),

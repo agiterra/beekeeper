@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn host_valid_bare_domain() {
-        assert!(validate_host("acme.communities.buzz.xyz").is_ok());
+        assert!(validate_host("acme.communities.beekeeper.xyz").is_ok());
     }
 
     #[test]

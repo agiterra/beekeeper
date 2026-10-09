@@ -30,7 +30,7 @@ Tools: `jq`, `curl`, Rust toolchain.
 cargo build -p beekeeper-cli
 ```
 
-Use `cargo run -p beekeeper-cli --` or the built binary at `target/debug/buzz`.
+Use `cargo run -p beekeeper-cli --` or the built binary at `target/debug/bee`.
 
 ---
 
@@ -535,10 +535,10 @@ bee sessions tools --channel "$CHANNEL_ID" --target "$TARGET" | jq '.tools'
 bee --format compact sessions tools --channel "$CHANNEL_ID" | jq .
 
 # export — refuses a non-empty directory
-rm -rf /tmp/buzz-sessions-export
-bee sessions export --channel "$CHANNEL_ID" --out /tmp/buzz-sessions-export | jq .
-ls /tmp/buzz-sessions-export
-bee sessions export --channel "$CHANNEL_ID" --out /tmp/buzz-sessions-export; echo "exit: $?"
+rm -rf /tmp/beekeeper-sessions-export
+bee sessions export --channel "$CHANNEL_ID" --out /tmp/beekeeper-sessions-export | jq .
+ls /tmp/beekeeper-sessions-export
+bee sessions export --channel "$CHANNEL_ID" --out /tmp/beekeeper-sessions-export; echo "exit: $?"
 # stderr: {"error":"user_error","message":"--out ... is not empty; exports never overwrite ..."}
 # exit: 1
 

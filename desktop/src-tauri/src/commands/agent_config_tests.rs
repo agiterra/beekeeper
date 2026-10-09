@@ -19,7 +19,7 @@ fn with_no_goose_config<T>(body: impl FnOnce() -> T) -> T {
         .lock()
         .unwrap_or_else(|err| err.into_inner());
     let prior = std::env::var_os("GOOSE_PATH_ROOT");
-    std::env::set_var("GOOSE_PATH_ROOT", "/nonexistent-buzz-test-path");
+    std::env::set_var("GOOSE_PATH_ROOT", "/nonexistent-beekeeper-test-path");
     let output = body();
     match prior {
         Some(value) => std::env::set_var("GOOSE_PATH_ROOT", value),

@@ -34,7 +34,7 @@ use beekeeper_host_core::command_paths::{
     command_looks_like_path, executable_basename, is_executable_file, resolve_workspace_command,
 };
 use beekeeper_host_core::managed_node::{
-    buzz_managed_command_path, buzz_managed_node_bin_dir, buzz_managed_npm_bin_dir,
+    beekeeper_managed_command_path, beekeeper_managed_node_bin_dir, beekeeper_managed_npm_bin_dir,
 };
 
 /// Resolve `command` to an absolute path, or `None`.
@@ -59,7 +59,7 @@ pub fn resolve_command(command: &str) -> Option<PathBuf> {
 
     // 2. The app-private npm/Node directories, for the ACP adapters.
     let basename = executable_basename(command);
-    if let Some(path) = buzz_managed_command_path(command, &basename) {
+    if let Some(path) = beekeeper_managed_command_path(command, &basename) {
         return Some(path);
     }
 
@@ -194,8 +194,8 @@ fn well_known_dirs() -> &'static [PathBuf] {
     static DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
     DIRS.get_or_init(|| {
         let mut dirs = Vec::new();
-        dirs.extend(buzz_managed_npm_bin_dir());
-        dirs.extend(buzz_managed_node_bin_dir());
+        dirs.extend(beekeeper_managed_npm_bin_dir());
+        dirs.extend(beekeeper_managed_node_bin_dir());
         dirs.extend([
             PathBuf::from("/opt/homebrew/bin"),
             PathBuf::from("/usr/local/bin"),
@@ -238,8 +238,8 @@ pub fn augmented_path() -> Option<String> {
     let mut managed: Vec<PathBuf> = Vec::new();
     managed.extend(exe_parent);
     if has_local_context {
-        managed.extend(buzz_managed_npm_bin_dir());
-        managed.extend(buzz_managed_node_bin_dir());
+        managed.extend(beekeeper_managed_npm_bin_dir());
+        managed.extend(beekeeper_managed_node_bin_dir());
     }
     if let Some(home) = &home {
         managed.push(home.join(".local").join("bin"));
