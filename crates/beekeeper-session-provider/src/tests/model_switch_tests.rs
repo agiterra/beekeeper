@@ -37,7 +37,7 @@ async fn fixture(switchable: bool) -> Fixture {
     fixture_with(switchable, true).await
 }
 
-/// `enabled` is the host's `BUZZ_CSP_MODEL_SWITCH` (`Config::model_switch`).
+/// `enabled` is the host's `BEEKEEPER_CSP_MODEL_SWITCH` (`Config::model_switch`).
 async fn fixture_with(switchable: bool, enabled: bool) -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let cwd = dir.path().join("checkout");
@@ -330,7 +330,7 @@ async fn model_switch_refusals_leave_the_model_alone() {
     );
 }
 
-/// The shipped default: with `BUZZ_CSP_MODEL_SWITCH` unset (the host's
+/// The shipped default: with `BEEKEEPER_CSP_MODEL_SWITCH` unset (the host's
 /// `Config::model_switch` false), even an adapter that offers a model control
 /// keeps its exact capability bytes, and a switch is refused
 /// `MODEL_SWITCH_UNSUPPORTED` without reaching the adapter.

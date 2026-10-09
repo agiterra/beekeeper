@@ -198,19 +198,20 @@ pub fn relay_client(
 ) -> Result<BeekeeperClient, PreviewFailure> {
     let no_identity = |why: String| PreviewFailure::new("preview_share_no_identity", why);
     let keys = Keys::parse(private_key.ok_or_else(|| {
-        no_identity("`--share` publishes to the relay and needs BUZZ_PRIVATE_KEY".into())
+        no_identity("`--share` publishes to the relay and needs BEEKEEPER_PRIVATE_KEY".into())
     })?)
-    .map_err(|error| no_identity(format!("invalid BUZZ_PRIVATE_KEY: {error}")))?;
+    .map_err(|error| no_identity(format!("invalid BEEKEEPER_PRIVATE_KEY: {error}")))?;
     let (tag, tag_json) = match auth_tag.filter(|input| !input.is_empty()) {
         Some(input) => {
             let json = crate::normalize_auth_tag_input(input);
-            let tag = beekeeper_sdk::nip_oa::parse_auth_tag(&json)
-                .map_err(|error| no_identity(format!("BUZZ_AUTH_TAG is malformed: {error}")))?;
+            let tag = beekeeper_sdk::nip_oa::parse_auth_tag(&json).map_err(|error| {
+                no_identity(format!("BEEKEEPER_AUTH_TAG is malformed: {error}"))
+            })?;
             beekeeper_sdk::nip_oa::verify_auth_tag(&json, &keys.public_key()).map_err(|error| {
-                no_identity(format!("BUZZ_AUTH_TAG verification failed: {error}"))
+                no_identity(format!("BEEKEEPER_AUTH_TAG verification failed: {error}"))
             })?;
             let canonical = serde_json::to_string(tag.as_slice())
-                .map_err(|error| no_identity(format!("BUZZ_AUTH_TAG: {error}")))?;
+                .map_err(|error| no_identity(format!("BEEKEEPER_AUTH_TAG: {error}")))?;
             (Some(tag), Some(canonical))
         }
         None => (None, None),

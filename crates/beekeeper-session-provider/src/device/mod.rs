@@ -79,7 +79,7 @@ pub struct DeviceConfig {
     pub keys: Keys,
     /// NIP-OA auth tag, when the deployment requires one.
     pub auth_tag: Option<Tag>,
-    /// `BUZZ_CSP_STATE_DIR`.
+    /// `BEEKEEPER_CSP_STATE_DIR`.
     pub state_dir: PathBuf,
     /// `Some(reason)` when this host turned devices off (published as the
     /// availability reason; every command is refused with it).

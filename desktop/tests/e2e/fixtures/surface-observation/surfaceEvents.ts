@@ -5,12 +5,12 @@ import { finalizeEvent } from "nostr-tools/pure";
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_METADATA_TAG_VERSION,
   codingSessionMetadataSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
   codingSessionTranscriptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -87,7 +87,7 @@ export function sessionEvents(input: {
         ["cst-key", codingSessionTranscriptSemanticKey(target, seq)],
       ],
       JSON.stringify({
-        schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
         session: target,
         eventSeq: seq,
         timestamp: (createdAt + seq) * 1_000,
@@ -107,7 +107,7 @@ export function sessionEvents(input: {
         ["csm-key", codingSessionMetadataSemanticKey(target)],
       ],
       JSON.stringify({
-        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
         session: target,
         projectRef: null,
         repoRef: null,

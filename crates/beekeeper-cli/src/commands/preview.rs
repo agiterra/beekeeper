@@ -2,7 +2,7 @@
 //!
 //! Local-only, like `bee session`: nothing here reaches the relay. Each verb is
 //! one request to the desktop app's session broker (the owner-only Unix socket
-//! at `$BUZZ_SESSION_BROKER_SOCK`, else the production default), carrying the
+//! at `$BEEKEEPER_SESSION_BROKER_SOCK`, else the production default), carrying the
 //! execution's preview grant from `$BEEKEEPER_PREVIEW_GRANT`.
 //!
 //! There is **no session argument**. The provider mints the grant for exactly

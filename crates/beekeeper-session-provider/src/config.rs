@@ -298,13 +298,18 @@ impl Config {
         let runtimes = parse_runtimes(&lookup)?;
 
         // 0 is unlimited, not invalid — see `UNLIMITED_MAX_SESSIONS`.
-        let max_sessions = parse_usize(&lookup, "BEEKEEPER_CSP_MAX_SESSIONS", DEFAULT_MAX_SESSIONS)?;
+        let max_sessions =
+            parse_usize(&lookup, "BEEKEEPER_CSP_MAX_SESSIONS", DEFAULT_MAX_SESSIONS)?;
         let session_idle_shutdown = parse_secs(
             &lookup,
             "BEEKEEPER_CSP_SESSION_IDLE_SHUTDOWN_SECS",
             DEFAULT_SESSION_IDLE_SHUTDOWN_SECS,
         )?;
-        let idle_timeout = parse_secs(&lookup, "BEEKEEPER_CSP_IDLE_TIMEOUT", DEFAULT_IDLE_TIMEOUT_SECS)?;
+        let idle_timeout = parse_secs(
+            &lookup,
+            "BEEKEEPER_CSP_IDLE_TIMEOUT",
+            DEFAULT_IDLE_TIMEOUT_SECS,
+        )?;
         let max_turn_duration = parse_secs(
             &lookup,
             "BEEKEEPER_CSP_MAX_TURN_DURATION",
@@ -445,7 +450,10 @@ fn warn_on_diverging_legacy_variables(
             );
         }
     }
-    for legacy in ["BEEKEEPER_CSP_DEFAULT_MODEL", "BEEKEEPER_CSP_ALLOWED_MODELS"] {
+    for legacy in [
+        "BEEKEEPER_CSP_DEFAULT_MODEL",
+        "BEEKEEPER_CSP_ALLOWED_MODELS",
+    ] {
         if non_empty(lookup, legacy).is_some() {
             tracing::warn!(
                 target: "csp::config",
@@ -870,7 +878,10 @@ mod tests {
     #[test]
     fn parses_a_nip_oa_auth_tag() {
         let mut vars = minimal();
-        vars.insert("BEEKEEPER_AUTH_TAG", r#"["owner-attestation","payload"]"#.into());
+        vars.insert(
+            "BEEKEEPER_AUTH_TAG",
+            r#"["owner-attestation","payload"]"#.into(),
+        );
         let config = load(&vars).expect("env should load");
         let tag = config.auth_tag.expect("auth tag should parse");
         assert_eq!(tag.as_slice()[0], "owner-attestation");
@@ -891,7 +902,10 @@ mod tests {
         let mut vars = minimal();
         vars.insert("BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", "1".into());
         assert!(load(&vars).unwrap().transcript_paragraph_flush);
-        vars.insert("BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH", "sometimes".into());
+        vars.insert(
+            "BEEKEEPER_CSP_TRANSCRIPT_PARAGRAPH_FLUSH",
+            "sometimes".into(),
+        );
         assert!(load(&vars).is_err());
     }
 

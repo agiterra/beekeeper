@@ -18,7 +18,7 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionCheckpoints";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   codingSessionMetadataSemanticKey,
@@ -27,7 +27,7 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import { buildCodingSessionRewindEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   codingSessionTranscriptSemanticKey,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -89,7 +89,7 @@ export function sv29Metadata(
     providerSecret,
     KIND_CODING_SESSION_METADATA,
     JSON.stringify({
-      schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
       session,
       projectRef: null,
       repoRef: null,
@@ -129,7 +129,7 @@ export function sv29Transcript(
     providerSecret,
     KIND_CODING_SESSION_TRANSCRIPT,
     JSON.stringify({
-      schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
       session,
       eventSeq: seq,
       timestamp: 1_800_900_000_000 + session.generation * 100_000 + seq * 1_000,

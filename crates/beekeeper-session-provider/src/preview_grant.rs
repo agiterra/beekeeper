@@ -165,7 +165,7 @@ pub(crate) fn attested_owner(auth_tag: Option<&nostr::Tag>) -> Option<PublicKey>
 
 /// This machine's desktop broker socket, absolute.
 ///
-/// An explicit `BUZZ_SESSION_BROKER_SOCK` in the provider's own environment
+/// An explicit `BEEKEEPER_SESSION_BROKER_SOCK` in the provider's own environment
 /// wins (the desktop honours the same override). Otherwise
 /// `~/.local/state/buzz-dev/session-broker.sock` for a dev instance and
 /// `~/.local/state/buzz/session-broker.sock` for production — the rule the

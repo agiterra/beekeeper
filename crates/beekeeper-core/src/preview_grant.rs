@@ -46,7 +46,7 @@ pub const PREVIEW_GRANT_ENV: &str = "BEEKEEPER_PREVIEW_GRANT";
 /// Environment variable naming the desktop broker socket. The same name the
 /// desktop and `bee session` already honour; the provider pushes this
 /// machine's app socket (dev or prod) alongside the grant.
-pub const SESSION_BROKER_SOCK_ENV: &str = "BUZZ_SESSION_BROKER_SOCK";
+pub const SESSION_BROKER_SOCK_ENV: &str = "BEEKEEPER_SESSION_BROKER_SOCK";
 /// Audience prefix: a grant names the desktop broker of the identity it was
 /// minted for, as `desktop-broker:<64 lowercase hex pubkey>`.
 pub const PREVIEW_GRANT_AUDIENCE_PREFIX: &str = "desktop-broker:";

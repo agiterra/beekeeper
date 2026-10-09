@@ -9,14 +9,14 @@ import {
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_METADATA_TAG_VERSION,
   codingSessionMetadataSemanticKey,
   lifecycleReceiptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   codingSessionTranscriptSemanticKey,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -151,7 +151,7 @@ function metadata(target: Target, createdAt: number): RelayEvent {
       ["csm-key", codingSessionMetadataSemanticKey(target)],
     ],
     {
-      schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
       session: target,
       sessionRef: SESSION_REF,
       projectRef: null,
@@ -211,7 +211,7 @@ function transcript(
       ["cst-key", codingSessionTranscriptSemanticKey(target, seq)],
     ],
     {
-      schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
       session: target,
       eventSeq: seq,
       timestamp: atMs,

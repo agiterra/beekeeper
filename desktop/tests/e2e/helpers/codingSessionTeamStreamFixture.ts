@@ -3,7 +3,7 @@ import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/codingSessionGenesis";
 import {
-  BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
@@ -12,7 +12,7 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import {
-  BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+  BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
   codingSessionTranscriptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
@@ -82,7 +82,7 @@ function metadata(target: Target, createdAt: number, status: string) {
       ["csm-key", codingSessionMetadataSemanticKey(target)],
     ],
     JSON.stringify({
-      schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+      schema: BEEKEEPER_CODING_SESSION_METADATA_SCHEMA,
       session: target,
       projectRef: null,
       repoRef: null,
@@ -168,7 +168,7 @@ export function teamSeatWriter(index: number, baseSeconds: number) {
         ["cst-key", codingSessionTranscriptSemanticKey(target, seq)],
       ],
       JSON.stringify({
-        schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+        schema: BEEKEEPER_CODING_SESSION_TRANSCRIPT_SCHEMA,
         session: target,
         eventSeq: seq,
         timestamp: (baseSeconds + seq) * 1_000,

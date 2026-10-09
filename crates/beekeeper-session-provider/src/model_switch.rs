@@ -36,7 +36,7 @@ use crate::{Provider, TurnDisposition};
 /// `MODEL_SWITCH_UNSUPPORTED` at admission. It ships **off**: older exact-key
 /// readers (installed desktops before SV-35, existing mobile builds) reject an
 /// unseen capability key and would drop the whole 44223. A canary host turns
-/// it on with `BUZZ_CSP_MODEL_SWITCH=1`, read once at provider start
+/// it on with `BEEKEEPER_CSP_MODEL_SWITCH=1`, read once at provider start
 /// ([`crate::config::Config::model_switch`]); flipping this default is the
 /// release action once the installed readers accept the key.
 pub const MODEL_SWITCH_ENABLED: bool = false;

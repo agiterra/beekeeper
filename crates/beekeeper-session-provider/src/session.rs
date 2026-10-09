@@ -289,9 +289,9 @@ pub struct CreateRequest {
     /// (`crate::preview_grant::push_preview_env`, SV-33):
     /// `BEEKEEPER_PREVIEW_GRANT`, a provider-signed bearer token that lets it
     /// drive its own session's local Browser preview and nothing else, and
-    /// `BUZZ_SESSION_BROKER_SOCK`, the absolute path of this machine's desktop
+    /// `BEEKEEPER_SESSION_BROKER_SOCK`, the absolute path of this machine's desktop
     /// session-broker socket (a location, not a credential). An unseated
-    /// execution therefore still holds no `BUZZ_*` identity credential; if
+    /// execution therefore still holds no `BEEKEEPER_*`/`BUZZ_*` identity credential; if
     /// minting fails neither preview variable is pushed.
     ///
     /// Never logged: [`CreateRequest`]'s hand-written `Debug` reports only
@@ -1987,7 +1987,7 @@ async fn start_agent(
     // after the fence has removed the provider's; and for every execution,
     // seated or not, the preview grant (`BEEKEEPER_PREVIEW_GRANT`, a bearer
     // token scoped to this session's local Browser) and the broker socket
-    // path (`BUZZ_SESSION_BROKER_SOCK`, a path, not a credential). An
+    // path (`BEEKEEPER_SESSION_BROKER_SOCK`, a path, not a credential). An
     // unseated execution gets no identity credential from it.
     //
     // A prepared scope replaces all of that: the adapter starts inside the
