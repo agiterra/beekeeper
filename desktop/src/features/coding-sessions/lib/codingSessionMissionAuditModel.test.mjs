@@ -23,7 +23,7 @@ function tool(id, turnId, offsetSeconds, args, result = "") {
     descriptor: { renderClass: "generic", label: "Ran tool", preview: null },
     title: id,
     toolName: id,
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: result === null ? "executing" : "completed",
     args,
     result: result ?? "",

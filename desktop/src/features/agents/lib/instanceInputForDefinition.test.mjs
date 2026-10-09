@@ -41,10 +41,10 @@ const claudeRuntime = {
   mcpCommand: null,
 };
 
-const buzzAgentRuntime = {
+const beekeeperAgentRuntime = {
   ...gooseRuntime,
   id: "buzz-agent",
-  label: "Buzz Agent",
+  label: "Beekeeper Agent",
   command: "buzz-agent-cmd",
   mcpCommand: null,
 };
@@ -181,7 +181,7 @@ test("no backend intent is byte-identical to the pre-intent mapping", async () =
   });
 });
 
-test("Buzz shared compute definition carries native provider and auto model", async () => {
+test("Beekeeper shared compute definition carries native provider and auto model", async () => {
   const input = await buildInstanceInputForDefinition(
     persona({
       runtime: "buzz-agent",
@@ -308,7 +308,7 @@ test("row 6: unfetched query refetches instead of resolving empty", async () => 
 test("item-13: goose+buzz-agent both available — persona with no runtime resolves buzz-agent", () => {
   const { runtime, warnings } = resolveStartRuntimeForDefinition(
     persona({ runtime: undefined }),
-    [gooseRuntime, claudeRuntime, buzzAgentRuntime],
+    [gooseRuntime, claudeRuntime, beekeeperAgentRuntime],
   );
   assert.equal(
     runtime.id,

@@ -10,7 +10,7 @@ import 'concentric_sheet_surface.dart';
 ///
 /// The strong ease-out makes entrances respond immediately, while the shorter
 /// exit keeps dismissals from feeling sluggish.
-const buzzModalAnimationStyle = AnimationStyle(
+const beekeeperModalAnimationStyle = AnimationStyle(
   curve: Cubic(0.23, 1, 0.32, 1),
   duration: Duration(milliseconds: 280),
   reverseCurve: Cubic(0.77, 0, 0.175, 1),
@@ -93,7 +93,7 @@ Future<T?> showBeekeeperModalBottomSheet<T>({
     anchorPoint: anchorPoint,
     sheetAnimationStyle: reduceMotion
         ? AnimationStyle.noAnimation
-        : (sheetAnimationStyle ?? buzzModalAnimationStyle),
+        : (sheetAnimationStyle ?? beekeeperModalAnimationStyle),
     requestFocus: requestFocus,
   );
 }
@@ -196,6 +196,6 @@ Future<T?> showBeekeeperDialog<T>({
     requestFocus: requestFocus,
     animationStyle: reduceMotion
         ? AnimationStyle.noAnimation
-        : (animationStyle ?? buzzModalAnimationStyle),
+        : (animationStyle ?? beekeeperModalAnimationStyle),
   );
 }

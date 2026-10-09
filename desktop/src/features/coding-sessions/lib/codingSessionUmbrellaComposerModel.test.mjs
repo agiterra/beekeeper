@@ -117,7 +117,7 @@ function catalogRecord(sessionId, signerPubkey) {
   return {
     generationId: `generation-${sessionId}`,
     label: "generation 1",
-    title: "Advance Buzz live sessions",
+    title: "Advance Beekeeper live sessions",
     providerAuthorityPubkey: signerPubkey,
     metadataAuthorityPubkey: signerPubkey,
     lastEventAt: "2026-08-12T10:00:00.000Z",

@@ -145,18 +145,18 @@ test("list tabs filter by project", async ({ page }) => {
   // Default: all repos visible under "All Projects". (The Repositories tab
   // renders RepositoryCards — repository-card/-row testids — since the
   // multi-repo rework; the fork spec predated that rename.)
-  const buzzRepo = page
+  const beekeeperRepo = page
     .locator(
       '[data-testid="repository-card-buzz"], [data-testid="repository-row-buzz"]',
     )
     .first();
-  await expect(buzzRepo).toBeVisible({ timeout: 10_000 });
+  await expect(beekeeperRepo).toBeVisible({ timeout: 10_000 });
 
   // Scope to General (the migration swept the mock repos into it). The
   // dropdown lives in the toolbar, so it works on every tab.
   await page.getByRole("button", { name: "Filter by project" }).click();
   await page.getByRole("menuitem", { name: "General" }).click();
-  await expect(buzzRepo).toBeVisible();
+  await expect(beekeeperRepo).toBeVisible();
 
   // With a project selected the + menu unlocks the full create list — the
   // entries target the selected project. (Hover-open: the scope dropdown's

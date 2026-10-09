@@ -92,8 +92,8 @@ export const ToolItem = React.memo(function ToolItem({
   const contextFailureTone = useCompactToolFailureTone();
   const failureTone = failureToneProp ?? contextFailureTone;
   const quietFailure = failed && failureTone === "quiet";
-  const canonicalToolName = item.buzzToolName ?? item.toolName;
-  const buzzTool = getBeekeeperToolInfo(canonicalToolName);
+  const canonicalToolName = item.beekeeperToolName ?? item.toolName;
+  const beekeeperTool = getBeekeeperToolInfo(canonicalToolName);
   const compactSummary = React.useMemo(
     () => buildCompactToolSummary(item),
     [item],
@@ -128,7 +128,7 @@ export const ToolItem = React.memo(function ToolItem({
         <CompactMessageSummary
           args={item.args}
           avatarUrl={agentResolvedAvatarUrl}
-          description={buzzTool?.label}
+          description={beekeeperTool?.label}
           displayName={agentLabel}
           duration={duration}
           hasArgs={hasArgs}
@@ -231,7 +231,7 @@ export const ToolItem = React.memo(function ToolItem({
           >
             <ToolDetailBlocks
               args={item.args}
-              description={buzzTool?.label}
+              description={beekeeperTool?.label}
               fileEditDiff={compactSummary.fileEditDiff}
               fileReadContent={compactSummary.fileReadContent}
               hasArgs={hasArgs}

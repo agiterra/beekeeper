@@ -149,16 +149,16 @@ export function createComposerLinkPasteHandler(
 ) {
   return (view: EditorView, event: ClipboardEvent): boolean => {
     const text = event.clipboardData?.getData("text/plain") ?? "";
-    const buzzHref = unwrapExactBeekeeperLink(text);
-    const buzzLinkType =
+    const beekeeperHref = unwrapExactBeekeeperLink(text);
+    const beekeeperLinkType =
       view.state.schema.nodes[COMPOSER_MESSAGE_LINK_NODE_NAME];
-    if (buzzHref && buzzLinkType) {
+    if (beekeeperHref && beekeeperLinkType) {
       const attrs = resolveComposerMessageLinkAttributes(
-        buzzHref,
+        beekeeperHref,
         resolveChannelName,
       );
       if (attrs) {
-        replaceSelectionWithNode(view, buzzLinkType.create(attrs));
+        replaceSelectionWithNode(view, beekeeperLinkType.create(attrs));
         event.preventDefault();
         return true;
       }

@@ -79,7 +79,7 @@ function spawnEntry(count) {
       renderClass: "subagent",
       title: "Task",
       toolName: "Task",
-      buzzToolName: null,
+      beekeeperToolName: null,
       status: "completed",
       args: { description: `Review part ${index}` },
       result: `Report ${index}`,

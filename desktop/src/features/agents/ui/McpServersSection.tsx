@@ -6,7 +6,7 @@ type McpServersSectionProps = {
   extensions: ExtensionEntry[];
   runtimeId: string | null;
   variant?: "compact" | "profile";
-  buzzAgentSlot?: React.ReactNode;
+  beekeeperAgentSlot?: React.ReactNode;
 };
 
 export function shouldRenderMcpServers(
@@ -20,7 +20,7 @@ export function shouldRenderMcpServers(
 }
 
 export function McpServersSection({
-  buzzAgentSlot,
+  beekeeperAgentSlot,
   extensions,
   runtimeId,
   variant = "compact",
@@ -43,7 +43,7 @@ export function McpServersSection({
         <p className="py-2 text-xs font-medium text-foreground">MCP servers</p>
       ) : null}
 
-      {isBeekeeperAgent && buzzAgentSlot ? buzzAgentSlot : null}
+      {isBeekeeperAgent && beekeeperAgentSlot ? beekeeperAgentSlot : null}
 
       {extensions.length > 0 ? (
         <div className="divide-y divide-border/55">

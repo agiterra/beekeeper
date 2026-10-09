@@ -21,7 +21,7 @@ import {
 // usePersonaModelDiscovery (keyed on provider), so the model dropdown updates
 // without saving. These tests guard the visibility predicate.
 
-test("editAgent_providerFieldVisible_forBuzzAgent", () => {
+test("editAgent_providerFieldVisible_forBeekeeperAgent", () => {
   assert.equal(
     runtimeSupportsLlmProviderSelection("buzz-agent"),
     true,
@@ -201,7 +201,7 @@ test("editAgent_modelFallback_selectNotDisabledLogic", () => {
 // Switching to buzz-agent runtime (which supports LLM provider selection)
 // must make the provider field visible, enabling live discovery.
 
-test("editAgent_runtimeSwitch_toBuzzAgentEnablesProvider", () => {
+test("editAgent_runtimeSwitch_toBeekeeperAgentEnablesProvider", () => {
   // Simulate: user switches from "claude" to "buzz-agent"
   const previousRuntime = "claude";
   const nextRuntime = "buzz-agent";
@@ -866,7 +866,7 @@ test("editAgent_inheritCheckboxRoundTrip_clearsStaleSavedProviderWhenRevertingTo
 // from agent.agentCommand in the catalog rather than using !inheritHarness as
 // a blanket not-provider-capable proxy.
 
-test("editAgent_inheritedBuzzAgentProvider_preservedOnNameOnlySave", () => {
+test("editAgent_inheritedBeekeeperAgentProvider_preservedOnNameOnlySave", () => {
   // Inherited buzz-agent persona with databricks_v2 snapshot.
   // User makes a name-only edit (never touches runtime or provider).
   // The catalog-arrival effect correctly derived selectedRuntimeId="buzz-agent".
@@ -924,7 +924,7 @@ test("editAgent_inheritedBuzzAgentProvider_preservedOnNameOnlySave", () => {
   );
 });
 
-test("editAgent_inheritedBuzzAgentProvider_clearsWhenUserSwitchesToInheritedClaude", () => {
+test("editAgent_inheritedBeekeeperAgentProvider_clearsWhenUserSwitchesToInheritedClaude", () => {
   // An agent inheriting buzz-agent with databricks_v2, but the persona was
   // changed to Claude (agentCommand now resolves to Claude). On save, the
   // provider must be cleared (not preserved for a non-capable runtime).
@@ -1097,7 +1097,7 @@ test("editAgent_findingE_lockedRuntimeStillClears", () => {
   );
 });
 
-test("editAgent_findingE_capableBuzzAgentLoadedCatalog_preservedOnNoOpSave", () => {
+test("editAgent_findingE_capableBeekeeperAgentLoadedCatalog_preservedOnNoOpSave", () => {
   // Confirm loaded-catalog inherited buzz-agent still preserves provider.
   // This is Finding D's good path — must not regress with the tri-state change.
 
@@ -1357,7 +1357,7 @@ test("requiredCredentialEnvKeys: custom/unknown runtime → empty", () => {
 
 const hasRequiredEnvKeyMissing = hasMissingRequiredEnvKey;
 
-test("blockSave_buzzAgentAnthropicMissingKey_blocked", () => {
+test("blockSave_beekeeperAgentAnthropicMissingKey_blocked", () => {
   // Will's exact case: buzz-agent / anthropic / opus / no ANTHROPIC_API_KEY
   const requiredKeys = requiredCredentialEnvKeys("buzz-agent", "anthropic");
   const envVars = {}; // key absent
@@ -1368,7 +1368,7 @@ test("blockSave_buzzAgentAnthropicMissingKey_blocked", () => {
   );
 });
 
-test("blockSave_buzzAgentAnthropicKeyProvided_allowed", () => {
+test("blockSave_beekeeperAgentAnthropicKeyProvided_allowed", () => {
   const requiredKeys = requiredCredentialEnvKeys("buzz-agent", "anthropic");
   const envVars = { ANTHROPIC_API_KEY: "sk-ant-test" };
   assert.equal(
@@ -1378,7 +1378,7 @@ test("blockSave_buzzAgentAnthropicKeyProvided_allowed", () => {
   );
 });
 
-test("blockSave_buzzAgentAnthropicEmptyStringKey_blocked", () => {
+test("blockSave_beekeeperAgentAnthropicEmptyStringKey_blocked", () => {
   // Empty string is treated the same as absent — matches EnvVarsEditor isMissing
   const requiredKeys = requiredCredentialEnvKeys("buzz-agent", "anthropic");
   const envVars = { ANTHROPIC_API_KEY: "" };
@@ -1410,7 +1410,7 @@ test("blockSave_codexNoCliLogin_notBlocked", () => {
   );
 });
 
-test("blockSave_buzzAgentDatabricksMissingHost_blocked", () => {
+test("blockSave_beekeeperAgentDatabricksMissingHost_blocked", () => {
   const requiredKeys = requiredCredentialEnvKeys("buzz-agent", "databricks");
   const envVars = {};
   assert.equal(
@@ -1420,7 +1420,7 @@ test("blockSave_buzzAgentDatabricksMissingHost_blocked", () => {
   );
 });
 
-test("blockSave_buzzAgentDatabricksHostProvided_allowed", () => {
+test("blockSave_beekeeperAgentDatabricksHostProvided_allowed", () => {
   const requiredKeys = requiredCredentialEnvKeys("buzz-agent", "databricks");
   const envVars = { DATABRICKS_HOST: "https://my.databricks.instance" };
   assert.equal(
@@ -1485,7 +1485,7 @@ test("blockSave_nullField_allowed", () => {
 //   FALSE-BLOCK: buzz-agent pin → inherit claude persona
 //     → must NOT be blocked (claude has no dialog-fixable credential requirement)
 
-test("blockSave_inheritTransition_claudePin_toBuzzAgentPersona_missingKey_blocked", () => {
+test("blockSave_inheritTransition_claudePin_toBeekeeperAgentPersona_missingKey_blocked", () => {
   // Scenario: agent is currently pinned to claude (CLI-login, llmProviderFieldVisible=false
   // so providerForDiscovery="" in the component). The user checks "Inherit runtime
   // from persona" where the persona uses buzz-agent/anthropic.
@@ -1525,7 +1525,7 @@ test("blockSave_inheritTransition_claudePin_toBuzzAgentPersona_missingKey_blocke
   );
 });
 
-test("blockSave_inheritTransition_buzzAgentPin_toClaudePersona_notBlocked", () => {
+test("blockSave_inheritTransition_beekeeperAgentPin_toClaudePersona_notBlocked", () => {
   // Scenario: agent is pinned to buzz-agent/anthropic. The user checks
   // "Inherit runtime from persona" where the persona uses claude.
   // prospectiveRuntimeId resolves to "claude"; claude doesn't support provider

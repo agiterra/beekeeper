@@ -375,7 +375,7 @@ async function expectAppliedBeekeeperTheme(
         return {
           storedTheme: window.localStorage.getItem(storageKey),
           isDark: root.classList.contains("dark"),
-          buzzTheme: root.getAttribute("data-beekeeper-theme"),
+          beekeeperTheme: root.getAttribute("data-beekeeper-theme"),
           gradientTop: styles
             .getPropertyValue("--beekeeper-gradient-top")
             .trim(),
@@ -388,7 +388,7 @@ async function expectAppliedBeekeeperTheme(
     .toEqual({
       storedTheme,
       isDark,
-      buzzTheme: themeName,
+      beekeeperTheme: themeName,
       gradientTop: isDark ? "#4a4616" : "#e6e6b6",
       gradientBottom: isDark ? "#0a1423" : "#c4d0da",
     });
@@ -669,28 +669,32 @@ test("appearance groups theme and preferences into labeled rows", async ({
   ).toBeLessThanOrEqual(0.5);
 });
 
-test("appearance picker — system tab (Buzz follows OS)", async ({ page }) => {
+test("appearance picker — system tab (Beekeeper follows OS)", async ({
+  page,
+}) => {
   await seedTheme(page, "buzz");
   await installMockBridge(page);
   const panel = await openAppearance(page, "system");
   await panel.screenshot({ path: `${SHOTS}/03-picker-system.png` });
 });
 
-test("appearance picker — light tab (Buzz)", async ({ page }) => {
+test("appearance picker — light tab (Beekeeper)", async ({ page }) => {
   await seedTheme(page, "buzz");
   await installMockBridge(page);
   const panel = await openAppearance(page, "light");
   await panel.screenshot({ path: `${SHOTS}/04-picker-light.png` });
 });
 
-test("appearance picker — dark tab (Buzz Dark)", async ({ page }) => {
+test("appearance picker — dark tab (Beekeeper Dark)", async ({ page }) => {
   await seedTheme(page, "buzz-dark");
   await installMockBridge(page);
   const panel = await openAppearance(page, "dark");
   await panel.screenshot({ path: `${SHOTS}/05-picker-dark.png` });
 });
 
-test("settings nav uses Buzz active pill + hover (light)", async ({ page }) => {
+test("settings nav uses Beekeeper active pill + hover (light)", async ({
+  page,
+}) => {
   await seedTheme(page, "buzz");
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -703,7 +707,7 @@ test("settings nav uses Buzz active pill + hover (light)", async ({ page }) => {
   await expect(profileRow).toHaveAttribute("data-active", "true");
   await expect(profileRow).toHaveCSS("font-weight", "600");
   const selectedLabelBox = await profileLabel.boundingBox();
-  // Appearance is the active section here; its nav row should carry the Buzz
+  // Appearance is the active section here; its nav row should carry the Beekeeper
   // white active pill (data-active=true), matching the Left Nav treatment.
   await page.getByTestId("settings-nav-appearance").click();
   await expect(profileRow).toHaveCSS("font-weight", "400");
@@ -721,7 +725,9 @@ test("settings nav uses Buzz active pill + hover (light)", async ({ page }) => {
   await sidebar.screenshot({ path: `${SHOTS}/06-settings-nav-light.png` });
 });
 
-test("settings nav uses Buzz active pill + hover (dark)", async ({ page }) => {
+test("settings nav uses Beekeeper active pill + hover (dark)", async ({
+  page,
+}) => {
   await seedTheme(page, "buzz-dark");
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -897,7 +903,9 @@ for (const { mode, theme } of [
   { mode: "light" as const, theme: "github-light" },
   { mode: "dark" as const, theme: "github-dark" },
 ]) {
-  test(`${theme} ignores the Buzz prominent preference`, async ({ page }) => {
+  test(`${theme} ignores the Beekeeper prominent preference`, async ({
+    page,
+  }) => {
     await seedTheme(page, theme);
     await page.addInitScript(
       ({ key }) => window.localStorage.setItem(key, "true"),
@@ -1030,11 +1038,11 @@ test("settings content uses the same inset surface as the main app", async ({
   });
 });
 
-test("appearance hides accent picker under Buzz", async ({ page }) => {
+test("appearance hides accent picker under Beekeeper", async ({ page }) => {
   await seedTheme(page, "buzz");
   await installMockBridge(page);
   const panel = await openAppearance(page, "light");
-  // The accent picker is hidden while a Buzz theme is active. Its neutral
+  // The accent picker is hidden while a Beekeeper theme is active. Its neutral
   // swatch testid must not be present.
   await expect(page.getByTestId("accent-color-neutral")).toHaveCount(0);
   await panel.screenshot({ path: `${SHOTS}/10-appearance-no-accent.png` });
@@ -1104,13 +1112,13 @@ test("glass background keeps the content panel solid", async ({ page }) => {
     opacitySlider.locator(".beekeeper-avatar-framing-slider-handle"),
   ).toHaveCSS("opacity", "1");
   await expect(root).toHaveAttribute("data-glass-background", "");
-  const buzzSettingOrder = await page
+  const beekeeperSettingOrder = await page
     .getByTestId("appearance-theme-card")
     .locator(
       '[data-testid="appearance-color-mode-row"], [data-testid="theme-style-row"], [data-testid="glass-background-row"], [data-testid="glass-opacity-row"], [data-testid="prominent-active-tab-row"]',
     )
     .evaluateAll((rows) => rows.map((row) => row.getAttribute("data-testid")));
-  expect(buzzSettingOrder).toEqual([
+  expect(beekeeperSettingOrder).toEqual([
     "appearance-color-mode-row",
     "theme-style-row",
     "glass-background-row",
@@ -1222,7 +1230,7 @@ test("glass background is unavailable on Linux", async ({ page }) => {
     .toBe("true");
 });
 
-test("non-Buzz glass preserves the selected theme sidebar tint", async ({
+test("non-Beekeeper glass preserves the selected theme sidebar tint", async ({
   page,
 }) => {
   await seedTheme(page, "rose-pine-dawn");
@@ -1267,10 +1275,12 @@ test("non-Buzz glass preserves the selected theme sidebar tint", async ({
   expect(tint.actual).toBe(tint.expected);
 });
 
-test("accent picker reveals/hides when toggling Buzz", async ({ page }) => {
-  // Start on a non-Buzz theme so the accent picker is present, then select the
-  // Buzz tile — the picker should animate out and unmount. Reselecting a
-  // non-Buzz tile brings it back. Asserts the presence toggle (the motion
+test("accent picker reveals/hides when toggling Beekeeper", async ({
+  page,
+}) => {
+  // Start on a non-Beekeeper theme so the accent picker is present, then select the
+  // Beekeeper tile — the picker should animate out and unmount. Reselecting a
+  // non-Beekeeper tile brings it back. Asserts the presence toggle (the motion
   // wrapper) works end to end.
   await seedTheme(page, "github-light");
   await page.addInitScript(() => {
@@ -1295,7 +1305,7 @@ test("accent picker reveals/hides when toggling Buzz", async ({ page }) => {
     "glass-background-row",
   ]);
 
-  // Switch to Buzz — picker should leave (allow the exit animation to settle).
+  // Switch to Beekeeper — picker should leave (allow the exit animation to settle).
   await page.getByTestId("theme-style-trigger").click();
   await page.getByTestId("theme-option-buzz").click();
   await expect(page.getByTestId("theme-style-trigger")).toHaveAttribute(
@@ -1304,7 +1314,7 @@ test("accent picker reveals/hides when toggling Buzz", async ({ page }) => {
   );
   await expect(page.getByTestId("accent-color-neutral")).toHaveCount(0);
 
-  // Back to a non-Buzz theme — picker returns.
+  // Back to a non-Beekeeper theme — picker returns.
   await page.getByTestId("theme-option-github-light").click();
   await expect(page.getByTestId("accent-color-neutral")).toBeVisible();
   await expect(page.getByTestId("theme-style-trigger")).toHaveAttribute(
@@ -1346,7 +1356,7 @@ test("accent picker reveals/hides when toggling Buzz", async ({ page }) => {
   });
 });
 
-test("Buzz light and dark modes apply live without a reload", async ({
+test("Beekeeper light and dark modes apply live without a reload", async ({
   page,
 }) => {
   await seedTheme(page, "buzz");
@@ -1370,7 +1380,7 @@ test("Buzz light and dark modes apply live without a reload", async ({
   await expectAppliedBeekeeperTheme(page, "buzz");
 });
 
-test("Buzz follows native system theme changes without a reload", async ({
+test("Beekeeper follows native system theme changes without a reload", async ({
   page,
 }) => {
   await seedTheme(page, "buzz");

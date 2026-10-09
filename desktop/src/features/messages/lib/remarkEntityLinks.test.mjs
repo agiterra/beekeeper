@@ -12,7 +12,7 @@ function run(value) {
   return tree.children[0].children;
 }
 
-test("turns every bare Buzz entity permalink family into a chip node", () => {
+test("turns every bare Beekeeper entity permalink family into a chip node", () => {
   const owner = "ab".repeat(32);
   const id = "cd".repeat(32);
   const links = [

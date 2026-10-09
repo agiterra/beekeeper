@@ -7,7 +7,7 @@ import { openInboxTab } from "../helpers/dashboard";
 const DEFAULT_MOCK_PUBKEY = "deadbeef".repeat(8);
 const BEEKEEPER_REPO_ADDRESS = `30617:${DEFAULT_MOCK_PUBKEY}:buzz`;
 
-test("Buzz Git pull request renders and stays actionable in Inbox", async ({
+test("Beekeeper Git pull request renders and stays actionable in Inbox", async ({
   page,
 }) => {
   await page.addInitScript(() => {

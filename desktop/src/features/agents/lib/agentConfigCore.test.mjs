@@ -46,7 +46,7 @@ function field(model, kind) {
   return model.fields.find((candidate) => candidate.kind === kind);
 }
 
-test("Buzz Agent exposes provider, model, and Buzz-owned effort", () => {
+test("Beekeeper Agent exposes provider, model, and Beekeeper-owned effort", () => {
   const model = deriveAgentConfigFieldModel({
     config,
     runtime: runtime("buzz-agent", {
@@ -61,7 +61,7 @@ test("Buzz Agent exposes provider, model, and Buzz-owned effort", () => {
     model.fields.map((item) => item.kind),
     ["provider", "model", "effort"],
   );
-  assert.equal(field(model, "effort").optionSource, "buzzAgentCatalog");
+  assert.equal(field(model, "effort").optionSource, "beekeeperAgentCatalog");
   assert.deepEqual(field(model, "effort").targetApplication, {
     kind: "envVar",
     key: "BEEKEEPER_AGENT_THINKING_EFFORT",
@@ -341,7 +341,7 @@ test("numeric descriptor value is null when env var is absent", () => {
 
 test("structuredEnvKeys_global_includes_effort_key_and_numeric_keys", () => {
   // Global surface renders effort + all numeric descriptors.
-  const buzzAgentModel = deriveAgentConfigFieldModel({
+  const beekeeperAgentModel = deriveAgentConfigFieldModel({
     config,
     runtime: runtime("buzz-agent", {
       modelEnvVar: "BEEKEEPER_AGENT_MODEL",
@@ -355,7 +355,7 @@ test("structuredEnvKeys_global_includes_effort_key_and_numeric_keys", () => {
   });
 
   // Global renders all renderable descriptors.
-  const renderedDescriptors = buzzAgentModel.fields.filter(
+  const renderedDescriptors = beekeeperAgentModel.fields.filter(
     (f) => f.render === "control",
   );
   const keys = structuredEnvKeys(renderedDescriptors);
@@ -380,7 +380,7 @@ test("structuredEnvKeys_global_includes_effort_key_and_numeric_keys", () => {
 
 test("structuredEnvKeys_per_agent_buzz_agent_includes_effort_and_numeric_keys", () => {
   // Per-agent buzz-agent renders effort + all 3 numeric descriptors.
-  const buzzAgentModel = deriveAgentConfigFieldModel({
+  const beekeeperAgentModel = deriveAgentConfigFieldModel({
     config,
     runtime: runtime("buzz-agent", {
       thinkingEnvVar: "BEEKEEPER_AGENT_THINKING_EFFORT",
@@ -391,7 +391,7 @@ test("structuredEnvKeys_per_agent_buzz_agent_includes_effort_and_numeric_keys", 
     scope: "definition",
   });
 
-  const renderedDescriptors = buzzAgentModel.fields.filter(
+  const renderedDescriptors = beekeeperAgentModel.fields.filter(
     (f) => f.render === "control",
   );
   const keys = structuredEnvKeys(renderedDescriptors);

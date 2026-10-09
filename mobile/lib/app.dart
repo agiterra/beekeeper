@@ -155,11 +155,11 @@ class App extends HookConsumerWidget {
     // Derive the gradient from the themes that produced each color scheme.
     // This keeps fallbacks and pinned brightness changes aligned with the
     // rendered palette rather than the raw persisted selection.
-    final buzzLightGradient = buzzTopSectionGradient(
+    final beekeeperLightGradient = beekeeperTopSectionGradient(
       resolved.lightTheme?.name ?? '',
       lightScheme.brightness,
     );
-    final buzzDarkGradient = buzzTopSectionGradient(
+    final beekeeperDarkGradient = beekeeperTopSectionGradient(
       resolved.darkTheme?.name ?? '',
       darkScheme.brightness,
     );
@@ -201,11 +201,11 @@ class App extends HookConsumerWidget {
       title: 'Beekeeper',
       theme: AppTheme.light(
         colorScheme: lightScheme,
-        topSectionGradient: buzzLightGradient,
+        topSectionGradient: beekeeperLightGradient,
       ),
       darkTheme: AppTheme.dark(
         colorScheme: darkScheme,
-        topSectionGradient: buzzDarkGradient,
+        topSectionGradient: beekeeperDarkGradient,
       ),
       themeMode: effectiveMode,
       // Above the navigator, so a burst keeps playing over a pushed thread page

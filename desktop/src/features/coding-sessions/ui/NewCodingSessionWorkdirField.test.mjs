@@ -19,7 +19,7 @@ import { JSDOM } from "jsdom";
  * effect never ran at all, which would prove nothing.
  */
 
-const PROJECT_KEY = "30621:owner:buzz-glue";
+const PROJECT_KEY = "30621:owner:beekeeper-glue";
 const CHANNEL_ID = "3d2a7b18-9b7a-4a41-9a86-6a52a1c0b7e1";
 const PROJECT_CHECKOUT = "/Users/x/Code/repo";
 const SEEDED_WORKSPACE = "/Users/x/Code/repo-wt-a";

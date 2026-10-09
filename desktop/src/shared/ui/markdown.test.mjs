@@ -523,7 +523,7 @@ test("rehypeImageGallery: leaves a single trailing image in the text flow", () =
 // schemes (returns `""`) before our `a` component override can see them,
 // which would break copy → paste → click for `beekeeper://message?…` links and
 // `beekeeper://pr|issue|repo?…` entity links end-to-end. We pass a custom
-// `urlTransform` (`buzzDeepLinkUrlTransform`) that preserves valid Buzz
+// `urlTransform` (`beekeeperDeepLinkUrlTransform`) that preserves valid Beekeeper
 // deep links and delegates everything else to `defaultUrlTransform`.
 //
 // This test renders real `<ReactMarkdown>` with the production transform
@@ -544,7 +544,7 @@ const OWNER_HEX =
 const EVENT_HEX =
   "c3b589fa5713ba25bad6dc095e2de00a4ac8f50050fdea00fc6444e603be1dd1";
 
-function buzzDeepLinkUrlTransform(value, key) {
+function beekeeperDeepLinkUrlTransform(value, key) {
   if (key !== "href") return defaultUrlTransform(value);
   if (isMessageLink(value) || isChannelLink(value)) return value;
   if (parseEntityLink(value).ok) return value;
@@ -555,7 +555,7 @@ function renderMarkdown(content) {
   return renderToStaticMarkup(
     React.createElement(
       ReactMarkdown,
-      { urlTransform: buzzDeepLinkUrlTransform },
+      { urlTransform: beekeeperDeepLinkUrlTransform },
       content,
     ),
   );
@@ -636,39 +636,39 @@ test("messageLinkUrlTransform: leaves non-entity beekeeper:// schemes to default
   assert.match(html, /href=""/);
 });
 
-test("buzzDeepLinkUrlTransform: preserves beekeeper://pr entity link href", () => {
-  const prLink = `beekeeper://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`;
+test("beekeeperDeepLinkUrlTransform: preserves beekeeper://pr entity link href", () => {
+  const prLink = `beekeeper://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=beekeeper-world`;
   const html = renderMarkdown(`[My PR](${prLink})`);
   // The href must survive — our transform preserves valid entity links.
   assert.match(html, /href="beekeeper:\/\/pr\?/);
   assert.doesNotMatch(html, /href=""/);
 });
 
-test("buzzDeepLinkUrlTransform: preserves beekeeper://pr autolink href", () => {
-  const prLink = `beekeeper://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`;
+test("beekeeperDeepLinkUrlTransform: preserves beekeeper://pr autolink href", () => {
+  const prLink = `beekeeper://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=beekeeper-world`;
   const html = renderMarkdown(`<${prLink}>`);
   assert.match(html, /href="beekeeper:\/\/pr\?/);
   assert.doesNotMatch(html, /href=""/);
 });
 
-test("buzzDeepLinkUrlTransform: preserves beekeeper://issue entity link href", () => {
-  const issueLink = `beekeeper://issue?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`;
+test("beekeeperDeepLinkUrlTransform: preserves beekeeper://issue entity link href", () => {
+  const issueLink = `beekeeper://issue?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=beekeeper-world`;
   const html = renderMarkdown(`[Issue title](${issueLink})`);
   assert.match(html, /href="beekeeper:\/\/issue\?/);
   assert.doesNotMatch(html, /href=""/);
 });
 
-test("buzzDeepLinkUrlTransform: preserves beekeeper://repo entity link href", () => {
-  const repoLink = `beekeeper://repo?owner=${OWNER_HEX}&d=buzz-world`;
+test("beekeeperDeepLinkUrlTransform: preserves beekeeper://repo entity link href", () => {
+  const repoLink = `beekeeper://repo?owner=${OWNER_HEX}&d=beekeeper-world`;
   const html = renderMarkdown(`[My repo](${repoLink})`);
   assert.match(html, /href="beekeeper:\/\/repo\?/);
   assert.doesNotMatch(html, /href=""/);
 });
 
-test("buzzDeepLinkUrlTransform: strips malformed beekeeper://pr (unknown param)", () => {
+test("beekeeperDeepLinkUrlTransform: strips malformed beekeeper://pr (unknown param)", () => {
   // Strict parser rejects unknown params — transform falls back to default sanitizer.
   const html = renderMarkdown(
-    `[link](beekeeper://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world&extra=ignored)`,
+    `[link](beekeeper://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=beekeeper-world&extra=ignored)`,
   );
   assert.match(html, /href=""/);
 });
@@ -745,7 +745,7 @@ test("renderEntityLinkAnchor_noRelayOrigin_cloneUrlReturnsNull", () => {
 
 test("renderEntityLinkAnchor_directEntityLink_returnsAnchorRegardlessOfOrigin", () => {
   // A direct beekeeper://pr link always resolves in-app — it does not require origin.
-  const prLink = `beekeeper://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`;
+  const prLink = `beekeeper://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=beekeeper-world`;
   const el = renderEntityLinkAnchor({
     children: React.createElement("span", null, "My PR"),
     href: prLink,
@@ -950,7 +950,7 @@ function nudgeBody(agentPubkey) {
     "**Fizz** needs configuration before it can respond:",
     "- set `ANTHROPIC_API_KEY` in Edit Agent → Environment variables",
     "",
-    "Open Edit Agent in the Buzz app to set these.",
+    "Open Edit Agent in the Beekeeper app to set these.",
     "",
     "```buzz:config-nudge",
     JSON.stringify({
@@ -1076,7 +1076,7 @@ test("nudgeGuard_noSentinel_proseRenderedCardAbsent", () => {
   );
 });
 
-test("bare Buzz permalinks render cohesive icon-prefixed chips", () => {
+test("bare Beekeeper permalinks render cohesive icon-prefixed chips", () => {
   const channelId = "580ca78b-9dae-46f3-8854-bd671853ba32";
   const messageLink = `beekeeper://message?channel=${channelId}&id=${EVENT_HEX}`;
   const compatibilityMessageLink = `beekeeper://channel/${channelId}/${EVENT_HEX}`;
@@ -1085,9 +1085,9 @@ test("bare Buzz permalinks render cohesive icon-prefixed chips", () => {
     messageLink,
     compatibilityMessageLink,
     channelLink,
-    `beekeeper://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`,
-    `beekeeper://issue?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`,
-    `beekeeper://repo?owner=${OWNER_HEX}&d=buzz-world`,
+    `beekeeper://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=beekeeper-world`,
+    `beekeeper://issue?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=beekeeper-world`,
+    `beekeeper://repo?owner=${OWNER_HEX}&d=beekeeper-world`,
   ];
   const markdown = renderCachedMarkdown({
     components: createMarkdownComponents(true, false),
@@ -1120,17 +1120,17 @@ test("bare Buzz permalinks render cohesive icon-prefixed chips", () => {
   assert.match(html, /inline-chip-icon-pr/);
   assert.match(html, /inline-chip-icon-issue/);
   assert.match(html, /inline-chip-icon-repo/);
-  assert.equal((html.match(/>buzz-world · c3b589fa</g) ?? []).length, 2);
-  assert.match(html, />buzz-world</);
+  assert.equal((html.match(/>beekeeper-world · c3b589fa</g) ?? []).length, 2);
+  assert.match(html, />beekeeper-world</);
 });
 
-test("authored Buzz permalink labels remain ordinary links", () => {
+test("authored Beekeeper permalink labels remain ordinary links", () => {
   const channelId = "580ca78b-9dae-46f3-8854-bd671853ba32";
   const links = [
     `[the message](beekeeper://message?channel=${channelId}&id=${EVENT_HEX})`,
     `[the compatibility message](beekeeper://channel/${channelId}/${EVENT_HEX})`,
     `[**design discussion**](beekeeper://channel/${channelId})`,
-    `[the issue](beekeeper://issue?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world)`,
+    `[the issue](beekeeper://issue?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=beekeeper-world)`,
   ];
   const markdown = renderCachedMarkdown({
     components: createMarkdownComponents(true, false),
@@ -1164,7 +1164,7 @@ test("authored Buzz permalink labels remain ordinary links", () => {
   assert.equal((html.match(/underline-offset-4/g) ?? []).length, 4);
 });
 
-test("bare Buzz permalinks shorten unavailable channel identifiers", () => {
+test("bare Beekeeper permalinks shorten unavailable channel identifiers", () => {
   const channelId = "580ca78b-9dae-46f3-8854-bd671853ba32";
   const markdown = renderCachedMarkdown({
     components: createMarkdownComponents(true, false),
@@ -1286,8 +1286,8 @@ test("agent mentions retain the bot treatment instead of the human icon", () => 
   assert.doesNotMatch(html, />@alice</);
 });
 
-test("renderEntityLinkAnchor renders Buzz entity links as chips", () => {
-  const prLink = `beekeeper://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`;
+test("renderEntityLinkAnchor renders Beekeeper entity links as chips", () => {
+  const prLink = `beekeeper://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=beekeeper-world`;
   const el = renderEntityLinkAnchor({
     children: "PR · abc123",
     href: prLink,
@@ -1302,9 +1302,9 @@ test("renderEntityLinkAnchor renders Buzz entity links as chips", () => {
 });
 
 test("renderEntityLinkAnchor keeps chip styling when interaction is disabled", () => {
-  const repoLink = `beekeeper://repo?owner=${OWNER_HEX}&d=buzz-world`;
+  const repoLink = `beekeeper://repo?owner=${OWNER_HEX}&d=beekeeper-world`;
   const el = renderEntityLinkAnchor({
-    children: "buzz-world",
+    children: "beekeeper-world",
     href: repoLink,
     interactive: false,
     onOpenEntityLink: () => {},

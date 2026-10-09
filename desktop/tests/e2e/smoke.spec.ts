@@ -130,7 +130,7 @@ test("creates a new mocked stream", async ({ page }) => {
   await expect(page.getByTestId("chat-title")).toContainText(channelName);
 });
 
-test("Buzz shared compute explains automatic model selection", async ({
+test("Beekeeper shared compute explains automatic model selection", async ({
   page,
 }) => {
   await page.goto("/");
@@ -166,7 +166,7 @@ test("Buzz shared compute explains automatic model selection", async ({
   await expect(page.locator("#persona-custom-model")).toHaveCount(0);
 });
 
-test("create agent persists Buzz shared compute with auto model", async ({
+test("create agent persists Beekeeper shared compute with auto model", async ({
   page,
 }) => {
   const agentName = `Shared compute agent ${Date.now()}`;

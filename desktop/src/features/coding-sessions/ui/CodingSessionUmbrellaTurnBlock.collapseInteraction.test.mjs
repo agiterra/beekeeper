@@ -83,7 +83,7 @@ async function fixture() {
         descriptor: { renderClass: "shell", label: "shell", preview: null },
         title: "tool-2",
         toolName: "tool-2",
-        buzzToolName: null,
+        beekeeperToolName: null,
         status: "completed",
         args: {},
         result: "",

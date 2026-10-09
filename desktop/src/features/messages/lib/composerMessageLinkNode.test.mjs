@@ -18,9 +18,9 @@ const CHANNEL_HREF = `beekeeper://channel/${CHANNEL_ID}`;
 const CHANNEL_MESSAGE_ID = "a".repeat(64);
 const CHANNEL_MESSAGE_HREF = `beekeeper://channel/${CHANNEL_ID}/${CHANNEL_MESSAGE_ID}`;
 const OWNER = "a".repeat(64);
-const REPO_HREF = `beekeeper://repo?owner=${OWNER}&d=buzz-world`;
+const REPO_HREF = `beekeeper://repo?owner=${OWNER}&d=beekeeper-world`;
 const ISSUE_ID = "b".repeat(64);
-const ISSUE_HREF = `beekeeper://issue?id=${ISSUE_ID}&owner=${OWNER}&d=buzz-world`;
+const ISSUE_HREF = `beekeeper://issue?id=${ISSUE_ID}&owner=${OWNER}&d=beekeeper-world`;
 
 test("resolves a composer preview and canonicalizes the underlying href", () => {
   assert.deepEqual(
@@ -123,7 +123,7 @@ test("real markdown-it parsing materializes a restored message link", () => {
   assert.match(html, /data-href="beekeeper:\/\/message\?channel=.*&amp;id=/);
 });
 
-test("real markdown-it parsing materializes mixed Buzz permalink chips", () => {
+test("real markdown-it parsing materializes mixed Beekeeper permalink chips", () => {
   const md = new MarkdownIt();
   registerComposerMessageLinkMarkdownIt(md, {
     resolveChannelName: (channelId) =>
@@ -135,7 +135,7 @@ test("real markdown-it parsing materializes mixed Buzz permalink chips", () => {
   assert.match(html, /data-href="beekeeper:\/\/channel\/9a1657ac/);
   assert.match(
     html,
-    /data-href="beekeeper:\/\/repo\?owner=a{64}&amp;d=buzz-world/,
+    /data-href="beekeeper:\/\/repo\?owner=a{64}&amp;d=beekeeper-world/,
   );
 });
 
@@ -236,12 +236,12 @@ test("composer node renders channel and entity chip presentations", () => {
   const repo = render(REPO_HREF);
   assert.equal(repo[1]["data-beekeeper-link-kind"], "repo");
   assert.match(repo[1].class, /inline-chip-icon-repo/);
-  assert.equal(repo[2], "buzz-world");
+  assert.equal(repo[2], "beekeeper-world");
 
   const issue = render(ISSUE_HREF);
   assert.equal(issue[1]["data-beekeeper-link-kind"], "issue");
   assert.match(issue[1].class, /inline-chip-icon-issue/);
-  assert.equal(issue[2], "buzz-world · bbbbbbbb");
+  assert.equal(issue[2], "beekeeper-world · bbbbbbbb");
 });
 
 test("markdown rendering stores identity in attributes, not visible id text", () => {

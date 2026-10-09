@@ -16,7 +16,7 @@ function makeTool(overrides = {}) {
     type: "tool",
     title: "Send Message",
     toolName: "send_message",
-    buzzToolName: "send_message",
+    beekeeperToolName: "send_message",
     status: "executing",
     args: { channel_id: "abc" },
     result: "",
@@ -117,7 +117,7 @@ test("getActivityHeadline uses semantic tool descriptors", () => {
       makeTool({
         title: "Shell",
         toolName: "dev__shell",
-        buzzToolName: null,
+        beekeeperToolName: null,
         args: { command: "bee messages send --content hi" },
         descriptor: {
           renderClass: "message",

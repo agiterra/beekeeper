@@ -100,7 +100,7 @@ class _PersonInviteSection extends HookConsumerWidget {
           child: SizedBox(
             key: const Key('community-invite-recipient-field'),
             width: double.infinity,
-            height: buzzSearchIdleFieldHeight,
+            height: beekeeperSearchIdleFieldHeight,
             child: BeekeeperSearchField(
               fieldKey: const Key('community-invite-search'),
               controller: searchController,

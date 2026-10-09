@@ -51,7 +51,7 @@ function umbrella(executions = []) {
     sessionRef: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
     genesisRef: "d".repeat(64),
     genesisResolution: "governed",
-    title: "Advance Buzz live sessions",
+    title: "Advance Beekeeper live sessions",
     executions,
   };
 }
@@ -270,7 +270,7 @@ test("seating an agent gives the seat its own worktree, and names it", async () 
     assert.equal(toggle.getAttribute("data-state"), "checked");
     assert.equal(
       screen.getByTestId("coding-session-worktree-name").value,
-      "advance-buzz-live-sessions-builder",
+      "advance-beekeeper-live-sessions-builder",
     );
     assert.match(
       screen.getByTestId("add-coding-session-provider-workdir-note")

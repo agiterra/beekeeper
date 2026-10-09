@@ -97,7 +97,7 @@ function tool(name, overrides = {}) {
     descriptor: { renderClass: "shell", label: name, preview: null },
     title: name,
     toolName: name,
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "completed",
     args: {},
     result: "",

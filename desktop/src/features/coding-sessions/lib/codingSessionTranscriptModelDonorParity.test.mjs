@@ -1,17 +1,17 @@
 /**
  * H-01a characterization — the donor transcript visibility law (Hive
  * `src/client/app/KannaTranscript.tsx` `shouldRender`/grouping at pin
- * `e0b8198bd144`) run against Buzz's canonical model-layer suppression in
+ * `e0b8198bd144`) run against Beekeeper's canonical model-layer suppression in
  * `codingSessionTranscriptModel.ts`, plus the module's uncovered formatting
- * exports. Buzz code is canonical: agreements are frozen, divergences are
- * asserted Buzz-side with the donor expectation recorded beside them.
+ * exports. Beekeeper code is canonical: agreements are frozen, divergences are
+ * asserted Beekeeper-side with the donor expectation recorded beside them.
  *
  * Scope: strictly the donor-discriminating edges — single-init suppression,
  * echo-based result dedup, and prefix grouping are already frozen by the
  * existing `codingSessionTranscriptModel` suite and are not re-asserted at
  * their existing vectors. No-seam disposition (recorded in
  * `conformance/session-ui-projections/CONTRACT.md`): the donor's
- * todo_write latest-only visibility law — Buzz has no TodoWrite concept in
+ * todo_write latest-only visibility law — Beekeeper has no TodoWrite concept in
  * this model, so the law has no seam here.
  */
 import assert from "node:assert/strict";
@@ -71,7 +71,7 @@ function tool({
     descriptor: { renderClass, label: "Ran command", preview: `preview-${id}` },
     title: toolName,
     toolName,
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "completed",
     args: { command: `command-${id}` },
     result: "ok",
@@ -88,9 +88,9 @@ const entryIds = (turn) =>
     entry.kind === "item" ? entry.item.id : entry.id,
   );
 
-test("divergence (Buzz canonical): every system init is omitted, the donor renders only the first", () => {
+test("divergence (Beekeeper canonical): every system init is omitted, the donor renders only the first", () => {
   // Donor law: only the FIRST system_init index renders; a second lifecycle
-  // would still show one row. Buzz drops system-init metadata entirely —
+  // would still show one row. Beekeeper drops system-init metadata entirely —
   // none reach entries or diagnostics, however many arrive.
   const model = deriveCodingSessionTranscriptModel(
     [
@@ -106,10 +106,10 @@ test("divergence (Buzz canonical): every system init is omitted, the donor rende
   assert.deepEqual(model.diagnostics, []);
 });
 
-test("divergence (Buzz canonical): result visibility keys on echo equality, the donor keys on duration", () => {
+test("divergence (Beekeeper canonical): result visibility keys on echo equality, the donor keys on duration", () => {
   // Donor law: a successful result row is hidden iff durationMs <= 60000
-  // (and shown past 60s); context_cleared adjacency also hides it — no Buzz
-  // analogue for either. Buzz keys on echo equality with the turn's
+  // (and shown past 60s); context_cleared adjacency also hides it — no Beekeeper
+  // analogue for either. Beekeeper keys on echo equality with the turn's
   // assistant prose, duration-independent, and keeps duration/cost as the
   // turn completion either way.
   const echoed = deriveCodingSessionTranscriptModel(
@@ -128,7 +128,7 @@ test("divergence (Buzz canonical): result visibility keys on echo equality, the 
     { isWorking: false },
   );
   const echoedTurn = echoed.blocks[0];
-  // Donor would RENDER this row (61s > 60s success); Buzz suppresses the
+  // Donor would RENDER this row (61s > 60s success); Beekeeper suppresses the
   // echo and keeps only the assistant message.
   assert.deepEqual(entryIds(echoedTurn), ["reply"]);
   assert.equal(echoedTurn.completion.durationMs, 61000);
@@ -146,14 +146,14 @@ test("divergence (Buzz canonical): result visibility keys on echo equality, the 
     { isWorking: false },
   );
   const freshTurn = fresh.blocks[0];
-  // Donor would HIDE this row (2s success); Buzz promotes the un-echoed body
+  // Donor would HIDE this row (2s success); Beekeeper promotes the un-echoed body
   // to a synthesized assistant message.
   assert.deepEqual(entryIds(freshTurn), ["reply", "settle:assistant-result"]);
   assert.equal(freshTurn.completion.durationMs, 2000);
 });
 
 test("agreement: completion outcome noise values suppress like the donor's successful-result rows", () => {
-  // Donor hides ceremony (short successful results); Buzz hides ceremony
+  // Donor hides ceremony (short successful results); Beekeeper hides ceremony
   // outcomes — the closed 7-value noise list returns null, real outcomes
   // surface lowercased with _- runs as spaces.
   const noise = [
@@ -244,9 +244,9 @@ test("characterization: only settled successful tools satisfy the completed-succ
   );
 });
 
-test("divergence (Buzz canonical): grouping keys on settled success, the donor exempts tools by name", () => {
+test("divergence (Beekeeper canonical): grouping keys on settled success, the donor exempts tools by name", () => {
   // Donor law: collapsible = tool && toolName NOT IN {AskUserQuestion,
-  // ExitPlanMode, TodoWrite} — a NAME allowlist. Buzz has no name check:
+  // ExitPlanMode, TodoWrite} — a NAME allowlist. Beekeeper has no name check:
   // any completed successful tool joins the run's sentence row, including one
   // the donor would always keep standalone. (Since the 2026-10-03 session-view
   // pass the whole run groups; there is no "three most recent" tail.)

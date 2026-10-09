@@ -42,7 +42,7 @@ function editItem(id, path, completedAt) {
     descriptor: { renderClass: "file-edit", object: path },
     title: "Edit",
     toolName: "Edit",
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "completed",
     args: { file_path: path, old_string: "a", new_string: "b" },
     result: "ok",

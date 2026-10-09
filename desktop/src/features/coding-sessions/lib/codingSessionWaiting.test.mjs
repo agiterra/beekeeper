@@ -48,7 +48,7 @@ function tool(id, turnId, overrides = {}) {
     descriptor: { renderClass: "shell", label: "Ran command", preview: "" },
     title: "Bash",
     toolName: "Bash",
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "completed",
     args: {},
     result: "",

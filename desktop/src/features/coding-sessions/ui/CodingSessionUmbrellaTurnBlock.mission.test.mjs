@@ -40,7 +40,7 @@ function toolItem(seq, renderClass, turnId) {
     descriptor: { renderClass, label: renderClass, preview: null },
     title: `tool-${seq}`,
     toolName: `tool-${seq}`,
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "completed",
     args: {},
     result: "",

@@ -501,7 +501,7 @@ for (const theme of ["buzz", "github-light", "catppuccin-mocha"]) {
   });
 }
 
-test("aligns the sidebar search with the channel title outside the Buzz theme", async ({
+test("aligns the sidebar search with the channel title outside the Beekeeper theme", async ({
   page,
 }) => {
   await loadTheme(page, "github-light");

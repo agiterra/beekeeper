@@ -8,17 +8,17 @@ import 'app_colors.dart';
 /// painted across the app's top section. Mirrors desktop, where the same
 /// gradient fills the sidebar canvas — see `data-beekeeper-sidebar` in
 /// `desktop/src/shared/styles/globals/theme.css`.
-const buzzThemeName = 'buzz';
+const beekeeperThemeName = 'buzz';
 
 /// Name of the dark counterpart, which reuses the GitHub Dark palette and the
-/// dark-tuned gradient stops. Paired with [buzzThemeName] in `themePairs`, so
+/// dark-tuned gradient stops. Paired with [beekeeperThemeName] in `themePairs`, so
 /// the two behave as a single "Beekeeper" choice under System mode.
-const buzzDarkThemeName = 'buzz-dark';
+const beekeeperDarkThemeName = 'buzz-dark';
 
 /// Whether [themeName] is either half of the Beekeeper pair. Both halves enable the
 /// gradient so System mode keeps it on across an OS light/dark switch.
 bool isBeekeeperTheme(String themeName) =>
-    themeName == buzzThemeName || themeName == buzzDarkThemeName;
+    themeName == beekeeperThemeName || themeName == beekeeperDarkThemeName;
 
 /// Whether the current widget tree is using the first-party Beekeeper treatment.
 bool isBeekeeperThemeContext(BuildContext context) =>
@@ -85,7 +85,7 @@ const _darkBottom = Color(0xFF0A1423);
 ///
 /// [brightness] comes from the applied color scheme rather than the theme name,
 /// so System mode picks the right stops as the OS switches.
-LinearGradient? buzzTopSectionGradient(
+LinearGradient? beekeeperTopSectionGradient(
   String themeName,
   Brightness brightness,
 ) {

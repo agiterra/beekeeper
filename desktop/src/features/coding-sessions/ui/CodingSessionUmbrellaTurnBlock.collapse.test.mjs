@@ -46,7 +46,7 @@ function toolItem(seq, turnId, overrides = {}) {
     descriptor: { renderClass: "shell", label: "shell", preview: null },
     title: `tool-${seq}`,
     toolName: `tool-${seq}`,
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "completed",
     args: {},
     result: "",

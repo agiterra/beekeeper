@@ -5,19 +5,19 @@ import { matchProjectCwd } from "./projectShellCwd.ts";
 
 const local = [
   { name: "tankloop", path: "/Users/andy/Code/tankloop" },
-  { name: "buzz", path: "/Users/andy/.buzz/REPOS/buzz" },
+  { name: "beekeeper", path: "/Users/andy/Code/beekeeper" },
 ];
 
 test("first project repo with a local checkout wins, in repo order", () => {
   const cwd = matchProjectCwd(
     [
       { dtag: "missing", name: "missing" },
-      { dtag: "buzz", name: "Buzz" },
+      { dtag: "beekeeper", name: "Beekeeper" },
       { dtag: "tankloop", name: "TankLoop" },
     ],
     local,
   );
-  assert.equal(cwd, "/Users/andy/.buzz/REPOS/buzz");
+  assert.equal(cwd, "/Users/andy/Code/beekeeper");
 });
 
 test("falls back from dtag to display name and to undefined", () => {

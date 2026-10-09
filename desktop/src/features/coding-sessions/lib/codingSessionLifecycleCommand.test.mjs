@@ -26,7 +26,7 @@ const input = {
   providerInstanceRef: "claude-primary",
   providerAuthorityPubkey: "ab".repeat(32),
   model: "claude-sonnet-4-6",
-  title: "Advance Buzz live sessions",
+  title: "Advance Beekeeper live sessions",
   initialTurn: "Inspect the project and start with the highest priority task.",
 };
 
@@ -35,7 +35,7 @@ test("session.create content and tags are deterministic and carry no host author
   assert.equal(event.kind, 44221);
   assert.equal(
     event.content,
-    `{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{"type":"session.create","projectRef":"30621:owner:amas-redux","repoRef":"30617:owner:amas-redux","providerInstanceRef":"claude-primary","providerAuthorityPubkey":"${"ab".repeat(32)}","model":"claude-sonnet-4-6","title":"Advance Buzz live sessions","initialTurn":"Inspect the project and start with the highest priority task."}}`,
+    `{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{"type":"session.create","projectRef":"30621:owner:amas-redux","repoRef":"30617:owner:amas-redux","providerInstanceRef":"claude-primary","providerAuthorityPubkey":"${"ab".repeat(32)}","model":"claude-sonnet-4-6","title":"Advance Beekeeper live sessions","initialTurn":"Inspect the project and start with the highest priority task."}}`,
   );
   assert.deepEqual(event.tags, [
     ["h", "channel-1"],
@@ -49,7 +49,7 @@ test("session.create content and tags are deterministic and carry no host author
   assert.equal("generation" in content.action, false);
 });
 
-test("resume and stop carry only an exact Buzz target and provider authority", () => {
+test("resume and stop carry only an exact Beekeeper target and provider authority", () => {
   for (const [type, build] of [
     ["session.resume", buildCodingSessionResumeEvent],
     ["session.stop", buildCodingSessionStopEvent],

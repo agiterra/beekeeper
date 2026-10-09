@@ -59,7 +59,7 @@ test("trusted global entries stay unassigned and preserve exact route coordinate
     catalog([
       {
         channelId: "sessions-channel",
-        session: session({ title: "buzz-glue" }),
+        session: session({ title: "beekeeper-glue" }),
       },
     ]),
     index(),
@@ -73,7 +73,7 @@ test("trusted global entries stay unassigned and preserve exact route coordinate
   assert.equal(entries[0].projectId, null);
   assert.equal(entries[0].channelId, "sessions-channel");
   assert.equal(entries[0].generationId, "opaque-generation-id");
-  assert.equal(entries[0].label, "buzz-glue");
+  assert.equal(entries[0].label, "beekeeper-glue");
   assert.equal(entries[0].sourceChannelLabel, "Project Sessions");
   assert.equal(entries[0].runtimeLabel, "Hive Seat");
   assert.doesNotMatch(
@@ -355,7 +355,7 @@ test("source channel labels are presentation only and never alter placement", ()
 test("exact signed projectRef places a session under only the matching project", () => {
   const owner =
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-  const projectRef = `30621:${owner}:buzz-glue`;
+  const projectRef = `30621:${owner}:beekeeper-glue`;
   const { entries } = resolveProjectCodingSessionShelf(
     catalog([
       {
@@ -365,13 +365,13 @@ test("exact signed projectRef places a session under only the matching project",
     ]),
     index({
       byRef: [
-        [projectRef, `${owner}:buzz-glue`],
+        [projectRef, `${owner}:beekeeper-glue`],
         [`30621:${owner}:buzz`, `${owner}:buzz`],
       ],
     }),
   );
   assert.equal(entries[0].placement, "project");
-  assert.equal(entries[0].projectId, `${owner}:buzz-glue`);
+  assert.equal(entries[0].projectId, `${owner}:beekeeper-glue`);
   assert.equal(entries[0].placedBy, "project-ref");
   assert.equal(entries[0].runtimeLabel, "Claude Code");
 });
@@ -394,8 +394,8 @@ test("null and unmatched signed projectRef fall through to the channel-owning pr
     index({
       byRef: [
         [
-          `30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:buzz-glue`,
-          "project:buzz-glue",
+          `30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:beekeeper-glue`,
+          "project:beekeeper-glue",
         ],
       ],
       byChannel: [["owned", "project:host"]],

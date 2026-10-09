@@ -79,8 +79,8 @@ Both external registries are advisory, not authoritative allocators: neither res
     ["d", "platform"],
     ["name", "Platform"],
     ["description", "Relay, desktop, and mobile for the platform team."],
-    ["a", "30617:<owner-a-pubkey-hex>:buzz"],
-    ["a", "30617:<owner-b-pubkey-hex>:buzz-infra"],
+    ["a", "30617:<owner-a-pubkey-hex>:beekeeper"],
+    ["a", "30617:<owner-b-pubkey-hex>:beekeeper-infra"],
     ["buzz-channel", "<channel-uuid>"],
     ["buzz-visibility", "listed"]
   ]

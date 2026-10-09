@@ -65,7 +65,7 @@ function metadataContent(target, overrides = {}) {
     session: target,
     projectRef: null,
     repoRef: null,
-    title: "Advance Buzz live sessions",
+    title: "Advance Beekeeper live sessions",
     agentRef: null,
     provider: null,
     runtime: target.driver,
@@ -238,13 +238,13 @@ test("SV-20: a team session's header leads with its project crumb, from the shel
   const { shell } = fakeSurfaceShell({ surfaces: [] });
   const withProject = {
     ...shell,
-    ctx: { ...shell.ctx, project: { id: "project-1", name: "Buzz Glue" } },
+    ctx: { ...shell.ctx, project: { id: "project-1", name: "Beekeeper Glue" } },
   };
   const markup = renderHeaderRow(buildUmbrella(), {
     onOpenProject() {},
     surfaceShell: withProject,
   });
-  const project = markup.indexOf(">Buzz Glue<");
+  const project = markup.indexOf(">Beekeeper Glue<");
   const separator = markup.indexOf(">/</li>");
   assert.ok(project >= 0 && separator > project, markup);
   assert.match(markup, /data-testid="coding-session-project-crumb"/);
@@ -256,8 +256,8 @@ test("SV-20: a team session's header leads with its project crumb, from the shel
 
 test("SV-20: Details names a NIP-34 repository by its identifier, and an unfamiliar ref verbatim", () => {
   assert.equal(
-    codingSessionHeaderRepoName(`30617:${"d".repeat(64)}:buzz`),
-    "buzz",
+    codingSessionHeaderRepoName(`30617:${"d".repeat(64)}:beekeeper`),
+    "beekeeper",
   );
   assert.equal(
     codingSessionHeaderRepoName("  local-checkout  "),

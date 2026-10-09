@@ -22,7 +22,7 @@ type ToolItem = Extract<TranscriptItem, { type: "tool" }>;
 export type ToolClassificationInput = {
   title: string;
   toolName: string;
-  buzzToolName: string | null;
+  beekeeperToolName: string | null;
   args: Record<string, unknown>;
   result: string;
   isError: boolean;
@@ -167,7 +167,7 @@ const SESSION_CONTEXT_SERVER_PREFIXES = [
 function classifySessionContextTool(
   input: ToolClassificationInput,
 ): AgentActivityDescriptor | null {
-  const operation = [input.toolName, input.title, input.buzzToolName]
+  const operation = [input.toolName, input.title, input.beekeeperToolName]
     .filter((value): value is string => Boolean(value))
     .map(normalizeToolNameText)
     .find((value) =>
@@ -234,7 +234,7 @@ export function classifyToolItem(item: ToolItem): AgentActivityDescriptor {
   return classifyTool({
     title: item.title,
     toolName: item.toolName,
-    buzzToolName: item.buzzToolName,
+    beekeeperToolName: item.beekeeperToolName,
     args: item.args,
     result: item.result,
     isError: item.isError,
@@ -249,9 +249,11 @@ export function renderClassLabel(renderClass: AgentActivityRenderClass) {
 function classifyLoadSkillTool(
   input: ToolClassificationInput,
 ): AgentActivityDescriptor | null {
-  const isLoadSkill = [input.toolName, input.title, input.buzzToolName].some(
-    (value) => value && normalizeToolNameText(value) === "load_skill",
-  );
+  const isLoadSkill = [
+    input.toolName,
+    input.title,
+    input.beekeeperToolName,
+  ].some((value) => value && normalizeToolNameText(value) === "load_skill");
   if (!isLoadSkill) return null;
 
   const skillRef = getToolString(input.args, ["name"]);
@@ -276,9 +278,9 @@ function classifyDeveloperHarnessTool(
 
   if (kind === "shell") {
     const command = getToolString(input.args, ["command"]);
-    const buzzCli = command ? parseBeekeeperCliCommand(command) : null;
-    if (buzzCli) {
-      return buzzCli;
+    const beekeeperCli = command ? parseBeekeeperCliCommand(command) : null;
+    if (beekeeperCli) {
+      return beekeeperCli;
     }
     return shellDescriptor(command, "harness");
   }
@@ -370,7 +372,7 @@ function classifyDeveloperHarnessTool(
 function classifyBeekeeperTool(
   input: ToolClassificationInput,
 ): AgentActivityDescriptor | null {
-  const name = [input.buzzToolName, input.toolName, input.title].find(
+  const name = [input.beekeeperToolName, input.toolName, input.title].find(
     (value) => value && getBeekeeperToolInfo(value),
   );
   if (!name) return null;
@@ -420,7 +422,7 @@ function resolveDeveloperToolKind(
   | "post_compact_hook"
   | "dev_mcp"
   | null {
-  for (const value of [input.toolName, input.title, input.buzzToolName]) {
+  for (const value of [input.toolName, input.title, input.beekeeperToolName]) {
     const kind = classifyDeveloperToolName(value);
     if (kind) return kind;
   }
@@ -466,7 +468,7 @@ export function parseBeekeeperCliCommand(
   const preview = isSend
     ? extractBeekeeperCliInlineContent(tokens, range)
     : extractBeekeeperCliObjectPreview(tokens, range);
-  const tone = buzzCliTone(group, verb);
+  const tone = beekeeperCliTone(group, verb);
   return {
     renderClass: isSend ? "message" : "relay-op",
     label: titleForBeekeeperCli(group, verb),
@@ -499,21 +501,21 @@ function actionForBeekeeperOperation(
   object: string | null,
   tone: AgentActivityTone,
 ): AgentActivityAction {
-  const verb = buzzOperationVerbToken(operation);
+  const verb = beekeeperOperationVerbToken(operation);
   return {
-    verb: buzzOperationVerb(verb, tone),
-    object: object ?? buzzOperationObject(operation),
+    verb: beekeeperOperationVerb(verb, tone),
+    object: object ?? beekeeperOperationObject(operation),
   };
 }
 
-function buzzOperationVerbToken(operation: string) {
+function beekeeperOperationVerbToken(operation: string) {
   if (operation.includes(".")) {
     return operation.split(".")[1] ?? "run";
   }
   return operation.split("_")[0] ?? "run";
 }
 
-function buzzOperationVerb(verb: string, tone: AgentActivityTone) {
+function beekeeperOperationVerb(verb: string, tone: AgentActivityTone) {
   if (verb === "add") return "Added";
   if (verb === "archive") return "Archived";
   if (verb === "create") return "Created";
@@ -529,7 +531,7 @@ function buzzOperationVerb(verb: string, tone: AgentActivityTone) {
   return "Updated";
 }
 
-function buzzOperationObject(operation: string) {
+function beekeeperOperationObject(operation: string) {
   if (isBeekeeperMessageSend(operation)) return "message";
   if (operation.includes(".")) {
     const [group] = operation.split(".");
@@ -542,7 +544,7 @@ function buzzOperationObject(operation: string) {
   return object ? object.replace(/[-_]+/g, " ") : "relay";
 }
 
-function buzzCliTone(group: string, verb: string): AgentActivityTone {
+function beekeeperCliTone(group: string, verb: string): AgentActivityTone {
   if (BEEKEEPER_CLI_ADMIN_VERBS.has(verb)) return "admin";
   if (BEEKEEPER_CLI_READ_VERBS.has(verb)) return "read";
   if (group === "feed" && verb === "get") return "read";
@@ -578,7 +580,7 @@ function extractBeekeeperCliObjectPreview(
 }
 
 type BeekeeperCommandRange = {
-  buzzIndex: number;
+  beekeeperIndex: number;
   groupIndex: number;
   verbIndex: number;
 };
@@ -603,7 +605,7 @@ function findBeekeeperCommand(tokens: string[]): BeekeeperCommandRange | null {
       if (!tokens[verbIndex] || isCommandSeparator(tokens[verbIndex])) {
         return null;
       }
-      return { buzzIndex: i, groupIndex: j, verbIndex };
+      return { beekeeperIndex: i, groupIndex: j, verbIndex };
     }
   }
   return null;

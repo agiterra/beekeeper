@@ -345,7 +345,7 @@ test("settings shortcut returns without opening search dialog", async ({
   await expect(page.getByTestId("search-results")).not.toBeVisible();
 });
 
-test("mixed Buzz permalinks render as chips in the composer", async ({
+test("mixed Beekeeper permalinks render as chips in the composer", async ({
   page,
 }) => {
   await page.goto("/");
@@ -359,9 +359,9 @@ test("mixed Buzz permalinks render as chips in the composer", async ({
   const links = [
     `beekeeper://message?channel=${channelId}&id=mock-general-welcome`,
     `beekeeper://channel/${channelId}`,
-    `beekeeper://repo?owner=${owner}&d=buzz-world`,
-    `beekeeper://pr?id=${pullRequestId}&owner=${owner}&d=buzz-world`,
-    `beekeeper://issue?id=${issueId}&owner=${owner}&d=buzz-world`,
+    `beekeeper://repo?owner=${owner}&d=beekeeper-world`,
+    `beekeeper://pr?id=${pullRequestId}&owner=${owner}&d=beekeeper-world`,
+    `beekeeper://issue?id=${issueId}&owner=${owner}&d=beekeeper-world`,
   ].join(" ");
   const composerInput = page.getByTestId("message-input");
   await composerInput.evaluate((element, text) => {
@@ -380,9 +380,9 @@ test("mixed Buzz permalinks render as chips in the composer", async ({
   await expect(chips).toHaveCount(5);
   await expect(chips.nth(0)).toHaveText("general · mock-gen");
   await expect(chips.nth(1)).toHaveText("general");
-  await expect(chips.nth(2)).toHaveText("buzz-world");
-  await expect(chips.nth(3)).toHaveText("buzz-world · cccccccc");
-  await expect(chips.nth(4)).toHaveText("buzz-world · bbbbbbbb");
+  await expect(chips.nth(2)).toHaveText("beekeeper-world");
+  await expect(chips.nth(3)).toHaveText("beekeeper-world · cccccccc");
+  await expect(chips.nth(4)).toHaveText("beekeeper-world · bbbbbbbb");
   await expect(chips.nth(1)).toHaveClass(/inline-chip-icon-channel/);
   await expect(chips.nth(2)).toHaveClass(/inline-chip-icon-repo/);
   await expect(chips.nth(3)).toHaveClass(/inline-chip-icon-pr/);

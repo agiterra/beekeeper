@@ -81,7 +81,7 @@ function metadata(overrides = {}) {
     session: TARGET,
     projectRef: "30621:owner:agiterra",
     repoRef: null,
-    title: "Advance Buzz coding sessions",
+    title: "Advance Beekeeper coding sessions",
     agentRef: null,
     provider: "claude-primary",
     runtime: "claude",

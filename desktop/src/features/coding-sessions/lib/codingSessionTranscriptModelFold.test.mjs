@@ -67,7 +67,7 @@ function tool({ id, renderClass = "shell", status = "completed", isError }) {
     },
     title: "Bash",
     toolName: "Bash",
-    buzzToolName: null,
+    beekeeperToolName: null,
     status,
     args: { command: `command-${id}` },
     result: failed ? "exit 1" : "ok",

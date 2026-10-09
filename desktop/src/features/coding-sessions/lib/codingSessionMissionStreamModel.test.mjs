@@ -49,7 +49,7 @@ test("Brief removes only routine execution and keeps chronology", () => {
             preview: null,
           },
           toolName: "Terminal",
-          buzzToolName: null,
+          beekeeperToolName: null,
           status: "failed",
           args: {},
           result: "failed",

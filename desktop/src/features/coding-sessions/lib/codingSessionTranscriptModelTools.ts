@@ -338,7 +338,7 @@ function baseRenderClass(tool: CodingSessionTranscriptToolItem) {
   return classifyTool({
     title: tool.title,
     toolName: tool.toolName,
-    buzzToolName: tool.buzzToolName,
+    beekeeperToolName: tool.beekeeperToolName,
     args: tool.args,
     result: tool.result,
     isError: false,

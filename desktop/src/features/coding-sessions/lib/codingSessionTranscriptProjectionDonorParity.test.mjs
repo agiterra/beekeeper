@@ -1,8 +1,8 @@
 /**
  * Donor transcript-hydration parity — the Hive `parseTranscript.ts`
  * `processTranscriptMessages` law (donor pin `e0b8198bd144`) run against this
- * fork's tool_call/tool_result pairing loop. Buzz code is canonical:
- * agreements are frozen, divergences are asserted Buzz-side with the donor
+ * fork's tool_call/tool_result pairing loop. Beekeeper code is canonical:
+ * agreements are frozen, divergences are asserted Beekeeper-side with the donor
  * expectation recorded beside them as findings, never bugs to fix.
  *
  * Scope: strictly the pairing edges the main projection suite does not cover.
@@ -44,9 +44,9 @@ function toolResult(toolId, content) {
 
 test("agreement: results attach backwards only — a result preceding its call never pairs", () => {
   // Donor: tool_result registers nothing, so a result arriving before its
-  // call finds no pending entry and the later call stays unresolved. Buzz
+  // call finds no pending entry and the later call stays unresolved. Beekeeper
   // agrees on the never-pairs-backwards law; the early result's FATE
-  // diverges (donor drops it silently, Buzz emits it standalone — asserted
+  // diverges (donor drops it silently, Beekeeper emits it standalone — asserted
   // in the orphan test below).
   const items = projectCodingSessionTranscript([
     toolResult("t1", "early"),
@@ -58,9 +58,9 @@ test("agreement: results attach backwards only — a result preceding its call n
   assert.equal(items[1].result, "");
 });
 
-test("divergence (Buzz canonical): an orphan tool_result surfaces as a standalone item, the donor drops it silently", () => {
+test("divergence (Beekeeper canonical): an orphan tool_result surfaces as a standalone item, the donor drops it silently", () => {
   // Donor: `if (pendingCall)` guard — an unknown toolId emits NO message and
-  // the result vanishes from the transcript. Buzz's trust boundary never
+  // the result vanishes from the transcript. Beekeeper's trust boundary never
   // drops input: the orphan degrades to a standalone tool item whose
   // toolName falls back to the toolId.
   const items = projectCodingSessionTranscript([
@@ -75,7 +75,7 @@ test("divergence (Buzz canonical): an orphan tool_result surfaces as a standalon
 test("agreement: duplicate toolId — the latest call wins the pairing, both call items stay", () => {
   // Donor: the pending map entry is overwritten by the later call; both
   // call messages remain and only the most recent can receive the result.
-  // Buzz's Map.set has the same last-writer-wins shape.
+  // Beekeeper's Map.set has the same last-writer-wins shape.
   const items = projectCodingSessionTranscript([
     toolCall("t1", "echo one"),
     toolCall("t1", "echo two"),
@@ -90,10 +90,10 @@ test("agreement: duplicate toolId — the latest call wins the pairing, both cal
   assert.equal(items[1].result, "res");
 });
 
-test("divergence (Buzz canonical): a second result for an already-paired call becomes standalone, the donor re-hydrates in place", () => {
+test("divergence (Beekeeper canonical): a second result for an already-paired call becomes standalone, the donor re-hydrates in place", () => {
   // Donor: the pending map entry is NEVER deleted, so a later result for the
   // same toolId overwrites the hydrated result in place (last result wins).
-  // Buzz deletes the pending entry on pairing, so the second result has no
+  // Beekeeper deletes the pending entry on pairing, so the second result has no
   // call to join and surfaces standalone; the paired card keeps the FIRST
   // result.
   const items = projectCodingSessionTranscript([
@@ -110,9 +110,9 @@ test("divergence (Buzz canonical): a second result for an already-paired call be
 });
 
 test("agreement: pairing survives malformed interleavings between call and result", () => {
-  // Donor: interleaved non-tool entries never disturb the pending map. Buzz
+  // Donor: interleaved non-tool entries never disturb the pending map. Beekeeper
   // agrees — a status row and a kindless malformed item between call and
-  // result leave the pairing intact (and, per Buzz's totality law, both
+  // result leave the pairing intact (and, per Beekeeper's totality law, both
   // interlopers still surface as items).
   const items = projectCodingSessionTranscript([
     toolCall("t1", "echo hello"),

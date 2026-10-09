@@ -1,9 +1,9 @@
 /**
- * H-08 — mapping Buzz `TranscriptItem`s into export-bundle messages.
+ * H-08 — mapping Beekeeper `TranscriptItem`s into export-bundle messages.
  *
  * The corpus (`conformance/transcript-export/`) constrains the bundle
  * envelope and the user_prompt attachment participation rule; the per-kind
- * message shapes are Buzz-defined for the Buzz viewer. Buzz transcript items
+ * message shapes are Beekeeper-defined for the Beekeeper viewer. Beekeeper transcript items
  * carry no attachments today, so every user_prompt maps with an empty
  * attachments list — the attachment plane stays law-complete but dormant
  * (recorded in the ledger row).
@@ -128,7 +128,7 @@ test("tool items map to tool_call with toolName, status, isError, and the result
       descriptor: { renderClass: "shell", label: "Ran command", preview: "ls" },
       title: "Bash",
       toolName: "Bash",
-      buzzToolName: null,
+      beekeeperToolName: null,
       status: "completed",
       args: { command: "ls" },
       result: "ok",

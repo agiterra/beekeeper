@@ -60,7 +60,7 @@ function tool(id, turnId) {
     },
     title: "Bash",
     toolName: "Bash",
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "completed",
     args: { command: "bun test" },
     result: "10 pass",

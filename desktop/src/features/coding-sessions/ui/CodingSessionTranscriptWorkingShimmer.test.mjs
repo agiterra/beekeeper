@@ -35,7 +35,7 @@ function runningTool(overrides = {}) {
     },
     title: "Bash",
     toolName: "Bash",
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "executing",
     args: {},
     result: "",

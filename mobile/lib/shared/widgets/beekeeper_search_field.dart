@@ -4,10 +4,10 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../theme/theme.dart';
 
 /// Height of an idle [BeekeeperSearchField].
-const double buzzSearchIdleFieldHeight = 45;
+const double beekeeperSearchIdleFieldHeight = 45;
 
 /// Font size used for idle [BeekeeperSearchField] text.
-const double buzzSearchIdleTextSize = 15;
+const double beekeeperSearchIdleTextSize = 15;
 const double _searchIdleIconSize = 26;
 const double _searchCompactIconSize = 18;
 const double _searchIdleIconInset = Grid.xxs;
@@ -119,8 +119,8 @@ class BeekeeperSearchField extends StatelessWidget {
                   hintText: isEditing ? null : hintText,
                   hintStyle: searchInputTextStyle.copyWith(
                     color: placeholderColor,
-                    fontSize: buzzSearchIdleTextSize,
-                    height: 20 / buzzSearchIdleTextSize,
+                    fontSize: beekeeperSearchIdleTextSize,
+                    height: 20 / beekeeperSearchIdleTextSize,
                   ),
                   border: InputBorder.none,
                   enabledBorder: InputBorder.none,

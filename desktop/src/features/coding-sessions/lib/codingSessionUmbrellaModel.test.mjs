@@ -52,7 +52,7 @@ function record({
   sessionRef = null,
   status = "running",
   lastEventAt = "2026-08-12T10:00:00.000Z",
-  title = "Advance Buzz live sessions",
+  title = "Advance Beekeeper live sessions",
   conflictCount = 0,
   runtime = "claude",
   model = "claude-opus-5",
@@ -426,7 +426,7 @@ test("a viewer who runs no providers resolves the same founder as the founder do
     providerInstanceRef: "claude-primary",
     providerAuthorityPubkey: providerPubkey,
     model: null,
-    title: "Advance Buzz live sessions",
+    title: "Advance Beekeeper live sessions",
     initialTurn: null,
   });
   const create = finalizeEvent(

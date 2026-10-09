@@ -49,7 +49,7 @@ function record({
   return {
     generationId: `gen-${signerPubkey.slice(0, 4)}-${target.driver}-${target.generation}`,
     label: `${target.driver} · generation ${target.generation}`,
-    title: "Advance Buzz live sessions",
+    title: "Advance Beekeeper live sessions",
     providerAuthorityPubkey: signerPubkey,
     metadataAuthorityPubkey: signerPubkey,
     lastEventAt,

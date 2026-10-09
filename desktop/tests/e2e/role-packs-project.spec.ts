@@ -1096,16 +1096,16 @@ test("the Roles page reads as one calm system across viewports, themes and zoom"
   // theme (CSS-variable surfaces included) off the stored theme *name*
   // (`buzz-theme`), read at boot. A stored name only takes effect on a page's
   // first navigation (the app rewrites it afterwards), so — exactly as
-  // `badge.spec.ts` and `buzz-theme-screenshots.spec.ts` do — this seeds
+  // `badge.spec.ts` and `beekeeper-theme-screenshots.spec.ts` do — this seeds
   // "buzz-dark" on a fresh page before its first load, then opens the same
   // fixture and re-seeds the same reports. Flipping the `.dark` class alone
   // leaves every `bg-card` surface on its light value, which is not the dark
   // theme a person sees.
   const darkPage = await page.context().newPage();
-  // The Buzz theme aliases follow the native appearance, so a stored
+  // The Beekeeper theme aliases follow the native appearance, so a stored
   // "buzz-dark" renders as "buzz" under Playwright's default light scheme:
   // emulate a dark scheme and, once the mock bridge is up, emit the native
-  // theme-changed event the app listens for (`buzz-theme-screenshots.spec.ts`).
+  // theme-changed event the app listens for (`beekeeper-theme-screenshots.spec.ts`).
   await darkPage.emulateMedia({ colorScheme: "dark" });
   await darkPage.addInitScript(() => {
     window.localStorage.setItem("buzz-theme", "buzz-dark");

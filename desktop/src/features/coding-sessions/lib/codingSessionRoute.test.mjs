@@ -26,7 +26,7 @@ test("coding-session route carries only channel and exact generation", () => {
   assert.equal(decodeURIComponent(encodedGeneration), "generation%7C1");
 });
 
-test("surface parsing is fail-closed to the main Buzz chrome", () => {
+test("surface parsing is fail-closed to the main Beekeeper chrome", () => {
   assert.equal(parseCodingSessionSurface("popout"), "popout");
   assert.equal(parseCodingSessionSurface("provider"), "main");
   assert.equal(parseCodingSessionSurface(undefined), "main");

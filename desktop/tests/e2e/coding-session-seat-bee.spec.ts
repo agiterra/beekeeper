@@ -517,7 +517,7 @@ test("a real, decoded kind:44223 beeStamp reaches the chip through the running a
           commandId: "l17-seat-builder",
           providerSecret: BUILDER_SECRET,
           providerPubkey: BUILDER_PUBKEY,
-          title: "Advance Buzz live sessions",
+          title: "Advance Beekeeper live sessions",
           beeStamp: {
             path: "/Applications/Beekeeper.app/Contents/MacOS/bee",
             source: "bundled",
@@ -537,7 +537,7 @@ test("a real, decoded kind:44223 beeStamp reaches the chip through the running a
           commandId: "l17-seat-refuter",
           providerSecret: REFUTER_SECRET,
           providerPubkey: REFUTER_PUBKEY,
-          title: "Advance Buzz live sessions",
+          title: "Advance Beekeeper live sessions",
         }),
       ],
     },
