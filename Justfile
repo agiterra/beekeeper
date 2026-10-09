@@ -1551,3 +1551,9 @@ app-from *ARGS:
     set -euo pipefail
     export PATH="{{justfile_directory()}}/bin:$PATH"
     bash "{{justfile_directory()}}/scripts/app-from.sh" {{ARGS}}
+
+# The login keychain's "Always Allow" survives each install only if every build
+# is signed by the same certificate (ledger 368). Idempotent.
+# Create the self-signed code-signing identity app-from signs with
+dev-signing-identity:
+    bash "{{justfile_directory()}}/scripts/dev-signing-identity.sh"
