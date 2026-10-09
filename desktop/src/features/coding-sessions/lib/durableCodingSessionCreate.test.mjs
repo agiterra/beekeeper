@@ -109,8 +109,8 @@ test("a standalone create publishes an explicit null projectRef", async () => {
 
 test("a project-scoped create signs the project coordinate into the command", async () => {
   const storage = memoryStorage();
-  const projectRef = `30621:${"b".repeat(64)}:buzz-glue`;
-  const scope = "project:owner:buzz-glue";
+  const projectRef = `30621:${"b".repeat(64)}:beekeeper-glue`;
+  const scope = "project:owner:beekeeper-glue";
   const prepared = await prepareDurableCodingSessionCreate(
     scope,
     input({ projectRef }),

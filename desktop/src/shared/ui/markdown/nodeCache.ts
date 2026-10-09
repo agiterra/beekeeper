@@ -17,7 +17,7 @@ import remarkMentions from "@/shared/lib/remarkMentions";
 import remarkRedactionMarkers from "@/shared/lib/remarkRedactionMarkers";
 import remarkSpoilers from "@/shared/lib/remarkSpoilers";
 
-import { buzzDeepLinkUrlTransform } from "./utils";
+import { beekeeperDeepLinkUrlTransform } from "./utils";
 
 /**
  * Parsed-markdown element cache.
@@ -117,7 +117,7 @@ function buildMarkdownElement(input: MarkdownParseInputs): React.ReactElement {
       // biome-ignore lint/suspicious/noExplicitAny: PluggableList type not directly importable
     ] as any[],
     rehypePlugins,
-    urlTransform: buzzDeepLinkUrlTransform,
+    urlTransform: beekeeperDeepLinkUrlTransform,
   });
 }
 

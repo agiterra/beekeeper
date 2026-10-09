@@ -630,7 +630,7 @@ test("block formatting preserves a backward native selection", async ({
     .toBe(true);
 });
 
-test("Buzz theme uses the primary color for the selection formatter", async ({
+test("Beekeeper theme uses the primary color for the selection formatter", async ({
   page,
 }) => {
   await openGeneral(page);

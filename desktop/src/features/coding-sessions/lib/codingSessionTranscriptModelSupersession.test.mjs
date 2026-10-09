@@ -46,7 +46,7 @@ function running(id, turnId) {
     descriptor: { renderClass: "shell", label: "Ran command", preview: id },
     title: "Bash",
     toolName: "Bash",
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "executing",
     args: { command: id },
     result: "",

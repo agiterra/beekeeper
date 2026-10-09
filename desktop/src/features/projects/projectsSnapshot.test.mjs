@@ -43,7 +43,7 @@ test("the key requires both relay and viewer identity", () => {
 test("snapshots round-trip and carry a sweepable updatedAt", () => {
   withMemoryLocalStorage((store) => {
     const key = projectsSnapshotKey("wss://relay.example", "abc");
-    const projects = [{ id: "p1", name: "Buzz" }];
+    const projects = [{ id: "p1", name: "Beekeeper" }];
     writeProjectsSnapshot(key, projects);
     const raw = JSON.parse(store.get(key));
     assert.equal(typeof raw.updatedAt, "number");

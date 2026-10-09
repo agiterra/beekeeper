@@ -297,7 +297,7 @@ function createPreview(
  * Exported so the resolver can tell "still the fallback" apart from a
  * markdown-label override it must not overwrite.
  */
-export function buzzEntityFallbackTitle(link: ParsedEntityLink): string {
+export function beekeeperEntityFallbackTitle(link: ParsedEntityLink): string {
   if (link.type === "repo" || link.type === "project") return link.dtag;
   return `${link.dtag} #${link.id.slice(0, 8)}`;
 }
@@ -314,7 +314,7 @@ function parseBeekeeperEntityPreview(
   if (!parsed.ok) return null;
 
   const link = parsed.value;
-  const title = buzzEntityFallbackTitle(link);
+  const title = beekeeperEntityFallbackTitle(link);
   if (link.type === "pr") {
     return {
       kind: "buzz-pull-request",

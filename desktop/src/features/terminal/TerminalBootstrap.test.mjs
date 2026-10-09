@@ -385,7 +385,7 @@ test("opening a tab keeps terminal ownership while its attachment is pending", a
   assert.equal(
     substrate.dataset.terminalOwner,
     "terminal",
-    "an attaching session must not force the substrate back to Buzz",
+    "an attaching session must not force the substrate back to Beekeeper",
   );
   assert.equal(view.getAllByRole("tab").length, 2);
 

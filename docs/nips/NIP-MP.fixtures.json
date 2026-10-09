@@ -1461,7 +1461,7 @@
     {
       "name": "valid_access_private",
       "expect": "accept",
-      "note": "Buzz access extension: a private project with no invites \u2014 readable only by its author.",
+      "note": "Beekeeper access extension: a private project with no invites \u2014 readable only by its author.",
       "template": {
         "kind": 30621,
         "content": "",
@@ -1480,7 +1480,7 @@
     {
       "name": "valid_access_private_with_invites",
       "expect": "accept",
-      "note": "Buzz access extension: private project inviting two members; a `p` tag may carry a NIP-01 relay hint.",
+      "note": "Beekeeper access extension: private project inviting two members; a `p` tag may carry a NIP-01 relay hint.",
       "template": {
         "kind": 30621,
         "content": "",
@@ -1508,7 +1508,7 @@
     {
       "name": "valid_access_public_explicit",
       "expect": "accept",
-      "note": "Buzz access extension: explicit public is identical to the absent-tag default.",
+      "note": "Beekeeper access extension: explicit public is identical to the absent-tag default.",
       "template": {
         "kind": 30621,
         "content": "",
@@ -3668,7 +3668,7 @@
     {
       "name": "valid_invite_role_four_elements",
       "expect": "accept",
-      "note": "Buzz roles extension: a fourth `p` element carries the member's role (owner|collaborator|viewer), matching the NIP-29 39002 grammar.",
+      "note": "Beekeeper roles extension: a fourth `p` element carries the member's role (owner|collaborator|viewer), matching the NIP-29 39002 grammar.",
       "template": {
         "kind": 30621,
         "content": "",

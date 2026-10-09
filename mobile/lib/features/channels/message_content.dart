@@ -355,15 +355,15 @@ class MessageContent extends HookConsumerWidget {
 
     final baseStyle = fallbackStyle ?? linkStyle;
     final uri = Uri.tryParse(url);
-    final buzzLink = uri?.scheme == 'beekeeper'
+    final beekeeperLink = uri?.scheme == 'beekeeper'
         ? parseBeekeeperDeepLink(uri!) ?? parseEntityDeepLink(uri)
         : null;
     final isBeekeeperLink =
-        buzzLink is ChannelDeepLink ||
-        buzzLink is MessageDeepLink ||
-        buzzLink is EntityDeepLink;
+        beekeeperLink is ChannelDeepLink ||
+        beekeeperLink is MessageDeepLink ||
+        beekeeperLink is EntityDeepLink;
     final isCanonicalBeekeeperLabel = isBeekeeperLink && text == url;
-    final buzzPresentation = switch (buzzLink) {
+    final beekeeperPresentation = switch (beekeeperLink) {
       ChannelDeepLink(:final channelId) => (
         icon: LucideIcons.hash,
         label:
@@ -416,20 +416,21 @@ class MessageContent extends HookConsumerWidget {
           )
         : Text.rich(TextSpan(style: authoredLinkStyle, children: [linkText]));
 
-    final renderedLink = isCanonicalBeekeeperLabel && buzzPresentation != null
+    final renderedLink =
+        isCanonicalBeekeeperLabel && beekeeperPresentation != null
         ? _TokenPill(
             key: ValueKey('buzz-link-chip:$url'),
-            icon: buzzPresentation.icon,
-            interactive: buzzPresentation.interactive,
-            semanticLabel: buzzPresentation.semanticLabel,
-            text: buzzPresentation.label,
+            icon: beekeeperPresentation.icon,
+            interactive: beekeeperPresentation.interactive,
+            semanticLabel: beekeeperPresentation.semanticLabel,
+            text: beekeeperPresentation.label,
             textStyle: baseStyle.copyWith(fontWeight: FontWeight.w600),
           )
         : linkTextWidget;
 
     // Mobile has no repo/PR/issue destination yet. Keep these presentation-only
     // instead of exposing a control whose tap cannot do anything.
-    if (buzzLink is EntityDeepLink) {
+    if (beekeeperLink is EntityDeepLink) {
       return IgnorePointer(child: renderedLink);
     }
 

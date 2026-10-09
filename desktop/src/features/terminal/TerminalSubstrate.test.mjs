@@ -456,7 +456,7 @@ test("mounted wheel path accumulates fractional lines per active session", async
   assert.deepEqual(calls.scroll, [1]);
 });
 
-test("canvas failure atomically restores Buzz ownership", async () => {
+test("canvas failure atomically restores Beekeeper ownership", async () => {
   const { props, view } = fixture();
   await ready(view);
   const substrate = view.container.querySelector(
@@ -507,7 +507,7 @@ test("cursor blink runs only while the terminal owns input and resets on input",
   try {
     const subject = fixture({ frame: VISIBLE_FRAME });
     await ready(subject.view);
-    assert.equal(callbacks.size, 0, "Buzz ownership must pause blinking");
+    assert.equal(callbacks.size, 0, "Beekeeper ownership must pause blinking");
 
     toggleChord();
     await waitFor(() => assert.equal(callbacks.size, 1));
@@ -802,7 +802,7 @@ test("tab chords drive new, close, and select while the terminal owns input", as
   assert.deepEqual(subject.calls.input, []);
 });
 
-test("tab chords stay inert while Buzz owns input", async () => {
+test("tab chords stay inert while Beekeeper owns input", async () => {
   const subject = tabFixture();
   await ready(subject.view);
   // Deliberately not revealed: owner is "buzz".
@@ -816,7 +816,7 @@ test("tab chords stay inert while Buzz owns input", async () => {
   assert.equal(
     spawn.defaultPrevented,
     false,
-    "Buzz-mode ⌘T belongs to the rest of the app",
+    "Beekeeper-mode ⌘T belongs to the rest of the app",
   );
 });
 

@@ -127,7 +127,7 @@ test("classifyTool promotes load_skill to skill-read descriptors", () => {
   const descriptor = classifyTool({
     title: "load_skill",
     toolName: "load_skill",
-    buzzToolName: null,
+    beekeeperToolName: null,
     args: { name: "block-safe-github" },
     result: "# Safe GitHub usage at Block\n",
     isError: false,
@@ -147,7 +147,7 @@ test("classifyTool promotes supporting-file load_skill to skill-read file descri
   const descriptor = classifyTool({
     title: "load_skill",
     toolName: "load_skill",
-    buzzToolName: null,
+    beekeeperToolName: null,
     args: { name: "block-safe-github/references/foo.md" },
     result: "# Reference\n",
     isError: false,
@@ -162,7 +162,7 @@ test("classifyTool promotes buzz CLI shell commands to relay operations", () => 
   const descriptor = classifyTool({
     title: "Shell",
     toolName: "dev__shell",
-    buzzToolName: null,
+    beekeeperToolName: null,
     args: { command: "bee channels get --channel buzz-agent-observability" },
     result: "{}",
     isError: false,
@@ -178,7 +178,7 @@ test("classifyTool humanizes session history and counts its unwrapped result", (
   const descriptor = classifyTool({
     title: "mcp.buzz-session-context.session_history",
     toolName: "mcp.buzz-session-context.session_history",
-    buzzToolName: null,
+    beekeeperToolName: null,
     args: {},
     result: JSON.stringify({
       content: [
@@ -204,7 +204,7 @@ test("classifyTool falls back once to a generic descriptor", () => {
   const descriptor = classifyTool({
     title: "Mystery",
     toolName: "mcp__mystery",
-    buzzToolName: null,
+    beekeeperToolName: null,
     args: { path: "notes.md" },
     result: "",
     isError: false,
@@ -220,7 +220,7 @@ test("classifyTool reads Claude Code's Bash as a command (SV-03)", () => {
   const descriptor = classifyTool({
     title: "Bash",
     toolName: "Bash",
-    buzzToolName: null,
+    beekeeperToolName: null,
     args: { command: "cargo test", description: "Run tests" },
     result: "",
     isError: false,
@@ -232,7 +232,7 @@ test("classifyTool reads Claude Code's Bash as a command (SV-03)", () => {
   const failed = classifyTool({
     title: "Bash",
     toolName: "Bash",
-    buzzToolName: null,
+    beekeeperToolName: null,
     args: { command: "false" },
     result: "",
     isError: true,
@@ -246,7 +246,7 @@ test("classifyTool reads an ACP execute call as a command whatever its title", (
   const descriptor = classifyTool({
     title: "`ls -la`",
     toolName: "`ls -la`",
-    buzzToolName: null,
+    beekeeperToolName: null,
     args: { command: "ls -la" },
     result: "",
     isError: false,
@@ -259,7 +259,7 @@ test("classifyTool reads an ACP execute call as a command whatever its title", (
     classifyTool({
       title: "`ls -la`",
       toolName: "`ls -la`",
-      buzzToolName: null,
+      beekeeperToolName: null,
       args: {},
       result: "",
       isError: false,
@@ -272,7 +272,7 @@ test("a Bash call that runs bee still reads as its relay operation", () => {
   const descriptor = classifyTool({
     title: "Bash",
     toolName: "Bash",
-    buzzToolName: null,
+    beekeeperToolName: null,
     args: { command: "bee messages send --channel x --content hi" },
     result: "",
     isError: false,
@@ -294,7 +294,7 @@ for (const server of DEV_MCP_SERVERS) {
     const descriptor = classifyTool({
       title: `${server}__todo`,
       toolName: `${server}__todo`,
-      buzzToolName: null,
+      beekeeperToolName: null,
       args: {},
       result: "",
       isError: false,
@@ -307,7 +307,7 @@ for (const server of DEV_MCP_SERVERS) {
     const descriptor = classifyTool({
       title: `${server}__stop`,
       toolName: `${server}__stop`,
-      buzzToolName: null,
+      beekeeperToolName: null,
       args: {},
       result: "",
       isError: false,
@@ -320,7 +320,7 @@ for (const server of DEV_MCP_SERVERS) {
     const descriptor = classifyTool({
       title: `mcp__${server}__brand_new_tool`,
       toolName: `mcp__${server}__brand_new_tool`,
-      buzzToolName: null,
+      beekeeperToolName: null,
       args: {},
       result: "",
       isError: false,
@@ -333,7 +333,7 @@ for (const server of DEV_MCP_SERVERS) {
     const descriptor = classifyTool({
       title: `mcp__${server}__shell`,
       toolName: `mcp__${server}__shell`,
-      buzzToolName: null,
+      beekeeperToolName: null,
       args: { command: "ls -la" },
       result: "",
       isError: false,
@@ -347,7 +347,7 @@ for (const server of SESSION_CONTEXT_SERVERS) {
     const descriptor = classifyTool({
       title: `mcp__${server}__session_overview`,
       toolName: `mcp__${server}__session_overview`,
-      buzzToolName: null,
+      beekeeperToolName: null,
       args: {},
       result: "",
       isError: false,

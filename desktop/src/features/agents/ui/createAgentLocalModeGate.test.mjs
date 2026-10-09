@@ -44,7 +44,7 @@ import {
 
 // ── Core predicate: provider-selection support ─────────────────────────────
 
-test("localMode_buzzAgent_supportsProviderSelection", () => {
+test("localMode_beekeeperAgent_supportsProviderSelection", () => {
   assert.equal(
     runtimeSupportsLlmProviderSelection("buzz-agent"),
     true,
@@ -78,7 +78,7 @@ test("localMode_custom_doesNotSupportProviderSelection", () => {
 
 // ── IMPORTANT 1: normalized field gate (provider + model) ─────────────────
 
-test("localMode_buzzAgent_emptyProvider_notSatisfied", () => {
+test("localMode_beekeeperAgent_emptyProvider_notSatisfied", () => {
   // Scenario: user selects buzz-agent but leaves provider empty.
   // Rust readiness requires BEEKEEPER_AGENT_PROVIDER — empty = NotReady.
   // The gate must report not-satisfied and surface the missing field marker,
@@ -102,7 +102,7 @@ test("localMode_buzzAgent_emptyProvider_notSatisfied", () => {
   );
 });
 
-test("localMode_buzzAgent_emptyModel_notSatisfied", () => {
+test("localMode_beekeeperAgent_emptyModel_notSatisfied", () => {
   // Scenario: buzz-agent + anthropic + API key present, but model left empty.
   // Rust readiness requires BEEKEEPER_AGENT_MODEL — empty = NotReady.
   // The gate surfaces the missing field marker; save button is still enabled.
@@ -127,7 +127,7 @@ test("localMode_buzzAgent_emptyModel_notSatisfied", () => {
 
 // ── Gate: buzz-agent / anthropic with missing key → markers shown ─────────
 
-test("localMode_buzzAgent_anthropic_missingKey_notSatisfied", () => {
+test("localMode_beekeeperAgent_anthropic_missingKey_notSatisfied", () => {
   // Scenario: user selects buzz-agent/anthropic + fills model, but hasn't
   // supplied ANTHROPIC_API_KEY — the exact crash-loop case the nudge handles.
   // Gate reports not-satisfied (required marker + env row shown); save allowed.
@@ -150,7 +150,7 @@ test("localMode_buzzAgent_anthropic_missingKey_notSatisfied", () => {
   );
 });
 
-test("localMode_buzzAgent_anthropic_allRequired_present_allowed", () => {
+test("localMode_beekeeperAgent_anthropic_allRequired_present_allowed", () => {
   // All three required fields present: provider, model, and credential key.
   const result = computeLocalModeGate({
     envVars: { ANTHROPIC_API_KEY: "sk-ant-test" },
@@ -352,7 +352,7 @@ test("localMode_goose_databricksHost_noFileConfig_stillRequired", () => {
 });
 
 test("localMode_goose_providerSatisfiedByFileConfig_noNormalizedFieldRequired", () => {
-  // Scenario: goose, no provider in Buzz env but file config has provider + model.
+  // Scenario: goose, no provider in Beekeeper env but file config has provider + model.
   // Neither 'provider' nor 'model' should be required.
   const fileConfig = {
     provider: "anthropic",

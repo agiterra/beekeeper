@@ -388,7 +388,7 @@ export function extractToolArgs(
 export function extractToolIdentity(update: Record<string, unknown>): {
   title: string;
   toolName: string;
-  buzzToolName: string | null;
+  beekeeperToolName: string | null;
 } {
   const candidates = collectToolNameCandidates(update);
   const knownName = candidates
@@ -402,7 +402,7 @@ export function extractToolIdentity(update: Record<string, unknown>): {
   return {
     title,
     toolName: knownName ?? normalizeToolName(firstSpecific ?? title),
-    buzzToolName: knownName ?? null,
+    beekeeperToolName: knownName ?? null,
   };
 }
 

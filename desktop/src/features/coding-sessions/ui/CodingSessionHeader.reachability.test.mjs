@@ -111,8 +111,8 @@ async function mountHeader(overrides = {}) {
     onStopAll: spy("stopAll"),
     onToggleRouteRail: spy("routeRail"),
     peopleCount: 4,
-    projectName: "Buzz Glue",
-    repoName: "buzz",
+    projectName: "Beekeeper Glue",
+    repoName: "beekeeper",
     runtimeLabel: "Codex",
     sessionTitle: "Keystone Session",
     status: { kind: "working", label: "Working" },
@@ -255,7 +255,7 @@ test("SV-20: the metadata line is Details' first rows", async () => {
     rows.querySelector(`[data-testid="coding-session-details-meta-${key}"]`)
       ?.textContent;
   assert.equal(text("goal"), "GoalShip the header");
-  assert.equal(text("repo"), "Repositorybuzz");
+  assert.equal(text("repo"), "Repositorybeekeeper");
   assert.equal(text("runtime"), "RuntimeCodex");
   // The model reads as a person reads it, effort apart from the raw id.
   assert.equal(text("model"), "Modelgpt-5.6-terra · Low");

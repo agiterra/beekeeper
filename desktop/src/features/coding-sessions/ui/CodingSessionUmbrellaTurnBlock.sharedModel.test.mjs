@@ -85,7 +85,7 @@ function tool(id, turnId, { status = "completed", result = "ok" } = {}) {
     descriptor: { renderClass: "shell", label: "Ran command", preview: id },
     title: "Bash",
     toolName: "Bash",
-    buzzToolName: null,
+    beekeeperToolName: null,
     status,
     args: { command: `echo ${id}` },
     result,

@@ -40,12 +40,12 @@ test("pending external metadata reserves the image treatment", () => {
   });
 });
 
-test("pending Buzz entity metadata remains image-less", () => {
+test("pending Beekeeper entity metadata remains image-less", () => {
   const entityPreview = {
     kind: "buzz-repository",
-    href: `beekeeper://repo?owner=${"cd".repeat(32)}&d=buzz`,
+    href: `beekeeper://repo?owner=${"cd".repeat(32)}&d=beekeeper`,
     provider: "Beekeeper",
-    title: "buzz",
+    title: "beekeeper",
     typeLabel: "repo",
   };
   assert.deepEqual(resolveLinkPreview(entityPreview, undefined), {
@@ -204,9 +204,9 @@ test("metadata loader coalesces fragment variants and bounds concurrency", async
 test("withEntityFallbacks re-adds previews dropped by null metadata", () => {
   const entityPreview = {
     kind: "buzz-pull-request",
-    href: `beekeeper://pr?id=${"ab".repeat(32)}&owner=${"cd".repeat(32)}&d=buzz`,
+    href: `beekeeper://pr?id=${"ab".repeat(32)}&owner=${"cd".repeat(32)}&d=beekeeper`,
     provider: "Beekeeper",
-    title: `buzz #${"ab".repeat(4)}`,
+    title: `beekeeper #${"ab".repeat(4)}`,
     typeLabel: "PR",
   };
 
@@ -218,16 +218,16 @@ test("withEntityFallbacks re-adds previews dropped by null metadata", () => {
 test("withEntityFallbacks keeps resolved previews and preserves order", () => {
   const first = {
     kind: "buzz-repository",
-    href: `beekeeper://repo?owner=${"cd".repeat(32)}&d=buzz`,
+    href: `beekeeper://repo?owner=${"cd".repeat(32)}&d=beekeeper`,
     provider: "Beekeeper",
-    title: "buzz",
+    title: "beekeeper",
     typeLabel: "repo",
   };
   const second = {
     kind: "buzz-issue",
-    href: `beekeeper://issue?id=${"ef".repeat(32)}&owner=${"cd".repeat(32)}&d=buzz`,
+    href: `beekeeper://issue?id=${"ef".repeat(32)}&owner=${"cd".repeat(32)}&d=beekeeper`,
     provider: "Beekeeper",
-    title: `buzz #${"ef".repeat(4)}`,
+    title: `beekeeper #${"ef".repeat(4)}`,
     typeLabel: "issue",
   };
   const resolvedSecond = {
@@ -247,7 +247,7 @@ test("entity fallback eligibility is kind-scoped", () => {
     isBeekeeperEntityPreview({
       ...preview,
       kind: "buzz-repository",
-      href: `beekeeper://repo?owner=${"cd".repeat(32)}&d=buzz`,
+      href: `beekeeper://repo?owner=${"cd".repeat(32)}&d=beekeeper`,
     }),
     true,
   );
@@ -282,11 +282,11 @@ function relayEvent({
   return { id, kind, pubkey, created_at: createdAt, content, tags, sig: "" };
 }
 
-test("Buzz PR metadata includes repository identity and trusted root context", async () => {
+test("Beekeeper PR metadata includes repository identity and trusted root context", async () => {
   const owner = "cd".repeat(32);
   const attacker = "ef".repeat(32);
   const id = "ab".repeat(32);
-  const repoAddress = `30617:${owner}:buzz`;
+  const repoAddress = `30617:${owner}:beekeeper`;
   const commit = "1234567".padEnd(40, "0");
   const events = [
     relayEvent({
@@ -294,7 +294,7 @@ test("Buzz PR metadata includes repository identity and trusted root context", a
       kind: 30617,
       pubkey: owner,
       tags: [
-        ["d", "buzz"],
+        ["d", "beekeeper"],
         ["name", "Beekeeper Desktop"],
         ["default-branch", "main"],
       ],
@@ -360,7 +360,7 @@ test("Buzz PR metadata includes repository identity and trusted root context", a
       .slice(0, filter.limit);
 
   const result = await fetchBeekeeperEntityMetadata(
-    `beekeeper://pr?id=${id}&owner=${owner}&d=buzz`,
+    `beekeeper://pr?id=${id}&owner=${owner}&d=beekeeper`,
     fetchEvents,
   );
   assert.equal(result?.siteName, "Beekeeper Desktop");
@@ -370,17 +370,17 @@ test("Buzz PR metadata includes repository identity and trusted root context", a
   assert.equal(result?.imageDataUrl, null);
 });
 
-test("Buzz entity roots reject ambiguous repository tags", async () => {
+test("Beekeeper entity roots reject ambiguous repository tags", async () => {
   const owner = "cd".repeat(32);
   const attacker = "ef".repeat(32);
-  const targetAddress = `30617:${owner}:buzz`;
+  const targetAddress = `30617:${owner}:beekeeper`;
   const attackerAddress = `30617:${attacker}:other`;
   const repository = relayEvent({
     id: "01".repeat(32),
     kind: 30617,
     pubkey: owner,
     tags: [
-      ["d", "buzz"],
+      ["d", "beekeeper"],
       ["name", "Beekeeper Desktop"],
       ["default-branch", "main"],
     ],
@@ -402,7 +402,7 @@ test("Buzz entity roots reject ambiguous repository tags", async () => {
       ],
     });
     const result = await fetchBeekeeperEntityMetadata(
-      `beekeeper://${type}?id=${id}&owner=${owner}&d=buzz`,
+      `beekeeper://${type}?id=${id}&owner=${owner}&d=beekeeper`,
       async (filter) =>
         filter.kinds?.includes(30617)
           ? [repository]
@@ -414,7 +414,7 @@ test("Buzz entity roots reject ambiguous repository tags", async () => {
   }
 });
 
-test("Buzz repository metadata stays image-less and exposes default branch", async () => {
+test("Beekeeper repository metadata stays image-less and exposes default branch", async () => {
   const owner = "cd".repeat(32);
   const result = await fetchBeekeeperEntityMetadata(
     `beekeeper://repo?owner=${owner}&d=relay-tools`,
@@ -442,7 +442,7 @@ test("Buzz repository metadata stays image-less and exposes default branch", asy
   assert.equal(result?.imageDomain, null);
 });
 
-test("Buzz project metadata resolves from the 30621 announcement", async () => {
+test("Beekeeper project metadata resolves from the 30621 announcement", async () => {
   const owner = "cd".repeat(32);
   const result = await fetchBeekeeperEntityMetadata(
     `beekeeper://project?owner=${owner}&d=pollinator`,
@@ -467,7 +467,7 @@ test("Buzz project metadata resolves from the 30621 announcement", async () => {
   assert.equal(result?.imageDataUrl, null);
 });
 
-test("Buzz project metadata declines a missing or invalid announcement", async () => {
+test("Beekeeper project metadata declines a missing or invalid announcement", async () => {
   const owner = "cd".repeat(32);
   assert.equal(
     await fetchBeekeeperEntityMetadata(

@@ -69,7 +69,7 @@ export type AgentConfigFieldDescriptor =
   | {
       kind: "effort";
       optionSource:
-        | "buzzAgentCatalog"
+        | "beekeeperAgentCatalog"
         | "legacyProviderModelCatalog"
         | "harnessNative";
       currentPersistence:
@@ -208,7 +208,7 @@ export function deriveAgentConfigFieldModel({
       kind: "effort",
       optionSource:
         runtime.id === "buzz-agent"
-          ? "buzzAgentCatalog"
+          ? "beekeeperAgentCatalog"
           : "legacyProviderModelCatalog",
       currentPersistence: {
         kind: "envVar",

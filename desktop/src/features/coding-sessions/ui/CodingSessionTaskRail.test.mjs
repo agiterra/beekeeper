@@ -17,7 +17,7 @@ const activeModel = {
   completedCount: 1,
   explanation: "Rendering the latest signed plan from this session.",
   copyText:
-    "Rendering the latest signed plan from this session.\n\n- [x] Read the signed transcript\n- [ ] Build the Buzz rail (in progress)",
+    "Rendering the latest signed plan from this session.\n\n- [x] Read the signed transcript\n- [ ] Build the Beekeeper rail (in progress)",
   state: "active",
   tasks: [
     {
@@ -27,7 +27,7 @@ const activeModel = {
     },
     {
       id: "task-current",
-      text: "Build the Buzz rail",
+      text: "Build the Beekeeper rail",
       status: "in_progress",
     },
     {
@@ -48,7 +48,7 @@ test("task rail renders bounded provider-neutral states and completion summary",
   assert.match(markup, />Plan</);
   assert.match(markup, /1\/3/);
   assert.match(markup, /Read the signed transcript/);
-  assert.match(markup, /Build the Buzz rail/);
+  assert.match(markup, /Build the Beekeeper rail/);
   assert.match(markup, /Await a provider state/);
   assert.match(markup, /data-status="completed"/);
   assert.match(markup, /data-status="in_progress"/);
@@ -57,7 +57,7 @@ test("task rail renders bounded provider-neutral states and completion summary",
   assert.match(markup, /role="progressbar"/);
   assert.match(markup, /aria-valuenow="33"/);
   assert.match(markup, /aria-label="Copy session plan"/);
-  assert.match(markup, /aria-label="Copy task: Build the Buzz rail"/);
+  assert.match(markup, /aria-label="Copy task: Build the Beekeeper rail"/);
   assert.match(markup, /<details/);
   assert.match(markup, />Completed</);
   assert.match(markup, /Live from signed session/);
@@ -167,7 +167,7 @@ test("the collapsed line states the plan honestly in every case", () => {
       ...activeModel,
       tasks: activeModel.tasks.filter((task) => task.status !== "blocked"),
     }),
-    "Build the Buzz rail",
+    "Build the Beekeeper rail",
   );
   // A failed task leads the line, ahead of blocked and in-progress ones.
   assert.equal(
@@ -224,7 +224,7 @@ test("the Plan surface variant fills the host with no landmark of its own (SV-24
   );
   assert.match(markup, /data-variant="surface"/);
   assert.match(markup, /data-surface-subheader/);
-  assert.match(markup, /Build the Buzz rail/);
+  assert.match(markup, /Build the Beekeeper rail/);
   // The host owns the panel landmark; the dock keeps the rail's id.
   assert.doesNotMatch(markup, /<aside/);
   assert.doesNotMatch(

@@ -73,7 +73,7 @@ test("markers in tool titles, args, results, and previews are all found", () => 
       },
       title: `Ran ${marker(29, 1)}`,
       toolName: "Bash",
-      buzzToolName: null,
+      beekeeperToolName: null,
       status: "completed",
       args: { command: `cd ${marker(12, 2)}` },
       result: `wrote ${marker(40, 3)}`,

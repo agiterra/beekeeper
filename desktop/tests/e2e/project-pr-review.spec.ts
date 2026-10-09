@@ -1065,10 +1065,10 @@ test("repository rows identify their git host", async ({ page }) => {
   await page.getByRole("button", { name: "Repositories", exact: true }).click();
   await page.getByRole("button", { name: "List layout" }).click();
 
-  const buzzHostIcon = page
+  const beekeeperHostIcon = page
     .getByTestId("repository-row-buzz")
     .getByTestId("repository-host-icon");
-  await expect(buzzHostIcon).toHaveAttribute(
+  await expect(beekeeperHostIcon).toHaveAttribute(
     "aria-label",
     "Relay-hosted repository",
   );
@@ -1078,7 +1078,7 @@ test("repository rows identify their git host", async ({ page }) => {
       .getByTestId("repository-host-icon"),
   ).toHaveAttribute("aria-label", "Git data hosted on github.com");
 
-  await buzzHostIcon.hover();
+  await beekeeperHostIcon.hover();
   await expect(
     page.getByRole("tooltip", { name: "Relay-hosted repository" }),
   ).toBeVisible();

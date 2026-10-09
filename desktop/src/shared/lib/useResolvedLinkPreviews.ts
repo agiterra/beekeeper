@@ -22,7 +22,7 @@ import {
 
 import { isEntityLink, parseEntityLink } from "./entityLink";
 import {
-  buzzEntityFallbackTitle,
+  beekeeperEntityFallbackTitle,
   type SupportedLinkPreview,
 } from "./linkPreview";
 
@@ -407,7 +407,9 @@ type ResolvedMetadataByHref = Record<
 export function shouldResolveTitle(preview: SupportedLinkPreview): boolean {
   if (!isEntityLink(preview.href)) return true;
   const parsed = parseEntityLink(preview.href);
-  return parsed.ok && preview.title === buzzEntityFallbackTitle(parsed.value);
+  return (
+    parsed.ok && preview.title === beekeeperEntityFallbackTitle(parsed.value)
+  );
 }
 
 export function resolveLinkPreview(
@@ -465,7 +467,7 @@ export function isBeekeeperEntityPreview(
  * lookup yields no metadata: `useResolvedLinkPreviews` drops null-metadata
  * previews (correct for external links — no metadata means no card), but
  * entity links always carry a usable fallback title (the repo d-tag, or
- * `<dtag> #<id8>` for PRs/issues — see `buzzEntityFallbackTitle`). Re-adds
+ * `<dtag> #<id8>` for PRs/issues — see `beekeeperEntityFallbackTitle`). Re-adds
  * recognized entity previews on their fallback title; non-entity previews
  * keep the hook's drop behavior.
  */

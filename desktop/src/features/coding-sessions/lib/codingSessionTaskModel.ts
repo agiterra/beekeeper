@@ -174,7 +174,7 @@ function classifyTaskTool(
     return "todo";
   }
 
-  for (const name of [item.buzzToolName, item.toolName, item.title]) {
+  for (const name of [item.beekeeperToolName, item.toolName, item.title]) {
     const normalized = normalizeToolName(name);
     if (normalized === "update_plan" || normalized.endsWith("_update_plan")) {
       return "update_plan";

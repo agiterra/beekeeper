@@ -7,7 +7,7 @@ import { mergeMessageLinkPreviews } from "./useMessageLinkPreviews.ts";
 
 const OWNER = "a".repeat(64);
 const EVENT_ID = "b".repeat(64);
-const ENTITY_HREF = `beekeeper://pr?id=${EVENT_ID}&owner=${OWNER}&d=buzz-world`;
+const ENTITY_HREF = `beekeeper://pr?id=${EVENT_ID}&owner=${OWNER}&d=beekeeper-world`;
 const EXTERNAL_HREF = "https://example.com/story";
 const RELAY_ORIGIN = "https://relay.example";
 
@@ -27,12 +27,16 @@ function snapshotTag(href, title, siteName) {
   ];
 }
 
-test("relay-resolved Buzz entities beat conflicting sender snapshots in content order", () => {
+test("relay-resolved Beekeeper entities beat conflicting sender snapshots in content order", () => {
   const content = `${ENTITY_HREF} then ${EXTERNAL_HREF}`;
   const candidates = extractSupportedLinkPreviews(content, RELAY_ORIGIN);
   const snapshots = parseLinkPreviewSnapshots(
     [
-      snapshotTag(ENTITY_HREF, "Forged sender title", "Definitely Real Buzz"),
+      snapshotTag(
+        ENTITY_HREF,
+        "Forged sender title",
+        "Definitely Real Beekeeper",
+      ),
       snapshotTag(EXTERNAL_HREF, "External story", "Example"),
     ],
     content,

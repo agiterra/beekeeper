@@ -97,7 +97,7 @@ test("isConversationalUnreadKind_unknownKind_countsAsConversational", () => {
   assert.equal(isConversationalUnreadKind(12345), true);
 });
 
-test("codingSessionKinds_matchBuzzCoreValues", () => {
+test("codingSessionKinds_matchBeekeeperCoreValues", () => {
   // Mirror of crates/beekeeper-core/src/kind.rs. A drift here is a wire break that
   // no type checker catches — the events simply stop matching.
   assert.deepEqual(
@@ -254,7 +254,7 @@ test("the generated-title kind is read off the wire and served by the mock relay
   );
 });
 
-test("projectScopedKinds_matchBuzzCoreValues", () => {
+test("projectScopedKinds_matchBeekeeperCoreValues", () => {
   // Mirror of crates/beekeeper-core/src/kind.rs `PROJECT_A_SCOPED_KINDS`: the
   // Pulse entry and the to-do op share one relay gate and one `#a` filter
   // shape, and a drift here is a wire break no type checker catches.

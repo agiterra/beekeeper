@@ -11,7 +11,7 @@ function makeTool(overrides = {}) {
     type: "tool",
     title: "Tool call",
     toolName: "shell",
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "completed",
     args: {},
     result: "",
@@ -23,11 +23,11 @@ function makeTool(overrides = {}) {
   };
 }
 
-test("buildCompactToolSummary formats Buzz send_message preview", () => {
+test("buildCompactToolSummary formats Beekeeper send_message preview", () => {
   const summary = buildCompactToolSummary(
     makeTool({
       toolName: "send_message",
-      buzzToolName: "send_message",
+      beekeeperToolName: "send_message",
       title: "Send Message",
       args: { content: "Hello team" },
     }),
@@ -232,11 +232,11 @@ test("buildCompactToolSummary exposes shellContent for shell-sourced buzz CLI re
   });
 });
 
-test("buildCompactToolSummary derives structured actions for native Buzz MCP tools", () => {
+test("buildCompactToolSummary derives structured actions for native Beekeeper MCP tools", () => {
   const summary = buildCompactToolSummary(
     makeTool({
       toolName: "get_channel",
-      buzzToolName: "get_channel",
+      beekeeperToolName: "get_channel",
       args: {
         channel_id: "channel-1",
       },

@@ -73,7 +73,7 @@ function singleClaudeUmbrella() {
     {
       generationId: "gen-1",
       label: "claude-agent-acp · generation 1",
-      title: "Advance Buzz live sessions",
+      title: "Advance Beekeeper live sessions",
       providerAuthorityPubkey: PROVIDER_PUBKEY,
       metadataAuthorityPubkey: PROVIDER_PUBKEY,
       lastEventAt: "2026-08-12T10:10:00.000Z",
@@ -190,7 +190,7 @@ test("the join create carries the umbrella's existing sessionRef", () => {
   assert.equal(payload.target.channelId, CHANNEL_ID);
   assert.equal(payload.model, "gpt-5.3-codex");
   // The session's title is inherited, not re-invented.
-  assert.equal(payload.title, "Advance Buzz live sessions");
+  assert.equal(payload.title, "Advance Beekeeper live sessions");
   assert.equal(payload.workdir, "/Users/brian/checkout");
 
   // …and that ref reaches the signed command unchanged: this is the whole
@@ -222,7 +222,7 @@ test("the join inherits the umbrella's project and repo claims", () => {
     {
       generationId: "gen-1",
       label: "claude-agent-acp · generation 1",
-      title: "Advance Buzz live sessions",
+      title: "Advance Beekeeper live sessions",
       providerAuthorityPubkey: PROVIDER_PUBKEY,
       metadataAuthorityPubkey: PROVIDER_PUBKEY,
       lastEventAt: "2026-08-12T10:10:00.000Z",
@@ -520,10 +520,10 @@ test("a half-filled seat builds no join at all", () => {
 test("a seated join names its worktree after the session and the seat's role", () => {
   assert.equal(
     addCodingSessionProviderSeatWorktreeName({
-      title: "Advance Buzz live sessions",
+      title: "Advance Beekeeper live sessions",
       role: "builder",
     }),
-    "advance-buzz-live-sessions-builder",
+    "advance-beekeeper-live-sessions-builder",
   );
   // The slug is the host's own: punctuation collapses, case folds, and the
   // 48-character cap is applied once so the field shows the final name.

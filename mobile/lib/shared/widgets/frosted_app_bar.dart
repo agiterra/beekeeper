@@ -114,7 +114,7 @@ class FrostedAppBar extends StatelessWidget {
 
   /// Paints over the frosted fill instead of the default translucent surface.
   /// Used by the Beekeeper themes to carry their branded gradient across the app's
-  /// top section — see [buzzTopSectionGradient].
+  /// top section — see [beekeeperTopSectionGradient].
   final Gradient? gradient;
 
   /// Whether to apply the translucent blur treatment behind the app bar.

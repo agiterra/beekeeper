@@ -15,7 +15,7 @@ const _schemeKey = 'buzz_color_scheme';
 
 /// Beekeeper ships as the default: the first-party pair, so a fresh install gets the
 /// branded top-section gradient without picking a theme first.
-const defaultSchemeName = buzzThemeName;
+const defaultSchemeName = beekeeperThemeName;
 const defaultSchemeDisplayName = 'Beekeeper';
 
 /// Pre-loaded SharedPreferences instance, overridden in main().

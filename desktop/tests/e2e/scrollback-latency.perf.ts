@@ -5,7 +5,7 @@ import { getPublicKey } from "nostr-tools/pure";
 import { installRelayBridge } from "../helpers/bridge";
 
 /**
- * SCROLL-BACK latency profile for one channel (#buzz-bugs) against a LIVE
+ * SCROLL-BACK latency profile for one channel (#bugs by default) against a LIVE
  * relay, post-PR #1500 read-model.
  *
  * Mechanics under test (source: useLoadOlderOnScroll.ts, pageOlderMessages.ts,
@@ -28,7 +28,7 @@ import { installRelayBridge } from "../helpers/bridge";
  *   BEEKEEPER_E2E_RELAY_URL=http://127.0.0.1:13000 \
  *   BEEKEEPER_COMMUNITY_HOST=<community host> \
  *   BEEKEEPER_PERF_NSEC=nsec1... \
- *   npx playwright test --config=playwright.perf.config.ts scrollback-buzzbugs.perf.ts
+ *   npx playwright test --config=playwright.perf.config.ts scrollback-latency.perf.ts
  */
 
 // No default relay: the one this was written against was Block's staging
@@ -36,7 +36,7 @@ import { installRelayBridge } from "../helpers/bridge";
 const RELAY_HTTP = process.env.BEEKEEPER_E2E_RELAY_URL ?? "";
 const NSEC = process.env.BEEKEEPER_PERF_NSEC ?? "";
 const COMMUNITY_HOST = process.env.BEEKEEPER_COMMUNITY_HOST ?? "";
-const TARGET_CHANNEL = process.env.BEEKEEPER_PERF_CHANNEL ?? "buzz-bugs";
+const TARGET_CHANNEL = process.env.BEEKEEPER_PERF_CHANNEL ?? "bugs";
 const PAGES = Number(process.env.BEEKEEPER_PERF_PAGES ?? 10);
 
 const IDENTITY_OVERRIDE_KEY = "buzz:e2e-identity-override.v1";

@@ -184,7 +184,7 @@ test("extractPromptText returns empty string when prompt is missing or not an ar
   assert.equal(extractPromptText({ params: { prompt: "nope" } }), "");
 });
 
-test("extractToolIdentity ignores Buzz tool names that only appear in file contents", () => {
+test("extractToolIdentity ignores Beekeeper tool names that only appear in file contents", () => {
   const identity = extractToolIdentity({
     sessionUpdate: "tool_call_update",
     toolCallId: "read-file-1",
@@ -202,11 +202,11 @@ test("extractToolIdentity ignores Buzz tool names that only appear in file conte
   assert.deepEqual(identity, {
     title: "read_file",
     toolName: "read_file",
-    buzzToolName: null,
+    beekeeperToolName: null,
   });
 });
 
-test("extractToolIdentity still recognizes explicit Buzz tool fields", () => {
+test("extractToolIdentity still recognizes explicit Beekeeper tool fields", () => {
   const identity = extractToolIdentity({
     sessionUpdate: "tool_call",
     title: "Tool call",
@@ -217,7 +217,7 @@ test("extractToolIdentity still recognizes explicit Buzz tool fields", () => {
   assert.deepEqual(identity, {
     title: "Tool call",
     toolName: "get_feed",
-    buzzToolName: "get_feed",
+    beekeeperToolName: "get_feed",
   });
 });
 
@@ -353,12 +353,12 @@ test("parseSystemPromptSections keeps exact core header literal when only a sing
 });
 
 test("parseSystemPromptSections pins the realistic Workspace+Base+System+Core harness shape", () => {
-  // The real Buzz harness emits [Workspace] content before [Base]. The parser
+  // The real Beekeeper harness emits [Workspace] content before [Base]. The parser
   // folds [Workspace] into the Base section (existing unchanged behavior);
   // core is extracted as a distinct "Core Memory" section last.
   const framed = [
     "[Workspace]",
-    "You are operating inside the Buzz platform.",
+    "You are operating inside the Beekeeper platform.",
     "",
     "[Base]",
     "You are an assistant.",
@@ -375,7 +375,7 @@ test("parseSystemPromptSections pins the realistic Workspace+Base+System+Core ha
   assert.deepEqual(sections, [
     {
       title: "Base",
-      body: "[Workspace]\nYou are operating inside the Buzz platform.\n\n[Base]\nYou are an assistant.",
+      body: "[Workspace]\nYou are operating inside the Beekeeper platform.\n\n[Base]\nYou are an assistant.",
     },
     { title: "System", body: "Custom persona instructions." },
     {
@@ -565,7 +565,7 @@ test("parseSystemPromptSections extracts Team Instructions with Core Memory and 
   // compose_prompt() produces the canonical delimiter; with_core() and with_canvas() append their frames.
   const framed = [
     "[Base]",
-    "You are a helpful AI assistant running in Buzz.",
+    "You are a helpful AI assistant running in Beekeeper.",
     "",
     "[System]",
     "You are Observer Agent. You coordinate multi-agent workflows.",
@@ -587,7 +587,10 @@ test("parseSystemPromptSections extracts Team Instructions with Core Memory and 
   ].join("\n");
   const sections = parseSystemPromptSections(framed);
   assert.deepEqual(sections, [
-    { title: "Base", body: "You are a helpful AI assistant running in Buzz." },
+    {
+      title: "Base",
+      body: "You are a helpful AI assistant running in Beekeeper.",
+    },
     {
       title: "System",
       body: "You are Observer Agent. You coordinate multi-agent workflows.",
@@ -763,7 +766,7 @@ test("parseSystemPromptSections (modern) pins full 5-section shape: Base+System+
   // Production shape from with_team() + with_core() + with_canvas(): all five sections present.
   const framed = [
     "[Base]",
-    "You are a helpful AI assistant running in Buzz.",
+    "You are a helpful AI assistant running in Beekeeper.",
     "",
     "[System]",
     "You are Observer Agent. You coordinate multi-agent workflows.",
@@ -784,7 +787,10 @@ test("parseSystemPromptSections (modern) pins full 5-section shape: Base+System+
   ].join("\n");
   const sections = parseSystemPromptSections(framed);
   assert.deepEqual(sections, [
-    { title: "Base", body: "You are a helpful AI assistant running in Buzz." },
+    {
+      title: "Base",
+      body: "You are a helpful AI assistant running in Beekeeper.",
+    },
     {
       title: "System",
       body: "You are Observer Agent. You coordinate multi-agent workflows.",

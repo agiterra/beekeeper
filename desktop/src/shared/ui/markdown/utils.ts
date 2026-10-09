@@ -183,7 +183,10 @@ export function isInsideHiddenSpoiler(element: Element): boolean {
  *   succeeds, keeping the sanitizer active against arbitrary `beekeeper://` URIs.
  * - Everything else delegates to `defaultUrlTransform`.
  */
-export function buzzDeepLinkUrlTransform(value: string, key: string): string {
+export function beekeeperDeepLinkUrlTransform(
+  value: string,
+  key: string,
+): string {
   if (key !== "href") return defaultUrlTransform(value);
   if (isMessageLink(value) || isChannelLink(value)) return value;
   if (parseCodingSessionLink(value)) return value;
@@ -192,11 +195,11 @@ export function buzzDeepLinkUrlTransform(value: string, key: string): string {
 }
 
 /**
- * @deprecated Preserved for external callers; use `buzzDeepLinkUrlTransform`
+ * @deprecated Preserved for external callers; use `beekeeperDeepLinkUrlTransform`
  * which also handles `beekeeper://pr|issue|repo` entity links.
  */
 export function messageLinkUrlTransform(value: string, key: string): string {
-  return buzzDeepLinkUrlTransform(value, key);
+  return beekeeperDeepLinkUrlTransform(value, key);
 }
 
 export function getReactNodeText(node: React.ReactNode): string {

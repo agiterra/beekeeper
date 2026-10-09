@@ -94,7 +94,7 @@ function record({
   return {
     generationId: `gen-${signerPubkey.slice(0, 4)}`,
     label: `${target.driver} · generation ${target.generation}`,
-    title: "Advance Buzz live sessions",
+    title: "Advance Beekeeper live sessions",
     providerAuthorityPubkey: signerPubkey,
     metadataAuthorityPubkey: signerPubkey,
     lastEventAt,
@@ -463,7 +463,7 @@ test("a turn split by a mid-turn ungrouped item yields two distinct block keys",
     {
       generationId: "gen-split",
       label: "claude-agent-acp · generation 1",
-      title: "Advance Buzz live sessions",
+      title: "Advance Beekeeper live sessions",
       providerAuthorityPubkey: CLAUDE_SIGNER,
       metadataAuthorityPubkey: CLAUDE_SIGNER,
       lastEventAt: "2026-08-12T10:10:00.000Z",

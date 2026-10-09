@@ -10,7 +10,7 @@ void main() {
   const member =
       'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 
-  test('parses Buzz and legacy membership tags with roles', () {
+  test('parses Beekeeper and legacy membership tags with roles', () {
     final snapshot = communityMembershipFromEvents([
       _event(
         createdAt: 2,

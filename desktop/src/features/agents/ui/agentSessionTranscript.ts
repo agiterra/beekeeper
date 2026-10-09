@@ -609,7 +609,7 @@ function upsertTool(
   id: string,
   title: string,
   toolName: string,
-  buzzToolName: string | null,
+  beekeeperToolName: string | null,
   status: ToolStatus,
   args: Record<string, unknown>,
   result: string,
@@ -620,15 +620,15 @@ function upsertTool(
 ) {
   const existing = d.itemsById.get(id);
   const canonicalBeekeeperToolName =
-    buzzToolName ?? findBeekeeperToolName(toolName, true);
+    beekeeperToolName ?? findBeekeeperToolName(toolName, true);
   if (existing?.type === "tool") {
     const updatedTitle = !isGenericToolTitle(title) ? title : existing.title;
     let updatedToolName = existing.toolName;
-    let updatedBeekeeperToolName = existing.buzzToolName;
+    let updatedBeekeeperToolName = existing.beekeeperToolName;
     if (canonicalBeekeeperToolName) {
       updatedBeekeeperToolName = canonicalBeekeeperToolName;
       updatedToolName = canonicalBeekeeperToolName;
-    } else if (!existing.buzzToolName && !isGenericToolTitle(toolName)) {
+    } else if (!existing.beekeeperToolName && !isGenericToolTitle(toolName)) {
       updatedToolName = toolName;
     }
     const mergedStatus = mergeToolStatus(existing.status, status);
@@ -638,7 +638,7 @@ function upsertTool(
     const descriptor = classifyTool({
       title: updatedTitle,
       toolName: updatedToolName,
-      buzzToolName: updatedBeekeeperToolName,
+      beekeeperToolName: updatedBeekeeperToolName,
       args: updatedArgs,
       result: updatedResult,
       isError: updatedIsError || mergedStatus === "failed",
@@ -649,7 +649,7 @@ function upsertTool(
       descriptor,
       title: updatedTitle,
       toolName: updatedToolName,
-      buzzToolName: updatedBeekeeperToolName,
+      beekeeperToolName: updatedBeekeeperToolName,
       status: mergedStatus,
       args: updatedArgs,
       result: updatedResult,
@@ -669,7 +669,7 @@ function upsertTool(
   const descriptor = classifyTool({
     title,
     toolName: resolvedToolName,
-    buzzToolName: canonicalBeekeeperToolName,
+    beekeeperToolName: canonicalBeekeeperToolName,
     args,
     result,
     isError: isError || status === "failed",
@@ -682,7 +682,7 @@ function upsertTool(
     descriptor,
     title,
     toolName: resolvedToolName,
-    buzzToolName: canonicalBeekeeperToolName,
+    beekeeperToolName: canonicalBeekeeperToolName,
     status,
     args,
     result,
@@ -985,7 +985,7 @@ export function processTranscriptEvent(
           `tool:${ch}:${toolId}`,
           identity.title,
           identity.toolName,
-          identity.buzzToolName,
+          identity.beekeeperToolName,
           normalizeToolStatus(asString(update.status) ?? "executing"),
           extractToolArgs(update),
           extractToolResult(update),
@@ -1005,7 +1005,7 @@ export function processTranscriptEvent(
           `tool:${ch}:${toolId}`,
           identity.title,
           identity.toolName,
-          identity.buzzToolName,
+          identity.beekeeperToolName,
           status,
           extractToolArgs(update),
           extractToolResult(update),

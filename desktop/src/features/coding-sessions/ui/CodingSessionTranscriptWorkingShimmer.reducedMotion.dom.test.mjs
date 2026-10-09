@@ -79,7 +79,7 @@ test("reduced motion: a fresh running tool's label is plain text", async () => {
             },
             title: "Bash",
             toolName: "Bash",
-            buzzToolName: null,
+            beekeeperToolName: null,
             status: "executing",
             args: {},
             result: "",

@@ -82,7 +82,7 @@ void main() {
     expect(items, hasLength(1));
     expect(items.single, isA<ToolItem>());
     final tool = items.single as ToolItem;
-    expect(tool.buzzToolName, 'send_message');
+    expect(tool.beekeeperToolName, 'send_message');
     expect(tool.toolName, 'send_message');
     expect(tool.status, ToolStatus.completed);
     expect(tool.args, {'content': 'hi'});

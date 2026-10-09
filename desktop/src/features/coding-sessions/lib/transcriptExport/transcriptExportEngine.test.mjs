@@ -1,5 +1,5 @@
 /**
- * H-08 — Buzz transcript-export engine tests.
+ * H-08 — Beekeeper transcript-export engine tests.
  *
  * The banked contract lives in `conformance/transcript-export/` (donor: Hive
  * `src/server/standalone-export.ts` at pin `e0b8198bd144`). This suite
@@ -205,7 +205,7 @@ test("share rewrite with an empty workspace path rewrites nothing", () => {
 test("share rewrite is pure and rewrites a top-level string — the donor's discarded-return shape is not copied", () => {
   // Donor subtlety (recorded in the corpus contract): the donor mutates in
   // place and discards the return value, so a top-level STRING argument would
-  // silently survive unrewritten. The Buzz engine returns the rewritten value
+  // silently survive unrewritten. The Beekeeper engine returns the rewritten value
   // and the caller uses it.
   assert.equal(
     rewriteLocalPathsForShare("open /home/op/work/x.ts", "/home/op/work"),

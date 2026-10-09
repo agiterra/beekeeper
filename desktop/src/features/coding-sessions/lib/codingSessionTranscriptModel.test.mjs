@@ -63,7 +63,7 @@ function tool({
     },
     title: "Bash",
     toolName: "Bash",
-    buzzToolName: null,
+    beekeeperToolName: null,
     status,
     args: { command: `command-${id}` },
     result: isError ? "exit 1" : "ok",

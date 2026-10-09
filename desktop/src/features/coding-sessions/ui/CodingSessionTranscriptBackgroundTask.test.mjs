@@ -71,7 +71,7 @@ function tool(id, turnId, overrides = {}) {
     },
     title: "Bash",
     toolName: "Bash",
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "completed",
     args: { command: "sleep 150", run_in_background: true },
     result: BACKGROUND_RESULT,

@@ -11,7 +11,10 @@ import {
 } from "./projectSessionsChannel.ts";
 
 test("the canonical name is the project name plus 'sessions'", () => {
-  assert.equal(projectSessionsChannelName("Buzz Glue"), "Buzz Glue sessions");
+  assert.equal(
+    projectSessionsChannelName("Beekeeper Glue"),
+    "Beekeeper Glue sessions",
+  );
   assert.equal(
     projectSessionsChannelName("  spaced   out  "),
     "spaced out sessions",
@@ -21,8 +24,8 @@ test("the canonical name is the project name plus 'sessions'", () => {
 
 test("the canonical description identifies a generated session transport", () => {
   assert.equal(
-    projectSessionsChannelDescription("  Buzz   Glue "),
-    "Coding sessions for Buzz Glue.",
+    projectSessionsChannelDescription("  Beekeeper   Glue "),
+    "Coding sessions for Beekeeper Glue.",
   );
   assert.equal(projectSessionsChannelDescription("   "), "Coding sessions.");
 });
@@ -31,14 +34,14 @@ test("a dedicated transport disappears once its session row can replace it", () 
   const channels = [
     {
       id: "sessions",
-      name: "Buzz Glue sessions",
-      description: "Coding sessions for Buzz Glue.",
+      name: "Beekeeper Glue sessions",
+      description: "Coding sessions for Beekeeper Glue.",
     },
     { id: "general", name: "general", description: "Team chat" },
   ];
   assert.deepEqual(
     withoutProjectSessionTransportChannels({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       channels,
       codingSessions: [{ channelId: "sessions" }],
     }),
@@ -53,12 +56,12 @@ test("a stamped transport is hidden even before any session row exists", () => {
   // description is this app's own creation stamp — hide on sight.
   assert.deepEqual(
     withoutProjectSessionTransportChannels({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       channels: [
         {
           id: "sessions",
-          name: "Buzz Glue sessions",
-          description: "Coding sessions for Buzz Glue.",
+          name: "Beekeeper Glue sessions",
+          description: "Coding sessions for Beekeeper Glue.",
         },
       ],
       codingSessions: [],
@@ -72,11 +75,15 @@ test("a person's own '<project> sessions' channel stays visible while it hosts n
   // could legitimately name a chat channel this way; keep it until sessions
   // actually live there.
   const channels = [
-    { id: "sessions", name: "Buzz Glue sessions", description: "Planning" },
+    {
+      id: "sessions",
+      name: "Beekeeper Glue sessions",
+      description: "Planning",
+    },
   ];
   assert.deepEqual(
     withoutProjectSessionTransportChannels({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       channels,
       codingSessions: [],
     }),
@@ -90,7 +97,7 @@ test("an ordinary chat channel stays visible when it also hosts a session", () =
   ];
   assert.deepEqual(
     withoutProjectSessionTransportChannels({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       channels,
       codingSessions: [{ channelId: "general" }],
     }),
@@ -101,12 +108,12 @@ test("an ordinary chat channel stays visible when it also hosts a session", () =
 test("the generated description still identifies a renamed transport", () => {
   assert.deepEqual(
     withoutProjectSessionTransportChannels({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       channels: [
         {
           id: "sessions",
           name: "agent work",
-          description: "Coding sessions for Buzz Glue.",
+          description: "Coding sessions for Beekeeper Glue.",
         },
       ],
       codingSessions: [{ channelId: "sessions" }],
@@ -118,10 +125,10 @@ test("the generated description still identifies a renamed transport", () => {
 test("the named channel wins regardless of case and spacing", () => {
   assert.deepEqual(
     resolveProjectSessionsChannel({
-      projectName: "Buzz  Glue",
+      projectName: "Beekeeper  Glue",
       projectChannels: [
         { id: "general", name: "general" },
-        { id: "sessions", name: "buzz glue SESSIONS" },
+        { id: "sessions", name: "beekeeper glue SESSIONS" },
       ],
     }),
     { channelId: "sessions", reason: "name" },
@@ -131,7 +138,7 @@ test("the named channel wins regardless of case and spacing", () => {
 test("without a name match the channel with the newest session activity wins", () => {
   assert.deepEqual(
     resolveProjectSessionsChannel({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       projectChannels: [
         { id: "stale", name: "old-agents" },
         { id: "recent", name: "workbench" },
@@ -149,10 +156,10 @@ test("without a name match the channel with the newest session activity wins", (
 test("a name match beats a busier channel — the published name is the mapping", () => {
   assert.deepEqual(
     resolveProjectSessionsChannel({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       projectChannels: [
         { id: "busy", name: "workbench" },
-        { id: "named", name: "Buzz Glue sessions" },
+        { id: "named", name: "Beekeeper Glue sessions" },
       ],
       sessionActivityByChannel: new Map([["busy", "2026-08-09T00:00:00.000Z"]]),
     }),
@@ -163,14 +170,14 @@ test("a name match beats a busier channel — the published name is the mapping"
 test("a project with no named and no active channel has no sessions channel yet", () => {
   assert.equal(
     resolveProjectSessionsChannel({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       projectChannels: [{ id: "general", name: "general" }],
     }),
     null,
   );
   assert.equal(
     resolveProjectSessionsChannel({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       projectChannels: [],
       sessionActivityByChannel: new Map([
         ["not-in-project", "2026-08-01T00:00:00.000Z"],
@@ -182,19 +189,19 @@ test("a project with no named and no active channel has no sessions channel yet"
 
 test("duplicate name matches resolve to one stable channel", () => {
   const channels = [
-    { id: "b", name: "Buzz Glue sessions" },
-    { id: "a", name: "buzz glue sessions" },
+    { id: "b", name: "Beekeeper Glue sessions" },
+    { id: "a", name: "beekeeper glue sessions" },
   ];
   assert.deepEqual(
     resolveProjectSessionsChannel({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       projectChannels: channels,
     }),
     { channelId: "a", reason: "name" },
   );
   assert.deepEqual(
     resolveProjectSessionsChannel({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       projectChannels: [...channels].reverse(),
     }),
     { channelId: "a", reason: "name" },
@@ -229,10 +236,10 @@ test("activity is the newest event per channel", () => {
 test("a transport-typed channel wins the resolution outright", () => {
   assert.deepEqual(
     resolveProjectSessionsChannel({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       projectChannels: [
         // A user-named decoy that matches rule 1 must not beat the type.
-        { id: "decoy", name: "Buzz Glue sessions", channelType: "stream" },
+        { id: "decoy", name: "Beekeeper Glue sessions", channelType: "stream" },
         { id: "t2", name: "whatever", channelType: "transport" },
         { id: "t1", name: "anything", channelType: "transport" },
       ],
@@ -316,15 +323,15 @@ test("transport-typed channels are always hidden; the name heuristic stays for l
   const channels = [
     { id: "t", name: "Anything At All", channelType: "transport" },
     // Legacy transport: stream-typed but canonical name + hosting sessions.
-    { id: "legacy", name: "Buzz Glue sessions", channelType: "stream" },
+    { id: "legacy", name: "Beekeeper Glue sessions", channelType: "stream" },
     // A user channel hosting a standalone session stays visible.
     { id: "chat", name: "general chat", channelType: "stream" },
     // A canonical name with no sessions is just a channel someone named.
-    { id: "named", name: "Buzz Glue sessions", channelType: "stream" },
+    { id: "named", name: "Beekeeper Glue sessions", channelType: "stream" },
   ];
   assert.deepEqual(
     withoutProjectSessionTransportChannels({
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       channels,
       codingSessions: [{ channelId: "legacy" }, { channelId: "chat" }],
     }).map((channel) => channel.id),

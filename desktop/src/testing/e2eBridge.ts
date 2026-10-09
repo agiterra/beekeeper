@@ -2617,7 +2617,7 @@ function buildMockConfigSurface(pubkey: string): {
     },
   };
 
-  const buzzAgentSurface = {
+  const beekeeperAgentSurface = {
     ...gooseSurface,
     runtimeId: "buzz-agent",
     runtimeLabel: "Beekeeper Agent",
@@ -2649,7 +2649,7 @@ function buildMockConfigSurface(pubkey: string): {
     case PUBKEY_MULTI_ORIGIN:
       return multiOriginSurface;
     case PUBKEY_BUZZ_AGENT:
-      return buzzAgentSurface;
+      return beekeeperAgentSurface;
     default:
       return gooseSurface;
   }

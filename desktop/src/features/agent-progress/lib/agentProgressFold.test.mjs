@@ -84,7 +84,7 @@ function toolItem(overrides = {}) {
     descriptor: { renderClass: "shell", label: "Bash", preview: null },
     title: "Bash",
     toolName: "Bash",
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "completed",
     args: {},
     result: "",

@@ -21,16 +21,16 @@ test("SV-20: the row reads project / title ● status, and the metadata line lef
       generationLabel: "Keystone Session · generation 2",
       model: "claude-sonnet-4-5",
       onOpenProject() {},
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       providerAuthorityPubkey: "d7d05d95".repeat(8),
-      repoName: "buzz",
+      repoName: "beekeeper",
       runtimeLabel: "Claude Code",
       sessionTitle: "Keystone Session",
       status: { kind: "working", label: "Working" },
     }),
   );
 
-  const project = markup.indexOf(">Buzz Glue<");
+  const project = markup.indexOf(">Beekeeper Glue<");
   const separator = markup.indexOf(">/</li>");
   const title = markup.indexOf(">Keystone Session</h1>");
   const status = markup.indexOf("Session status: Working");
@@ -44,7 +44,7 @@ test("SV-20: the row reads project / title ● status, and the metadata line lef
     "Claude Code",
     "claude-sonnet",
     "generation 2",
-    ">buzz<",
+    ">beekeeper<",
   ]) {
     assert.doesNotMatch(markup, new RegExp(gone));
   }
@@ -75,14 +75,14 @@ test("Details' metadata rows: goal, repository, runtime, model, generation, blan
   assert.deepEqual(
     codingSessionHeaderMetadataRows({
       goal: "  Make two-agent work read as one session ",
-      repo: "buzz",
+      repo: "beekeeper",
       runtime: "Claude Code",
       model: "claude-sonnet-4-5",
       generation: "generation 2",
     }).map(({ key, label, value }) => [key, label, value]),
     [
       ["goal", "Goal", "Make two-agent work read as one session"],
-      ["repo", "Repository", "buzz"],
+      ["repo", "Repository", "beekeeper"],
       ["runtime", "Runtime", "Claude Code"],
       ["model", "Model", "claude-sonnet-4-5"],
       ["generation", "Generation", "generation 2"],
@@ -104,7 +104,7 @@ test("Details' runtime and model rows say whose they are in a multi-seat session
   const rows = (focusedSeat) =>
     codingSessionHeaderMetadataRows({
       goal: null,
-      repo: "buzz",
+      repo: "beekeeper",
       runtime: "Claude Code",
       model: "opus",
       generation: null,
@@ -370,10 +370,10 @@ test("closure controls describe session state without rewriting execution status
 test("an owning project reads as a followable crumb ahead of the title", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
-      channelName: "buzz glue sessions",
+      channelName: "beekeeper glue sessions",
       generationLabel: "Keystone Session · generation 2",
       onOpenProject() {},
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       runtimeLabel: "Claude Code",
       sessionTitle: "Keystone Session",
       status: { kind: "idle", label: "Idle" },
@@ -383,18 +383,18 @@ test("an owning project reads as a followable crumb ahead of the title", () => {
   assert.match(markup, /data-testid="coding-session-project-crumb"/);
   assert.match(
     markup,
-    />Buzz Glue<\/button><\/li><li aria-hidden="true"[^>]*>\/<\/li>/,
+    />Beekeeper Glue<\/button><\/li><li aria-hidden="true"[^>]*>\/<\/li>/,
   );
   // The crumb is a real control, not text styled to look like one.
-  assert.match(markup, /title="Open Buzz Glue"/);
+  assert.match(markup, /title="Open Beekeeper Glue"/);
 });
 
 test("without a way to open it the project is plain text, not a dead link", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {
-      channelName: "buzz glue sessions",
+      channelName: "beekeeper glue sessions",
       generationLabel: "Keystone Session · generation 2",
-      projectName: "Buzz Glue",
+      projectName: "Beekeeper Glue",
       runtimeLabel: "Claude Code",
       sessionTitle: "Keystone Session",
       status: { kind: "idle", label: "Idle" },
@@ -404,7 +404,7 @@ test("without a way to open it the project is plain text, not a dead link", () =
   assert.doesNotMatch(markup, /coding-session-project-crumb/);
   assert.match(
     markup,
-    /<span class="[^"]*" data-testid="coding-session-project-label">Buzz Glue<\/span>/,
+    /<span class="[^"]*" data-testid="coding-session-project-label">Beekeeper Glue<\/span>/,
   );
 });
 

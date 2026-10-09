@@ -112,7 +112,7 @@ test("claude's context window is a trait, and never part of the model name", () 
   assert.match(markup, />1M</);
 });
 
-// Asked live, 2026-08-24: "how is the permission setting being done in Buzz?
+// Asked live, 2026-08-24: "how is the permission setting being done in Beekeeper?
 // Are we even handling that?" It is not: every `session/request_permission` is
 // answered `allow_once` in the ACP read loop (§2 item 13). The row says so
 // rather than offering modes nothing enforces.

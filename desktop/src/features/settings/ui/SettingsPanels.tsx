@@ -293,8 +293,8 @@ function ThemeSettingsCard() {
   // Beekeeper themes pin a neutral accent (GitHub black in light, white in dark),
   // so the accent picker is hidden while a Beekeeper theme is active. `themeName` is
   // the effective theme, so this also covers System mode resolving to Beekeeper.
-  const buzzThemeSelected = isBeekeeperTheme(themeName);
-  const accentPickerHidden = buzzThemeSelected;
+  const beekeeperThemeSelected = isBeekeeperTheme(themeName);
+  const accentPickerHidden = beekeeperThemeSelected;
   const shouldReduceMotion = useReducedMotion();
 
   const previewVarsByTheme = useThemePreviewVars();
@@ -656,7 +656,7 @@ function ThemeSettingsCard() {
           )}
 
           <GlassBackgroundSetting />
-          {buzzThemeSelected ? <ProminentActiveTabSetting /> : null}
+          {beekeeperThemeSelected ? <ProminentActiveTabSetting /> : null}
         </SettingsOptionGroup>
 
         <SettingsOptionGroup

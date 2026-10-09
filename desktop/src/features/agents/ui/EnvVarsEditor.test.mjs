@@ -685,9 +685,9 @@ test("buildRecord_runtime_switch_new_hiddenKeys_then_generic_edit", () => {
   //   (c) An unset new-runtime hidden key is not introduced.
 
   // Derive both descriptor sets from real runtime objects.
-  const buzzAgentRuntime = {
+  const beekeeperAgentRuntime = {
     id: "buzz-agent",
-    label: "Buzz Agent",
+    label: "Beekeeper Agent",
     avatarUrl: "",
     availability: "available",
     command: "buzz-agent",
@@ -732,15 +732,15 @@ test("buildRecord_runtime_switch_new_hiddenKeys_then_generic_edit", () => {
     loginHint: null,
   };
 
-  const buzzDescriptors = deriveNumericDescriptors(buzzAgentRuntime);
+  const beekeeperDescriptors = deriveNumericDescriptors(beekeeperAgentRuntime);
   const gooseDescriptors = deriveNumericDescriptors(gooseRuntime);
-  const buzzHiddenKeys = structuredEnvKeys(buzzDescriptors);
+  const beekeeperHiddenKeys = structuredEnvKeys(beekeeperDescriptors);
   const gooseHiddenKeys = structuredEnvKeys(gooseDescriptors);
 
   // Sanity-check that BEEKEEPER_AGENT_MAX_ROUNDS is hidden under buzz-agent but not
   // under Goose — that contrast is what makes it become a generic row.
   assert.ok(
-    buzzHiddenKeys.includes("BEEKEEPER_AGENT_MAX_ROUNDS"),
+    beekeeperHiddenKeys.includes("BEEKEEPER_AGENT_MAX_ROUNDS"),
     "BEEKEEPER_AGENT_MAX_ROUNDS must be hidden under buzz-agent descriptors",
   );
   assert.equal(
@@ -814,9 +814,9 @@ test("filterBakedGenericRows_numeric_baked_key_excluded_and_placeholder_shown", 
   // filterBakedGenericRows path must exclude this key from the generic
   // baked-row display so it isn't editable twice, while the structured
   // numeric input shows the inherited placeholder via numericTuningPlaceholder.
-  const buzzAgentRuntime = {
+  const beekeeperAgentRuntime = {
     id: "buzz-agent",
-    label: "Buzz Agent",
+    label: "Beekeeper Agent",
     avatarUrl: "",
     availability: "available",
     command: "buzz-agent",
@@ -838,7 +838,7 @@ test("filterBakedGenericRows_numeric_baked_key_excluded_and_placeholder_shown", 
     loginHint: null,
   };
 
-  const numericDescriptors = deriveNumericDescriptors(buzzAgentRuntime);
+  const numericDescriptors = deriveNumericDescriptors(beekeeperAgentRuntime);
   const numericStructuredKeys = structuredEnvKeys(numericDescriptors);
 
   assert.ok(

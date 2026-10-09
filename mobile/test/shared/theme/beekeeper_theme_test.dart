@@ -4,41 +4,44 @@ import 'package:beekeeper/shared/theme/theme.dart';
 import 'package:beekeeper/shared/widgets/frosted_app_bar.dart';
 
 void main() {
-  group('Buzz theme catalog entries', () {
+  group('Beekeeper theme catalog entries', () {
     test('both halves are in the catalog', () {
-      expect(findTheme(buzzThemeName), isNotNull);
-      expect(findTheme(buzzDarkThemeName), isNotNull);
+      expect(findTheme(beekeeperThemeName), isNotNull);
+      expect(findTheme(beekeeperDarkThemeName), isNotNull);
     });
 
     test('borrow the GitHub palettes', () {
-      final buzz = findTheme(buzzThemeName)!;
+      final beekeeper = findTheme(beekeeperThemeName)!;
       final github = findTheme('github-light')!;
-      expect(buzz.bg, github.bg);
-      expect(buzz.fg, github.fg);
-      expect(buzz.comment, github.comment);
+      expect(beekeeper.bg, github.bg);
+      expect(beekeeper.fg, github.fg);
+      expect(beekeeper.comment, github.comment);
 
-      final buzzDark = findTheme(buzzDarkThemeName)!;
+      final beekeeperDark = findTheme(beekeeperDarkThemeName)!;
       final githubDark = findTheme('github-dark')!;
-      expect(buzzDark.bg, githubDark.bg);
-      expect(buzzDark.fg, githubDark.fg);
-      expect(buzzDark.comment, githubDark.comment);
+      expect(beekeeperDark.bg, githubDark.bg);
+      expect(beekeeperDark.fg, githubDark.fg);
+      expect(beekeeperDark.comment, githubDark.comment);
     });
 
     test('are a light/dark pair', () {
-      expect(findTheme(buzzThemeName)!.isDark, isFalse);
-      expect(findTheme(buzzDarkThemeName)!.isDark, isTrue);
-      expect(themePairFor(buzzThemeName), buzzDarkThemeName);
-      expect(themePairFor(buzzDarkThemeName), buzzThemeName);
+      expect(findTheme(beekeeperThemeName)!.isDark, isFalse);
+      expect(findTheme(beekeeperDarkThemeName)!.isDark, isTrue);
+      expect(themePairFor(beekeeperThemeName), beekeeperDarkThemeName);
+      expect(themePairFor(beekeeperDarkThemeName), beekeeperThemeName);
     });
 
     test('appear as a single System-mode option labelled "Beekeeper"', () {
       final paired = themeGroups().paired.map((t) => t.name);
-      expect(paired, contains(buzzThemeName));
-      expect(paired, isNot(contains(buzzDarkThemeName)));
-      expect(pairedThemeLabel(buzzThemeName), 'Beekeeper');
-      expect(themeSelectionLabel(buzzThemeName, ThemeMode.system), 'Beekeeper');
+      expect(paired, contains(beekeeperThemeName));
+      expect(paired, isNot(contains(beekeeperDarkThemeName)));
+      expect(pairedThemeLabel(beekeeperThemeName), 'Beekeeper');
       expect(
-        themeSelectionLabel(buzzDarkThemeName, ThemeMode.system),
+        themeSelectionLabel(beekeeperThemeName, ThemeMode.system),
+        'Beekeeper',
+      );
+      expect(
+        themeSelectionLabel(beekeeperDarkThemeName, ThemeMode.system),
         'Beekeeper',
       );
     });
@@ -47,11 +50,11 @@ void main() {
       const storedAccent = '#ef4444';
 
       expect(
-        effectiveAccentIndex(buzzThemeName, storedAccent),
+        effectiveAccentIndex(beekeeperThemeName, storedAccent),
         neutralAccentIndex,
       );
       expect(
-        effectiveAccentIndex(buzzDarkThemeName, storedAccent),
+        effectiveAccentIndex(beekeeperDarkThemeName, storedAccent),
         neutralAccentIndex,
       );
       expect(
@@ -62,30 +65,30 @@ void main() {
     });
 
     test('resolve across brightnesses like any other pair', () {
-      final resolved = resolveSchemes(buzzThemeName, ThemeMode.system);
+      final resolved = resolveSchemes(beekeeperThemeName, ThemeMode.system);
       expect(resolved.forcedMode, isNull);
       expect(resolved.light.brightness, Brightness.light);
       expect(resolved.dark.brightness, Brightness.dark);
-      expect(resolved.lightTheme?.name, buzzThemeName);
-      expect(resolved.darkTheme?.name, buzzDarkThemeName);
+      expect(resolved.lightTheme?.name, beekeeperThemeName);
+      expect(resolved.darkTheme?.name, beekeeperDarkThemeName);
 
       expect(
-        effectiveTheme(buzzThemeName, ThemeMode.dark)?.name,
-        buzzDarkThemeName,
+        effectiveTheme(beekeeperThemeName, ThemeMode.dark)?.name,
+        beekeeperDarkThemeName,
       );
       expect(
-        effectiveTheme(buzzDarkThemeName, ThemeMode.light)?.name,
-        buzzThemeName,
+        effectiveTheme(beekeeperDarkThemeName, ThemeMode.light)?.name,
+        beekeeperThemeName,
       );
     });
 
     test(
-      'fallbacks expose the effective Buzz theme for gradient selection',
+      'fallbacks expose the effective Beekeeper theme for gradient selection',
       () {
         final coerced = resolveSchemes('nord', ThemeMode.light);
-        expect(coerced.lightTheme?.name, buzzThemeName);
+        expect(coerced.lightTheme?.name, beekeeperThemeName);
         expect(
-          buzzTopSectionGradient(
+          beekeeperTopSectionGradient(
             coerced.lightTheme!.name,
             coerced.light.brightness,
           ),
@@ -93,9 +96,9 @@ void main() {
         );
 
         final unknown = resolveSchemes('not-a-theme', ThemeMode.light);
-        expect(unknown.lightTheme?.name, buzzThemeName);
+        expect(unknown.lightTheme?.name, beekeeperThemeName);
         expect(
-          buzzTopSectionGradient(
+          beekeeperTopSectionGradient(
             unknown.lightTheme!.name,
             unknown.light.brightness,
           ),
@@ -105,15 +108,18 @@ void main() {
     );
   });
 
-  group('buzzTopSectionGradient', () {
-    test('is null for non-Buzz themes', () {
-      expect(buzzTopSectionGradient('github-light', Brightness.light), isNull);
-      expect(buzzTopSectionGradient('nord', Brightness.dark), isNull);
+  group('beekeeperTopSectionGradient', () {
+    test('is null for non-Beekeeper themes', () {
+      expect(
+        beekeeperTopSectionGradient('github-light', Brightness.light),
+        isNull,
+      );
+      expect(beekeeperTopSectionGradient('nord', Brightness.dark), isNull);
     });
 
     test('paints top to bottom for both halves of the pair', () {
-      for (final name in [buzzThemeName, buzzDarkThemeName]) {
-        final gradient = buzzTopSectionGradient(name, Brightness.light);
+      for (final name in [beekeeperThemeName, beekeeperDarkThemeName]) {
+        final gradient = beekeeperTopSectionGradient(name, Brightness.light);
         expect(gradient, isNotNull, reason: '$name should be gradient-backed');
         expect(gradient!.begin, Alignment.topCenter);
         expect(gradient.end, Alignment.bottomCenter);
@@ -124,23 +130,38 @@ void main() {
     test('brightness selects the stops, not the theme name', () {
       // Both halves enable the gradient, so System mode keeps it on across an
       // OS switch — the applied brightness alone decides which stops are used.
-      final light = buzzTopSectionGradient(buzzThemeName, Brightness.light)!;
-      final dark = buzzTopSectionGradient(buzzThemeName, Brightness.dark)!;
+      final light = beekeeperTopSectionGradient(
+        beekeeperThemeName,
+        Brightness.light,
+      )!;
+      final dark = beekeeperTopSectionGradient(
+        beekeeperThemeName,
+        Brightness.dark,
+      )!;
 
       expect(light.colors, isNot(dark.colors));
       expect(
-        buzzTopSectionGradient(buzzDarkThemeName, Brightness.dark)!.colors,
+        beekeeperTopSectionGradient(
+          beekeeperDarkThemeName,
+          Brightness.dark,
+        )!.colors,
         dark.colors,
       );
       expect(
-        buzzTopSectionGradient(buzzDarkThemeName, Brightness.light)!.colors,
+        beekeeperTopSectionGradient(
+          beekeeperDarkThemeName,
+          Brightness.light,
+        )!.colors,
         light.colors,
       );
     });
 
     test('is opaque so the color replaces the frosted fill', () {
       for (final brightness in Brightness.values) {
-        final gradient = buzzTopSectionGradient(buzzThemeName, brightness)!;
+        final gradient = beekeeperTopSectionGradient(
+          beekeeperThemeName,
+          brightness,
+        )!;
         for (final color in gradient.colors) {
           expect(color.a, 1.0);
         }
@@ -181,8 +202,8 @@ void main() {
       await tester.pumpWidget(
         harness(
           AppTheme.light(
-            topSectionGradient: buzzTopSectionGradient(
-              buzzThemeName,
+            topSectionGradient: beekeeperTopSectionGradient(
+              beekeeperThemeName,
               Brightness.light,
             ),
           ),
@@ -195,7 +216,7 @@ void main() {
       expect(decoration.color, isNull);
     });
 
-    testWidgets('non-Buzz themes keep the frosted surface fill', (
+    testWidgets('non-Beekeeper themes keep the frosted surface fill', (
       tester,
     ) async {
       await tester.pumpWidget(harness(AppTheme.light()));
@@ -205,14 +226,14 @@ void main() {
       expect(decoration.color, isNotNull);
     });
 
-    testWidgets('Buzz section labels use 80% neutral foreground', (
+    testWidgets('Beekeeper section labels use 80% neutral foreground', (
       tester,
     ) async {
       await tester.pumpWidget(
         harness(
           AppTheme.light(
-            topSectionGradient: buzzTopSectionGradient(
-              buzzThemeName,
+            topSectionGradient: beekeeperTopSectionGradient(
+              beekeeperThemeName,
               Brightness.light,
             ),
           ),
@@ -226,7 +247,7 @@ void main() {
       );
     });
 
-    testWidgets('navigation roles inherit non-Buzz theme tokens', (
+    testWidgets('navigation roles inherit non-Beekeeper theme tokens', (
       tester,
     ) async {
       const primaryForeground = Color(0xFF123456);
@@ -260,9 +281,9 @@ void main() {
   });
 
   group('isBeekeeperTheme', () {
-    test('matches only the Buzz pair', () {
-      expect(isBeekeeperTheme(buzzThemeName), isTrue);
-      expect(isBeekeeperTheme(buzzDarkThemeName), isTrue);
+    test('matches only the Beekeeper pair', () {
+      expect(isBeekeeperTheme(beekeeperThemeName), isTrue);
+      expect(isBeekeeperTheme(beekeeperDarkThemeName), isTrue);
       expect(isBeekeeperTheme('github-light'), isFalse);
       expect(isBeekeeperTheme(''), isFalse);
     });

@@ -84,7 +84,7 @@ test("top-level project lists align dates and overflow actions", async ({
   await expect(
     repositoryRow.getByTestId("repositories-row-branch"),
   ).toContainText("main");
-  // Subtitle is the repository location (owner/repo for Buzz-hosted repos).
+  // Subtitle is the repository location (owner/repo for Beekeeper-hosted repos).
   await expect(repositoryRow.locator("p")).toHaveText(/\/buzz$/);
   const repositoryPositions = await trailingPositions(repositoryRow, {
     actionName: /More options for/,

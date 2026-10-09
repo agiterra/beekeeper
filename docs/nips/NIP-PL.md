@@ -1,6 +1,6 @@
 ---
 title: "NIP-PL — Push Leases (full normative draft)"
-tags: [nostr, nip, push-notifications, buzz, draft]
+tags: [nostr, nip, push-notifications, beekeeper, draft]
 status: draft
 created: 2026-07-02
 ---

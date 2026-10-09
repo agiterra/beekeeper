@@ -248,7 +248,7 @@ test("every new create draft mints a fresh canonical umbrella sessionRef", async
     providerInstanceRef: "claude-primary",
     providerAuthorityPubkey: "a".repeat(64),
     model: null,
-    title: "Advance Buzz live sessions",
+    title: "Advance Beekeeper live sessions",
     initialTurn: null,
   };
   const first = buildNewCodingSessionCreateInput(base);
@@ -289,7 +289,7 @@ test("founding publishes genesis and name before preparing the linked 10-key cre
       providerInstanceRef: "claude-primary",
       providerAuthorityPubkey: "a".repeat(64),
       model: null,
-      title: "Advance Buzz live sessions",
+      title: "Advance Beekeeper live sessions",
       initialTurn: null,
     },
     {
@@ -300,7 +300,7 @@ test("founding publishes genesis and name before preparing the linked 10-key cre
       },
       publishName: async (input) => {
         order.push("name");
-        assert.equal(input.content, "Advance Buzz live sessions");
+        assert.equal(input.content, "Advance Beekeeper live sessions");
         assert.equal(input.sessionRef.length, 36);
         return { id: "f".repeat(64), kind: 44229 };
       },

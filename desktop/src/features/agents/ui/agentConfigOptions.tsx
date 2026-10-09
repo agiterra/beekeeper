@@ -77,7 +77,7 @@ export type PersonaDropdownOption = {
  *   derived by `getProviderApiKeyLabel` — single source of truth for all UI
  *   surfaces so they never drift.
  *
- * Mirrors the Rust `readiness::buzz_agent_requirements` /
+ * Mirrors the Rust `readiness::beekeeper_agent_requirements` /
  * `readiness::goose_requirements` logic — keep in sync.
  */
 export type ProviderCredentialConfig =

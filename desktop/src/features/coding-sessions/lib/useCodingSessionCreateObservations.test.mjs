@@ -91,7 +91,7 @@ test("cold creates load before live admission and a gap receipt joins in post-fe
     providerInstanceRef: "claude-primary",
     providerAuthorityPubkey: PROVIDER_PUBKEY,
     model: null,
-    title: "Advance Buzz live sessions",
+    title: "Advance Beekeeper live sessions",
     initialTurn: null,
   });
   const createEvent = finalizeEvent(

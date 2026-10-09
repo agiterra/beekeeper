@@ -39,7 +39,7 @@ function toolItems(events) {
 }
 
 function activityTitle(item) {
-  return formatToolTitle(item.buzzToolName ?? item.toolName, item.title);
+  return formatToolTitle(item.beekeeperToolName ?? item.toolName, item.title);
 }
 
 // --- stub-overflow vanish (pins the pre-existing degraded-frame behavior) ---
@@ -135,7 +135,7 @@ test("buildTranscript falls back to a single turn trigger id for older prompt fr
   assert.equal(userMessage.messageId, PROMPT_EVENT_ID);
 });
 
-test("buildTranscript keeps read_file activity categorized by the actual tool when output names Buzz tools", () => {
+test("buildTranscript keeps read_file activity categorized by the actual tool when output names Beekeeper tools", () => {
   const [item] = toolItems([
     acpToolUpdate(10, {
       sessionUpdate: "tool_call",
@@ -164,7 +164,7 @@ test("buildTranscript keeps read_file activity categorized by the actual tool wh
   ]);
 
   assert.equal(item.toolName, "read_file");
-  assert.equal(item.buzzToolName, null);
+  assert.equal(item.beekeeperToolName, null);
   assert.equal(item.title, "read_file");
   assert.equal(activityTitle(item), "read_file");
   assert.equal(item.status, "completed");
@@ -172,7 +172,7 @@ test("buildTranscript keeps read_file activity categorized by the actual tool wh
   assert.match(item.result, /delete_message/);
 });
 
-test("buildTranscript keeps shell activity categorized by the actual tool when grep output names Buzz tools", () => {
+test("buildTranscript keeps shell activity categorized by the actual tool when grep output names Beekeeper tools", () => {
   const [item] = toolItems([
     acpToolUpdate(20, {
       sessionUpdate: "tool_call",
@@ -200,14 +200,14 @@ test("buildTranscript keeps shell activity categorized by the actual tool when g
   ]);
 
   assert.equal(item.toolName, "shell");
-  assert.equal(item.buzzToolName, null);
+  assert.equal(item.beekeeperToolName, null);
   assert.equal(activityTitle(item), "shell");
   assert.equal(item.status, "completed");
   assert.match(item.result, /get_event/);
   assert.match(item.result, /delete_message/);
 });
 
-test("buildTranscript categorizes explicit Buzz tool calls for the activity bar", () => {
+test("buildTranscript categorizes explicit Beekeeper tool calls for the activity bar", () => {
   const [item] = toolItems([
     acpToolUpdate(30, {
       sessionUpdate: "tool_call",
@@ -228,7 +228,7 @@ test("buildTranscript categorizes explicit Buzz tool calls for the activity bar"
   ]);
 
   assert.equal(item.toolName, "get_feed");
-  assert.equal(item.buzzToolName, "get_feed");
+  assert.equal(item.beekeeperToolName, "get_feed");
   assert.equal(activityTitle(item), "Get Feed");
   assert.deepEqual(item.args, { limit: 20 });
   assert.equal(item.status, "completed");
@@ -1710,7 +1710,7 @@ test("buildTranscript same-seq different-timestamp session/new events both produ
   );
 });
 
-test("buildTranscript five-section system prompt card is standalone with all sections; CheckCheck context contains only Buzz/thread context", () => {
+test("buildTranscript five-section system prompt card is standalone with all sections; CheckCheck context contains only Beekeeper/thread context", () => {
   // Production scenario: team-pack agent harness emits
   // [Base]/[System (with team delimiter)]/[Agent Memory — core]/[Channel Canvas]
   // in systemPrompt. The display layer must:
@@ -1851,7 +1851,7 @@ test("buildTranscript five-section system prompt card is standalone with all sec
   );
 
   // (d) CheckCheck context (prompt segment's context field) must contain only
-  // the session/prompt:context item — Buzz/thread context only, no system-prompt sections.
+  // the session/prompt:context item — Beekeeper/thread context only, no system-prompt sections.
   const promptContextItem = flat.find(
     (i) => i.acpSource === "session/prompt:context",
   );

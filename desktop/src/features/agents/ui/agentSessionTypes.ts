@@ -268,7 +268,7 @@ export type TranscriptItem =
       descriptor: AgentActivityDescriptor;
       title: string;
       toolName: string;
-      buzzToolName: string | null;
+      beekeeperToolName: string | null;
       status: ToolStatus;
       args: Record<string, unknown>;
       result: string;

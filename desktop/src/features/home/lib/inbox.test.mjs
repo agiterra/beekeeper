@@ -15,7 +15,7 @@ const DM_CHANNEL_ID = "8ad375a7-6990-4b22-985f-e3fd34f634d7";
 const channels = [
   {
     id: CHANNEL_ID,
-    name: "buzz-bugs",
+    name: "beekeeper-bugs",
     channelType: "stream",
   },
   {
@@ -65,7 +65,7 @@ test("mention rows use the channel list when feed channelName is blank", () => {
 
   assert.deepEqual(getInboxTypeLabel(inboxItem), {
     text: "Mentioned in",
-    channelLabel: "buzz-bugs",
+    channelLabel: "beekeeper-bugs",
   });
 });
 
@@ -88,7 +88,7 @@ test("thread activity rows use the channel list when feed channelName is blank",
 
   assert.deepEqual(getInboxTypeLabel(inboxItem), {
     text: "Thread in",
-    channelLabel: "buzz-bugs",
+    channelLabel: "beekeeper-bugs",
   });
 });
 
@@ -126,7 +126,7 @@ test("thread groups are represented by the latest reply rather than the root", (
   );
   assert.deepEqual(getInboxTypeLabel(inboxItem), {
     text: "Thread in",
-    channelLabel: "buzz-bugs",
+    channelLabel: "beekeeper-bugs",
   });
 });
 
@@ -165,7 +165,7 @@ test("thread groups use the latest row label even when the root was a mention", 
   );
   assert.deepEqual(getInboxTypeLabel(inboxItem), {
     text: "Thread in",
-    channelLabel: "buzz-bugs",
+    channelLabel: "beekeeper-bugs",
   });
 });
 
@@ -604,7 +604,7 @@ test("excludeHiddenFeedItems drops hidden items and adjusts the total", () => {
     content: id,
     createdAt: 10,
     channelId,
-    channelName: "buzz-bugs",
+    channelName: "beekeeper-bugs",
     tags: [["h", channelId]],
     category: "mention",
   });

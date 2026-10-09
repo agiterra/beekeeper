@@ -43,7 +43,7 @@ void main() {
     );
   });
 
-  testWidgets('uses Buzz rows, desktop presets, and a real duration', (
+  testWidgets('uses Beekeeper rows, desktop presets, and a real duration', (
     tester,
   ) async {
     final statusNotifier = _RecordingUserStatusNotifier();

@@ -28,7 +28,7 @@ function tool({
     },
     title: toolName,
     toolName,
-    buzzToolName: null,
+    beekeeperToolName: null,
     status: "completed",
     args,
     result,
@@ -85,7 +85,7 @@ test("normalizes Codex update_plan snapshots without provider-specific UI data",
   assert.match(model.copyText, /- \[ \] Report a strange state \(blocked\)/);
 });
 
-test("normalizes Claude TodoWrite and Buzz todo snapshots", () => {
+test("normalizes Claude TodoWrite and Beekeeper todo snapshots", () => {
   const claude = deriveCodingSessionTaskModel([
     tool({
       id: "claude-todos",
@@ -293,7 +293,7 @@ test("bounds task count and task text from signed transcript data", () => {
   assert.equal(model.tasks[0].text.length, MAX_CODING_SESSION_TASK_TEXT_LENGTH);
 });
 
-test("reads a Buzz todo checklist result only when args are not authoritative", () => {
+test("reads a Beekeeper todo checklist result only when args are not authoritative", () => {
   const model = deriveCodingSessionTaskModel([
     tool({
       id: "todo-result",
