@@ -25,6 +25,7 @@ import {
   joinCodingSessionRewindRecord,
   resolveCodingSessionRewindAvailability,
 } from "./codingSessionRewind.ts";
+import { codingSessionRewindBlockText } from "./codingSessionRewindRows.ts";
 
 const CHANNEL = "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2";
 const PROVIDER = "d4".repeat(32);
@@ -318,13 +319,22 @@ test("availability: a restorable git checkpoint offers both choices", () => {
   });
 });
 
-test("availability: no git is chat only; an older build's checkpoint is neither", () => {
-  const noGit = resolveCodingSessionRewindAvailability({
-    ...free,
-    checkpoint: checkpoint(null, false),
-  });
-  assert.deepEqual(noGit.chat, { enabled: true });
-  assert.deepEqual(noGit.files, { enabled: false, block: "no-git" });
+test("availability: no git or no baseTree is chat only (ledger 371)", () => {
+  for (const git of [null, { baseTree: null, tree: "2".repeat(40) }]) {
+    const chatOnly = resolveCodingSessionRewindAvailability({
+      ...free,
+      checkpoint: checkpoint(git, true),
+    });
+    assert.deepEqual(chatOnly.chat, { enabled: true }, JSON.stringify(git));
+    assert.deepEqual(chatOnly.files, { enabled: false, block: "no-git" });
+    assert.equal(
+      codingSessionRewindBlockText(chatOnly.files.block),
+      "No git checkpoint for this turn",
+    );
+  }
+});
+
+test("availability: restorable false refuses both, as the provider does", () => {
   const older = resolveCodingSessionRewindAvailability({
     ...free,
     checkpoint: checkpoint(GIT, false),
@@ -337,6 +347,18 @@ test("availability: no git is chat only; an older build's checkpoint is neither"
     enabled: false,
     block: "provider-cannot-rewind",
   });
+  // An earlier rewind-capable build tied restorable to the baseline: the
+  // provider still refuses it, so neither choice is offered, and the reason
+  // names the checkpoint rather than claiming the build cannot rewind.
+  for (const git of [null, { baseTree: null, tree: "2".repeat(40) }]) {
+    const unrestorable = resolveCodingSessionRewindAvailability({
+      ...free,
+      checkpoint: checkpoint(git, false),
+    });
+    const block = { enabled: false, block: "checkpoint-not-restorable" };
+    assert.deepEqual(unrestorable.chat, block, JSON.stringify(git));
+    assert.deepEqual(unrestorable.files, block);
+  }
   const none = resolveCodingSessionRewindAvailability({
     ...free,
     checkpoint: null,

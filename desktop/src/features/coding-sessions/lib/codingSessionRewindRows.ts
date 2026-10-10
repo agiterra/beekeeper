@@ -140,6 +140,8 @@ export function codingSessionRewindBlockText(
       return "This provider build cannot rewind: it published no checkpoint for this turn";
     case "provider-cannot-rewind":
       return "This provider build cannot rewind";
+    case "checkpoint-not-restorable":
+      return "This turn's checkpoint says it cannot be rewound to";
     case "no-git":
       return "No git checkpoint for this turn";
   }

@@ -225,11 +225,9 @@ async fn turn_checkpoint_lists_a_shell_edit_and_leaves_the_repository_alone() {
         "the shell-only edit is listed, and the change staged before the turn is not"
     );
     assert_eq!(checkpoint["unavailable"], serde_json::Value::Null);
-    // SV-29: restorable exactly when the turn has git facts and a baseline.
-    assert_eq!(
-        checkpoint["restorable"],
-        checkpoint["git"]["baseTree"].is_string()
-    );
+    // SV-29 / ledger 371: a turn checkpoint from a build that rewinds is
+    // restorable (chat at least); files also need the baseTree checked above.
+    assert_eq!(checkpoint["restorable"], true);
 
     // Signed by the key that signs the same generation's 44225 items, and
     // structurally valid for every reader.

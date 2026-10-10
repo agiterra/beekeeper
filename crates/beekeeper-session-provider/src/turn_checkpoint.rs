@@ -7,7 +7,9 @@
 //!
 //! - **Baseline.** Once the turn's opening items are queued — so the prompt's
 //!   `eventSeq` is known — and before the prompt is sent, the actor asks for
-//!   one ([`await_baseline`]) and waits at most [`BASELINE_WAIT`]. The
+//!   one ([`await_baseline`]) and waits at most [`BASELINE_WAIT`]
+//!   ([`FIRST_TURN_BASELINE_WAIT`] for a generation's first prompted turn,
+//!   whose cold index is the slowest to capture — ledger 371). The
 //!   provider spawns the capture at `base-<firstSeq>` and answers on the
 //!   request's channel; the actor forwards what it received as
 //!   [`SessionEvent::BaselineCaptured`], so the baseline is folded before any
@@ -62,16 +64,34 @@ use crate::turn_checkpoint_git::{
     ChangedFile, DiffResult, FileChange, OmittedPath, RefLeaf, UnavailableCode, DIFF_TIMEOUT,
 };
 
-/// Whether this build implements `session.rewind` (SV-29). A turn checkpoint
-/// says `restorable: true` only when this holds and it has the `git` facts
-/// and the `baseTree` a rewind restores to.
+/// Whether this build implements `session.rewind` (SV-29). Every `turn`
+/// checkpoint it publishes says `restorable: true` when this holds: the
+/// conversation can be rewound to that turn whatever the git facts say
+/// (ledger 371). Restoring the *files* additionally needs `git.baseTree`,
+/// which the rewind checks on its own (`files: restore` without one is
+/// `NOT_RESTORABLE`).
 pub(crate) const BUILD_IMPLEMENTS_REWIND: bool = true;
 
-/// How long an actor holds a turn's prompt for its baseline. Above the
-/// capture's own 3 s ceiling, so a capture that makes its ceiling is used;
-/// a cold boundary preparation in front of it can still miss, and then the
-/// turn simply has no baseline.
+/// How long an actor holds a turn's prompt for its baseline, for every turn
+/// but a generation's first. Above the capture's own 3 s ceiling, so a
+/// capture that makes its ceiling is used; a cold boundary preparation in
+/// front of it can still miss, and then the turn simply has no baseline.
 pub const BASELINE_WAIT: Duration = Duration::from_millis(3_500);
+
+/// How long an actor holds the prompt of a generation's **first** prompted
+/// turn (no end capture started in the generation yet) for its baseline.
+///
+/// Ledger 371: in a large fresh worktree every index entry is racy, so the
+/// first capture rehashes the whole tree, and the 3.5 s bound published the
+/// first turn of a Tank Loop run with `baseTree: null` — no files, and no
+/// "Chat and files" rewind for it. Measured 2026-10-10 with
+/// `bench_baseline_capture` on fresh `git clone --local`s of this repository
+/// (7,454 tracked files, test build): the first capture took 2.2–3.6 s, so
+/// the 3 s capture ceiling already loses it on this tree, and a larger one
+/// is further out. T3 Code gives git 30 s per command; a generation's first
+/// turn gets the same, once. Later turns keep [`BASELINE_WAIT`]. An
+/// interrupt, a steer or a shutdown still ends the wait at once.
+pub const FIRST_TURN_BASELINE_WAIT: Duration = Duration::from_secs(30);
 
 /// How long the actor waits for the provider to take the request up at all.
 /// A loop that has not reached it by then is busy, and the prompt is not
@@ -89,8 +109,12 @@ const SHUTDOWN_DRAIN: Duration = Duration::from_secs(5);
 pub enum BaselineAnswer {
     /// Not taken up yet.
     Requested,
-    /// The provider started the capture.
+    /// The provider started the capture; the actor waits up to
+    /// [`BASELINE_WAIT`] in all.
     Capturing,
+    /// The provider started the capture of its generation's first prompted
+    /// turn; the actor waits up to [`FIRST_TURN_BASELINE_WAIT`] in all.
+    CapturingFirstTurn,
     /// The baseline tree's object id.
     Captured(String),
 }
@@ -114,10 +138,22 @@ fn inside_work_tree(cwd: &Path) -> bool {
         .any(|dir| std::fs::symlink_metadata(dir.join(".git")).is_ok())
 }
 
+/// How long the actor holds a prompt for its baseline in all, once the
+/// provider has taken the request up as `answer`.
+#[must_use]
+pub fn baseline_wait(answer: &BaselineAnswer) -> Duration {
+    match answer {
+        BaselineAnswer::CapturingFirstTurn => FIRST_TURN_BASELINE_WAIT,
+        BaselineAnswer::Requested | BaselineAnswer::Capturing | BaselineAnswer::Captured(_) => {
+            BASELINE_WAIT
+        }
+    }
+}
+
 /// Ask the provider for this turn's baseline and wait for it, bounded.
 ///
 /// Asks nothing outside a git working tree. Never fails the turn and never
-/// holds it past [`BASELINE_WAIT`]: a closed
+/// holds it past [`baseline_wait`] (counted from the request): a closed
 /// inbox, a request not taken up within [`BASELINE_PICKUP_WAIT`], a refused
 /// capture, a command arriving in the actor's mailbox meanwhile (an interrupt,
 /// a steer — the prompt loop answers it) or a shutdown all return at
@@ -162,22 +198,24 @@ pub(crate) async fn await_baseline<C>(
         }
     };
     let answered = async {
-        let pickup = tokio::time::sleep(BASELINE_PICKUP_WAIT);
-        tokio::pin!(pickup);
-        let mut taken_up = false;
+        let asked = tokio::time::Instant::now();
+        // Until the provider takes the request up, only the pickup bound;
+        // then the whole wait its answer names, counted from the request.
+        let mut deadline = asked + BASELINE_PICKUP_WAIT;
         loop {
             tokio::select! {
                 changed = answer.changed() => {
                     if changed.is_err() {
                         return None;
                     }
-                    match &*answer.borrow_and_update() {
-                        BaselineAnswer::Captured(tree) => return Some(tree.clone()),
-                        BaselineAnswer::Capturing => taken_up = true,
+                    let now = answer.borrow_and_update().clone();
+                    match now {
+                        BaselineAnswer::Captured(tree) => return Some(tree),
                         BaselineAnswer::Requested => {}
+                        taken_up => deadline = asked + baseline_wait(&taken_up),
                     }
                 }
-                () = &mut pickup, if !taken_up => return None,
+                () = tokio::time::sleep_until(deadline) => return None,
             }
         }
     };
@@ -186,7 +224,6 @@ pub(crate) async fn await_baseline<C>(
         () = stopped => None,
         () = commanded => None,
         base_tree = answered => base_tree,
-        () = tokio::time::sleep(BASELINE_WAIT) => None,
     };
     // Dropped before the prompt is sent, so a capture finishing after this
     // point finds nobody listening and is not used as the baseline.
@@ -200,6 +237,13 @@ pub(crate) async fn await_baseline<C>(
             base_tree,
         })
         .await;
+}
+
+/// Whether the turn a baseline is asked for is its generation's first: no
+/// end capture has started in `chain` yet (ledger 371). Its capture then
+/// gets [`FIRST_TURN_BASELINE_WAIT`].
+fn is_first_prompted_turn(chain: Option<&state::CheckpointChain>) -> bool {
+    chain.is_none_or(|chain| chain.last_started.is_none())
 }
 
 /// Whether a transcript item can open a turn's checkpoint coverage.
@@ -469,6 +513,18 @@ impl crate::Provider {
         let cwd = record.cwd.clone();
         let host_git = self.host_git_request(record, &cwd);
         let generation = record.generation;
+        // Ledger 371: no end capture started in this generation yet, so this
+        // is its first prompted turn, and its capture gets the long bound.
+        let first_turn =
+            is_first_prompted_turn(self.state.checkpoint_chain(session_id, generation));
+        let (taken_up, phase) = if first_turn {
+            (
+                BaselineAnswer::CapturingFirstTurn,
+                CapturePhase::FirstBaseline,
+            )
+        } else {
+            (BaselineAnswer::Capturing, CapturePhase::Baseline)
+        };
         let session_id = session_id.to_owned();
         #[cfg(test)]
         let ceiling = self.turn_checkpoints.baseline_ceiling;
@@ -478,7 +534,7 @@ impl crate::Provider {
         // taken after they report, so its prompt does not overlap them.
         let ends = self.turn_checkpoints.ends_running(&session_id);
         // An error is the actor having stopped waiting already.
-        if reply.send(BaselineAnswer::Capturing).is_err() {
+        if reply.send(taken_up).is_err() {
             return;
         }
         self.turn_checkpoints.tasks.spawn(async move {
@@ -513,7 +569,7 @@ impl crate::Provider {
                         generation,
                         leaf,
                         None,
-                        CapturePhase::Baseline,
+                        phase,
                     )
                     .await
                 }
@@ -907,7 +963,10 @@ fn checkpoint_payload(
         git: None,
         files: Vec::new(),
         files_not_listed: 0,
-        restorable: false,
+        // SV-29 / ledger 371: a turn can be rewound to by this build whatever
+        // was measured; restoring its files is the rewind's own check on
+        // `git.baseTree`. A `pre_rewind` caller clears this.
+        restorable: BUILD_IMPLEMENTS_REWIND,
         unavailable: None,
         summary: None,
     };
@@ -951,7 +1010,6 @@ fn checkpoint_payload(
                     }
                 }
             }
-            payload.restorable = BUILD_IMPLEMENTS_REWIND && base_tree.is_some();
             payload.git = Some(CodingSessionCheckpointGit {
                 head: tree.head.clone(),
                 branch: tree.branch.clone(),

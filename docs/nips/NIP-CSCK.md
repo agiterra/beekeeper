@@ -165,11 +165,18 @@ At most 32 KiB of strict JSON:
   captured (for example "Baseline not captured") and MUST NOT render it as
   "0 files changed".
 - `restorable` is `true` exactly when the provider build implements
-  `session.rewind` (SV-29) **and** the checkpoint has `git` with a non-null
-  `baseTree`; a `pre_rewind` checkpoint is never restorable. Checkpoints
-  published before that build stay `false`. It is per-checkpoint truth: a
-  reader offers a rewind only from a checkpoint whose provider said it can
-  perform one.
+  `session.rewind` (SV-29) and the checkpoint is a `turn` checkpoint; a
+  `pre_rewind` checkpoint is never restorable. It says the **conversation**
+  can be rewound to this turn, whatever the `git` facts are: a turn with no
+  `git`, or with a `null` `baseTree`, can still be rewound chat only
+  (`files: keep`). Whether the **files** can be restored is read from
+  `git.baseTree` alone — a reader MUST NOT infer it from `restorable`, and a
+  provider refuses `files: restore` without one (`NOT_RESTORABLE`).
+  Checkpoints published before rewind was built stay `false`, and so do
+  those an earlier rewind-capable build published without a `baseTree` (it
+  then tied `restorable` to the baseline); a provider refuses every rewind
+  to a `false` one. It is per-checkpoint truth: a reader offers a rewind
+  only from a checkpoint whose provider said it can perform one.
 - `unavailable.code` is one of `NOT_A_REPOSITORY`, `BOUNDARY_UNPREPARED`,
   `TIMED_OUT`, `GIT_FAILED`. `unavailable.sentence` is one line of at most 512
   UTF-8 bytes naming no host path.

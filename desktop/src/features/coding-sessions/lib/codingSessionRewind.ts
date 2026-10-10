@@ -66,6 +66,7 @@ export type CodingSessionRewindBlock =
   | "turn-running"
   | "no-checkpoint"
   | "provider-cannot-rewind"
+  | "checkpoint-not-restorable"
   | "no-git";
 
 export type CodingSessionRewindChoice =
@@ -91,13 +92,18 @@ const off = (block: CodingSessionRewindBlock): CodingSessionRewindChoice => ({
  * Every gate the provider applies is mirrored, never widened: a rewind is
  * addressed to the current generation (an older one is `STALE_GENERATION`),
  * needs restart authority, is `SESSION_BUSY` while a turn runs, and names a
- * turn checkpoint. Restoring files additionally needs the checkpoint's git
- * trees and a build that marked it `restorable`.
+ * turn checkpoint the provider marked `restorable`. `restorable` is about the
+ * conversation only (ledger 371); restoring files additionally needs
+ * `git.baseTree`, read from the git facts and never inferred from
+ * `restorable`.
  *
- * A checkpoint with git trees but `restorable: false` came from a build that
- * cannot rewind at all (C2 hard-coded it false), so neither choice is
- * offered. One with no `git` was taken outside a repository: the chat can be
- * rewound, the files cannot.
+ * `restorable: false` refuses both choices, as the provider does
+ * (`NOT_RESTORABLE`). With git trees it came from a build that cannot rewind
+ * at all (C2 hard-coded it false); without a `baseTree` it may also be a
+ * rewind-capable build that tied `restorable` to the baseline, so the reason
+ * names the checkpoint rather than the build. A `restorable` checkpoint with
+ * no `git`, or no `baseTree` (taken outside a repository, or its baseline
+ * was not captured in time), offers the chat only.
  */
 export function resolveCodingSessionRewindAvailability(input: {
   checkpoint: CodingSessionCheckpointEntry | null;
@@ -128,17 +134,16 @@ export function resolveCodingSessionRewindAvailability(input: {
     return { chat: off(gate), files: off(gate), checkpointEventId };
   }
   const payload = (checkpoint as CodingSessionCheckpointEntry).payload;
-  const git = payload.git;
-  if (git !== null && git.baseTree !== null && !payload.restorable) {
-    const block = off("provider-cannot-rewind");
+  const baseTree = payload.git?.baseTree ?? null;
+  if (!payload.restorable) {
+    const block = off(
+      baseTree !== null
+        ? "provider-cannot-rewind"
+        : "checkpoint-not-restorable",
+    );
     return { chat: block, files: block, checkpointEventId };
   }
-  const files =
-    git === null || git.baseTree === null
-      ? off("no-git")
-      : payload.restorable
-        ? ON
-        : off("provider-cannot-rewind");
+  const files = baseTree === null ? off("no-git") : ON;
   return { chat: ON, files, checkpointEventId };
 }
 

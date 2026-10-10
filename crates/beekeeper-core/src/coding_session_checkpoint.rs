@@ -252,8 +252,10 @@ pub struct CodingSessionCheckpointPayload {
     pub files: Vec<CodingSessionCheckpointFile>,
     /// Changed files not listed in `files`.
     pub files_not_listed: u64,
-    /// Whether the provider that captured this can rewind to it. `false` until
-    /// a provider implements `session.rewind`.
+    /// Whether the provider that captured this can rewind the conversation
+    /// to it. `false` until a provider implements `session.rewind`, and on
+    /// every `pre_rewind` checkpoint. It says nothing about the files:
+    /// restoring them needs [`CodingSessionCheckpointGit::base_tree`].
     pub restorable: bool,
     /// Why there are no git facts, or `null` exactly when `git` is set.
     pub unavailable: Option<CodingSessionCheckpointUnavailable>,

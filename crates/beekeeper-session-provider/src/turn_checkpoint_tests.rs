@@ -88,10 +88,7 @@ fn turn_checkpoint_maps_coverage_files_and_git() {
         (payload.coverage.from_seq, payload.coverage.through_seq),
         (41, 58)
     );
-    assert!(
-        payload.restorable,
-        "git and a baseTree from a build that rewinds"
-    );
+    assert!(payload.restorable, "a turn from a build that rewinds");
     assert_eq!(payload.summary, None);
     assert_eq!(payload.unavailable, None);
     let git = payload.git.expect("git");
@@ -363,17 +360,123 @@ async fn turn_checkpoint_outside_a_repository_asks_for_no_baseline() {
     assert!(inbox.try_recv().is_err(), "no baseline request");
 }
 
-/// SV-29: `restorable` needs the trees a rewind restores to. No baseline, or
-/// no git facts at all, and the checkpoint says it cannot be rewound to.
+/// SV-29 / ledger 371: `restorable` is "this build can rewind to this turn",
+/// independent of the git facts — a turn with no baseline, or no git facts
+/// at all, can still be rewound chat only. Restoring files needs
+/// `git.baseTree`, which stays `null` here and is the rewind's own check.
 #[test]
-fn turn_checkpoint_is_restorable_only_with_git_and_a_base_tree() {
+fn turn_checkpoint_is_restorable_without_a_base_tree() {
     let without_base = checkpoint_payload(&captured(None, Vec::new(), 0), None);
     encodes(&without_base);
-    assert!(!without_base.restorable);
+    assert!(without_base.restorable);
+    assert_eq!(
+        without_base
+            .git
+            .as_ref()
+            .and_then(|git| git.base_tree.as_ref()),
+        None
+    );
     let failed = checkpoint_payload(
         &capture(Some(&oid('b')), Measured::Failed(not_measured())),
         None,
     );
     encodes(&failed);
-    assert!(!failed.restorable);
+    assert!(failed.restorable);
+    assert!(failed.git.is_none());
+}
+
+/// Ledger 371: a generation's first prompted turn waits for its baseline far
+/// longer than later turns, which keep the short bound.
+#[test]
+fn turn_checkpoint_first_turn_baseline_wait_is_longer() {
+    assert_eq!(baseline_wait(&BaselineAnswer::Capturing), BASELINE_WAIT);
+    assert_eq!(
+        baseline_wait(&BaselineAnswer::CapturingFirstTurn),
+        FIRST_TURN_BASELINE_WAIT
+    );
+    assert_eq!(FIRST_TURN_BASELINE_WAIT, Duration::from_secs(30));
+    assert!(BASELINE_WAIT < FIRST_TURN_BASELINE_WAIT);
+    assert!(
+        crate::turn_checkpoint_git::FIRST_BASELINE_CAPTURE_TIMEOUT < FIRST_TURN_BASELINE_WAIT,
+        "the first capture's ceiling fits inside the actor's wait"
+    );
+    assert_eq!(
+        CapturePhase::FirstBaseline.timeout(),
+        crate::turn_checkpoint_git::FIRST_BASELINE_CAPTURE_TIMEOUT
+    );
+}
+
+/// The provider's side: a generation with no end capture started yet is on
+/// its first prompted turn; once one has started it is not.
+#[test]
+fn turn_checkpoint_first_turn_is_the_generation_without_an_end_capture() {
+    assert!(is_first_prompted_turn(None));
+    let mut chain = state::CheckpointChain {
+        generation: 2,
+        ..Default::default()
+    };
+    assert!(is_first_prompted_turn(Some(&chain)));
+    chain.last_started = Some(17);
+    assert!(!is_first_prompted_turn(Some(&chain)));
+}
+
+/// The actor's side of the first-turn bound: a first turn's capture that
+/// answers after [`BASELINE_WAIT`] is still used; a later turn's is not; and
+/// a command arriving still ends a first turn's long wait at once.
+#[tokio::test(start_paused = true)]
+async fn turn_checkpoint_first_turn_holds_the_prompt_for_a_slow_baseline() {
+    let (_mail, empty) = mpsc::channel::<()>(1);
+    let slow = BASELINE_WAIT + Duration::from_secs(5);
+    let (tree, elapsed) = baseline_with(&empty, move |reply| {
+        let _ = reply.send(BaselineAnswer::CapturingFirstTurn);
+        tokio::spawn(async move {
+            tokio::time::sleep(slow).await;
+            let _ = reply.send(BaselineAnswer::Captured(oid('f')));
+            std::mem::forget(reply);
+        });
+    })
+    .await;
+    assert_eq!(
+        tree,
+        Some(oid('f')),
+        "the first turn's slow baseline is used"
+    );
+    assert!(elapsed >= slow && elapsed < FIRST_TURN_BASELINE_WAIT);
+
+    let (tree, elapsed) = baseline_with(&empty, move |reply| {
+        let _ = reply.send(BaselineAnswer::Capturing);
+        tokio::spawn(async move {
+            tokio::time::sleep(slow).await;
+            let _ = reply.send(BaselineAnswer::Captured(oid('f')));
+            std::mem::forget(reply);
+        });
+    })
+    .await;
+    assert_eq!(tree, None, "a later turn's is not");
+    assert!(elapsed >= BASELINE_WAIT && elapsed < slow);
+
+    let (tree, elapsed) = baseline_with(&empty, |reply| {
+        let _ = reply.send(BaselineAnswer::CapturingFirstTurn);
+        std::mem::forget(reply);
+    })
+    .await;
+    assert_eq!(tree, None);
+    assert!(
+        elapsed >= FIRST_TURN_BASELINE_WAIT,
+        "capped at the long bound"
+    );
+    assert!(elapsed < FIRST_TURN_BASELINE_WAIT + Duration::from_millis(100));
+
+    let (mail, pending) = mpsc::channel::<()>(1);
+    let (tree, elapsed) = baseline_with(&pending, move |reply| {
+        let _ = reply.send(BaselineAnswer::CapturingFirstTurn);
+        std::mem::forget(reply);
+        mail.try_send(()).expect("an interrupt arrives");
+    })
+    .await;
+    assert_eq!(tree, None);
+    assert!(
+        elapsed < BASELINE_PICKUP_WAIT,
+        "a command still ends it at once"
+    );
 }

@@ -128,6 +128,14 @@ use run::{Git, StepError};
 /// baseline and the checkpoint says so (`baseTree: null`).
 pub(crate) const BASELINE_CAPTURE_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// Ceiling on the baseline capture of a generation's first prompted turn.
+///
+/// Its index is the coldest a session sees (ledger 371: a fresh worktree's
+/// first capture rehashes every racy entry), so it gets T3 Code's 30 s git
+/// budget less room for the boundary preparation in front of it, inside the
+/// actor's [`crate::turn_checkpoint::FIRST_TURN_BASELINE_WAIT`].
+pub(crate) const FIRST_BASELINE_CAPTURE_TIMEOUT: Duration = Duration::from_secs(28);
+
 /// Ceiling on the capture taken after a turn ends.
 ///
 /// Nothing waits on it — it is spawned — so it is generous enough for a cold
@@ -199,6 +207,9 @@ const DURABLE_CONFIG: [&str; 4] = [
 pub(crate) enum CapturePhase {
     /// Before the turn's prompt is sent ([`BASELINE_CAPTURE_TIMEOUT`]).
     Baseline,
+    /// Before a generation's first prompted turn's prompt is sent
+    /// ([`FIRST_BASELINE_CAPTURE_TIMEOUT`]).
+    FirstBaseline,
     /// After the turn's terminal result ([`END_CAPTURE_TIMEOUT`]).
     TurnEnd,
     /// Before a rewind touches anything ([`PRE_REWIND_CAPTURE_TIMEOUT`]).
@@ -211,6 +222,7 @@ impl CapturePhase {
     pub(crate) fn timeout(self) -> Duration {
         match self {
             Self::Baseline => BASELINE_CAPTURE_TIMEOUT,
+            Self::FirstBaseline => FIRST_BASELINE_CAPTURE_TIMEOUT,
             Self::TurnEnd => END_CAPTURE_TIMEOUT,
             Self::PreRewind => PRE_REWIND_CAPTURE_TIMEOUT,
         }

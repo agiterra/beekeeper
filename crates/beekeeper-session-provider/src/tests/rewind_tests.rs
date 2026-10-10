@@ -339,6 +339,46 @@ async fn rewind_chat_only_keeps_the_files() {
     rig.assert_after_turn_three();
 }
 
+/// Ledger 371: a turn whose baseline was not captured in time publishes
+/// `baseTree: null` but is still `restorable`, so the conversation can be
+/// rewound to it ("Chat only"), while restoring its files is refused with
+/// the files reason and touches nothing.
+#[tokio::test]
+async fn a_turn_without_a_baseline_rewinds_chat_only_and_refuses_files() {
+    let mut rig = rig().await;
+    // Every baseline capture times out at once: no turn gets a baseTree.
+    rig.provider.turn_checkpoints.baseline_ceiling = Some(Duration::ZERO);
+    rig.three_turns().await;
+    let turn_two = rig.turn_checkpoint(2);
+    let payload = payload_of(&turn_two);
+    assert_eq!(
+        payload.git.as_ref().map(|git| git.base_tree.clone()),
+        Some(None),
+        "git facts, but no baseline"
+    );
+    assert!(payload.restorable, "a turn from a build that rewinds");
+    let turn_two = turn_two.id.to_hex();
+
+    rig.rewind("rw-files", &turn_two, "restore").await;
+    let refused = rig.receipt("rw-files");
+    assert_eq!(refused["status"], "failed", "{refused:#}");
+    assert_eq!(refused["error"]["code"], NOT_RESTORABLE, "{refused:#}");
+    let message = refused["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("files cannot be restored"),
+        "the refusal names the files, not the build: {message}"
+    );
+    assert!(refused.get("rewind").is_none());
+    assert_eq!(rig.generation(), 1);
+    rig.assert_after_turn_three();
+
+    rig.rewind("rw-chat", &turn_two, "keep").await;
+    let receipt = rig.receipt("rw-chat");
+    assert_eq!(receipt["rewind"]["files"], "kept", "{receipt:#}");
+    assert_eq!(rig.generation(), 2);
+    rig.assert_after_turn_three();
+}
+
 #[tokio::test]
 async fn rewind_refusals_touch_nothing_and_carry_no_rewind_object() {
     let mut rig = rig().await;

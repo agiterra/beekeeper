@@ -20,6 +20,10 @@ test("the disabled reasons say exactly why, in the brief's words", () => {
     "No git checkpoint for this turn",
   );
   assert.equal(
+    codingSessionRewindBlockText("checkpoint-not-restorable"),
+    "This turn's checkpoint says it cannot be rewound to",
+  );
+  assert.equal(
     codingSessionRewindBlockText("outside-generation"),
     "Only this run's turns can be rewound",
   );

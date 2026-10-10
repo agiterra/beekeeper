@@ -762,10 +762,14 @@ fn numstat_and_name_status_parse_renames_and_binaries() {
     );
 }
 
-/// Measured cost of a warm baseline capture. Not part of the gate: point
-/// `BK_CHECKPOINT_BENCH_REPO` at a throwaway `git clone --local` (never a
-/// checkout that shares a common dir with someone's live repository) and run
+/// Measured cost of a baseline capture, cold then warm. Not part of the gate:
+/// point `BK_CHECKPOINT_BENCH_REPO` at a throwaway `git clone --local` made
+/// just before (never a checkout that shares a common dir with someone's live
+/// repository) and run
 /// `cargo test -p beekeeper-session-provider turn_checkpoint_git -- --ignored --nocapture`.
+/// The first capture of a fresh clone is the cold case a generation's first
+/// turn meets (every index entry racy, ledger 371), so it runs under the
+/// first-turn ceiling and is reported on its own.
 #[tokio::test]
 #[ignore = "benchmark: needs BK_CHECKPOINT_BENCH_REPO"]
 async fn bench_baseline_capture() {
@@ -773,7 +777,7 @@ async fn bench_baseline_capture() {
         return;
     };
     let repo = PathBuf::from(repo);
-    // Warm-up.
+    let started = std::time::Instant::now();
     capture_tree(
         &repo,
         Some(&UNBOUNDED_FOR_TESTS),
@@ -781,10 +785,14 @@ async fn bench_baseline_capture() {
         1,
         RefLeaf::Base(0),
         None,
-        CapturePhase::Baseline,
+        CapturePhase::FirstBaseline,
     )
     .await
-    .expect("warm-up");
+    .expect("cold first capture");
+    println!(
+        "cold first baseline capture ms: {}",
+        started.elapsed().as_millis()
+    );
     let mut samples = Vec::new();
     for run in 1..=10u64 {
         let started = std::time::Instant::now();
