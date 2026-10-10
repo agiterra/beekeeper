@@ -97,6 +97,8 @@ pub struct EventQuery {
     /// starved off the page by unrelated global events before post-filtering.
     /// Matching is byte-exact, so callers must pass canonical coordinates.
     pub a_tags: Option<Vec<String>>,
+    /// Application event types, matched through the JSONB tag GIN index before LIMIT.
+    pub application_types: Option<Vec<String>>,
     /// Restrict results to events carrying **every** one of these literal
     /// `[name, value]` tags, matched by JSONB containment.
     ///
@@ -234,6 +236,7 @@ impl EventQuery {
             ids: None,
             e_tags: None,
             a_tags: None,
+            application_types: None,
             tags_containing: None,
             channel_ids: None,
             channel_ids_include_global: true,
@@ -630,6 +633,22 @@ pub(crate) async fn query_events_on(
                     qb.push(" OR ");
                 }
                 let containment = serde_json::json!([["a", coordinate]]);
+                qb.push(format!("{col_prefix}tags @> "));
+                qb.push_bind(containment);
+            }
+            qb.push(")");
+        }
+    }
+
+    if let Some(ref types) = q.application_types {
+        if !types.is_empty() {
+            qb.push(" AND (");
+            for (i, event_type) in types.iter().enumerate() {
+                if i > 0 {
+                    qb.push(" OR ");
+                }
+                let containment =
+                    serde_json::json!([["l", event_type, "org.agiterra.application-event"]]);
                 qb.push(format!("{col_prefix}tags @> "));
                 qb.push_bind(containment);
             }
@@ -1067,6 +1086,22 @@ pub(crate) async fn count_events_on(conn: &mut sqlx::PgConnection, q: &EventQuer
                     qb.push(" OR ");
                 }
                 let containment = serde_json::json!([["a", coordinate]]);
+                qb.push(format!("{col_prefix}tags @> "));
+                qb.push_bind(containment);
+            }
+            qb.push(")");
+        }
+    }
+
+    if let Some(ref types) = q.application_types {
+        if !types.is_empty() {
+            qb.push(" AND (");
+            for (i, event_type) in types.iter().enumerate() {
+                if i > 0 {
+                    qb.push(" OR ");
+                }
+                let containment =
+                    serde_json::json!([["l", event_type, "org.agiterra.application-event"]]);
                 qb.push(format!("{col_prefix}tags @> "));
                 qb.push_bind(containment);
             }
@@ -3798,6 +3833,42 @@ mod tests {
         .await
         .expect("query empty a_tags");
         assert!(none.is_empty(), "an empty #a list means match nothing");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn application_type_pushdown_filters_before_limit_and_count() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let owner = Keys::generate();
+        let make = |label: &str, created_at: u64| {
+            EventBuilder::new(Kind::Custom(50_000), r#"{"schema":1,"data":{}}"#)
+                .tags(vec![Tag::parse([
+                    "l",
+                    label,
+                    "org.agiterra.application-event",
+                ])
+                .unwrap()])
+                .custom_created_at(nostr::Timestamp::from(created_at))
+                .sign_with_keys(&owner)
+                .unwrap()
+        };
+        let wanted = make("org.example.build.completed", 1_800_001_000);
+        insert_event(&pool, community, &wanted, None).await.unwrap();
+        for i in 1..=3 {
+            let noise = make("org.example.build.started", 1_800_001_000 + i);
+            insert_event(&pool, community, &noise, None).await.unwrap();
+        }
+        let query = EventQuery {
+            kinds: Some(vec![50_000]),
+            application_types: Some(vec!["org.example.build.completed".into()]),
+            limit: Some(1),
+            ..EventQuery::for_community(community)
+        };
+        let rows = query_events(&pool, &query).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].event.id, wanted.id);
+        assert_eq!(count_events(&pool, &query).await.unwrap(), 1);
     }
 
     #[tokio::test]

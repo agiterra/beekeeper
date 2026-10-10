@@ -13,11 +13,11 @@ use beekeeper_auth::Scope;
 use beekeeper_core::kind::{
     event_kind_u32, is_identity_archive_request_kind, is_parameterized_replaceable,
     is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_TURN_METRIC,
-    KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
-    KIND_CANVAS, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CHECKPOINT,
-    KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENERATED_TITLE,
-    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_HANDOVER,
-    KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_APPLICATION_EVENT, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST,
+    KIND_BOOKMARK_SET, KIND_CANVAS, KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+    KIND_CODING_SESSION_CHECKPOINT, KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_COMMAND,
+    KIND_CODING_SESSION_GENERATED_TITLE, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
+    KIND_CODING_SESSION_HANDOVER, KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_OBSERVATION, KIND_CODING_SESSION_POLICY,
     KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TEAM_TRANSACTION,
@@ -70,6 +70,75 @@ fn validate_custom_emoji_tags(event: &Event) -> Result<(), IngestError> {
             .map_err(|err| IngestError::Rejected(format!("invalid: {err}")))?;
     }
     Ok(())
+}
+
+const APPLICATION_EVENT_NAMESPACE: &str = "org.agiterra.application-event";
+
+fn validate_application_event(event: &Event) -> Result<(), IngestError> {
+    let invalid =
+        |reason: &str| IngestError::Rejected(format!("invalid: application event {reason}"));
+    let mut h = 0;
+    let mut namespace = 0;
+    let mut label = 0;
+    for tag in event.tags.iter() {
+        let parts = tag.as_slice();
+        match parts.first().map(String::as_str) {
+            Some("h") => {
+                h += 1;
+                if parts.len() != 2 || uuid::Uuid::parse_str(&parts[1]).is_err() {
+                    return Err(invalid("requires one valid channel h tag"));
+                }
+            }
+            Some("L") => {
+                namespace += 1;
+                if parts.len() != 2 || parts[1] != APPLICATION_EVENT_NAMESPACE {
+                    return Err(invalid("has an invalid namespace tag"));
+                }
+            }
+            Some("l") => {
+                label += 1;
+                if parts.len() != 3
+                    || parts[2] != APPLICATION_EVENT_NAMESPACE
+                    || !valid_application_event_type(&parts[1])
+                {
+                    return Err(invalid("has an invalid type tag"));
+                }
+            }
+            _ => {}
+        }
+    }
+    if h != 1 || namespace != 1 || label != 1 {
+        return Err(invalid("requires exactly one h, L, and l tag"));
+    }
+    let content: serde_json::Value =
+        serde_json::from_str(&event.content).map_err(|_| invalid("content must be JSON"))?;
+    if content
+        .get("schema")
+        .and_then(serde_json::Value::as_u64)
+        .is_none_or(|v| v == 0)
+        || !content
+            .get("data")
+            .is_some_and(serde_json::Value::is_object)
+    {
+        return Err(invalid(
+            "content requires an integer schema and object data",
+        ));
+    }
+    Ok(())
+}
+
+fn valid_application_event_type(value: &str) -> bool {
+    value.len() <= 128
+        && value.split('.').count() >= 3
+        && value.split('.').all(|part| {
+            !part.is_empty()
+                && part.len() <= 63
+                && !part.starts_with('-')
+                && !part.ends_with('-')
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
 }
 
 fn validate_reaction_emoji(event: &Event, emoji: &str) -> Result<(), IngestError> {
@@ -343,7 +412,7 @@ fn map_push_accept_error(error: super::push_lease::AcceptError) -> IngestError {
 fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static str> {
     match kind {
         KIND_PROFILE => Ok(Scope::UsersWrite),
-        KIND_TEXT_NOTE | KIND_LONG_FORM => Ok(Scope::MessagesWrite),
+        KIND_TEXT_NOTE | KIND_LONG_FORM | KIND_APPLICATION_EVENT => Ok(Scope::MessagesWrite),
         KIND_CONTACT_LIST | KIND_READ_STATE | KIND_USER_STATUS | KIND_AGENT_ENGRAM
         | KIND_EVENT_REMINDER | KIND_PERSONA | KIND_TEAM | KIND_MANAGED_AGENT
         | KIND_PRIVATE_MANAGED_AGENT | KIND_TEAM_CATALOG | super::push_lease::KIND_PUSH_LEASE => {
@@ -802,7 +871,8 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
 pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
     matches!(
         kind,
-        KIND_STREAM_MESSAGE
+        KIND_APPLICATION_EVENT
+            | KIND_STREAM_MESSAGE
             | KIND_STREAM_MESSAGE_V2
             | KIND_STREAM_MESSAGE_EDIT
             | KIND_STREAM_MESSAGE_PINNED
@@ -3615,6 +3685,10 @@ async fn ingest_event_inner(
         )));
     }
 
+    if kind_u32 == KIND_APPLICATION_EVENT {
+        validate_application_event(&event)?;
+    }
+
     let is_gift_wrap = kind_u32 == KIND_GIFT_WRAP;
     if event.pubkey != *auth.pubkey() && !is_gift_wrap {
         return Err(IngestError::AuthFailed(
@@ -5287,6 +5361,87 @@ mod tests {
         KIND_STREAM_MESSAGE_DIFF, KIND_TEAM, KIND_USER_STATUS,
     };
     use nostr::{EventBuilder, Kind};
+
+    fn application_event(tags: Vec<nostr::Tag>, content: &str) -> Event {
+        EventBuilder::new(Kind::Custom(KIND_APPLICATION_EVENT as u16), content)
+            .tags(tags)
+            .sign_with_keys(&nostr::Keys::generate())
+            .expect("sign application event")
+    }
+
+    fn application_tags() -> Vec<nostr::Tag> {
+        vec![
+            nostr::Tag::parse(["h", "c42dcf94-1a36-4ce5-b663-5903aa10fbdb"]).unwrap(),
+            nostr::Tag::parse(["L", APPLICATION_EVENT_NAMESPACE]).unwrap(),
+            nostr::Tag::parse([
+                "l",
+                "org.example.build.completed",
+                APPLICATION_EVENT_NAMESPACE,
+            ])
+            .unwrap(),
+        ]
+    }
+
+    #[test]
+    fn application_event_envelope_rejects_bad_tags_and_payloads() {
+        let valid = application_event(application_tags(), r#"{"schema":1,"data":{"id":"b-1"}}"#);
+        assert!(validate_application_event(&valid).is_ok());
+        assert_eq!(
+            required_scope_for_kind(KIND_APPLICATION_EVENT, &valid).unwrap(),
+            Scope::MessagesWrite
+        );
+        assert!(requires_h_channel_scope(KIND_APPLICATION_EVENT));
+
+        for tags in [
+            application_tags()[1..].to_vec(),
+            {
+                let mut tags = application_tags();
+                tags.push(tags[0].clone());
+                tags
+            },
+            {
+                let mut tags = application_tags();
+                tags[0] = nostr::Tag::parse(["h", "invalid"]).unwrap();
+                tags
+            },
+            {
+                let mut tags = application_tags();
+                tags[1] = nostr::Tag::parse(["L", "other.namespace"]).unwrap();
+                tags
+            },
+            {
+                let mut tags = application_tags();
+                tags[2] = nostr::Tag::parse(["l", "bad", APPLICATION_EVENT_NAMESPACE]).unwrap();
+                tags
+            },
+            {
+                let mut tags = application_tags();
+                tags[2] =
+                    nostr::Tag::parse(["l", "org.example.build.completed", "wrong.namespace"])
+                        .unwrap();
+                tags
+            },
+        ] {
+            assert!(validate_application_event(&application_event(
+                tags,
+                r#"{"schema":1,"data":{}}"#
+            ))
+            .is_err());
+        }
+        for content in [
+            "not json",
+            "[]",
+            r#"{"schema":0,"data":{}}"#,
+            r#"{"schema":"1","data":{}}"#,
+            r#"{"schema":1,"data":[]}"#,
+        ] {
+            assert!(
+                validate_application_event(&application_event(application_tags(), content))
+                    .is_err(),
+                "{content}"
+            );
+        }
+    }
 
     #[test]
     fn reaction_validation_accepts_wrapped_max_shortcode() {

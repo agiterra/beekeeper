@@ -25,12 +25,27 @@ use crate::connection::handle_connection;
 use crate::metrics::track_metrics;
 use crate::nip11::{nip11_document, relay_info_handler};
 use crate::state::AppState;
+use crate::webhook_plugin::{plugin_router, WebhookPlugin};
 
 /// Build the axum [`Router`] with all relay routes, middleware, and CORS configuration.
 ///
 /// Pure Nostr protocol: WebSocket (NIP-01), HTTP bridge (NIP-98), media (Blossom),
 /// git (smart HTTP), NIP-05, and health probes.
 pub fn build_router(state: Arc<AppState>) -> Router {
+    build_router_core(state, Router::new())
+}
+
+/// Build the relay router with compiled-in vendor webhook plugins.
+/// Duplicate or malformed plugin namespaces fail startup.
+pub fn build_router_with_webhook_plugins(
+    state: Arc<AppState>,
+    plugins: Vec<WebhookPlugin>,
+) -> Result<Router, String> {
+    let webhook_router = plugin_router(Arc::clone(&state), plugins)?;
+    Ok(build_router_core(state, webhook_router))
+}
+
+fn build_router_core(state: Arc<AppState>, webhook_router: Router) -> Router {
     let media_body_limit = state
         .config
         .media
@@ -156,6 +171,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     // Merge — each sub-router carries its own body limit.
     // Metrics → Trace → CORS applied once over the combined router.
     let mut merged = api_router
+        .merge(webhook_router)
         .merge(media_router)
         .merge(git_router)
         .merge(git_policy_router);

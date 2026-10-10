@@ -81,6 +81,8 @@ pub const KIND_BLOSSOM_AUTH: u32 = 24242;
 pub const KIND_NOSTR_IDENTITY_BINDING: u32 = 24243;
 /// NIP-98: HTTP auth event (used in nip98.rs, not stored).
 pub const KIND_HTTP_AUTH: u32 = 27235;
+/// Channel-scoped, signed application event with a typed JSON envelope.
+pub const KIND_APPLICATION_EVENT: u32 = 50000;
 
 // NEW: Beekeeper command kinds (Pure Nostr plan)
 /// Agent metadata + owner reference (replaceable, agent-authored).
@@ -1921,6 +1923,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_HTTP_AUTH,
     KIND_STREAM_MESSAGE,
     KIND_STREAM_MESSAGE_V2,
+    KIND_APPLICATION_EVENT,
     KIND_STREAM_MESSAGE_EDIT,
     KIND_STREAM_MESSAGE_PINNED,
     KIND_STREAM_MESSAGE_BOOKMARKED,

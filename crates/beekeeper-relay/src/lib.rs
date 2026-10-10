@@ -55,6 +55,8 @@ pub mod telemetry;
 pub mod tenant;
 /// Relay-side tunnel session directory and routing.
 pub mod tunnel;
+/// Host-bound and signature-guarded webhook ingress plugins.
+pub mod webhook_plugin;
 /// Webhook secret generation and constant-time comparison.
 pub mod webhook_secret;
 pub(crate) mod workflow_ci_result;

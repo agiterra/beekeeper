@@ -1112,6 +1112,15 @@ pub fn filter_fully_pushable(filter: &Filter) -> bool {
             "e" => {
                 // #e is fully pushed (any count) via JSONB containment.
             }
+            "l" if filter.kinds.as_ref().is_some_and(|kinds| {
+                kinds.len() == 1
+                    && kinds.iter().all(|kind| {
+                        kind.as_u16() as u32 == beekeeper_core::kind::KIND_APPLICATION_EVENT
+                    })
+            }) =>
+            {
+                // Application types are pushed before LIMIT through the tag GIN index.
+            }
             _ => {
                 // Any other generic tag (#t, #a, etc.) is not pushed.
                 if !tag_values.is_empty() {
@@ -1243,6 +1252,19 @@ fn filter_to_query_params(
         }
     });
 
+    // Only application events guarantee the namespaced `l` tag. Mixed-kind
+    // filters retain the ordinary NIP-01 post-filter path.
+    let application_types = if kinds.as_ref().is_some_and(|ks| {
+        ks.len() == 1 && ks[0] == beekeeper_core::kind::KIND_APPLICATION_EVENT as i32
+    }) {
+        let l_tag_key = nostr::SingleLetterTag::lowercase(nostr::Alphabet::L);
+        filter.generic_tags.get(&l_tag_key).and_then(|values| {
+            (!values.is_empty()).then(|| values.iter().map(ToString::to_string).collect())
+        })
+    } else {
+        None
+    };
+
     // Push single-value #p tag into SQL via event_mentions join.
     // This is critical for gift-wrap (kind:1059) and membership notification
     // queries where >500 events for other recipients would otherwise push
@@ -1302,6 +1324,7 @@ fn filter_to_query_params(
         ids,
         e_tags,
         a_tags,
+        application_types,
         ..EventQuery::for_community(community)
     }
 }
@@ -2655,6 +2678,34 @@ mod tests {
             beekeeper_core::tenant::CommunityId::from_uuid(uuid::Uuid::nil()),
         );
         assert_eq!(q5.d_tag, None);
+    }
+
+    #[test]
+    fn application_type_is_pushed_only_for_application_kind() {
+        let type_tag = SingleLetterTag::lowercase(Alphabet::L);
+        let community = beekeeper_core::tenant::CommunityId::from_uuid(uuid::Uuid::nil());
+        let app = Filter::new()
+            .kind(nostr::Kind::Custom(
+                beekeeper_core::kind::KIND_APPLICATION_EVENT as u16,
+            ))
+            .custom_tags(type_tag, ["org.example.build.completed"]);
+        let query = filter_to_query_params(&app, None, community);
+        assert_eq!(
+            query.application_types,
+            Some(vec!["org.example.build.completed".into()])
+        );
+        assert!(filter_fully_pushable(&app));
+
+        let mixed = Filter::new()
+            .kinds([
+                nostr::Kind::Custom(beekeeper_core::kind::KIND_APPLICATION_EVENT as u16),
+                nostr::Kind::Custom(1),
+            ])
+            .custom_tags(type_tag, ["org.example.build.completed"]);
+        assert!(filter_to_query_params(&mixed, None, community)
+            .application_types
+            .is_none());
+        assert!(!filter_fully_pushable(&mixed));
     }
 
     #[test]
