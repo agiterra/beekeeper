@@ -24,13 +24,29 @@ use super::driver::{self, OP_TIMEOUT, WAIT_FOR_DEFAULT, WAIT_FOR_MAX};
 use super::policy::{self, PNG_CAP_BYTES};
 use super::view::{self, HistoryOp, ImageEncoding};
 use super::{
-    emit_state, ports, refused_origin, unix_now, with_record, Binding, Driving, PreviewError,
-    PreviewStatus, ACTIVITY_EVENT, DRIVING_EVENT, DRIVING_LINGER_SECS, OPEN_REQUESTED_EVENT,
+    emit_state, idle, ports, refused_origin, unix_now, with_record, Binding, Driving, PreviewError,
+    PreviewPlacement, PreviewStatus, ACTIVITY_EVENT, DRIVING_EVENT, DRIVING_LINGER_SECS,
+    OPEN_REQUESTED_EVENT,
 };
 use crate::session_broker::protocol::BrokerResponse;
 
 /// Largest request line a preview op may arrive in.
 pub const MAX_REQUEST_BYTES: usize = 64 * 1024;
+
+/// How long `open` and `navigate` wait, by default, for the page to finish
+/// loading (its start included). Past it they answer `loading: true` with a
+/// sentence, not an error: the page got there, it is just slow. The CLI's
+/// socket outlasts this (`bee preview`'s `NAVIGATE_TIMEOUT`).
+pub const LOAD_WAIT: Duration = Duration::from_secs(10);
+
+/// How long `open` waits for the session's view to mount its Browser tab
+/// after asking, before reporting the page `hidden`.
+pub const SHOW_WAIT: Duration = Duration::from_millis(1_500);
+
+/// The sentence an agent gets for a page that is open but not on screen.
+pub const HIDDEN_SENTENCE: &str = "The page is open but hidden: this session's Browser tab is \
+     not on screen. The person can show it from the session's Browser tab; snapshots and \
+     driving work while it is hidden.";
 
 /// One `bee preview` verb (WIRE-C4 §2 ops table).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -48,11 +64,17 @@ pub enum PreviewAction {
         url: Option<String>,
         #[serde(default)]
         port: Option<u16>,
+        /// Wait for the load (default true), up to [`LOAD_WAIT`].
+        #[serde(default)]
+        wait: Option<bool>,
     },
     /// Go to a URL, or back/forward/reload.
     Navigate {
         #[serde(default)]
         url: Option<String>,
+        /// Wait for the load (default true), up to [`LOAD_WAIT`].
+        #[serde(default)]
+        wait: Option<bool>,
         #[serde(default)]
         back: bool,
         #[serde(default)]
@@ -298,16 +320,34 @@ async fn run(
             to_map(json!({ "servers": servers }))
         }
         PreviewAction::DebugState => to_map(view::debug_state(app, channel_id).await?),
-        PreviewAction::Open { url, port } => {
+        PreviewAction::Open { url, port, wait } => {
             let url = open_target(app, url, port).await?;
             authorize_and_bind(channel_id, grant, Access::Open)?;
             let opened = async {
                 let before = with_record(channel_id, |record| record.generation);
-                let state = view::open(app, channel_id, &url, true).await?;
-                await_commit(channel_id, before).await?;
+                view::open(app, channel_id, &url, true).await?;
+                let arrival = await_arrival(channel_id, before, wait.unwrap_or(true)).await?;
+                let placement = await_shown(channel_id).await;
                 let mut out = common(channel_id);
                 out.insert("opened".into(), json!(true));
-                out.insert("placement".into(), json!(state.placement));
+                out.insert("placement".into(), json!(placement));
+                out.insert(
+                    "shown".into(),
+                    json!(matches!(
+                        placement,
+                        PreviewPlacement::Docked | PreviewPlacement::PoppedOut
+                    )),
+                );
+                let notes: Vec<&str> = [
+                    (placement == PreviewPlacement::Hidden).then_some(HIDDEN_SENTENCE),
+                    arrival_note(arrival),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                if !notes.is_empty() {
+                    out.insert("note".into(), json!(notes.join(" ")));
+                }
                 Ok(out)
             };
             noting_success(opened, || note_activity(app, channel_id, grant, verb)).await
@@ -321,7 +361,7 @@ async fn run(
         action => {
             authorize_and_bind(channel_id, grant, Access::Drive)?;
             ensure_drivable(channel_id)?;
-            ensure_visible(app, channel_id).await?;
+            request_shown(app, channel_id);
             noting_success(drive(app, channel_id, action), || {
                 note_activity(app, channel_id, grant, verb)
             })
@@ -373,7 +413,16 @@ fn authorize_and_bind(
 
 fn ensure_drivable(channel_id: &str) -> Result<(), PreviewError> {
     with_record(channel_id, |record| match record.status {
-        PreviewStatus::Absent => Err(PreviewError::not_open()),
+        PreviewStatus::Absent => Err(match &record.closed_reason {
+            Some(reason) => PreviewError::new(
+                "preview_not_open",
+                format!(
+                    "{} Run `bee preview open` to open it again.",
+                    reason.sentence
+                ),
+            ),
+            None => PreviewError::not_open(),
+        }),
         PreviewStatus::ClosedByPerson => Err(PreviewError::closed_by_person()),
         PreviewStatus::Unavailable => Err(match &record.unavailable {
             Some(reason) => PreviewError::unavailable(reason),
@@ -386,23 +435,35 @@ fn ensure_drivable(channel_id: &str) -> Result<(), PreviewError> {
     })
 }
 
-/// Visible only: an agent op on a preview drawn nowhere pops it out first.
-async fn ensure_visible(app: &AppHandle, channel_id: &str) -> Result<(), PreviewError> {
-    let (unplaced, url) = with_record(channel_id, |record| {
+/// An agent op on a hidden page asks the session's view to show its
+/// Browser tab, and runs hidden either way: it never pops a window out
+/// (ledger 371(c)). The op's result carries the placement it ran at.
+fn request_shown(app: &AppHandle, channel_id: &str) {
+    let (hidden, url) = with_record(channel_id, |record| {
         (
-            record.placement() == super::PreviewPlacement::None,
+            record.placement() == PreviewPlacement::Hidden,
             record.url.clone(),
         )
     });
-    if unplaced {
-        view::set_popped(app, channel_id, true).await?;
-        with_record(channel_id, |record| record.auto_popped = true);
+    if hidden {
         let _ = app.emit(
             OPEN_REQUESTED_EVENT,
             json!({ "channelId": channel_id, "url": url }),
         );
     }
-    Ok(())
+}
+
+/// Wait up to [`SHOW_WAIT`] for a hidden page to be placed (the view the
+/// open-request reached mounting its Browser tab); the placement it ended at.
+async fn await_shown(channel_id: &str) -> PreviewPlacement {
+    let deadline = tokio::time::Instant::now() + SHOW_WAIT;
+    loop {
+        let placement = with_record(channel_id, |record| record.placement());
+        if placement != PreviewPlacement::Hidden || tokio::time::Instant::now() >= deadline {
+            return placement;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 async fn open_target(
@@ -432,36 +493,100 @@ async fn open_target(
     Ok(policy::check_preview_url(&raw, refused.as_ref())?)
 }
 
-/// Wait until a navigation started after `before` has committed.
-async fn await_commit(channel_id: &str, before: u64) -> Result<(), PreviewError> {
-    let deadline = tokio::time::Instant::now() + OP_TIMEOUT;
+/// How far a navigation got before its wait ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arrival {
+    /// It finished loading.
+    Loaded,
+    /// It started, and the caller asked not to wait for the load.
+    Started,
+    /// It started and was still loading when [`LOAD_WAIT`] ran out.
+    StillLoading,
+}
+
+/// One check of a navigation's wait: `None` = keep waiting. Pure, so the
+/// rules are testable: a navigation that never started is a timeout (it did
+/// not get there); one that started but is slow is not an error.
+pub fn arrival_check(
+    before: u64,
+    generation: u64,
+    status: PreviewStatus,
+    wait_load: bool,
+    timed_out: bool,
+) -> Option<Result<Arrival, PreviewError>> {
+    let started = generation > before;
+    if started && status == PreviewStatus::Ready {
+        return Some(Ok(Arrival::Loaded));
+    }
+    if started && !wait_load {
+        return Some(Ok(Arrival::Started));
+    }
+    if matches!(
+        status,
+        PreviewStatus::Absent | PreviewStatus::ClosedByPerson | PreviewStatus::Unavailable
+    ) {
+        return Some(Err(PreviewError::not_open()));
+    }
+    if timed_out {
+        return Some(if started {
+            Ok(Arrival::StillLoading)
+        } else {
+            Err(PreviewError::timeout())
+        });
+    }
+    None
+}
+
+/// Wait until a navigation started after `before` has loaded (or only
+/// started, when `wait_load` is false), up to [`LOAD_WAIT`].
+async fn await_arrival(
+    channel_id: &str,
+    before: u64,
+    wait_load: bool,
+) -> Result<Arrival, PreviewError> {
+    let deadline = tokio::time::Instant::now() + LOAD_WAIT;
     loop {
         let (generation, status) =
             with_record(channel_id, |record| (record.generation, record.status));
-        if generation > before {
-            return Ok(());
-        }
-        if matches!(
-            status,
-            PreviewStatus::Absent | PreviewStatus::ClosedByPerson | PreviewStatus::Unavailable
-        ) {
-            return Err(PreviewError::not_open());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err(PreviewError::timeout());
+        let timed_out = tokio::time::Instant::now() >= deadline;
+        if let Some(result) = arrival_check(before, generation, status, wait_load, timed_out) {
+            return result;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
-/// `input`, `url`, `generation`: on every driving result.
+/// The sentence for a navigation that answered before its page loaded.
+pub fn arrival_note(arrival: Arrival) -> Option<&'static str> {
+    match arrival {
+        Arrival::Loaded => None,
+        Arrival::Started => {
+            Some("Not waiting for the load (--no-wait): the page may still be loading.")
+        }
+        Arrival::StillLoading => Some(
+            "The page started but had not finished loading after 10 s; it may still be \
+             loading. Snapshot or `bee preview wait-for` before trusting what is there.",
+        ),
+    }
+}
+
+/// `input`, `url`, `generation`, `loading`, `placement`: on every driving
+/// result. `generation` is the page's navigation generation (refs carry it).
 fn common(channel_id: &str) -> Map<String, Value> {
-    let (url, generation) =
-        with_record(channel_id, |record| (record.url.clone(), record.generation));
+    let (url, generation, loading, placement) = with_record(channel_id, |record| {
+        (
+            record.url.clone(),
+            record.generation,
+            record.status == PreviewStatus::Loading,
+            record.placement(),
+        )
+    });
     let mut out = Map::new();
     out.insert("input".into(), json!("synthetic"));
     out.insert("url".into(), json!(url));
     out.insert("generation".into(), json!(generation));
+    out.insert("loading".into(), json!(loading));
+    out.insert("placement".into(), json!(placement));
     out
 }
 
@@ -493,6 +618,7 @@ async fn drive(
     let result = match action {
         PreviewAction::Navigate {
             url,
+            wait,
             back,
             forward,
             reload,
@@ -527,8 +653,12 @@ async fn drive(
             } else {
                 view::history(app, channel_id, HistoryOp::Reload).await?;
             }
-            await_commit(channel_id, before).await?;
-            Map::new()
+            let arrival = await_arrival(channel_id, before, wait.unwrap_or(true)).await?;
+            let mut out = Map::new();
+            if let Some(note) = arrival_note(arrival) {
+                out.insert("note".into(), json!(note));
+            }
+            out
         }
         PreviewAction::Snapshot { image } => {
             snapshot(app, channel_id, image.unwrap_or(true)).await?
@@ -622,6 +752,13 @@ async fn drive(
     Ok(out)
 }
 
+/// A snapshot's `loading`: the page's own `document.readyState` when the
+/// driver reported one, else the preview's load state. A blank capture of a
+/// half-loaded page must not read as a finished one (ledger 371(e)).
+pub fn snapshot_loading(ready_state: Option<&str>, status: PreviewStatus) -> bool {
+    status == PreviewStatus::Loading || ready_state.is_some_and(|state| state != "complete")
+}
+
 async fn snapshot(
     app: &AppHandle,
     channel_id: &str,
@@ -634,7 +771,23 @@ async fn snapshot(
         .and_then(|value| value.as_str().map(str::to_string))
         .unwrap_or_default();
     let (text, truncated) = driver::cap_aria(&text);
+    let ready_state = aria
+        .remove("readyState")
+        .and_then(|value| value.as_str().map(str::to_string));
+    let status = with_record(channel_id, |record| record.status);
+    let loading = snapshot_loading(ready_state.as_deref(), status);
     let mut out = Map::new();
+    out.insert("loading".into(), json!(loading));
+    if loading {
+        out.insert(
+            "note".into(),
+            json!(format!(
+                "The page was still loading when this was taken (readyState {}); it may be \
+                 blank or partial. Wait for it and snapshot again.",
+                ready_state.as_deref().unwrap_or("unknown")
+            )),
+        );
+    }
     out.insert("title".into(), aria.remove("title").unwrap_or(Value::Null));
     out.insert("ariaBytes".into(), json!(text.len()));
     out.insert("aria".into(), json!(text));
@@ -691,6 +844,7 @@ fn note_activity(app: &AppHandle, channel_id: &str, grant: &VerifiedPreviewGrant
         let _ = app.emit(DRIVING_EVENT, driving);
     }
     emit_state(app, channel_id);
+    idle::note_agent_activity(app, channel_id);
     let app = app.clone();
     let channel = channel_id.to_string();
     tauri::async_runtime::spawn(async move {

@@ -248,7 +248,7 @@ export async function handleSessionPreviewMockCommand(
                 ? {
                     kind: "person",
                     sessionId: target.sessionId,
-                    generation: target.generation,
+                    sessionGeneration: target.generation,
                   }
                 : { kind: "none" },
         }),

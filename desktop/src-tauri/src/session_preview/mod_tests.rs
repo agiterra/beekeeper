@@ -77,7 +77,7 @@ fn state_serializes_to_the_wire_shape() {
     assert_eq!(value["freezeFrame"], serde_json::Value::Null);
     assert_eq!(
         value["boundTo"],
-        serde_json::json!({"kind": "agent", "executionId": "exec-1", "sessionId": "S", "generation": 2})
+        serde_json::json!({"kind": "agent", "executionId": "exec-1", "sessionId": "S", "sessionGeneration": 2})
     );
 
     record.binding = Binding::Person {
@@ -88,7 +88,7 @@ fn state_serializes_to_the_wire_shape() {
     let value = serde_json::to_value(record.state()).expect("serialize");
     assert_eq!(
         value["boundTo"],
-        serde_json::json!({"kind": "person", "sessionId": "S", "generation": 4})
+        serde_json::json!({"kind": "person", "sessionId": "S", "sessionGeneration": 4})
     );
     assert_eq!(value["placement"], "popped_out");
     assert_eq!(value["status"], "closed_by_person");
@@ -98,6 +98,21 @@ fn state_serializes_to_the_wire_shape() {
     let value = serde_json::to_value(record.state()).expect("serialize");
     assert_eq!(value["boundTo"], serde_json::json!({"kind": "none"}));
     assert_eq!(value["placement"], "none");
+    assert_eq!(value["closedReason"], serde_json::Value::Null);
+}
+
+#[test]
+fn a_live_page_with_no_slot_is_hidden_not_none() {
+    let mut record = PreviewRecord::new("chan");
+    assert_eq!(record.placement(), PreviewPlacement::None);
+    record.has_view = true;
+    record.slot_window = Some("main".into());
+    assert_eq!(record.placement(), PreviewPlacement::Hidden);
+    let value = serde_json::to_value(record.state()).expect("serialize");
+    assert_eq!(value["placement"], "hidden");
+    record.closed_reason = Some(ClosedReason::IDLE_HIDDEN);
+    let value = serde_json::to_value(record.state()).expect("serialize");
+    assert_eq!(value["closedReason"]["code"], "idle_hidden");
 }
 
 #[test]

@@ -25,7 +25,15 @@ export type SessionPreviewStatus =
   | "closed_by_person"
   | "unavailable";
 
-export type SessionPreviewPlacement = "docked" | "popped_out" | "none";
+/**
+ * Where the page is drawn. `hidden`: a page is open but drawn nowhere (no
+ * Browser slot is mounted and it is not popped out); `none`: no page.
+ */
+export type SessionPreviewPlacement =
+  | "docked"
+  | "popped_out"
+  | "hidden"
+  | "none";
 
 /**
  * Who may drive the preview (WIRE-C4 § 9.8): `none` = undriveable until an
@@ -34,12 +42,13 @@ export type SessionPreviewPlacement = "docked" | "popped_out" | "none";
  */
 export type SessionPreviewBoundTo =
   | { kind: "none" }
-  | { kind: "person"; sessionId: string; generation: number }
+  | { kind: "person"; sessionId: string; sessionGeneration: number }
   | {
       kind: "agent";
       executionId: string;
       sessionId: string;
-      generation: number;
+      /** The bound session's provider generation, not the page's `generation`. */
+      sessionGeneration: number;
     };
 
 /** The agent op currently driving the preview, or null. */
@@ -75,6 +84,8 @@ export type SessionPreviewState = {
   driving: SessionPreviewDriving | null;
   dataStore: "per_session" | "incognito" | null;
   unavailable: { code: SessionPreviewUnavailableCode; sentence: string } | null;
+  /** Why the app (not the person) closed it, until it is opened again. */
+  closedReason?: { code: string; sentence: string } | null;
 };
 
 /** One listening loopback TCP server on this machine (lsof only: never contacted; `title` is always null). */

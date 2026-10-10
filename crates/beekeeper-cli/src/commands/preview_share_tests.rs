@@ -88,6 +88,7 @@ async fn share_without_a_relay_refuses_before_asking_the_broker() {
         grant: None,
         caller: None,
         cwd: dir.path().to_path_buf(),
+        snapshot_dir: dir.path().join("snapshots"),
         now_ms: 1,
     };
     let cmd = parse(&["snapshot", "--share"]).expect("parses");

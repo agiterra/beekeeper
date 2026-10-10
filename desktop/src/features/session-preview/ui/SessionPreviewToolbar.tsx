@@ -6,20 +6,26 @@ import {
   MoreHorizontal,
   PictureInPicture2,
   RotateCw,
+  Server,
   X,
 } from "lucide-react";
 
-import type { SessionPreviewState } from "@/shared/api/tauriSessionPreview";
+import type {
+  SessionPreviewServer,
+  SessionPreviewState,
+} from "@/shared/api/tauriSessionPreview";
 import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 
 import { sessionPreviewDisplayUrl } from "../lib/previewModel";
+import { sessionPreviewCurrentServer } from "../lib/previewTabModel";
 
 export type SessionPreviewToolbarActions = {
   onBack: () => void;
@@ -31,9 +37,20 @@ export type SessionPreviewToolbarActions = {
   onClose: () => void;
 };
 
+/** This computer's local servers, for the switcher (ledger 371(i)). */
+export type SessionPreviewToolbarServers = {
+  servers: readonly SessionPreviewServer[];
+  loading: boolean;
+  error: string | null;
+  /** The menu opened or closed: the list is read only while it is open. */
+  onOpenChange: (open: boolean) => void;
+  /** Navigate the open page to this server. */
+  onChoose: (server: SessionPreviewServer) => void;
+};
+
 /**
- * Back, forward, reload, the URL field, pop out and the overflow (float or
- * dock, close). A refused URL is shown under the field in the broker's own
+ * Back, forward, reload, the server switcher, the URL field, pop out and the
+ * overflow (float or dock, close). A refused URL is shown under the field in the broker's own
  * sentence (`preview_url_refused`), never swapped for a system-browser
  * handoff.
  */
@@ -41,13 +58,16 @@ export function SessionPreviewToolbar({
   actions,
   floating,
   refusal,
+  servers,
   state,
 }: {
   actions: SessionPreviewToolbarActions;
   floating: boolean;
   refusal: string | null;
+  servers: SessionPreviewToolbarServers;
   state: SessionPreviewState;
 }) {
+  const current = sessionPreviewCurrentServer(servers.servers, state.url);
   const shown = state.url ? sessionPreviewDisplayUrl(state.url) : "";
   const [draft, setDraft] = React.useState(shown);
   const [editing, setEditing] = React.useState(false);
@@ -90,6 +110,54 @@ export function SessionPreviewToolbar({
         >
           <RotateCw />
         </Button>
+        <DropdownMenu onOpenChange={servers.onOpenChange}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              aria-label="Switch to another local server"
+              data-testid="session-preview-servers-switch"
+              size="icon-xs"
+              variant="ghost"
+            >
+              <Server />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuLabel className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+              Local servers
+            </DropdownMenuLabel>
+            {servers.servers.map((server) => (
+              <DropdownMenuItem
+                data-current={server === current ? "true" : undefined}
+                data-testid="session-preview-servers-switch-item"
+                key={server.url}
+                onSelect={() => servers.onChoose(server)}
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-xs">
+                    {sessionPreviewDisplayUrl(server.url)}
+                    {server === current ? " · open now" : ""}
+                  </span>
+                  {server.process ? (
+                    <span className="truncate text-2xs text-muted-foreground">
+                      {server.process}
+                    </span>
+                  ) : null}
+                </span>
+              </DropdownMenuItem>
+            ))}
+            {servers.servers.length === 0 ? (
+              <DropdownMenuItem
+                data-testid="session-preview-servers-switch-empty"
+                disabled
+              >
+                {servers.error ??
+                  (servers.loading
+                    ? "Looking for servers on this computer…"
+                    : "No local server is listening on this computer.")}
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <form
           className="mx-1 min-w-0 flex-1"
           onSubmit={(event) => {

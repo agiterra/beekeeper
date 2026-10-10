@@ -1,5 +1,7 @@
 use super::*;
 
+use base64::Engine as _;
+
 use clap::{CommandFactory, Parser};
 
 /// `bee preview …` as its own parser, so the verb tree is tested without the
@@ -166,6 +168,94 @@ fn bad_invocations_are_input_errors() {
 }
 
 #[test]
+fn a_bare_step_word_asks_whether_the_flag_was_meant() {
+    for (word, flag) in [
+        ("reload", "--reload"),
+        ("back", "--back"),
+        ("Forward", "--forward"),
+        (" reload ", "--reload"),
+    ] {
+        let failure = action_for(&parse(&["navigate", word]).expect("parses"))
+            .expect_err("a step word is not a URL");
+        assert_eq!(failure.code, "preview_bad_request", "{word:?}");
+        assert_eq!(failure.exit_code(), 1);
+        assert!(
+            failure.error.contains(&format!("Did you mean `{flag}`?")),
+            "{word:?}: {}",
+            failure.error
+        );
+    }
+    // A URL that merely contains the word is still a URL.
+    assert_eq!(
+        action(&["navigate", "http://localhost:5173/reload"]),
+        json!({"verb": "navigate", "url": "http://localhost:5173/reload"})
+    );
+}
+
+#[test]
+fn open_and_navigate_wait_for_the_load_unless_told_not_to() {
+    let (_, open, open_timeout) =
+        action_for(&parse(&["open", "--port", "5173"]).expect("parses")).expect("builds");
+    assert_eq!(
+        open,
+        json!({"verb": "open", "port": 5173}),
+        "waiting is the default"
+    );
+    assert!(
+        open_timeout >= Duration::from_secs(12),
+        "outlasts the broker's load wait"
+    );
+    assert_eq!(
+        action(&["open", "--port", "5173", "--no-wait"]),
+        json!({"verb": "open", "port": 5173, "wait": false})
+    );
+    assert_eq!(
+        action(&["navigate", "--reload", "--no-wait"]),
+        json!({"verb": "navigate", "reload": true, "wait": false})
+    );
+}
+
+#[test]
+fn the_default_snapshot_dir_is_per_session_beside_the_broker_not_the_tree() {
+    use beekeeper_core::coding_session_command::CodingSessionTarget;
+    use beekeeper_core::preview_grant::{
+        mint_preview_grant, preview_grant_audience, PreviewGrantRequest,
+    };
+
+    let keys = nostr::Keys::generate();
+    let grant = mint_preview_grant(
+        &keys,
+        &PreviewGrantRequest {
+            channel_id: uuid::Uuid::nil(),
+            target: CodingSessionTarget {
+                driver: "claude".into(),
+                instance_id: "i".into(),
+                session_id: "sess/../01".into(),
+                generation: 2,
+            },
+            execution_id: "e".into(),
+            audience: preview_grant_audience(&keys.public_key()),
+            ttl_secs: 60,
+        },
+        1_790_000_000,
+    )
+    .expect("mint");
+    let socket = Path::new("/state/buzz/session-broker.sock");
+    assert_eq!(
+        snapshot::default_snapshot_dir(socket, Some(&grant)),
+        PathBuf::from("/state/buzz/preview-snapshots/sess_.._01")
+    );
+    assert_eq!(
+        snapshot::default_snapshot_dir(socket, None),
+        PathBuf::from("/state/buzz/preview-snapshots/unknown-session")
+    );
+    assert_eq!(snapshot::session_dir_name(".."), "unknown-session");
+    assert_eq!(snapshot::session_dir_name(""), "unknown-session");
+    // A relative socket never puts snapshots under the cwd.
+    assert!(snapshot::default_snapshot_dir(Path::new("b.sock"), None).is_absolute());
+}
+
+#[test]
 fn exit_codes_follow_the_wire_contract() {
     for (code, exit) in [
         ("preview_url_refused", 1),
@@ -250,6 +340,7 @@ mod live {
             grant: grant.map(str::to_owned),
             caller: None,
             cwd: dir.to_path_buf(),
+            snapshot_dir: dir.join("state/preview-snapshots/S"),
             now_ms: 1_790_000_000_123,
         }
     }
@@ -315,7 +406,7 @@ mod live {
     }
 
     #[test]
-    fn a_snapshot_lands_in_the_callers_tree_and_never_prints_base64() {
+    fn a_snapshot_lands_outside_the_tree_and_never_prints_base64() {
         let dir = tempfile::tempdir().expect("tempdir");
         let ctx = context(dir.path(), Some("bkpg1.token"));
         let png = [0x89u8, b'P', b'N', b'G', 1, 2, 3];
@@ -329,12 +420,13 @@ mod live {
         );
         let out = execute(&parse(&["snapshot"]).expect("parses"), &ctx).expect("ok");
         seen.join().expect("broker");
-        let png_path = dir
-            .path()
-            .join(".beekeeper/preview/snapshot-4-1790000000123.png");
-        let aria_path = dir
-            .path()
-            .join(".beekeeper/preview/snapshot-4-1790000000123.aria.yaml");
+        let png_path = ctx.snapshot_dir.join("snapshot-4-1790000000123.png");
+        let aria_path = ctx.snapshot_dir.join("snapshot-4-1790000000123.aria.yaml");
+        assert!(png_path.is_absolute());
+        assert!(
+            !dir.path().join(".beekeeper").exists(),
+            "nothing in the tree"
+        );
         assert_eq!(std::fs::read(&png_path).expect("png"), png);
         assert_eq!(
             std::fs::read_to_string(&aria_path).expect("aria"),

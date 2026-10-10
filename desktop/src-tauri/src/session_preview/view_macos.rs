@@ -49,6 +49,29 @@ fn rect(r: SlotRect) -> Rect {
     }
 }
 
+/// The size a page lays out at while it has never been placed: hidden
+/// pages are driven and snapshotted, so they need a real viewport, not 1×1.
+const HIDDEN_VIEWPORT: SlotRect = SlotRect {
+    x: 0.0,
+    y: 0.0,
+    width: 1280.0,
+    height: 800.0,
+};
+
+/// The window a view is built in: where the record places it, else the
+/// window its slot last lived in, else the main window (a hidden page still
+/// needs a parent view; it is not drawn there).
+fn build_host(app: &AppHandle, record: &PreviewRecord) -> Option<String> {
+    [
+        target_host(record),
+        record.slot_window.clone(),
+        Some("main".to_string()),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|label| app.get_webview_window(label).is_some())
+}
+
 /// The window the record says the view belongs in, if any.
 fn target_host(record: &PreviewRecord) -> Option<String> {
     if record.popped {
@@ -173,6 +196,7 @@ fn reset_closed(record: &mut PreviewRecord) {
     record.can_go_forward = false;
     record.freeze_frame = None;
     record.driving = None;
+    record.ever_shown = false;
 }
 
 fn drop_view(channel_id: &str) {
@@ -258,7 +282,10 @@ fn apply_now(app: &AppHandle, channel_id: &str) {
         Some(show)
     });
     if let Some(visible) = visible {
-        with_record(channel_id, |record| record.hidden = !visible);
+        with_record(channel_id, |record| {
+            record.hidden = !visible;
+            record.ever_shown |= visible;
+        });
     }
 }
 
@@ -301,7 +328,7 @@ fn page_load(app: &AppHandle, channel_id: &str, event: PageLoadEvent, url: Strin
 
 fn build(app: &AppHandle, channel_id: &str) -> Result<(), String> {
     let record = with_record(channel_id, |record| record.clone());
-    let host = target_host(&record).ok_or("there is no window to show the preview in")?;
+    let host = build_host(app, &record).ok_or("there is no window to host the preview in")?;
     let window = app
         .get_webview_window(&host)
         .ok_or_else(|| format!("window {host} is gone"))?;
@@ -320,12 +347,7 @@ fn build(app: &AppHandle, channel_id: &str) -> Result<(), String> {
     let builder = WebViewBuilder::new()
         .with_visible(false)
         .with_focused(false)
-        .with_bounds(rect(SlotRect {
-            x: 0.0,
-            y: 0.0,
-            width: 1.0,
-            height: 1.0,
-        }))
+        .with_bounds(rect(HIDDEN_VIEWPORT))
         .with_devtools(tauri::is_dev())
         .with_back_forward_navigation_gestures(true)
         .with_user_agent(user_agent())
@@ -390,8 +412,21 @@ pub async fn open(
             record.popped || record.slot.is_none() || record.slot_window.is_none(),
         )
     });
-    if unplaced {
-        // Never headless: with no slot to dock into, it pops out.
+    let popped = with_record(channel_id, |record| record.popped);
+    if unplaced && agent {
+        // An agent never pops a window (ledger 371(c)): a person-chosen
+        // pop-out stays where it is; otherwise the page opens hidden and the
+        // session's view is asked to show its Browser tab. If no view of the
+        // session is on screen it stays hidden, and says so (placement
+        // `hidden`, the Browser tab's badge).
+        if popped {
+            ensure_popout_window(app, channel_id).await?;
+        } else {
+            let payload = json!({ "channelId": channel_id, "url": url.as_str() });
+            let _ = app.emit(OPEN_REQUESTED_EVENT, payload);
+        }
+    } else if unplaced {
+        // The person opened it with no slot to dock into: it pops out.
         with_record(channel_id, |record| {
             if !record.popped {
                 record.popped = true;
@@ -399,10 +434,6 @@ pub async fn open(
             }
         });
         ensure_popout_window(app, channel_id).await?;
-        if agent {
-            let payload = json!({ "channelId": channel_id, "url": url.as_str() });
-            let _ = app.emit(OPEN_REQUESTED_EVENT, payload);
-        }
     }
     if !has_view {
         if let Err(error) = ensure_rule_list(app).await {
@@ -427,6 +458,7 @@ pub async fn open(
     with_record(channel_id, |record| {
         record.status = PreviewStatus::Loading;
         record.unavailable = None;
+        record.closed_reason = None;
         record.url = Some(url.to_string());
     });
     let channel = channel_id.to_string();
@@ -478,6 +510,7 @@ pub async fn close(
 ) -> Result<PreviewState, PreviewError> {
     with_record(channel_id, |record| {
         reset_closed(record);
+        record.closed_reason = None;
         record.status = if by_person {
             PreviewStatus::ClosedByPerson
         } else {

@@ -14,14 +14,14 @@
 //! refusal prints `{"ok":false,"code":…,"error":<sentence>}` on stderr with
 //! stdout empty. Exit codes: 0 ok; 1 input; 2 no browser on this machine;
 //! 3 any grant refusal; 4 everything else. A snapshot's PNG and aria text are
-//! written by this process, into its own working tree: the desktop never
-//! writes into a seat's tree.
+//! written by this process, by default into a per-session directory beside
+//! the broker socket in the app's state dir — never into the working tree,
+//! where they would show up in the Diff and in rewinds (`preview_snapshot`).
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use base64::Engine as _;
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{json, Map, Value};
 
@@ -35,9 +35,6 @@ const DEFAULT_SOCKET_REL: &str = ".local/state/buzz/session-broker.sock";
 pub const NO_BROWSER_SENTENCE: &str =
     "No browser on this machine: the Beekeeper app is not running where this agent runs.";
 
-/// Where a snapshot lands when `--out` is not given, relative to the cwd.
-const DEFAULT_SNAPSHOT_DIR: &str = ".beekeeper/preview";
-
 /// The broker refuses request lines above this; refusing here first says so
 /// without a round trip.
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
@@ -47,6 +44,13 @@ const MAX_RESPONSE_BYTES: u64 = 6 * 1024 * 1024 + 1024;
 
 /// Driver ops default to 10 s at the broker; the socket outlasts that by 5 s.
 const OP_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// `open` and `navigate` wait up to 10 s for the load at the broker, then
+/// up to 1.5 s for the page to be shown; the socket outlasts both.
+const NAVIGATE_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// Bare words `navigate` is often given in place of its step flags.
+const NAVIGATE_STEPS: [&str; 3] = ["back", "forward", "reload"];
 
 /// `wait_for` may run up to 30 s at the broker.
 const MAX_WAIT_MS: u64 = 30_000;
@@ -59,8 +63,10 @@ const DEFAULT_WAIT_MS: u64 = 5_000;
 pub enum PreviewCmd {
     /// Report the preview's state (works with no preview open).
     Status,
-    /// Open the preview at a local URL or port, docked in the session's
-    /// Browser surface if it is mounted, else popped out. Never headless.
+    /// Open the preview at a local URL or port and wait for it to load. It
+    /// docks in the session's Browser tab when the session is on screen;
+    /// otherwise it opens hidden (`placement: "hidden"`) and the person can
+    /// show it from that tab. It never opens a window of its own.
     Open {
         /// A local URL: http(s) on localhost, 127.0.0.1 or [::1].
         #[arg(long, conflicts_with = "port", required_unless_present = "port")]
@@ -68,6 +74,9 @@ pub enum PreviewCmd {
         /// A local port; resolves to the listening server's URL.
         #[arg(long)]
         port: Option<u16>,
+        /// Answer once the navigation starts, without waiting for the load.
+        #[arg(long)]
+        no_wait: bool,
     },
     /// Navigate the open preview: a local URL, or back, forward or reload.
     Navigate {
@@ -84,9 +93,14 @@ pub enum PreviewCmd {
         /// Reload the page.
         #[arg(long)]
         reload: bool,
+        /// Answer once the navigation starts, without waiting for the load.
+        #[arg(long)]
+        no_wait: bool,
     },
-    /// Capture the page: aria snapshot text and a PNG, written into this
-    /// working tree (default `./.beekeeper/preview/`).
+    /// Capture the page: aria snapshot text and a PNG, written by default to
+    /// a per-session directory in the app's state dir (the result prints the
+    /// absolute paths), never into this working tree. `loading: true` says
+    /// the page had not finished loading.
     Snapshot {
         /// Where to write the PNG; the aria text goes beside it as
         /// `<name>.aria.yaml`.
@@ -431,6 +445,8 @@ pub struct PreviewContext {
     pub caller: Option<String>,
     /// The directory a relative snapshot path is resolved against.
     pub cwd: PathBuf,
+    /// Where a snapshot lands without `--out`: absolute, outside the tree.
+    pub snapshot_dir: PathBuf,
     /// Unix milliseconds, for the default snapshot file name.
     pub now_ms: u128,
 }
@@ -457,11 +473,13 @@ impl PreviewContext {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_millis())
             .unwrap_or_default();
+        let snapshot_dir = snapshot::default_snapshot_dir(&socket, grant.as_deref());
         Ok(Self {
             socket,
             grant,
             caller,
             cwd,
+            snapshot_dir,
             now_ms,
         })
     }
@@ -549,7 +567,10 @@ pub fn action_for(cmd: &PreviewCmd) -> Result<(&'static str, Value, Duration), P
             PreviewCmd::Status => ("status", OP_TIMEOUT),
             PreviewCmd::Servers => ("servers", OP_TIMEOUT),
             PreviewCmd::Close => ("close", OP_TIMEOUT),
-            PreviewCmd::Open { url, port } => {
+            PreviewCmd::Open { url, port, no_wait } => {
+                if *no_wait {
+                    action.insert("wait".into(), json!(false));
+                }
                 match (url, port) {
                     (Some(url), _) => action.insert("url".into(), json!(url)),
                     (None, Some(port)) => action.insert("port".into(), json!(port)),
@@ -560,14 +581,27 @@ pub fn action_for(cmd: &PreviewCmd) -> Result<(&'static str, Value, Duration), P
                         ))
                     }
                 };
-                ("open", OP_TIMEOUT)
+                ("open", NAVIGATE_TIMEOUT)
             }
             PreviewCmd::Navigate {
                 url,
                 back,
                 forward,
                 reload,
+                no_wait,
             } => {
+                if let Some(step) = url.as_deref().and_then(navigate_step) {
+                    return Err(PreviewFailure::new(
+                        "preview_bad_request",
+                        format!(
+                            "`bee preview navigate {step}` reads {step:?} as a URL. \
+                             Did you mean `--{step}`?"
+                        ),
+                    ));
+                }
+                if *no_wait {
+                    action.insert("wait".into(), json!(false));
+                }
                 match (url, back, forward, reload) {
                     (Some(url), false, false, false) => action.insert("url".into(), json!(url)),
                     (None, true, false, false) => action.insert("back".into(), json!(true)),
@@ -578,7 +612,7 @@ pub fn action_for(cmd: &PreviewCmd) -> Result<(&'static str, Value, Duration), P
                         "`bee preview navigate` takes one of <url>, --back, --forward, --reload",
                     )),
                 };
-                ("navigate", OP_TIMEOUT)
+                ("navigate", NAVIGATE_TIMEOUT)
             }
             PreviewCmd::Snapshot { no_image, .. } => {
                 action.insert("image".into(), json!(!no_image));
@@ -725,7 +759,7 @@ pub fn execute(cmd: &PreviewCmd, context: &PreviewContext) -> Result<Value, Prev
         }
     };
     if let PreviewCmd::Snapshot { out, .. } = cmd {
-        write_snapshot(&mut result, out.as_deref(), context)?;
+        snapshot::write_snapshot(&mut result, out.as_deref(), context)?;
     }
     // The CLI's display name for the verb: what was typed, not the wire name.
     let shown = if verb == "wait_for" { "wait-for" } else { verb };
@@ -738,61 +772,6 @@ pub fn execute(cmd: &PreviewCmd, context: &PreviewContext) -> Result<Value, Prev
         }
     }
     Ok(Value::Object(output))
-}
-
-/// Decode the snapshot's PNG (never printed) and write it and the aria text
-/// into the caller's tree, replacing `png.base64` with the paths.
-fn write_snapshot(
-    result: &mut Map<String, Value>,
-    out: Option<&Path>,
-    context: &PreviewContext,
-) -> Result<(), PreviewFailure> {
-    let generation = result
-        .get("generation")
-        .and_then(Value::as_u64)
-        .unwrap_or_default();
-    let png_path = match out {
-        Some(out) if out.is_absolute() => out.to_path_buf(),
-        Some(out) => context.cwd.join(out),
-        None => context
-            .cwd
-            .join(DEFAULT_SNAPSHOT_DIR)
-            .join(format!("snapshot-{generation}-{}.png", context.now_ms)),
-    };
-    let aria_path = png_path.with_extension("aria.yaml");
-    let io = |path: &Path, error: std::io::Error| {
-        PreviewFailure::new(
-            "preview_io_error",
-            format!("cannot write {}: {error}", path.display()),
-        )
-    };
-    if let Some(parent) = png_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| io(parent, error))?;
-    }
-
-    let mut written_png = None;
-    if let Some(Value::Object(png)) = result.get_mut("png") {
-        if let Some(Value::String(encoded)) = png.remove("base64") {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(encoded.as_bytes())
-                .map_err(|error| {
-                    PreviewFailure::new(
-                        "preview_bad_response",
-                        format!("the snapshot's PNG is not base64: {error}"),
-                    )
-                })?;
-            std::fs::write(&png_path, &bytes).map_err(|error| io(&png_path, error))?;
-            written_png = Some(png_path.clone());
-        }
-    }
-    let aria = result.get("aria").and_then(Value::as_str).unwrap_or("");
-    std::fs::write(&aria_path, aria).map_err(|error| io(&aria_path, error))?;
-    result.insert(
-        "pngPath".into(),
-        written_png.map_or(Value::Null, |path| json!(path.display().to_string())),
-    );
-    result.insert("ariaPath".into(), json!(aria_path.display().to_string()));
-    Ok(())
 }
 
 /// One request/response round trip with the broker.
@@ -892,6 +871,19 @@ pub fn parse_response(line: &str) -> Result<Value, PreviewFailure> {
         .unwrap_or("preview_unavailable");
     Err(PreviewFailure::new(code, error))
 }
+
+/// The step a bare `navigate` word names (`reload`, any case), when it is
+/// one: the person meant the flag, not a URL.
+pub fn navigate_step(url: &str) -> Option<&'static str> {
+    let word = url.trim();
+    NAVIGATE_STEPS
+        .into_iter()
+        .find(|step| step.eq_ignore_ascii_case(word))
+}
+
+/// Where snapshots are written.
+#[path = "preview_snapshot.rs"]
+mod snapshot;
 
 /// `snapshot --share`: publish the snapshot as a kind 44253.
 #[path = "preview_share.rs"]

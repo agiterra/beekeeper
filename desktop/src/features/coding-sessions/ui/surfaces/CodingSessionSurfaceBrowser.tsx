@@ -10,8 +10,9 @@ import {
   SessionPreviewRemoteView,
   useSessionPreviewRemoteRead,
 } from "@/features/session-preview/ui/SessionPreviewRemoteView";
+import { useSessionPreviewBrowserTab } from "@/features/session-preview/hooks/useSessionPreviewBrowserTab";
+import { SessionPreviewHiddenBadge } from "@/features/session-preview/ui/SessionPreviewHiddenBadge";
 import { SessionPreviewSurface } from "@/features/session-preview/ui/SessionPreviewSurface";
-import { listenSessionPreview } from "@/shared/api/tauriSessionPreview";
 import { isMacPlatform } from "@/shared/lib/platform";
 
 import type {
@@ -171,36 +172,20 @@ export function CodingSessionSurfaceBrowserPanel({
 }
 
 /**
- * An agent's `bee preview open` with no Browser slot mounted: Rust has popped
- * the preview out; this offers the Browser tab as the view's own move
- * (`openProactive`, refused once the person has arranged the panels), so the
- * person can bring it back beside the session. Returns nothing.
+ * The preview's tie to this view's Browser tab (`useSessionPreviewBrowserTab`):
+ * an agent's open-request shows the tab instead of popping a window, and the
+ * person closing the tab closes the page. Returns nothing.
  */
 export function useCodingSessionBrowserOpenRequests(
   ctx: CodingSessionSurfaceBaseCtx,
 ): null {
-  const { channelId } = ctx;
-  // The panel actions object may be fresh each render; subscribe once per
-  // channel and call whatever the latest one is.
-  const openRef = React.useRef(ctx.panels.openProactive);
-  openRef.current = ctx.panels.openProactive;
-  React.useEffect(() => {
-    if (!channelId) return;
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    void listenSessionPreview(channelId, {
-      onOpenRequested: () => openRef.current?.(["browser"], "browser"),
-    })
-      .then((stop) => {
-        if (cancelled) stop();
-        else unlisten = stop;
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [channelId]);
+  useSessionPreviewBrowserTab({
+    channelId: ctx.channelId,
+    sessionKey: ctx.sessionKey,
+    lens: ctx.lens,
+    panelState: ctx.panelState,
+    panels: ctx.panels,
+  });
   return null;
 }
 
@@ -228,6 +213,9 @@ export const codingSessionSurfaceBrowser: CodingSessionSurfaceDefinition = {
   placement: "right",
   lenses: ["conversation", "mission"],
   availability: (ctx) => codingSessionSurfaceBrowserAvailability(ctx),
+  Badge: ({ ctx, slot }) => (
+    <SessionPreviewHiddenBadge channelId={ctx.channelId} slot={slot} />
+  ),
   Panel: CodingSessionSurfaceBrowserPanel,
   readExtension: useCodingSessionBrowserExtension,
 };

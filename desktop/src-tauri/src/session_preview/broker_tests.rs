@@ -241,9 +241,18 @@ fn actions_parse_from_the_wire_shape() {
         parse(json!({"verb": "open", "port": 5173})).expect("open"),
         PreviewAction::Open {
             url: None,
-            port: Some(5173)
+            port: Some(5173),
+            wait: None,
         }
     );
+    assert!(matches!(
+        parse(json!({"verb": "navigate", "reload": true, "wait": false})),
+        Ok(PreviewAction::Navigate {
+            reload: true,
+            wait: Some(false),
+            ..
+        })
+    ));
     assert_eq!(
         parse(
             json!({"verb": "click", "target": {"role": "button", "name": "Save"}, "clickCount": 2})
@@ -304,4 +313,52 @@ async fn a_successful_op_records_activity_after_it_runs() {
     .await;
     assert_eq!(done.ok(), Some(7));
     assert_eq!(noted_after_run, Some(true));
+}
+
+#[test]
+fn a_navigation_that_never_started_is_a_timeout_and_a_slow_one_is_not() {
+    use super::{arrival_check, arrival_note, Arrival};
+    // Not started yet, time left: keep waiting.
+    assert!(arrival_check(3, 3, PreviewStatus::Loading, true, false).is_none());
+    // Never started: it did not get there.
+    let refused = arrival_check(3, 3, PreviewStatus::Ready, true, true)
+        .expect("decided")
+        .expect_err("timeout");
+    assert_eq!(refused.code, "preview_timeout");
+    // Started and loaded.
+    assert_eq!(
+        arrival_check(3, 4, PreviewStatus::Ready, true, false).map(|r| r.ok()),
+        Some(Some(Arrival::Loaded))
+    );
+    // Started, still loading, waiting: keep waiting, then answer honestly.
+    assert!(arrival_check(3, 4, PreviewStatus::Loading, true, false).is_none());
+    assert_eq!(
+        arrival_check(3, 4, PreviewStatus::Loading, true, true).map(|r| r.ok()),
+        Some(Some(Arrival::StillLoading))
+    );
+    // --no-wait answers as soon as it started.
+    assert_eq!(
+        arrival_check(3, 4, PreviewStatus::Loading, false, false).map(|r| r.ok()),
+        Some(Some(Arrival::Started))
+    );
+    // Closed under it: not open.
+    let closed = arrival_check(3, 3, PreviewStatus::ClosedByPerson, true, false)
+        .expect("decided")
+        .expect_err("closed");
+    assert_eq!(closed.code, "preview_not_open");
+    assert!(arrival_note(Arrival::Loaded).is_none());
+    assert!(arrival_note(Arrival::StillLoading)
+        .is_some_and(|note| note.contains("may still be loading")));
+}
+
+#[test]
+fn a_snapshot_of_a_page_still_loading_says_so() {
+    use super::snapshot_loading;
+    assert!(!snapshot_loading(Some("complete"), PreviewStatus::Ready));
+    assert!(snapshot_loading(Some("interactive"), PreviewStatus::Ready));
+    assert!(snapshot_loading(Some("loading"), PreviewStatus::Ready));
+    assert!(snapshot_loading(Some("complete"), PreviewStatus::Loading));
+    // An older driver reports no readyState: the load state decides.
+    assert!(!snapshot_loading(None, PreviewStatus::Ready));
+    assert!(snapshot_loading(None, PreviewStatus::Loading));
 }

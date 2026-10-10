@@ -37,6 +37,7 @@ pub mod broker;
 pub mod commands;
 pub mod driver;
 pub mod geometry;
+pub mod idle;
 pub mod policy;
 pub mod ports;
 pub mod view;
@@ -72,6 +73,13 @@ pub const OPEN_REQUESTED_EVENT: &str = "session-preview://open-requested";
 /// Seconds after an agent's last op before it no longer counts as driving.
 pub const DRIVING_LINGER_SECS: u64 = 10;
 
+/// How long a page an agent opened may stay alive, hidden, with no person
+/// ever having seen it and no agent op on it, before it is closed (ledger
+/// 371(d)). A hidden page holds a dev server's sockets and a WebKit process;
+/// one nobody looks at and nobody drives is a leak, not a feature. The state
+/// says why it closed ([`ClosedReason::IDLE_HIDDEN`]).
+pub const AGENT_HIDDEN_IDLE_SECS: u64 = 30 * 60;
+
 /// Lifecycle of one session's preview.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -97,7 +105,11 @@ pub enum PreviewPlacement {
     Docked,
     /// In its own `session-preview-<channelId>` window.
     PoppedOut,
-    /// Not drawn: no slot is mounted and it is not popped out.
+    /// Alive but not drawn: a page is open, no Browser slot is mounted and it
+    /// is not popped out. Agents can still drive and snapshot it; the person
+    /// is told it exists (the Browser tab's badge and the surface's notice).
+    Hidden,
+    /// No page: nothing to draw.
     None,
 }
 
@@ -142,8 +154,11 @@ pub enum BoundTo {
     Person {
         /// Bound session id.
         session_id: String,
-        /// Bound generation.
-        generation: u64,
+        /// The bound provider session's generation
+        /// (`CodingSessionTarget::generation`: bumps when the provider
+        /// restarts the session). Unrelated to [`PreviewState::generation`],
+        /// the page's navigation count, so it is named for what it is.
+        session_generation: u64,
     },
     /// Agent-opened.
     #[serde(rename_all = "camelCase")]
@@ -152,8 +167,9 @@ pub enum BoundTo {
         execution_id: String,
         /// Bound session id.
         session_id: String,
-        /// Bound generation.
-        generation: u64,
+        /// The bound provider session's generation; see
+        /// [`BoundTo::Person::session_generation`].
+        session_generation: u64,
     },
 }
 
@@ -163,7 +179,7 @@ impl From<&Binding> for BoundTo {
             Binding::None => BoundTo::None,
             Binding::Person { target } => BoundTo::Person {
                 session_id: target.session_id.clone(),
-                generation: target.generation,
+                session_generation: target.generation,
             },
             Binding::Agent {
                 target,
@@ -171,7 +187,7 @@ impl From<&Binding> for BoundTo {
             } => BoundTo::Agent {
                 execution_id: execution_id.clone(),
                 session_id: target.session_id.clone(),
-                generation: target.generation,
+                session_generation: target.generation,
             },
         }
     }
@@ -216,6 +232,25 @@ impl Unavailable {
     pub const WEBVIEW_FAILED: Unavailable = Unavailable {
         code: "webview_failed",
         sentence: "The Browser could not start a web view on this computer.",
+    };
+}
+
+/// Why the app (not the person) closed a preview, as `{code, sentence}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ClosedReason {
+    /// Stable code.
+    pub code: &'static str,
+    /// The sentence the UI and `bee preview status` show.
+    pub sentence: &'static str,
+}
+
+impl ClosedReason {
+    /// An agent opened it, nobody ever showed it, and it sat idle for
+    /// [`AGENT_HIDDEN_IDLE_SECS`].
+    pub const IDLE_HIDDEN: ClosedReason = ClosedReason {
+        code: "idle_hidden",
+        sentence: "Closed after 30 minutes idle: an agent opened it, no one showed it, \
+                   and nothing drove it since.",
     };
 }
 
@@ -286,7 +321,8 @@ pub struct PreviewRecord {
     pub url: Option<String>,
     /// Document title.
     pub title: Option<String>,
-    /// Committed top-level navigations so far; stamps refs.
+    /// Navigation generation: top-level navigations started so far. Stamps
+    /// snapshot refs (`e12@g3`); not the session's generation.
     pub generation: u64,
     /// History state, read after each navigation event.
     pub can_go_back: bool,
@@ -323,6 +359,15 @@ pub struct PreviewRecord {
     pub unavailable: Option<Unavailable>,
     /// A native view exists for it.
     pub has_view: bool,
+    /// The view has been drawn on screen (docked or popped out) since it
+    /// opened. Only a page nobody has seen is closed for idleness.
+    pub ever_shown: bool,
+    /// Unix seconds of the last agent `open` or op, for the idle close.
+    pub last_agent_activity: u64,
+    /// An idle watcher task is running for this channel.
+    pub idle_watch: bool,
+    /// Why the app closed it, until it is opened again.
+    pub closed_reason: Option<ClosedReason>,
 }
 
 impl PreviewRecord {
@@ -350,7 +395,21 @@ impl PreviewRecord {
             data_store: "per_session",
             unavailable: None,
             has_view: false,
+            ever_shown: false,
+            last_agent_activity: 0,
+            idle_watch: false,
+            closed_reason: None,
         }
+    }
+
+    /// Whether an agent-opened page nobody has seen has sat idle for
+    /// [`AGENT_HIDDEN_IDLE_SECS`] at unix time `now`.
+    pub fn idle_close_due(&self, now: u64) -> bool {
+        self.has_view
+            && !self.ever_shown
+            && matches!(self.binding, Binding::Agent { .. })
+            && self.placement() == PreviewPlacement::Hidden
+            && now.saturating_sub(self.last_agent_activity) >= AGENT_HIDDEN_IDLE_SECS
     }
 
     /// Where the view is drawn right now.
@@ -362,7 +421,7 @@ impl PreviewRecord {
         } else if self.slot.is_some() && self.slot_window.is_some() {
             PreviewPlacement::Docked
         } else {
-            PreviewPlacement::None
+            PreviewPlacement::Hidden
         }
     }
 
@@ -384,6 +443,7 @@ impl PreviewRecord {
             driving: self.driving.clone(),
             data_store: self.data_store,
             unavailable: self.unavailable.clone(),
+            closed_reason: self.closed_reason.clone(),
         }
     }
 }
@@ -400,7 +460,8 @@ pub struct PreviewState {
     pub url: Option<String>,
     /// Title.
     pub title: Option<String>,
-    /// Navigation generation.
+    /// Navigation generation: top-level navigations started on this page so
+    /// far (stamps refs). `boundTo.sessionGeneration` is the session's.
     pub generation: u64,
     /// History.
     pub can_go_back: bool,
@@ -422,6 +483,8 @@ pub struct PreviewState {
     pub data_store: &'static str,
     /// Unavailable reason.
     pub unavailable: Option<Unavailable>,
+    /// Why the app closed it, when it did (not the person).
+    pub closed_reason: Option<ClosedReason>,
 }
 
 static REGISTRY: Mutex<Option<HashMap<String, PreviewRecord>>> = Mutex::new(None);

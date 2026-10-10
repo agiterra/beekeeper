@@ -587,7 +587,10 @@ globalThis.__beekeeperPreviewDriverFactory = (createInjected) => {
 
   const snapshot = (op) => {
     const root = document.body || document.documentElement;
-    if (!root) return { ok: true, aria: "", title: document.title };
+    // readyState travels with every snapshot: a capture of a page that has
+    // not finished loading must say so (ledger 371(e)).
+    const readyState = document.readyState;
+    if (!root) return { ok: true, aria: "", title: document.title, readyState };
     const yaml = pw().ariaSnapshot(root, { mode: "ai" });
     snapshotUrl = location.href;
     // Stamp refs with the navigation generation they belong to.
@@ -595,7 +598,7 @@ globalThis.__beekeeperPreviewDriverFactory = (createInjected) => {
       /\[ref=((?:f\d+)?e\d+)\]/g,
       (_, ref) => `[ref=${ref}@g${op.generation}]`,
     );
-    return { ok: true, aria, title: document.title };
+    return { ok: true, aria, title: document.title, readyState };
   };
 
   const VERBS = { click, type, press, scroll, check, snapshot };

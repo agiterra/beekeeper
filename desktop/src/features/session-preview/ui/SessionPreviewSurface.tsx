@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ExternalLink, PictureInPicture2 } from "lucide-react";
+import { EyeOff, ExternalLink, PictureInPicture2 } from "lucide-react";
 
 import {
   type SessionPreviewState,
@@ -36,6 +36,7 @@ import {
   readSessionPreviewRecents,
   rememberSessionPreviewRecent,
 } from "../lib/previewRecents";
+import { sessionPreviewHiddenNotice } from "../lib/previewTabModel";
 import { SessionPreviewEmptyState } from "./SessionPreviewEmptyState";
 import { SessionPreviewFloating } from "./SessionPreviewFloating";
 import { SessionPreviewShareStrip } from "./SessionPreviewShareStrip";
@@ -92,6 +93,7 @@ export function SessionPreviewSurface({
   const [refusal, setRefusal] = React.useState<string | null>(null);
   const [floatBox, setFloatBox] = React.useState<PreviewFloatBox | null>(null);
   const [recents, setRecents] = React.useState(readSessionPreviewRecents);
+  const [serverMenuOpen, setServerMenuOpen] = React.useState(false);
 
   const binding = sessionPreviewBinding({
     options,
@@ -109,7 +111,11 @@ export function SessionPreviewSurface({
     channelId,
     enabled: state !== null && state.status !== "unavailable",
   });
-  const servers = useSessionPreviewServers(!open && state !== null);
+  // The server list is read while the empty state shows it, and while the
+  // open toolbar's switcher menu is open (ledger 371(i)).
+  const servers = useSessionPreviewServers(
+    state !== null && (!open || serverMenuOpen),
+  );
 
   const run = React.useCallback(
     (action: () => Promise<SessionPreviewState>) => {
@@ -203,7 +209,7 @@ export function SessionPreviewSurface({
             closedNote={
               state.status === "closed_by_person"
                 ? SESSION_PREVIEW_CLOSED_LABEL
-                : null
+                : (state.closedReason?.sentence ?? null)
             }
             onChoose={setChosen}
             onOpen={navigate}
@@ -255,10 +261,55 @@ export function SessionPreviewSurface({
       }}
       floating={floating}
       refusal={refusal}
+      servers={{
+        servers: servers.servers,
+        loading: servers.loading,
+        error: servers.error,
+        onOpenChange: setServerMenuOpen,
+        onChoose: (server) => navigate(server.url, server.title),
+      }}
       state={state}
     />
   );
-  const live = <SessionPreviewSlot control={slot} state={state} />;
+  const hiddenNotice = sessionPreviewHiddenNotice(state);
+  const live = (
+    <>
+      {hiddenNotice ? (
+        <div
+          className="flex shrink-0 items-center gap-2 border-b border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground"
+          data-testid="session-preview-hidden"
+          role="status"
+        >
+          <EyeOff aria-hidden className="size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 truncate">{hiddenNotice}</span>
+          <Button
+            data-testid="session-preview-hidden-show"
+            onClick={() =>
+              setFloatBox(
+                defaultPreviewFloatBox({
+                  width: window.innerWidth,
+                  height: window.innerHeight,
+                }),
+              )
+            }
+            size="xs"
+            variant="outline"
+          >
+            Show
+          </Button>
+          <Button
+            data-testid="session-preview-hidden-close"
+            onClick={() => run(() => sessionPreviewClose(channelId))}
+            size="xs"
+            variant="ghost"
+          >
+            Close
+          </Button>
+        </div>
+      ) : null}
+      <SessionPreviewSlot control={slot} state={state} />
+    </>
+  );
 
   return (
     <div
