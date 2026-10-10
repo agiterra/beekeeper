@@ -95,7 +95,9 @@ sig       Schnorr signature
 
 Beekeeper extends the standard Nostr event format with custom kind numbers for enterprise features.
 
-New message type? New kind integer. Zero breaking changes.
+Beekeeper-owned message types use distinct kind integers. Application-defined
+data uses kind 50000 with a namespaced type tag and versioned JSON envelope;
+the relay validates its envelope but does not interpret or execute the data.
 
 ---
 
