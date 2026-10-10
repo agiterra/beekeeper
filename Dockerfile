@@ -186,16 +186,16 @@ EXPOSE 3000 8080 9102
 # deploy/compose mounts a volume here; pre-created so it inherits buzz:buzz.
 RUN mkdir -p /data/git && chown buzz:buzz /data/git
 
-USER buzz:buzz
-WORKDIR /var/lib/buzz
-
 # The pre-rename names, as links to the current binaries. Hand-managed scripts
 # on deployed hosts call them (hive's run.sh calls /usr/local/bin/buzz-admin),
 # and a compose file may name buzz-relay as its command. Remove once no
-# deployment does.
+# deployment does. Created before USER: /usr/local/bin is root's.
 RUN ln -s beekeeper-relay /usr/local/bin/buzz-relay \
     && ln -s beekeeper-admin /usr/local/bin/buzz-admin \
     && ln -s beekeeper-pair-relay /usr/local/bin/buzz-pair-relay
+
+USER buzz:buzz
+WORKDIR /var/lib/buzz
 
 ENTRYPOINT ["/usr/local/bin/beekeeper-relay"]
 
