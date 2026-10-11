@@ -86,7 +86,7 @@ pub const SESSION_REWOUND_STATUS: &str = "session_rewound";
 pub const CONTEXT_NOT_RECOVERED: &str = "CONTEXT_NOT_RECOVERED";
 /// A create named a genesis event that could not be resolved and verified.
 pub const GENESIS_NOT_FOUND: &str = "GENESIS_NOT_FOUND";
-/// A create named an `actor` without a `role`, or a `role` without an `actor`.
+/// A create named a `role` without an `actor`, or a null seat identity.
 ///
 /// The two are a pair: an agent seat is a pubkey *and* the role it holds, and
 /// half of one describes nothing a consumer can render or a provider can seat.

@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { showAgentProfileSyncWarning } from "@/features/agents/ui/agentProfileSyncWarning";
 
 import { personaManagedAgentUpdate } from "@/features/profile/ui/UserProfilePanelUtils";
 import type {
@@ -96,9 +97,7 @@ export async function submitProfilePersonaDialog({
         : null;
       const result = agentUpdate ? await updateManagedAgent(agentUpdate) : null;
       if (result?.profileSyncError) {
-        toast.warning(
-          `${result.agent.name} was updated, but profile sync failed: ${result.profileSyncError}`,
-        );
+        showAgentProfileSyncWarning(result.agent.name, result.profileSyncError);
       }
       toast.success(`Updated ${input.displayName}.`);
     } else {

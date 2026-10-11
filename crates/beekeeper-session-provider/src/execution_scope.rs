@@ -2101,6 +2101,7 @@ fn resolve_env(
 /// The launch facts a provider path has in hand, before the scope exists.
 pub(crate) struct LaunchFacts<'a> {
     pub session_id: &'a str,
+    pub runtime_instance: &'a str,
     pub project_ref: Option<&'a str>,
     /// How the host ties `cwd` to `project_ref` ([`WorkspaceAssociation`]).
     pub association: WorkspaceAssociation,
@@ -2215,6 +2216,8 @@ pub(crate) fn execution_plan_for(
     // work for all, and relay commands still need the identity only a
     // seat is given.
     let bee = crate::seat_bee::host_seat_bee().map(|(bee, _)| bee.path.clone());
+    let runtime_roots =
+        crate::runtime_installations::roots(&config.state_dir, facts.runtime_instance, facts.cwd)?;
     let mut inputs = ScopeInputs::new(
         ScopePurpose::Session,
         &config.state_dir,
@@ -2229,6 +2232,7 @@ pub(crate) fn execution_plan_for(
     inputs.runtime = config
         .runtime_profile_override
         .unwrap_or_else(|| RuntimeProfile::for_driver(facts.driver));
+    inputs.runtime_roots = &runtime_roots;
     inputs.agent_command = facts.agent_command;
     inputs.agent_args = facts.agent_args;
     inputs.agent_env = facts.agent_env;
@@ -2304,7 +2308,8 @@ pub(crate) async fn stage_unseated_agents_for(
     if std::fs::symlink_metadata(&dest).is_ok() {
         host_dir(&clones, session_id)?;
     }
-    let tip = crate::agents_checkout::stage_read_only_clone(&record, &dest)
+    let auth = crate::agents_checkout::ScopedGitAuth::provider(config).map_err(unavailable)?;
+    let tip = crate::agents_checkout::stage_read_only_clone_scoped(&record, &dest, Some(&auth))
         .await
         .map_err(|error| unavailable(error.to_string()))?;
     tracing::info!(

@@ -27,6 +27,20 @@ pub async fn start_managed_agent(
         expected_relay_url.as_deref(),
         relay_ws_url_with_override(&state),
     )?;
+    if super::host_transfer::start_if_adopted(&app, &pubkey, reconcile_relay.as_str()).await? {
+        let records = load_managed_agents(&app)?;
+        let record = records
+            .iter()
+            .find(|r| r.pubkey == pubkey)
+            .ok_or("agent not found")?;
+        let runtimes = state
+            .managed_agent_processes
+            .lock()
+            .map_err(|e| e.to_string())?;
+        return summarize_from_disk(&app, record, &runtimes);
+    }
+    // Ownership is checked before readiness/profile work or legacy fallback.
+    crate::managed_agents::require_desktop_runtime_owner(&pubkey, reconcile_relay.as_str())?;
     enum StartTarget {
         Local,
         Provider,

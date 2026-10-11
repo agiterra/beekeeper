@@ -63,6 +63,9 @@ pub(super) fn buffer_contains_identifier(buf: &[u8], id: &[u8]) -> bool {
 /// Returns `None` if the process doesn't have the marker or can't be read.
 #[cfg(target_os = "macos")]
 fn extract_beekeeper_marker_value(pid: u32) -> Option<String> {
+    if super::process::process_has_env_key(pid, beekeeper_host_core::layout::CHILD_MARKER_VAR) {
+        return None;
+    }
     let buf = sweep::procargs2_buffer(pid)?;
 
     if buf.len() < std::mem::size_of::<libc::c_int>() {
@@ -102,6 +105,9 @@ fn extract_beekeeper_marker_value(pid: u32) -> Option<String> {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn extract_beekeeper_marker_value(pid: u32) -> Option<String> {
+    if super::process::process_has_env_key(pid, beekeeper_host_core::layout::CHILD_MARKER_VAR) {
+        return None;
+    }
     let data = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
     super::process::marker_value(data.split(|&b| b == 0))
 }

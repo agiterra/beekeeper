@@ -1045,11 +1045,15 @@ version = "0.1.0"
 dependencies = [
  "atomic-write-file",
  "beekeeper-core",
+ "beekeeper-sdk",
  "chrono",
  "dirs",
+ "nostr 0.44.7",
  "serde",
  "serde_json",
+ "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -1134,6 +1138,7 @@ dependencies = [
  "base64 0.22.1",
  "beekeeper-acp",
  "beekeeper-core",
+ "beekeeper-host-core",
  "beekeeper-persona",
  "beekeeper-sdk",
  "beekeeper-workflow",

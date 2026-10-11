@@ -488,10 +488,17 @@ void main() {
       expect(decoded.value!.providerAuthorityPubkey, providerPubkey);
     });
 
-    test('half a seat or a bad seat is malformed', () {
+    test('an attributed actor-only Solo decodes', () {
+      final decoded = decodeCodingSessionCreate(
+        createEvent(commandId: 'cmd-1', actor: 'd' * 64),
+      );
+      expect(decoded.value, isNotNull);
+      expect(decoded.value!.providerAuthorityPubkey, providerPubkey);
+    });
+
+    test('a role without actor or a bad seat is malformed', () {
       final cases = <NostrEvent>[
         createEvent(commandId: 'cmd-1', role: 'lead'),
-        createEvent(commandId: 'cmd-1', actor: 'd' * 64),
         createEvent(commandId: 'cmd-1', actor: 'D' * 64, role: 'lead'),
         createEvent(commandId: 'cmd-1', actor: 'd' * 64, role: 'Lead'),
       ];

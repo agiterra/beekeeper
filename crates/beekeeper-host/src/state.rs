@@ -211,7 +211,7 @@ impl RelayConnectionState {
     pub fn unknowable() -> Self {
         Self::Unknown {
             why: "the host supervises the provider as a child process and holds no relay \
-                  connection of its own; ask the app, which does"
+                  connection of its own; inspect provider catalog and session evidence through a relay client"
                 .to_string(),
         }
     }
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn the_relay_state_says_why_it_cannot_tell_rather_than_guessing() {
         let RelayConnectionState::Unknown { why } = RelayConnectionState::unknowable();
-        assert!(why.contains("ask the app"), "{why}");
+        assert!(why.contains("relay client"), "{why}");
         let json = serde_json::to_string(&RelayConnectionState::unknowable()).expect("encode");
         assert!(json.contains("\"unknown\""), "{json}");
         assert!(

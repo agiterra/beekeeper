@@ -2970,16 +2970,18 @@ pub async fn dispatch(
             channel,
             session,
             provider_authority,
+            expected_target,
             wait,
             timeout_secs,
         } => {
-            stop::cmd_stop(
+            stop::cmd_stop_fenced(
                 client,
                 &channel,
                 &session,
                 &provider_authority,
                 wait,
                 timeout_secs,
+                expected_target.as_deref(),
             )
             .await
         }

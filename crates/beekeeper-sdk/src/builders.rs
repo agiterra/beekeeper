@@ -6172,8 +6172,8 @@ mod tests {
         }
     }
 
-    /// The seat pair is enforced at the builder, not only at the relay: a
-    /// producer cannot sign half a seat.
+    /// Attributed Solo creates accept actor-only; a team role requires an
+    /// actor at the builder as well as at the relay.
     #[test]
     fn a_lifecycle_command_builder_refuses_half_an_agent_seat() {
         use beekeeper_core::coding_session_lifecycle_command::CodingSessionLifecycleAction;
@@ -6184,17 +6184,29 @@ mod tests {
             panic!("expected create action")
         };
         *actor = Some("cd".repeat(32));
+        let solo = build_coding_session_lifecycle_command(channel, &payload)
+            .expect("an actor-only Solo builds")
+            .sign_with_keys(&Keys::generate())
+            .expect("sign the attributed Solo");
+        assert!(solo.content.contains(r#""actor":"#));
+        assert!(!solo.content.contains(r#""role":"#));
+
+        let CodingSessionLifecycleAction::SessionCreate { actor, role, .. } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
+        *actor = None;
+        *role = Some("lead".into());
         let error = build_coding_session_lifecycle_command(channel, &payload)
-            .expect_err("an actor with no role must not build");
+            .expect_err("a role without an actor must not build");
         assert!(
             format!("{error}").contains(beekeeper_core::coding_session_payload::ACTOR_ROLE_PAIR),
             "got {error}"
         );
-
-        let CodingSessionLifecycleAction::SessionCreate { role, .. } = &mut payload.action else {
+        let CodingSessionLifecycleAction::SessionCreate { actor, .. } = &mut payload.action else {
             panic!("expected create action")
         };
-        *role = Some("lead".into());
+        *actor = Some("cd".repeat(32));
         let builder = build_coding_session_lifecycle_command(channel, &payload)
             .expect("a complete seat builds");
         let event = builder
@@ -6207,6 +6219,11 @@ mod tests {
             "a seat's key material must never reach signed content: {}",
             event.content
         );
+        let CodingSessionLifecycleAction::SessionCreate { actor, .. } = &mut payload.action else {
+            panic!("expected create action")
+        };
+        *actor = Some("cd".repeat(32).to_uppercase());
+        assert!(build_coding_session_lifecycle_command(channel, &payload).is_err());
     }
 
     /// A hire signs through the same 44221 builder as every other lifecycle

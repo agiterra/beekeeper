@@ -3,9 +3,8 @@ use std::collections::HashMap;
 use tauri::AppHandle;
 
 use super::{
-    append_log_marker, current_instance_id, now_iso, process_belongs_to_us,
-    process_has_beekeeper_marker, process_is_running, terminate_process, ManagedAgentPairRuntime,
-    ManagedAgentRecord, ManagedAgentRuntimeKey,
+    append_log_marker, current_instance_id, now_iso, process_belongs_to_us, process_is_running,
+    terminate_process, ManagedAgentPairRuntime, ManagedAgentRecord, ManagedAgentRuntimeKey,
 };
 
 pub(crate) fn managed_agent_runtime_keys<T>(
@@ -17,6 +16,87 @@ pub(crate) fn managed_agent_runtime_keys<T>(
         .filter(|key| key.pubkey.eq_ignore_ascii_case(pubkey))
         .cloned()
         .collect()
+}
+
+/// Quiesce the tracked ACP leader through its existing graceful shutdown path.
+/// Never signal the adapter group or escalate an uncertain boundary.
+pub(crate) fn quiesce_managed_agent_pair(
+    app: &AppHandle,
+    record: &mut ManagedAgentRecord,
+    runtimes: &mut HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
+    key: &ManagedAgentRuntimeKey,
+) -> Result<(), String> {
+    super::require_desktop_runtime_owner(&key.pubkey, &key.relay_url)?;
+    #[cfg(not(unix))]
+    {
+        let _ = (app, record, runtimes, key);
+        Err(
+            "safe ACP transfer requires a supported graceful shutdown signal on this platform"
+                .into(),
+        )
+    }
+    #[cfg(unix)]
+    {
+        let runtime = runtimes
+            .get_mut(key)
+            .ok_or("quiescence requires a tracked ACP generation")?;
+        if runtime
+            .child
+            .try_wait()
+            .map_err(|e| e.to_string())?
+            .is_some()
+        {
+            return Err(
+                "legacy process exited without this transfer's quiescence acknowledgment".into(),
+            );
+        }
+        let signal = std::process::Command::new("/bin/kill")
+            .args(["-s", "TERM", &runtime.child.id().to_string()])
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !signal.success() {
+            return Err("could not request tracked ACP graceful shutdown".into());
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+        loop {
+            if let Some(status) = runtime.child.try_wait().map_err(|e| e.to_string())? {
+                record.last_exit_code = status.code();
+                if !status.success() {
+                    return Err("legacy ACP exited without proving accepted work drained; ownership remains fenced".into());
+                }
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(
+                    "legacy ACP quiescence is unconfirmed; no process group was killed".into(),
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let receipt_path = runtime
+            .log_path
+            .with_file_name(format!("quiesced-{}.json", runtime.start_nonce));
+        let receipt:serde_json::Value=serde_json::from_slice(&std::fs::read(receipt_path).map_err(|_| "legacy ACP has no generation-bound graceful acknowledgment; restart it with the supported harness before transfer")?).map_err(|_|"invalid legacy quiescence acknowledgment")?;
+        if receipt.get("harnessPid").and_then(|v| v.as_u64()) != Some(u64::from(runtime.child.id()))
+            || receipt.get("schema").and_then(|v| v.as_str())
+                != Some("beekeeper-local-quiescence/v1")
+            || receipt.get("startNonce").and_then(|v| v.as_str())
+                != Some(runtime.start_nonce.as_str())
+            || receipt.get("actorPubkey").and_then(|v| v.as_str()) != Some(key.pubkey.as_str())
+            || receipt.get("acceptedWorkDrained").and_then(|v| v.as_bool()) != Some(true)
+            || receipt
+                .get("relayUrl")
+                .and_then(|v| v.as_str())
+                .map(beekeeper_host_core::record::canonical_relay_key)
+                .as_deref()
+                != Some(beekeeper_host_core::record::canonical_relay_key(&key.relay_url).as_str())
+        {
+            return Err("legacy quiescence acknowledgment does not match tracked custody".into());
+        }
+        runtimes.remove(key);
+        super::super::remove_agent_runtime_receipt(app, key);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -37,12 +117,13 @@ pub(crate) fn managed_agent_runtime_relay_urls<T>(
 /// runtime is reinserted so the pair stays visible and stoppable instead of
 /// becoming an invisible orphan. Touches no other pair for the agent and
 /// does no record-level stop bookkeeping — callers own that.
-fn stop_managed_agent_pair(
+pub(crate) fn stop_managed_agent_pair(
     app: &AppHandle,
     record: &mut ManagedAgentRecord,
     runtimes: &mut HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
     key: &ManagedAgentRuntimeKey,
 ) -> Result<(), String> {
+    super::require_desktop_runtime_owner(&key.pubkey, &key.relay_url)?;
     let Some(mut runtime) = runtimes.remove(key) else {
         return Ok(());
     };
@@ -98,7 +179,7 @@ fn stop_legacy_scalar_pid(app: &AppHandle, record: &mut ManagedAgentRecord) -> R
     if let Some(pid) = record.runtime_pid.take() {
         if process_is_running(pid)
             && process_belongs_to_us(pid)
-            && process_has_beekeeper_marker(pid, &current_instance_id(app))
+            && super::desktop_owns_marked_process(pid, &current_instance_id(app))
         {
             terminate_process(pid)?;
         }

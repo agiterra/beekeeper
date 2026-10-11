@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { validateLinkedAgentRuntimeEdit } from "./UserProfilePanelPersonaSubmit.ts";
+import {
+  validateLinkedAgentRuntimeEdit,
+  submitProfilePersonaDialog,
+} from "./UserProfilePanelPersonaSubmit.ts";
+import { toast } from "sonner";
 
 function agent(overrides = {}) {
   return {
@@ -100,6 +104,41 @@ test("validateLinkedAgentRuntimeEdit allows available runtime changes", () => {
     }),
     null,
   );
+});
+
+test("linked persona update preserves accepted-but-unconfirmed warning without claiming sync failure", async () => {
+  const originalWarning = toast.warning;
+  const warnings = [];
+  toast.warning = (message) => warnings.push(message);
+  try {
+    await submitProfilePersonaDialog({
+      input: updateInput({ runtime: "goose", displayName: "Updated Mira" }),
+      managedAgent: agent(),
+      previousPersona: persona(),
+      runtimes: [],
+      updatePersona: async () => persona({ displayName: "Updated Mira" }),
+      updateManagedAgent: async () => ({
+        agent: agent({ name: "Updated Mira" }),
+        profileSyncError:
+          "Configuration accepted; runtime application awaits the next supported execution boundary.",
+      }),
+      createPersona: async () => {
+        throw new Error("unexpected create");
+      },
+      createManagedAgentForPersona: async () => {
+        throw new Error("unexpected create");
+      },
+      onDone() {},
+    });
+    assert.equal(warnings.length, 1);
+    assert.match(
+      warnings[0],
+      /Configuration accepted; runtime application awaits/,
+    );
+    assert.doesNotMatch(warnings[0], /sync failed|saved locally/);
+  } finally {
+    toast.warning = originalWarning;
+  }
 });
 
 test("validateLinkedAgentRuntimeEdit rejects unavailable linked-agent runtime changes", () => {

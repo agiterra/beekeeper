@@ -31,7 +31,10 @@ pub mod env;
 pub mod layout;
 pub mod logs;
 pub mod managed_node;
+pub mod ownership;
 pub mod path_env;
+pub mod project;
+pub mod provision;
 pub mod record;
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ pub mod actions;
 /// (ledger 186, finding 178(f)).
 pub mod actions_authority;
 pub mod actions_example;
+pub mod agent_management;
 pub mod agents;
 pub mod agents_repo;
 pub mod agents_repo_clone;
@@ -171,3 +172,8 @@ mod tests {
             .any(|tag| tag.as_slice().first().map(String::as_str) == Some("h")));
     }
 }
+
+pub(crate) mod host_commission;
+pub(crate) mod host_project;
+
+pub(crate) mod community;

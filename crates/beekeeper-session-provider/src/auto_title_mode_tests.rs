@@ -184,6 +184,7 @@ async fn the_stub_adapter_still_titles_under_agent() {
     );
     let generator = AcpTitleGenerator {
         state_dir: state.clone(),
+        runtime_instance: "claude-primary".into(),
         driver: "claude-agent-acp".into(),
         runtime: "claude".into(),
         agent_command: "bash".into(),

@@ -120,6 +120,8 @@ pub(crate) enum RestoreObstacle {
     Rejected(String),
     /// A seated generation whose seat has not been re-staged on this host.
     ActorUnavailable,
+    /// Explicit local prerequisites refused reattachment before adapter launch.
+    Prerequisite(crate::session::CreateFailure),
     /// The generation already has a live process; there is nothing to restore.
     AlreadyLive,
     /// The umbrella has been handed over or deleted, so nothing under it may
@@ -141,6 +143,7 @@ impl RestoreObstacle {
             Self::Unsupported => NATIVE_RESTORE_UNSUPPORTED,
             Self::Rejected(_) => NATIVE_RESTORE_REJECTED,
             Self::ActorUnavailable => ACTOR_UNAVAILABLE,
+            Self::Prerequisite(failure) => failure.code,
             Self::AlreadyLive => SESSION_ALREADY_ATTACHED,
             Self::Fenced(refusal) => refusal.code,
         }
@@ -177,6 +180,7 @@ impl RestoreObstacle {
                 "this execution already has a live process on this provider".to_owned()
             }
             Self::Fenced(refusal) => refusal.message.clone(),
+            Self::Prerequisite(failure) => failure.message.clone(),
         }
     }
 }
@@ -271,6 +275,12 @@ impl Provider {
         // 44223 it is rendering, the lease semantic key, the operation fence —
         // keeps naming the same thing.
         let target = self.target_for(&record);
+        let ownership_admission = crate::host_ownership::admit(
+            &self.config,
+            record.actor.as_deref(),
+            crate::host_ownership::Admission::Resume,
+        )
+        .map_err(RestoreObstacle::Prerequisite)?;
         // 5. Custody, under the command id that minted *this* generation. A
         //    record from before generation commands were persisted had its
         //    generation minted by the create.
@@ -284,7 +294,10 @@ impl Provider {
             None => (None, Vec::new(), None),
             Some(actor) => {
                 let seats = ActorSeatsFile::load(self.config.actor_seats_file.as_deref());
-                match seats.seat(&seat_command_id) {
+                let conversation_seat = self
+                    .conversation_actor_seat(&record)
+                    .map_err(|_| RestoreObstacle::ActorUnavailable)?;
+                match seats.seat(&seat_command_id).or(conversation_seat.as_ref()) {
                     // An entry naming a different pubkey is not this seat's
                     // custody. Refusing rather than substituting is the same
                     // rule the create and resume paths hold.
@@ -332,11 +345,9 @@ impl Provider {
             &target,
             &seat_command_id,
         );
-        let agent_env: Vec<(String, String)> = descriptor
-            .cli_env
-            .iter()
-            .map(|env| (env.name.clone(), env.value.clone()))
-            .collect();
+        let agent_env =
+            crate::runtime_credentials::environment(&self.config.state_dir, &descriptor)
+                .map_err(RestoreObstacle::Prerequisite)?;
         // The deletion re-check every start and resume makes, read in the slow
         // half and applied in `finish_restore`.
         let deletion_check = match (record.project_ref.clone(), self.rest_client.clone()) {
@@ -347,6 +358,7 @@ impl Provider {
             _ => None,
         };
         Ok(RestoreJob {
+            ownership_admission,
             record,
             target,
             seat_command_id,
@@ -374,6 +386,7 @@ impl Provider {
         run: RestoreRun,
     ) -> anyhow::Result<Result<(), RestoreObstacle>> {
         let RestoreRun {
+            ownership_admission,
             record,
             target,
             seat_command_id,
@@ -462,6 +475,12 @@ impl Provider {
                 RestoreObstacle::ProviderUnavailable
             }));
         }
+        if let Some(guard) = ownership_admission.as_ref() {
+            if let Err(failure) = guard.recheck() {
+                started.discard();
+                return Ok(Err(RestoreObstacle::Prerequisite(failure)));
+            }
+        }
         let outbox_before = self.outbox.pending_keys();
         let startup = self.sessions.attach(started);
         // Per-process capabilities, re-witnessed: this is a different adapter
@@ -534,6 +553,7 @@ impl Provider {
 /// A restore's inputs, decided on the loop by [`Provider::prepare_restore`]
 /// and owned, so [`run_restore_job`] can run anywhere.
 pub(crate) struct RestoreJob {
+    ownership_admission: Option<crate::host_ownership::HostAdmission>,
     record: SessionRecord,
     target: CodingSessionTarget,
     seat_command_id: String,
@@ -571,6 +591,7 @@ impl RestoreJob {
 
 /// What the slow half of a restore produced, for [`Provider::finish_restore`].
 pub(crate) struct RestoreRun {
+    ownership_admission: Option<crate::host_ownership::HostAdmission>,
     record: SessionRecord,
     target: CodingSessionTarget,
     seat_command_id: String,
@@ -583,6 +604,7 @@ impl RestoreRun {
     /// survives: dropping the startup future ends the adapter it spawned.
     pub(crate) fn timed_out(meta: RestoreMeta, limit: Duration) -> Self {
         RestoreRun {
+            ownership_admission: None,
             record: meta.record,
             target: meta.target,
             seat_command_id: meta.seat_command_id,
@@ -615,6 +637,7 @@ enum RestoreOutcome {
 /// state, so it may run off the run loop (SV-76).
 pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
     let RestoreJob {
+        ownership_admission,
         record,
         target,
         seat_command_id,
@@ -637,6 +660,7 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
         None => None,
     };
     let finish = |outcome| RestoreRun {
+        ownership_admission,
         record: record.clone(),
         target: target.clone(),
         seat_command_id: seat_command_id.clone(),
@@ -671,6 +695,7 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
                 &config,
                 &crate::execution_scope::LaunchFacts {
                     session_id: &record.session_id,
+                    runtime_instance: &descriptor.instance_ref,
                     project_ref: record.project_ref.as_deref(),
                     association: crate::execution_scope::recorded_association(&record),
                     unseated_agents: unseated_agents.as_ref().ok().and_then(Option::as_deref),

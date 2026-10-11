@@ -118,6 +118,9 @@ pub mod invite;
 pub mod kind;
 /// Reading a `RUST_LOG`-style filter written against the pre-rename `buzz_*` crate names.
 pub mod log_targets;
+/// Shared public managed-agent configuration and validation.
+pub mod managed_agent;
+mod managed_agent_text;
 /// Where the model registry is looked for, in order, and which copy answered:
 /// the project's agents repository, then its code checkout.
 pub mod model_registry_source;
@@ -127,6 +130,7 @@ pub mod network;
 pub mod observer;
 /// NIP-AB device pairing — crypto primitives, message types, and errors.
 pub mod pairing;
+pub mod persona;
 /// Presence status types shared across crates.
 pub mod presence;
 /// SV-33: the provider-signed per-session preview grant the desktop broker

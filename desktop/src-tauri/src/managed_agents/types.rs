@@ -746,70 +746,7 @@ fn default_record_active() -> bool {
 // `nobody` is intentionally NOT exposed here. The harness supports it, but
 // it's a heartbeat-only mode and the desktop has no surface for it.
 
-/// Who the agent should respond to. Defaults to `OwnerOnly`, which matches
-/// the harness default → existing agents behave identically.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum RespondTo {
-    #[default]
-    OwnerOnly,
-    Allowlist,
-    Anyone,
-}
-
-impl RespondTo {
-    /// CLI/env wire string (matches `beekeeper-acp`'s `--respond-to`).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::OwnerOnly => "owner-only",
-            Self::Allowlist => "allowlist",
-            Self::Anyone => "anyone",
-        }
-    }
-
-    /// Parse the NIP-AP wire string. Definitions carry `respond_to` as
-    /// opaque data everywhere else; this is the single parse boundary
-    /// (instance mint), and an unrecognized mode fails LOUDLY here rather
-    /// than silently defaulting — a typo'd definition must not mint an
-    /// agent with a different audience than its author intended.
-    pub fn parse_wire(value: &str) -> Result<Self, String> {
-        match value {
-            "owner-only" => Ok(Self::OwnerOnly),
-            "allowlist" => Ok(Self::Allowlist),
-            "anyone" => Ok(Self::Anyone),
-            other => Err(format!(
-                "definition respond_to '{other}' is not a recognized mode (expected 'owner-only', 'allowlist', or 'anyone')"
-            )),
-        }
-    }
-}
-
-/// Validate and normalize a respond-to allowlist.
-///
-/// Rules mirror `beekeeper-acp/src/config.rs::validate_allowlist`:
-/// - Each entry is exactly 64 hex chars (any case in, lowercase out).
-/// - Duplicates removed, insertion order preserved.
-///
-/// Empty input is allowed here — the boundary check (allowlist mode requires
-/// at least one entry) is the caller's job, because an `UpdateManagedAgentRequest`
-/// may want to validate a list without yet knowing the final mode.
-pub fn validate_respond_to_allowlist(input: &[String]) -> Result<Vec<String>, String> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::with_capacity(input.len());
-    for entry in input {
-        let trimmed = entry.trim();
-        if trimmed.len() != 64 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(format!(
-                "invalid pubkey in respond-to allowlist: '{trimmed}' (must be 64 hex chars)"
-            ));
-        }
-        let lower = trimmed.to_ascii_lowercase();
-        if seen.insert(lower.clone()) {
-            out.push(lower);
-        }
-    }
-    Ok(out)
-}
+pub use beekeeper_core_pkg::managed_agent::{validate_respond_to_allowlist, RespondTo};
 
 /// The behavioral fields resolved for a new instance at mint time.
 #[derive(Debug, PartialEq, Eq)]

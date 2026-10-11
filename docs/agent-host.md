@@ -4,7 +4,8 @@
 login — or at boot, on a Mac nobody logs in to — survives every Beekeeper
 launch, quit and update, and installs on a server with no GUI anywhere.
 
-Quitting Beekeeper is a window closing. It is not a shutdown.
+Quitting Beekeeper closes the client; host-managed work continues. Legacy
+agents that have not been transferred remain owned by the desktop.
 
 ```
 login or boot (launchd/systemd)  login (launchd)
@@ -32,16 +33,19 @@ content from the relay as they always did.
 restarting it on the backoff ladder, stopping it with SIGINT so its durable
 outbox flushes, and taking its state directory over from a stale owner.
 
-**Does not own:** managed agents (`beekeeper-acp`). Those are still the desktop
-app's children and still end when it quits. That is a known limit of this
-landing, not an accident; the menu bar app shows them while Beekeeper is
-running by asking it, and says out loud when it cannot.
+**Owns through the provider:** participants created through headless setup or
+explicitly transferred from the desktop. Their conversation responsibilities
+use the provider's existing runtime execution and survive client quit.
+Untransferred legacy `beekeeper-acp` children remain desktop-owned until an
+explicit, reversible handoff; closing the desktop still ends those children.
 
 **Cannot see:** the provider's relay connection. The host *supervises* the
 provider rather than linking it in, so it holds no relay socket of its own and
-reports `relayConnection: unknown` with a reason. The desktop answers that
-question, from its own connection plus the provider's published kind:44222
-catalog. Synthesising "connected" from "the child is alive" would be a guess.
+reports `relayConnection: unknown` with a reason. Authorized relay clients can
+read the provider's published kind:44222 catalog and session availability
+without a desktop. Their own relay connection, the provider's published
+availability and the host's process observation are separate facts.
+Synthesising "connected" from "the child is alive" would be a guess.
 
 **Names unnamed sessions.** The provider gives a session nobody named a short
 title from the founder's first message, signed with its own key as a
@@ -135,8 +139,8 @@ as a system LaunchDaemon instead, which launchd loads at boot and runs as the
 persona's own account:
 
 ```bash
-# Commission the persona's host first (host.json and provider-key, as in
-# "On a server" below), then check it as that user:
+# Commission under the designated persona's OS home first, without a custom
+# BEEKEEPER_HOST_HOME (see "On a server"), then check it as that user:
 sudo -u persona -H beekeeper-host check
 
 # Install, as root. --user is required and is never guessed from $HOME or
@@ -154,6 +158,11 @@ the persona cannot execute the binary (install it somewhere every user can
 run, not inside your own home), or if the persona already has a login
 LaunchAgent for the host — two hosts would race for one socket, so remove that
 one first.
+
+This system registration resolves configuration and logs from the designated
+account's home; it does not carry an arbitrary `BEEKEEPER_HOST_HOME`. For a
+custom service root, use explicit foreground supervision or the generated
+macOS login/Linux user registration, which carries the selected root.
 
 Day to day, **run everything as the persona, not as root**: `bee host status`,
 `start`, `stop`, `restart` and `logs` talk to the host's socket, which answers
@@ -175,52 +184,59 @@ persona cannot remove it, and says so rather than reporting success.
 
 ## On a server
 
-There is no GUI and no app, so the identity is commissioned on a machine that
-has one and copied across.
+Commission directly on the executor as an authorized owner. The CLI mints and
+attests a scoped provider identity; the host subsequently reads only that scoped
+key. No desktop bundle or copied GUI state is required.
 
 ```bash
-# 1. Build and install the binaries somewhere your shell and systemd can see.
-just install-bee
-
-# 2. Register the service.
-bee host install
-
-# 3. A user unit dies at logout. Without this, the host stops the moment you
-#    disconnect — the single most common way this silently fails.
-loginctl enable-linger "$USER"
+. ./bin/activate-hermit
+just install-headless
+# Install the ACP adapter for your selected runtime separately. The native CLI
+# must be authenticated under the executor account; an executable is not proof
+# that a model/account is usable.
+export BEEKEEPER_HOST_HOME=/absolute/durable/service-home
+export BEEKEEPER_RELAY_URL=wss://hive.example.org
+# Supply BEEKEEPER_PRIVATE_KEY through your existing secret custodian, not argv.
+bee community join-policy
+# For an invited identity, accept the displayed revision when required, then:
+bee community claim-invite --code '<invite>' --policy-receipt '<receipt>'
+bee host commission --runtime codex --adapter /absolute/bin/codex-acp \
+  --provider-command /absolute/bin/beekeeper-session-provider \
+  --runtime-install-root /absolute/npm/lib/node_modules/@agentclientprotocol/codex-acp
+beekeeper-host check
+# Foreground supervision works under a container supervisor too:
+beekeeper-host run
 ```
 
-Then give it an identity. Two files, both written by hand here:
+`--runtime-install-root` explicitly grants read access to the selected installed
+runtime code and its bundled dependencies inside the existing execution boundary.
+It does not grant account credentials or general access to the executor home.
 
-`~/.local/state/buzz/host/host.json`
+Commissioning reports file setup, scoped relay admission and the unconfirmed
+runtime account separately. A retry retains the same provider identity. Missing
+adapter or scoped custody is a specific refusal; it never mints a replacement
+for an unavailable existing key. `BEEKEEPER_HOST_HOME` selects service state
+without changing OS `HOME`, which native runtimes may use for their own account
+state. Keep both service state and required native history on durable storage.
 
-```json
-{
-  "version": 1,
-  "instance": "production",
-  "relayUrl": "wss://hive.example.org",
-  "providerPubkey": "<64 lowercase hex>",
-  "sessionProviderBaseDir": "/home/agent/.local/share/beekeeper/session-provider",
-  "providerStateDir": "/home/agent/.local/share/beekeeper/session-provider/<providerPubkey>",
-  "runtimes": [],
-  "writtenAt": "2026-09-30T00:00:00Z"
-}
-```
+On Linux, register the same host with `bee host install` and enable user-service
+lingering with `loginctl enable-linger "$USER"`. The generated registration
+carries the selected service home. On a headless Mac, use the system registration
+above under the designated operating-system account. Local `bee host status`
+reports supervision; relay catalog/session evidence reports connection and
+runtime availability. These observations are separate.
 
-`<sessionProviderBaseDir>/coding-session-provider.json` — the record store,
-copied from the machine that provisioned the identity, and
-`~/.local/state/buzz/host/provider-key` — the nsec, `chmod 600`.
+Use `--credential-file /absolute/restricted/runtime-credentials.json` at
+commissioning to select an explicit runtime credential source. Its owner-only
+JSON maps `runtimes` instance references to permitted model credential variables.
+The provider rereads the selected source at each new/resumed session; a missing
+or invalid configured source blocks that session. Account switching and native
+resume depend on the installed adapter and retained state; do not infer either
+from a successful host check.
 
-```bash
-beekeeper-host check      # reads everything back, and prints where the key
-                          # came from. Never the key.
-systemctl --user start beekeeper-host
-bee host status
-```
-
-`beekeeper-host check` is the command to run when something is wrong. It names
-the file it wanted and what to do about it, for every way a commissioning can
-be incomplete.
+See [headless extensions](headless-extensions.md) for the workflow/host-step
+contract, immutable revision, grant and failure limits. The host does not gain
+owner credentials or unrestricted hook secrets from commissioning.
 
 ## Where the key lives, and what that costs
 
@@ -235,7 +251,7 @@ build. A daemon reading that entry would mean a GUI prompt at login, a human
 at the keyboard, and a grant that dissolves on the next rebuild. A server has
 no keychain at all.
 
-So the app hands the key over at commissioning and the host resolves it from
+So the authorized CLI or desktop hands the scoped key over at commissioning and the host resolves it from
 its own routes, in order:
 
 1. `BEEKEEPER_HOST_PRIVATE_KEY` — the container path.

@@ -878,6 +878,35 @@ impl BeekeeperClient {
         .await
     }
 
+    /// Submit an existing authenticated bootstrap operation once.
+    /// A missing reply is unknown, never automatically retried.
+    pub(crate) async fn post_bootstrap(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<String, CliError> {
+        let url = format!("{}{path}", self.relay_url);
+        let bytes = serde_json::to_vec(body).map_err(|e| CliError::Other(e.to_string()))?;
+        let auth = sign_nip98(&self.keys, "POST", &url, Some(&bytes))?;
+        let response = self
+            .with_auth_tag(
+                self.http
+                    .post(&url)
+                    .header("Authorization", auth)
+                    .header("Content-Type", "application/json")
+                    .body(bytes),
+            )
+            .send()
+            .await
+            .map_err(|_| {
+                CliError::DeliveryUnknown(
+                    "bootstrap request may have reached relay; inspect membership before retrying"
+                        .into(),
+                )
+            })?;
+        self.handle_response(response).await
+    }
+
     /// GET one of the relay's git read routes — `tree/{ref}[/{path}]` or
     /// `raw/{ref}/{path}` under `/git/{owner}/{repo}/` — with a NIP-98 token
     /// bound to the **repository root**, the way `git-credential-nostr`
@@ -1670,7 +1699,7 @@ pub fn normalize_relay_url(url: &str) -> String {
 }
 
 /// Convert an HTTP(S) relay base URL back to a WebSocket URL for NIP-01 connections.
-fn to_ws_url(http_url: &str) -> String {
+pub(crate) fn to_ws_url(http_url: &str) -> String {
     http_url
         .replace("https://", "wss://")
         .replace("http://", "ws://")

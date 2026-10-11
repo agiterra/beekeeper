@@ -622,6 +622,8 @@ pub(crate) fn names_the_session(row: &serde_json::Value, job: &TitleJob) -> bool
 pub(crate) struct AcpTitleGenerator {
     /// Provider state directory: the scratch lives under it.
     pub state_dir: PathBuf,
+    /// Runtime instance selecting its host-declared installation roots.
+    pub runtime_instance: String,
     /// Driver slug, for the runtime profile.
     pub driver: String,
     /// Runtime slug (`claude`, `codex`, …).
@@ -641,26 +643,40 @@ pub(crate) struct AcpTitleGenerator {
 impl TitleGenerator for AcpTitleGenerator {
     async fn generate(&self, message: &str) -> Result<Option<GeneratedTitle>, String> {
         let scratch = TitleScratch::create(&self.state_dir)?;
+        let cli_env = crate::runtime_credentials::environment_for(
+            &self.state_dir,
+            &self.runtime_instance,
+            &self.runtime,
+            self.cli_env.clone(),
+        )
+        .map_err(|failure| failure.message)?;
         let plan = {
+            let runtime_roots = crate::runtime_installations::roots(
+                &self.state_dir,
+                &self.runtime_instance,
+                &scratch.cwd,
+            )
+            .map_err(|failure| failure.message)?;
             let mut inputs = ScopeInputs::new(
                 ScopePurpose::Discovery,
                 &self.state_dir,
                 &scratch.session_id,
                 &scratch.cwd,
             );
+            inputs.runtime_roots = &runtime_roots;
             inputs.driver = &self.driver;
             inputs.runtime = self
                 .runtime_profile_override
                 .unwrap_or_else(|| RuntimeProfile::for_driver(&self.driver));
             inputs.agent_command = &self.agent_command;
             inputs.agent_args = &self.agent_args;
-            inputs.agent_env = &self.cli_env;
+            inputs.agent_env = &cli_env;
             crate::execution_scope::prepare(&inputs).map_err(|failure| failure.message)?
         };
         let runtime = acp::OneShotRuntime {
             agent_command: &self.agent_command,
             agent_args: &self.agent_args,
-            cli_env: &self.cli_env,
+            cli_env: &cli_env,
             claude: self.runtime == "claude",
             model: &self.model,
         };
@@ -804,6 +820,7 @@ impl crate::Provider {
         };
         let generator = AcpTitleGenerator {
             state_dir: self.config.state_dir.clone(),
+            runtime_instance: descriptor.instance_ref.clone(),
             driver: descriptor.driver.clone(),
             runtime: descriptor.runtime.clone(),
             agent_command: descriptor.agent_command.clone(),

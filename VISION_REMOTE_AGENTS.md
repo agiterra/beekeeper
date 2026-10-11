@@ -10,6 +10,15 @@ Nothing here is new on its own. Deploying containers is solved. Kubernetes is so
 
 ## Same Agent, New Body
 
+First commissioning may happen through the authorized CLI and host, without a
+desktop installation. The desktop is a management and viewing client. Execution
+ownership is exclusive for each accepted responsibility; the same identity may
+hold several responsibilities when thread routing makes the target explicit.
+Transferring a legacy local body preserves its custody and history, quiesces the
+old owner before adoption, and restores it only after the new owner stops.
+Native continuation remains an adapter capability, rather than a promise of
+seamless account or runtime switching.
+
 What makes an agent *that agent* was never the process. Its identity is a keypair. Its voice is its signed messages. Its durable memory is engrams on the relay. Its reputation is its contribution history. None of that lives in the machine that happens to be running it — which means none of it dies with the machine.
 
 So a remote agent's return is a resurrection, not a rebirth: fresh compute, same agent. The body is disposable by design — and honestly so: workspace files, checkouts, and session-local state are part of the body, not the agent, and they go when it goes unless the substrate supplies persistence. What survives is what was always on the relay: who the agent is, what it said, what it learned, and what the team decided together. And that survival is scoped the way everything on a relay is scoped: resurrection returns the agent to its own community. The same key can join another community, but it arrives carrying the key, not the history — identity is portable, community state is not ([VISION.md](VISION.md)).

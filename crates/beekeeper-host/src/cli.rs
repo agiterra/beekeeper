@@ -5,7 +5,7 @@
 //! must run in the foreground under systemd's `Type=simple` and in a
 //! container, where the runtime's termination signal has to reach it directly.
 //!
-//! Commissioning happens in the app, not here. This binary reads what the app
+//! Commissioning happens in an authorized CLI or desktop client. This binary reads what it
 //! wrote (`host.json`, and a key on one of three routes) and keeps the
 //! provider alive. When it cannot, it says which of those it was missing
 //! rather than minting a replacement — a new key would strand every event the

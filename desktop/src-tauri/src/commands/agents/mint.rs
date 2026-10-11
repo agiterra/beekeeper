@@ -24,27 +24,13 @@ pub(crate) fn mint_agent_identity(
     ),
     String,
 > {
-    use nostr::ToBech32;
-
-    let agent_keys = nostr::Keys::generate();
-    let pubkey = agent_keys.public_key().to_hex();
-    let private_key_nsec = agent_keys
-        .secret_key()
-        .to_bech32()
-        .map_err(|error| format!("failed to encode private key: {error}"))?;
-    // Bridge nostr 0.37 → 0.36 (buzz-sdk) via hex round-trip.
-    let compat_owner = nostr::Keys::parse(&owner_keys.secret_key().to_secret_hex())
-        .map_err(|e| format!("failed to bridge owner keys: {e}"))?;
-    let compat_agent = nostr::PublicKey::from_hex(&pubkey)
-        .map_err(|e| format!("failed to bridge agent pubkey: {e}"))?;
-    let auth_tag = beekeeper_sdk_pkg::nip_oa::compute_auth_tag(&compat_owner, &compat_agent, "")
-        .map_err(|e| format!("failed to compute NIP-OA auth tag: {e}"))?;
+    let minted = beekeeper_host_core::provision::mint_agent_identity(owner_keys)?;
     Ok((
-        agent_keys,
+        minted.keys,
         crate::managed_agents::crew_roles::MintedCrewIdentity {
-            pubkey,
-            private_key_nsec,
-            auth_tag: Some(auth_tag),
+            pubkey: minted.pubkey,
+            private_key_nsec: minted.private_key_nsec,
+            auth_tag: Some(minted.auth_tag),
         },
     ))
 }

@@ -358,10 +358,34 @@ mod live {
             json!({"ok": false, "code": "preview_no_browser", "error": NO_BROWSER_SENTENCE})
         );
         // A socket file with nobody listening is the same answer.
-        let stale = UnixListener::bind(&ctx.socket).expect("bind");
-        drop(stale);
+        // Bind in an isolated child, then wait for process exit. Other tests
+        // spawning processes cannot inherit this fixture's listening socket.
+        let child = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "commands::preview::tests::live::stale_socket_child",
+                "--nocapture",
+            ])
+            .env("BEEKEEPER_PREVIEW_STALE_TEST_SOCKET", &ctx.socket)
+            .output()
+            .expect("create stale socket in isolated child");
+        assert!(
+            child.status.success(),
+            "{}",
+            String::from_utf8_lossy(&child.stderr)
+        );
+        assert!(ctx.socket.exists(), "child left the stale socket fixture");
         let failure = execute(&parse(&["status"]).expect("parses"), &ctx).expect_err("refused");
-        assert_eq!(failure.exit_code(), 2);
+        assert_eq!(failure.exit_code(), 2, "stale socket refusal: {failure:?}");
+    }
+
+    #[test]
+    fn stale_socket_child() {
+        let Some(socket) = std::env::var_os("BEEKEEPER_PREVIEW_STALE_TEST_SOCKET") else {
+            return;
+        };
+        let stale = UnixListener::bind(socket).expect("bind stale fixture");
+        drop(stale);
     }
 
     #[test]

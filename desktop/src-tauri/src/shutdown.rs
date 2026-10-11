@@ -30,9 +30,8 @@ pub(crate) fn shut_down_app(app: &tauri::AppHandle, shutdown_done: &std::sync::a
         // Stopping the provider is an explicit act now, over the host's
         // control socket.
         //
-        // Managed agents (`beekeeper-acp`) are still this app's children and still
-        // die with it. That is a known, deliberate limit of this landing; the
-        // release notes say so.
+        // Legacy managed agents remain this app's children. Adopted agents are
+        // host-owned and are excluded from legacy quit cleanup and orphan sweeps.
         //
         // The one exception is a host this app started itself because nothing
         // runs it at login: the person declined that, so sessions end with the
@@ -185,6 +184,9 @@ pub(crate) fn shutdown_managed_agents(app: &tauri::AppHandle) -> Result<(), Stri
         // marker, instead of falling through to the orphan sweep's 200ms
         // grace below.
         for key in managed_agents::managed_agent_runtime_keys(&runtimes, &record.pubkey) {
+            if managed_agents::require_desktop_runtime_owner(&key.pubkey, &key.relay_url).is_err() {
+                continue;
+            }
             let runtime = runtimes.remove(&key);
             let Some(pid) = runtime
                 .as_ref()

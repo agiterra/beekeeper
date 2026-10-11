@@ -252,6 +252,7 @@ export function renameFailedText(message: string): string {
   return `The name was not changed: ${message}`;
 }
 export function renameUnpublishedText(message: string): string {
+  if (message.startsWith("Configuration accepted;")) return message;
   return `Renamed on this computer, but the relay may still show the old name: ${message}`;
 }
 

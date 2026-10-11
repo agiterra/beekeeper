@@ -212,6 +212,20 @@ install-bee:
         echo "Without lingering the host stops the moment you log out."
     fi
 
+# Install the complete local execution toolchain without a desktop bundle.
+# Model/account setup remains an explicit prerequisite; this does not log in.
+install-headless:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{justfile_directory()}}/bin:$PATH"
+    INSTALL_ROOT="${CARGO_INSTALL_ROOT:-$HOME/.local}"
+    for package in beekeeper-cli beekeeper-host beekeeper-session-provider beekeeper-acp beekeeper-agent beekeeper-dev-mcp git-credential-nostr; do
+        cargo install --locked --path "crates/$package" --root "$INSTALL_ROOT"
+    done
+    echo "Installed headless execution binaries in $INSTALL_ROOT/bin"
+    echo "Add that directory to PATH, then follow docs/headless-extensions.md."
+    echo "Runtime adapter installation and model/account readiness are separate checks."
+
 # Tail all service logs
 logs *ARGS:
     docker compose logs -f {{ARGS}}

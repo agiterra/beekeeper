@@ -233,7 +233,15 @@ pub async fn load_agents_files(
     projects: &ProjectsFile,
     project: &str,
 ) -> Result<AgentsFiles, HostStepRefusal> {
-    use crate::agents_checkout::{read_agents_file, AgentsReadError};
+    load_agents_files_scoped(projects, project, None).await
+}
+
+async fn load_agents_files_scoped(
+    projects: &ProjectsFile,
+    project: &str,
+    auth: Option<&crate::agents_checkout::ScopedGitAuth>,
+) -> Result<AgentsFiles, HostStepRefusal> {
+    use crate::agents_checkout::{read_agents_file_scoped, AgentsReadError};
     let Some(record) = projects.agents_repos.get(project) else {
         return Err(refusal(
             ACTION_AGENTS_REPO_NOT_RECORDED,
@@ -244,7 +252,7 @@ pub async fn load_agents_files(
             ),
         ));
     };
-    let actions = match read_agents_file(record, ACTIONS_YML).await {
+    let actions = match read_agents_file_scoped(record, ACTIONS_YML, auth).await {
         Ok(file) => file,
         Err(AgentsReadError::FileMissing { sha, .. }) => {
             return Err(refusal(
@@ -257,11 +265,12 @@ pub async fn load_agents_files(
         }
         Err(error) => return Err(refusal(ACTION_AGENTS_REPO_UNREADABLE, error.to_string())),
     };
-    let team_yml = match read_agents_file(record, beekeeper_persona::team::TEAM_YML).await {
-        Ok(file) => Some(file.text),
-        Err(AgentsReadError::FileMissing { .. }) => None,
-        Err(error) => return Err(refusal(ACTION_AGENTS_REPO_UNREADABLE, error.to_string())),
-    };
+    let team_yml =
+        match read_agents_file_scoped(record, beekeeper_persona::team::TEAM_YML, auth).await {
+            Ok(file) => Some(file.text),
+            Err(AgentsReadError::FileMissing { .. }) => None,
+            Err(error) => return Err(refusal(ACTION_AGENTS_REPO_UNREADABLE, error.to_string())),
+        };
     Ok(AgentsFiles {
         provenance: actions.provenance(),
         commit: actions.sha.clone(),
@@ -775,7 +784,10 @@ impl Provider {
         let host_env: HashMap<String, String> = std::env::vars().collect();
         // The definition comes from the agents repository's fetched tip
         // (spec § 4.11), read before the sync verification below.
-        let files = load_agents_files(&projects, &request.project).await;
+        let files = match crate::agents_checkout::ScopedGitAuth::provider(&self.config) {
+            Ok(auth) => load_agents_files_scoped(&projects, &request.project, Some(&auth)).await,
+            Err(message) => Err(refusal(ACTION_AGENTS_REPO_UNREADABLE, message)),
+        };
         if let Ok(files) = &files {
             // Named on whatever 46023 this request produces (ledger 250).
             self.action_steps

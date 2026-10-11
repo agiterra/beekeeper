@@ -1,6 +1,5 @@
 import * as React from "react";
 import { toast } from "sonner";
-
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useIsManagedAgent } from "@/features/agent-memory/hooks";
 import {
@@ -31,6 +30,7 @@ import {
 } from "@/features/agents/lib/instanceInputForDefinition";
 import { describeLogFile } from "@/features/agents/ui/agentUi";
 import { useAgentLifecycleActions } from "@/features/profile/ui/useAgentLifecycleActions";
+import { useProfileAgentControl } from "@/features/profile/lib/useProfileAgentControl";
 import {
   duplicatePersonaDialogState,
   editPersonaDialogState,
@@ -100,7 +100,6 @@ import { getUserProfilePanelHeaderContent } from "@/features/profile/ui/UserProf
 import { UserProfileEditAgentDialog } from "@/features/profile/ui/UserProfileEditAgentDialog";
 import { useProfileEditAgentRequest } from "@/features/profile/ui/useProfileEditAgentRequest";
 export type { ProfilePanelTab, ProfilePanelView };
-
 export function UserProfilePanel({
   canResetWidth,
   currentPubkey,
@@ -125,7 +124,6 @@ export function UserProfilePanel({
   const isOverlay = useIsThreadPanelOverlay();
   const isSplitLayout = layout === "split";
   useEscapeKey(onClose, isOverlay || isSinglePanelView);
-
   const [internalView, setInternalView] =
     React.useState<ProfilePanelView>("summary");
   const view = controlledView ?? internalView;
@@ -226,15 +224,12 @@ export function UserProfilePanel({
   );
   const effectivePubkey = managedAgent?.pubkey ?? pubkey ?? null;
   const pubkeyLower = effectivePubkey?.toLowerCase() ?? "";
-
   const profileQuery = useUserProfileQuery(effectivePubkey ?? undefined);
   const currentProfileQuery = useProfileQuery(currentPubkey !== undefined);
-
   React.useEffect(() => {
     if (!effectivePubkey) return;
     void profileQuery.refetch();
   }, [effectivePubkey, profileQuery.refetch]);
-
   const relayAgentsQuery = useRelayAgentsQuery({ enabled: true });
   const availableRuntimesQuery = useAvailableAcpRuntimes();
   const acpRuntimesQuery = useAcpRuntimesQuery();
@@ -276,7 +271,6 @@ export function UserProfilePanel({
   const userStatus = pubkeyLower
     ? userStatusQuery.data?.[pubkeyLower]
     : undefined;
-
   const relayAgent = relayAgentsQuery.data?.find(
     (agent) => agent.pubkey.toLowerCase() === pubkeyLower,
   );
@@ -305,7 +299,6 @@ export function UserProfilePanel({
   // manage it locally (older agents may not advertise an owner pubkey). Every
   // real boundary is server-side, so this only controls what UI we paint.
   const viewerIsOwner = isCurrentUserOwner || isOwner === true;
-
   const activityAgent = React.useMemo(
     () =>
       resolveProfileActivityAgent({
@@ -451,6 +444,10 @@ export function UserProfilePanel({
     ],
   );
 
+  const agentControl = useProfileAgentControl(
+    managedAgent,
+    isAgentActionPending,
+  );
   const { handleAgentPrimaryAction, handleAgentRestart } =
     useAgentLifecycleActions({
       channels: channelsQuery.data,
@@ -458,6 +455,7 @@ export function UserProfilePanel({
       relayAgents: relayAgentsQuery.data,
       startManagedAgent: startAgentMutation.mutateAsync,
       stopManagedAgent: stopAgentMutation.mutateAsync,
+      control: agentControl,
     });
 
   const handleInstantiateAgent = React.useCallback(async () => {
@@ -735,6 +733,7 @@ export function UserProfilePanel({
   );
   const { agentInfoFields, agentSettingsFields, diagnosticsFields } =
     useProfileFieldBuckets({
+      agentControl,
       isBot,
       isOwner: viewerIsOwner,
       managedAgent,
@@ -815,6 +814,7 @@ export function UserProfilePanel({
           instanceBuckets={instanceBuckets}
           activityAgent={activityAgent}
           managedAgent={managedAgent}
+          agentControl={agentControl}
           agentInfoFields={agentInfoFields}
           archiveActions={archiveActions}
           agentSettingsFields={agentSettingsFields}

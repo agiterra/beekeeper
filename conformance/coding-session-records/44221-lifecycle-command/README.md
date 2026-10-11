@@ -22,12 +22,12 @@ Three rules make the bracketed keys exact rather than approximate:
   events without them exist and must stay valid forever. An explicit `null` is
   *present* to a key-set check and would mean a different thing to a strict
   reader than to a lenient one — that pun is refused.
-- **Three historical create forms** (8, 9 and 10 keys) × seated × attributed ×
-  routed = the twenty-four accepted create shapes `beekeeper-core` builds rather
+- **Three historical create forms** (8, 9 and 10 keys) × anonymous/actor/actor-role × attributed ×
+  routed = the thirty-six accepted create shapes `beekeeper-core` builds rather
   than lists.
 
-`genesisRef` never appears without `sessionRef`. `actor` and `role` travel
-together or not at all. A create carries the routing **record** (the answer); a
+`genesisRef` never appears without `sessionRef`. An actor may carry ordinary Solo
+work without a role; a role always requires an actor. A create carries the routing **record** (the answer); a
 hire carries the routing **request** (the question), and each refuses the
 other's shape by the name of the key that does not belong (ledger draft 97).
 

@@ -1346,3 +1346,70 @@ fn no_line_is_printed_for_none_superseded_or_unknown() {
 
 #[path = "work_bind_ref_tests.rs"]
 mod bind_ref_tests;
+
+#[test]
+fn explicit_work_repository_ignores_poisoned_git_dir() {
+    let target = tempfile::tempdir().expect("target fixture");
+    let poison = tempfile::tempdir().expect("poison fixture");
+    for path in [target.path(), poison.path()] {
+        let output = super::super::worktree::git_command(path)
+            .args(["init", "-q", "--initial-branch=main"])
+            .output()
+            .expect("initialize fixture");
+        assert!(output.status.success());
+    }
+    // A child process gets the hook-shaped environment. No process-global
+    // mutation can race with the other CLI tests.
+    let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args([
+            "--exact",
+            "commands::sessions::work::tests::explicit_work_repository_poison_child",
+            "--nocapture",
+        ])
+        .env("BEEKEEPER_WORK_GIT_TEST_TARGET", target.path())
+        .env("GIT_DIR", poison.path().join(".git"))
+        .output()
+        .expect("run isolated regression");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn explicit_work_repository_poison_child() {
+    let Some(target) = std::env::var_os("BEEKEEPER_WORK_GIT_TEST_TARGET") else {
+        return;
+    };
+    let target = PathBuf::from(target);
+    let raw = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&target)
+        .args(["rev-parse", "--absolute-git-dir"])
+        .output()
+        .expect("demonstrate inherited hook repository");
+    assert!(raw.status.success());
+    assert_eq!(
+        PathBuf::from(String::from_utf8_lossy(&raw.stdout).trim())
+            .canonicalize()
+            .expect("raw repository"),
+        PathBuf::from(std::env::var_os("GIT_DIR").expect("poisoned environment"))
+            .canonicalize()
+            .expect("poison repository"),
+    );
+    let actual = git(
+        target.to_str().expect("fixture path"),
+        &["rev-parse", "--absolute-git-dir"],
+    )
+    .expect("read explicitly selected repository");
+    assert_eq!(
+        PathBuf::from(actual.trim())
+            .canonicalize()
+            .expect("actual repository"),
+        target
+            .join(".git")
+            .canonicalize()
+            .expect("target repository"),
+    );
+}

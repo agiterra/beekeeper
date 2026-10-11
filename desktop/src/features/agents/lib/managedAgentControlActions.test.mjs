@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   startManagedAgentWithRules,
   respawnManagedAgentWithRules,
+  isManagedAgentActive,
 } from "./managedAgentControlActions.ts";
 
 function agent(overrides = {}) {
@@ -165,4 +166,42 @@ test("test_respawn_onStopped_fires_before_start_resolves", async () => {
     ["stop", "onStopped", "start"],
     "onStopped must fire after stop resolves and before start is called",
   );
+});
+
+test("host-managed restart verifies stop then clears before starting successor", async () => {
+  // Transferred identities retain a stopped local record with no local PID.
+  // Host-managed lifecycle is separate; cached record status cannot skip Stop.
+  const transferred = agent({ status: "stopped", pid: null });
+  const events = [];
+  assert.equal(isManagedAgentActive(transferred), false);
+  await respawnManagedAgentWithRules({
+    agent: transferred,
+    stopManagedAgent: async (pubkey) => {
+      assert.equal(pubkey, transferred.pubkey);
+      events.push("verified-stop");
+    },
+    onStopped: () => events.push("clear"),
+    startManagedAgent: async (pubkey) => {
+      assert.equal(pubkey, transferred.pubkey);
+      events.push("successor-start");
+    },
+  });
+  assert.deepEqual(events, ["verified-stop", "clear", "successor-start"]);
+});
+
+test("host-managed failed stop preserves badges and prevents successor start", async () => {
+  const events = [];
+  await assert.rejects(
+    respawnManagedAgentWithRules({
+      agent: agent({ status: "stopped", pid: null }),
+      stopManagedAgent: async () => {
+        events.push("stop");
+        throw new Error("sibling responsibility stop unconfirmed");
+      },
+      onStopped: () => events.push("clear"),
+      startManagedAgent: async () => events.push("start"),
+    }),
+    /sibling responsibility stop unconfirmed/,
+  );
+  assert.deepEqual(events, ["stop"]);
 });

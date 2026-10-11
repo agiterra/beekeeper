@@ -14,6 +14,7 @@ import type { IdentityArchiveActions } from "@/features/identity-archive/hooks";
 import { getPresenceLabel } from "@/features/presence/lib/presence";
 import { PresenceDot } from "@/features/presence/ui/PresenceBadge";
 import type { ProfileActivityAgent } from "@/features/profile/lib/profileActivityAgent";
+import type { ProfileAgentControl } from "@/features/profile/lib/profileAgentControl";
 import type {
   useFollowMutation,
   useUnfollowMutation,
@@ -91,6 +92,7 @@ export type ProfileSummaryViewProps = {
   isSelf: boolean;
   instanceBuckets: { live: ManagedAgent[]; archived: ManagedAgent[] };
   managedAgent: ManagedAgent | undefined;
+  agentControl?: ProfileAgentControl;
   agentInfoFields: ProfileField[];
   archiveActions: IdentityArchiveActions;
   agentSettingsFields: ProfileField[];
@@ -167,6 +169,7 @@ export function ProfileSummaryView({
   isSelf,
   instanceBuckets,
   managedAgent,
+  agentControl,
   agentInfoFields,
   archiveActions,
   agentSettingsFields,
@@ -193,9 +196,11 @@ export function ProfileSummaryView({
   const activeTurns = useAgentWorking(isBot ? pubkey : null).channels;
   const avatarStatus = isBot
     ? managedAgent
-      ? isManagedAgentActive(managedAgent)
-        ? "online"
-        : "offline"
+      ? agentControl?.statusText
+        ? presenceStatus
+        : isManagedAgentActive(managedAgent)
+          ? "online"
+          : "offline"
       : (presenceStatus ?? "offline")
     : presenceStatus;
   const stickyLayoutRef = React.useRef<HTMLDivElement>(null);
@@ -428,15 +433,20 @@ export function ProfileSummaryView({
           className={primaryActionsMotionClassName}
           concealed={primaryActionsConcealed}
           followMutation={followMutation}
-          agentActionDisabled={isAgentActionPending}
+          agentActionDisabled={
+            isAgentActionPending || agentControl?.action === null
+          }
           agentActionLabel={
             isOwner === true && managedAgent
-              ? getManagedAgentPrimaryActionLabel(managedAgent)
+              ? (agentControl?.label ??
+                getManagedAgentPrimaryActionLabel(managedAgent))
               : undefined
           }
           agentActionLive={
-            managedAgent?.status === "running" ||
-            managedAgent?.status === "deployed"
+            agentControl
+              ? agentControl.action === "stop"
+              : managedAgent?.status === "running" ||
+                managedAgent?.status === "deployed"
           }
           onAgentPrimaryAction={
             isOwner === true && managedAgent
@@ -446,8 +456,10 @@ export function ProfileSummaryView({
           onAgentRestart={
             isOwner === true &&
             managedAgent?.backend.type === "local" &&
-            (managedAgent.status === "running" ||
-              managedAgent.status === "deployed")
+            (agentControl
+              ? agentControl.canRestart
+              : managedAgent.status === "running" ||
+                managedAgent.status === "deployed")
               ? handleAgentRestart
               : undefined
           }

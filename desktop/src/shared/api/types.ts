@@ -204,6 +204,7 @@ export type ManagedAgentRuntimeLifecycle =
   | "listening"
   | "waking"
   | "ready"
+  | "host_managed"
   | "failed"
   | "stopped";
 
@@ -618,9 +619,8 @@ export type UpdateManagedAgentInput = {
   provider?: string | null;
   /**
    * Preferred ACP runtime id. Absent = don't touch, `null` = clear back to
-   * definition/global inheritance, `"id"` = set. Host-owned like
-   * `model`/`provider`: which harness this computer runs the identity on is an
-   * install fact, not a pack fact.
+   * definition/global inheritance, `"id"` = set. Like `model`/`provider`,
+   * the local harness is an installation fact, separate from the role pack.
    */
   runtime?: string | null;
   systemPrompt?: string | null;

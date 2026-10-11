@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use beekeeper_host_core::config::HostConfig;
 use beekeeper_host_core::env::{build_provider_env, ProviderEnvInputs, INHERITED_KEYS_TO_CLEAR};
-use beekeeper_host_core::layout::CHILD_MARKER_VAR;
+use beekeeper_host_core::layout::{self, CHILD_MARKER_VAR, HOME_VAR, INSTANCE_VAR};
 use beekeeper_host_core::logs::{append_log_marker, now_iso, open_log_file};
 use beekeeper_host_core::record::CodingSessionProviderRecord;
 
@@ -133,6 +133,12 @@ pub fn spawn_provider_child(
         command.env(key, value);
     }
 
+    // Always materialize the resolved host home, even for legacy registration
+    // or direct `host run` where the override was absent. The provider must use
+    // the same ownership journal as this host, never an absent-override bypass.
+    command.env(HOME_VAR, layout::home_dir()?);
+    command.env(INSTANCE_VAR, config.instance.namespace_value());
+
     // The marker that says this child has an owner.
     //
     // The desktop's untracked-harness sweep kills any process whose exe path
@@ -198,7 +204,7 @@ mod tests {
     /// stale value inherited from somewhere else would make the desktop spare
     /// a process no host owns.
     #[test]
-    fn the_child_marker_names_this_hosts_pid() {
+    fn the_child_marker_and_resolved_home_name_this_host() {
         // Proven through the same path the spawn uses: a real child, told to
         // print the variable back.
         let dir = tempfile::tempdir().expect("tempdir");
@@ -217,7 +223,7 @@ mod tests {
         let script = dir.path().join("fake-provider");
         std::fs::write(
             &script,
-            format!("#!/bin/sh\necho \"marker=${CHILD_MARKER_VAR}\"\n"),
+            format!("#!/bin/sh\necho \"marker=${CHILD_MARKER_VAR}\"\necho \"home=${HOME_VAR}\"\necho \"instance=${INSTANCE_VAR}\"\n"),
         )
         .expect("write");
         #[cfg(unix)]
@@ -240,6 +246,17 @@ mod tests {
         assert!(
             logged.contains(&format!("marker={}", std::process::id())),
             "the child must carry this host's pid: {logged}"
+        );
+        assert!(
+            logged.contains(&format!(
+                "home={}",
+                layout::home_dir().expect("resolved home").display()
+            )),
+            "the child must carry the resolved service home even without an override: {logged}"
+        );
+        assert!(
+            logged.contains("instance=production"),
+            "the child must use the configured journal namespace: {logged}"
         );
         assert!(
             logged.contains("under agent host pid"),

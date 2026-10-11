@@ -1,7 +1,7 @@
-//! Reading what the app wrote: the config, the record and the key.
+//! Reading client commissioning: the config, the record and the scoped key.
 //!
 //! Commissioning itself happens in Beekeeper — minting an identity and getting
-//! it attested by the owner key is the app's job, and this host deliberately
+//! it attested by the owner key is the CLI or desktop's job; this host deliberately
 //! cannot do it. What lives here is the other half: reading the result, and
 //! refusing it by name when it does not add up.
 //!
@@ -101,8 +101,8 @@ pub fn commission(home: &Path, instance: Instance) -> Result<Commissioned, Strin
     let config_path = layout::host_config_path(home, instance);
     let config = HostConfig::load(&config_path)?.ok_or_else(|| {
         format!(
-            "this host has not been commissioned: {} does not exist. Open Beekeeper and finish \
-             setting up coding sessions, or write the file yourself for a headless install.",
+            "this host has not been commissioned: {} does not exist. Run `bee host commission` \
+             with the owner credentials, explicit service home and installed runtime adapter.",
             config_path.display()
         )
     })?;
@@ -308,6 +308,6 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let error = commission(dir.path(), Instance::Production).expect_err("must be refused");
         assert!(error.contains("host.json"), "{error}");
-        assert!(error.contains("Open Beekeeper"), "{error}");
+        assert!(error.contains("bee host commission"), "{error}");
     }
 }

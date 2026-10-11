@@ -50,7 +50,7 @@
 
 use std::path::{Path, PathBuf};
 
-use beekeeper_host_core::layout::{self, Instance, INSTANCE_VAR};
+use beekeeper_host_core::layout::{self, Instance, HOME_VAR, INSTANCE_VAR};
 use beekeeper_host_core::logs::now_iso;
 
 pub mod launchd_daemon;
@@ -703,6 +703,8 @@ fn registration_contents(
 	<dict>
 		<key>{INSTANCE_VAR}</key>
 		<string>{instance_value}</string>
+		<key>{HOME_VAR}</key>
+		<string>{service_home}</string>
 	</dict>
 	<key>RunAtLoad</key>
 	<true/>
@@ -724,6 +726,11 @@ fn registration_contents(
             .map(|arg| format!("\n\t\t<string>{arg}</string>"))
             .collect::<String>(),
         instance_value = instance.namespace_value(),
+        service_home = home
+            .to_string_lossy()
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;"),
         log = log.display(),
     )
 }
@@ -747,6 +754,7 @@ Documentation=file:{config}
 Type=simple
 ExecStart={program}{argv}
 Environment={INSTANCE_VAR}={instance_value}
+Environment="{HOME_VAR}={service_home}"
 Restart=on-failure
 RestartSec=5
 # Above the provider's own SIGINT window plus escalation, so systemd does not
@@ -765,6 +773,11 @@ WantedBy=default.target
             .map(|arg| format!(" {arg}"))
             .collect::<String>(),
         instance_value = instance.namespace_value(),
+        service_home = home
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('%', "%%"),
         stop_timeout = stop_timeout_secs(),
     )
 }
@@ -1188,6 +1201,8 @@ mod tests {
         // And the instance is carried, so a dev registration cannot start a
         // production host.
         assert!(contents.contains(INSTANCE_VAR), "{contents}");
+        assert!(contents.contains(HOME_VAR), "{contents}");
+        assert!(contents.contains("/home/agent"), "{contents}");
         assert!(
             contents.contains(Instance::Production.namespace_value()),
             "{contents}"

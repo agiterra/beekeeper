@@ -36,6 +36,10 @@ pub enum Instance {
 /// answer.
 pub const INSTANCE_VAR: &str = "BEEKEEPER_HOST_INSTANCE";
 
+/// Explicit service home for containers, isolated installations and tests.
+/// This never changes the operating-system HOME or reads desktop paths.
+pub const HOME_VAR: &str = "BEEKEEPER_HOST_HOME";
+
 /// The variable that overrides the control-socket path outright.
 ///
 /// For containers and tests, where `$HOME` is not where state belongs.
@@ -197,6 +201,13 @@ pub fn host_owner_file_name() -> &'static str {
 
 /// Resolve `$HOME`, with the one error message worth reading.
 pub fn home_dir() -> Result<PathBuf, String> {
+    if let Some(value) = std::env::var_os(HOME_VAR) {
+        let path = PathBuf::from(value);
+        if !path.is_absolute() {
+            return Err(format!("{HOME_VAR} must be an absolute path"));
+        }
+        return Ok(path);
+    }
     dirs::home_dir().ok_or_else(|| "cannot resolve the home directory".to_string())
 }
 

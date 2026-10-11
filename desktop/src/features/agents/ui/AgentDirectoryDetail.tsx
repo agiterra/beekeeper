@@ -1,7 +1,9 @@
+import { useCallback, useState } from "react";
 import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { X } from "lucide-react";
 
 import type { AgentDirectoryRow } from "@/features/agents/lib/agentDirectoryModel";
+import { HostTransferPanel, type HostTransferPhase } from "./HostTransferPanel";
 import { Button } from "@/shared/ui/button";
 import {
   AGENT_DETAIL_CLOSE_TESTID,
@@ -62,6 +64,29 @@ export function AgentDirectoryDetail({
   isRestartPending: boolean;
   isPending: boolean;
 }) {
+  const [observed, setObserved] = useState<{
+    pubkey: string;
+    phase: HostTransferPhase | null | undefined;
+  } | null>(null);
+  const observePhase = useCallback(
+    (phase: HostTransferPhase | null | undefined) => {
+      setObserved({ pubkey: row.pubkey, phase });
+    },
+    [row.pubkey],
+  );
+  const phase = observed?.pubkey === row.pubkey ? observed.phase : undefined;
+  const awaitingOwnership = row.isInstalled && canEdit && phase === undefined;
+  const legacy = !canEdit || phase === null || phase === "legacyRestored";
+  const canStart =
+    !awaitingOwnership &&
+    (phase === "hostStopped" || (legacy && !row.isRunning));
+  const canStop =
+    !awaitingOwnership &&
+    (phase === "adopted" ||
+      ((legacy || phase === "prepared") && row.isRunning));
+  const canRestart =
+    !awaitingOwnership &&
+    (legacy || phase === "adopted" || phase === "hostStopped");
   const packText = agentDetailPackText(row);
   const { openProfilePanel } = useProfilePanel();
 
@@ -190,7 +215,7 @@ export function AgentDirectoryDetail({
           <div className="flex flex-wrap gap-2">
             <Button
               data-testid={AGENT_DETAIL_START_TESTID}
-              disabled={isPending || row.isRunning}
+              disabled={isPending || !canStart}
               onClick={onStart}
               size="sm"
               variant="outline"
@@ -199,7 +224,7 @@ export function AgentDirectoryDetail({
             </Button>
             <Button
               data-testid={AGENT_DETAIL_STOP_TESTID}
-              disabled={isPending || !row.isRunning}
+              disabled={isPending || !canStop}
               onClick={onStop}
               size="sm"
               variant="outline"
@@ -208,7 +233,7 @@ export function AgentDirectoryDetail({
             </Button>
             <Button
               data-testid={AGENT_DETAIL_RESTART_TESTID}
-              disabled={isPending}
+              disabled={isPending || !canRestart}
               onClick={onRestart}
               size="sm"
               variant="outline"
@@ -235,6 +260,14 @@ export function AgentDirectoryDetail({
           </p>
         )}
       </section>
+      {row.isInstalled && canEdit ? (
+        <HostTransferPanel
+          key={row.pubkey}
+          pubkey={row.pubkey}
+          onPhaseChange={observePhase}
+          managementPending={isPending}
+        />
+      ) : null}
     </div>
   );
 }

@@ -42,6 +42,16 @@ test("backend-authoritative local setup takes precedence", () => {
   );
 });
 
+test("host ownership discloses missing relay availability without offering local setup", () => {
+  const adopted = runtime({
+    localSetup: false,
+    lifecycle: "host_managed",
+    pid: null,
+  });
+  assert.equal(agentCommunityAvailability(adopted), "Unavailable");
+  assert.match(agentCommunityStatusDetail(adopted), /Managed by the host/);
+});
+
 test("unavailable detail distinguishes stopped and failed", () => {
   assert.equal(
     agentCommunityStatusDetail(runtime({ lifecycle: "stopped" })),
@@ -110,4 +120,16 @@ test("matches a stored community URL against canonical backend rows", () => {
     findManagedAgentRuntime(runtimes, "aa", "ws://localhost:3001"),
     undefined,
   );
+});
+
+test("quiesced custody discloses pending adoption even without local runtime prerequisites", () => {
+  const pending = runtime({
+    lifecycle: "failed",
+    localSetup: false,
+    pid: null,
+    error:
+      "Legacy execution quiesced; host adoption is pending. Availability is unconfirmed.",
+  });
+  assert.equal(agentCommunityAvailability(pending), "Unavailable");
+  assert.equal(agentCommunityStatusDetail(pending), pending.error);
 });

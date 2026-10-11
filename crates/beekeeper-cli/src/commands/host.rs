@@ -1,6 +1,7 @@
 //! `bee host` — the agent host on this machine.
 //!
-//! Local-only: this command does **not** talk to the relay. It calls
+//! Launcher controls are local-only. Owner-authorized commissioning additionally
+//! proves the scoped provider's admission through the existing relay API. Controls call
 //! `beekeeper-host`'s owner-only control socket, or writes the login registration
 //! that starts it. Both are launcher-local facts — is the host installed, is
 //! it running, what is its child doing, what did it log — and none of them can
@@ -18,6 +19,10 @@ use crate::error::CliError;
 
 #[derive(Subcommand)]
 pub enum HostCmd {
+    /// Commission a scoped provider without launching the desktop.
+    Commission(super::host_commission::CommissionArgs),
+    /// Materialize an authorized project checkout and its pinned agents source.
+    TrustProject(super::host_project::ProjectArgs),
     /// Ask the running host for its status, as JSON.
     ///
     /// Distinguishes a host that is not installed from one that is installed
@@ -285,7 +290,9 @@ pub async fn dispatch(command: &HostCmd, dev: bool) -> Result<(), CliError> {
                 HostCmd::Logs { .. }
                 | HostCmd::Install { .. }
                 | HostCmd::Uninstall { .. }
-                | HostCmd::Installed => unreachable!("handled above"),
+                | HostCmd::Installed
+                | HostCmd::Commission(_)
+                | HostCmd::TrustProject(_) => unreachable!("handled above"),
             };
             let socket = layout::host_socket_path(&home, instance);
             let timeout = match other {

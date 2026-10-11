@@ -547,6 +547,7 @@ async fn one_title_spawn_at_a_time() {
 fn generator_for(state_dir: &Path, script: String) -> AcpTitleGenerator {
     AcpTitleGenerator {
         state_dir: state_dir.to_path_buf(),
+        runtime_instance: "claude-primary".into(),
         driver: "claude-agent-acp".into(),
         runtime: "claude".into(),
         agent_command: "bash".into(),

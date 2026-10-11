@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { AgentStatusBadge } from "@/features/agents/ui/AgentStatusBadge";
+import type { ProfileAgentControl } from "../lib/profileAgentControl";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
   HoverCopyIndicator,
@@ -80,6 +81,7 @@ export function bucketProfileFields(fields: ProfileField[]) {
 }
 
 export function useProfileFieldBuckets({
+  agentControl,
   isBot,
   isOwner,
   managedAgent,
@@ -95,6 +97,7 @@ export function useProfileFieldBuckets({
   pubkey,
   relayAgent,
 }: {
+  agentControl?: ProfileAgentControl;
   isBot: boolean;
   isOwner: boolean | undefined;
   managedAgent: ManagedAgent | undefined;
@@ -129,8 +132,20 @@ export function useProfileFieldBuckets({
           })
         : []),
     ];
-    return bucketProfileFields(metadataFields);
+    const observedFields = agentControl?.statusText
+      ? metadataFields.map((field) =>
+          field.label === "Status"
+            ? {
+                ...field,
+                displayValue: agentControl.statusText ?? "",
+                displayNode: undefined,
+              }
+            : field,
+        )
+      : metadataFields;
+    return bucketProfileFields(observedFields);
   }, [
+    agentControl,
     isBot,
     isOwner,
     managedAgent,

@@ -21,10 +21,9 @@ pub(crate) fn sweep_orphaned_agent_processes(app: &AppHandle, skip_pids: &[u32])
             }
         })
         .collect();
-    // Collect live orphans AND dead-leader groups into a single kill batch.
-    // Dead leaders: PGID may have been recycled, but the window is narrow
-    // (PID files are from this session) and the cost of missing surviving
-    // group members outweighs the recycling risk.
+    // Collect verified live desktop-owned orphans into one kill batch.
+    // A dead leader does not establish ownership of a recycled process group.
+    // Only live processes with this desktop marker enter the kill batch.
     let targets: Vec<i32> = legacy_entries
         .iter()
         .map(|(_, pid)| *pid)
@@ -36,8 +35,7 @@ pub(crate) fn sweep_orphaned_agent_processes(app: &AppHandle, skip_pids: &[u32])
             // Receipt/PID-file entries were written by this instance at spawn
             // time — they are Beekeeper-owned by construction; no name gate needed.
             // Kill live processes; dead ones fall through to receipt cleanup.
-            (process_is_running(*pid) && process_has_beekeeper_marker(*pid, &instance_id))
-                || !process_is_running(*pid)
+            process_is_running(*pid) && desktop_owns_marked_process(*pid, &instance_id)
         })
         .map(|pid| pid as i32)
         .collect();
@@ -164,7 +162,7 @@ pub(crate) fn sweep_system_agent_processes(instance_id: &str, skip_pids: &[u32])
         }
         // Custom harnesses don't match KNOWN_AGENT_BINARIES by name; the
         // BEEKEEPER_MANAGED_AGENT env marker is the authoritative ownership proof.
-        if !process_has_beekeeper_marker(upid, instance_id) {
+        if !desktop_owns_marked_process(upid, instance_id) {
             continue;
         }
         // Live descendants of a tracked harness are exempt — see sweep::is_live_descendant_*.
@@ -217,7 +215,7 @@ pub(crate) fn sweep_system_agent_processes(instance_id: &str, skip_pids: &[u32])
         }
         // Same ownership rule as macOS: the marker is the authoritative gate.
         // Fixes custom-harness orphan cleanup on Linux.
-        if !process_has_beekeeper_marker(upid, instance_id) {
+        if !desktop_owns_marked_process(upid, instance_id) {
             continue;
         }
         // Live descendants of a tracked harness are exempt — see sweep::is_live_descendant_*.
@@ -320,7 +318,7 @@ pub(crate) fn collect_same_instance_orphans(
         }
         // Custom harnesses don't match KNOWN_AGENT_BINARIES by name; the
         // BEEKEEPER_MANAGED_AGENT env marker is the authoritative ownership proof.
-        if !process_has_beekeeper_marker(upid, instance_id) {
+        if !desktop_owns_marked_process(upid, instance_id) {
             continue;
         }
         // Live descendants of a tracked harness are exempt — see sweep::is_live_descendant_*.
@@ -368,7 +366,7 @@ pub(crate) fn collect_same_instance_orphans(
         }
         // Same ownership rule as macOS: the marker is the authoritative gate.
         // Fixes custom-harness orphan cleanup on Linux.
-        if !process_has_beekeeper_marker(upid, instance_id) {
+        if !desktop_owns_marked_process(upid, instance_id) {
             continue;
         }
         // Live descendants of a tracked harness are exempt — see sweep::is_live_descendant_*.

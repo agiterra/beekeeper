@@ -20,7 +20,6 @@
 //! (README § (c) "coverageComplete, and the 44244 terminal").
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::process::Command;
 
 use beekeeper_core::coding_session_team_transaction::CodingSessionTeamFoldContext;
 use beekeeper_core::kind::{
@@ -476,9 +475,7 @@ pub fn print_example(verb: &str, requested: &str) -> Result<(), CliError> {
 /// Run one git command in `dir` and return its stdout, or a refusal naming
 /// the exact command that failed.
 fn git(dir: &str, args: &[&str]) -> Result<String, CliError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let output = super::worktree::git_command(std::path::Path::new(dir))
         .args(args)
         .output()
         .map_err(|error| {

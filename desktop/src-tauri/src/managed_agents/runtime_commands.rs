@@ -57,19 +57,63 @@ fn status_for_with(
     let metadata = super::known_acp_runtime(&command);
     let effective = resolve_effective_agent_env(record, personas, metadata, global);
     let local_setup = matches!(agent_readiness(&effective), AgentReadiness::Ready);
+    let ownership = beekeeper_host_core::layout::home_dir().and_then(|home| {
+        beekeeper_host_core::ownership::for_pair(
+            &home,
+            crate::agent_host::instance(),
+            &key.pubkey,
+            &key.relay_url,
+        )
+    });
+    let custody_status = ownership
+        .as_ref()
+        .ok()
+        .and_then(|t| t.as_ref().and_then(|t| ownership_lifecycle(&t.phase)));
+    let custody_error = ownership.err();
     ManagedAgentRuntimeStatus {
         pubkey: key.pubkey.clone(),
         relay_url: key.relay_url.clone(),
         requested_relay_url,
         local_setup,
-        lifecycle: runtime
-            .map(|runtime| runtime.lifecycle.clone())
-            .unwrap_or(ManagedAgentRuntimeLifecycle::Stopped),
-        pid: runtime.map(|runtime| runtime.child.id()),
-        error: runtime.and_then(|runtime| runtime.error.clone()),
+        lifecycle: custody_status
+            .as_ref()
+            .map(|v| v.0.clone())
+            .unwrap_or_else(|| {
+                if custody_error.is_some() {
+                    ManagedAgentRuntimeLifecycle::Failed
+                } else {
+                    runtime
+                        .map(|runtime| runtime.lifecycle.clone())
+                        .unwrap_or(ManagedAgentRuntimeLifecycle::Stopped)
+                }
+            }),
+        pid: if custody_status.is_some() || custody_error.is_some() {
+            None
+        } else {
+            runtime.map(|runtime| runtime.child.id())
+        },
+        error: custody_status
+            .map(|v| v.1.to_string())
+            .or(custody_error)
+            .or_else(|| runtime.and_then(|runtime| runtime.error.clone())),
         log_path: managed_agent_runtime_log_path(app, key)
             .ok()
             .map(|path| path.display().to_string()),
+    }
+}
+
+// Ownership is supervisor evidence; a primary target's terminal phase cannot
+// label every responsibility stopped or expose a stale local PID.
+fn ownership_lifecycle(
+    phase: &beekeeper_host_core::ownership::Phase,
+) -> Option<(ManagedAgentRuntimeLifecycle, &'static str)> {
+    use beekeeper_host_core::ownership::Phase;
+    match phase {
+        Phase::Prepared | Phase::LegacyRestored => None,
+        Phase::Quiesced => Some((ManagedAgentRuntimeLifecycle::Failed, "Legacy execution quiesced; host adoption is pending. Availability is unconfirmed.")),
+        Phase::Adopted => Some((ManagedAgentRuntimeLifecycle::HostManaged, "Managed by the host. Inspect all responsibilities through relay session status.")),
+        Phase::HostStopped => Some((ManagedAgentRuntimeLifecycle::HostManaged, "Transferred primary execution stopped; other responsibilities may remain. Inspect relay session status.")),
+        Phase::Restoring => Some((ManagedAgentRuntimeLifecycle::HostManaged, "Ownership restoration is in progress; all host responsibilities must stop. Inspect relay session status.")),
     }
 }
 
@@ -86,7 +130,9 @@ fn observer_lifecycle_key(
     }
     if matches!(
         payload.lifecycle,
-        ManagedAgentRuntimeLifecycle::Starting | ManagedAgentRuntimeLifecycle::Stopped
+        ManagedAgentRuntimeLifecycle::Starting
+            | ManagedAgentRuntimeLifecycle::Stopped
+            | ManagedAgentRuntimeLifecycle::HostManaged
     ) {
         return Err("observer cannot author starting or stopped lifecycle".into());
     }
@@ -106,6 +152,7 @@ pub fn put_managed_agent_runtime_lifecycle(
     app: AppHandle,
 ) -> Result<ManagedAgentRuntimeStatus, String> {
     let key = observer_lifecycle_key(&outer_pubkey, &payload)?;
+    super::runtime::require_desktop_runtime_owner(&key.pubkey, &key.relay_url)?;
     let state = app.state::<AppState>();
     let records = load_managed_agents(&app)?;
     let record = records
@@ -264,6 +311,7 @@ fn start_pair(
         return Err("managed agent changed while runtime reconciliation was in flight".into());
     }
     let key = ManagedAgentRuntimeKey::new(pubkey, &relay_url)?;
+    super::runtime::require_desktop_runtime_owner(&key.pubkey, &key.relay_url)?;
     let mut runtimes = state
         .managed_agent_processes
         .lock()
@@ -328,6 +376,7 @@ pub fn stop_managed_agent_runtime(
     let mut records = load_managed_agents(&app)?;
     let record = find_managed_agent_mut(&mut records, &pubkey)?;
     let key = ManagedAgentRuntimeKey::new(pubkey, &relay_url)?;
+    super::runtime::require_desktop_runtime_owner(&key.pubkey, &key.relay_url)?;
     let mut runtimes = state
         .managed_agent_processes
         .lock()
@@ -696,6 +745,12 @@ mod tests {
             None,
         );
         assert!(observer_lifecycle_key(&stopped.pubkey, &stopped).is_err());
+        let host = payload(
+            "wss://relay.example",
+            ManagedAgentRuntimeLifecycle::HostManaged,
+            None,
+        );
+        assert!(observer_lifecycle_key(&host.pubkey, &host).is_err());
     }
 
     #[test]
@@ -713,5 +768,20 @@ mod tests {
             Some("unexpected"),
         );
         assert!(observer_lifecycle_key(&ready_with_error.pubkey, &ready_with_error).is_err());
+    }
+    #[test]
+    fn ownership_phase_never_promotes_unknown_host_responsibilities_to_local_status() {
+        use beekeeper_host_core::ownership::Phase;
+        for phase in [Phase::Adopted, Phase::HostStopped, Phase::Restoring] {
+            let (lifecycle, detail) = ownership_lifecycle(&phase).unwrap();
+            assert_eq!(lifecycle, ManagedAgentRuntimeLifecycle::HostManaged);
+            assert!(detail.contains("responsibilities"));
+            assert_ne!(lifecycle, ManagedAgentRuntimeLifecycle::Stopped);
+        }
+        let (lifecycle, detail) = ownership_lifecycle(&Phase::Quiesced).unwrap();
+        assert_eq!(lifecycle, ManagedAgentRuntimeLifecycle::Failed);
+        assert!(detail.contains("adoption is pending"));
+        assert!(ownership_lifecycle(&Phase::Prepared).is_none());
+        assert!(ownership_lifecycle(&Phase::LegacyRestored).is_none());
     }
 }

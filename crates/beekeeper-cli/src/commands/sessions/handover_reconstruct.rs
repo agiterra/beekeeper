@@ -531,7 +531,7 @@ pub(super) fn create_answer(
 /// *project's* old folder while the continuation said "recovered": the
 /// artifacts in one directory, the agent in another.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ProjectsBinding {
+pub(crate) struct ProjectsBinding {
     /// The hint file that was written.
     pub(super) hint_path: PathBuf,
     /// The absolute directory bound to the create.
@@ -647,7 +647,7 @@ pub(super) fn resolve_create_directory(
 /// file name, or a working directory that does not resolve to an absolute
 /// path — each before the create is published, so a failure here never leaves
 /// a claimed session with an unbound execution.
-pub(super) fn bind_pending_directory(
+pub(crate) fn bind_pending_directory(
     projects_file: &Path,
     command_id: &str,
     directory: &Path,

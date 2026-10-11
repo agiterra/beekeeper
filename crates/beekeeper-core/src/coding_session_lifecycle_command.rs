@@ -658,14 +658,11 @@ pub fn decode_coding_session_lifecycle_command(
             // the forms are built rather than listed: a hand-written list of
             // twenty-four is a list that grows a hole the next time a key is
             // added.
-            let mut forms: Vec<Vec<&str>> = Vec::with_capacity(24);
+            let mut forms: Vec<Vec<&str>> = Vec::with_capacity(36);
             for base in CREATE_ACTION_FORMS {
-                for with_seat in [false, true] {
+                for seat_keys in [&[][..], &["actor"][..], &["actor", "role"][..]] {
                     let mut seat_form = base.to_vec();
-                    if with_seat {
-                        seat_form.push("actor");
-                        seat_form.push("role");
-                    }
+                    seat_form.extend_from_slice(seat_keys);
                     for with_hire in [false, true] {
                         let mut form = seat_form.clone();
                         if with_hire {
@@ -1263,27 +1260,25 @@ fn require_seat_pair_shape(action: &Value) -> Result<(), String> {
     if actor.is_none() && role.is_none() {
         return Ok(());
     }
-    let both_named = actor
-        .and_then(Value::as_str)
-        .zip(role.and_then(Value::as_str))
-        .is_some();
-    if both_named {
+    if actor.and_then(Value::as_str).is_some()
+        && (role.is_none() || role.and_then(Value::as_str).is_some())
+    {
         return Ok(());
     }
     Err(format!(
         "{ACTOR_ROLE_PAIR}: coding-session lifecycle command action.actor and action.role \
-         must both be present as non-null strings, or both be absent"
+         role requires a named actor; present actor and role must be non-null strings"
     ))
 }
 
 /// Same rule, applied to the decoded type so a programmatic producer cannot
 /// build half a seat and sign it.
 fn validate_actor_role_pair(actor: Option<&str>, role: Option<&str>) -> Result<(), String> {
-    if actor.is_some() == role.is_some() {
+    if role.is_none() || actor.is_some() {
         return Ok(());
     }
     Err(format!(
-        "{ACTOR_ROLE_PAIR}: action.actor and action.role must both be set or both be unset"
+        "{ACTOR_ROLE_PAIR}: action.role requires action.actor"
     ))
 }
 
@@ -2037,9 +2032,8 @@ mod tests {
 
     /// The pairing rule, in both directions, with the code the refusal names.
     #[test]
-    fn an_actor_without_a_role_is_refused_as_actor_role_pair() {
+    fn role_without_actor_and_null_identity_are_refused_as_actor_role_pair() {
         for (actor, role) in [
-            (format!("\"{}\"", "cd".repeat(32)), "<absent>".to_owned()),
             ("<absent>".to_owned(), "\"lead\"".to_owned()),
             (format!("\"{}\"", "cd".repeat(32)), "null".to_owned()),
             ("null".to_owned(), "\"lead\"".to_owned()),
@@ -2054,6 +2048,21 @@ mod tests {
                 "the refusal must name {ACTOR_ROLE_PAIR}, got {error:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_attributed_solo_create_requires_no_team_role() {
+        let decoded = decode_coding_session_lifecycle_command(&lifecycle_content_with_seat(
+            &format!("\"{}\"", "cd".repeat(32)),
+            "<absent>",
+        ))
+        .expect("attributed Solo");
+        decoded.validate().expect("programmatic producer agrees");
+        let CodingSessionLifecycleAction::SessionCreate { actor, role, .. } = decoded.action else {
+            panic!("create")
+        };
+        assert_eq!(actor, Some("cd".repeat(32)));
+        assert_eq!(role, None);
     }
 
     /// The seat's two values are bounded exactly like every other reference on

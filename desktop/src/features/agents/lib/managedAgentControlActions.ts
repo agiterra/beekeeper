@@ -101,7 +101,10 @@ export async function respawnManagedAgentWithRules({
    * clear stale working badges at the right boundary. */
   onStopped?: () => void;
 }) {
-  if (agent.backend.type === "local" && isManagedAgentActive(agent)) {
+  // Cached local status cannot establish host ownership or a stop boundary.
+  // The backend safely no-ops stopped legacy agents and verifies all host
+  // responsibilities before permitting a successor.
+  if (agent.backend.type === "local") {
     await stopManagedAgent(agent.pubkey);
     onStopped?.();
   }

@@ -134,3 +134,66 @@ export async function reconcileManagedAgentRuntimes(
 ): Promise<ManagedAgentRuntimeStatus[]> {
   return invokeTauri("reconcile_managed_agent_runtimes", { communities });
 }
+
+export type ManagedAgentHostTransfer = {
+  operationId: string;
+  actorPubkey: string;
+  relayUrl: string;
+  definitionEventId: string;
+  legacyNonce: string;
+  phase:
+    | "prepared"
+    | "quiesced"
+    | "adopted"
+    | "hostStopped"
+    | "restoring"
+    | "legacyRestored";
+  target: {
+    driver: string;
+    instanceId: string;
+    sessionId: string;
+    generation: number;
+  } | null;
+};
+export type ManagedAgentHostTransferInfo = {
+  relayUrl: string;
+  revision: string;
+  commissioned: boolean;
+  transfer: ManagedAgentHostTransfer | null;
+  channel: string | null;
+  cwd: string | null;
+};
+
+export function getManagedAgentHostTransfer(
+  pubkey: string,
+  options?: { localOnly?: boolean },
+): Promise<ManagedAgentHostTransferInfo> {
+  return invokeTauri("get_managed_agent_host_transfer", {
+    pubkey,
+    ...(options?.localOnly ? { localOnly: true } : {}),
+  });
+}
+export function prepareManagedAgentHostTransfer(input: {
+  pubkey: string;
+  relayUrl: string;
+  operationId: string;
+  definitionEventId: string;
+  channel: string;
+  cwd: string;
+}): Promise<ManagedAgentHostTransfer> {
+  return invokeTauri("prepare_managed_agent_host_transfer", input);
+}
+export function adoptManagedAgentHostTransfer(input: {
+  pubkey: string;
+  relayUrl: string;
+  operationId: string;
+}): Promise<{ host_admitted: boolean; receipt_event_id: string }> {
+  return invokeTauri("adopt_managed_agent_host_transfer", input);
+}
+export function rollbackManagedAgentHostTransfer(input: {
+  pubkey: string;
+  relayUrl: string;
+  operationId: string;
+}): Promise<ManagedAgentHostTransfer> {
+  return invokeTauri("rollback_managed_agent_host_transfer", input);
+}

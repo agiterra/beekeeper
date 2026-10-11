@@ -24,62 +24,12 @@
 
 use beekeeper_core_pkg::kind::KIND_MANAGED_AGENT;
 use nostr::{EventBuilder, Kind, Tag};
-use serde::{Deserialize, Serialize};
 
-use super::{ManagedAgentRecord, RespondTo};
+use super::ManagedAgentRecord;
+#[cfg(test)]
+use super::RespondTo;
 
-/// The JSON body stored in a managed-agent event's content field.
-///
-/// Explicit opt-IN allowlist of the agent's public identity + behavioral
-/// config. See the module docs for the exclusion contract — secrets, the
-/// provider backend blob, and all runtime/install fields are deliberately
-/// absent and must stay that way.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ManagedAgentEventContent {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub persona_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    /// `persona_content_hash` of the persona snapshot pinned at create time.
-    /// Public drift indicator (not a secret) — lets other clients flag a stale
-    /// snapshot without re-reading the source persona.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub persona_source_version: Option<String>,
-    pub parallelism: u32,
-    /// Inbound author gate mode (wire string).
-    pub respond_to: RespondTo,
-    /// Allowlisted author pubkeys when `respond_to == Allowlist`. These are
-    /// public keys, not secrets.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub respond_to_allowlist: Vec<String>,
-    /// The agent's primary role slug, when the record has one. Public: the
-    /// role is what a project's lead hires by.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub home_role: Option<String>,
-    /// `project_agent_digest` of the record's `project_ref`, never the
-    /// coordinate itself: this event is readable by every relay member and a
-    /// project may be private. A claim by the event's author — readers check
-    /// the author's authority over the project before believing it. Which
-    /// digest, if any, is published is
-    /// [`super::project_association_carry::published_project_digest`]: only a
-    /// verified public project's own, otherwise whatever the record carries.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_digest: Option<String>,
-    /// `true` when this agent's association is intentionally unpublished
-    /// (`PROJECT_AGENT_WITHDRAWN_CONTENT_KEY`): its project was verified
-    /// private here or on another computer of this owner. Carries no digest,
-    /// coordinate or project identity, is never serialized with
-    /// `project_digest`, and stops the owner's other computers republishing a
-    /// digest they carried. See
-    /// [`super::project_association_carry::published_project_withdrawn`].
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub project_withdrawn: bool,
-}
+pub use beekeeper_core_pkg::managed_agent::ManagedAgentEventContent;
 
 /// Project a `ManagedAgentRecord` onto the content fields published in
 /// managed-agent events.
@@ -90,47 +40,17 @@ pub struct ManagedAgentEventContent {
 /// operational start/stop produces an identical projection and never
 /// republishes.
 pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventContent {
-    // Slimmed projection (NIP-AP "Slimming: kind:30177"): definition-linked
-    // instances resolve prompt/model/provider/source_version through their
-    // kind:30175 definition, so those fields are omitted from the wire.
-    // Definition-less instances ARE their own definition and keep emitting
-    // the quad — old readers parse a slimmed event successfully and would
-    // otherwise overwrite their local snapshot with absent values, with no
-    // restore path. This branch retires once every record is
-    // definition-backed (B5 backfill).
-    let definition_linked = record.persona_id.is_some();
     ManagedAgentEventContent {
         name: record.name.clone(),
         persona_id: record.persona_id.clone(),
-        system_prompt: if definition_linked {
-            None
-        } else {
-            record.system_prompt.clone()
-        },
-        model: if definition_linked {
-            None
-        } else {
-            record.model.clone()
-        },
-        provider: if definition_linked {
-            None
-        } else {
-            record.provider.clone()
-        },
-        persona_source_version: if definition_linked {
-            None
-        } else {
-            record.persona_source_version.clone()
-        },
+        system_prompt: record.system_prompt.clone(),
+        model: record.model.clone(),
+        provider: record.provider.clone(),
+        persona_source_version: record.persona_source_version.clone(),
         parallelism: record.parallelism,
         respond_to: record.respond_to,
         respond_to_allowlist: record.respond_to_allowlist.clone(),
-        home_role: record
-            .home_role
-            .as_deref()
-            .map(str::trim)
-            .filter(|role| !role.is_empty())
-            .map(str::to_owned),
+        home_role: record.home_role.clone(),
         // A private project is never announced; an unverified or absent
         // association republishes only the digest this record carries, so
         // this computer never withdraws another computer's association.
@@ -138,6 +58,7 @@ pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventCont
         // A withdrawal is marked, so it is not mistaken for a stale host.
         project_withdrawn: super::project_association_carry::published_project_withdrawn(record),
     }
+    .public_projection()
 }
 
 /// Build a kind:30177 event from a `ManagedAgentRecord`.
@@ -145,17 +66,11 @@ pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventCont
 /// Returns an unsigned `EventBuilder` — the caller signs and submits. The
 /// `d_tag` is the agent's pubkey.
 pub fn build_agent_event(record: &ManagedAgentRecord) -> Result<EventBuilder, String> {
-    super::validate_managed_agent_definition_text(
-        &record.name,
-        record.persona_id.as_deref(),
-        record.system_prompt.as_deref(),
+    beekeeper_sdk_pkg::managed_agent::build_managed_agent_event(
+        &record.pubkey,
+        &agent_event_content(record),
     )
-    .map_err(|error| format!("Managed agent definition is unsafe to publish: {error}"))?;
-    let content = serde_json::to_string(&agent_event_content(record))
-        .map_err(|e| format!("failed to serialize managed-agent content: {e}"))?;
-    let tags =
-        vec![Tag::parse(["d", record.pubkey.as_str()]).map_err(|e| format!("invalid d-tag: {e}"))?];
-    Ok(EventBuilder::new(Kind::Custom(KIND_MANAGED_AGENT as u16), content).tags(tags))
+    .map_err(|error| error.to_string())
 }
 
 /// Parse a kind:30177 event's content into the projection — the inbound
@@ -200,7 +115,7 @@ mod tests {
     fn sample_agent() -> ManagedAgentRecord {
         ManagedAgentRecord {
             reserves_name_globally: false,
-            pubkey: "agentpubkeyhex".to_string(),
+            pubkey: "ab".repeat(32),
             name: "Test Agent".to_string(),
             persona_id: Some("persona-1".to_string()),
             private_key_nsec: "nsec1secretdonotpublish".to_string(),
@@ -315,7 +230,10 @@ mod tests {
                     .flatten()
             })
             .unwrap();
-        assert_eq!(d, "agentpubkeyhex");
+        assert_eq!(
+            d,
+            "abababababababababababababababababababababababababababababababab"
+        );
     }
 
     /// The security-critical assertion: the published projection must NEVER
@@ -478,7 +396,11 @@ mod tests {
         });
         let keys = Keys::generate();
         let event = EventBuilder::new(Kind::Custom(KIND_MANAGED_AGENT as u16), content.to_string())
-            .tags(vec![Tag::parse(["d", "agentpubkeyhex"]).unwrap()])
+            .tags(vec![Tag::parse([
+                "d",
+                "abababababababababababababababababababababababababababababababab",
+            ])
+            .unwrap()])
             .sign_with_keys(&keys)
             .unwrap();
         let event = nostr::Event::from_json(event.as_json()).unwrap();
@@ -658,7 +580,11 @@ mod tests {
         let parse = |content: serde_json::Value| {
             let event =
                 EventBuilder::new(Kind::Custom(KIND_MANAGED_AGENT as u16), content.to_string())
-                    .tags(vec![Tag::parse(["d", "agentpubkeyhex"]).unwrap()])
+                    .tags(vec![Tag::parse([
+                        "d",
+                        "abababababababababababababababababababababababababababababababab",
+                    ])
+                    .unwrap()])
                     .sign_with_keys(&Keys::generate())
                     .unwrap();
             managed_agent_content_from_event(&event).unwrap()
@@ -687,7 +613,11 @@ mod tests {
     #[test]
     fn build_agent_delete_has_single_a_tag_no_e_tag() {
         const OWNER: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-        let builder = build_agent_delete("agentpubkeyhex", OWNER).unwrap();
+        let builder = build_agent_delete(
+            "abababababababababababababababababababababababababababababababab",
+            OWNER,
+        )
+        .unwrap();
         let keys = nostr::Keys::generate();
         let event = builder.sign_with_keys(&keys).unwrap();
 
@@ -702,7 +632,7 @@ mod tests {
         assert_eq!(a_tags.len(), 1);
         assert_eq!(
             a_tags[0][1],
-            format!("{KIND_MANAGED_AGENT}:{OWNER}:agentpubkeyhex")
+            format!("{KIND_MANAGED_AGENT}:{OWNER}:{}", "ab".repeat(32))
         );
 
         assert!(event

@@ -205,7 +205,7 @@ test("create agent persists Beekeeper shared compute with auto model", async ({
   }, agentName);
 
   expect(createPayload).toMatchObject({
-    agentCommand: "buzz-agent",
+    agentCommand: "beekeeper-agent",
     model: "auto",
     provider: "relay-mesh",
     spawnAfterCreate: true,

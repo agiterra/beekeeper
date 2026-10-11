@@ -19,6 +19,7 @@ pub mod coding_session_handover;
 pub mod coding_session_observation;
 pub mod coding_session_policy;
 pub mod coding_session_team_transaction;
+pub mod managed_agent;
 pub mod mentions;
 pub mod nip_oa;
 pub mod project_work;

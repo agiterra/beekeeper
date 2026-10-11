@@ -812,6 +812,19 @@ pub async fn stop_managed_agent(
     app: AppHandle,
 ) -> Result<ManagedAgentSummary, String> {
     use tauri::Manager;
+    if host_transfer::stop_if_adopted(&app, &pubkey).await? {
+        let state = app.state::<AppState>();
+        let records = load_managed_agents(&app)?;
+        let record = records
+            .iter()
+            .find(|r| r.pubkey == pubkey)
+            .ok_or("agent not found")?;
+        let runtimes = state
+            .managed_agent_processes
+            .lock()
+            .map_err(|e| e.to_string())?;
+        return summarize_from_disk(&app, record, &runtimes);
+    }
     tokio::task::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let _store_guard = state
@@ -949,6 +962,7 @@ pub(crate) use purge::purge_managed_agent_side_effects;
 
 #[path = "agents_deploy.rs"]
 mod deploy;
+pub(super) mod host_transfer;
 mod mint;
 pub(super) mod provider_access;
 mod provider_deploy;
@@ -958,6 +972,10 @@ pub(super) use deploy::build_deploy_payload;
 use deploy::{deploy_payload_json, DeployProjections};
 #[cfg(test)]
 use deploy::{ensure_remote_provider_supported, resolve_deploy_model_provider};
+pub use host_transfer::{
+    adopt_managed_agent_host_transfer, get_managed_agent_host_transfer,
+    prepare_managed_agent_host_transfer, rollback_managed_agent_host_transfer,
+};
 pub(crate) use mint::mint_agent_identity;
 pub use start::start_managed_agent;
 

@@ -191,7 +191,7 @@ test("a non-boolean value on any capability key, known or not, is refused", () =
   );
 });
 
-test("a seated create (actor + role) is a strict lifecycle command", () => {
+test("attributed Solo and seated creates are strict lifecycle commands", () => {
   const create = (extra = {}) => ({
     schema: "buzz-coding-session-lifecycle-command/v1",
     commandId: "csl-1",
@@ -215,7 +215,7 @@ test("a seated create (actor + role) is a strict lifecycle command", () => {
   assert.equal(strict(create()), true);
   assert.equal(strict(create({ actor: ACTOR, role: "lead" })), true);
   assert.equal(strict(create({ role: "lead" })), false);
-  assert.equal(strict(create({ actor: ACTOR })), false);
+  assert.equal(strict(create({ actor: ACTOR })), true);
   assert.equal(strict(create({ actor: ACTOR, role: "Lead" })), false);
   assert.equal(strict(create({ actor: "C".repeat(64), role: "lead" })), false);
 });

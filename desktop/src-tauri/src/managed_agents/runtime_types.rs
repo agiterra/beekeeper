@@ -38,6 +38,8 @@ pub enum ManagedAgentRuntimeLifecycle {
     Listening,
     Waking,
     Ready,
+    /// Ownership was adopted; relay session evidence determines availability.
+    HostManaged,
     Failed,
     Stopped,
 }

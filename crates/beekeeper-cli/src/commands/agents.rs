@@ -11,6 +11,8 @@ use crate::{AgentsCmd, RespondToArg};
 
 pub async fn dispatch(command: AgentsCmd, client: &BeekeeperClient) -> Result<(), CliError> {
     match command {
+        AgentsCmd::Create(args) => super::agent_management::create(&args, client).await,
+        AgentsCmd::Update(args) => super::agent_management::update(&args, client).await,
         AgentsCmd::DraftCreate {
             channel,
             display_name,

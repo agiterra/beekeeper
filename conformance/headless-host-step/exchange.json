@@ -1,0 +1,82 @@
+{
+  "witnessedRelayPubkey": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+  "acceptedClaimEventId": "3bb01b61d6990fefaee13e225292094420f457bac54811ce16bb3d2c076086bf",
+  "request": {
+    "pubkey": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+    "created_at": 1791720000,
+    "kind": 46013,
+    "tags": [
+      [
+        "d",
+        "11111111-1111-4111-8111-111111111111:hook"
+      ],
+      [
+        "h",
+        "22222222-2222-4222-8222-222222222222"
+      ],
+      [
+        "schema",
+        "buzz-host-step/v1"
+      ],
+      [
+        "a",
+        "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:demo"
+      ]
+    ],
+    "content": "{\"schema\":\"buzz-host-step/v1\",\"runId\":\"11111111-1111-4111-8111-111111111111\",\"workflowId\":\"33333333-3333-4333-8333-333333333333\",\"workflowName\":\"on-push\",\"stepId\":\"hook\",\"stepIndex\":0,\"definitionHash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"stepKind\":\"run_on_host\",\"channelId\":\"22222222-2222-4222-8222-222222222222\",\"project\":\"30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:demo\",\"triggerContext\":{\"after\":\"cccccccccccccccccccccccccccccccccccccccc\"},\"inputs\":{},\"expiresAt\":1791723600}",
+    "id": "6873f1c3740819ff5fe01151da778a806bc4782af53efe6bf6686e63222304e8",
+    "sig": "043e06ca6dd7952f24000ed5088125fdfb0e58634e9a484d54a0709d7b65976305d356114b9069cfd9d722480b2c64f1914f75c8b9074f5a4011c746cdfcd131"
+  },
+  "claim": {
+    "pubkey": "e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13",
+    "created_at": 1791720000,
+    "kind": 46022,
+    "tags": [
+      [
+        "d",
+        "11111111-1111-4111-8111-111111111111:hook"
+      ],
+      [
+        "h",
+        "22222222-2222-4222-8222-222222222222"
+      ],
+      [
+        "schema",
+        "buzz-host-step/v1"
+      ],
+      [
+        "e",
+        "6873f1c3740819ff5fe01151da778a806bc4782af53efe6bf6686e63222304e8"
+      ]
+    ],
+    "content": "{\"schema\":\"buzz-host-step/v1\",\"runId\":\"11111111-1111-4111-8111-111111111111\",\"stepId\":\"hook\",\"channelId\":\"22222222-2222-4222-8222-222222222222\",\"requestedEventId\":\"6873f1c3740819ff5fe01151da778a806bc4782af53efe6bf6686e63222304e8\",\"host\":{\"name\":\"fixture\"}}",
+    "id": "3bb01b61d6990fefaee13e225292094420f457bac54811ce16bb3d2c076086bf",
+    "sig": "23d93c693fea21693a17f615880b2ac526c4007d7310be891374b0f3e4f552793bc5b8be7a3295d36a49fe62f02b9f8e5f4da39a5cc6cab60ad2b58659e332a3"
+  },
+  "result": {
+    "pubkey": "e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13",
+    "created_at": 1791720000,
+    "kind": 46023,
+    "tags": [
+      [
+        "d",
+        "11111111-1111-4111-8111-111111111111:hook"
+      ],
+      [
+        "h",
+        "22222222-2222-4222-8222-222222222222"
+      ],
+      [
+        "schema",
+        "buzz-host-step/v1"
+      ],
+      [
+        "e",
+        "6873f1c3740819ff5fe01151da778a806bc4782af53efe6bf6686e63222304e8"
+      ]
+    ],
+    "content": "{\"schema\":\"buzz-host-step/v1\",\"runId\":\"11111111-1111-4111-8111-111111111111\",\"stepId\":\"hook\",\"channelId\":\"22222222-2222-4222-8222-222222222222\",\"requestedEventId\":\"6873f1c3740819ff5fe01151da778a806bc4782af53efe6bf6686e63222304e8\",\"claimEventId\":\"3bb01b61d6990fefaee13e225292094420f457bac54811ce16bb3d2c076086bf\",\"disposition\":\"exited\",\"exitCode\":0,\"timedOut\":false,\"agentsCommit\":\"dddddddddddddddddddddddddddddddddddddddd\",\"headSha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"stdoutTail\":\"{\\\"schema\\\":\\\"example-hook/v1\\\",\\\"ok\\\":true}\",\"stderrTail\":\"\"}",
+    "id": "a06f06b60449c49fd72d5b4d5f4aadbdbf3b2eacf639dff606d2ac3f99df4fdd",
+    "sig": "2e0a8e8285097136b2d5c353a80db22369b096ab1dd4aed5fa94854d046e1b7db7df4d7d5616d1270a63e958db4659729af810903485c2706e9f8acf47891d63"
+  }
+}

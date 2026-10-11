@@ -544,3 +544,26 @@ fn a_stopped_receipt_naming_another_target_or_signer_is_never_a_confirmation() {
         Ok(Some(StopAnswer::Stopped { .. }))
     ));
 }
+
+#[tokio::test]
+async fn ownership_stop_fence_refuses_a_replacement_without_publication() {
+    let provider = nostr::Keys::generate();
+    let authority = provider.public_key().to_hex();
+    let (url, relay, server) =
+        spawn_relay(provider, live_channel(&authority), Answer::Stopped).await;
+    let expected = serde_json::to_string(&target(SESSION, 1)).expect("target");
+    let error = super::stop::cmd_stop_fenced(
+        &client(url),
+        CHANNEL,
+        SESSION,
+        &authority,
+        true,
+        Some(5),
+        Some(&expected),
+    )
+    .await
+    .expect_err("replacement refused");
+    assert!(matches!(error, CliError::Conflict(_)));
+    assert!(relay.records.lock().expect("records").published.is_empty());
+    server.abort();
+}

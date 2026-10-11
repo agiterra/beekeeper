@@ -64,6 +64,10 @@ pub mod ci_result_listener;
 mod claim_reverify_fetch;
 pub mod commands;
 pub mod config;
+pub mod conversation;
+mod host_ownership;
+mod runtime_credentials;
+mod runtime_installations;
 // Assignment wakes held until their seat's input settles (review finding 4).
 pub mod context_projector;
 mod context_store;
@@ -588,6 +592,11 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     // extend from here.
 
     let publisher = relay.event_publisher();
+    let conversation_publisher = conversation::ConversationPublisher {
+        provider: publisher.clone(),
+        rest: relay.rest_client(),
+        state_dir: provider.config.state_dir.clone(),
+    };
     let mut ticker = tokio::time::interval(RUNTIME_TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut lease_ticker = lease::renewal_interval();
@@ -779,7 +788,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
             // empty outbox yields `None`, which parks this arm forever, and a
             // failed publish yields its backoff, so neither case spins.
             _ = sleep_for(publish_delay) => {
-                if let Err(error) = provider.flush_one(&publisher).await {
+                if let Err(error) = provider.flush_one(&conversation_publisher).await {
                     tracing::error!(target: "csp", "outbox flush failed: {error}");
                 }
             }
@@ -796,7 +805,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     if let Err(error) = provider.flush_pending_leases(&publisher).await {
         tracing::warn!(target: "csp::lease", "clean-shutdown release handoff failed: {error}");
     }
-    match bounded_shutdown_drain(provider.flush(&publisher)).await {
+    match bounded_shutdown_drain(provider.flush(&conversation_publisher)).await {
         Ok(Ok(_)) => {}
         Ok(Err(error)) => {
             tracing::warn!(target: "csp", "clean-shutdown durable drain failed: {error}");
@@ -1082,6 +1091,9 @@ pub struct Provider {
     ///
     /// In-memory on purpose. After a restart there is no mailbox, so every
     /// entry in it would be a lie about custody this process no longer has.
+    #[cfg(test)]
+    conversation_ownership_context:
+        Option<(std::path::PathBuf, beekeeper_host_core::layout::Instance)>,
     in_flight: HashMap<String, InFlightTurn>,
     /// Per-session pairing of gate tool calls with their results.
     ///
@@ -1315,7 +1327,9 @@ impl Provider {
     pub fn new(config: Config) -> anyhow::Result<Self> {
         let pubkey_hex = config.pubkey_hex();
         let state = StateStore::open(&config.state_dir, config.command_horizon.as_secs())?;
-        let outbox = Outbox::open(&config.state_dir, &pubkey_hex)?;
+        let outbox = Outbox::open_with_delegates(&config.state_dir, &pubkey_hex, |event| {
+            conversation::delegated_outbox_event(&config.state_dir, event)
+        })?;
         let team_wakes = team_wake::WakeIntentStore::open(&config.state_dir)?;
         let host_result_wakes = host_result_wake::HostResultWakeStore::open(&config.state_dir)?;
         let ci_continuations = ci_continuation_store::CiContinuationStore::open(&config.state_dir)?;
@@ -1385,6 +1399,8 @@ impl Provider {
             pending_leases: HashMap::new(),
             established_leases: HashSet::new(),
             first_lease_prerequisites: HashMap::new(),
+            #[cfg(test)]
+            conversation_ownership_context: None,
             in_flight: HashMap::new(),
             gate_observers: HashMap::new(),
             gate_starts_open,
@@ -1758,6 +1774,7 @@ impl Provider {
     ) -> Result<(), beekeeper_acp::relay::RelayError> {
         let filter = ChannelFilter {
             kinds: Some(vec![
+                beekeeper_core::kind::KIND_STREAM_MESSAGE,
                 KIND_CODING_SESSION_COMMAND,
                 KIND_CODING_SESSION_LIFECYCLE_COMMAND,
                 KIND_CODING_SESSION_TEAM_TRANSACTION,
@@ -2060,6 +2077,36 @@ impl Provider {
         let created_at = event.created_at.as_secs();
         let operator_pubkey = event.pubkey.to_hex();
         match kind {
+            beekeeper_core::kind::KIND_STREAM_MESSAGE => {
+                let Some(content) = self.conversation_command(channel_id, event)? else {
+                    return Ok(());
+                };
+                if self.replay.open_until.contains_key(&channel_id) {
+                    self.replay.held.push(HeldCommand {
+                        channel_id,
+                        created_at,
+                        event_id: event.id.to_hex(),
+                        operator_pubkey,
+                        content,
+                        host_answer: false,
+                    });
+                    return Ok(());
+                }
+                if self
+                    .on_turn(
+                        channel_id,
+                        created_at,
+                        &operator_pubkey,
+                        &event.id.to_hex(),
+                        &content,
+                        false,
+                    )
+                    .await?
+                    == TurnDisposition::Undecided
+                {
+                    return Ok(());
+                }
+            }
             KIND_CODING_SESSION_LIFECYCLE_COMMAND => {
                 self.on_lifecycle(
                     channel_id,
@@ -3590,6 +3637,23 @@ impl Provider {
     ) -> anyhow::Result<()> {
         let outbox_before = self.outbox.pending_keys();
         self.state.consume_command(&plan.command_id, now_secs())?;
+        let ownership_admission = match host_ownership::admit(
+            &self.config,
+            plan.actor.as_deref(),
+            host_ownership::Admission::Create {
+                command: &plan.command_id,
+                initial_turn: plan.initial_turn.is_some(),
+            },
+        ) {
+            Ok(guard) => guard,
+            Err(failure) => {
+                return self.enqueue_receipt(
+                    plan.channel_id,
+                    &plan.command_id,
+                    &LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message),
+                )
+            }
+        };
 
         // Infallible in practice: `decide_lifecycle` only mints a plan whose
         // ref matched a descriptor, and the runtime list never changes while
@@ -3764,11 +3828,19 @@ impl Provider {
             .as_ref()
             .and_then(|skills| skills.compose_ref.clone());
 
-        let agent_env: Vec<(String, String)> = descriptor
-            .cli_env
-            .iter()
-            .map(|env| (env.name.clone(), env.value.clone()))
-            .collect();
+        let agent_env = match runtime_credentials::environment(&self.config.state_dir, &descriptor)
+        {
+            Ok(env) => env,
+            Err(failure) => {
+                if plan.actor.is_some() {
+                    self.forget_actor_seat(&plan.command_id);
+                }
+                self.state.consume_command(&plan.command_id, now_secs())?;
+                let receipt =
+                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
+                return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+            }
+        };
         // An unseated execution reads its project's agents repository from a
         // read-only clone the host stages for it — never the host's own cache.
         // Revalidated at every start: an execution of a deleted project does
@@ -3792,6 +3864,7 @@ impl Provider {
             .and_then(|_| {
                 self.execution_plan(&execution_scope::LaunchFacts {
                     session_id: &target.session_id,
+                    runtime_instance: &descriptor.instance_ref,
                     project_ref: plan.project_ref.as_deref(),
                     association: if plan.workspace_bound {
                         execution_scope::WorkspaceAssociation::HostBound
@@ -3887,6 +3960,17 @@ impl Provider {
                 return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
             }
         };
+        if let Some(guard) = ownership_admission.as_ref() {
+            if let Err(failure) = guard.recheck() {
+                started.discard();
+                self.discard_orphaned_context_package(context_package_id.as_deref());
+                return self.enqueue_receipt(
+                    plan.channel_id,
+                    &plan.command_id,
+                    &LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message),
+                );
+            }
+        }
         let startup = self.sessions.attach(started);
         // What this exact process answered at `initialize`, recorded before
         // any metadata is built from it.
@@ -4784,6 +4868,22 @@ impl Provider {
         let Some(record) = self.state.session(&plan.target.session_id).cloned() else {
             return Ok(());
         };
+        let ownership_admission = match host_ownership::admit(
+            &self.config,
+            record.actor.as_deref(),
+            host_ownership::Admission::Resume,
+        ) {
+            Ok(guard) => guard,
+            Err(failure) => {
+                self.state.consume_command(&plan.command_id, now_secs())?;
+                let receipt =
+                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
+                return self
+                    .answer_resume_failure(&plan, rewind, receipt, relay)
+                    .await;
+            }
+        };
+
         // Revalidated at every start: an execution whose own authority was
         // withdrawn does not come back under it.
         if let Some(reason) = record.authority_withdrawn.as_deref() {
@@ -4899,7 +4999,8 @@ impl Provider {
                     let seats = crate::actor_seats::ActorSeatsFile::load(
                         self.config.actor_seats_file.as_deref(),
                     );
-                    match seats.seat(&plan.command_id) {
+                    let conversation_seat = self.conversation_actor_seat(&record)?;
+                    match seats.seat(&plan.command_id).or(conversation_seat.as_ref()) {
                         Some(seat) if seat.pubkey == actor => {
                             let identity = session::SeatIdentity {
                                 actor_pubkey: seat.pubkey.clone(),
@@ -4967,11 +5068,22 @@ impl Provider {
             .as_ref()
             .and_then(|skills| skills.compose_ref.clone());
 
-        let agent_env: Vec<(String, String)> = descriptor
-            .cli_env
-            .iter()
-            .map(|env| (env.name.clone(), env.value.clone()))
-            .collect();
+        let agent_env = match runtime_credentials::environment(&self.config.state_dir, &descriptor)
+        {
+            Ok(env) => env,
+            Err(failure) => {
+                self.state.consume_command(&plan.command_id, now_secs())?;
+                if record.actor.is_some() {
+                    self.forget_actor_seat(&plan.command_id);
+                }
+                self.discard_orphaned_context_package(context_package_id.as_deref());
+                let receipt =
+                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
+                return self
+                    .answer_resume_failure(&plan, rewind, receipt, relay)
+                    .await;
+            }
+        };
         // Same scope derivation as the create, from the record — plus the
         // record's binding, so native history is reattached only to the scope
         // that wrote it.
@@ -4994,6 +5106,7 @@ impl Provider {
             .and_then(|_| {
                 self.execution_plan(&execution_scope::LaunchFacts {
                     session_id: &record.session_id,
+                    runtime_instance: &descriptor.instance_ref,
                     project_ref: record.project_ref.as_deref(),
                     association: execution_scope::recorded_association(&record),
                     unseated_agents: unseated_agents.as_ref().ok().and_then(Option::as_deref),
@@ -5098,6 +5211,18 @@ impl Provider {
                     .await;
             }
         };
+        if let Some(guard) = ownership_admission.as_ref() {
+            if let Err(failure) = guard.recheck() {
+                started.discard();
+                self.state.consume_command(&plan.command_id, now_secs())?;
+                self.discard_orphaned_context_package(context_package_id.as_deref());
+                let receipt =
+                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
+                return self
+                    .answer_resume_failure(&plan, rewind, receipt, relay)
+                    .await;
+            }
+        }
         let startup = self.sessions.attach(started);
         self.steering
             .insert(record.session_id.clone(), startup.steering_supported);
@@ -5139,6 +5264,9 @@ impl Provider {
             self.sessions.shutdown(&record.session_id);
             return Err(error.into());
         }
+        // An admitted generation continues the same responsibility; preserve
+        // consumed request targets while moving future thread inputs forward.
+        self.refresh_conversation_generation(&self.target_for(&record), &target)?;
         // The generation's command id just moved to this resume's, and that is
         // the key custody is filed under. Restate it before anything else can
         // read the old one.
@@ -5968,6 +6096,7 @@ impl Provider {
         // duplicate check read it: the fence that admitted the turn and the
         // fence the turn claims must never be two computations.
         let mut decided_operation_key: Option<String> = None;
+        let _ownership_admission;
         let (command_id, target, deliver, attachment_counts, mut message) = match decision {
             TurnDecision::Ignore(reason) => {
                 log_ignored("turn", &reason);
@@ -6118,6 +6247,70 @@ impl Provider {
                 // sender's words unframed, and it is `None` for every turn
                 // that carries no assignment pointer — which is every
                 // ordinary turn.
+                let instructions = match self
+                    .conversation_instructions(&command_id, operator_pubkey)
+                    .await
+                {
+                    Ok(instructions) => instructions,
+                    Err(failure) => {
+                        let receipt = LifecycleReceipt::turn_refused(
+                            &command_id,
+                            &target,
+                            failure.code,
+                            &failure.message,
+                        );
+                        self.refuse_with_staged_answer(channel_id, &command_id, &receipt, None)?;
+                        return Ok(TurnDisposition::Answered(failure.code.to_owned()));
+                    }
+                };
+                // An ordinary request names an already accepted responsibility.
+                // Reattach its persisted native generation, never session/new.
+                if self.is_conversation_request(&command_id, &target)?
+                    && !self
+                        .sessions
+                        .handle(&target.session_id)
+                        .is_some_and(session::SessionHandle::is_live)
+                {
+                    match self.restore_generation(&target.session_id, None).await? {
+                        Ok(()) => {}
+                        Err(obstacle) => {
+                            let receipt = LifecycleReceipt::turn_refused(
+                                &command_id,
+                                &target,
+                                obstacle.code(),
+                                &obstacle.message(),
+                            );
+                            self.refuse_with_staged_answer(
+                                channel_id,
+                                &command_id,
+                                &receipt,
+                                None,
+                            )?;
+                            return Ok(TurnDisposition::Answered(obstacle.code().into()));
+                        }
+                    }
+                }
+                let actor = self
+                    .state
+                    .session(&target.session_id)
+                    .and_then(|record| record.actor.clone());
+                _ownership_admission = match host_ownership::admit(
+                    &self.config,
+                    actor.as_deref(),
+                    host_ownership::Admission::Turn,
+                ) {
+                    Ok(guard) => guard,
+                    Err(failure) => {
+                        let receipt = LifecycleReceipt::turn_refused(
+                            &command_id,
+                            &target,
+                            failure.code,
+                            &failure.message,
+                        );
+                        self.refuse_with_staged_answer(channel_id, &command_id, &receipt, None)?;
+                        return Ok(TurnDisposition::Answered(failure.code.into()));
+                    }
+                };
                 let work_brief = self
                     .assignment_work_brief(&target, &command_id, &text)
                     .await;
@@ -6140,6 +6333,13 @@ impl Provider {
                 let framing = situation_card::attach_situation_card(
                     framing,
                     card,
+                    channel_id,
+                    operator_pubkey,
+                    deliver,
+                );
+                let framing = situation_card::attach_situation_card(
+                    framing,
+                    instructions,
                     channel_id,
                     operator_pubkey,
                     deliver,
@@ -8651,6 +8851,7 @@ impl Provider {
         receipt: &LifecycleReceipt,
         outbox_key: Option<String>,
     ) -> anyhow::Result<()> {
+        self.conversation_receipt(command_id, receipt)?;
         let event = self.sign_receipt(channel_id, command_id, receipt)?;
         self.state.stage_terminal_disposition(
             command_id,
@@ -8691,6 +8892,7 @@ impl Provider {
         disposition_key: &str,
         receipt: &LifecycleReceipt,
     ) -> anyhow::Result<()> {
+        self.conversation_receipt(command_id, receipt)?;
         let event = self.sign_receipt(channel_id, command_id, receipt)?;
         self.state.stage_terminal_disposition(
             disposition_key,
@@ -8720,6 +8922,7 @@ impl Provider {
         receipt: &LifecycleReceipt,
         outbox_key: Option<String>,
     ) -> anyhow::Result<()> {
+        self.conversation_receipt(command_id, receipt)?;
         let event = self.sign_receipt(channel_id, command_id, receipt)?;
         self.state.stage_terminal_disposition(
             command_id,
@@ -8757,6 +8960,7 @@ impl Provider {
         receipt: &LifecycleReceipt,
         outbox_key: Option<&str>,
     ) -> anyhow::Result<()> {
+        self.conversation_receipt(command_id, receipt)?;
         let content = serde_json::to_string(receipt)?;
         let (event, semantic_key) = if receipt.status.is_turn_stage() {
             (
@@ -10085,6 +10289,7 @@ impl Provider {
             None => transcript::fit_item_recording(item, overhead, MAX_TRANSCRIPT_CONTENT_BYTES),
         };
         self.record_redactions(&target.session_id, &redactions, timestamp);
+        self.conversation_transcript(target, event_seq, &item)?;
         let envelope = TranscriptEnvelope::new(target, event_seq, timestamp, turn_id, item);
         let content = serde_json::to_string(&envelope)?;
         let event = build_coding_session_transcript_item(channel_id, target, event_seq, &content)?
@@ -11556,6 +11761,7 @@ impl Provider {
         self.flush_terminal_dispositions()?;
         self.purge_outbox_for_retired()?;
         self.purge_outbox_for_left_channels()?;
+        self.purge_unpublishable_conversations()?;
         Ok(self.outbox.flush(sink).await?)
     }
 
@@ -11563,6 +11769,7 @@ impl Provider {
         self.flush_terminal_dispositions()?;
         self.purge_outbox_for_retired()?;
         self.purge_outbox_for_left_channels()?;
+        self.purge_unpublishable_conversations()?;
         Ok(self.outbox.flush_one(sink).await?)
     }
 
@@ -13002,6 +13209,9 @@ mod tests {
     #[path = "deferred_admission_tests.rs"]
     mod deferred_admission_tests;
 
+    #[path = "conversation_tests.rs"]
+    mod conversation_tests;
+
     struct CollectingSink {
         events: Mutex<Vec<Event>>,
     }
@@ -13751,7 +13961,7 @@ mod tests {
 
     /// `claude_runtime` for a command spawned as-is — notably a path that is
     /// meant *not* to exist, where the spawn itself has to fail.
-    fn claude_runtime_command(agent_command: String) -> RuntimeDescriptor {
+    pub(crate) fn claude_runtime_command(agent_command: String) -> RuntimeDescriptor {
         RuntimeDescriptor {
             steer_idle_guard: None,
             title_model: None,

@@ -230,6 +230,15 @@ pub struct Outbox {
 impl Outbox {
     /// Load the ledger, dropping rows this identity can no longer publish.
     pub fn open(dir: &Path, signer: &str) -> io::Result<Self> {
+        Self::open_with_delegates(dir, signer, |_| false)
+    }
+
+    /// Load provider rows and explicitly validated scoped actor conversation rows.
+    pub(crate) fn open_with_delegates(
+        dir: &Path,
+        signer: &str,
+        delegate: impl Fn(&nostr::Event) -> bool,
+    ) -> io::Result<Self> {
         let path = dir.join(OUTBOX_FILE);
         let mut pending: Vec<Pending> = Vec::new();
         let mut acked: HashSet<String> = HashSet::new();
@@ -257,7 +266,7 @@ impl Outbox {
                 }
                 Ok(LedgerRow::Accepted { entry }) => {
                     acked.insert(entry.id.clone());
-                    if entry.signer == signer {
+                    if entry.signer == signer || delegate(&entry.event) {
                         accepted.insert((entry.kind, entry.semantic_key.clone()), *entry);
                     }
                 }
@@ -312,7 +321,7 @@ impl Outbox {
             if acked.contains(&entry.id) {
                 continue;
             }
-            if entry.signer != signer {
+            if entry.signer != signer && !delegate(&entry.event) {
                 fenced_by_signer += 1;
                 continue;
             }
@@ -476,7 +485,7 @@ impl Outbox {
         priority: Priority,
         event: nostr::Event,
     ) -> io::Result<bool> {
-        self.enqueue_inner(kind, semantic_key, priority, event, false)
+        self.enqueue_inner(kind, semantic_key, priority, event, false, false)
     }
 
     /// Queue an event that *supersedes* any unsent row with the same key.
@@ -494,7 +503,30 @@ impl Outbox {
         priority: Priority,
         event: nostr::Event,
     ) -> io::Result<bool> {
-        self.enqueue_inner(kind, semantic_key, priority, event, true)
+        self.enqueue_inner(kind, semantic_key, priority, event, true, false)
+    }
+
+    /// Queue only a verified, scoped actor conversation projection.
+    pub(crate) fn enqueue_conversation(
+        &mut self,
+        dir: &Path,
+        semantic_key: &str,
+        priority: Priority,
+        event: nostr::Event,
+    ) -> io::Result<bool> {
+        if !crate::conversation::delegated_outbox_event(dir, &event) {
+            return Err(io::Error::other(
+                "conversation output lacks scoped actor custody",
+            ));
+        }
+        self.enqueue_inner(
+            beekeeper_core::kind::KIND_STREAM_MESSAGE,
+            semantic_key,
+            priority,
+            event,
+            false,
+            true,
+        )
     }
 
     fn enqueue_inner(
@@ -504,6 +536,7 @@ impl Outbox {
         priority: Priority,
         event: nostr::Event,
         supersede: bool,
+        delegate_verified: bool,
     ) -> io::Result<bool> {
         #[cfg(test)]
         if std::mem::take(&mut self.fail_next_enqueue) {
@@ -524,7 +557,7 @@ impl Outbox {
             return Ok(false);
         }
         let signer = event.pubkey.to_hex();
-        if signer != self.signer {
+        if signer != self.signer && !delegate_verified {
             tracing::warn!(
                 target: "csp::outbox",
                 "refusing to queue an event signed by {signer}, not this provider"
@@ -658,7 +691,10 @@ impl Outbox {
             }
             match outcome {
                 Ok(()) => {
-                    if entry.kind == 44223 {
+                    if entry.kind == 44223
+                        || (entry.kind == beekeeper_core::kind::KIND_STREAM_MESSAGE
+                            && entry.semantic_key.starts_with("conversation:"))
+                    {
                         self.append(&LedgerRow::Accepted {
                             entry: Box::new(entry.clone()),
                         })?;

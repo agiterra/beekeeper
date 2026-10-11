@@ -191,6 +191,7 @@ pub(super) fn classify_stop_receipts(
 /// Exit codes: 0 published (and, with `--wait`, confirmed `stopped`); 1 a
 /// refusal before publishing, or the provider's signed refusal; 5 the relay
 /// accepted the command and no receipt arrived in time (`unconfirmed`).
+#[cfg(test)]
 pub async fn cmd_stop(
     client: &BeekeeperClient,
     channel_id: &str,
@@ -199,6 +200,35 @@ pub async fn cmd_stop(
     wait: bool,
     timeout_secs: Option<u64>,
 ) -> Result<(), CliError> {
+    cmd_stop_fenced(
+        client,
+        channel_id,
+        session_id,
+        provider_authority,
+        wait,
+        timeout_secs,
+        None,
+    )
+    .await
+}
+
+/// Stop only the observed responsibility when an optional exact target fence is supplied.
+pub async fn cmd_stop_fenced(
+    client: &BeekeeperClient,
+    channel_id: &str,
+    session_id: &str,
+    provider_authority: &str,
+    wait: bool,
+    timeout_secs: Option<u64>,
+    expected_target: Option<&str>,
+) -> Result<(), CliError> {
+    let expected_target = expected_target
+        .map(|value| {
+            serde_json::from_str::<CodingSessionTarget>(value).map_err(|_| {
+                CliError::Usage("--expected-target must be CodingSessionTarget JSON".into())
+            })
+        })
+        .transpose()?;
     let channel = Uuid::parse_str(channel_id)
         .map_err(|error| CliError::Usage(format!("--channel is not a UUID: {error}")))?;
     validate_lower_hex64("--provider-authority", provider_authority)?;
@@ -238,6 +268,15 @@ pub async fn cmd_stop(
     let rows = resolve_sessions(&metadata, &receipts, &[]);
     let row = plan_stop(&rows, &receipts, channel_id, session_id, provider_authority)?;
     let target = row.target.clone();
+    if expected_target
+        .as_ref()
+        .is_some_and(|expected| expected != &target)
+    {
+        return Err(CliError::Conflict(format!(
+            "current execution {} differs from --expected-target; nothing was published",
+            row.target_key
+        )));
+    }
     let target_key = row.target_key.clone();
 
     let command_id = Uuid::new_v4().to_string();

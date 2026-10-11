@@ -34,7 +34,7 @@ pub(crate) use metadata::{
 };
 
 mod stop;
-pub(crate) use stop::managed_agent_runtime_keys;
+pub(crate) use stop::{managed_agent_runtime_keys, quiesce_managed_agent_pair};
 pub use stop::{stop_managed_agent_process, stop_managed_agent_workspace_pair};
 
 mod sweep;
@@ -50,6 +50,10 @@ pub(crate) use process::{
     current_instance_id, process_belongs_to_us, process_has_beekeeper_marker, process_is_running,
     terminate_process, terminate_untracked_pair_runtime, valid_agent_runtime_receipt,
 };
+
+mod ownership;
+use ownership::desktop_owns_marked_process;
+pub(crate) use ownership::require_desktop_runtime_owner;
 
 mod orphan_sweep;
 #[cfg(target_os = "macos")]
@@ -376,6 +380,7 @@ pub fn spawn_agent_child(
     owner_hex: Option<&str>,
     replay_floor_unix: Option<u64>,
 ) -> Result<crate::managed_agents::ManagedAgentProcess, String> {
+    require_desktop_runtime_owner(&record.pubkey, relay_url)?;
     if let Some(error) = spawn_key_refusal(record) {
         return Err(error);
     }
@@ -819,12 +824,7 @@ pub fn spawn_agent_child(
         }
     }
 
-    // Stamp desktop ownership and an unpredictable harness-generation identity,
-    // then give every BEEKEEPER_* set or cleared above its BUZZ_* twin (last).
-    let start_nonce = uuid::Uuid::new_v4().simple().to_string();
-    command
-        .env("BEEKEEPER_MANAGED_AGENT", current_instance_id(app))
-        .env("BEEKEEPER_MANAGED_AGENT_START_NONCE", &start_nonce);
+    let start_nonce = ownership::stamp_desktop_ownership(&mut command, app, &log_path);
     super::apply_legacy_env_names(&mut command);
 
     // Stamp the effective spawn config from the values that populated the

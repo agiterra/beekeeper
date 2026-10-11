@@ -6,8 +6,9 @@ The `bee` CLI is your primary interface. Auth env vars: `BEEKEEPER_RELAY_URL`, `
 
 | Group | Key commands |
 |-------|-------------|
+| `bee community` | `mint-invite`, `join-policy`, `accept-policy`, `claim-invite` |
 | `bee sandbox` | `plan`, `seed`, `reclaim-paths` |
-| `bee agents` | `draft-create`, `draft-update`, `archive`, `unarchive`, `archived` |
+| `bee agents` | `create`, `update`, `draft-create`, `draft-update`, `archive`, `unarchive`, `archived` |
 | `bee ci` | `wait`, `continue`, `continuation` |
 | `bee messages` | `send`, `send-diff`, `edit`, `delete`, `get`, `thread`, `search`, `vote` |
 | `bee channels` | `list`, `get`, `search`, `create`, `update`, `topic`, `purpose`, `join`, `leave`, `archive`, `unarchive`, `delete`, `members`, `add-member`, `remove-member`, `set-add-policy` |
@@ -32,7 +33,7 @@ The `bee` CLI is your primary interface. Auth env vars: `BEEKEEPER_RELAY_URL`, `
 | `bee pack` | `validate`, `inspect`, `compose`, `migrate`, `clone-template` |
 | `bee packs` | `set-source`, `init`, `get-source`, `status` |
 | `bee git` | `setup`, `status`, `check` |
-| `bee host` | `status`, `logs`, `start`, `stop`, `restart`, `bind`, `install`, `uninstall`, `installed` |
+| `bee host` | `commission`, `trust-project`, `status`, `logs`, `start`, `stop`, `restart`, `bind`, `install`, `uninstall`, `installed` |
 | `bee session` | `list`, `read`, `send`, `send-key`, `exec`, `request-access` |
 | `bee preview` | `status`, `open`, `navigate`, `snapshot`, `click`, `type`, `press`, `scroll`, `eval`, `wait-for`, `servers`, `close` |
 | `bee device` | `list`, `open`, `screenshot`, `close`, `watch` |

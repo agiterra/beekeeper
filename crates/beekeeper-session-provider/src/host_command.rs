@@ -25,6 +25,9 @@ use crate::agent_fence::FENCE;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
+#[path = "host_command_dependency.rs"]
+mod dependency;
+
 /// Exit code reported when the timeout fired and the process was killed.
 pub const TIMEOUT_EXIT_CODE: i32 = 124;
 /// Exit code reported when the program could not be started at all.
@@ -52,6 +55,8 @@ pub const ACTION_STEP_INVALID: &str = "ACTION_STEP_INVALID";
 pub const ACTION_HOST_ENV_MISSING: &str = "ACTION_HOST_ENV_MISSING";
 /// `env_from_host` named one of the provider's own credentials.
 pub const ACTION_HOST_ENV_FENCED: &str = "ACTION_HOST_ENV_FENCED";
+/// A host-installed program is missing or is not executable before claim.
+pub const ACTION_HOST_EXECUTABLE_MISSING: &str = "ACTION_HOST_EXECUTABLE_MISSING";
 
 /// Why a command could not be prepared for spawning.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,8 +130,8 @@ struct Spawned {
 /// touching the process table.
 ///
 /// Refuses (rather than errors) when the directory escapes the checkout or a
-/// host-supplied variable is not set: both are facts the operator can act
-/// on, and both are checked *before* the claim is published so a step that
+/// host-supplied variable or host-installed executable is missing. These are
+/// checked *before* the claim is published so a step that
 /// cannot run here is never claimed here.
 pub fn prepare(
     spec: &ResolvedRunOnHost,
@@ -160,6 +165,7 @@ pub fn prepare(
         }
         env.insert(name.clone(), value.clone());
     }
+    dependency::check(&spec.command, &cwd, &env, host_env)?;
     Ok(PreparedCommand {
         command: spec.command.clone(),
         cwd,
@@ -963,6 +969,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn preparation_refuses_a_missing_runtime_before_claim() {
+        let checkout = tempfile::tempdir().expect("checkout");
+        let env = HashMap::from([("PATH".into(), checkout.path().display().to_string())]);
+        let refusal = prepare(&spec(&["missing-hook-runtime"], 5), checkout.path(), &env)
+            .expect_err("missing runtime is unready");
+        assert_eq!(refusal.code, ACTION_HOST_EXECUTABLE_MISSING);
+    }
+
     #[tokio::test]
     async fn true_exits_zero_and_false_exits_one() {
         let checkout = tempfile::tempdir().expect("tempdir");
@@ -1128,10 +1143,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_program_that_cannot_start_reports_127_with_the_reason() {
+    async fn missing_program_is_a_preparation_refusal_before_execution() {
         let checkout = tempfile::tempdir().expect("tempdir");
         let artifacts = tempfile::tempdir().expect("tempdir");
-        let outcome = run(
+        let error = run(
             &spec(&["/definitely/not/a/program"], 5),
             checkout.path(),
             artifacts.path(),
@@ -1141,14 +1156,17 @@ mod tests {
             },
         )
         .await
-        .expect("run");
-        assert_eq!(outcome.exit_code, Some(SPAWN_FAILURE_EXIT_CODE));
-        // The reason is longer than this test's 64-byte tail, so only its end
-        // survives: the OS error, not the "failed to spawn" prefix.
+        .expect_err("missing executable must refuse preparation");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(
-            outcome.stderr_tail.contains("os error"),
-            "{:?}",
-            outcome.stderr_tail
+            error.to_string().contains("install the prerequisite"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read_dir(artifacts.path())
+                .expect("artifacts")
+                .count(),
+            0
         );
     }
 

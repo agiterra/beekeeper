@@ -7,48 +7,13 @@ use std::collections::BTreeMap;
 
 use beekeeper_core_pkg::kind::{event_is_shared, KIND_PERSONA};
 use nostr::{EventBuilder, Kind, Tag};
-use serde::{Deserialize, Serialize};
 
 use super::{AgentDefinition, ManagedAgentRecord};
 use crate::app_state::AppState;
 
-/// The JSON body stored in a persona event's content field.
-///
-/// Field order MUST match the NIP-AP reference vectors (`docs/nips/NIP-AP.md`
-/// content body: `display_name, system_prompt, avatar_url, runtime, model,
-/// provider, name_pool`). serde emits fields in declaration order, so this
-/// order pins the exact content bytes and therefore the NIP-01 event id — a
-/// reorder here breaks cross-implementation interop. Guarded by
-/// `content_matches_nip_ap_vector`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PersonaEventContent {
-    pub display_name: String,
-    /// Optional since the unified agent model (NIP-AP revision): a definition
-    /// can be pure configuration. Writers emit `Some` whenever the record has
-    /// a prompt (including the empty string) so pre-revision content bytes —
-    /// and therefore `persona_content_hash` — are unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub avatar_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub name_pool: Vec<String>,
-    /// Definition-level defaults copied onto instances at creation
-    /// (NIP-AP behavioral fields). Absent = defer to client defaults;
-    /// `skip_serializing_if` keeps pre-revision hashes stable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub respond_to: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub respond_to_allowlist: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parallelism: Option<u32>,
-}
+// Canonical wire body shared with headless consumers; field order and serde
+// defaults are pinned by the existing NIP-AP vectors below.
+pub use beekeeper_core_pkg::persona::PersonaEventContent;
 
 /// Derive the d-tag (persona slug) from a `AgentDefinition`.
 ///

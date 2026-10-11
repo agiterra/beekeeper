@@ -1,8 +1,8 @@
 //! Handing a provisioned identity to the agent host.
 //!
-//! Commissioning is the app's: it mints the provider keypair and gets the
-//! owner key to attest it (NIP-OA), and the host deliberately cannot do
-//! either. What the app then writes down is everything the host needs to serve
+//! The desktop resolves its owner signer and custody, then calls the shared
+//! provisioning service. The CLI uses that same service; the running host
+//! never needs the owner's signing key. Commissioning writes everything needed to serve
 //! that identity with nobody logged in:
 //!
 //! - `host.json` — the relay, the pubkey, the runtime offer, the stored
@@ -41,7 +41,6 @@
 //! The keychain entry is **not** deleted. It stays as the recovery path and as
 //! the thing `reset.rs` already knows how to clear.
 
-use beekeeper_host_core::atomic_write::{atomic_write_json_restricted, create_dir_all_restricted};
 use beekeeper_host_core::config::{HostConfig, HOST_CONFIG_VERSION};
 use beekeeper_host_core::layout;
 use beekeeper_host_core::record::{CodingSessionProviderRecord, CodingSessionProviderStore};
@@ -74,17 +73,8 @@ pub(crate) async fn commission_host(
 ) -> Result<bool, String> {
     let instance = super::instance();
     let home = layout::home_dir()?;
-    let host_dir = layout::host_dir(&home, instance);
-    create_dir_all_restricted(&host_dir)?;
-
     let base_dir = super::session_provider_base_dir(app)?;
     let state_dir = crate::session_provider::provider_state_dir(app, &record.provider_pubkey)?;
-
-    // The key first, then the config. A host that saw a config naming an
-    // identity whose key is not yet written would refuse and publish
-    // `key_unresolved` for the window between the two writes — briefly true,
-    // and needlessly alarming. The other order is never wrong.
-    write_key_file(&home, instance, record)?;
 
     let config = HostConfig {
         version: HOST_CONFIG_VERSION,
@@ -103,8 +93,7 @@ pub(crate) async fn commission_host(
         provider_command: None,
         written_at: crate::util::now_iso(),
     };
-    config.validate()?;
-    write_json(&layout::host_config_path(&home, instance), &config)?;
+    beekeeper_host_core::provision::write_commissioning(&home, &config, record)?;
 
     // The secret does not travel on the wire; this only says "look again".
     // Which op is sent is chosen for the host's log rather than for behaviour
@@ -154,132 +143,4 @@ pub(crate) async fn rebind_host(
         Commissioning::RelayChanged,
     )
     .await
-}
-
-/// Write the nsec to the host's `0600` key file.
-fn write_key_file(
-    home: &std::path::Path,
-    instance: layout::Instance,
-    record: &CodingSessionProviderRecord,
-) -> Result<(), String> {
-    if record.private_key_nsec.trim().is_empty() {
-        return Err(format!(
-            "the coding-session provider {} has no private key available — the OS keyring may be \
-             unreachable. Refusing to commission the agent host without an identity, because a \
-             replacement key would strand every event the real one signed.",
-            record.provider_pubkey
-        ));
-    }
-    let path = layout::host_key_file_path(home, instance);
-    // `atomic_write_json_restricted` sets 0600 on the temp file *before* the
-    // secret bytes go in, so there is no window where the key is readable.
-    ensure_exists(&path)?;
-    atomic_write_json_restricted(&path, record.private_key_nsec.trim().as_bytes())
-}
-
-fn write_json<T: serde::Serialize>(path: &std::path::Path, value: &T) -> Result<(), String> {
-    let payload = serde_json::to_vec_pretty(value)
-        .map_err(|error| format!("failed to encode {}: {error}", path.display()))?;
-    ensure_exists(path)?;
-    atomic_write_json_restricted(path, &payload)
-}
-
-/// `atomic_write_json_restricted` opens an existing path, so a first write
-/// needs the file to exist. Created empty and owner-only, never with content.
-fn ensure_exists(path: &std::path::Path) -> Result<(), String> {
-    if path.exists() {
-        return Ok(());
-    }
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(|error| format!("failed to create {}: {error}", path.display()))?;
-        file.flush()
-            .map_err(|error| format!("failed to create {}: {error}", path.display()))?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, b"")
-            .map_err(|error| format!("failed to create {}: {error}", path.display()))?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A record with no key must be refused *before* anything is written, and
-    /// the refusal must say why a replacement is not minted instead.
-    #[test]
-    fn a_keyless_record_is_refused_rather_than_commissioned() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let record = CodingSessionProviderRecord {
-            provider_pubkey: "a".repeat(64),
-            instance_id: "a".repeat(16),
-            auth_tag: None,
-            created_at: "2026-09-30T00:00:00Z".to_string(),
-            relay_url: "wss://hive.example.org".to_string(),
-            private_key_nsec: String::new(),
-        };
-        let error = write_key_file(dir.path(), layout::Instance::Production, &record)
-            .expect_err("must be refused");
-        assert!(error.contains("would strand every event"), "{error}");
-        assert!(
-            !layout::host_key_file_path(dir.path(), layout::Instance::Production).exists(),
-            "nothing may be written for a keyless record"
-        );
-    }
-
-    /// The key file must be owner-only from the moment it exists — there must
-    /// be no window between `create` and `chmod` where it is readable.
-    #[cfg(unix)]
-    #[test]
-    fn the_key_file_is_owner_only_and_holds_exactly_the_nsec() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().expect("tempdir");
-        let home = dir.path();
-        create_dir_all_restricted(&layout::host_dir(home, layout::Instance::Production))
-            .expect("host dir");
-        let record = CodingSessionProviderRecord {
-            provider_pubkey: "b".repeat(64),
-            instance_id: "b".repeat(16),
-            auth_tag: None,
-            created_at: "2026-09-30T00:00:00Z".to_string(),
-            relay_url: "wss://hive.example.org".to_string(),
-            private_key_nsec: "  nsec1example  ".to_string(),
-        };
-        write_key_file(home, layout::Instance::Production, &record).expect("write");
-        let path = layout::host_key_file_path(home, layout::Instance::Production);
-        assert_eq!(
-            std::fs::read_to_string(&path).expect("read"),
-            "nsec1example",
-            "the file holds the trimmed nsec and nothing else — no JSON, no newline"
-        );
-        assert_eq!(
-            std::fs::metadata(&path)
-                .expect("metadata")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
-        // And rewriting it (a re-commission) keeps the mode.
-        write_key_file(home, layout::Instance::Production, &record).expect("rewrite");
-        assert_eq!(
-            std::fs::metadata(&path)
-                .expect("metadata")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
-    }
 }

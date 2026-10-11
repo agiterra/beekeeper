@@ -58,11 +58,13 @@ pub(crate) async fn discover(config: &mut Config) {
         .iter_mut()
         .filter(|descriptor| descriptor.discover_models)
     {
-        let cli_env: Vec<(String, String)> = descriptor
-            .cli_env
-            .iter()
-            .map(|env| (env.name.clone(), env.value.clone()))
-            .collect();
+        let cli_env = match crate::runtime_credentials::environment(&config.state_dir, descriptor) {
+            Ok(env) => env,
+            Err(failure) => {
+                tracing::warn!(target: "csp::models", code = failure.code, "model discovery credentials unavailable");
+                continue;
+            }
+        };
         let plan = discovery_plan(
             &config.state_dir,
             config.runtime_profile_override,
@@ -135,12 +137,15 @@ fn discovery_plan(
         message: format!("could not create the discovery directory: {error}"),
     })?;
     let session_id = format!("discovery-{slug}");
+    let runtime_roots =
+        crate::runtime_installations::roots(state_dir, &descriptor.instance_ref, &cwd)?;
     let mut inputs = crate::execution_scope::ScopeInputs::new(
         crate::execution_scope::ScopePurpose::Discovery,
         state_dir,
         &session_id,
         &cwd,
     );
+    inputs.runtime_roots = &runtime_roots;
     inputs.driver = &descriptor.driver;
     inputs.runtime = runtime_override
         .unwrap_or_else(|| crate::execution_scope::RuntimeProfile::for_driver(&descriptor.driver));

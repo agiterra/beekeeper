@@ -309,12 +309,14 @@ test("SV-22: Agents counts running subagents and clears; Diff counts what this d
   const host = page.getByTestId("coding-session-surface-host");
   await expect(badge(launcher, "agents")).toHaveCount(0);
   await expect(badge(launcher, "diff")).toHaveCount(0);
-  // People, Pulse, Files and Browser carry no badge.
-  for (const id of ["people", "pulse", "files", "browser"]) {
+  // People, Pulse and Files carry no badge.
+  for (const id of ["people", "pulse", "files"]) {
     await expect(
       page.getByTestId(`coding-session-surface-badge-slot-${id}`),
     ).toHaveCount(0);
   }
+  // Browser has no hidden preview badge when no page is open.
+  await expect(page.getByTestId("session-preview-hidden-badge")).toHaveCount(0);
   // C5: Device counts open device slots; with none open, no badge.
   await expect(badge(launcher, "device")).toHaveCount(0);
 

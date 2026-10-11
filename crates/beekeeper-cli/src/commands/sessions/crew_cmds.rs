@@ -956,7 +956,7 @@ pub(super) fn coding_session_navigation_url(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum CreateWaitOutcome {
+pub(crate) enum CreateWaitOutcome {
     Confirmed {
         status: ReceiptStatus,
         receipt_event_id: String,
@@ -1014,7 +1014,7 @@ fn same_create_answer(left: &CreateWaitOutcome, right: &CreateWaitOutcome) -> bo
 /// content decodes through `buzz-core`'s receipt decoder naming the same
 /// command. Anything else — an unrelated command, a wrong signer, a malformed
 /// event — is skipped, never guessed at.
-pub(super) fn verified_command_receipts(
+pub(crate) fn verified_command_receipts(
     events: &[Value],
     channel_id: &str,
     command_id: &str,
@@ -1165,7 +1165,7 @@ pub(super) async fn await_command_receipt<T>(
     }
 }
 
-async fn await_create_receipt(
+pub(crate) async fn await_create_receipt(
     client: &BeekeeperClient,
     channel_id: &str,
     command_id: &str,

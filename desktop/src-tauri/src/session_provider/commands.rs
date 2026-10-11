@@ -13,7 +13,6 @@
 
 use std::collections::BTreeMap;
 
-use nostr::ToBech32;
 use tauri::{AppHandle, State};
 
 use crate::agent_host::{commission, AgentHost};
@@ -27,20 +26,11 @@ use crate::session_provider::store::{
     load_provider_store, save_provider_store, CodingSessionProviderRecord,
 };
 use crate::session_provider::trust;
-use crate::util::now_iso;
 
 /// Serialize the load-mint-save sequence. React development mode may issue the
 /// provisioning command twice while checking effect cleanup; without a lock,
 /// both calls can observe an empty store and mint competing identities.
 static PROVISION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Number of hex characters of the provider pubkey used as the instance id.
-///
-/// Must match `beekeeper_session_provider::config::INSTANCE_ID_PUBKEY_PREFIX_LEN`:
-/// the provider derives the same value when `BEEKEEPER_CSP_INSTANCE_ID` is unset,
-/// and a mismatch would silently split one provider across two `cs-target`
-/// identities.
-const INSTANCE_ID_PUBKEY_PREFIX_LEN: usize = 16;
 
 /// Model catalog for one coding-session runtime.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -530,32 +520,7 @@ pub(crate) fn mint_provider_record(
     owner_keys: &nostr::Keys,
     relay_url: &str,
 ) -> Result<CodingSessionProviderRecord, String> {
-    let keys = nostr::Keys::generate();
-    let provider_pubkey = keys.public_key().to_hex();
-    let private_key_nsec = keys
-        .secret_key()
-        .to_bech32()
-        .map_err(|error| format!("failed to encode provider private key: {error}"))?;
-    let instance_id = provider_pubkey
-        .get(..INSTANCE_ID_PUBKEY_PREFIX_LEN)
-        .unwrap_or(&provider_pubkey)
-        .to_string();
-
-    // Empty conditions, matching every other Beekeeper-minted attestation: the tag
-    // proves ownership, and the relay's own scope rules decide what the key may
-    // write. `compute_auth_tag` already returns the JSON array of strings that
-    // `BEEKEEPER_AUTH_TAG` carries, so it is stored verbatim.
-    let auth_tag = beekeeper_sdk_pkg::nip_oa::compute_auth_tag(owner_keys, &keys.public_key(), "")
-        .map_err(|error| format!("failed to compute NIP-OA auth tag: {error}"))?;
-
-    Ok(CodingSessionProviderRecord {
-        provider_pubkey,
-        instance_id,
-        auth_tag: Some(auth_tag),
-        created_at: now_iso(),
-        relay_url: relay_url.to_string(),
-        private_key_nsec,
-    })
+    beekeeper_host_core::provision::mint_provider_record(owner_keys, relay_url)
 }
 
 /// One recovered redaction, as the UI receives it.

@@ -59,8 +59,8 @@ test("an unresolved actor name falls back to the role, never to a guess", () => 
 });
 
 test("half a seat is not a seat", () => {
-  // An actor with no role, or a role with no actor, labels as unseated —
-  // both are refused on the wire, and a projection must not invent one.
+  // Actor-only attributed Solo carries no team-role seat, so the unseated
+  // label remains appropriate. A role without an actor must not invent a seat.
   assert.equal(
     formatCodingSessionExecutionLabel({
       agentRef: ACTOR,

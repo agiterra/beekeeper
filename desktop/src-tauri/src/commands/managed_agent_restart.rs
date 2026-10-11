@@ -1,6 +1,6 @@
 use tauri::{AppHandle, State};
 
-use super::agents::{start_local_agent_with_preflight, stop_managed_agent};
+use super::agents::{start_managed_agent, stop_managed_agent};
 use crate::{
     app_state::AppState, managed_agents::ManagedAgentSummary, relay::relay_ws_url_with_override,
 };
@@ -19,21 +19,20 @@ pub async fn restart_managed_agent(
 ) -> Result<ManagedAgentSummary, String> {
     let pinned_relay =
         restart_relay_for_active(&relay_ws_url_with_override(&state), &expected_relay_url)?;
+    let signer = state
+        .keys
+        .lock()
+        .map_err(|e| e.to_string())?
+        .public_key()
+        .to_hex();
     stop_managed_agent(pubkey.clone(), app.clone()).await?;
     // The stop may wait for process termination. Re-resolve afterwards so a
     // community switch during that wait can never redirect the subsequent
     // start to another relay.
     restart_relay_for_active(&relay_ws_url_with_override(&state), &pinned_relay)?;
-    start_local_agent_with_preflight(
-        &app,
-        &state,
-        &pubkey,
-        false,
-        Some(&pinned_relay),
-        None,
-        None,
-    )
-    .await
+    // Reuse the shared start adapter, including adopted successor ownership.
+    // Calling the legacy preflight directly would refuse or bypass that branch.
+    start_managed_agent(pubkey, Some(pinned_relay), Some(signer), None, app, state).await
 }
 
 #[cfg(test)]

@@ -201,9 +201,9 @@ pub struct SessionRecord {
     pub actor: Option<String>,
     /// The role slug this seat holds within its umbrella, or `None`.
     ///
-    /// Set exactly when [`SessionRecord::actor`] is. Republished in every
-    /// 44223 for this generation and consulted for the umbrella's `lead`
-    /// interrupt authority (plan D7).
+    /// A role requires an actor; an attributed Solo responsibility can have
+    /// an actor without a role. Republished in every 44223 for this generation
+    /// and consulted for the umbrella's `lead` interrupt authority (plan D7).
     #[serde(default)]
     pub role: Option<String>,
     /// The role pack this seat was staged with, as the wire describes it.

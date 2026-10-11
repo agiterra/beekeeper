@@ -126,16 +126,16 @@ export function hasStrictLifecycleCommandJson(
       [...base.slice(0, 3), "sessionRef", ...base.slice(3)],
       [...base.slice(0, 3), "sessionRef", "genesisRef", ...base.slice(3)],
     ];
-    // The seated forms buzz-core accepts: every unseated form plus the
-    // `actor`/`role` pair, which travels together or not at all.
+    // An attributed Solo can carry actor alone; a team role requires actor.
     const seatForms = [
       ...unseated,
+      ...unseated.map((form) => [...form, "actor"]),
       ...unseated.map((form) => [...form, "actor", "role"]),
     ];
     // The 2026-09-01 attribution amendment: `hireRef` names the 44221 hire a
     // seated create answers. Trailing and independent of the seat pair and of
-    // routing, exactly as buzz-core enumerates it — 3 bases x seated x
-    // attributed x routed = 24 accepted shapes
+    // routing, exactly as buzz-core enumerates it — 3 bases x 3 actor forms x
+    // attributed x routed = 36 accepted shapes
     // (`coding_session_lifecycle_command.rs`, matrix at REPORT-B1 2.3).
     const hireForms = [
       ...seatForms,
@@ -203,8 +203,8 @@ export function hasStrictLifecycleCommandValues(
       !Object.hasOwn(action, "actor") ||
       (typeof action.actor === "string" &&
         /^[0-9a-f]{64}$/.test(action.actor) &&
-        typeof action.role === "string" &&
-        isRoleSlug(action.role));
+        (!Object.hasOwn(action, "role") ||
+          (typeof action.role === "string" && isRoleSlug(action.role))));
     // Absent is not null. A key-set check sees an explicit null as *present*,
     // so without this line the same bytes would mean "no hire" to this reader
     // and "malformed" to buzz-core's strict decoder. Uppercase is rejected,

@@ -238,6 +238,11 @@ The intended product is not:
 
 ## Experience-level proof
 
+The session view is optional for ordinary conversation work. Addressing an agent
+in a channel can create or continue its accepted responsibility; the inspectable
+session record supplies authority, execution evidence and recovery behind that
+conversation. Opening or closing a client does not transfer execution ownership.
+
 The vision is becoming real when a person can:
 
 1. open one session associated with the work at hand;

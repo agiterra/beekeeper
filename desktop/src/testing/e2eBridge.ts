@@ -1265,6 +1265,7 @@ type MockManagedAgentRuntimeRow = {
     | "listening"
     | "waking"
     | "ready"
+    | "hostManaged"
     | "failed"
     | "stopped";
   pid: number | null;
@@ -14181,6 +14182,30 @@ export function maybeInstallE2eTauriMocks() {
       }
       case "list_managed_agents":
         return handleListManagedAgents(activeConfig);
+      case "get_managed_agent_host_transfer": {
+        // Default fixtures have local custody and no commissioned host. Keep
+        // ownership observation distinct from a verified desired relay head.
+        let relayUrl = getRelayWsUrl(activeConfig);
+        try {
+          const activeId = window.localStorage.getItem(
+            "buzz-active-community-id",
+          );
+          const communities = JSON.parse(
+            window.localStorage.getItem("buzz-communities") ?? "[]",
+          ) as { id: string; relayUrl: string }[];
+          relayUrl =
+            communities.find((row) => row.id === activeId)?.relayUrl ??
+            relayUrl;
+        } catch {
+          // Match the mock start boundary's configured fallback.
+        }
+        return {
+          relayUrl,
+          revision: "",
+          commissioned: false,
+          transfer: null,
+        };
+      }
       case "list_project_role_packs":
         return handleListProjectRolePacks();
       case "compare_project_pack_revisions":

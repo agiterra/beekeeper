@@ -261,7 +261,7 @@
     },
     {
       "name": "hire-with-requested-by",
-      "why": "COMMS-MAP §3: the seat that ran `bee sessions hire`.",
+      "why": "COMMS-MAP \u00a73: the seat that ran `bee sessions hire`.",
       "content": {
         "schema": "buzz-coding-session-lifecycle-command/v1",
         "commandId": "cmd-1",
@@ -360,7 +360,7 @@
     },
     {
       "name": "restart",
-      "why": "Spec §4.9 restart-with-current-definition; same shape as resume.",
+      "why": "Spec \u00a74.9 restart-with-current-definition; same shape as resume.",
       "content": {
         "schema": "buzz-coding-session-lifecycle-command/v1",
         "commandId": "cmd-1",
@@ -510,8 +510,8 @@
       "reason": "missing-required"
     },
     {
-      "name": "invalid-create-actor-without-role",
-      "why": "The seat pair travels together or not at all.",
+      "name": "valid-create-actor-without-role",
+      "why": "An attributed ordinary Solo may name an actor without holding a team role; a role still requires an actor.",
       "content": {
         "schema": "buzz-coding-session-lifecycle-command/v1",
         "commandId": "cmd-1",
@@ -528,11 +528,61 @@
         }
       },
       "accepts": {
+        "rust": true,
+        "desktopCoordination": true,
+        "dart": true
+      }
+    },
+    {
+      "name": "invalid-create-role-without-actor",
+      "why": "A team role still requires the actor identity that holds it.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "cmd-1",
+        "action": {
+          "type": "session.create",
+          "projectRef": null,
+          "repoRef": null,
+          "providerInstanceRef": "claude-primary",
+          "providerAuthorityPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "model": null,
+          "title": null,
+          "initialTurn": null,
+          "role": "lead"
+        }
+      },
+      "accepts": {
         "rust": false,
         "desktopCoordination": false,
         "dart": false
       },
       "reason": "missing-required"
+    },
+    {
+      "name": "invalid-create-explicit-null-role",
+      "why": "Absent role is Solo; an explicitly present null role is malformed, never coerced to absence.",
+      "content": {
+        "schema": "buzz-coding-session-lifecycle-command/v1",
+        "commandId": "cmd-1",
+        "action": {
+          "type": "session.create",
+          "projectRef": null,
+          "repoRef": null,
+          "providerInstanceRef": "claude-primary",
+          "providerAuthorityPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "model": null,
+          "title": null,
+          "initialTurn": null,
+          "actor": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "role": null
+        }
+      },
+      "accepts": {
+        "rust": false,
+        "desktopCoordination": false,
+        "dart": false
+      },
+      "reason": "wrong-type"
     },
     {
       "name": "invalid-create-uppercase-authority-pubkey",

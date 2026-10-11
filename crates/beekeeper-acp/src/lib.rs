@@ -17,6 +17,8 @@ mod pool;
 mod pool_lifecycle;
 mod pulse_fetch;
 mod queue;
+mod quiescence;
+use quiescence::shutdown_agent_pool;
 pub mod relay;
 mod scope;
 mod setup_mode;
@@ -2426,25 +2428,8 @@ async fn tokio_main() -> Result<()> {
     //      `IN_FLIGHT_DEADLINE_SECS` expires.
     let (steer_ack_tx, mut steer_ack_rx) = mpsc::unbounded_channel::<SteerAckEvent>();
 
-    // ── Step 7: Shutdown signal ───────────────────────────────────────────────
-    let (shutdown_tx, mut shutdown_rx) = watch::channel(());
-
-    let tx = shutdown_tx.clone();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        let _ = tx.send(());
-    });
-
-    #[cfg(unix)]
-    {
-        let tx = shutdown_tx.clone();
-        tokio::spawn(async move {
-            use tokio::signal::unix::{signal, SignalKind};
-            let mut sigterm = signal(SignalKind::terminate()).expect("SIGTERM handler");
-            sigterm.recv().await;
-            let _ = tx.send(());
-        });
-    }
+    // Existing shutdown watch gates relay admission before draining prompts.
+    let (shutdown_tx, mut shutdown_rx) = quiescence::shutdown_watch();
 
     // Track the newest membership notification timestamp per channel.
     // On reconnect the relay replays events newest-first, so the first event
@@ -3645,18 +3630,21 @@ async fn tokio_main() -> Result<()> {
     // period expires, remaining tasks are aborted and fall back to
     // AcpClient::Drop (start_kill + try_wait — best-effort, not guaranteed).
     let (rx_ref, js_ref) = pool.rx_and_join_set();
+    let mut shutdown_task_failed = false;
     let shutdown_result = tokio::time::timeout(grace, async {
         loop {
             tokio::select! {
                 result = js_ref.join_next() => {
                     match result {
-                        Some(Err(e)) => tracing::warn!("task error during shutdown: {e}"),
+                        Some(Err(e)) => { shutdown_task_failed = true; tracing::warn!("task error during shutdown: {e}"); },
                         Some(Ok(())) => {}
                         None => break, // join_set empty
                     }
                 }
                 maybe_result = rx_ref.recv() => {
                     if let Some(mut pr) = maybe_result {
+                        if !matches!(pr.outcome, PromptOutcome::Ok(_)) || pr.batch.is_some() { shutdown_task_failed = true; }
+                        if let Some(scope) = pr.source.scope() { queue.mark_complete(scope.clone()); }
                         let idx = pr.agent.index;
                         pr.agent.acp.shutdown().await;
                         tracing::debug!(agent = idx, "reaped checked-out agent on shutdown");
@@ -3674,6 +3662,12 @@ async fn tokio_main() -> Result<()> {
     // Drain any remaining results that arrived after join_set drained but
     // before tasks were aborted.
     while let Ok(mut pr) = pool.result_rx_try_recv() {
+        if !matches!(pr.outcome, PromptOutcome::Ok(_)) || pr.batch.is_some() {
+            shutdown_task_failed = true;
+        }
+        if let Some(scope) = pr.source.scope() {
+            queue.mark_complete(scope.clone());
+        }
         let idx = pr.agent.index;
         pr.agent.acp.shutdown().await;
         tracing::debug!(agent = idx, "reaped late-arriving agent on shutdown");
@@ -3732,7 +3726,14 @@ async fn tokio_main() -> Result<()> {
     relay.shutdown().await;
 
     tracing::info!("beekeeper-acp stopped");
-    Ok(())
+    quiescence::complete_shutdown(
+        wake_drain.is_ok()
+            && shutdown_result.is_ok()
+            && !shutdown_task_failed
+            && !queue.has_undispatched_work(),
+        &pubkey_hex,
+        &config.relay_url,
+    )
 }
 
 #[derive(PartialEq)]
@@ -5089,18 +5090,6 @@ fn normalized_agent_name(init_result: &serde_json::Value) -> String {
 
 async fn shutdown_agent_slots(slots: &mut [Option<OwnedAgent>]) {
     for slot in slots {
-        if let Some(mut agent) = slot.take() {
-            agent.acp.shutdown().await;
-        }
-    }
-}
-
-async fn shutdown_agent_pool(pool: &mut AgentPool) {
-    pool.join_set.shutdown().await;
-    while let Ok(mut result) = pool.result_rx_try_recv() {
-        result.agent.acp.shutdown().await;
-    }
-    for slot in pool.agents_mut() {
         if let Some(mut agent) = slot.take() {
             agent.acp.shutdown().await;
         }

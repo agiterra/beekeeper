@@ -1,5 +1,7 @@
 import * as React from "react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
+import { managedAgentHostTransferQueryKey } from "@/features/agents/hooks";
 
 import {
   isManagedAgentActive,
@@ -9,6 +11,7 @@ import {
 } from "@/features/agents/lib/managedAgentControlActions";
 import { clearActiveTurnsForAgentOnStop } from "@/features/agents/managedAgentRuntimeHooks";
 import type { Channel, ManagedAgent, RelayAgent } from "@/shared/api/types";
+import type { ProfileAgentControl } from "../lib/profileAgentControl";
 
 export function useAgentLifecycleActions({
   channels,
@@ -16,18 +19,27 @@ export function useAgentLifecycleActions({
   relayAgents,
   startManagedAgent,
   stopManagedAgent,
+  control,
 }: {
   channels: readonly Channel[] | undefined;
   managedAgent: ManagedAgent | undefined;
   relayAgents: readonly RelayAgent[] | undefined;
   startManagedAgent: (pubkey: string) => Promise<unknown>;
   stopManagedAgent: (pubkey: string) => Promise<unknown>;
+  control?: ProfileAgentControl;
 }) {
+  const queryClient = useQueryClient();
   const handleAgentPrimaryAction = React.useCallback(async () => {
     if (!managedAgent) return;
 
     try {
-      if (isManagedAgentActive(managedAgent)) {
+      if (control?.action === null)
+        throw new Error(
+          "Ownership transition is unconfirmed; refresh before controlling this agent.",
+        );
+      if (
+        control ? control.action === "stop" : isManagedAgentActive(managedAgent)
+      ) {
         const result = await stopManagedAgentWithRules({
           agent: managedAgent,
           channels: channels ?? [],
@@ -54,6 +66,10 @@ export function useAgentLifecycleActions({
       toast.error(
         error instanceof Error ? error.message : "Agent action failed.",
       );
+    } finally {
+      await queryClient.invalidateQueries({
+        queryKey: managedAgentHostTransferQueryKey(managedAgent.pubkey),
+      });
     }
   }, [
     channels,
@@ -61,12 +77,16 @@ export function useAgentLifecycleActions({
     relayAgents,
     startManagedAgent,
     stopManagedAgent,
+    control,
+    queryClient,
   ]);
 
   const handleAgentRestart = React.useCallback(async () => {
     if (!managedAgent) return;
 
     try {
+      if (control && !control.canRestart)
+        throw new Error("Ownership transition does not permit restart.");
       await respawnManagedAgentWithRules({
         agent: managedAgent,
         startManagedAgent,
@@ -78,8 +98,12 @@ export function useAgentLifecycleActions({
       toast.error(
         error instanceof Error ? error.message : "Agent restart failed.",
       );
+    } finally {
+      await queryClient.invalidateQueries({
+        queryKey: managedAgentHostTransferQueryKey(managedAgent.pubkey),
+      });
     }
-  }, [managedAgent, startManagedAgent, stopManagedAgent]);
+  }, [managedAgent, startManagedAgent, stopManagedAgent, control, queryClient]);
 
   return { handleAgentPrimaryAction, handleAgentRestart };
 }

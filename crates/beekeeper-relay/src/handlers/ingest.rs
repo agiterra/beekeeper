@@ -9033,8 +9033,8 @@ mod tests {
         assert!(validate_coding_session_lifecycle_command_envelope(&reordered).is_err());
     }
 
-    /// The agent-seat amendment at the ingest gate: a create that names an
-    /// `actor` and a `role` is stored, and half a seat never is.
+    /// Actor-only creates are Solo responsibilities; a seated create names
+    /// both actor and role. A role without an actor is never stored.
     ///
     /// The relay does not resolve the seat — custody is host-local by design —
     /// so all it can do is refuse a payload that describes nothing coherent,
@@ -9073,23 +9073,21 @@ mod tests {
         );
         assert!(validate_coding_session_lifecycle_command_envelope(&complete).is_ok());
 
-        for (actor, role) in [
-            (
-                serde_json::Value::String("cd".repeat(32)),
-                serde_json::Value::Null,
-            ),
-            (
-                serde_json::Value::Null,
-                serde_json::Value::String("lead".to_owned()),
-            ),
-        ] {
-            let error = validate_coding_session_lifecycle_command_envelope(&seated(actor, role))
-                .expect_err("half a seat must be refused at ingest");
-            assert!(
-                error.contains(beekeeper_core::coding_session_payload::ACTOR_ROLE_PAIR),
-                "the ingest refusal must name the code: {error}"
-            );
-        }
+        let solo = seated(
+            serde_json::Value::String("cd".repeat(32)),
+            serde_json::Value::Null,
+        );
+        assert!(validate_coding_session_lifecycle_command_envelope(&solo).is_ok());
+
+        let error = validate_coding_session_lifecycle_command_envelope(&seated(
+            serde_json::Value::Null,
+            serde_json::Value::String("lead".to_owned()),
+        ))
+        .expect_err("a role without an actor must be refused at ingest");
+        assert!(
+            error.contains(beekeeper_core::coding_session_payload::ACTOR_ROLE_PAIR),
+            "the ingest refusal must name the code: {error}"
+        );
 
         // A malformed seat is refused too — the relay never stores a create it
         // cannot describe.

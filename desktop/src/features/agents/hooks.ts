@@ -128,6 +128,9 @@ export const managedAgentLogFocusRefetchPolicy = {
 
 export const relayAgentsQueryKey = ["relay-agents"] as const;
 export const managedAgentsQueryKey = ["managed-agents"] as const;
+/** Prefix shared by full-head and local-only ownership observations. */
+export const managedAgentHostTransferQueryKey = (pubkey: string) =>
+  ["managed-agent-host-transfer", pubkey] as const;
 export const personasQueryKey = ["personas"] as const;
 export const acpRuntimesQueryKey = ["acp-runtimes"] as const;
 export const acpAuthMethodsQueryKey = ["acp-auth-methods"] as const;

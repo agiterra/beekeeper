@@ -97,10 +97,11 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
   }
   final hasSessionRef = action.containsKey('sessionRef');
   final hasGenesisRef = action.containsKey('genesisRef');
-  // An agent seat: `actor` and `role` travel together or not at all, in the
-  // exact forms buzz-core accepts (lowercase 64-hex; `[a-z0-9-]` slug).
+  // An attributed Solo may carry actor alone. A team role still requires an
+  // actor, with the same lowercase 64-hex and role-slug rules as Rust.
   final hasActor = action.containsKey('actor');
-  if (hasActor != action.containsKey('role')) {
+  final hasRole = action.containsKey('role');
+  if (hasRole && !hasActor) {
     return const CodingSessionDecoded.failed(
       CodingSessionDecodeReason.malformedPayload,
     );
@@ -141,7 +142,7 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
     'title',
     'initialTurn',
     if (hasActor) 'actor',
-    if (hasActor) 'role',
+    if (hasRole) 'role',
     if (hasHireRef) 'hireRef',
     if (hasRouting) 'routing',
   ];
@@ -153,7 +154,7 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
   if (hasActor &&
       (!isHex64(action['actor']) ||
           action['actor'] != normalizePubkey(action['actor']) ||
-          !_isRoleSlug(action['role']))) {
+          (hasRole && !_isRoleSlug(action['role'])))) {
     return const CodingSessionDecoded.failed(
       CodingSessionDecodeReason.malformedPayload,
     );

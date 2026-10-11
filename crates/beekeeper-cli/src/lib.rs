@@ -299,10 +299,13 @@ pub enum OutputFormat {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Join a community using its existing invite protocol.
+    #[command(subcommand)]
+    Community(commands::community::CommunityCmd),
     /// Seed a sandbox's build state, or say what this project calls build state
     #[command(subcommand)]
     Sandbox(SandboxCmd),
-    /// Draft owner-reviewed agent creation and updates
+    /// Create and configure managed agents, or submit owner-reviewed drafts
     #[command(subcommand)]
     Agents(AgentsCmd),
     /// Wait for exact, relay-confirmed CI results; register and inspect
@@ -660,6 +663,10 @@ impl RespondToArg {
 
 #[derive(Subcommand)]
 pub enum AgentsCmd {
+    /// Commission an identity and its attributed headless work context.
+    Create(commands::agent_management::CreateArgs),
+    /// Publish an authorized revision of an existing managed identity.
+    Update(commands::agent_management::UpdateArgs),
     /// Open a prefilled create-agent form in the owner's Beekeeper Desktop
     DraftCreate {
         /// Current channel UUID; the new agent is added here after save
@@ -3575,6 +3582,9 @@ pub enum SessionsCmd {
         /// Signing pubkey (64-char lowercase hex) of the provider that owns the execution
         #[arg(long = "provider-authority")]
         provider_authority: String,
+        /// Exact accepted target JSON; refuse if a replacement generation is current.
+        #[arg(long)]
+        expected_target: Option<String>,
         /// Wait for the provider's signed receipt for this stop.
         #[arg(long)]
         wait: bool,
@@ -5951,7 +5961,17 @@ async fn run(cli: Cli) -> Result<(), CliError> {
     // with no identity at all still has to be able to answer "is the host
     // installed", which is the first question when nothing is working.
     if let Cmd::Host(ref sub) = cli.command {
-        return commands::host::dispatch(sub, false).await;
+        if let commands::host::HostCmd::Commission(args) = sub {
+            return commands::host_commission::commission(
+                args,
+                &cli.relay,
+                cli.private_key.as_deref(),
+            )
+            .await;
+        }
+        if !matches!(sub, commands::host::HostCmd::TrustProject(_)) {
+            return commands::host::dispatch(sub, false).await;
+        }
     }
 
     // Entirely local: nothing here reaches a relay, so it runs before any
@@ -6122,8 +6142,12 @@ async fn run(cli: Cli) -> Result<(), CliError> {
 
     match cli.command {
         Cmd::Agents(sub) => commands::agents::dispatch(sub, &client).await,
+        Cmd::Host(commands::host::HostCmd::TrustProject(args)) => {
+            commands::host_project::trust_project(&args, &client).await
+        }
         Cmd::Ci(sub) => commands::ci::dispatch(sub, &client, &cli.format).await,
         Cmd::Device(sub) => commands::device::dispatch(&sub, &client).await,
+        Cmd::Community(sub) => commands::community::dispatch(sub, &client).await,
         Cmd::Messages(sub) => commands::messages::dispatch(sub, &client, &cli.format).await,
         Cmd::Channels(sub) => commands::channels::dispatch(sub, &client, &cli.format).await,
         Cmd::Canvas(sub) => commands::channels::dispatch_canvas(sub, &client).await,
@@ -6811,6 +6835,7 @@ mod tests {
             "canvas",
             "channels",
             "ci",
+            "community",
             "device",
             "dms",
             "docs",
@@ -6934,9 +6959,11 @@ mod tests {
             vec![
                 "archive",
                 "archived",
+                "create",
                 "draft-create",
                 "draft-update",
-                "unarchive"
+                "unarchive",
+                "update"
             ]
         );
         assert_eq!(
@@ -7298,7 +7325,7 @@ mod tests {
             // C1: `publish` and `status` (spec § 5.1), plus the offline
             // `example` (ledger 206 A).
             ("actions", 3),
-            ("agents", 5),
+            ("agents", 7),
             ("canvas", 2),
             ("channels", 16),
             // C5 (SV-34): list, open, screenshot, close, watch.

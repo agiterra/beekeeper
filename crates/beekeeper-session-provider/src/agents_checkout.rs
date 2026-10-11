@@ -30,27 +30,68 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 /// How long one git invocation may take.
 const GIT_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// Where this host keeps its clone of a project's agents repository, and the
-/// ref the project pins. Written by the desktop into the projects file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentsRepoRecord {
-    /// Absolute path of the clone.
-    pub path: PathBuf,
-    /// The pinned ref, fully qualified (`refs/heads/main`).
-    #[serde(rename = "ref")]
-    pub ref_name: String,
-    /// The repository's clone URL on the relay. `None` in a record written
-    /// before ledger 250; the fetch then falls back to an `origin` remote,
-    /// and without one refuses by name rather than reading an old tip as
-    /// current.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
+pub use beekeeper_host_core::project::AgentsRepoRecord;
+
+/// Per-subprocess scoped relay Git authentication. It never consults an owner key file.
+#[derive(Clone)]
+pub struct ScopedGitAuth {
+    keys: nostr::Keys,
+    auth_tag: Option<String>,
+    helper: PathBuf,
+}
+
+impl std::fmt::Debug for ScopedGitAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ScopedGitAuth(<restricted>)")
+    }
+}
+
+impl ScopedGitAuth {
+    /// Bind explicitly supplied scoped custody to the installed trusted credential helper.
+    pub fn new(
+        keys: nostr::Keys,
+        auth_tag: Option<String>,
+        helper: PathBuf,
+    ) -> Result<Self, String> {
+        if !helper.is_absolute() || !helper.is_file() {
+            return Err("the installed scoped Git credential helper is unavailable".into());
+        }
+        Ok(Self {
+            keys,
+            auth_tag,
+            helper,
+        })
+    }
+
+    pub(crate) fn provider(config: &crate::config::Config) -> Result<Self, String> {
+        let helper = std::env::current_exe()
+            .ok()
+            .and_then(|exe| {
+                exe.parent().map(|parent| {
+                    parent.join(if cfg!(windows) {
+                        "git-credential-nostr.exe"
+                    } else {
+                        "git-credential-nostr"
+                    })
+                })
+            })
+            .ok_or("the installed scoped Git credential helper is unavailable")?;
+        Ok(Self {
+            keys: config.keys.clone(),
+            auth_tag: config
+                .auth_tag
+                .as_ref()
+                .map(|tag| serde_json::to_string(tag.as_slice()))
+                .transpose()
+                .map_err(|_| "invalid scoped Git attestation")?,
+            helper,
+        })
+    }
 }
 
 /// One file read from the agents repository's tip.
@@ -142,6 +183,14 @@ pub struct AgentsTip {
 /// # Errors
 /// No readable clone, or no tip at all.
 pub async fn pinned_tip(record: &AgentsRepoRecord) -> Result<AgentsTip, AgentsReadError> {
+    pinned_tip_scoped(record, None).await
+}
+
+/// Fetch the authorized pinned head using explicit executor custody.
+pub async fn pinned_tip_scoped(
+    record: &AgentsRepoRecord,
+    auth: Option<&ScopedGitAuth>,
+) -> Result<AgentsTip, AgentsReadError> {
     if !record.path.join(".git").exists() {
         return Err(AgentsReadError::NoCheckout {
             path: record.path.clone(),
@@ -153,7 +202,7 @@ pub async fn pinned_tip(record: &AgentsRepoRecord) -> Result<AgentsTip, AgentsRe
         .strip_prefix("refs/heads/")
         .unwrap_or(&record.ref_name);
     let remote_ref = format!("refs/remotes/origin/{branch}");
-    let (sha, fetch_error) = match fetch_tip(record, &remote_ref).await {
+    let (sha, fetch_error) = match fetch_tip(record, &remote_ref, auth).await {
         Ok(()) => (
             git(&record.path, &["rev-parse", "--verify", &remote_ref])
                 .await
@@ -199,12 +248,21 @@ pub async fn read_agents_file(
     record: &AgentsRepoRecord,
     file: &str,
 ) -> Result<AgentsFile, AgentsReadError> {
+    read_agents_file_scoped(record, file, None).await
+}
+
+/// Read a pinned agents file with explicit scoped relay authentication.
+pub async fn read_agents_file_scoped(
+    record: &AgentsRepoRecord,
+    file: &str,
+    auth: Option<&ScopedGitAuth>,
+) -> Result<AgentsFile, AgentsReadError> {
     let AgentsTip {
         sha,
         stale,
         fetched_at,
         fetch_error,
-    } = pinned_tip(record).await?;
+    } = pinned_tip_scoped(record, auth).await?;
     let spec = format!("{sha}:{file}");
     match git(&record.path, &["show", &spec]).await {
         Ok(text) => Ok(AgentsFile {
@@ -231,12 +289,16 @@ pub async fn read_agents_file(
 /// for a record written before the URL was — from an `origin` remote if the
 /// clone has one. `Err` is git's own complaint, or the sentence saying there
 /// is nowhere to fetch from.
-async fn fetch_tip(record: &AgentsRepoRecord, remote_ref: &str) -> Result<(), String> {
+async fn fetch_tip(
+    record: &AgentsRepoRecord,
+    remote_ref: &str,
+    auth: Option<&ScopedGitAuth>,
+) -> Result<(), String> {
     let source =
         match record.url.as_deref().map(str::trim) {
             Some(url) if !url.is_empty() => url.to_owned(),
             _ => match git(&record.path, &["remote", "get-url", "origin"]).await {
-                Ok(url) if !url.trim().is_empty() => "origin".to_owned(),
+                Ok(url) if !url.trim().is_empty() => url.trim().to_owned(),
                 _ => return Err(
                     "this host recorded no clone URL for the agents repository and the clone has \
                      no origin remote; open the project's Actions tab to record it again"
@@ -245,9 +307,10 @@ async fn fetch_tip(record: &AgentsRepoRecord, remote_ref: &str) -> Result<(), St
             },
         };
     let refspec = format!("+{}:{remote_ref}", record.ref_name);
-    git(
+    git_scoped(
         &record.path,
         &["fetch", "--quiet", "--no-tags", "--", &source, &refspec],
+        auth,
     )
     .await
     .map(|_| ())
@@ -288,7 +351,16 @@ pub async fn stage_read_only_clone(
     record: &AgentsRepoRecord,
     dest: &Path,
 ) -> Result<AgentsTip, AgentsReadError> {
-    let tip = pinned_tip(record).await?;
+    stage_read_only_clone_scoped(record, dest, None).await
+}
+
+/// Stage the same read-only clone while fetching its head with explicit custody.
+pub async fn stage_read_only_clone_scoped(
+    record: &AgentsRepoRecord,
+    dest: &Path,
+    auth: Option<&ScopedGitAuth>,
+) -> Result<AgentsTip, AgentsReadError> {
+    let tip = pinned_tip_scoped(record, auth).await?;
     let failed = |detail: String| AgentsReadError::Git { detail };
     let source = record.path.to_string_lossy().into_owned();
     if dest.join(".git").is_dir() {
@@ -361,7 +433,70 @@ async fn clone_git(dir: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 async fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    git_scoped(dir, args, None).await
+}
+
+fn configure_scoped_git(cmd: &mut Command, args: &[&str], auth: Option<&ScopedGitAuth>) {
+    if let Some(auth) = auth {
+        for var in crate::git_probe::GIT_REPO_SELECTION_VARS {
+            cmd.env_remove(var);
+        }
+        cmd.env_remove("BUZZ_AUTH_TAG")
+            .env_remove("BEEKEEPER_PRIVATE_KEY");
+        cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_TERMINAL_PROMPT", "0");
+        cmd.env("NOSTR_PRIVATE_KEY", auth.keys.secret_key().to_secret_hex());
+        cmd.env_remove("BEEKEEPER_AUTH_TAG");
+        if let Some(tag) = &auth.auth_tag {
+            cmd.env("BEEKEEPER_AUTH_TAG", tag);
+        }
+        // Reset helpers from repository configuration, including URL-scoped entries,
+        // before supplying the program this installation chose.
+        cmd.args([
+            "-c",
+            "credential.helper=",
+            "-c",
+            "credential.useHttpPath=true",
+        ]);
+        if let Some(source) = args
+            .iter()
+            .position(|arg| *arg == "--")
+            .and_then(|index| args.get(index + 1))
+        {
+            cmd.arg("-c").arg(format!("credential.{source}.helper="));
+            cmd.arg("-c").arg(format!(
+                "credential.{source}.helper=!{}",
+                crate::execution_scope_git::shell_quoted(&auth.helper)
+            ));
+        } else {
+            cmd.arg("-c").arg(format!(
+                "credential.helper=!{}",
+                crate::execution_scope_git::shell_quoted(&auth.helper)
+            ));
+        }
+    }
+}
+
+async fn git_scoped(
+    dir: &Path,
+    args: &[&str],
+    auth: Option<&ScopedGitAuth>,
+) -> Result<String, String> {
+    if let Some(auth) = auth {
+        let remote = args
+            .iter()
+            .position(|arg| *arg == "--")
+            .and_then(|index| args.get(index + 1));
+        if remote
+            .is_some_and(|source| source.starts_with("https://") || source.starts_with("http://"))
+            && !auth.helper.is_file()
+        {
+            return Err("the installed scoped Git credential helper is unavailable; no ambient credential fallback was attempted".into());
+        }
+    }
     let mut cmd = Command::new("git");
+    configure_scoped_git(&mut cmd, args, auth);
     // The host's own clone: its configuration is the host's, but no hook of
     // it runs either way.
     cmd.args([
@@ -598,5 +733,65 @@ mod tests {
             "{}",
             stale.provenance()
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod scoped_auth_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn scoped_git_resets_repository_helpers_and_supplies_only_chosen_custody() {
+        let dir = tempfile::tempdir().expect("fixture");
+        assert!(Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(dir.path())
+            .status()
+            .await
+            .expect("git")
+            .success());
+        let evil = "!printf 'username=wrong\npassword=owner-fallback\n'";
+        assert!(Command::new("git")
+            .args(["config", "credential.helper", evil])
+            .current_dir(dir.path())
+            .status()
+            .await
+            .expect("config")
+            .success());
+        let helper = dir.path().join("trusted-helper");
+        std::fs::write(&helper, "#!/bin/sh\nif [ -n \"$NOSTR_PRIVATE_KEY\" ] && [ \"$BEEKEEPER_AUTH_TAG\" = fixture ]; then printf 'username=scoped\\npassword=chosen\\n'; fi\n").expect("helper");
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700))
+            .expect("executable");
+        let auth = ScopedGitAuth::new(nostr::Keys::generate(), Some("fixture".into()), helper)
+            .expect("auth");
+        let mut cmd = Command::new("git");
+        configure_scoped_git(&mut cmd, &[], Some(&auth));
+        let mut child = cmd
+            .args(["credential", "fill"])
+            .current_dir(dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("fill");
+        child
+            .stdin
+            .take()
+            .expect("input")
+            .write_all(b"protocol=https\nhost=isolated.invalid\npath=git/project\n\n")
+            .await
+            .expect("request");
+        let output = child.wait_with_output().await.expect("completion");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let body = String::from_utf8_lossy(&output.stdout);
+        assert!(body.contains("username=scoped") && body.contains("password=chosen"));
+        assert!(!body.contains("owner-fallback"));
+        assert!(!format!("{auth:?}").contains(&auth.keys.secret_key().to_secret_hex()));
     }
 }
