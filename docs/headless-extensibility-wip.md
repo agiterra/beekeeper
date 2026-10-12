@@ -1,28 +1,42 @@
-# Headless/extensibility WIP checkpoint — 2026-10-12
+# Headless/extensibility clean-break candidate — 2026-10-12
 
-Slice E is unfinished. This topic branch is for team visibility and review; it is not a release or an accepted migration upgrade. No merge, production installation or deployment is authorized by this checkpoint.
+Brian's direction is a clean break from the original desktop executor. Fresh
+Create/setup and administration use shared headless management; the host/provider
+owns execution. Desktop supplies UI, signing, Keychain custody and bootstrap
+adapters. There is no automatic legacy import, native artifact conversion,
+handoff, desktop executor or fallback. Retained old data is not automatically
+executed; tracked live or unproved legacy conflicts are refused. Remote provider
+capabilities, custom protected ACP configuration and Solo sessions remain.
 
-The governing plan, current-state map and detailed receipts are on agents-repository branch `work/headless-extensibility-evidence`, under `plans/BEEKEEPER_HEADLESS_EXTENSIBILITY_PLAN.md` and `plans/archive/2026-10-11-headless-extensibility/slice-e/`. The original agents checkout's unrelated work was not copied into this topic.
+The governing plan, map, ledger391–392 and detailed evidence are on agents-topic
+`work/headless-extensibility-evidence`, under
+`plans/BEEKEEPER_HEADLESS_EXTENSIBILITY_PLAN.md` and
+`plans/archive/2026-10-11-headless-extensibility/slice-e/`.
+See [clean setup and recovery](agent-recovery.md) and
+[host administration](agent-host.md) for current product boundaries.
 
-## Applied implementation
+Fresh isolated CLI/native backend Create, ordinary work with the client closed,
+reopen without duplicate execution, strict modern native restart/resume,
+relay-only administration, cumulative Stop, Delete/replay and a newly defined
+hook have recorded runtime evidence. Final full `just ci` passed on code commit
+`b7ad812e2`; whole affected desktop smoke passed1457 tests with one skip.
+Independent source/delta reviews closed their findings, and the evidence audit
+verified144 signed events with25 correlation checks. Live fixture binary hashes
+and later focused HTTP/custom-selector checks are recorded separately.
 
-Shared headless management serves desktop and CLI creation, configuration and lifecycle. Host/provider execution replaces reachable desktop launch, restore, supervision, sweep and fallback paths. The retained legacy reader is a one-way importer with protected backups. Remote provider capabilities and Solo sessions retain their existing boundaries.
+Shared Delete retires managed execution and removes the exact definition. It
+explicitly retains executor custody for recovery; identity archiving is not a
+general relay/repository permission ban or key erasure. Native desktop Delete
+completed shared retirement but reported client Keychain cleanup incomplete in
+the isolated home. No full client-cleanup or native GUI/GUI Quit pass is claimed;
+the GUI tool pipe is unavailable. Windows, Linux/release-profile, other-vendor
+and cross-account runtime acceptance remain unproved. Historical64477/8e
+migration uncertainty/backups stay unchanged, failed/uncertain and outside the
+revised release requirements.
 
-Lifecycle/delete reconciliation retains every observed exact responsibility and requires terminal evidence; missing metadata is not termination. Durable Stop completion and reserved Create outcomes survive covered crash cuts. Unproved startup or child exit retains custody/context. B5 revision replacement requires exact signed source equivalence and affirmative pre-admission under the same pair lock; target absence alone cannot authorize it.
-
-Commissioned runtime settings survive desktop bootstrap. Explicit GUI limits patch the shared scoped host configuration. Private-persona snapshot support is applied but awaits complete integration, focused acceptance and review.
-
-## Tested behavior and open gates
-
-A predecessor E candidate actually created one native Codex responsibility through desktop backend commands on an isolated relay. Signed ordinary replies, completion after closing the desktop during an active turn, and a later app-closed reply were observed. Reopening retained that same responsibility/native process. Native GUI rendering was not proved.
-
-Historical focused quiescence, lifecycle, admission, migration-reader and ownership tests pass as documented in the evidence. Literal E smoke passed1457 with one explicit skip; coherent provider runs passed1581 with14 ignored. Those runs are not a green full CI result for this checkpoint.
-
-Known incomplete behavior:
-
-- Reopen's private-persona backfill caused `AGENT_DEFINITION_PACK_UNAVAILABLE`. The private projection implementation needs importer/refresh integration and final authorization/hash/replay review before native retest.
-- Stopped legacy fixturef433 remains blocked in incomplete Prepared operation26af08ab. Capture validation/progress ordering repair is prepared outside product and archived as untested source; it is not applied here.
-- Original migrations64477 and8e retain `RuntimeStarting` uncertainty with no supported generation-bound exit proof. Their intents and backups remain immutable; other fixture success cannot repair them.
-- Rebuilt native migration/continuity/replay, complete lifecycle/delete/hook acceptance, final full CI and independent final review remain open. Windows hardware and native GUI limitations remain disclosed.
-
-Current formal acceptance retains its fixed review/action/git-ref proof behavior. This refactor does not introduce a general acceptance policy engine or make Git-specific proof requirements universal workflow rules. Desktop-local embedded Mesh model lifetime is a remaining external model dependency; the real Codex evidence does not prove that dependency headless.
+Existing Review/Action/GitRef proof behavior remains software-specific; no
+general acceptance policy engine or universal Git workflow requirement was
+added. Desktop-local embedded Mesh model lifetime remains an external model
+dependency; the Codex evidence does not prove it headless. Topic publication is
+for review: no main merge, production install/deploy or Brian live-agent
+migration has occurred.
