@@ -91,7 +91,7 @@ async fn ordinary_allowlist_and_private_owner_clamp_are_revalidated() {
         .unwrap());
 }
 #[tokio::test]
-async fn newly_installed_migration_route_backfills_below_advanced_watermark_in_order() {
+async fn newly_installed_responsibility_route_backfills_below_advanced_watermark_in_order() {
     let dir = tempfile::tempdir().unwrap();
     let channel = Uuid::new_v4();
     let actor = Keys::generate();
@@ -111,18 +111,10 @@ async fn newly_installed_migration_route_backfills_below_advanced_watermark_in_o
     let same = make("same second pending", floor);
     let after = make("after drain pending", floor + 1);
     let answered = make("already answered", floor);
-    let reply = nostr::EventBuilder::new(Kind::Custom(9), "old actor answer")
-        .tags([
-            Tag::parse(["h", &channel.to_string()]).unwrap(),
-            Tag::parse(["e", &answered.id.to_hex(), "", "reply"]).unwrap(),
-        ])
-        .sign_with_keys(&actor)
-        .unwrap();
     let (relay, queries, _server) = spawn_test_relay_with_events(
         &host.config.keys,
         vec![
             policy_definition(&actor, "owner-only", vec![]),
-            reply,
             after.clone(),
             answered.clone(),
             uncertain.clone(),
@@ -131,6 +123,10 @@ async fn newly_installed_migration_route_backfills_below_advanced_watermark_in_o
     )
     .await;
     host.set_rest_client(relay.rest_client());
+    // Modern reply deduplication uses this host’s durable consumption ledger.
+    host.state
+        .consume_command(&answered.id.to_hex(), now_secs())
+        .unwrap();
     host.state
         .record_watermark(channel, now_secs() + 100)
         .unwrap();
@@ -227,123 +223,4 @@ async fn unauthorized_ordinary_author_gets_no_ambiguous_responsibility_disclosur
     let sink = CollectingSink::new();
     host.flush(&sink).await.unwrap();
     assert!(!sink.all().iter().any(|reply| reply.kind == Kind::Custom(9)));
-}
-
-#[tokio::test]
-async fn long_stopped_downtime_is_inspected_from_proven_source_without_claiming_consumption() {
-    let dir = tempfile::tempdir().unwrap();
-    let channel = Uuid::new_v4();
-    let actor = Keys::generate();
-    let (mut host, _) = routed_provider(dir.path(), channel, &actor).await;
-    let capture = now_secs();
-    let stopped_time = capture - 1500;
-    let source = capture - 2000;
-    let make = |text: &str| {
-        nostr::EventBuilder::new(Kind::Custom(9), text)
-            .tags([
-                Tag::parse(["h", &channel.to_string()]).unwrap(),
-                Tag::parse(["p", &actor.public_key().to_hex()]).unwrap(),
-            ])
-            .custom_created_at(nostr::Timestamp::from(stopped_time))
-            .sign_with_keys(test_operator_keys())
-            .unwrap()
-    };
-    let during = make("old during drain pending");
-    let after = make("old after stop pending");
-    let handled = make("old handled");
-    let cold = nostr::EventBuilder::new(Kind::Custom(9), "trigger before native session creation")
-        .tags([
-            Tag::parse(["h", &channel.to_string()]).unwrap(),
-            Tag::parse(["p", &actor.public_key().to_hex()]).unwrap(),
-        ])
-        .custom_created_at(nostr::Timestamp::from(source - 1))
-        .sign_with_keys(test_operator_keys())
-        .unwrap();
-    let reply = nostr::EventBuilder::new(Kind::Custom(9), "proven old result")
-        .tags([
-            Tag::parse(["h", &channel.to_string()]).unwrap(),
-            Tag::parse(["e", &handled.id.to_hex(), "", "reply"]).unwrap(),
-        ])
-        .sign_with_keys(&actor)
-        .unwrap();
-    let definition = policy_definition(&actor, "owner-only", vec![]);
-    let (relay, queries, _server) = spawn_test_relay_with_events(
-        &host.config.keys,
-        vec![
-            definition.clone(),
-            cold.clone(),
-            during.clone(),
-            after.clone(),
-            handled.clone(),
-            reply,
-        ],
-    )
-    .await;
-    host.set_rest_client(relay.rest_client());
-    let path = host.config.state_dir.join("conversation-routes.json");
-    let mut routes: ConversationRoutes =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    routes.routes[0].replay_floor_unix = Some(capture);
-    state::atomic_write(&path, &serde_json::to_vec(&routes).unwrap()).unwrap();
-    host.state.record_watermark(channel, capture + 100).unwrap();
-    let mut receiver = host.conversation_backfill.slot.take_receiver();
-    // The old grace-only snapshot misses the long-stopped inputs; it must not
-    // prevent a newly verified immutable source bound from triggering backfill.
-    host.start_conversation_backfill().unwrap();
-    let fetched = tokio::time::timeout(Duration::from_secs(5), off_loop::next(&mut receiver))
-        .await
-        .unwrap();
-    host.finish_conversation_backfill(fetched).await.unwrap();
-    assert!(!host.state.is_command_consumed(&during.id.to_hex()));
-    let private_path = host
-        .config
-        .state_dir
-        .join("actors")
-        .join(actor.public_key().to_hex())
-        .join("configuration.json");
-    state::atomic_write(&private_path,&serde_json::to_vec(&serde_json::json!({"schema":"beekeeper-private-agent-config/v1","actorPubkey":actor.public_key().to_hex(),"relayUrl":host.config.relay_url,"definition":definition,"record":{"migration_backfill_since_unix":source}})).unwrap()).unwrap();
-    assert_eq!(
-        host.subscription_replay_since(channel, None),
-        Some(source.saturating_sub(REPLAY_GRACE_SECS))
-    );
-    host.start_conversation_backfill().unwrap();
-    let fetched = tokio::time::timeout(Duration::from_secs(5), off_loop::next(&mut receiver))
-        .await
-        .unwrap();
-    host.finish_conversation_backfill(fetched).await.unwrap();
-    for event in [&during, &after, &handled, &cold] {
-        assert!(host.state.is_command_consumed(&event.id.to_hex()));
-    }
-    assert!(host.in_flight.is_empty());
-    assert!(host.replay.held.is_empty());
-    let sink = CollectingSink::new();
-    host.flush(&sink).await.unwrap();
-    let replies: Vec<_> = sink
-        .all()
-        .into_iter()
-        .filter(|event| event.kind == Kind::Custom(9))
-        .collect();
-    assert_eq!(replies.len(), 3);
-    assert!(replies
-        .iter()
-        .all(|event| event.content.contains("earlier outcome is uncertain")));
-    assert!(queries
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|query| query
-            .as_array()
-            .is_some_and(|filters| filters.iter().any(|filter| filter
-                .get("since")
-                .and_then(serde_json::Value::as_u64)
-                == Some(source.saturating_sub(REPLAY_GRACE_SECS))))));
-    let mut invalid: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&private_path).unwrap()).unwrap();
-    invalid["record"]["migration_backfill_since_unix"] = serde_json::json!(capture + 1);
-    state::atomic_write(&private_path, &serde_json::to_vec(&invalid).unwrap()).unwrap();
-    assert!(host
-        .start_conversation_backfill()
-        .unwrap_err()
-        .to_string()
-        .contains("MIGRATION_REPLAY_PROVENANCE_INVALID"));
 }

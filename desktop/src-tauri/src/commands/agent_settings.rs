@@ -42,9 +42,9 @@ pub async fn set_managed_agent_start_on_app_launch(
         &crate::relay::relay_ws_url_with_override(&state),
     );
     if start_on_app_launch {
-        super::agents::host_transfer::start_host_pair(&app, &pubkey, &relay).await?;
+        super::agents::headless_management::start_host_pair(&app, &pubkey, &relay).await?;
     } else {
-        super::agents::host_transfer::stop_host_pair(&app, &pubkey, &relay).await?;
+        super::agents::headless_management::stop_host_pair(&app, &pubkey, &relay).await?;
     }
     let _guard = state
         .managed_agents_store_lock
@@ -111,7 +111,7 @@ pub async fn set_managed_agent_auto_restart(
             &record.relay_url,
             &crate::relay::relay_ws_url_with_override(&state),
         );
-        super::agents::host_transfer::reconcile_host_agent(
+        super::agents::headless_management::reconcile_host_agent(
             &saved_app,
             &state,
             &saved_pubkey,

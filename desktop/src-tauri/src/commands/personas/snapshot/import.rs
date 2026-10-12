@@ -475,6 +475,7 @@ pub async fn confirm_agent_snapshot_import(
         decode_snapshot_for_import(&input.file_bytes, owner_keys.as_ref(), &records)?.0
     };
 
+    crate::commands::agents::headless_management::preflight_fresh_snapshot(&app)?;
     let display_name = snapshot.profile.display_name.trim().to_string();
     if display_name.is_empty() {
         return Err("Snapshot display name is empty.".to_string());
@@ -590,7 +591,6 @@ pub async fn confirm_agent_snapshot_import(
             auth_tag: auth_tag.clone(),
             relay_url: String::new(), // resolves to workspace relay at runtime
             avatar_url: effective_avatar.clone(),
-            // Machine-local commands: catalog-derived at spawn, never from snapshot data.
             acp_command: crate::managed_agents::DEFAULT_ACP_COMMAND.to_string(),
             agent_command: String::new(),
             agent_command_override: None,
@@ -647,12 +647,11 @@ pub async fn confirm_agent_snapshot_import(
             name_pool: snapshot.definition.name_pool.clone(),
         };
 
+        crate::commands::agents::headless_management::reserve_fresh_snapshot(&app, &record)?;
         records.push(record.clone());
         save_managed_agents(&app, &records)?;
 
-        // Enqueue the kind:30177 managed-agent event via retention.
-        // (Uses the same pattern as agents.rs::retain_managed_agent_pending
-        // inlined here to avoid cross-module private-fn access.)
+        // Retain the locally authored definition for shared publication.
         retain_agent_pending(&app, &state, &record);
 
         crate::managed_agents::try_regenerate_nest(&app);
@@ -677,6 +676,14 @@ pub async fn confirm_agent_snapshot_import(
     )
     .await
     .err();
+
+    let profile_sync_error = crate::commands::agents::headless_management::enroll_fresh_snapshot(
+        &app,
+        &state,
+        &record,
+        profile_sync_error,
+    )
+    .await;
 
     // ── Phase 4: restore memory (async, outside lock) ─────────────────────────
     let memory_total = snapshot.memory.entries.len();

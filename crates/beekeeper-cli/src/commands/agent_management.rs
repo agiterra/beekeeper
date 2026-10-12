@@ -3,9 +3,6 @@ use crate::{client::BeekeeperClient, error::CliError, validate::read_or_stdin, R
 use clap::Args;
 use std::path::PathBuf;
 use uuid::Uuid;
-#[path = "agent_management_import_evidence.rs"]
-mod import_evidence;
-pub use import_evidence::{supply_migration_definition, SupplyMigrationDefinitionArgs};
 /// Commission one attributed ordinary participant on an existing headless host.
 #[derive(Args, Debug)]
 pub struct CreateArgs {
@@ -37,24 +34,15 @@ pub struct CreateArgs {
     #[arg(long)]
     pub provider_instance: Option<String>,
     /// Add another accepted responsibility for an existing host-custodied identity.
-    #[arg(long, conflicts_with = "adopt_agent_pubkey")]
+    #[arg(long)]
     pub agent_pubkey: Option<String>,
-    /// Adopt an existing identity after its legacy generation is quiesced.
-    #[arg(long, requires_all = ["key_file", "auth_tag_file"])]
-    pub adopt_agent_pubkey: Option<String>,
-    /// Owner-only staged existing scoped key; never an owner's signing key.
-    #[arg(long, requires = "adopt_agent_pubkey")]
-    pub key_file: Option<PathBuf>,
-    /// Owner-only staged existing NIP-OA attestation.
-    #[arg(long, requires = "adopt_agent_pubkey")]
-    pub auth_tag_file: Option<PathBuf>,
     /// Maximum seconds to wait for the provider's signed create receipt.
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=300))]
     pub wait_secs: u64,
     /// Configure custody and identity without admitting execution.
     #[arg(long)]
     pub no_start: bool,
-    /// Verified replay boundary; earlier/same-second uncertain legacy requests are disclosed.
+    /// Explicit responsibility replay lower bound.
     #[arg(long)]
     pub replay_floor_unix: Option<u64>,
     /// Complete safe public definition JSON; supported optional fields may be cleared.
@@ -122,9 +110,6 @@ fn create_request(
         model: args.model.clone(),
         provider_instance: args.provider_instance.clone(),
         agent_pubkey: args.agent_pubkey.clone(),
-        adopt_agent_pubkey: args.adopt_agent_pubkey.clone(),
-        key_file: args.key_file.clone(),
-        auth_tag_file: args.auth_tag_file.clone(),
         wait_secs: args.wait_secs,
         activate: !args.no_start,
         replay_floor_unix: args.replay_floor_unix,
@@ -438,8 +423,6 @@ pub enum AgentsCmd {
     RestartRemote(RemoteRestartArgs),
     /// Retire and tombstone only with truthful actor-wide terminal proof.
     Delete(DeleteArgs),
-    /// Retain an original signed definition as migration evidence; never starts or repairs execution.
-    SupplyMigrationDefinition(SupplyMigrationDefinitionArgs),
     /// Open a prefilled create-agent form in the owner's Beekeeper Desktop
     DraftCreate {
         /// Current channel UUID; the new agent is added here after save

@@ -157,7 +157,7 @@ const AGENT_PUBKEY: &str = "agentpubkeyhex00000000000000000000000000000000000000
 
 /// A local managed agent carrying every device-local secret that an inbound
 /// event must NEVER be able to overwrite.
-fn local_agent() -> ManagedAgentRecord {
+pub(super) fn local_agent() -> ManagedAgentRecord {
     ManagedAgentRecord {
         reserves_name_globally: false,
         pubkey: AGENT_PUBKEY.to_string(),
@@ -776,7 +776,7 @@ fn deletion_event(coord: &str) -> nostr::Event {
     deletion_event_with_keys(coord, &nostr::Keys::generate())
 }
 
-fn deletion_event_with_keys(coord: &str, keys: &nostr::Keys) -> nostr::Event {
+pub(super) fn deletion_event_with_keys(coord: &str, keys: &nostr::Keys) -> nostr::Event {
     use nostr::{EventBuilder, JsonUtil, Kind, Tag};
     let event = EventBuilder::new(Kind::Custom(5), "")
         .tags(vec![Tag::parse(["a", coord]).unwrap()])

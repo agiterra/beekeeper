@@ -842,7 +842,11 @@ mod tests {
     #[cfg(unix)]
     fn await_death(pid: u32) -> bool {
         for _ in 0..30 {
-            if !crate::managed_agents::process_is_running(pid) {
+            if std::process::Command::new("ps")
+                .args(["-p", &pid.to_string(), "-o", "pid="])
+                .output()
+                .is_ok_and(|output| output.status.code() == Some(1) && output.stdout.is_empty())
+            {
                 return true;
             }
             std::thread::sleep(Duration::from_millis(100));

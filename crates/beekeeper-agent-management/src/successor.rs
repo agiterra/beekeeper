@@ -18,6 +18,9 @@ pub(super) fn prepare(
     else {
         return Ok(None);
     };
+    if !ownership::is_modern_enrollment(&current) {
+        return Err(CliError::Refused("historical setup is retired; recreate with a fresh identity, retained custody was not changed".into()));
+    }
     match current.phase {
         Phase::Adopted => Ok(None),
         Phase::HostStopped if current.operation_id != operation.to_string() => Ok(Some(current)),

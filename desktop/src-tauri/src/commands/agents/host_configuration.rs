@@ -16,6 +16,8 @@ struct ConfigurationIntent {
     operation_id: Uuid,
     owner_pubkey: String,
     expected_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_private_snapshot_hash: Option<String>,
     desired_hash: String,
     was_active: bool,
     quiesced: bool,
@@ -51,6 +53,29 @@ fn read_intent(path: &Path) -> Result<Option<ConfigurationIntent>, String> {
         .map_err(|e| e.to_string())
 }
 
+fn configuration_hash(
+    public: &beekeeper_core_pkg::managed_agent::ManagedAgentEventContent,
+    private: &PrivateConfiguration,
+) -> Result<String, String> {
+    Ok(hex::encode(Sha256::digest(
+        serde_json::to_vec(&json!({"public":public,"private":private.record}))
+            .map_err(|_| "configuration digest unavailable")?,
+    )))
+}
+fn configuration_path(
+    ctx: &Context,
+    actor: &str,
+    relay: &str,
+    hash: &str,
+    refresh: bool,
+) -> Result<PathBuf, String> {
+    let key = crate::managed_agents::ManagedAgentRuntimeKey::new(actor, relay)?;
+    let purpose = if refresh { "refresh" } else { "configure" };
+    Ok(layout::host_dir(&ctx.home, ctx.instance)
+        .join("management/desktop-configuration")
+        .join(key.runtime_id())
+        .join(format!("{purpose}-{hash}.json")))
+}
 async fn configuration_operation(
     app: &AppHandle,
     state: &AppState,
@@ -58,20 +83,21 @@ async fn configuration_operation(
     relay: &str,
     public: &beekeeper_core_pkg::managed_agent::ManagedAgentEventContent,
     private: &PrivateConfiguration,
-    expected_source: Option<&ManagedAgentRecord>,
+    expected: (Option<&ManagedAgentRecord>, Option<&str>),
 ) -> Result<(PathBuf, ConfigurationIntent), String> {
+    let (expected_source, expected_private_hash) = expected;
     let owner_pubkey = Transport::owner(app, relay)?.keys().public_key().to_hex();
-    let desired_hash = hex::encode(Sha256::digest(
-        serde_json::to_vec(&json!({"public":public,"private":private.record}))
-            .map_err(|e| e.to_string())?,
-    ));
-    let key = crate::managed_agents::ManagedAgentRuntimeKey::new(actor, relay)?;
+    let desired_hash = configuration_hash(public, private)?;
     let ctx = context()?;
-    let dir = layout::host_dir(&ctx.home, ctx.instance)
-        .join("management/desktop-configuration")
-        .join(key.runtime_id());
-    atomic_write::create_dir_all_restricted(&dir)?;
-    let path = dir.join(format!("configure-{desired_hash}.json"));
+    let path = configuration_path(
+        &ctx,
+        actor,
+        relay,
+        &desired_hash,
+        expected_private_hash.is_some(),
+    )?;
+    let dir = path.parent().ok_or("configuration directory unavailable")?;
+    atomic_write::create_dir_all_restricted(dir)?;
     let current = head(app, relay, actor).await?;
     let held = {
         let _lock = ownership::management_lock(&ctx.home, ctx.instance)?;
@@ -81,7 +107,9 @@ async fn configuration_operation(
         if held.owner_pubkey != owner_pubkey || held.desired_hash != desired_hash {
             return Err("configuration delivery payload conflicts".into());
         }
-        if !held.complete || held.accepted_revision.as_deref() == Some(current.id.to_hex().as_str())
+        if expected_private_hash.is_some()
+            || !held.complete
+            || held.accepted_revision.as_deref() == Some(current.id.to_hex().as_str())
         {
             return Ok((path, held.clone()));
         }
@@ -99,13 +127,20 @@ async fn configuration_operation(
             current.id
         ));
     }
-    let was_active = lifecycle::active_host_agent_pubkeys(app, state)
-        .await?
-        .contains(actor);
+    let was_active = if expected_private_hash.is_some() {
+        // Refresh never requests a lifecycle effect; lease availability is not
+        // a prerequisite and must not be inferred from accepted ownership.
+        false
+    } else {
+        lifecycle::active_host_agent_pubkeys(app, state)
+            .await?
+            .contains(actor)
+    };
     let next = ConfigurationIntent {
         operation_id: Uuid::new_v4(),
         owner_pubkey,
         expected_revision: current.id.to_hex(),
+        expected_private_snapshot_hash: expected_private_hash.map(str::to_owned),
         desired_hash,
         was_active,
         quiesced: false,
@@ -115,7 +150,10 @@ async fn configuration_operation(
     };
     let _lock = ownership::management_lock(&ctx.home, ctx.instance)?;
     if let Some(old) = read_intent(&path)? {
-        if !old.complete || old.accepted_revision.as_deref() == Some(current.id.to_hex().as_str()) {
+        if expected_private_hash.is_some()
+            || !old.complete
+            || old.accepted_revision.as_deref() == Some(current.id.to_hex().as_str())
+        {
             return Ok((path, old));
         }
         save_intent(
@@ -148,7 +186,7 @@ async fn configure(
         relay,
         &public,
         &private,
-        expected_source,
+        (expected_source, None),
     )
     .await?;
     let current = head(app, relay, &desired.pubkey).await?;
@@ -283,7 +321,7 @@ async fn finish_configuration(
     mut intent: ConfigurationIntent,
 ) -> Result<(), String> {
     if intent.was_active && intent.quiesced && !intent.restarted {
-        importer::ensure_enrolled(app, desired, relay, true)
+        enrollment::start_existing(app, desired, relay)
             .await
             .map_err(|e| {
                 format!("Configuration accepted; successor admission remains unconfirmed: {e}")
@@ -306,9 +344,7 @@ pub(crate) async fn reconcile_host_agent(
     if record.backend != BackendKind::Local {
         return Err("remote settings use their provider boundary".into());
     }
-    if ownership::for_pair(&context()?.home, context()?.instance, actor, relay)?.is_none() {
-        importer::ensure_enrolled(app, &record, relay, false).await?;
-    }
+    enrollment::require_modern(app, &record, relay)?;
     let (path, intent) = configure(app, state, &record, relay, restart, None).await?;
     if record_for_pair(app, actor, relay)? != record {
         return Err(
@@ -346,16 +382,7 @@ pub(crate) async fn update_if_adopted(
     {
         return Err("another community requires its own authorized host enrollment; this edit did not move the identity".into());
     }
-    if ownership::for_pair(
-        &context()?.home,
-        context()?.instance,
-        &source.pubkey,
-        &relay,
-    )?
-    .is_none()
-    {
-        importer::ensure_enrolled(app, &source, &relay, false).await?;
-    }
+    enrollment::require_modern(app, &source, &relay)?;
     let (path, intent) = configure(
         app,
         state,
@@ -435,6 +462,7 @@ mod tests {
             operation_id: Uuid::new_v4(),
             owner_pubkey: "ab".repeat(32),
             expected_revision: "cd".repeat(32),
+            expected_private_snapshot_hash: None,
             desired_hash: "ef".repeat(32),
             was_active: true,
             quiesced: false,
@@ -484,3 +512,7 @@ mod tests {
             .contains("bounded"));
     }
 }
+
+#[path = "host_accepted_configuration_refresh.rs"]
+mod accepted_refresh;
+pub(crate) use accepted_refresh::refresh_accepted_host_agents;

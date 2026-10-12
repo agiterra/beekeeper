@@ -56,8 +56,13 @@ fn validate(app: &AppHandle, scenario: &Scenario, path: &Path) -> Result<(), Str
         .map(PathBuf::from)
         .ok_or("isolated HOME missing")?;
     let service = beekeeper_host_core::layout::home_dir()?;
-    if home != Path::new("/tmp/bee-headless-e-desktop-home")
-        || !service.ends_with("slice-e-service-home")
+    if ![
+        Path::new("/tmp/bee-headless-e-desktop-home"),
+        Path::new("/tmp/bee-headless-e-clean-desktop-home"),
+    ]
+    .contains(&home.as_path())
+        || !(service.ends_with("slice-e-service-home")
+            || service.ends_with("slice-e-clean-service-home"))
         || !path.starts_with("/tmp/bee-headless-e-native-scenarios")
         || scenario.relay_url != "ws://127.0.0.1:3037"
         || scenario.actions.len() > 16
@@ -139,7 +144,7 @@ async fn execute(app: &AppHandle, scenario: &Scenario, action: Action) -> Result
             Ok(json!({"deleted":true,"pubkey":pubkey}))
         }
         Action::Inspect { pubkey } => {
-            commands::agents::host_transfer::get_managed_agent_host_transfer(
+            commands::agents::headless_management::get_managed_agent_host_status(
                 app.clone(),
                 pubkey,
                 None,
@@ -225,8 +230,15 @@ pub(crate) fn isolated_scope_requested() -> bool {
         .is_some_and(|path| {
             path.starts_with("/tmp/bee-headless-e-native-scenarios") && restricted(&path).is_ok()
         })
-        && std::env::var_os("HOME").as_deref()
-            == Some(std::ffi::OsStr::new("/tmp/bee-headless-e-desktop-home"))
-        && beekeeper_host_core::layout::home_dir()
-            .is_ok_and(|home| home.ends_with("slice-e-service-home"))
+        && std::env::var_os("HOME").is_some_and(|home| {
+            [
+                "/tmp/bee-headless-e-desktop-home",
+                "/tmp/bee-headless-e-clean-desktop-home",
+            ]
+            .iter()
+            .any(|allowed| home == std::ffi::OsStr::new(allowed))
+        })
+        && beekeeper_host_core::layout::home_dir().is_ok_and(|home| {
+            home.ends_with("slice-e-service-home") || home.ends_with("slice-e-clean-service-home")
+        })
 }

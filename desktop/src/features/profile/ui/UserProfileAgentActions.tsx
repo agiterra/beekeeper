@@ -92,10 +92,10 @@ export function UserProfileAgentSettingsMenu({
             >
               <Power className="h-4 w-4 text-muted-foreground" />
               <span className="min-w-0 flex-1 text-sm font-medium">
-                Auto-start
+                Enabled on host
               </span>
               <Switch
-                aria-label="Auto-start"
+                aria-label="Enabled on host"
                 checked={managedAgent.startOnAppLaunch}
                 data-testid={autoStartSwitchId}
                 disabled={isPending}

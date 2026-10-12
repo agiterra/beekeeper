@@ -497,7 +497,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     };
 
     let mut provider = Provider::new(config)?;
-    provider.state.establish_import_readback()?;
+    provider.state.persist_bootstrap_snapshot()?;
     provider
         .outbox
         .set_background_interval(Duration::from_secs(3));
@@ -702,7 +702,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
             }
             fetched = off_loop::next(&mut conversation_backfills) => {
                 if let Err(error) = provider.finish_conversation_backfill(fetched).await {
-                    tracing::warn!(target: "csp::conversation", "migration replay prerequisite failed: {error}");
+                    tracing::warn!(target: "csp::conversation", "responsibility replay prerequisite failed: {error}");
                 }
             }
             answer = off_loop::next(&mut relay_identity_answers) => {
@@ -734,7 +734,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
             }
             _ = ticker.tick() => {
                 if let Err(error) = provider.start_conversation_backfill() {
-                    tracing::warn!(target: "csp::conversation", "migration replay start failed: {error}");
+                    tracing::warn!(target: "csp::conversation", "responsibility replay start failed: {error}");
                 }
                 // Hot-reload: an operator who adds a project to the file should
                 // see it offered without restarting the provider.
@@ -3532,14 +3532,19 @@ impl Provider {
     /// file exists and what it is allowed to contain.
     ///
     /// Best-effort, and deliberately so: the consequence of a missed write is
-    /// that a seat is not re-staged after the next restart, which surfaces as
-    /// a visible `ACTOR_UNAVAILABLE` refusal on the promise that needed it.
+    /// that unresolved custody recovery is not promptly disclosed. Modern
+    /// routed actors already use their existing protected worker custody;
+    /// unavailable/invalid custody and role-seat requests remain visible.
     /// The consequence of making it fatal would be refusing a create that
     /// otherwise worked, which is strictly worse.
     fn publish_seat_requests(&self) {
         if let Err(error) = crate::seat_requests::write_seat_requests(
             &self.config.state_dir,
-            self.state.sessions(),
+            self.state.sessions().filter(|record| {
+                !self
+                    .conversation_actor_seat(record)
+                    .is_ok_and(|seat| seat.is_some())
+            }),
             &self.pubkey_hex,
         ) {
             tracing::warn!(
@@ -11918,8 +11923,6 @@ mod tests {
     mod hire_requester_tests;
     #[path = "host_result_wake_tests.rs"]
     mod host_result_wake_tests;
-    #[path = "import_admission_race_tests.rs"]
-    mod import_admission_race_tests;
     #[path = "model_switch_tests.rs"]
     mod model_switch_tests;
     #[path = "observed_gate_row_tests.rs"]

@@ -128,8 +128,10 @@ pub async fn run_project_agent_teardown(
     for record in &snapshot {
         if record.backend == crate::managed_agents::BackendKind::Local {
             let pair = crate::relay::effective_agent_relay_url(&record.relay_url, &relay);
-            super::agents::host_transfer::delete_host_agent_snapshot(&app, &state, record, &pair)
-                .await?;
+            super::agents::headless_management::delete_host_agent_snapshot(
+                &app, &state, record, &pair,
+            )
+            .await?;
         }
     }
     tokio::task::spawn_blocking(move || {

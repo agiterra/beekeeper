@@ -54,14 +54,16 @@ pub(super) fn require_host_ownership(
     actor: &str,
     relay: &str,
 ) -> Result<(), String> {
-    let held = ownership::for_pair(&ctx.home, ctx.instance, actor, relay)?;
-    if !held.is_some_and(|held| {
-        matches!(
+    let Some(held) = ownership::for_pair(&ctx.home, ctx.instance, actor, relay)? else {
+        return Err("This identity has no modern host enrollment; retained old records require explicit fresh recreation. No old owner was stopped".into());
+    };
+    if !ownership::is_modern_enrollment(&held)
+        || !matches!(
             held.phase,
             ownership::Phase::Adopted | ownership::Phase::HostStopped
         )
-    }) {
-        return Err("migration required or incomplete; use supported setup/Start to establish host custody before Stop. No legacy termination or stopped result is claimed".into());
+    {
+        return Err("Retained ownership is unresolved or historical; no exit proof, recreation permission or custody clearing is implied. Diagnose the original operation".into());
     }
     Ok(())
 }
@@ -159,7 +161,7 @@ mod tests {
         let relay = "wss://relay.example";
         assert!(pending(&ctx, &actor, relay)
             .unwrap_err()
-            .contains("migration required"));
+            .contains("no modern host enrollment"));
         let held = ownership::Transfer {
             operation_id: "old".into(),
             actor_pubkey: actor.clone(),
@@ -169,10 +171,14 @@ mod tests {
             target: None,
             phase: ownership::Phase::Prepared,
         };
-        ownership::advance(&ctx.home, ctx.instance, held).unwrap();
+        atomic_write::atomic_write_json_restricted(
+            &layout::host_dir(&ctx.home, ctx.instance).join("managed-ownership.json"),
+            &serde_json::to_vec(&serde_json::json!({"transfers":[held],"history":[]})).unwrap(),
+        )
+        .unwrap();
         assert!(require_host_ownership(&ctx, &actor, relay)
             .unwrap_err()
-            .contains("migration required"));
+            .contains("unresolved or historical"));
         assert!(!path(&ctx, &actor, relay).unwrap().exists());
     }
 }

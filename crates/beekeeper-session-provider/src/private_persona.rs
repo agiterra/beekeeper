@@ -15,8 +15,59 @@ pub(crate) struct Snapshot {
     pub source_hash: String,
     pub event: Event,
 }
+fn exact_coordinate(event: &Event, id: &str) -> bool {
+    let mut tags = event
+        .tags
+        .iter()
+        .filter(|tag| tag.as_slice().first().is_some_and(|key| key == "d"));
+    tags.next().is_some_and(|tag| tag.as_slice() == ["d", id]) && tags.next().is_none()
+}
 fn refused() -> CreateFailure {
     crate::execution_scope::refuse("AGENT_DEFINITION_PACK_UNAVAILABLE", "protected private persona pin is unavailable or no longer matches this actor/community/definition; no turn was admitted")
+}
+// A relay-only owner may rename an actor without executor-private access.
+// Preserve the exact signed persona pin for that metadata-only revision. All
+// tags and every other raw content field must remain identical; this does not
+// admit policy/runtime changes or relax open-turn revision replay fences.
+fn bound_revision_matches(bound: &Event, current: &Event, actor: &str, owner: PublicKey) -> bool {
+    for event in [bound, current] {
+        if event.pubkey != owner
+            || event.kind.as_u16() != beekeeper_core::kind::KIND_MANAGED_AGENT as u16
+            || !exact_coordinate(event, actor)
+            || event.verify().is_err()
+        {
+            return false;
+        }
+    }
+    if bound == current {
+        return true;
+    }
+    if bound.tags != current.tags || current.created_at < bound.created_at {
+        return false;
+    }
+    let (Ok(mut before), Ok(mut after)) = (
+        serde_json::from_str::<serde_json::Value>(&bound.content),
+        serde_json::from_str::<serde_json::Value>(&current.content),
+    ) else {
+        return false;
+    };
+    let (Some(before), Some(after)) = (before.as_object_mut(), after.as_object_mut()) else {
+        return false;
+    };
+    if before
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .is_none()
+        || after
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .is_none()
+    {
+        return false;
+    }
+    before.remove("name");
+    after.remove("name");
+    before == after
 }
 pub(crate) fn validate(
     snapshot: &Snapshot,
@@ -34,10 +85,7 @@ pub(crate) fn validate(
         || event.pubkey != owner
         || event.kind.as_u16() != beekeeper_core::kind::KIND_PERSONA as u16
         || event.verify().is_err()
-        || !event
-            .tags
-            .iter()
-            .any(|tag| tag.as_slice() == ["d", persona_id])
+        || !exact_coordinate(event, persona_id)
         || event
             .tags
             .iter()
@@ -96,14 +144,25 @@ fn from_envelope(
             .and_then(serde_json::Value::as_str)
             .map(beekeeper_host_core::record::canonical_relay_key)
             != Some(beekeeper_host_core::record::canonical_relay_key(relay))
-        || bound.id != current.id
-        || bound != *current
+        || !bound_revision_matches(&bound, current, actor, owner)
         || bound.pubkey != owner
+        || bound.kind.as_u16() != beekeeper_core::kind::KIND_MANAGED_AGENT as u16
+        || !exact_coordinate(&bound, actor)
         || bound.verify().is_err()
     {
         return Err(refused());
     }
     let snapshot: Snapshot = serde_json::from_value(pin.clone()).map_err(|_| refused())?;
+    let definition: beekeeper_core::managed_agent::ManagedAgentEventContent =
+        serde_json::from_str(&bound.content).map_err(|_| refused())?;
+    if definition.persona_id.as_deref() != Some(persona_id)
+        || definition
+            .persona_source_version
+            .as_deref()
+            .is_some_and(|version| version != snapshot.source_hash)
+    {
+        return Err(refused());
+    }
     let content = validate(&snapshot, actor, relay, owner, persona_id)?;
     Ok(Some((snapshot.event, content)))
 }

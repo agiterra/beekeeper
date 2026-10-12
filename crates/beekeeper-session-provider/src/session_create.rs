@@ -324,26 +324,6 @@ impl Provider {
                 }
             }
         }
-        let native_import = match managed_configuration::native(
-            &self.config,
-            plan.actor.as_deref(),
-            &plan.command_id,
-            plan.channel_id,
-            &plan.cwd,
-            &descriptor,
-        ) {
-            Ok(native) => native,
-            Err(failure) => {
-                return self.enqueue_receipt(
-                    plan.channel_id,
-                    &plan.command_id,
-                    &LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message),
-                )
-            }
-        };
-        if let Some((_, environment, _)) = &native_import {
-            agent_env.extend(environment.clone());
-        }
         let private_idle = match private_settings
             .as_ref()
             .map(|s| s.duration("idle_timeout_seconds", self.config.idle_timeout))
@@ -433,16 +413,7 @@ impl Provider {
                 return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
             }
         };
-        if let Some(import) = &native_import {
-            if let Err(failure) = managed_configuration::materialize(import, &execution) {
-                self.discard_orphaned_context_package(context_package_id.as_deref());
-                return self.enqueue_receipt(
-                    plan.channel_id,
-                    &plan.command_id,
-                    &LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message),
-                );
-            }
-        }
+
         let execution_binding = execution.binding().cloned();
         let execution_state = execution.state();
 
@@ -454,10 +425,10 @@ impl Provider {
             cwd: plan.cwd.clone(),
             title: plan.title.clone(),
             model: plan.model.clone(),
-            resume_cursor: native_import.as_ref().map(|(cursor, _, _)| cursor.clone()),
+            resume_cursor: None,
             // Never strict: an ordinary create or resume may legitimately
             // end up in a fresh conversation, and says so on the wire.
-            strict_native: native_import.is_some(),
+            strict_native: false,
             rehydration_mcp,
             agent_command: descriptor.agent_command.clone(),
             agent_args: descriptor.agent_args.clone(),

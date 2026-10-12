@@ -1,7 +1,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { managedAgentHostTransferQueryKey } from "@/features/agents/hooks";
+import { managedAgentHostStatusQueryKey } from "@/features/agents/hooks";
 
 import {
   isManagedAgentActive,
@@ -68,7 +68,7 @@ export function useAgentLifecycleActions({
       );
     } finally {
       await queryClient.invalidateQueries({
-        queryKey: managedAgentHostTransferQueryKey(managedAgent.pubkey),
+        queryKey: managedAgentHostStatusQueryKey(managedAgent.pubkey),
       });
     }
   }, [
@@ -100,7 +100,7 @@ export function useAgentLifecycleActions({
       );
     } finally {
       await queryClient.invalidateQueries({
-        queryKey: managedAgentHostTransferQueryKey(managedAgent.pubkey),
+        queryKey: managedAgentHostStatusQueryKey(managedAgent.pubkey),
       });
     }
   }, [managedAgent, startManagedAgent, stopManagedAgent, control, queryClient]);

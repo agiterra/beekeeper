@@ -6,9 +6,11 @@ launch, quit and update, and installs on a server with no GUI anywhere.
 
 Quitting Beekeeper closes the client; host-managed work continues. Desktop
 creation and agent controls use the shared headless management implementation.
-Existing desktop records pass through a one-way upgrade importer; blocked
-migration preserves source custody and reports repair rather than launching a
-desktop executor. See [migration and recovery](agent-migration.md).
+This is a clean break from the former all-in-one desktop executor. Existing
+local records, credentials and history are retained; they are not automatically
+imported or started. Recreate local agents through the supported headless
+Create/setup path. A still-running or unproved old executor conflict blocks
+execution. See [clean setup and recovery](agent-recovery.md).
 
 ```
 login or boot (launchd/systemd)  login (launchd)
@@ -36,8 +38,7 @@ content from the relay as they always did.
 restarting it on the backoff ladder, stopping it with SIGINT so its durable
 outbox flushes, and taking its state directory over from a stale owner.
 
-**Owns through the provider:** participants created through CLI or desktop and
-eligible records imported at setup. Their conversation responsibilities use
+**Owns through the provider:** participants created through CLI or desktop. Their conversation responsibilities use
 the provider's existing runtime execution and survive client quit. The desktop
 retains credential custody, signing, presentation and local bootstrap adapters;
 it has no legacy agent launch, supervision, sweep or restore-owner path.

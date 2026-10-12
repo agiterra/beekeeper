@@ -68,7 +68,7 @@ pub async fn give_agent_its_own_nest(
             &record.relay_url,
             &crate::relay::relay_ws_url_with_override(&state),
         );
-        super::agents::host_transfer::reconcile_host_agent(
+        super::agents::headless_management::reconcile_host_agent(
             &saved_app,
             &state,
             &saved_pubkey,

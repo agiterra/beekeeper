@@ -59,6 +59,26 @@ pub(crate) async fn stage(
     operator: &str,
     content: &str,
 ) -> Result<(), CreateFailure> {
+    stage_with_context(
+        config,
+        state,
+        rest,
+        channel,
+        operator,
+        content,
+        crate::host_ownership::context()?,
+    )
+    .await
+}
+async fn stage_with_context(
+    config: &Config,
+    state: &StateStore,
+    rest: Option<&beekeeper_acp::relay::RestClient>,
+    channel: Uuid,
+    operator: &str,
+    content: &str,
+    ownership_context: Option<(std::path::PathBuf, beekeeper_host_core::layout::Instance)>,
+) -> Result<(), CreateFailure> {
     let Ok(payload) = decode_coding_session_lifecycle_command(content) else {
         return Ok(());
     };
@@ -89,7 +109,6 @@ pub(crate) async fn stage(
         ));
     }
     if value.get("actorPubkey").and_then(Value::as_str) != Some(actor)
-        || value.get("channelId").and_then(Value::as_str) != Some(channel.to_string().as_str())
         || value.get("providerInstance").and_then(Value::as_str)
             != Some(provider_instance_ref.as_str())
     {
@@ -158,7 +177,15 @@ pub(crate) async fn stage(
             "a responsibility has unconfirmed process quiescence; explicit recovery is required",
         ));
     }
-    let ownership_context = crate::host_ownership::context()?;
+    if value.get("nativeContextRequired").and_then(Value::as_bool) == Some(true)
+        || value
+            .get("nativeImportOperation")
+            .is_some_and(|v| !v.is_null())
+    {
+        return Err(refused(
+            "historical imported enrollment is retired; recreate through fresh headless setup",
+        ));
+    }
     let _admission_lock = ownership_context
         .as_ref()
         .map(|(home, instance)| {
@@ -166,18 +193,49 @@ pub(crate) async fn stage(
                 .map_err(|_| refused("another ownership transition is in progress"))
         })
         .transpose()?;
+    if let Some((home, instance)) = &ownership_context {
+        if let Some(held) = ownership::for_pair(home, *instance, actor, &config.relay_url)
+            .map_err(|_| refused("ownership unavailable"))?
+        {
+            if !ownership::is_modern_enrollment(&held)
+                || !matches!(held.phase, Phase::Adopted | Phase::HostStopped)
+            {
+                return Err(refused("historical setup is retired; recreate through fresh headless setup, retained custody was not changed"));
+            }
+        }
+    }
+    if state.unresolved_actor_start(Some(actor)) {
+        return Err(refused("a managed actor startup outcome is unconfirmed"));
+    }
+    // The actor-wide enrollment remembers the latest responsibility. A remote
+    // owner can also restart a previously accepted, exactly scoped and proved
+    // stopped ordinary responsibility without access to this worker's files.
+    let cwd =
+        if value.get("channelId").and_then(Value::as_str) == Some(channel.to_string().as_str()) {
+            value
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(std::path::PathBuf::from)
+                .ok_or_else(|| refused("enrolled workspace missing"))?
+        } else {
+            accepted_workspace(
+                config,
+                state,
+                actor,
+                channel,
+                provider_instance_ref.as_str(),
+                requested_project,
+                &owner,
+            )?
+        };
     let revision = current.id.to_hex();
     value["definition"] =
         serde_json::to_value(current).map_err(|_| refused("current definition encoding failed"))?;
     write(&dir.join("enrollment.json"), &value)?;
-    let mut import_required = false;
     if let Some((home, instance)) = ownership_context {
         if let Some(held) = ownership::for_pair(&home, instance, actor, &config.relay_url)
             .map_err(|_| refused("ownership unavailable"))?
         {
-            import_required = held.phase == Phase::HostStopped
-                && held.target.is_none()
-                && value.get("nativeContextRequired").and_then(Value::as_bool) == Some(true);
             if held.phase == Phase::Adopted && held.operation_id != payload.command_id {
                 // An explicitly requested additional Solo responsibility remains
                 // host-owned. Only the all-terminal boundary changes the primary journal.
@@ -222,39 +280,7 @@ pub(crate) async fn stage(
             }
         }
     }
-    if import_required {
-        if value
-            .get("replayFloorUnix")
-            .and_then(Value::as_u64)
-            .is_none()
-        {
-            return Err(refused(
-                "paused import replay boundary missing; no fresh fallback",
-            ));
-        }
-        let source = value
-            .get("nativeImportOperation")
-            .and_then(Value::as_str)
-            .ok_or_else(|| refused("paused native import provenance missing"))?;
-        Uuid::parse_str(source).map_err(|_| refused("paused native import operation invalid"))?;
-        let native = protected(
-            &config
-                .state_dir
-                .join(format!("native-import-{source}.json")),
-        )?
-        .ok_or_else(|| refused("paused native context missing; no fresh fallback"))?;
-        write(
-            &config
-                .state_dir
-                .join(format!("native-import-{}.json", payload.command_id)),
-            &native,
-        )?;
-    }
-    let cwd = value
-        .get("cwd")
-        .and_then(Value::as_str)
-        .map(std::path::PathBuf::from)
-        .ok_or_else(|| refused("enrolled workspace missing"))?;
+
     let cwd = cwd
         .canonicalize()
         .map_err(|_| refused("enrolled workspace unavailable"))?;
@@ -299,6 +325,64 @@ pub(crate) async fn stage(
     )?;
     Ok(())
 }
+fn accepted_workspace(
+    config: &Config,
+    state: &StateStore,
+    actor: &str,
+    channel: Uuid,
+    runtime: &str,
+    project: Option<&str>,
+    owner: &str,
+) -> Result<std::path::PathBuf, CreateFailure> {
+    if state.unresolved_actor_start(Some(actor)) {
+        return Err(refused("a managed actor startup outcome is unconfirmed"));
+    }
+    let routes: crate::conversation::ConversationRoutes =
+        protected(&config.state_dir.join("conversation-routes.json"))?
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| refused("accepted responsibility routes malformed"))?
+            .ok_or_else(|| refused("accepted responsibility routes unavailable"))?;
+    let mut selected = None;
+    for record in state.sessions().filter(|record| {
+        record.actor.as_deref() == Some(actor)
+            && record.channel_id == channel
+            && record.provider_instance_ref == runtime
+            && record.project_ref.as_deref() == project
+    }) {
+        let target = record.target(&config.instance_id);
+        if record.created_by.as_deref() != Some(owner)
+            || record.role.is_some()
+            || record.pack_ref.is_some()
+            || record.authority_withdrawn.is_some()
+            || record.is_retired()
+            || !record.closed
+            || state.unresolved_start_target(&target)
+            || config
+                .state_dir
+                .join(format!("stop-quiescence-{}.json", record.session_id))
+                .exists()
+            || record
+                .process_witness
+                .as_ref()
+                .is_none_or(|witness| !witness.proves_absent(&target))
+            || !routes.routes.iter().any(|route| {
+                route.actor_pubkey == actor && route.channel_id == channel && route.target == target
+            })
+        {
+            return Err(refused(
+                "prior responsibility scope or terminal evidence is unconfirmed",
+            ));
+        }
+        if selected.as_ref().is_some_and(|cwd| cwd != &record.cwd) {
+            return Err(refused("prior responsibility workspace is ambiguous"));
+        }
+        selected = Some(record.cwd.clone());
+    }
+    selected
+        .ok_or_else(|| refused("no accepted responsibility matches requested channel and runtime"))
+}
+
 fn protected_secret(path: &std::path::Path) -> Result<String, CreateFailure> {
     let metadata = std::fs::symlink_metadata(path).map_err(|_| refused("actor custody missing"))?;
     if !metadata.file_type().is_file() || metadata.len() > 4096 {
@@ -328,16 +412,10 @@ pub(crate) fn complete(
     };
     let event = definition(&value, actor, &plan.created_by)?;
     if let Some((home, instance)) = crate::host_ownership::context()? {
-        if let Some(mut held) = ownership::for_pair(&home, instance, actor, &config.relay_url)
+        if let Some(held) = ownership::for_pair(&home, instance, actor, &config.relay_url)
             .map_err(|_| refused("ownership unavailable"))?
         {
             match held.phase {
-                Phase::Quiesced if held.operation_id == plan.command_id => {
-                    held.phase = Phase::Adopted;
-                    held.target = Some(target.clone());
-                    ownership::advance(&home, instance, held)
-                        .map_err(|_| refused("import ownership could not be recorded"))?;
-                }
                 Phase::HostStopped
                     if held.target.is_none()
                         && held.operation_id == plan.command_id
@@ -514,6 +592,124 @@ pub(crate) fn follow_generation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn historical_custody_without_import_flags_is_refused_before_any_restaging_write() {
+        use beekeeper_host_core::{layout::Instance, ownership::Transfer};
+        let root = tempfile::tempdir().expect("isolated fixture");
+        let home = root.path().join("home");
+        atomic_write::create_dir_all_restricted(&beekeeper_host_core::layout::host_dir(
+            &home,
+            Instance::Dev,
+        ))
+        .expect("ownership directory");
+        let channel = Uuid::new_v4();
+        let cwd = root.path().join("work");
+        std::fs::create_dir(&cwd).expect("workspace");
+        let projects = crate::tests::write_projects(root.path(), channel, &cwd);
+        let mut provider = crate::tests::provider(&root.path().join("state"), Some(&projects));
+        let owner = crate::tests::test_operator_keys();
+        let actor =
+            beekeeper_host_core::provision::mint_agent_identity(owner).expect("scoped identity");
+        let actor_dir = provider.config.state_dir.join("actors").join(&actor.pubkey);
+        atomic_write::create_dir_all_restricted(&actor_dir).expect("actor directory");
+        atomic_write::atomic_write_json_restricted(
+            &actor_dir.join("key"),
+            actor.private_key_nsec.as_bytes(),
+        )
+        .expect("scoped key");
+        atomic_write::atomic_write_json_restricted(
+            &actor_dir.join("auth-tag.json"),
+            actor.auth_tag.as_bytes(),
+        )
+        .expect("attestation");
+        let old = nostr::EventBuilder::new(nostr::Kind::Custom(30177), "old retained definition")
+            .tags([nostr::Tag::parse(["d", &actor.pubkey]).expect("actor")])
+            .sign_with_keys(owner)
+            .expect("old owner head");
+        let current =
+            nostr::EventBuilder::new(nostr::Kind::Custom(30177), "new current owner definition")
+                .tags(old.tags.iter().cloned())
+                .custom_created_at(nostr::Timestamp::from(old.created_at.as_secs() + 1))
+                .sign_with_keys(owner)
+                .expect("current owner head");
+        let enrollment_path = actor_dir.join("enrollment.json");
+        write(&enrollment_path,&json!({"actorPubkey":actor.pubkey,"channelId":channel,"providerInstance":"claude-primary","definition":old,"cwd":cwd,"projectRef":null})).expect("historical enrollment without import flags");
+        let original_enrollment = std::fs::read(&enrollment_path).expect("enrollment bytes");
+        let seats_path = root.path().join("actor-seats.json");
+        write(
+            &seats_path,
+            &json!({"version":1,"pending":{},"retained":"unchanged"}),
+        )
+        .expect("retained seats");
+        provider.config.actor_seats_file = Some(seats_path.clone());
+        let original_seats = std::fs::read(&seats_path).expect("seats bytes");
+        let command = Uuid::new_v4().to_string();
+        let event = crate::tests::create_event(&provider, channel, &command);
+        let mut payload: Value = serde_json::from_str(&event.content).expect("existing wire");
+        payload["action"]["actor"] = json!(actor.pubkey);
+        let content = serde_json::to_string(&payload).expect("actor-only Solo create");
+        assert!(decode_coding_session_lifecycle_command(&content).is_ok());
+        let hints = projects
+            .parent()
+            .expect("project parent")
+            .join(beekeeper_host_core::project::PENDING_HINTS_DIR);
+        atomic_write::create_dir_all_restricted(&hints).expect("hints");
+        let hint_path = hints.join(format!("{command}.json"));
+        write(&hint_path, &json!({"retained":"unchanged"})).expect("retained hint");
+        let original_hint = std::fs::read(&hint_path).expect("hint bytes");
+        let (relay, _, server) =
+            crate::tests::spawn_test_relay_with_events(&provider.config.keys, vec![current]).await;
+        let rest = relay.rest_client();
+        for phase in [
+            Phase::Prepared,
+            Phase::Quiesced,
+            Phase::Adopted,
+            Phase::HostStopped,
+        ] {
+            let held = Transfer {
+                operation_id: command.clone(),
+                actor_pubkey: actor.pubkey.clone(),
+                relay_url: provider.config.relay_url.clone(),
+                legacy_nonce: "retained-old-owner".into(),
+                definition_event_id: old.id.to_hex(),
+                target: None,
+                phase,
+            };
+            write(
+                &beekeeper_host_core::layout::host_dir(&home, Instance::Dev)
+                    .join("managed-ownership.json"),
+                &json!({"transfers":[held],"history":[]}),
+            )
+            .expect("retained historical journal");
+            assert!(stage_with_context(
+                &provider.config,
+                &provider.state,
+                Some(&rest),
+                channel,
+                &owner.public_key().to_hex(),
+                &content,
+                Some((home.clone(), Instance::Dev))
+            )
+            .await
+            .is_err());
+            assert_eq!(
+                std::fs::read(&enrollment_path).expect("unchanged enrollment"),
+                original_enrollment
+            );
+            assert_eq!(
+                std::fs::read(&seats_path).expect("unchanged seats"),
+                original_seats
+            );
+            assert_eq!(
+                std::fs::read(&hint_path).expect("unchanged hint"),
+                original_hint
+            );
+            assert!(!provider.state.is_command_consumed(&command));
+            assert_eq!(provider.state.sessions().count(), 0);
+        }
+        server.abort();
+    }
     #[tokio::test]
     async fn missing_or_pending_primary_cannot_turn_absence_into_terminal_ownership() {
         let root = tempfile::tempdir().expect("fixture");
@@ -575,3 +771,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "managed_enrollment_scope_tests.rs"]
+mod scope_tests;

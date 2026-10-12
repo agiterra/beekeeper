@@ -100,8 +100,27 @@ pub async fn start_remote(
             }
         }
         if !active.is_empty() {
+            let observation = crate::lifecycle::status(&scope, client).await?;
+            let runtime_available =
+                observation["responsibilities"]
+                    .as_array()
+                    .is_some_and(|observed| {
+                        observed.iter().any(|entry| {
+                            active.iter().any(|row| {
+                                row.provider_authority == args.provider_authority
+                                    && row.channel_id == args.channel
+                                    && entry["responsibility"]["target"]
+                                        == serde_json::json!(row.target)
+                                    && entry["responsibility"]["channelId"]
+                                        == row.channel_id.to_string()
+                                    && entry["responsibility"]["providerAuthority"]
+                                        == row.provider_authority
+                                    && entry["runtime_available"] == true
+                            })
+                        })
+                    });
             return Ok(
-                json!({"agent_pubkey":args.agent_pubkey,"execution_created":false,"already_adopted":true,"configuration_application":"unconfirmed","observation":crate::lifecycle::status(&scope,client).await?,"responsibilities":active}),
+                json!({"agent_pubkey":args.agent_pubkey,"execution_created":false,"already_adopted":true,"runtime_available":runtime_available,"pending":!runtime_available,"availability":if runtime_available {"verified_unexpired_provider_lease"} else {"no_current_live_lease"},"configuration_application":"unconfirmed","observation":observation,"responsibilities":active}),
             );
         }
         let content: beekeeper_core::managed_agent::ManagedAgentEventContent =
@@ -139,7 +158,13 @@ pub async fn start_remote(
         held
     };
     if let Some(result) = &operation.result {
-        return Ok(result.clone());
+        return crate::lifecycle::observe_created_start(
+            result.clone(),
+            args.channel,
+            &args.provider_authority,
+            client,
+        )
+        .await;
     }
     management::submit(client, &operation.event).await?;
     let result=match crate::receipts::await_create_receipt(client,&args.channel.to_string(),&args.operation_id.to_string(),&args.provider_authority,args.wait_secs).await {
@@ -150,7 +175,8 @@ pub async fn start_remote(
     };
     operation.result = Some(result.clone());
     local::save(&path, &operation)?;
-    Ok(result)
+    crate::lifecycle::observe_created_start(result, args.channel, &args.provider_authority, client)
+        .await
 }
 /// Restart first proves every observed responsibility terminal using the shared actor-wide stop.
 pub async fn restart_remote(

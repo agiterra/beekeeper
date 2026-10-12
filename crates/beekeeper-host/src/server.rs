@@ -278,7 +278,7 @@ fn status(control: &Arc<HostControl>) -> Status {
     let sessions = crate::sessions::read_sessions(&config.provider_state_dir);
     let mut warnings = Vec::new();
     if let Some(rows) = pending_seat_requests(&config.provider_state_dir) {
-        warnings.push(Warning::seat_restage_requires_desktop(rows));
+        warnings.push(Warning::seat_custody_pending(rows));
     }
     Status {
         protocol_version: crate::protocol::PROTOCOL_VERSION,
@@ -299,13 +299,10 @@ fn status(control: &Arc<HostControl>) -> Status {
     }
 }
 
-/// How many seat-restage rows are waiting, when any are.
-///
-/// Re-staging reads the relay and the desktop's managed-agent store, so it
-/// stays the app's job. The host's part is to make the wait *visible*: a seat
-/// that will not be re-staged until somebody opens Beekeeper is an ordinary
-/// degradation, and an ordinary degradation that nobody is told about is how a
-/// person concludes the product is broken.
+/// The worker's unresolved recovery-custody requests, when any remain.
+/// The provider excludes modern requests already served by its protected
+/// routed-actor custody adapter. Unknown/role-seat rows remain visible here;
+/// the host does not read signing secrets or infer desktop dependency.
 fn pending_seat_requests(state_dir: &std::path::Path) -> Option<usize> {
     #[derive(serde::Deserialize)]
     struct SeatRequests {

@@ -29,9 +29,6 @@
 //! items at the same sequence as a conflict it must surface, while a gap is
 //! simply a sequence it never sees.
 
-#[path = "state_import.rs"]
-mod import;
-
 #[path = "state_lifecycle.rs"]
 mod lifecycle;
 pub(crate) use lifecycle::{lifecycle_fingerprint, LifecycleStartIntent, LifecycleStartPhase};
@@ -823,6 +820,11 @@ pub(crate) struct FaultPlan {
 }
 
 impl StateStore {
+    /// Persist the commissioned empty or recovered snapshot before admission.
+    pub(crate) fn persist_bootstrap_snapshot(&self) -> io::Result<()> {
+        self.persist()
+    }
+
     /// Open (creating if absent) the state directory and load everything in it.
     ///
     /// `command_retention_secs` drops consumed command ids older than the

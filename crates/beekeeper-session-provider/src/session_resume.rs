@@ -358,27 +358,6 @@ impl Provider {
                 }
             }
         }
-        let native_import = match managed_configuration::native(
-            &self.config,
-            record.actor.as_deref(),
-            &record.command_id,
-            record.channel_id,
-            &record.cwd,
-            &descriptor,
-        ) {
-            Ok(import) => import,
-            Err(failure) => {
-                self.state.consume_command(&plan.command_id, now_secs())?;
-                let receipt =
-                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self
-                    .answer_resume_failure(&plan, rewind, receipt, relay)
-                    .await;
-            }
-        };
-        if let Some((_, environment, _)) = &native_import {
-            agent_env.extend(environment.clone());
-        }
         // Same scope derivation as the create, from the record — plus the
         // record's binding, so native history is reattached only to the scope
         // that wrote it.
@@ -436,16 +415,6 @@ impl Provider {
         let execution_binding = execution.binding().cloned();
         let execution_state = execution.state();
 
-        if let Some(import) = &native_import {
-            if let Err(failure) = managed_configuration::materialize(import, &execution) {
-                self.state.consume_command(&plan.command_id, now_secs())?;
-                let receipt =
-                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self
-                    .answer_resume_failure(&plan, rewind, receipt, relay)
-                    .await;
-            }
-        }
         let private_timeouts: Result<
             Option<(std::time::Duration, std::time::Duration)>,
             session::CreateFailure,
@@ -481,7 +450,7 @@ impl Provider {
             resume_cursor: resume_cursor.clone(),
             // Imported native continuity cannot silently become a fresh conversation.
             // Ordinary existing resume keeps its preexisting disclosed fallback.
-            strict_native: native_import.is_some() && rewind.is_none(),
+            strict_native: false,
             rehydration_mcp,
             agent_command: descriptor.agent_command.clone(),
             agent_args: descriptor.agent_args.clone(),

@@ -35,6 +35,14 @@ pub enum Error {
     /// Accepted operation lacks terminal confirmation; retry exact operation.
     #[error("{0}")]
     Unconfirmed(String),
+    /// Relay returned a non-success HTTP status; adapters preserve its existing retry classification.
+    #[error("relay error {status}: {body}")]
+    Relay {
+        /// Exact HTTP response status, not an inferred delivery outcome.
+        status: u16,
+        /// Existing relay response message.
+        body: String,
+    },
     /// Transport/storage unavailable.
     #[error("{0}")]
     Other(String),
@@ -85,57 +93,29 @@ pub struct PrivateConfiguration {
     /// Complete existing private record, with key material supplied separately.
     pub record: Value,
 }
-/// Tracked legacy ACP context exported at a verified shutdown boundary.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NativeContext {
-    /// Export format identifier.
-    pub schema: String,
-    /// Scoped actor identity.
-    pub actor_pubkey: String,
-    /// Scoped community.
-    pub relay_url: String,
-    /// Verified tracked process generation PID.
-    pub harness_pid: u32,
-    /// Exact acknowledged generation marker.
-    pub start_nonce: String,
-    /// Available native conversations; missing requested context is a refusal.
-    pub sessions: Vec<NativeSession>,
+/// Verified executor-private configuration readback; never a public projection.
+#[derive(Clone)]
+pub struct PrivateConfigurationSnapshot {
+    /// SHA256 of the exact protected snapshot bytes, for conditional local writes.
+    pub snapshot_hash: String,
+    /// Exact owner-signed managed definition bound by this snapshot.
+    pub definition: nostr::Event,
+    /// Independently verified enrollment definition; a differing ID identifies
+    /// interrupted private materialization, not a canonical completed snapshot.
+    pub enrollment_definition: nostr::Event,
+    /// Complete preserved private settings, with identity custody kept separately.
+    pub private: PrivateConfiguration,
 }
-/// One native conversation in a private migration export.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NativeSession {
-    /// Exact legacy worker index; ambiguous worker imports are refused.
-    pub worker_index: usize,
-    /// Conversation community channel.
-    pub channel_id: String,
-    /// Existing thread binding, if known.
-    pub root_event_id: Option<String>,
-    /// Executor-private native session cursor.
-    pub resume_cursor: String,
-    /// Exact runtime binary/command compatibility boundary.
-    pub runtime_command: Option<String>,
-    /// Runtime family name.
-    pub runtime_name: String,
-    /// Existing workspace.
-    pub cwd: PathBuf,
-    /// Actual selected non-secret runtime home variables; no inferred account paths.
-    #[serde(default)]
-    pub runtime_home_environment: std::collections::BTreeMap<String, String>,
-    /// Explicit vendor configuration home resolved from actual launch facts.
-    #[serde(default, alias = "runtimeConfigHome")]
-    pub native_config_home: Option<PathBuf>,
-    /// Exact bounded native artifacts selected and backed up by the importer.
-    #[serde(default)]
-    pub native_artifacts: Vec<beekeeper_host_core::native_artifacts::NativeArtifact>,
-    /// Existing native runtime home/account boundary.
-    pub source_home: Option<PathBuf>,
+impl std::fmt::Debug for PrivateConfigurationSnapshot {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("PrivateConfigurationSnapshot(<redacted>)")
+    }
 }
 pub mod receipts;
 mod support;
 use support::*;
 mod management;
+pub use management::configuration::{private_configuration_snapshot, update_if_private_unchanged};
 pub use management::{authorize_project, create, update, CreateRequest, UpdateRequest};
 
 /// Validate an ordinary workspace against explicit custody roots, without requiring Git.
@@ -164,8 +144,3 @@ impl std::fmt::Debug for PrivateConfiguration {
         formatter.write_str("PrivateConfiguration(<redacted>)")
     }
 }
-
-mod import_boundary;
-pub use import_boundary::{
-    read_import_definition_evidence, require_unadmitted_import, supply_import_definition_evidence,
-};

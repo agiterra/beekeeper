@@ -22,9 +22,7 @@ pub async fn dispatch(command: AgentsCmd, client: &BeekeeperClient) -> Result<()
         AgentsCmd::Stop(args) => super::agent_management::stop(&args, client).await,
         AgentsCmd::Restart(args) => super::agent_management::restart(&args, client).await,
         AgentsCmd::Delete(args) => super::agent_management::delete(&args, client).await,
-        AgentsCmd::SupplyMigrationDefinition(args) => {
-            super::agent_management::supply_migration_definition(&args, client)
-        }
+
         AgentsCmd::DraftCreate {
             channel,
             display_name,

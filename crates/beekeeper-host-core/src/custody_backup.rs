@@ -1,6 +1,6 @@
-//! Immutable, restricted pre-migration custody backups.
+//! Immutable, restricted operation-scoped custody snapshots.
 //!
-//! The importer selects only the participant's proven source artifacts. This
+//! Callers select only the participant's explicit custody artifacts. This
 //! module neither discovers human transcripts nor starts, stops or restores an
 //! executor. A partial write is resumable; a completed backup is never replaced.
 
@@ -17,9 +17,9 @@ use crate::{atomic_write, record::canonical_relay_key};
 pub struct BackupScope {
     /// Existing participant identity, never a newly minted replacement.
     pub actor_pubkey: String,
-    /// Community whose custody and configuration are being imported.
+    /// Community whose custody and configuration are being retained.
     pub relay_url: String,
-    /// Stable migration UUID, preserved across interruption and retry.
+    /// Stable operation UUID, preserved across interruption and retry.
     pub operation_id: String,
 }
 
@@ -43,13 +43,13 @@ pub struct BackupEntry {
     pub sha256: String,
 }
 
-/// Completed immutable snapshot; presence is not proof of execution adoption.
+/// Completed immutable snapshot; presence is not proof of execution termination.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BackupManifest {
     /// Versioned local backup format.
     pub schema: String,
-    /// Existing identity/community and stable migration operation.
+    /// Existing identity/community and stable custody operation.
     pub scope: BackupScope,
     /// Every captured artifact, in deterministic name order.
     pub files: Vec<BackupEntry>,
@@ -139,7 +139,7 @@ pub fn capture(
     scope.relay_url = canonical_relay_key(&scope.relay_url);
     url::Url::parse(&scope.relay_url).map_err(|_| "invalid backup community")?;
     if files.is_empty() {
-        return Err("migration backup requires source custody".into());
+        return Err("custody backup requires source custody".into());
     }
     let mut manifest = BackupManifest {
         schema: "beekeeper-agent-migration-backup/v1".into(),
@@ -152,16 +152,14 @@ pub fn capture(
     }
     manifest.files.sort_by(|a, b| a.name.cmp(&b.name));
     if manifest.files.windows(2).any(|w| w[0].name == w[1].name) {
-        return Err("migration backup repeats an artifact name".into());
+        return Err("custody backup repeats an artifact name".into());
     }
     directory_path(directory, Path::new(""), true)?;
     let manifest_path = directory.join("manifest.json");
     if manifest_path.exists() {
         let held = verify(directory)?;
         if held != manifest {
-            return Err(
-                "migration backup conflicts with preserved source; original retained".into(),
-            );
+            return Err("custody backup conflicts with preserved source; original retained".into());
         }
         return Ok(held);
     }
@@ -189,7 +187,7 @@ pub fn capture(
     verify(directory)
 }
 
-/// Verify restricted custody and every immutable artifact hash before adoption
+/// Verify restricted custody and every immutable artifact hash before deleting retained source
 /// or explicit offline recovery. This never enables a legacy execution owner.
 pub fn verify(directory: &Path) -> Result<BackupManifest, String> {
     directory_path(directory, Path::new(""), false)?;
@@ -197,9 +195,9 @@ pub fn verify(directory: &Path) -> Result<BackupManifest, String> {
     restricted(&path)?;
     let manifest: BackupManifest =
         serde_json::from_slice(&std::fs::read(path).map_err(|_| "cannot read backup manifest")?)
-            .map_err(|_| "migration backup manifest is malformed")?;
+            .map_err(|_| "custody backup manifest is malformed")?;
     if manifest.schema != "beekeeper-agent-migration-backup/v1" || manifest.files.is_empty() {
-        return Err("unsupported or empty migration backup".into());
+        return Err("unsupported or empty custody backup".into());
     }
     for expected in &manifest.files {
         directory_path(
@@ -211,12 +209,14 @@ pub fn verify(directory: &Path) -> Result<BackupManifest, String> {
         restricted(&path)?;
         let bytes = std::fs::read(path).map_err(|_| "cannot read backed-up custody")?;
         if entry(&expected.name, &bytes) != *expected {
-            return Err("migration backup integrity check failed; adoption refused".into());
+            return Err(
+                "custody backup integrity check failed; custody verification refused".into(),
+            );
         }
     }
     Ok(manifest)
 }
 
 #[cfg(test)]
-#[path = "migration_backup_tests.rs"]
+#[path = "custody_backup_tests.rs"]
 mod tests;

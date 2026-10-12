@@ -21,8 +21,13 @@ pub async fn start_managed_agent(
         .find(|r| r.pubkey == pubkey)
         .ok_or("agent not found")?;
     if record.backend == BackendKind::Local {
-        host_transfer::start_host_pair_with_floor(&app, &pubkey, relay.as_str(), replay_floor_unix)
-            .await?;
+        headless_management::start_host_pair_with_floor(
+            &app,
+            &pubkey,
+            relay.as_str(),
+            replay_floor_unix,
+        )
+        .await?;
     } else {
         deploy_to_provider(
             &app,

@@ -1,12 +1,8 @@
-//! Durable one-way import and sole host custody of a participant/community pair.
+//! Durable sole host custody and modern enrollment of a participant/community pair.
 //!
-//! This journal grants no relay authority and never kills a PID. The legacy
-//! custodian verifies its tracked generation has stopped before quiescence;
-//! adoption requires the existing provider's verified create receipt. Both
-//! custodians refuse to execute while transfer is between owners.
-#[path = "ownership_import.rs"]
-mod import_definition;
-pub use import_definition::revise_quiesced_import_definition;
+//! This journal grants no relay authority and never signals a persisted PID.
+//! Enrollment and successor transitions require verified provider receipts.
+//! Historical import phases remain readable solely to deny unsupported execution.
 
 use std::path::Path;
 
@@ -23,9 +19,9 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Phase {
-    /// Custody was staged; the legacy generation remains responsible.
+    /// Unsupported historical staged custody; decode only, never admitted.
     Prepared,
-    /// The tracked legacy generation stopped; neither custodian may run it.
+    /// Unsupported historical import boundary; decode only, never admitted.
     Quiesced,
     /// Verified provider adoption makes the host the sole execution owner.
     Adopted,
@@ -33,7 +29,7 @@ pub enum Phase {
     Restoring,
     /// Host execution is stopped; only verified host admission may succeed it.
     HostStopped,
-    /// Historical restored custody; retained for one-way import, never newly entered.
+    /// Historical restored custody; retained for reading history, never newly entered.
     LegacyRestored,
 }
 
@@ -47,7 +43,7 @@ pub struct Transfer {
     pub actor_pubkey: String,
     /// Canonical community transport.
     pub relay_url: String,
-    /// Preserved legacy harness generation (not a PID).
+    /// Enrollment identity marker; historical legacy values remain read-only.
     pub legacy_nonce: String,
     /// Safe authorized definition event ID at staging.
     pub definition_event_id: String,
@@ -55,6 +51,15 @@ pub struct Transfer {
     pub target: Option<CodingSessionTarget>,
     /// Current durable custody boundary.
     pub phase: Phase,
+}
+
+/// Whether custody originated in canonical fresh host enrollment. Historical
+/// import markers remain readable, but cannot authorize new execution.
+pub fn is_modern_enrollment(transfer: &Transfer) -> bool {
+    transfer
+        .legacy_nonce
+        .strip_prefix("fresh-identity:")
+        .is_some_and(|operation| uuid::Uuid::parse_str(operation).is_ok())
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -106,7 +111,7 @@ fn journal_lock(home: &Path, instance: Instance) -> Result<std::fs::File, String
     Ok(lock)
 }
 
-/// Serialize runtime admission and verified stop/import boundaries for one pair.
+/// Serialize runtime admission and verified stop boundaries for one pair.
 /// This is separate from the client management lock: clients may await relay
 /// receipts while the worker admits their execution. Hold through runtime
 /// startup and durable record insertion, or through a verified stop boundary.
@@ -365,7 +370,26 @@ pub fn host_stopped(
         return Err("host stop acknowledgment requires adopted ownership".into());
     }
     current.phase = Phase::HostStopped;
-    advance(home, instance, current)
+    let _journal_lock = journal_lock(home, instance)?;
+    let mut journal = read(home, instance)?;
+    let held = journal
+        .transfers
+        .iter_mut()
+        .find(|t| {
+            t.actor_pubkey.eq_ignore_ascii_case(actor) && t.relay_url == canonical_relay_key(relay)
+        })
+        .ok_or("ownership disappeared")?;
+    if held.phase == Phase::HostStopped && held.target.as_ref() == Some(target) {
+        return Ok(());
+    }
+    if held.phase != Phase::Adopted || held.target.as_ref() != Some(target) {
+        return Err("ownership changed before stop commit".into());
+    }
+    *held = current;
+    atomic_write::atomic_write_json_restricted(
+        &layout::host_dir(home, instance).join("managed-ownership.json"),
+        &serde_json::to_vec_pretty(&journal).map_err(|_| "ownership encoding failed")?,
+    )
 }
 
 /// Adopt a newly accepted responsibility after the previous host execution
@@ -391,6 +415,9 @@ pub fn successor(
         return Ok(());
     };
     let old = journal.transfers[index].clone();
+    if !is_modern_enrollment(&old) {
+        return Err("historical setup is retired; recreate with a fresh identity".into());
+    }
     if old.phase == Phase::Adopted
         && old.operation_id == operation
         && old.target.as_ref() == Some(&target)
@@ -418,86 +445,52 @@ pub fn successor(
     )
 }
 
-/// Advance a verified handoff boundary, preserving custody and operation identity.
-/// Callers serialize with the host's management lock. This function performs no
-/// process signalling; an acknowledged stopped generation must precede the
-/// corresponding transition, and an accepted target must precede adoption.
-pub fn advance(home: &Path, instance: Instance, mut next: Transfer) -> Result<(), String> {
-    nostr::PublicKey::from_hex(&next.actor_pubkey).map_err(|_| "invalid transfer actor")?;
-    nostr::EventId::from_hex(&next.definition_event_id)
-        .map_err(|_| "invalid definition revision")?;
-    if next.operation_id.trim().is_empty() || next.legacy_nonce.trim().is_empty() {
-        return Err("transfer requires operation identity and tracked legacy generation".into());
-    }
-    next.actor_pubkey.make_ascii_lowercase();
-    next.relay_url = canonical_relay_key(&next.relay_url);
-    url::Url::parse(&next.relay_url).map_err(|_| "invalid transfer relay")?;
-    let _journal_lock = journal_lock(home, instance)?;
-    let mut journal = read(home, instance)?;
-    if let Some(index) = journal.transfers.iter().position(|t| {
-        t.actor_pubkey == next.actor_pubkey
-            && t.relay_url == next.relay_url
-            && t.phase == Phase::LegacyRestored
-            && t.operation_id != next.operation_id
-    }) {
-        if next.phase != Phase::Prepared || next.target.is_some() {
-            return Err("a fresh transfer must stage legacy custody".into());
-        }
-        let retired = journal.transfers.remove(index);
-        journal.history.push(retired);
-    }
-    if let Some(old) = journal
-        .transfers
-        .iter_mut()
-        .find(|t| t.actor_pubkey == next.actor_pubkey && t.relay_url == next.relay_url)
-    {
-        if *old == next {
-            return Ok(());
-        }
-        if old.operation_id != next.operation_id
-            || old.legacy_nonce != next.legacy_nonce
-            || old.definition_event_id != next.definition_event_id
-        {
-            return Err("ownership transfer operation conflicts with preserved inputs".into());
-        }
-        let allowed = matches!(
-            (&old.phase, &next.phase),
-            (Phase::Prepared, Phase::Quiesced)
-                | (Phase::Quiesced, Phase::Adopted)
-                | (Phase::Adopted, Phase::HostStopped)
-                | (Phase::Quiesced, Phase::HostStopped)
-        );
-        if !allowed {
-            return Err("ownership transfer cannot skip a verified boundary".into());
-        }
-        if old.phase == Phase::Quiesced && next.phase == Phase::HostStopped && next.target.is_some()
-        {
-            return Err("paused import requires no accepted execution target".into());
-        }
-        if next.phase == Phase::Adopted && next.target.is_none() {
-            return Err("adoption requires verified accepted execution".into());
-        }
-        if old.target.is_some() && old.target != next.target {
-            return Err("ownership transfer target conflicts".into());
-        }
-        *old = next;
-    } else {
-        if next.phase != Phase::Prepared || next.target.is_some() {
-            return Err("transfer must begin with staged legacy custody".into());
-        }
-        journal.transfers.push(next);
-    }
-    let dir = layout::host_dir(home, instance);
-    atomic_write::create_dir_all_restricted(&dir)?;
-    atomic_write::atomic_write_json_restricted(
-        &dir.join("managed-ownership.json"),
-        &serde_json::to_vec_pretty(&journal).map_err(|e| e.to_string())?,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn concurrent_same_target_stop_acknowledgments_are_idempotent() {
+        let home = tempfile::tempdir().unwrap();
+        let actor = "ab".repeat(32);
+        let relay = "wss://isolated.example";
+        let target = CodingSessionTarget {
+            driver: "managed-acp".into(),
+            instance_id: "primary".into(),
+            session_id: uuid_for_test(),
+            generation: 1,
+        };
+        record_host_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &uuid_for_test(),
+            &"cd".repeat(32),
+            Some(target.clone()),
+        )
+        .unwrap();
+        std::thread::scope(|scope| {
+            let mut threads = Vec::new();
+            for _ in 0..16 {
+                let target = &target;
+                let actor = &actor;
+                let home = home.path();
+                threads.push(
+                    scope.spawn(move || host_stopped(home, Instance::Dev, actor, relay, target)),
+                );
+            }
+            for thread in threads {
+                thread.join().unwrap().unwrap();
+            }
+        });
+        assert_eq!(
+            for_pair(home.path(), Instance::Dev, &actor, relay)
+                .unwrap()
+                .unwrap()
+                .phase,
+            Phase::HostStopped
+        );
+    }
     #[test]
     fn pair_admission_fences_startup_without_blocking_other_communities() {
         let home = tempfile::tempdir().unwrap();
@@ -515,78 +508,7 @@ mod tests {
             try_admission_lock(home.path(), Instance::Dev, &actor, "wss://one.example").is_ok()
         );
     }
-    #[test]
-    fn one_way_import_cannot_restore_legacy_execution() {
-        let home = tempfile::tempdir().unwrap();
-        let mut t = Transfer {
-            operation_id: "op-1".into(),
-            actor_pubkey: "ab".repeat(32),
-            relay_url: "wss://relay.example/".into(),
-            legacy_nonce: "generation-1".into(),
-            definition_event_id: "cd".repeat(32),
-            target: None,
-            phase: Phase::Prepared,
-        };
-        advance(home.path(), Instance::Dev, t.clone()).unwrap();
-        for phase in [Phase::LegacyRestored, Phase::Restoring, Phase::Adopted] {
-            let mut skipped = t.clone();
-            skipped.phase = phase;
-            assert!(advance(home.path(), Instance::Dev, skipped).is_err());
-        }
-        t.phase = Phase::Quiesced;
-        advance(home.path(), Instance::Dev, t.clone()).unwrap();
-        let mut wrong = t.clone();
-        wrong.phase = Phase::HostStopped;
-        wrong.target = Some(CodingSessionTarget {
-            driver: "codex-acp".into(),
-            instance_id: "primary".into(),
-            session_id: uuid_for_test(),
-            generation: 1,
-        });
-        assert!(advance(home.path(), Instance::Dev, wrong).is_err());
-        t.phase = Phase::HostStopped;
-        advance(home.path(), Instance::Dev, t.clone()).unwrap();
-        assert_eq!(
-            for_pair(home.path(), Instance::Dev, &t.actor_pubkey, &t.relay_url)
-                .unwrap()
-                .unwrap()
-                .legacy_nonce,
-            "generation-1"
-        );
-        let mut restored = t.clone();
-        restored.phase = Phase::LegacyRestored;
-        assert!(advance(home.path(), Instance::Dev, restored).is_err());
-        successor(
-            home.path(),
-            Instance::Dev,
-            &t.actor_pubkey,
-            &t.relay_url,
-            "op-2",
-            &t.definition_event_id,
-            CodingSessionTarget {
-                driver: "codex-acp".into(),
-                instance_id: "primary".into(),
-                session_id: uuid_for_test(),
-                generation: 1,
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            for_pair(home.path(), Instance::Dev, &t.actor_pubkey, &t.relay_url)
-                .unwrap()
-                .unwrap()
-                .phase,
-            Phase::Adopted
-        );
-        assert_eq!(
-            serde_json::from_str::<Phase>("\"legacyRestored\"").unwrap(),
-            Phase::LegacyRestored
-        );
-        assert_eq!(
-            serde_json::from_str::<Phase>("\"restoring\"").unwrap(),
-            Phase::Restoring
-        );
-    }
+
     #[test]
     fn exact_fresh_configured_enrollment_can_complete_without_overwriting_import() {
         let home = tempfile::tempdir().unwrap();

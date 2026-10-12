@@ -59,15 +59,9 @@ pub struct CreateRequest {
     pub provider_instance: Option<String>,
     /// Add another accepted responsibility for an existing host-custodied identity.
     pub agent_pubkey: Option<String>,
-    /// Adopt an existing identity after its legacy generation is quiesced.
-    pub adopt_agent_pubkey: Option<String>,
-    /// Owner-only staged existing scoped key; never an owner's signing key.
-    pub key_file: Option<PathBuf>,
-    /// Owner-only staged existing NIP-OA attestation.
-    pub auth_tag_file: Option<PathBuf>,
     /// Maximum seconds to wait for the provider's signed create receipt.
     pub wait_secs: u64,
-    /// Explicit migration replay lower bound in Unix seconds; existing deduplication remains authoritative.
+    /// Explicit responsibility replay lower bound in Unix seconds; existing deduplication remains authoritative.
     pub replay_floor_unix: Option<u64>,
     /// Authoritative safe public projection preserving all supported public policy.
     pub public_definition: Option<ManagedAgentEventContent>,
@@ -77,8 +71,6 @@ pub struct CreateRequest {
     pub identity: Option<crate::IdentityInput>,
     /// Whether to create an execution now. False preserves a stopped identity.
     pub activate: bool,
-    /// Verified private native import, strict continuation with no fresh fallback.
-    pub native_context: Option<crate::NativeContext>,
 }
 
 /// Publish a new public configuration revision as its authorized owner.
@@ -259,36 +251,10 @@ pub async fn create(
     if project_public == Some(false) {
         configuration::require_private_channel(client, args.channel).await?;
     }
-    let transfer = if let Some(actor) = &args.adopt_agent_pubkey {
-        let transfer = beekeeper_host_core::ownership::for_pair(
-            &home,
-            config.instance,
-            actor,
-            &config.relay_url,
-        )
-        .map_err(fail)?
-        .ok_or_else(|| {
-            CliError::Refused("identity adoption requires a staged ownership transfer".into())
-        })?;
-        if transfer.operation_id != args.operation_id.to_string()
-            || !(matches!(
-                transfer.phase,
-                beekeeper_host_core::ownership::Phase::Quiesced
-                    | beekeeper_host_core::ownership::Phase::Adopted
-            ) || (!args.activate
-                && transfer.phase == beekeeper_host_core::ownership::Phase::HostStopped
-                && transfer.target.is_none()))
-        {
-            return Err(CliError::Refused("adoption requires the matching operation and a verified quiesced legacy generation".into()));
-        }
-        Some(transfer)
-    } else {
-        None
-    };
     let request = json!({"type":"create","owner":owner,"relay":config.relay_url,"channel":args.channel,
         "name":args.display_name,"prompt":prompt,"cwd":cwd,"model":model,"runtime":runtime.instance_ref,
-        "existingActor":args.agent_pubkey,"adoptActor":args.adopt_agent_pubkey,"adoptRevision":transfer.as_ref().map(|value| &value.definition_event_id),
-        "project":project,"publicDefinition":args.public_definition,"privateConfig":args.private_config,"activate":args.activate,"nativeContext":args.native_context,"replayFloorUnix":args.replay_floor_unix});
+        "existingActor":args.agent_pubkey,
+        "project":project,"publicDefinition":args.public_definition,"privateConfig":args.private_config,"activate":args.activate,"replayFloorUnix":args.replay_floor_unix});
     let successor_boundary = successor::prepare(
         &home,
         &config,
@@ -307,58 +273,70 @@ pub async fn create(
         .await?;
     }
     let path = operation_path(context, args.operation_id)?;
-    let mut minted = None;
     let mut operation = match read_operation(&path, &request)? {
         Some(operation) => operation,
         None => {
-            let actor = match transfer.as_ref() {
-                Some(transfer) => existing_identity(args, &owner, &transfer.actor_pubkey)?,
-                None => match args.agent_pubkey.as_deref() {
-                    Some(actor) => {
-                        let (key, auth_tag) =
-                            actor_custody(&config.provider_state_dir, actor, None)?;
-                        let keys = Keys::parse(&key)
-                            .map_err(|_| fail("existing actor custody key is invalid"))?;
-                        let attester =
-                            beekeeper_sdk::nip_oa::verify_auth_tag(&auth_tag, &keys.public_key())
-                                .map_err(fail)?;
-                        if attester.to_hex() != owner {
+            let actor = match args.agent_pubkey.as_deref() {
+                Some(actor) => {
+                    let (key, auth_tag) = actor_custody(&config.provider_state_dir, actor, None)?;
+                    let keys = Keys::parse(&key)
+                        .map_err(|_| fail("existing actor custody key is invalid"))?;
+                    let attester =
+                        beekeeper_sdk::nip_oa::verify_auth_tag(&auth_tag, &keys.public_key())
+                            .map_err(fail)?;
+                    if attester.to_hex() != owner {
+                        return Err(CliError::Auth(
+                            "existing actor is attested by another owner".into(),
+                        ));
+                    }
+                    provision::MintedAgentIdentity {
+                        keys,
+                        pubkey: actor.into(),
+                        private_key_nsec: key,
+                        auth_tag,
+                    }
+                }
+                None => match &args.identity {
+                    None => provision::mint_agent_identity(client.keys()).map_err(fail)?,
+                    Some(identity) => {
+                        let attester = beekeeper_sdk::nip_oa::verify_auth_tag(
+                            &identity.auth_tag,
+                            &identity.keys.public_key(),
+                        )
+                        .map_err(fail)?;
+                        if attester.to_hex() != owner
+                            || identity.keys.public_key() == client.keys().public_key()
+                        {
                             return Err(CliError::Auth(
-                                "existing actor is attested by another owner".into(),
+                                "adapter identity is not an owner-attested scoped actor".into(),
                             ));
                         }
                         provision::MintedAgentIdentity {
-                            keys,
-                            pubkey: actor.into(),
-                            private_key_nsec: key,
-                            auth_tag,
+                            keys: identity.keys.clone(),
+                            pubkey: identity.keys.public_key().to_hex(),
+                            private_key_nsec: identity.keys.secret_key().to_secret_hex(),
+                            auth_tag: identity.auth_tag.clone(),
                         }
                     }
-                    None => match &args.identity {
-                        None => provision::mint_agent_identity(client.keys()).map_err(fail)?,
-                        Some(identity) => {
-                            let attester = beekeeper_sdk::nip_oa::verify_auth_tag(
-                                &identity.auth_tag,
-                                &identity.keys.public_key(),
-                            )
-                            .map_err(fail)?;
-                            if attester.to_hex() != owner
-                                || identity.keys.public_key() == client.keys().public_key()
-                            {
-                                return Err(CliError::Auth(
-                                    "adapter identity is not an owner-attested scoped actor".into(),
-                                ));
-                            }
-                            provision::MintedAgentIdentity {
-                                keys: identity.keys.clone(),
-                                pubkey: identity.keys.public_key().to_hex(),
-                                private_key_nsec: identity.keys.secret_key().to_secret_hex(),
-                                auth_tag: identity.auth_tag.clone(),
-                            }
-                        }
-                    },
                 },
             };
+            if args.agent_pubkey.is_none()
+                && (config
+                    .provider_state_dir
+                    .join("actors")
+                    .join(&actor.pubkey)
+                    .exists()
+                    || beekeeper_host_core::ownership::for_pair(
+                        &home,
+                        config.instance,
+                        &actor.pubkey,
+                        &config.relay_url,
+                    )
+                    .map_err(fail)?
+                    .is_some())
+            {
+                return Err(CliError::Refused("identity already has retained custody or ownership; retry the original operation or recreate with a distinct fresh identity".into()));
+            }
             let default_content = ManagedAgentEventContent {
                 name: args.display_name.clone(),
                 persona_id: None,
@@ -385,17 +363,8 @@ pub async fn create(
                     "public name conflicts with enrollment".into(),
                 ));
             }
-            let (public, profile) = if transfer.is_some() || args.agent_pubkey.is_some() {
+            let (public, profile) = if args.agent_pubkey.is_some() {
                 let public = current_head(client, &actor.pubkey).await?;
-                if transfer
-                    .as_ref()
-                    .is_some_and(|value| public.id.to_hex() != value.definition_event_id)
-                {
-                    return Err(CliError::Conflict(format!(
-                        "adoption definition changed; effective revision is {}",
-                        public.id
-                    )));
-                }
                 let existing: ManagedAgentEventContent =
                     serde_json::from_str(&public.content).map_err(fail)?;
                 if existing.name != args.display_name
@@ -407,7 +376,7 @@ pub async fn create(
                                 .is_some_and(|selected| selected != &model)))
                 {
                     return Err(CliError::Conflict(
-                        "adoption must preserve the existing name, instructions and model".into(),
+                        "existing responsibility must preserve the existing name, instructions and model".into(),
                     ));
                 }
                 let profiles = client
@@ -415,7 +384,7 @@ pub async fn create(
                     .await?;
                 let profile = profiles.into_iter().filter_map(|value| serde_json::from_value::<Event>(value).ok())
                     .find(|event| event.pubkey == actor.keys.public_key() && beekeeper_core::verify_event(event).is_ok())
-                    .ok_or_else(|| CliError::Refused("existing signed agent profile is unavailable; refusing to replace it during adoption".into()))?;
+                    .ok_or_else(|| CliError::Refused("existing signed agent profile is unavailable; refusing to replace it for an existing responsibility".into()))?;
                 (public, profile)
             } else {
                 let public = client.sign_event_unchecked(
@@ -467,7 +436,7 @@ pub async fn create(
             let member = client.sign_event_unchecked(actor_membership(
                 args.channel,
                 &actor.pubkey,
-                args.agent_pubkey.is_some() || args.adopt_agent_pubkey.is_some(),
+                args.agent_pubkey.is_some(),
             )?)?;
             let provider_member = client.sign_event_unchecked(
                 beekeeper_sdk::build_add_member(args.channel, &config.provider_pubkey, None)
@@ -503,12 +472,14 @@ pub async fn create(
                 target: None,
                 receipt_event_id: None,
                 predecessor: successor_boundary.clone(),
+                custody_handoff: args.agent_pubkey.is_none().then(|| ReservedCustody {
+                    key: actor.private_key_nsec.clone(),
+                    auth_tag: actor.auth_tag.clone(),
+                }),
             };
-            // Reserve the identity before custody/publication. A crash in the
-            // following custody handoff is explicitly blocked on retry, never
-            // repaired by silently minting a different participant.
+            // Persist the scoped mint with its immutable identity reservation.
+            // It is cleared after durable actor custody, before publication.
             save(&path, &operation)?;
-            minted = Some(actor);
             operation
         }
     };
@@ -525,10 +496,8 @@ pub async fn create(
             save(&path, &operation)?;
         }
     }
-    let initial = minted
-        .as_ref()
-        .map(|actor| (actor.private_key_nsec.as_str(), actor.auth_tag.as_str()));
-    let (key, auth) = actor_custody(&config.provider_state_dir, &operation.actor_pubkey, initial)?;
+    let (key, auth) =
+        finish_reserved_custody(&config.provider_state_dir, &path, &mut operation, &owner)?;
     let actor_keys = Keys::parse(&key).map_err(|_| fail("actor custody key is invalid"))?;
     let actor_client = client.scoped(actor_keys, auth.clone())?;
     stage_configuration(&context.home, &config, &operation, args, &cwd)?;
@@ -543,37 +512,17 @@ pub async fn create(
             .ok_or_else(|| fail("configuration event missing"))?
             .id
             .to_hex();
-        if let Some(mut transfer) = transfer {
-            let _admission = beekeeper_host_core::ownership::admission_lock(
-                &home,
-                config.instance,
-                &operation.actor_pubkey,
-                &config.relay_url,
-            )
-            .map_err(fail)?;
-            crate::lifecycle::require_configured_stops(
-                &operation.actor_pubkey,
-                args.channel,
-                None,
-                client,
-            )
-            .await?;
-            transfer.phase = beekeeper_host_core::ownership::Phase::HostStopped;
-            transfer.target = None;
-            beekeeper_host_core::ownership::advance(&home, config.instance, transfer)
-                .map_err(fail)?;
-        } else {
-            beekeeper_host_core::ownership::record_host_enrollment(
-                &home,
-                config.instance,
-                &operation.actor_pubkey,
-                &config.relay_url,
-                &args.operation_id.to_string(),
-                &revision,
-                None,
-            )
-            .map_err(fail)?;
-        }
+
+        beekeeper_host_core::ownership::record_host_enrollment(
+            &home,
+            config.instance,
+            &operation.actor_pubkey,
+            &config.relay_url,
+            &args.operation_id.to_string(),
+            &revision,
+            None,
+        )
+        .map_err(fail)?;
         return Ok(
             json!({"operation_id":args.operation_id,"agent_pubkey":operation.actor_pubkey,"revision":revision,"desired_running":false,"execution_admitted":false,"custody":"host_retained"}),
         );
@@ -596,7 +545,7 @@ pub async fn create(
             let transport = event_transport(event, client, &actor_client)?;
             submit(transport, event).await?;
         }
-        if args.adopt_agent_pubkey.is_none() && args.agent_pubkey.is_none() {
+        if args.agent_pubkey.is_none() {
             let revision = operation
                 .events
                 .first()
@@ -641,12 +590,7 @@ pub async fn create(
         target,
         args.replay_floor_unix,
     )?;
-    if let Some(mut transfer) = transfer {
-        transfer.phase = beekeeper_host_core::ownership::Phase::Adopted;
-        transfer.target = Some(target.clone());
-        beekeeper_host_core::ownership::advance(&home, config.instance, transfer).map_err(fail)?;
-    }
-    if args.adopt_agent_pubkey.is_none() && args.agent_pubkey.is_none() {
+    if args.agent_pubkey.is_none() {
         let revision = operation
             .events
             .first()

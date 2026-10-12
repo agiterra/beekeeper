@@ -82,8 +82,12 @@ pub async fn start_managed_agent_runtime(
     app: AppHandle,
 ) -> Result<ManagedAgentRuntimeStatus, String> {
     let key = ManagedAgentRuntimeKey::new(pubkey, &relay_url)?;
-    crate::commands::agents::host_transfer::start_host_pair(&app, &key.pubkey, &key.relay_url)
-        .await?;
+    crate::commands::agents::headless_management::start_host_pair(
+        &app,
+        &key.pubkey,
+        &key.relay_url,
+    )
+    .await?;
     let status = status_for(&app, &key, None);
     emit(&app, &status);
     Ok(status)
@@ -96,7 +100,7 @@ pub async fn stop_managed_agent_runtime(
     app: AppHandle,
 ) -> Result<ManagedAgentRuntimeStatus, String> {
     let key = ManagedAgentRuntimeKey::new(pubkey, &relay_url)?;
-    crate::commands::agents::host_transfer::stop_host_pair(&app, &key.pubkey, &key.relay_url)
+    crate::commands::agents::headless_management::stop_host_pair(&app, &key.pubkey, &key.relay_url)
         .await?;
     let status = status_for(&app, &key, None);
     emit(&app, &status);
@@ -119,7 +123,6 @@ pub async fn reconcile_managed_agent_runtimes(
     communities: Vec<super::ManagedAgentCommunityTarget>,
     app: AppHandle,
 ) -> Result<Vec<ManagedAgentRuntimeStatus>, String> {
-    crate::commands::agents::host_transfer::import_legacy_agents_on_setup(&app).await?;
     let records = load_managed_agents(&app)?;
     let mut rows = Vec::new();
     for community in communities {

@@ -63,12 +63,3 @@ pub struct ManagedAgentRuntimeStatus {
 pub struct ManagedAgentCommunityTarget {
     pub relay_url: String,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ManagedAgentRuntimeReceipt {
-    pub key: ManagedAgentRuntimeKey,
-    pub pid: u32,
-    pub desktop_instance_id: String,
-    pub started_at: String,
-}

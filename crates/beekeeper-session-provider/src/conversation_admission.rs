@@ -14,7 +14,7 @@ impl Provider {
         {
             return Ok(None);
         }
-        let declined_key = format!("conversation:{}:migration-declined", event.id);
+        let declined_key = format!("conversation:{}:replay-declined", event.id);
         if self
             .outbox
             .contains(beekeeper_core::kind::KIND_STREAM_MESSAGE, &declined_key)
@@ -31,7 +31,7 @@ impl Provider {
         }
         let routes: ConversationRoutes =
             load(&self.config.state_dir.join("conversation-routes.json"))?;
-        let mut origins = self.conversation_origins()?;
+        let origins = self.conversation_origins()?;
         if origins.legacy_answers.contains_key(&event.id.to_hex()) {
             self.state
                 .consume_command(&event.id.to_hex(), crate::now_secs())?;
@@ -87,7 +87,10 @@ impl Provider {
             })
             .transpose()
             .map_err(|failure| anyhow::anyhow!("{}: {}", failure.code, failure.message))?;
-        if ownership.as_ref().is_some_and(|owner| owner.legacy_owns) {
+        if ownership
+            .as_ref()
+            .is_some_and(|owner| owner.historical_setup)
+        {
             self.state
                 .consume_command(&event.id.to_hex(), crate::now_secs())?;
             return Ok(None);
@@ -135,65 +138,36 @@ impl Provider {
         }
         if let Some(floor) = route.replay_floor_unix {
             // An existing host origin already has its admission/replay owner.
-            if !origins.requests.contains_key(&event.id.to_hex()) {
-                let old_answer = self.legacy_answered(route, event).await;
-                if let Ok(Some(answer_id)) = &old_answer {
-                    origins
-                        .legacy_answers
-                        .insert(event.id.to_hex(), answer_id.clone());
-                    self.save_conversation_origins(&origins)?;
-                    self.state
-                        .consume_command(&event.id.to_hex(), crate::now_secs())?;
-                    return Ok(None);
-                }
-                if old_answer.is_err() {
-                    let origin = Origin {
-                        actor: actor.clone(),
-                        channel,
-                        root: root.clone(),
-                        event: event.id.to_hex(),
-                        author: Some(event.pubkey.to_hex()),
-                        target: route.target.clone(),
-                        definition_event_id: None,
-                        linked_definition_event_id: None,
-                        private_definition_event_id: None,
-                        instructions: None,
-                    };
-                    self.conversation_reply(&origin,&format!("{}:migration-declined",event.id),"MIGRATION_REPLY_EVIDENCE_UNAVAILABLE: This host could not verify the earlier outcome and has not replayed this request. Send a new request after the prerequisite is repaired.")?;
-                    self.state
-                        .consume_command(&event.id.to_hex(), crate::now_secs())?;
-                    return Ok(None);
-                }
-                if event.created_at.as_secs() < floor
+            if !origins.requests.contains_key(&event.id.to_hex())
+                && (event.created_at.as_secs() < floor
                     || crate::now_secs().saturating_sub(event.created_at.as_secs())
-                        > self.config.command_horizon.as_secs()
-                {
-                    let origin = Origin {
-                        actor: actor.clone(),
-                        channel,
-                        root,
-                        event: event.id.to_hex(),
-                        author: Some(event.pubkey.to_hex()),
-                        target: route.target.clone(),
-                        definition_event_id: None,
-                        linked_definition_event_id: None,
-                        private_definition_event_id: None,
-                        instructions: None,
-                    };
-                    let message = if event.created_at.as_secs() < floor {
-                        "This request predates the protected migration capture. Its earlier outcome is uncertain. This host has not replayed it; send a new request if work is still needed."
-                    } else {
-                        "MIGRATION_REPLAY_TOO_OLD: This request exceeds the existing command admission horizon. This host has not replayed it; send a new request if work is still needed."
-                    };
-                    self.conversation_reply(
-                        &origin,
-                        &format!("{}:migration-declined", event.id),
-                        message,
-                    )?;
-                    self.state
-                        .consume_command(&event.id.to_hex(), crate::now_secs())?;
-                    return Ok(None);
-                }
+                        > self.config.command_horizon.as_secs())
+            {
+                let origin = Origin {
+                    actor: actor.clone(),
+                    channel,
+                    root,
+                    event: event.id.to_hex(),
+                    author: Some(event.pubkey.to_hex()),
+                    target: route.target.clone(),
+                    definition_event_id: None,
+                    linked_definition_event_id: None,
+                    private_definition_event_id: None,
+                    instructions: None,
+                };
+                let message = if event.created_at.as_secs() < floor {
+                    "This request predates the responsibility replay boundary. Its earlier outcome is uncertain. This host has not replayed it; send a new request if work is still needed."
+                } else {
+                    "RESPONSIBILITY_REPLAY_TOO_OLD: This request exceeds the existing command admission horizon. This host has not replayed it; send a new request if work is still needed."
+                };
+                self.conversation_reply(
+                    &origin,
+                    &format!("{}:replay-declined", event.id),
+                    message,
+                )?;
+                self.state
+                    .consume_command(&event.id.to_hex(), crate::now_secs())?;
+                return Ok(None);
             }
         }
         self.conversation_command_authorized_at(

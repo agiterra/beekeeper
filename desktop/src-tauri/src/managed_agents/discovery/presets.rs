@@ -249,6 +249,7 @@ pub(crate) fn command_for_runtime_id(id: &str) -> Option<String> {
 ///
 /// Returns `None` for inputs that do not resolve to any known harness; those
 /// pins are treated as custom/unknown and always kept.
+#[cfg(test)]
 pub(crate) fn canonical_harness_command(input: &str) -> Option<String> {
     let normalized = super::normalize_command_identity(input);
 

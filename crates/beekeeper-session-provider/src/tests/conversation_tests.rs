@@ -919,129 +919,23 @@ async fn declined_ambiguous_request_stays_declined_after_stop_and_worker_restart
 }
 
 #[tokio::test]
-async fn legacy_owner_abstains_and_adoption_never_replays_legacy_handled_input() {
-    use beekeeper_host_core::{
-        layout::Instance,
-        ownership::{self, Phase, Transfer},
-    };
-    for restored in [false, true] {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let home = tempfile::tempdir().expect("isolated service home");
-        let channel = Uuid::new_v4();
-        let actor = Keys::generate();
-        let (mut host, target) = routed_provider(dir.path(), channel, &actor).await;
-        let mut transfer = Transfer {
-            operation_id: "legacy-transfer".into(),
-            actor_pubkey: actor.public_key().to_hex(),
-            relay_url: host.config.relay_url.clone(),
-            legacy_nonce: "tracked-legacy".into(),
-            definition_event_id: "ab".repeat(32),
-            target: None,
-            phase: Phase::Prepared,
-        };
-        ownership::advance(home.path(), Instance::Dev, transfer.clone()).expect("prepared fixture");
-        if restored {
-            transfer.phase = Phase::LegacyRestored;
-            // Historical journals are readable, but E must never newly enter
-            // restored legacy execution. Seed only this restricted old fixture.
-            beekeeper_host_core::atomic_write::atomic_write_json_restricted(
-                &beekeeper_host_core::layout::host_dir(home.path(), Instance::Dev)
-                    .join("managed-ownership.json"),
-                &serde_json::to_vec(&serde_json::json!({"transfers":[transfer],"history":[]}))
-                    .unwrap(),
-            )
-            .unwrap();
-        }
-        let input = message(channel, &actor, None, test_operator_keys());
-        let lock = ownership::admission_lock(
-            home.path(),
-            Instance::Dev,
-            &actor.public_key().to_hex(),
-            &host.config.relay_url,
-        )
-        .expect("transition barrier");
-        assert!(host
-            .conversation_command_at(channel, &input, Some((home.path(), Instance::Dev)))
-            .expect("busy legacy ownership still abstains")
-            .is_none());
-        assert!(host.state.is_command_consumed(&input.id.to_hex()));
-        drop(lock);
-        assert!(host
-            .conversation_command_at(channel, &input, Some((home.path(), Instance::Dev)))
-            .expect("legacy owner")
-            .is_none());
-        assert!(host.state.is_command_consumed(&input.id.to_hex()));
-        assert!(host.in_flight.is_empty());
-        let sink = CollectingSink::new();
-        host.flush(&sink).await.expect("no competing reply");
-        assert!(!sink
-            .all()
-            .iter()
-            .any(|event| event.kind == nostr::Kind::Custom(9)));
-        if restored {
-            transfer.operation_id = "next-adoption".into();
-            transfer.phase = Phase::Prepared;
-            ownership::advance(home.path(), Instance::Dev, transfer.clone())
-                .expect("new transfer fixture");
-        }
-        transfer.phase = Phase::Quiesced;
-        ownership::advance(home.path(), Instance::Dev, transfer.clone()).expect("quiesced fixture");
-        transfer.phase = Phase::Adopted;
-        transfer.target = Some(target.clone());
-        ownership::advance(home.path(), Instance::Dev, transfer).expect("adopted fixture");
-        assert!(host
-            .conversation_command_at(channel, &input, Some((home.path(), Instance::Dev)))
-            .expect("adoption replay")
-            .is_none());
-        assert!(host.in_flight.is_empty());
-        let fresh = nostr::EventBuilder::new(nostr::Kind::Custom(9), "fresh host-owned input")
-            .tags(input.tags)
-            .sign_with_keys(test_operator_keys())
-            .expect("new event");
-        assert!(host
-            .conversation_command_at(channel, &fresh, Some((home.path(), Instance::Dev)))
-            .expect("new host input")
-            .is_some());
-        host.handle_command_event(channel, &fresh)
-            .await
-            .expect("existing turn admission");
-        pump_until_turn_finished(&mut host).await;
-        assert!(host.state.is_command_consumed(&fresh.id.to_hex()));
-        host.flush(&sink).await.expect("host answer");
-        assert!(sink
-            .all()
-            .iter()
-            .any(|event| event.kind == nostr::Kind::Custom(9)
-                && !event.content.starts_with("Request ")));
-    }
-}
-
-#[tokio::test]
 async fn busy_ownership_terminal_answer_survives_later_watermark_and_outer_recovery() {
-    use beekeeper_host_core::{
-        layout::Instance,
-        ownership::{self, Phase, Transfer},
-    };
+    use beekeeper_host_core::{layout::Instance, ownership};
     let dir = tempfile::tempdir().expect("tempdir");
     let home = tempfile::tempdir().expect("home");
     let channel = Uuid::new_v4();
     let actor = Keys::generate();
     let (mut host, target) = routed_provider(dir.path(), channel, &actor).await;
-    let mut transfer = Transfer {
-        operation_id: "busy-transfer".into(),
-        actor_pubkey: actor.public_key().to_hex(),
-        relay_url: host.config.relay_url.clone(),
-        legacy_nonce: "legacy".into(),
-        definition_event_id: "ab".repeat(32),
-        target: None,
-        phase: Phase::Prepared,
-    };
-    ownership::advance(home.path(), Instance::Dev, transfer.clone()).expect("prepared fixture");
-    transfer.phase = Phase::Quiesced;
-    ownership::advance(home.path(), Instance::Dev, transfer.clone()).expect("quiesced fixture");
-    transfer.phase = Phase::Adopted;
-    transfer.target = Some(target);
-    ownership::advance(home.path(), Instance::Dev, transfer).expect("adopted fixture");
+    ownership::record_host_enrollment(
+        home.path(),
+        Instance::Dev,
+        &actor.public_key().to_hex(),
+        &host.config.relay_url,
+        &Uuid::new_v4().to_string(),
+        &"ab".repeat(32),
+        Some(target),
+    )
+    .expect("modern enrollment");
     host.conversation_ownership_context = Some((home.path().to_path_buf(), Instance::Dev));
     let busy = message(channel, &actor, None, test_operator_keys());
     let lock = ownership::admission_lock(

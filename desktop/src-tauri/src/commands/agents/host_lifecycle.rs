@@ -21,7 +21,7 @@ pub(crate) async fn start_host_pair(
     if record.backend != BackendKind::Local {
         return Err("remote lifecycle uses its authorized provider boundary".into());
     }
-    importer::ensure_enrolled(app, &record, relay, true).await
+    enrollment::start_existing(app, &record, relay).await
 }
 
 pub(crate) async fn start_host_pair_with_floor(
@@ -30,11 +30,14 @@ pub(crate) async fn start_host_pair_with_floor(
     relay: &str,
     floor: Option<u64>,
 ) -> Result<(), String> {
+    if floor.is_some() {
+        return Err("explicit replay floor requires a new CLI responsibility".into());
+    }
     let record = record_for_pair(app, actor, relay)?;
     if record.backend != BackendKind::Local {
         return Err("remote lifecycle uses its provider boundary".into());
     }
-    importer::ensure_enrolled_with_floor(app, &record, relay, true, floor).await
+    enrollment::start_existing(app, &record, relay).await
 }
 
 pub(crate) async fn stop_host_pair(
@@ -49,7 +52,7 @@ pub(crate) async fn stop_host_pair(
                 .into(),
         );
     }
-    let _guard = importer::import_guard(app, actor, relay).await?;
+    let _guard = client_guard(app, actor, relay).await?;
     let ctx = context()?;
     let intent = stop_intent::pending(&ctx, actor, relay)?;
     let mut request = lifecycle(actor);
@@ -72,7 +75,7 @@ pub(crate) async fn delete_host_agent_snapshot(
 ) -> Result<Value, String> {
     let ctx = context()?;
     let _guard = if expected.backend == BackendKind::Local {
-        let guard = importer::import_guard(app, &expected.pubkey, relay).await?;
+        let guard = client_guard(app, &expected.pubkey, relay).await?;
         stop_intent::require_host_ownership(&ctx, &expected.pubkey, relay)?;
         Some(guard)
     } else {
@@ -85,7 +88,7 @@ pub(crate) async fn delete_host_agent_snapshot(
     {
         return Err("agent changed before deletion; intended custody retained".into());
     }
-    let intent = importer::deletion_intent(app, expected, relay).await?;
+    let intent = deletion::deletion_intent(app, expected, relay).await?;
     let request = DeleteRequest {
         operation_id: intent.operation_id,
         agent_pubkey: expected.pubkey.clone(),

@@ -179,3 +179,108 @@ fn nothing_seated_writes_an_empty_request_list() {
     assert_eq!(file.version, SEAT_REQUESTS_VERSION);
     assert!(file.requests.is_empty(), "{file:?}");
 }
+
+#[tokio::test]
+async fn accepted_modern_actor_custody_fulfills_requests_but_missing_and_role_custody_remain_visible(
+) {
+    use nostr::{EventBuilder, Keys};
+    use serde_json::json;
+    let dir = tempfile::tempdir().expect("isolated provider");
+    let channel = Uuid::new_v4();
+    let cwd = dir.path().join("work");
+    std::fs::create_dir(&cwd).expect("workspace");
+    let projects = crate::tests::write_projects(dir.path(), channel, &cwd);
+    let mut host = crate::tests::provider(&dir.path().join("state"), Some(&projects));
+    let actor = Keys::generate();
+    let (relay, _, server) =
+        crate::tests::spawn_test_relay_with_events(&host.config.keys, vec![]).await;
+    host.set_rest_client(relay.rest_client());
+    host.set_relay_self(host.config.keys.public_key().to_hex());
+    let seats = dir.path().join("actor-seats.json");
+    crate::state::atomic_write(&seats,&serde_json::to_vec(&json!({"version":1,"pending":{"modern-request":{"pubkey":actor.public_key().to_hex(),"nsec":actor.secret_key().to_secret_hex(),"authTag":null,"relayUrl":host.config.relay_url}}})).expect("scoped staging")).expect("one-shot seat");
+    host.config.actor_seats_file = Some(seats);
+    let event = crate::tests::create_event(&host, channel, "modern-request");
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&event.content).expect("existing create");
+    payload["action"]["actor"] = json!(actor.public_key().to_hex());
+    let event = EventBuilder::new(event.kind, payload.to_string())
+        .tags(event.tags)
+        .sign_with_keys(crate::tests::test_operator_keys())
+        .expect("signed create");
+    host.handle_command_event(channel, &event)
+        .await
+        .expect("actual fake ACP startup");
+    let accepted = host
+        .state
+        .sessions()
+        .next()
+        .expect("accepted generation")
+        .clone();
+    let actor_dir = host
+        .config
+        .state_dir
+        .join("actors")
+        .join(actor.public_key().to_hex());
+    std::fs::create_dir_all(&actor_dir).expect("actor directory");
+    crate::state::atomic_write(
+        &actor_dir.join("key"),
+        actor.secret_key().to_secret_hex().as_bytes(),
+    )
+    .expect("worker custody");
+    crate::state::atomic_write(&host.config.state_dir.join("conversation-routes.json"),&serde_json::to_vec(&json!({"routes":[{"actorPubkey":actor.public_key().to_hex(),"channelId":channel,"target":host.target_for(&accepted)}]})).expect("exact accepted route")).expect("route");
+    let read = || {
+        serde_json::from_str::<SeatRequestsFile>(
+            &std::fs::read_to_string(seat_requests_path(&host.config.state_dir))
+                .expect("request observation"),
+        )
+        .expect("requests")
+    };
+    host.publish_seat_requests();
+    assert!(
+        read().requests.is_empty(),
+        "valid modern worker-owned custody needs no restager"
+    );
+    // A project association does not turn an attributed Solo actor into a role-seat.
+    host.state
+        .update_session(&accepted.session_id, |record| {
+            record.project_ref = Some(format!(
+                "30621:{}:project",
+                crate::tests::test_operator_keys().public_key().to_hex()
+            ))
+        })
+        .expect("project association");
+    host.publish_seat_requests();
+    assert!(read().requests.is_empty());
+    std::fs::remove_file(actor_dir.join("key")).expect("simulate unavailable custody");
+    host.publish_seat_requests();
+    assert_eq!(
+        read().requests.len(),
+        1,
+        "missing custody must not be hidden"
+    );
+    crate::state::atomic_write(&actor_dir.join("key"), b"invalid custody").expect("invalid key");
+    host.publish_seat_requests();
+    assert_eq!(
+        read().requests.len(),
+        1,
+        "invalid custody remains unresolved"
+    );
+    crate::state::atomic_write(
+        &actor_dir.join("key"),
+        actor.secret_key().to_secret_hex().as_bytes(),
+    )
+    .expect("restore valid fixture key");
+    host.state
+        .update_session(&accepted.session_id, |record| {
+            record.role = Some("builder".into())
+        })
+        .expect("role recovery fact");
+    host.publish_seat_requests();
+    let unresolved = read();
+    assert_eq!(unresolved.requests.len(), 1);
+    assert_eq!(unresolved.requests[0].role, "builder");
+    host.sessions
+        .shutdown_and_join(&accepted.session_id, crate::session::ACTOR_RETIRE_GRACE)
+        .await;
+    server.abort();
+}

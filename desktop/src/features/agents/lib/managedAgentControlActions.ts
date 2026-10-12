@@ -102,8 +102,8 @@ export async function respawnManagedAgentWithRules({
   onStopped?: () => void;
 }) {
   // Cached local status cannot establish host ownership or a stop boundary.
-  // The backend safely no-ops stopped legacy agents and verifies all host
-  // responsibilities before permitting a successor.
+  // The backend verifies all host responsibilities and refuses retained old
+  // desktop records before permitting a successor.
   if (agent.backend.type === "local") {
     await stopManagedAgent(agent.pubkey);
     onStopped?.();

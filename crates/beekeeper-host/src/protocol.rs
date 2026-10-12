@@ -232,16 +232,12 @@ pub struct Warning {
 }
 
 impl Warning {
-    /// Seats are re-staged by the desktop app, because re-staging reads the
-    /// relay and the managed-agent store. With no desktop running, the rows in
-    /// `seat-requests.json` wait — which is acceptable, and must be visible.
-    pub fn seat_restage_requires_desktop(rows: usize) -> Self {
+    /// Unresolved scoped custody prevents native reattachment. A seat-request
+    /// row alone does not prove desktop dependency or runtime unavailability.
+    pub fn seat_custody_pending(rows: usize) -> Self {
         Self {
-            code: "SEAT_RESTAGE_REQUIRES_DESKTOP".to_string(),
-            message: format!(
-                "{rows} agent seat(s) are waiting to be re-staged, which only Beekeeper can do — \
-                 open the app to finish it"
-            ),
+            code: "SEAT_CUSTODY_PENDING".to_string(),
+            message: format!("{rows} seat-custody recovery request(s) are unresolved; verify scoped identity and role-pack custody before retrying native reattachment"),
         }
     }
 }
@@ -326,9 +322,10 @@ mod tests {
     /// client that treated it as a failure would show nothing at all.
     #[test]
     fn a_warning_has_a_stable_code_and_a_human_line() {
-        let warning = Warning::seat_restage_requires_desktop(3);
-        assert_eq!(warning.code, "SEAT_RESTAGE_REQUIRES_DESKTOP");
-        assert!(warning.message.contains("open the app"), "{warning:?}");
+        let warning = Warning::seat_custody_pending(3);
+        assert_eq!(warning.code, "SEAT_CUSTODY_PENDING");
+        assert!(warning.message.contains("unresolved"), "{warning:?}");
+        assert!(!warning.message.contains("desktop") && !warning.message.contains("open the app"));
         assert_eq!(
             warning.code,
             warning.code.to_uppercase(),

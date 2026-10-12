@@ -14182,9 +14182,8 @@ export function maybeInstallE2eTauriMocks() {
       }
       case "list_managed_agents":
         return handleListManagedAgents(activeConfig);
-      case "get_managed_agent_host_transfer": {
-        // Default fixtures have local custody and no commissioned host. Keep
-        // ownership observation distinct from a verified desired relay head.
+      case "get_managed_agent_host_status": {
+        // Mock fixtures represent modern host-managed records, not legacy import.
         let relayUrl = getRelayWsUrl(activeConfig);
         try {
           const activeId = window.localStorage.getItem(
@@ -14199,11 +14198,26 @@ export function maybeInstallE2eTauriMocks() {
         } catch {
           // Match the mock start boundary's configured fallback.
         }
+        const actor = (payload as { pubkey?: string }).pubkey;
+        const agent = (await handleListManagedAgents(activeConfig)).find(
+          (row) => row.pubkey === actor,
+        );
+        const active =
+          agent?.status === "running" || agent?.status === "deployed";
         return {
           relayUrl,
-          revision: "",
-          commissioned: false,
-          transfer: null,
+          revision: null,
+          revisionAvailable: false,
+          commissioned: true,
+          ownershipPhase: active ? "adopted" : "hostStopped",
+          legacyRecreationRequired: false,
+          legacyConflict: null,
+          ownershipPendingReason: null,
+          freshCreationPending: false,
+          runtimeAvailable:
+            payload && (payload as { localOnly?: boolean }).localOnly
+              ? null
+              : active,
         };
       }
       case "list_project_role_packs":

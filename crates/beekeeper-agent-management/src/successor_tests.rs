@@ -96,35 +96,24 @@ fn stopped_actor_successor_uses_preserved_pair_and_refuses_restoration() {
         provider_command: None,
         written_at: String::new(),
     };
-    let mut transfer = Transfer {
-        operation_id: Uuid::new_v4().to_string(),
-        actor_pubkey: actor.clone(),
-        relay_url: relay.into(),
-        legacy_nonce: "legacy-tracked-start".into(),
-        definition_event_id: "ab".repeat(32),
-        target: None,
-        phase: Phase::Prepared,
-    };
-    ownership::advance(home.path(), config.instance, transfer.clone()).expect("prepared");
-    assert!(prepare(home.path(), &config, Some(&actor), Uuid::new_v4()).is_err());
-    transfer.phase = Phase::Quiesced;
-    ownership::advance(home.path(), config.instance, transfer.clone()).expect("quiesced");
-    transfer.phase = Phase::Adopted;
-    transfer.target = Some(old.clone());
-    ownership::advance(home.path(), config.instance, transfer.clone()).expect("adopted");
+    let enrolled_op = Uuid::new_v4();
+    ownership::record_host_enrollment(
+        home.path(),
+        config.instance,
+        &actor,
+        relay,
+        &enrolled_op.to_string(),
+        &"ab".repeat(32),
+        Some(old.clone()),
+    )
+    .expect("modern enrollment");
     ownership::host_stopped(home.path(), config.instance, &actor, relay, &old).expect("stopped");
     let next = Uuid::new_v4();
     let boundary = prepare(home.path(), &config, Some(&actor), next)
         .expect("eligible")
         .expect("boundary");
     assert_eq!(boundary.target, Some(old));
-    assert!(prepare(
-        home.path(),
-        &config,
-        Some(&actor),
-        Uuid::parse_str(&transfer.operation_id).expect("old op")
-    )
-    .is_err());
+    assert!(prepare(home.path(), &config, Some(&actor), enrolled_op).is_err());
     let new_target = target();
     ownership::successor(
         home.path(),
@@ -233,21 +222,16 @@ async fn canonical_cli_successor_fences_other_contexts_and_reconciles_without_de
         provider_command: None,
         written_at: String::new(),
     };
-    let mut prior = Transfer {
-        operation_id: Uuid::new_v4().to_string(),
-        actor_pubkey: actor.clone(),
-        relay_url: url,
-        legacy_nonce: "preserved".into(),
-        definition_event_id: "ab".repeat(32),
-        target: None,
-        phase: Phase::Prepared,
-    };
-    ownership::advance(home.path(), config.instance, prior.clone()).expect("prepared");
-    prior.phase = Phase::Quiesced;
-    ownership::advance(home.path(), config.instance, prior.clone()).expect("quiesced");
-    prior.phase = Phase::Adopted;
-    prior.target = Some(old.clone());
-    ownership::advance(home.path(), config.instance, prior.clone()).expect("adopted");
+    ownership::record_host_enrollment(
+        home.path(),
+        config.instance,
+        &actor,
+        &url,
+        &Uuid::new_v4().to_string(),
+        &"ab".repeat(32),
+        Some(old.clone()),
+    )
+    .expect("modern enrollment");
     ownership::host_stopped(
         home.path(),
         config.instance,
@@ -295,6 +279,7 @@ async fn canonical_cli_successor_fences_other_contexts_and_reconciles_without_de
         target: Some(next.clone()),
         receipt_event_id: Some("cd".repeat(32)),
         predecessor: Some(boundary.clone()),
+        custody_handoff: None,
     };
     reconcile(
         home.path(),

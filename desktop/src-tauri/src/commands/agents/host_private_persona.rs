@@ -17,11 +17,60 @@ fn private_event_matches(event: &Event, owner: nostr::PublicKey, id: &str, conte
         && event.kind.as_u16() == 30175
         && event.verify().is_ok()
         && event.content == content
-        && event.tags.iter().any(|tag| tag.as_slice() == ["d", id])
+        && {
+            let mut coordinates = event
+                .tags
+                .iter()
+                .filter(|tag| tag.as_slice().first().is_some_and(|key| key == "d"));
+            coordinates
+                .next()
+                .is_some_and(|tag| tag.as_slice() == ["d", id])
+                && coordinates.next().is_none()
+        }
         && !event
             .tags
             .iter()
             .any(|tag| tag.as_slice() == ["shared", "true"])
+}
+struct PinAuthority<'a> {
+    actor: &'a str,
+    relay: &'a str,
+    id: &'a str,
+    source_hash: &'a str,
+    owner: nostr::PublicKey,
+    content: &'a str,
+}
+fn read_cached_pin(path: &std::path::Path, authority: &PinAuthority<'_>) -> Result<Value, String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if !meta.file_type().is_file() || meta.len() > 1024 * 1024 {
+        return Err("private persona pin custody invalid".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o077 != 0 {
+            return Err("private persona pin permissions unsafe".into());
+        }
+    }
+    let value: Value = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    let event: Event = serde_json::from_value(
+        value
+            .get("event")
+            .cloned()
+            .ok_or("private persona pin event absent")?,
+    )
+    .map_err(|e| e.to_string())?;
+    if value.get("schema").and_then(Value::as_str) != Some("beekeeper-private-persona/v1")
+        || value.get("actorPubkey").and_then(Value::as_str) != Some(authority.actor)
+        || value.get("relayUrl").and_then(Value::as_str) != Some(authority.relay)
+        || value.get("personaId").and_then(Value::as_str) != Some(authority.id)
+        || value.get("sourceHash").and_then(Value::as_str) != Some(authority.source_hash)
+        || !private_event_matches(&event, authority.owner, authority.id, authority.content)
+    {
+        return Err("private persona pin conflicts with current source".into());
+    }
+    Ok(value)
 }
 /// Attach only after the original source/configuration CAS has succeeded.
 /// Retry reuses exact locally retained/cached signed bytes; the shared writer binds30177.
@@ -71,6 +120,13 @@ pub(crate) fn attach_private_persona(
     let projection = persona_event_content(persona);
     let content = serde_json::to_string(&projection).map_err(|e| e.to_string())?;
     let hash = persona_content_hash(&projection);
+    if record
+        .persona_source_version
+        .as_deref()
+        .is_some_and(|source| source != hash)
+    {
+        return Err("private persona differs from the pinned source; reconcile the definition explicitly before updating execution".into());
+    }
     // A content-addressed protected pin is immutable across operation retries.
     // It does not modify original importer stages or public retention/publication.
     let key = hex::encode(Sha256::digest(format!(
@@ -88,38 +144,17 @@ pub(crate) fn attach_private_persona(
     let ctx = super::super::context()?;
     let _lock = beekeeper_host_core::ownership::management_lock(&ctx.home, ctx.instance)?;
     let snapshot = match std::fs::symlink_metadata(&path) {
-        Ok(meta) => {
-            if !meta.file_type().is_file() || meta.len() > 1024 * 1024 {
-                return Err("private persona pin custody invalid".into());
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if meta.permissions().mode() & 0o077 != 0 {
-                    return Err("private persona pin permissions unsafe".into());
-                }
-            }
-            let value: Value =
-                serde_json::from_slice(&std::fs::read(&path).map_err(|e| e.to_string())?)
-                    .map_err(|e| e.to_string())?;
-            let event: Event = serde_json::from_value(
-                value
-                    .get("event")
-                    .cloned()
-                    .ok_or("private persona pin event absent")?,
-            )
-            .map_err(|e| e.to_string())?;
-            if value.get("schema").and_then(Value::as_str) != Some("beekeeper-private-persona/v1")
-                || value.get("actorPubkey").and_then(Value::as_str) != Some(record.pubkey.as_str())
-                || value.get("relayUrl").and_then(Value::as_str) != Some(canonical.as_str())
-                || value.get("personaId").and_then(Value::as_str) != Some(id)
-                || value.get("sourceHash").and_then(Value::as_str) != Some(hash.as_str())
-                || !private_event_matches(&event, owner, id, &content)
-            {
-                return Err("private persona pin conflicts with current source".into());
-            }
-            value
-        }
+        Ok(_) => read_cached_pin(
+            &path,
+            &PinAuthority {
+                actor: &record.pubkey,
+                relay: &canonical,
+                id,
+                source_hash: &hash,
+                owner,
+                content: &content,
+            },
+        )?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let conn = open_retention_db(&scope.db_path)?;
             let retained = get_retained_event(&conn, 30175, &owner.to_hex(), id)?
@@ -186,5 +221,60 @@ mod tests {
             "private",
             "private instructions"
         ));
+    }
+    #[test]
+    fn immutable_private_pin_recovery_reuses_exact_signed_bytes_and_rejects_source_drift() {
+        let keys = nostr::Keys::generate();
+        let event = nostr::EventBuilder::new(nostr::Kind::Custom(30175), "private content")
+            .tags([nostr::Tag::parse(["d", "private"]).unwrap()])
+            .sign_with_keys(&keys)
+            .unwrap();
+        let value = json!({"schema":"beekeeper-private-persona/v1","actorPubkey":"actor","relayUrl":"wss://fixture.example","personaId":"private","sourceHash":"hash-a","event":event});
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pin.json");
+        atomic_write::atomic_write_json_restricted(&path, &serde_json::to_vec(&value).unwrap())
+            .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let authority = PinAuthority {
+            actor: "actor",
+            relay: "wss://fixture.example",
+            id: "private",
+            source_hash: "hash-a",
+            owner: keys.public_key(),
+            content: "private content",
+        };
+        let first = read_cached_pin(&path, &authority).unwrap();
+        let recovered = read_cached_pin(&path, &authority).unwrap();
+        assert_eq!(first, recovered);
+        assert_eq!(first["event"]["id"], json!(event.id.to_hex()));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let changed = PinAuthority {
+            source_hash: "hash-b",
+            ..authority
+        };
+        assert!(read_cached_pin(&path, &changed).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn cached_private_pin_rejects_unsafe_permissions_and_symlink_custody() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pin.json");
+        std::fs::write(&path, b"{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let keys = nostr::Keys::generate();
+        let scope = PinAuthority {
+            actor: "actor",
+            relay: "wss://fixture.example",
+            id: "private",
+            source_hash: "hash",
+            owner: keys.public_key(),
+            content: "private content",
+        };
+        assert!(read_cached_pin(&path, &scope).is_err());
+        let link = dir.path().join("link.json");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(read_cached_pin(&link, &scope).is_err());
     }
 }

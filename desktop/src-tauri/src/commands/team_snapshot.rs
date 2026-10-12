@@ -520,6 +520,7 @@ pub async fn confirm_team_snapshot_import(
 ) -> Result<TeamSnapshotImportResult, String> {
     // ── Phase 1: validate (no I/O) ───────────────────────────────────────────
     let snapshot = decode_team_snapshot_from_bytes(&input.file_bytes)?;
+    crate::commands::agents::headless_management::preflight_fresh_snapshot(&app)?;
     let now = now_iso();
 
     // Resolve behavioral defaults for every member before any key generation.
@@ -650,6 +651,9 @@ pub async fn confirm_team_snapshot_import(
         });
     }
 
+    for member in &minted {
+        crate::commands::agents::headless_management::reserve_fresh_snapshot(&app, &member.record)?;
+    }
     // ── Phase 3: store (sync, inside lock) ──────────────────────────────────
     let team = {
         let _store_guard = state
@@ -798,6 +802,15 @@ pub async fn confirm_team_snapshot_import(
         )
         .await
         .err();
+
+        let profile_sync_error =
+            crate::commands::agents::headless_management::enroll_fresh_snapshot(
+                &app,
+                &state,
+                &m.record,
+                profile_sync_error,
+            )
+            .await;
 
         // Phase 5: memory restore (best-effort).
         let memory_total = snap_member.memory.entries.len();

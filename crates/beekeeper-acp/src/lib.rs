@@ -3782,8 +3782,6 @@ async fn tokio_main() -> Result<()> {
             && shutdown_result.is_ok()
             && !shutdown_task_failed
             && !queue.has_undispatched_work(),
-        &pubkey_hex,
-        &config.relay_url,
     )
 }
 

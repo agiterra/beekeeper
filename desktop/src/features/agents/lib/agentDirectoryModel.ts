@@ -91,6 +91,8 @@ export type AgentDirectoryRow = {
   name: string;
   /** A managed agent exists here for this pubkey. */
   isInstalled: boolean;
+  /** Local host controls and remote provider controls are separate scopes. */
+  backendType?: "local" | "provider";
   /** `status` is `running`/`deployed` on the managed record. `false` for a wire-only agent. */
   isRunning: boolean;
   /** Installed but not running. `false` for a wire-only agent. */
@@ -351,6 +353,7 @@ export function buildAgentDirectory(
       pubkey,
       name,
       isInstalled: managed !== null,
+      backendType: managed ? (managed.backend?.type ?? "local") : undefined,
       isRunning,
       isStopped: managed !== null && !isRunning,
       needsRestart: managed?.needsRestart ?? false,

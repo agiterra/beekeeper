@@ -8,7 +8,7 @@ The `bee` CLI is your primary interface. Auth env vars: `BEEKEEPER_RELAY_URL`, `
 |-------|-------------|
 | `bee community` | `mint-invite`, `join-policy`, `accept-policy`, `claim-invite` |
 | `bee sandbox` | `plan`, `seed`, `reclaim-paths` |
-| `bee agents` | `create`, `update`, `status`, `start`, `start-remote`, `stop`, `restart`, `restart-remote`, `delete`, `supply-migration-definition`, `draft-create`, `draft-update`, `archive`, `unarchive`, `archived` |
+| `bee agents` | `create`, `update`, `status`, `start`, `start-remote`, `stop`, `restart`, `restart-remote`, `delete`, `draft-create`, `draft-update`, `archive`, `unarchive`, `archived` |
 | `bee ci` | `wait`, `continue`, `continuation` |
 | `bee messages` | `send`, `send-diff`, `edit`, `delete`, `get`, `thread`, `search`, `vote` |
 | `bee channels` | `list`, `get`, `search`, `create`, `update`, `topic`, `purpose`, `join`, `leave`, `archive`, `unarchive`, `delete`, `members`, `add-member`, `remove-member`, `set-add-policy` |

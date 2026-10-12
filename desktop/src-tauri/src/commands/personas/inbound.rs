@@ -14,8 +14,12 @@ use crate::{
     util::now_iso,
 };
 
+mod exact_managed_deletion;
+
 #[cfg(test)]
 mod carry_tests;
+#[cfg(test)]
+mod exact_managed_deletion_tests;
 #[cfg(test)]
 mod inbound_tests;
 
@@ -82,7 +86,7 @@ pub async fn reconcile_inbound_persona_event(
         Some(InboundRuntimeRefresh::Local { pubkey, relay_urls }) => {
             let state = app.state::<AppState>();
             for relay in &relay_urls {
-                super::super::agents::host_transfer::reconcile_host_agent(&app, &state, &pubkey, relay, true).await.map_err(|error| format!("Inbound agent access was saved, but host application remains unconfirmed: {error}"))?;
+                super::super::agents::headless_management::reconcile_host_agent(&app, &state, &pubkey, relay, true).await.map_err(|error| format!("Inbound agent access was saved, but host application remains unconfirmed: {error}"))?;
             }
         }
         Some(InboundRuntimeRefresh::Provider {
@@ -145,9 +149,9 @@ fn reconcile_inbound_persona_event_blocking(
     // cross-kind d-tag collision can never link a team to a persona or agent.
     let kind = event.kind.as_u16() as u32;
 
-    // kind:5 deletion: a tombstone removes the local record at the coordinate
-    // in its `a` tag (`<target_kind>:<owner>:<d_tag>`). Handled before the
-    // upsert dispatch because its coordinate and retention key differ.
+    // kind:5 deletion: coordinate targets retain their existing rules; an exact
+    // managed-agent e target resolves only through the current signed cache.
+    // Handle before upserts because deletion's retention key differs.
     if kind == KIND_DELETION {
         reconcile_inbound_tombstone(&event, &arrival_relay_url, &app, &state)?;
         return Ok(None);
@@ -384,21 +388,10 @@ fn reconcile_inbound_tombstone(
 ) -> Result<(), String> {
     use crate::managed_agents::{
         load_managed_agents, load_teams,
-        retention::{
-            open_retention_db, retain_inbound_event, tombstone_retention_d_tag, InboundOutcome,
-            RetainedEvent,
-        },
+        retention::{open_retention_db, InboundOutcome},
         save_managed_agents, save_teams,
     };
-    use beekeeper_core_pkg::kind::{KIND_DELETION, KIND_MANAGED_AGENT, KIND_PERSONA, KIND_TEAM};
-    use nostr::JsonUtil;
-
-    let Some((target_kind, target_d_tag)) = parse_deletion_coordinate(event) else {
-        return Ok(()); // no routable coordinate — nothing to delete
-    };
-    if !matches!(target_kind, KIND_PERSONA | KIND_TEAM | KIND_MANAGED_AGENT) {
-        return Ok(()); // deletion for a kind we don't track locally
-    }
+    use beekeeper_core_pkg::kind::{KIND_MANAGED_AGENT, KIND_PERSONA, KIND_TEAM};
 
     let _store_guard = state
         .managed_agents_store_lock
@@ -416,17 +409,24 @@ fn reconcile_inbound_tombstone(
         return Ok(());
     };
     let conn = open_retention_db(&scope.db_path)?;
-    let outcome = retain_inbound_event(
+    let Some((target_kind, target_d_tag)) = exact_managed_deletion::coordinate(&conn, event)?
+    else {
+        return Ok(()); // no verified current cached managed head for e-only input
+    };
+    if !matches!(target_kind, KIND_PERSONA | KIND_TEAM | KIND_MANAGED_AGENT) {
+        return Ok(());
+    }
+    let agents = if exact_managed_deletion::needs_head(event, target_kind) {
+        load_managed_agents(app)?
+    } else {
+        Vec::new()
+    };
+    let outcome = exact_managed_deletion::retain_tombstone(
         &conn,
-        &RetainedEvent {
-            kind: KIND_DELETION,
-            pubkey: event.pubkey.to_hex(),
-            d_tag: tombstone_retention_d_tag(target_kind, &target_d_tag),
-            content: event.content.to_string(),
-            created_at: event.created_at.as_secs() as i64,
-            raw_event: event.as_json(),
-            pending_sync: false,
-        },
+        event,
+        target_kind,
+        &target_d_tag,
+        &agents,
     )?;
     if outcome == InboundOutcome::Skipped {
         return Ok(());

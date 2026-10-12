@@ -8,9 +8,7 @@ use std::{
 use tauri::{AppHandle, Manager};
 
 use crate::app_state::keyring_service;
-use crate::managed_agents::{
-    ManagedAgentRecord, ManagedAgentRuntimeKey, ManagedAgentRuntimeReceipt,
-};
+use crate::managed_agents::{ManagedAgentRecord, ManagedAgentRuntimeKey};
 use crate::secret_store::{KeyringProbe, SecretStore};
 
 /// Keyring key name for an agent's nsec, namespaced from the human identity
@@ -739,33 +737,6 @@ fn open_install_log(path: &Path, truncate: bool) -> Result<File, String> {
     options
         .open(path)
         .map_err(|error| format!("failed to open log file {}: {error}", path.display()))
-}
-
-fn agent_pids_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = managed_agents_base_dir(app)?.join("agent-pids");
-    Ok(dir)
-}
-
-pub fn read_all_agent_runtime_receipts(
-    app: &AppHandle,
-) -> Vec<(PathBuf, ManagedAgentRuntimeReceipt)> {
-    let Ok(dir) = agent_pids_dir(app) else {
-        return Vec::new();
-    };
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
-        .filter_map(|entry| {
-            let path = entry.path();
-            let bytes = fs::read(&path).ok()?;
-            serde_json::from_slice(&bytes)
-                .ok()
-                .map(|receipt| (path, receipt))
-        })
-        .collect()
 }
 
 pub fn read_log_tail(path: &Path, max_lines: usize) -> Result<String, String> {

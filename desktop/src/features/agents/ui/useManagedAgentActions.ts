@@ -335,14 +335,14 @@ export function useManagedAgentActions() {
       });
       setActionNoticeMessage(
         updated.startOnAppLaunch
-          ? `Will start ${updated.name} automatically when the desktop app opens.`
-          : `${updated.name} will stay manual-start only.`,
+          ? `Host work enabled for ${updated.name}.`
+          : `Host work stopped for ${updated.name}.`,
       );
     } catch (error) {
       setActionErrorMessage(
         error instanceof Error
           ? error.message
-          : "Failed to update startup preference.",
+          : "Host lifecycle change remains unconfirmed.",
       );
     }
   }

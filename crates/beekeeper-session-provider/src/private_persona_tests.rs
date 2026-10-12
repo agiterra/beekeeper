@@ -15,7 +15,8 @@ fn fixture() -> (Keys, String, Event, Snapshot) {
     .unwrap();
     let current = EventBuilder::new(
         Kind::Custom(30177),
-        json!({"name":"Actor","persona_id":"private"}).to_string(),
+        json!({"name":"Actor","persona_id":"private","parallelism":1,"respond_to":"owner-only"})
+            .to_string(),
     )
     .tags([Tag::parse(["d", &actor]).unwrap()])
     .sign_with_keys(&owner)
@@ -72,6 +73,80 @@ fn signed_private_pin_is_exactly_bound_to_current_revision_and_replay_bytes() {
         &actor,
         "wss://fixture.example",
         &changed,
+        owner.public_key(),
+        "private"
+    )
+    .is_err());
+}
+#[test]
+fn relay_only_owner_rename_preserves_pin_but_other_definition_changes_refuse() {
+    let (owner, actor, bound, snapshot) = fixture();
+    let value = envelope(&actor, &bound, &snapshot);
+    let original = serde_json::to_vec(&value).unwrap();
+    let sign = |content: serde_json::Value, keys: &Keys| {
+        EventBuilder::new(bound.kind, content.to_string())
+            .tags(bound.tags.clone())
+            .custom_created_at(nostr::Timestamp::from(bound.created_at.as_secs() + 1))
+            .sign_with_keys(keys)
+            .unwrap()
+    };
+    let mut renamed: serde_json::Value = serde_json::from_str(&bound.content).unwrap();
+    renamed["name"] = json!("Owner's remote rename");
+    let current = sign(renamed.clone(), &owner);
+    let selected = from_envelope(
+        &value,
+        &actor,
+        "wss://fixture.example",
+        &current,
+        owner.public_key(),
+        "private",
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(selected.0, snapshot.event);
+    assert_eq!(serde_json::to_vec(&value).unwrap(), original);
+    for (field, changed) in [
+        ("persona_id", json!("another")),
+        ("persona_source_version", json!("new hash")),
+        ("model", json!("other model")),
+        ("provider", json!("other provider")),
+        ("runtime", json!("other runtime")),
+        ("respond_to", json!("anyone")),
+        ("project_ref", json!("foreign project")),
+        ("parallelism", json!(2)),
+        ("unknown_future_policy", json!(true)),
+    ] {
+        let mut changed_content = renamed.clone();
+        changed_content[field] = changed;
+        assert!(
+            from_envelope(
+                &value,
+                &actor,
+                "wss://fixture.example",
+                &sign(changed_content, &owner),
+                owner.public_key(),
+                "private"
+            )
+            .is_err(),
+            "{field}"
+        );
+    }
+    assert!(from_envelope(
+        &value,
+        &actor,
+        "wss://fixture.example",
+        &sign(renamed, &Keys::generate()),
+        owner.public_key(),
+        "private"
+    )
+    .is_err());
+    let mut tampered = current;
+    tampered.content.push(' ');
+    assert!(from_envelope(
+        &value,
+        &actor,
+        "wss://fixture.example",
+        &tampered,
         owner.public_key(),
         "private"
     )
@@ -164,4 +239,116 @@ fn absent_private_pin_preserves_existing_public_resolution_and_unknown_schema_re
         "private"
     )
     .is_err());
+}
+
+#[test]
+fn current_declared_persona_version_is_required_when_present_without_broadening_public_rules() {
+    let (owner, actor, _, snapshot) = fixture();
+    let head = |persona: &str, version: Option<&str>| {
+        EventBuilder::new(
+            Kind::Custom(30177),
+            json!({"name":"Actor","persona_id":persona,"persona_source_version":version,"parallelism":1,"respond_to":"owner-only"})
+                .to_string(),
+        )
+        .tags([Tag::parse(["d", &actor]).unwrap()])
+        .sign_with_keys(&owner)
+        .unwrap()
+    };
+    let matching = head("private", Some(&snapshot.source_hash));
+    assert!(from_envelope(
+        &envelope(&actor, &matching, &snapshot),
+        &actor,
+        "wss://fixture.example",
+        &matching,
+        owner.public_key(),
+        "private"
+    )
+    .unwrap()
+    .is_some());
+    let mismatching = head("private", Some("unreviewed-other-source"));
+    assert!(from_envelope(
+        &envelope(&actor, &mismatching, &snapshot),
+        &actor,
+        "wss://fixture.example",
+        &mismatching,
+        owner.public_key(),
+        "private"
+    )
+    .is_err());
+    let wrong_persona = head("other", None);
+    assert!(from_envelope(
+        &envelope(&actor, &wrong_persona, &snapshot),
+        &actor,
+        "wss://fixture.example",
+        &wrong_persona,
+        owner.public_key(),
+        "private"
+    )
+    .is_err());
+    // Existing public linked projection omits this field. Absence is supported,
+    // not a new universal persona/workflow version prerequisite.
+    let old = head("private", None);
+    assert!(from_envelope(
+        &envelope(&actor, &old, &snapshot),
+        &actor,
+        "wss://fixture.example",
+        &old,
+        owner.public_key(),
+        "private"
+    )
+    .unwrap()
+    .is_some());
+}
+
+#[test]
+fn duplicate_signed_coordinates_are_ambiguous_even_when_one_matches() {
+    let (owner, actor, current, mut snapshot) = fixture();
+    let good = snapshot.clone();
+    snapshot.event = EventBuilder::new(Kind::Custom(30175), snapshot.event.content.clone())
+        .tags([
+            Tag::parse(["d", "private"]).unwrap(),
+            Tag::parse(["d", "other"]).unwrap(),
+        ])
+        .sign_with_keys(&owner)
+        .unwrap();
+    assert!(validate(
+        &snapshot,
+        &actor,
+        "wss://fixture.example",
+        owner.public_key(),
+        "private"
+    )
+    .is_err());
+    let bad_head = EventBuilder::new(current.kind, current.content.clone())
+        .tags([
+            Tag::parse(["d", &actor]).unwrap(),
+            Tag::parse(["d", "other-actor"]).unwrap(),
+        ])
+        .sign_with_keys(&owner)
+        .unwrap();
+    assert!(from_envelope(
+        &envelope(&actor, &bad_head, &good),
+        &actor,
+        "wss://fixture.example",
+        &bad_head,
+        owner.public_key(),
+        "private"
+    )
+    .is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn protected_private_pin_file_refuses_world_readable_or_symlink_custody() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("configuration.json");
+    std::fs::write(&path, b"{}").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(super::super::protected(&path).is_err());
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(super::super::protected(&path).unwrap().is_some());
+    let link = dir.path().join("linked.json");
+    std::os::unix::fs::symlink(&path, &link).unwrap();
+    assert!(super::super::protected(&link).is_err());
 }

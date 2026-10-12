@@ -488,14 +488,14 @@ export function UserProfilePanel({
       });
       toast.success(
         updated.startOnAppLaunch
-          ? `Will start ${updated.name} automatically.`
-          : `${updated.name} will stay manual-start only.`,
+          ? `Host work enabled for ${updated.name}.`
+          : `Host work stopped for ${updated.name}.`,
       );
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to update startup preference.",
+          : "Host lifecycle change remains unconfirmed.",
       );
     }
   }, [managedAgent, startOnLaunchMutation.mutateAsync]);

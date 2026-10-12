@@ -55,6 +55,10 @@ pub(crate) fn install_default_agents(
     project_ref: &str,
     source: &packs_cache::ProjectPackSource,
 ) -> Result<Vec<InstalledDefaultAgent>, String> {
+    crate::commands::agents::headless_management::require_clean_setup(
+        app,
+        &crate::relay::relay_ws_url_with_override(state),
+    )?;
     let keys = state.signing_keys()?;
     let auth = crate::commands::project_git_exec::build_git_auth_config(state)?;
     let relay_http =
@@ -138,6 +142,8 @@ pub(crate) fn install_default_agents(
         .map_err(|_| "managed-agent storage lock is unavailable".to_string())?;
     let definitions = load_personas(app)?;
     let agents = load_managed_agents(app)?;
+    let prior_pubkeys: std::collections::HashSet<_> =
+        agents.iter().map(|r| r.pubkey.clone()).collect();
     let teams = load_teams(app)?;
     let team_name = project_team_name(project_ref);
     let team_id = teams
@@ -170,6 +176,17 @@ pub(crate) fn install_default_agents(
     let global = crate::managed_agents::load_global_agent_config(app)?;
     crew_roles::pin_default_runtime(&mut result, global.preferred_runtime.as_deref());
     association::associate_installation(&mut result.agents, project_ref, &result.installed)?;
+    let fresh_relay = crate::relay::relay_ws_url_with_override(state);
+    for row in &result.agents {
+        if !prior_pubkeys.contains(&row.pubkey) && !row.pubkey.is_empty() {
+            crate::commands::agents::headless_management::reserve_fresh_host_agent(
+                app,
+                row,
+                &fresh_relay,
+                false,
+            )?;
+        }
+    }
     save_personas(app, &result.definitions)?;
     save_managed_agents(app, &result.agents)?;
     association::retain_installed_agents(app, state, &result.agents, &result.installed);

@@ -3086,6 +3086,11 @@ fn management_transport_error(error: CliError) -> beekeeper_agent_management::Er
         CliError::Conflict(v) => Error::Conflict(v),
         CliError::Refused(v) => Error::Refused(v),
         CliError::NotFound(v) => Error::NotFound(v),
+        CliError::Relay { status, body } => Error::Relay { status, body },
         other => Error::Other(other.to_string()),
     }
 }
+
+#[cfg(test)]
+#[path = "client_management_status_tests.rs"]
+mod management_status_tests;

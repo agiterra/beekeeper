@@ -20,6 +20,20 @@ const local = {
 let client;
 let observedRelay = "ws://localhost:3037/";
 let observedPhase = "adopted";
+function hostStatus(phase) {
+  if (phase !== "adopted" && phase !== "hostStopped" && phase !== null)
+    return undefined;
+  return {
+    relayUrl: local.relayUrl,
+    revision: null,
+    revisionAvailable: false,
+    commissioned: true,
+    ownershipPhase: phase,
+    legacyRecreationRequired: phase === null,
+    legacyConflict: null,
+    runtimeAvailable: null,
+  };
+}
 function wrapper({ children }) {
   return React.createElement(QueryClientProvider, { client }, children);
 }
@@ -34,7 +48,7 @@ before(() => {
   });
   dom.window.__TAURI_INTERNALS__ = {
     invoke: async (command, args) => {
-      if (command === "get_managed_agent_host_transfer") {
+      if (command === "get_managed_agent_host_status") {
         assert.equal(
           args.localOnly,
           true,
@@ -42,11 +56,13 @@ before(() => {
         );
         return {
           relayUrl: observedRelay,
-          revision: "",
-          transfer:
-            observedPhase === null
-              ? null
-              : { phase: observedPhase, operationId: "verified-operation" },
+          revision: null,
+          revisionAvailable: false,
+          commissioned: true,
+          ownershipPhase: observedPhase,
+          legacyRecreationRequired: observedPhase === null,
+          legacyConflict: null,
+          runtimeAvailable: null,
         };
       }
       if (command === "list_managed_agent_runtimes")
@@ -140,7 +156,7 @@ test("empty relay without established matching community cannot borrow the adopt
   await waitFor(() =>
     assert.equal(
       client.getQueryState([
-        "managed-agent-host-transfer",
+        "managed-agent-host-status",
         actor,
         "local",
         "ws://another-relay",
@@ -152,7 +168,7 @@ test("empty relay without established matching community cannot borrow the adopt
   assert.equal(result.current.canRestart, false);
 });
 
-test("unpublished or offline legacy profile retains local controls from local-only ownership", async () => {
+test("previous desktop profile requires recreation without starting legacy work", async () => {
   observedPhase = null;
   const React = await import("react");
   const { renderHook, waitFor } = await import("@testing-library/react");
@@ -164,9 +180,9 @@ test("unpublished or offline legacy profile retains local controls from local-on
     wrapper: ({ children }) =>
       React.createElement(QueryClientProvider, { client }, children),
   });
-  await waitFor(() => assert.equal(result.current.action, "start"));
-  assert.equal(result.current.label, "Start agent");
-  assert.equal(result.current.statusText, null);
+  await waitFor(() => assert.match(result.current.label, /Recreate/));
+  assert.equal(result.current.action, null);
+  assert.match(result.current.statusText, /retained for reference/);
 });
 
 test("a different active community cannot supply adopted ownership for this profile", async () => {
@@ -184,7 +200,7 @@ test("a different active community cannot supply adopted ownership for this prof
   await waitFor(() =>
     assert.equal(
       client.getQueryState([
-        "managed-agent-host-transfer",
+        "managed-agent-host-status",
         actor,
         "local",
         local.relayUrl,
@@ -194,7 +210,7 @@ test("a different active community cannot supply adopted ownership for this prof
   );
   assert.equal(result.current.action, null);
   assert.equal(result.current.canRestart, false);
-  assert.match(result.current.statusText, /Ownership unconfirmed/);
+  assert.match(result.current.statusText, /Refresh host status/);
 });
 
 test("canonical profile observation overrides stopped local record and ignores another relay's Ready", async () => {
@@ -219,31 +235,34 @@ test("canonical profile observation overrides stopped local record and ignores a
   observedPhase = "hostStopped";
   await act(async () =>
     client.invalidateQueries({
-      queryKey: ["managed-agent-host-transfer", actor, "local", local.relayUrl],
+      queryKey: ["managed-agent-host-status", actor, "local", local.relayUrl],
     }),
   );
   await waitFor(() => assert.equal(result.current.action, "start"));
   assert.equal(result.current.label, "Start new host context");
 });
 
-test("profile controls fail closed through transitions and preserve restored legacy rules", () => {
-  for (const phase of [undefined, "prepared", "quiesced", "restoring"]) {
-    const observed = profileAgentControl(local, phase);
-    assert.equal(observed.action, null, String(phase));
-    assert.equal(observed.canRestart, false, String(phase));
-    assert.doesNotMatch(observed.statusText, /^Stopped$|Ready/);
+test("modern local controls fail closed without ownership and retained old records never launch", () => {
+  for (const value of [undefined, hostStatus(null)]) {
+    const observed = profileAgentControl(local, value);
+    assert.equal(observed.action, null);
+    assert.equal(observed.canRestart, false);
   }
-  assert.equal(profileAgentControl(local, "hostStopped").action, "start");
-  assert.match(
-    profileAgentControl(local, "hostStopped").label,
-    /new host context/,
-  );
-  assert.equal(profileAgentControl(local, "legacyRestored").action, "start");
-  assert.equal(profileAgentControl(local, "legacyRestored").statusText, null);
   assert.equal(
-    profileAgentControl({ ...local, status: "running" }, "legacyRestored")
+    profileAgentControl(local, hostStatus("hostStopped")).action,
+    "start",
+  );
+  assert.equal(
+    profileAgentControl({ ...local, status: "running" }, hostStatus(null))
       .action,
-    "stop",
+    null,
+  );
+  assert.equal(
+    profileAgentControl(
+      { ...local, backend: { type: "provider", id: "remote", config: {} } },
+      undefined,
+    ).action,
+    "start",
   );
 });
 
@@ -258,7 +277,7 @@ test("adopted profile primary action stops and restart uses shared stop-start de
     () =>
       useAgentLifecycleActions({
         managedAgent: local,
-        control: profileAgentControl(local, "adopted"),
+        control: profileAgentControl(local, hostStatus("adopted")),
         channels: [],
         relayAgents: [],
         stopManagedAgent: async () => events.push("stop"),
@@ -293,7 +312,7 @@ test("transition controls dispatch nothing and failed host stop prevents restart
     ({ phase }) =>
       useAgentLifecycleActions({
         ...options,
-        control: profileAgentControl(local, phase),
+        control: profileAgentControl(local, hostStatus(phase)),
       }),
     { initialProps: { phase: "restoring" }, wrapper },
   );
@@ -305,4 +324,23 @@ test("transition controls dispatch nothing and failed host stop prevents restart
   rerender({ phase: "adopted" });
   await act(async () => result.current.handleAgentRestart());
   assert.deepEqual(events, ["stop"]);
+});
+
+test("adopted ownership does not override observed runtime availability", () => {
+  const known = profileAgentControl(
+    local,
+    {
+      ...hostStatus("adopted"),
+      runtimeAvailable: true,
+    },
+    { lifecycle: "host_managed", error: "Runtime availability is unconfirmed" },
+  );
+  assert.match(known.statusText, /availability observed/);
+  assert.doesNotMatch(known.statusText, /unconfirmed|Ready|Idle/);
+  for (const runtimeAvailable of [null, false])
+    assert.match(
+      profileAgentControl(local, { ...hostStatus("adopted"), runtimeAvailable })
+        .statusText,
+      /unconfirmed/,
+    );
 });

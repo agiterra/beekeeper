@@ -866,7 +866,7 @@ pub async fn team_readiness(
         ProjectPackSourceProbe::NotProbed
     };
     let active_agents =
-        crate::commands::agents::host_transfer::active_host_agent_pubkeys(&app, &state).await;
+        crate::commands::agents::headless_management::active_host_agent_pubkeys(&app, &state).await;
     let active_error = active_agents.as_ref().err().cloned();
     let local_app = app.clone();
     let local_project_ref = project_ref.clone();

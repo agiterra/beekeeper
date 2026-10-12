@@ -1,5 +1,6 @@
 //! Protected client deletion retry receipt and cleanup custody.
 use super::*;
+use beekeeper_host_core::custody_backup::{self, BackupFile, BackupScope};
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DeleteIntent {
@@ -76,7 +77,7 @@ pub(crate) async fn deletion_intent(
         .ok_or("delete source attestation unavailable; custody retained")?;
     let ctx = context()?;
     let _lock = ownership::management_lock(&ctx.home, ctx.instance)?;
-    migration_backup::capture(
+    custody_backup::capture(
         &pair_directory(&record.pubkey, relay)?.join("backup-delete"),
         BackupScope {
             actor_pubkey: record.pubkey.clone(),
@@ -104,7 +105,7 @@ pub(crate) async fn deletion_intent(
 /// Shared delete is retried before any Keychain cleanup; this grants no execution.
 pub(crate) fn deletion_source(actor: &str, relay: &str) -> Result<ManagedAgentRecord, String> {
     let directory = pair_directory(actor, relay)?.join("backup-delete");
-    let manifest = migration_backup::verify(&directory)?;
+    let manifest = custody_backup::verify(&directory)?;
     if manifest.scope.actor_pubkey != actor
         || beekeeper_host_core::record::canonical_relay_key(&manifest.scope.relay_url)
             != beekeeper_host_core::record::canonical_relay_key(relay)

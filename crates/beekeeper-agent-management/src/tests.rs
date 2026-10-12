@@ -249,59 +249,6 @@ fn signed_profile_uses_actor_transport_and_management_uses_owner_transport() {
 }
 
 #[test]
-fn adoption_preserves_scoped_identity_and_refuses_another_owner_or_public_key_file() {
-    let dir = tempfile::tempdir().expect("custody");
-    let owner = Keys::generate();
-    let actor = provision::mint_agent_identity(&owner).expect("actor");
-    let key_path = dir.path().join("key");
-    let auth_path = dir.path().join("auth.json");
-    atomic_write::atomic_write_json_restricted(&key_path, actor.private_key_nsec.as_bytes())
-        .expect("key");
-    atomic_write::atomic_write_json_restricted(&auth_path, actor.auth_tag.as_bytes())
-        .expect("auth");
-    let args = CreateRequest {
-        operation_id: Uuid::new_v4(),
-        channel: Uuid::new_v4(),
-        display_name: "Worker".into(),
-        system_prompt: "Review changes".into(),
-        home: Some(dir.path().into()),
-        cwd: dir.path().into(),
-        project: None,
-        model: None,
-        provider_instance: None,
-        agent_pubkey: None,
-        adopt_agent_pubkey: Some(actor.pubkey.clone()),
-        key_file: Some(key_path.clone()),
-        auth_tag_file: Some(auth_path),
-        wait_secs: 1,
-        activate: true,
-        ..Default::default()
-    };
-    let adopted =
-        existing_identity(&args, &owner.public_key().to_hex(), &actor.pubkey).expect("adopt");
-    assert_eq!(adopted.pubkey, actor.pubkey);
-    assert_eq!(adopted.private_key_nsec, actor.private_key_nsec);
-    assert!(existing_identity(
-        &args,
-        &Keys::generate().public_key().to_hex(),
-        &actor.pubkey
-    )
-    .is_err());
-    assert!(existing_identity(
-        &args,
-        &owner.public_key().to_hex(),
-        &Keys::generate().public_key().to_hex()
-    )
-    .is_err());
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o644)).expect("mode");
-        assert!(existing_identity(&args, &owner.public_key().to_hex(), &actor.pubkey).is_err());
-    }
-}
-
-#[test]
 fn operation_retry_keeps_exact_events_and_reused_id_conflicts() {
     let dir = tempfile::tempdir().expect("home");
     let path = dir.path().join("operation.json");
@@ -316,6 +263,7 @@ fn operation_retry_keeps_exact_events_and_reused_id_conflicts() {
         target: None,
         receipt_event_id: None,
         predecessor: None,
+        custody_handoff: None,
     };
     save(&path, &operation).expect("reserve");
     let retried = read_operation(&path, &operation.request)

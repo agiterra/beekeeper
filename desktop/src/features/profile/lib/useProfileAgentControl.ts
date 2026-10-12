@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
-import { managedAgentHostTransferQueryKey } from "@/features/agents/hooks";
+import { managedAgentHostStatusQueryKey } from "@/features/agents/hooks";
 import { useManagedAgentRuntimesQuery } from "@/features/agents/managedAgentRuntimeHooks";
 import { canonicalRelayUrl } from "@/features/agents/managedAgentRuntimeStatus";
 import { useCommunitiesIfPresent } from "@/features/communities/useCommunities";
@@ -8,11 +8,11 @@ import {
   loadActiveCommunityId,
   loadCommunities,
 } from "@/features/communities/communityStorage";
-import { getManagedAgentHostTransfer } from "@/shared/api/tauriManagedAgents";
+import { getManagedAgentHostStatus } from "@/shared/api/tauriManagedAgents";
 import type { ManagedAgent } from "@/shared/api/types";
 import { profileAgentControl } from "./profileAgentControl";
 
-/** Observe the existing pair and transfer journal for profile presentation. */
+/** Observe canonical host status for the selected pair, without claiming readiness. */
 export function useProfileAgentControl(
   agent: ManagedAgent | undefined,
   pending: boolean,
@@ -30,14 +30,14 @@ export function useProfileAgentControl(
   const enabled = agent?.backend.type === "local";
   const ownership = useQuery({
     queryKey: [
-      ...managedAgentHostTransferQueryKey(agent?.pubkey ?? ""),
+      ...managedAgentHostStatusQueryKey(agent?.pubkey ?? ""),
       "local",
       pairRelay,
     ],
-    // Local ownership remains observable for unpublished/offline legacy agents;
+    // Local ownership remains observable while the relay is offline;
     // this response does not certify a current desired relay revision.
     queryFn: () =>
-      getManagedAgentHostTransfer(agent?.pubkey ?? "", { localOnly: true }),
+      getManagedAgentHostStatus(agent?.pubkey ?? "", { localOnly: true }),
     enabled,
     refetchInterval: enabled ? 3000 : false,
   });
@@ -50,16 +50,16 @@ export function useProfileAgentControl(
     void refreshRuntimes();
   }, [enabled, pending, refreshOwnership, refreshRuntimes]);
   useEffect(() => {
-    if (!ownership.data?.transfer) return;
+    if (!ownership.data?.ownershipPhase) return;
     void refreshRuntimes();
   }, [ownership.data, refreshRuntimes]);
   const sameCommunity =
     pairRelay !== null &&
     canonicalRelayUrl(ownership.data?.relayUrl ?? "") === pairRelay;
-  const phase =
+  const status =
     ownership.isError || ownership.isPending || !sameCommunity
       ? undefined
-      : (ownership.data?.transfer?.phase ?? null);
+      : ownership.data;
   const runtime = runtimes.data?.find(
     (row) =>
       row.pubkey === agent?.pubkey &&
@@ -67,7 +67,7 @@ export function useProfileAgentControl(
       canonicalRelayUrl(row.relayUrl) === pairRelay,
   );
   return useMemo(
-    () => (agent ? profileAgentControl(agent, phase, runtime) : undefined),
-    [agent, phase, runtime],
+    () => (agent ? profileAgentControl(agent, status, runtime) : undefined),
+    [agent, status, runtime],
   );
 }

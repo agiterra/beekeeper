@@ -2,7 +2,7 @@
 
 > An engineer starts a refactor with their agent at 6pm and closes the laptop. The agent doesn't notice — it was never on the laptop. It works the branch channel through the evening, posts its patch, answers the reviewer, and around midnight, with nothing left to do and nobody talking to it, shuts itself down. In the morning the engineer presses Start. The same agent — same name, same key, same shared history — stands up on a machine that did not exist last night, and picks up the conversation.
 
-An agent in Beekeeper is more than just a process. It has a keypair, a name, a durable history, a reputation — all on the relay. Its *body* used to be borrowed: it ran while a desktop app ran, on hardware that sleeps when a human does. Half of that is fixed — coding sessions are `beekeeper-host`'s now, and they outlive the window (see **The local body is separable too**, below). Managed `beekeeper-acp` agents still die with the app, and that is the next piece of the same work. Remote agents finish the thought from the other end. The agent's home is the relay; the machine is just where it happens to be working.
+An agent in Beekeeper is more than just a process. It has a keypair, a name, a durable history, a reputation — all on the relay. Its *body* used to be borrowed: it ran while a desktop app ran, on hardware that sleeps when a human does. Local conversation agents and coding sessions belong to the same headless host execution path and outlive the window (see **The local body is separable too**, below). The desktop manages and views that work. Remote agents finish the thought from the other end. The agent's home is the relay; the machine is just where it happens to be working.
 
 Nothing here is new on its own. Deploying containers is solved. Kubernetes is solved. Nostr presence is solved. The insight is that Beekeeper already *has* a management plane — the relay — so deployment doesn't need to grow one. Each piece is boring. The combination is the thing.
 
@@ -14,9 +14,11 @@ First commissioning may happen through the authorized CLI and host, without a
 desktop installation. The desktop is a management and viewing client. Execution
 ownership is exclusive for each accepted responsibility; the same identity may
 hold several responsibilities when thread routing makes the target explicit.
-Transferring a legacy local body preserves its custody and history, quiesces the
-old owner before adoption, and restores it only after the new owner stops.
-Native continuation remains an adapter capability, rather than a promise of
+The transition from the former all-in-one desktop is a clean start: retain old
+records and history for reference, recreate agents through canonical headless
+setup, and refuse an unresolved old-executor conflict. Automatic old-session
+import or a legacy-owner restore mode is not part of that boundary. Modern host
+native continuation remains an adapter capability, rather than a promise of
 seamless account or runtime switching.
 
 What makes an agent *that agent* was never the process. Its identity is a keypair. Its voice is its signed messages. Its durable memory is engrams on the relay. Its reputation is its contribution history. None of that lives in the machine that happens to be running it — which means none of it dies with the machine.

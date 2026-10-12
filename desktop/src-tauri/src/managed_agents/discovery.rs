@@ -17,6 +17,8 @@ mod presets;
 pub(crate) use adapter_availability::availability_drift;
 pub(crate) use adapter_availability::cache_adapter_availability;
 use adapter_availability::clear_adapter_availability_cache;
+#[cfg(test)]
+pub(crate) use presets::canonical_harness_command;
 pub(super) mod renamed_commands;
 use renamed_commands::resolve_with_renamed_fallback;
 mod runtime_metadata;
@@ -25,11 +27,10 @@ mod windows_install;
 pub(crate) use auth_preflight::{
     run_runtime_auth_preflight, AuthPreflightState, AuthPreflightVerdict,
 };
-pub(crate) use presets::{
-    canonical_harness_command, command_for_runtime_id, preset_harness_definitions,
-    preset_harness_ids,
-};
+#[cfg(test)]
+pub(crate) use presets::command_for_runtime_id;
 use presets::{preset_catalog_entry, PRESET_HARNESSES};
+pub(crate) use presets::{preset_harness_definitions, preset_harness_ids};
 pub(crate) use runtime_metadata::KnownAcpRuntime;
 
 const GOOSE_AVATAR_URL: &str = "https://goose-docs.ai/img/logo_dark.png";

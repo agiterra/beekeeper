@@ -2,22 +2,17 @@
 //!
 //! # Why this file exists
 //!
-//! A seated execution's key material is one-shot host-local custody: the
-//! desktop writes an entry into the actor-seats file keyed by the *command id*
-//! that mints a generation, and the provider consumes it at spawn
-//! ([`crate::actor_seats`]). That channel has exactly one trigger — a
-//! lifecycle command being published — and a provider restart is not one.
-//! After a restart the provider wants to reopen the generations it already
-//! owns *in place* ([`crate::native_restore`]), and for a seated generation
-//! that needs the same seat's key again, under the same command id, with no
-//! new command anywhere on the wire.
+//! Native reattachment needs the same scoped identity and role/pack custody
+//! as the accepted generation. One-shot role-seat staging alone cannot prove
+//! that custody will be available after a restart. This secret-free file names
+//! recovery requests; it is not an execution queue or a second key store.
 //!
-//! So the provider states the need instead of guessing at it: one row per open
-//! seated generation, rewritten whenever that set changes, in
-//! `seat-requests.json` beside `state.json`. The desktop reads it after every
-//! provider spawn and re-stages the custody that is missing
-//! (`docs/CI_CONTINUATION_RECOVERY_SPEC.md` §3). The provider never reads it
-//! back — its own truth is `state.json`.
+//! The provider's publication path excludes modern routed actors whose
+//! existing `conversation_actor_seat` adapter can already load matching
+//! protected custody. Missing/invalid custody and role seats remain requests.
+//! A row never implies that opening a desktop is necessary or that a currently
+//! attached runtime is unavailable. The provider itself restores from its
+//! existing state/custody adapters rather than consuming this observation.
 //!
 //! # What it may contain
 //!
@@ -51,7 +46,7 @@ pub const SEAT_REQUESTS_VERSION: u32 = 1;
 /// One open seated generation whose custody may need re-staging.
 ///
 /// The key is [`Self::command_id`]: it is the command id the *current*
-/// generation was minted by, which is the exact key the desktop files custody
+/// generation was minted by, which is the exact key the custody adapter files identity
 /// under and the exact key [`crate::native_restore`] reads it back from. For a
 /// generation that has never been resumed that is the create's own command id;
 /// after a resume it is the resume's.
@@ -177,6 +172,7 @@ fn is_fenced(record: &SessionRecord, provider_pubkey: &str) -> bool {
 }
 
 /// Every row `records` implies, in the order the records are given.
+/// The provider supplies only records not fulfilled by its durable custody adapter.
 ///
 /// `provider_pubkey` is this provider's authority pubkey — the body a claim
 /// either names or does not.
@@ -195,7 +191,7 @@ where
 ///
 /// A full rewrite rather than an append: the file's whole meaning is "these
 /// and only these generations still need custody", and a stale row would ask
-/// the desktop to stage a key for a generation that has been stopped. An empty
+/// the custody adapter to stage a key for a generation that has been stopped. An empty
 /// set writes an empty `requests` array rather than deleting the file, so a
 /// reader can tell "the provider says nothing is seated" from "the provider
 /// has not written yet".

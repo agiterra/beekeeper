@@ -226,11 +226,10 @@ pub(crate) async fn provider_status(
         }
     }
 
-    // And re-stage any agent seats the live child is waiting on. The app's
-    // supervisor used to do this at spawn time; the status poll is where it
-    // belongs now that the app does not spawn anything. Fire-and-forget: a
-    // status call must answer quickly and must not fail because a re-stage
-    // did.
+    // Serve only explicit role-seat custody requests for this exact provider
+    // generation. Canonical fresh managed custody is already persisted on the
+    // host and recovers headlessly; this fallback performs no execution or
+    // lifecycle control. Fire-and-forget so pending custody cannot block status.
     match (status.live_pid(), provider_state_dir_from(&status)) {
         (Some(pid), Some(state_dir)) => {
             crate::agent_host::seat_restage::restage_if_needed(app, &state_dir, Some(pid))

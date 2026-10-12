@@ -10,11 +10,7 @@ export type AgentCommunityAvailability =
 export function agentCommunityAvailability(
   runtime: ManagedAgentRuntimeStatus,
 ): AgentCommunityAvailability {
-  if (
-    runtime.lifecycle === "host_managed" ||
-    runtime.error?.startsWith("Legacy execution quiesced;")
-  )
-    return "Unavailable";
+  if (runtime.lifecycle === "host_managed") return "Unavailable";
   if (!runtime.localSetup) return "Needs setup on this device";
 
   switch (runtime.lifecycle) {
@@ -38,8 +34,7 @@ export function agentCommunityStatusDetail(
       runtime.error ??
       "Managed by the host. Inspect its work through relay session status."
     );
-  if (runtime.error?.startsWith("Legacy execution quiesced;"))
-    return runtime.error;
+  if (runtime.lifecycle === "failed" && runtime.error) return runtime.error;
   if (!runtime.localSetup)
     return "Set up this agent on this device to start it.";
   if (runtime.lifecycle === "stopped") return "Stopped by you";

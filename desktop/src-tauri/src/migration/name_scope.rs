@@ -58,7 +58,6 @@ pub(crate) struct NameScopeOutcome {
 /// so the definition rows renamed in step are already in the unified store, and
 /// after `strip_baked_team_instructions` / `refresh_builtin_agent_avatars` so
 /// their own content-hash repins have settled and the hashes captured here are
-/// the final pre-rename ones. BEFORE `backfill_standalone_agents`, so a
 /// manufactured definition never snapshots a name this is about to change.
 pub fn scope_agent_names_to_projects(app: &tauri::AppHandle) {
     let Ok(base_dir) = crate::managed_agents::managed_agents_base_dir(app) else {

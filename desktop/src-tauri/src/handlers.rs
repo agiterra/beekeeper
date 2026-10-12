@@ -253,7 +253,7 @@ pub(crate) fn invoke_handler(
         managed_agents::project_team_setup::publication::activation::project_team_setup_start_lead,
         managed_agents::actor_seats::clear_coding_session_actor_seat,
         start_managed_agent,
-        get_managed_agent_host_transfer,
+        get_managed_agent_host_status,
         stop_managed_agent,
         restart_managed_agent,
         set_agent_managed_profiles,

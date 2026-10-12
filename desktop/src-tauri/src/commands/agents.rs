@@ -201,6 +201,13 @@ pub async fn create_managed_agent(
         );
     }
 
+    let creation_relay = crate::relay::effective_agent_relay_url(
+        input.relay_url.as_deref().unwrap_or(""),
+        &crate::relay::relay_ws_url_with_override(&state),
+    );
+    if input.backend == BackendKind::Local {
+        headless_management::require_clean_setup(&app, &creation_relay)?;
+    }
     // ── Phase 1: mint the identity (sync lock) ───────────────────────────────
     // Keys and the NIP-OA auth tag come from the one shared minting path
     // (`mint_agent_identity`), so a crew-role install and a hand-made agent
@@ -486,6 +493,14 @@ pub async fn create_managed_agent(
             },
         };
 
+        if record.backend == BackendKind::Local {
+            headless_management::reserve_fresh_host_agent(
+                &app,
+                &record,
+                &creation_relay,
+                input.spawn_after_create,
+            )?;
+        }
         records.push(record);
 
         save_managed_agents(&app, &records)?;
@@ -505,11 +520,11 @@ pub async fn create_managed_agent(
     // client custody/cache; it never grants desktop execution ownership.
     let mut spawn_error = None;
     if input.backend == BackendKind::Local {
-        if let Err(error) = host_transfer::enroll_new_host_agent(
+        if let Err(error) = headless_management::enroll_new_host_agent(
             &app,
             &state,
             &pubkey,
-            &resolved_relay_url,
+            &creation_relay,
             input.spawn_after_create,
         )
         .await
@@ -612,7 +627,7 @@ pub async fn stop_managed_agent(
     use tauri::Manager;
     let state = app.state::<AppState>();
     let relay = relay_ws_url_with_override(&state);
-    host_transfer::stop_host_pair(&app, &pubkey, &relay).await?;
+    headless_management::stop_host_pair(&app, &pubkey, &relay).await?;
     let records = load_managed_agents(&app)?;
     let record = records
         .iter()
@@ -637,7 +652,7 @@ pub async fn delete_managed_agent(
     let cleanup_retry = cached.is_none();
     let expected = match cached {
         Some(record) => record,
-        None => host_transfer::deletion_source(&pubkey, &active_relay)?,
+        None => headless_management::deletion_source(&pubkey, &active_relay)?,
     };
     if expected.backend != BackendKind::Local
         && expected.backend_agent_id.is_some()
@@ -651,7 +666,7 @@ pub async fn delete_managed_agent(
         &expected.relay_url,
         &relay_ws_url_with_override(&state),
     );
-    host_transfer::delete_host_agent_snapshot(&app, &state, &expected, &relay).await?;
+    headless_management::delete_host_agent_snapshot(&app, &state, &expected, &relay).await?;
     if cleanup_retry {
         purge::purge_managed_agent_side_effects(
             &app,
@@ -692,8 +707,8 @@ pub(crate) use purge::purge_managed_agent_side_effects;
 
 #[path = "agents_deploy.rs"]
 mod deploy;
+pub(crate) mod headless_management;
 mod headless_transport;
-pub(crate) mod host_transfer;
 mod mint;
 pub(super) mod provider_access;
 mod provider_deploy;
@@ -703,7 +718,7 @@ pub(super) use deploy::build_deploy_payload;
 use deploy::{deploy_payload_json, DeployProjections};
 #[cfg(test)]
 use deploy::{ensure_remote_provider_supported, resolve_deploy_model_provider};
-pub use host_transfer::get_managed_agent_host_transfer;
+pub use headless_management::get_managed_agent_host_status;
 pub(crate) use mint::mint_agent_identity;
 pub use start::start_managed_agent;
 

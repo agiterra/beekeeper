@@ -8,7 +8,9 @@ use std::collections::BTreeMap;
 use beekeeper_core_pkg::kind::{event_is_shared, KIND_PERSONA};
 use nostr::{EventBuilder, Kind, Tag};
 
-use super::{AgentDefinition, ManagedAgentRecord};
+use super::AgentDefinition;
+#[cfg(test)]
+use super::ManagedAgentRecord;
 use crate::app_state::AppState;
 
 // Canonical wire body shared with headless consumers; field order and serde
@@ -430,6 +432,7 @@ pub struct PersonaSnapshot {
     /// `None`). Applied on the same terms as `model`/`provider`: a named
     /// runtime propagates to the instance on the next spawn, a blank one
     /// leaves the host's choice standing. See [`apply_persona_snapshot`].
+    #[cfg(test)]
     pub runtime: Option<String>,
     /// `persona_content_hash` of the persona at snapshot time; the drift basis.
     pub source_version: String,
@@ -446,6 +449,7 @@ pub fn persona_snapshot(persona: &AgentDefinition) -> PersonaSnapshot {
         system_prompt: Some(persona.system_prompt.clone()),
         model: persona.model.clone(),
         provider: persona.provider.clone(),
+        #[cfg(test)]
         runtime: persona.runtime.clone(),
         source_version: persona_content_hash(&persona_event_content(persona)),
     }
@@ -456,6 +460,7 @@ pub fn persona_snapshot(persona: &AgentDefinition) -> PersonaSnapshot {
 /// one leaves the record's value alone.
 ///
 /// The asymmetry is the whole point — see [`apply_persona_snapshot`].
+#[cfg(test)]
 fn apply_definition_value(slot: &mut Option<String>, value: Option<String>) {
     let Some(value) = value else {
         return;
@@ -500,6 +505,7 @@ fn apply_definition_value(slot: &mut Option<String>, value: Option<String>) {
 /// Deliberately does NOT touch `updated_at`: persistence stamps are the
 /// caller's concern, and the prospective snapshot (which applies this to a
 /// clone) must stay pure.
+#[cfg(test)]
 pub fn apply_persona_snapshot(record: &mut ManagedAgentRecord, persona: &AgentDefinition) {
     let snapshot = persona_snapshot(persona);
     if let Some(prompt) = snapshot.system_prompt {

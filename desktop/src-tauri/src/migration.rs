@@ -151,17 +151,12 @@ fn run_boot_migrations_inner(app: &tauri::AppHandle, reset_completed: bool) {
     pollen::migrate_pollen_agent_name(app);
     // Clean the legacy baked team-instructions suffix out of stored prompts
     // AFTER the fold (so definitions lifted out of personas.json are cleaned in
-    // the same boot) and BEFORE backfill_standalone_agents (so a manufactured
     // definition never snapshots a suffix this strips).
     strip_baked_team_instructions(app);
     refresh_builtin_agent_avatars(app);
     // Names became unique per project (ledger 246); ordering rationale is on
-    // the function. After the fold, before `backfill_standalone_agents`.
     scope_agent_names_to_projects(app);
-    // B5: manufacture definitions for standalone agents AFTER the fold (so
-    // pre-existing definition slugs exist for collision checks) and before event
-    // sync republishes — the backfilled link flips the 30177 projection.
-    backfill_standalone_agents(app);
+
     // Repair dropped team↔member links, then detach directory-backed teams,
     // gated on a clean repair so a failure preserves `source_dir` for a retry.
     team_membership::repair_then_detach_teams(app);
@@ -991,8 +986,7 @@ pub use materialize::materialize_agent_runtimes;
 mod fold;
 pub use fold::fold_personas_into_agent_store;
 use fold::load_persona_runtimes;
-mod backfill;
-pub use backfill::backfill_standalone_agents;
+
 mod builtin_avatars;
 mod detach;
 use builtin_avatars::refresh_builtin_agent_avatars;

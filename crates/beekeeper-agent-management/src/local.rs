@@ -14,6 +14,135 @@ pub(crate) struct Operation {
     pub(crate) receipt_event_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) predecessor: Option<beekeeper_host_core::ownership::Transfer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) custody_handoff: Option<ReservedCustody>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ReservedCustody {
+    pub(crate) key: String,
+    pub(crate) auth_tag: String,
+}
+
+/// Finish only the still-unpublished scoped identity reservation. The handoff
+/// is removed durably before any relay publication, not retained as a keystore.
+pub(crate) fn finish_reserved_custody(
+    state: &Path,
+    path: &Path,
+    operation: &mut Operation,
+    owner: &str,
+) -> Result<(String, String), CliError> {
+    if let Some(handoff) = operation.custody_handoff.as_ref() {
+        if operation.target.is_some() || operation.receipt_event_id.is_some() {
+            return Err(CliError::Refused(
+                "completed operation cannot restore deleted custody".into(),
+            ));
+        }
+        let keys = Keys::parse(&handoff.key).map_err(|_| fail("reserved actor key is invalid"))?;
+        if keys.public_key().to_hex() != operation.actor_pubkey
+            || keys.public_key().to_hex() == owner
+            || operation.request.get("owner").and_then(Value::as_str) != Some(owner)
+        {
+            return Err(CliError::Auth(
+                "reserved scoped identity does not match operation owner/actor".into(),
+            ));
+        }
+        let attester =
+            beekeeper_sdk::nip_oa::verify_auth_tag(&handoff.auth_tag, &keys.public_key())
+                .map_err(|_| CliError::Auth("reserved scoped attestation invalid".into()))?;
+        if attester.to_hex() != owner {
+            return Err(CliError::Auth(
+                "reserved identity is attested by another owner".into(),
+            ));
+        }
+        let auth: Vec<String> = serde_json::from_str(&handoff.auth_tag)
+            .map_err(|_| fail("reserved attestation malformed"))?;
+        if !operation.events.iter().any(|event| {
+            event.kind.as_u16() == 30177
+                && event.pubkey.to_hex() == owner
+                && event.verify().is_ok()
+                && event
+                    .tags
+                    .iter()
+                    .any(|tag| tag.as_slice() == ["d", operation.actor_pubkey.as_str()])
+        }) || !operation.events.iter().any(|event| {
+            event.kind.as_u16() == 0
+                && event.pubkey == keys.public_key()
+                && event.verify().is_ok()
+                && event.tags.iter().any(|tag| tag.as_slice() == auth)
+        }) {
+            return Err(CliError::Auth(
+                "reserved custody does not match signed operation identity".into(),
+            ));
+        }
+        let dir = state.join("actors").join(&operation.actor_pubkey);
+        for file in [dir.join("key"), dir.join("auth-tag.json")] {
+            match std::fs::symlink_metadata(&file) {
+                Ok(metadata) => {
+                    if !metadata.file_type().is_file() || metadata.len() > 4096 {
+                        return Err(CliError::Refused("existing actor custody is not a bounded regular file; original retained".into()));
+                    }
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        if metadata.permissions().mode() & 0o077 != 0 {
+                            return Err(CliError::Refused("existing actor custody permissions are too broad; original retained".into()));
+                        }
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => {
+                    return Err(CliError::Refused(
+                        "existing actor custody unreadable; original retained".into(),
+                    ))
+                }
+            }
+        }
+        if let Ok(existing) = std::fs::read_to_string(dir.join("key")) {
+            let existing =
+                Keys::parse(existing.trim()).map_err(|_| fail("existing actor key invalid"))?;
+            if existing.public_key() != keys.public_key() {
+                return Err(CliError::Refused(
+                    "existing actor custody conflicts; original retained".into(),
+                ));
+            }
+        } else if dir.join("key").exists() {
+            return Err(CliError::Refused(
+                "existing actor key unreadable; original retained".into(),
+            ));
+        }
+        if let Ok(existing) = std::fs::read_to_string(dir.join("auth-tag.json")) {
+            if existing.trim() != handoff.auth_tag.trim() {
+                return Err(CliError::Refused(
+                    "existing actor attestation conflicts; original retained".into(),
+                ));
+            }
+        } else if dir.join("auth-tag.json").exists() {
+            return Err(CliError::Refused(
+                "existing actor attestation unreadable; original retained".into(),
+            ));
+        }
+        actor_custody(
+            state,
+            &operation.actor_pubkey,
+            Some((&handoff.key, &handoff.auth_tag)),
+        )?;
+        operation.custody_handoff = None;
+        save(path, operation)?;
+    }
+    let held = actor_custody(state, &operation.actor_pubkey, None)?;
+    let keys = Keys::parse(&held.0).map_err(|_| fail("actor custody invalid"))?;
+    if beekeeper_sdk::nip_oa::verify_auth_tag(&held.1, &keys.public_key())
+        .map_err(|_| fail("actor attestation invalid"))?
+        .to_hex()
+        != owner
+    {
+        return Err(CliError::Auth(
+            "actor custody belongs to another owner".into(),
+        ));
+    }
+    Ok(held)
 }
 
 pub(crate) fn fail(error: impl std::fmt::Display) -> CliError {
@@ -72,11 +201,31 @@ pub(crate) fn operation_path(context: &Context, id: Uuid) -> Result<PathBuf, Cli
 }
 
 pub(crate) fn read_operation(path: &Path, request: &Value) -> Result<Option<Operation>, CliError> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(fail(error)),
     };
+    if !metadata.file_type().is_file() || metadata.len() > 8 * 1024 * 1024 {
+        return Err(CliError::Refused(
+            "operation journal is not a bounded regular file".into(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(CliError::Refused(
+                "operation journal custody permissions are too broad".into(),
+            ));
+        }
+    }
+    let bytes = std::fs::read(path).map_err(fail)?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        return Err(CliError::Refused(
+            "operation journal grew beyond its bound".into(),
+        ));
+    }
     let operation: Operation =
         serde_json::from_slice(&bytes).map_err(|_| fail("operation journal is malformed"))?;
     if operation.request != *request {
@@ -174,64 +323,6 @@ pub(crate) fn stage_actor(
     Ok(())
 }
 
-pub(crate) fn restricted_input(path: &Path) -> Result<String, CliError> {
-    let metadata = std::fs::symlink_metadata(path)
-        .map_err(|_| CliError::Usage("staged custody input is unavailable".into()))?;
-    if !metadata.file_type().is_file() || metadata.len() > 4096 {
-        return Err(CliError::Usage(
-            "staged custody input must be a bounded regular file".into(),
-        ));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(CliError::Usage(
-                "staged custody input must be owner-only".into(),
-            ));
-        }
-    }
-    std::fs::read_to_string(path).map_err(|_| fail("staged custody input could not be read"))
-}
-
-pub(crate) fn existing_identity(
-    args: &CreateRequest,
-    owner: &str,
-    actor: &str,
-) -> Result<provision::MintedAgentIdentity, CliError> {
-    let key_path = args
-        .key_file
-        .as_deref()
-        .ok_or_else(|| CliError::Usage("adoption requires --key-file".into()))?;
-    let auth_path = args
-        .auth_tag_file
-        .as_deref()
-        .ok_or_else(|| CliError::Usage("adoption requires --auth-tag-file".into()))?;
-    let nsec = restricted_input(key_path)?;
-    let keys = Keys::parse(nsec.trim())
-        .map_err(|_| CliError::Usage("staged actor key is invalid".into()))?;
-    if keys.public_key().to_hex() != actor {
-        return Err(CliError::Auth(
-            "staged key does not match the identity being adopted".into(),
-        ));
-    }
-    let auth = restricted_input(auth_path)?;
-    let attesting_owner =
-        beekeeper_sdk::nip_oa::verify_auth_tag(auth.trim(), &keys.public_key())
-            .map_err(|_| CliError::Auth("staged actor attestation is invalid".into()))?;
-    if attesting_owner.to_hex() != owner {
-        return Err(CliError::Auth(
-            "signer does not own the existing actor".into(),
-        ));
-    }
-    Ok(provision::MintedAgentIdentity {
-        keys,
-        pubkey: actor.into(),
-        private_key_nsec: nsec.trim().into(),
-        auth_tag: auth.trim().into(),
-    })
-}
-
 pub(crate) fn install_route(
     state: &Path,
     actor: &str,
@@ -269,3 +360,7 @@ pub(crate) fn install_route(
     }
     save(&path, &value)
 }
+
+#[cfg(test)]
+#[path = "reserved_custody_tests.rs"]
+mod custody_tests;

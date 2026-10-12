@@ -145,7 +145,7 @@ pub async fn associate_managed_agent_with_project(
             &record.relay_url,
             &crate::relay::relay_ws_url_with_override(&state),
         );
-        super::agents::host_transfer::reconcile_host_agent(
+        super::agents::headless_management::reconcile_host_agent(
             &app,
             &state,
             &agent_pubkey,

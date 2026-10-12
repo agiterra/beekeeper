@@ -62,11 +62,11 @@ fn require(
     else {
         return Ok(());
     };
+    if !ownership::is_modern_enrollment(&transfer) {
+        return Err(refusal());
+    }
     let allowed = match transfer.phase {
         Phase::Adopted => true,
-        Phase::Quiesced => {
-            matches!(admission, Admission::Create { command, initial_turn: false } if command == transfer.operation_id)
-        }
         Phase::HostStopped => match admission {
             Admission::Create {
                 command,
@@ -77,12 +77,12 @@ fn require(
                     command == transfer.operation_id
                         && transfer.legacy_nonce == format!("fresh-identity:{command}")
                 } else {
-                    true
+                    transfer.target.is_some()
                 }
             }
             _ => false,
         },
-        Phase::Prepared | Phase::Restoring | Phase::LegacyRestored => false,
+        Phase::Prepared | Phase::Quiesced | Phase::Restoring | Phase::LegacyRestored => false,
     };
     if allowed {
         Ok(())
@@ -106,7 +106,7 @@ pub(crate) fn context() -> Result<Option<(PathBuf, Instance)>, CreateFailure> {
 /// Keep synchronous conversation disposition serialized with the existing
 /// ownership transition fence. Runtime startup acquires its own admission.
 pub(crate) struct ConversationOwnership {
-    pub(crate) legacy_owns: bool,
+    pub(crate) historical_setup: bool,
     pub(crate) busy: bool,
     _lock: Option<std::fs::File>,
 }
@@ -120,8 +120,13 @@ pub(crate) fn conversation_ownership(
     let lock = ownership::try_admission_lock(home, instance, actor, relay).ok();
     let transfer = ownership::for_pair(home, instance, actor, relay).map_err(|_| refusal())?;
     Ok(ConversationOwnership {
-        legacy_owns: transfer
-            .is_some_and(|t| matches!(t.phase, Phase::Prepared | Phase::LegacyRestored)),
+        historical_setup: transfer.is_some_and(|t| {
+            !ownership::is_modern_enrollment(&t)
+                || matches!(
+                    t.phase,
+                    Phase::Prepared | Phase::Quiesced | Phase::Restoring | Phase::LegacyRestored
+                )
+        }),
         busy: lock.is_none(),
         _lock: lock,
     })
@@ -198,89 +203,59 @@ pub(crate) fn admit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beekeeper_host_core::ownership::Transfer;
-
     #[test]
-    fn host_ownership_fences_each_transfer_boundary_without_blocking_fresh_hosts() {
-        let home = tempfile::tempdir().expect("home");
+    fn historical_states_are_read_only_and_never_admit_execution() {
+        let home = tempfile::tempdir().unwrap();
         let actor = "ab".repeat(32);
         let relay = "wss://isolated.example";
-        assert!(require(home.path(), Instance::Dev, &actor, relay, Admission::Turn).is_ok());
-        let mut transfer = Transfer {
-            operation_id: "adopt-1".into(),
-            actor_pubkey: actor.clone(),
-            relay_url: relay.into(),
-            legacy_nonce: "legacy-1".into(),
-            definition_event_id: "cd".repeat(32),
-            target: None,
-            phase: Phase::Prepared,
-        };
-        ownership::advance(home.path(), Instance::Dev, transfer.clone()).expect("prepared");
-        assert!(require(home.path(), Instance::Dev, &actor, relay, Admission::Resume).is_err());
-        transfer.phase = Phase::Quiesced;
-        ownership::advance(home.path(), Instance::Dev, transfer.clone()).expect("quiesced");
-        assert!(require(
-            home.path(),
-            Instance::Dev,
-            &actor,
-            relay,
-            Admission::Create {
-                command: "other",
-                initial_turn: false
+        for phase in [
+            Phase::Prepared,
+            Phase::Quiesced,
+            Phase::Restoring,
+            Phase::LegacyRestored,
+            Phase::Adopted,
+            Phase::HostStopped,
+        ] {
+            let transfer = ownership::Transfer {
+                operation_id: "historical".into(),
+                actor_pubkey: actor.clone(),
+                relay_url: relay.into(),
+                legacy_nonce: "old".into(),
+                definition_event_id: "cd".repeat(32),
+                target: None,
+                phase,
+            };
+            beekeeper_host_core::atomic_write::create_dir_all_restricted(
+                &beekeeper_host_core::layout::host_dir(home.path(), Instance::Dev),
+            )
+            .unwrap();
+            beekeeper_host_core::atomic_write::atomic_write_json_restricted(
+                &beekeeper_host_core::layout::host_dir(home.path(), Instance::Dev)
+                    .join("managed-ownership.json"),
+                &serde_json::to_vec(&serde_json::json!({"transfers":[transfer],"history":[]}))
+                    .unwrap(),
+            )
+            .unwrap();
+            for admission in [
+                Admission::Resume,
+                Admission::Turn,
+                Admission::Create {
+                    command: "historical",
+                    initial_turn: false,
+                },
+            ] {
+                assert!(require(home.path(), Instance::Dev, &actor, relay, admission).is_err());
             }
-        )
-        .is_err());
-        assert!(require(
-            home.path(),
-            Instance::Dev,
-            &actor,
-            relay,
-            Admission::Create {
-                command: "adopt-1",
-                initial_turn: true
-            }
-        )
-        .is_err());
-        assert!(require(
-            home.path(),
-            Instance::Dev,
-            &actor,
-            relay,
-            Admission::Create {
-                command: "adopt-1",
-                initial_turn: false
-            }
-        )
-        .is_ok());
-        assert!(require(home.path(), Instance::Dev, &actor, relay, Admission::Turn).is_err());
-        transfer.target = Some(
-            beekeeper_core::coding_session_command::CodingSessionTarget {
-                driver: "codex-acp".into(),
-                instance_id: "primary".into(),
-                session_id: "00000000-0000-0000-0000-000000000001".into(),
-                generation: 1,
-            },
-        );
-        transfer.phase = Phase::Adopted;
-        ownership::advance(home.path(), Instance::Dev, transfer.clone()).expect("adopted");
-        assert!(require(home.path(), Instance::Dev, &actor, relay, Admission::Turn).is_ok());
-        transfer.phase = Phase::HostStopped;
-        ownership::advance(home.path(), Instance::Dev, transfer.clone()).expect("host stopped");
-        assert!(require(home.path(), Instance::Dev, &actor, relay, Admission::Turn).is_err());
-        assert!(require(
-            home.path(),
-            Instance::Dev,
-            &actor,
-            relay,
-            Admission::Create {
-                command: "successor",
-                initial_turn: false
-            }
-        )
-        .is_ok());
-        transfer.phase = Phase::Restoring;
-        assert!(ownership::advance(home.path(), Instance::Dev, transfer.clone()).is_err());
-        transfer.phase = Phase::LegacyRestored;
-        assert!(ownership::advance(home.path(), Instance::Dev, transfer).is_err());
+            assert!(ownership::record_host_enrollment(
+                home.path(),
+                Instance::Dev,
+                &actor,
+                relay,
+                "new",
+                &"cd".repeat(32),
+                None
+            )
+            .is_err());
+        }
     }
 }

@@ -179,6 +179,7 @@ impl From<beekeeper_agent_management::Error> for CliError {
             Error::NotFound(v) => Self::NotFound(v),
             Error::Refused(v) => Self::Refused(v),
             Error::Unconfirmed(v) => Self::Unconfirmed(v),
+            Error::Relay { status, body } => Self::Relay { status, body },
             Error::Other(v) => Self::Other(v),
         }
     }

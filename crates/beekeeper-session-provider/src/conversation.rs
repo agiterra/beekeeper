@@ -39,7 +39,7 @@ pub struct ConversationRoute {
     pub channel_id: Uuid,
     /// Exact accepted execution and generation.
     pub target: CodingSessionTarget,
-    /// Immutable pre-drain capture lower bound for migration replay.
+    /// Explicit lower bound for this responsibility’s replay.
     /// This is not evidence that an earlier request was consumed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_floor_unix: Option<u64>,
@@ -393,9 +393,12 @@ impl Provider {
             })
             .transpose()
             .map_err(|failure| anyhow::anyhow!("{}: {}", failure.code, failure.message))?;
-        if ownership.as_ref().is_some_and(|owner| owner.legacy_owns) {
-            // The legacy subscriber owns this input. Consume it locally so a
-            // later adoption/backfill cannot execute the same request again.
+        if ownership
+            .as_ref()
+            .is_some_and(|owner| owner.historical_setup)
+        {
+            // Unsupported historical setup cannot execute this input. Durable
+            // consumption keeps a later retry from silently becoming fresh work.
             self.state.consume_command(&event_id, crate::now_secs())?;
             return Ok(None);
         }

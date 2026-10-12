@@ -496,7 +496,7 @@ async fn restart_single_agent_after_install(
             &record.relay_url,
             &crate::relay::relay_ws_url_with_override(&state),
         );
-        super::agents::host_transfer::reconcile_host_agent(app, &state, pubkey, &relay, true)
+        super::agents::headless_management::reconcile_host_agent(app, &state, pubkey, &relay, true)
             .await?;
         Ok::<bool, String>(true)
     }

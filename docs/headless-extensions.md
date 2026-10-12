@@ -80,12 +80,12 @@ does not add a plugin framework. Graceful shutdown is not a guaranteed save
 hook; SIGKILL cannot invoke one. Readiness, credential custody and execution
 boundaries remain executor concerns.
 
-An instance linked to an agent definition uses the authorized owner's current
-shared kind30175 head, together with its kind30177 instance revision. Publish
-the definition through the existing catalog sharing control before using it on
-a separately commissioned executor. A private or missing definition is visibly
-blocked; the executor does not read desktop memory or flatten private prompts
-into a public instance. Runtime, model or account preferences that disagree
+An instance linked to an agent definition uses its authorized kind30175
+revision together with the kind30177 instance revision. Shared definitions are
+resolved through the relay; a fresh local private definition is retained as an
+owner-signed pin in restricted executor configuration. Missing or mismatched
+provenance blocks execution. The executor does not read desktop memory or
+flatten private prompts into a public instance. Runtime, model or account preferences that disagree
 with the accepted execution require a new supported configuration boundary;
 publication alone does not establish that they were applied.
 
@@ -93,8 +93,8 @@ Ordinary conversation admission respects the process ownership fence. During a
 busy host transition, an authorized addressed request receives a durable,
 correlated host-local blocked reply and is consumed; send a new request when
 the host is available. It does not create a second queue or promise eventual
-execution. When ownership is restored to the legacy client, the host abstains
-and records that input as consumed so later adoption cannot replay it.
+execution. An unsupported historical desktop ownership record blocks execution; clean
+setup does not restore a legacy owner or import its input history.
 
 Strict native restoration also applies to a context created before its first
 prompt. If the adapter has not persisted a transcript yet, restart may report
@@ -287,8 +287,10 @@ Windows execution requires separate available hardware; Linux install/build
 and Mac behavior need their own observed receipts. Packaging and this fixture
 alone do not satisfy those stories.
 
-Host-adopted agent deletion retains the existing revocation refusal. No supported
-headless delete command is provided in this slice: the desktop refuses deletion
-and preserves custody rather than reporting a deletion it cannot safely complete.
-Stopping a responsibility and reversible ownership rollback use their existing
-verified lifecycle receipts; they do not imply agent revocation or deletion.
+Shared desktop/CLI deletion retains a stable operation, fences new work and
+waits for exact terminal receipts for every observed responsibility. Relay
+retirement, exact definition deletion and local custody cleanup are separate
+outcomes. Missing evidence or a newer definition returns pending/conflict and
+preserves custody. Stop alone does not imply identity revocation. See
+[clean setup and recovery](agent-recovery.md) for retained old data and
+uncertain-start limits.

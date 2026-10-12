@@ -2,67 +2,77 @@ import {
   getManagedAgentPrimaryActionLabel,
   isManagedAgentActive,
 } from "@/features/agents/lib/managedAgentControlActions";
-import type { ManagedAgentHostTransfer } from "@/shared/api/tauriManagedAgents";
+import type { ManagedAgentHostStatus } from "@/shared/api/tauriManagedAgents";
 import type {
   ManagedAgent,
   ManagedAgentRuntimeStatus,
 } from "@/shared/api/types";
-
 export type ProfileAgentControl = {
   action: "start" | "stop" | null;
   label: string;
   canRestart: boolean;
   statusText: string | null;
 };
-
-/** Presentation of canonical ownership observations; execution remains backend-owned. */
+/** Canonical host observation controls local work; remote providers retain their own boundary. */
 export function profileAgentControl(
   agent: ManagedAgent,
-  phase: ManagedAgentHostTransfer["phase"] | null | undefined,
+  status: ManagedAgentHostStatus | undefined,
   runtime?: ManagedAgentRuntimeStatus,
 ): ProfileAgentControl {
-  if (
-    agent.backend.type !== "local" ||
-    phase === null ||
-    phase === "legacyRestored"
-  )
+  if (agent.backend.type !== "local")
     return {
       action: isManagedAgentActive(agent) ? "stop" : "start",
       label: getManagedAgentPrimaryActionLabel(agent),
-      canRestart: agent.backend.type === "local" && isManagedAgentActive(agent),
+      canRestart: false,
       statusText: null,
     };
+  if (status?.legacyRecreationRequired)
+    return {
+      action: null,
+      label: "Recreate through headless setup",
+      canRestart: false,
+      statusText:
+        status.legacyConflict ??
+        "Previous desktop agent retained for reference. Recreate it through headless setup; no automatic import or execution.",
+    };
+  if (!status || status.legacyConflict || status.ownershipPendingReason)
+    return {
+      action: null,
+      label: "Host ownership unconfirmed",
+      canRestart: false,
+      statusText:
+        status?.legacyConflict ??
+        status?.ownershipPendingReason ??
+        "Refresh host status before controlling this agent.",
+    };
   const detail = runtime?.lifecycle === "host_managed" ? runtime.error : null;
-  if (phase === "adopted")
+  if (status.ownershipPhase === "adopted")
     return {
       action: "stop",
       label: "Stop host work",
       canRestart: true,
-      statusText:
-        detail ??
-        "Host managed; availability must be observed through relay work.",
+      statusText: [
+        status.runtimeAvailable === true
+          ? "Host managed; runtime availability observed through relay work."
+          : "Host managed; runtime availability is unconfirmed.",
+        status.runtimeAvailable === true ? null : detail,
+      ]
+        .filter(Boolean)
+        .join(" "),
     };
-  if (phase === "hostStopped")
+  if (status.ownershipPhase === "hostStopped")
     return {
       action: "start",
       label: "Start new host context",
       canRestart: true,
       statusText:
         detail ??
-        "Host managed; primary stopped. Inspect other responsibilities through relay work.",
+        "Host work is stopped; Start opens a new context with the same identity.",
     };
   return {
     action: null,
-    label: "Ownership transition pending",
+    label: "Host ownership unconfirmed",
     canRestart: false,
-    statusText:
-      phase === "quiesced"
-        ? "Unavailable; legacy execution quiesced, awaiting host adoption."
-        : phase === "restoring"
-          ? (detail ??
-            "Host managed; desktop ownership restoration in progress.")
-          : phase === "prepared"
-            ? "Move pending; legacy shutdown has not been acknowledged."
-            : "Ownership unconfirmed; refresh before controlling this agent.",
+    statusText: "Refresh host status before controlling this agent.",
   };
 }

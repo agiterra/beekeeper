@@ -81,8 +81,8 @@ pub fn mint_provider_record(
 ///
 /// Validates everything before writing; repeating with the same identity is
 /// safe. The scoped key is written atomically before publishing the config.
-/// These are two atomic writes, not a transaction or ownership handoff: callers
-/// must quiesce an old owner and obtain adoption acknowledgement separately.
+/// These are two atomic writes, not a transaction. Fresh scoped identity
+/// commissioning preserves any existing custody for recovery.
 /// Existing desktop custody is retained as a recovery source.
 pub fn write_commissioning(
     home: &Path,

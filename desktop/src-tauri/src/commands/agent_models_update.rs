@@ -174,7 +174,7 @@ pub async fn update_managed_agent(
     state: State<'_, AppState>,
 ) -> Result<UpdateManagedAgentResponse, String> {
     if let Some(response) =
-        crate::commands::host_transfer::update_if_adopted(&input, &app, &state).await?
+        crate::commands::headless_management::update_if_adopted(&input, &app, &state).await?
     {
         return Ok(response);
     }
@@ -354,8 +354,10 @@ async fn reconcile_local_update(
     relays: &[String],
 ) -> Result<crate::managed_agents::ManagedAgentSummary, String> {
     for relay in relays {
-        super::super::agents::host_transfer::reconcile_host_agent(app, state, pubkey, relay, true)
-            .await?;
+        super::super::agents::headless_management::reconcile_host_agent(
+            app, state, pubkey, relay, true,
+        )
+        .await?;
     }
     let records = load_managed_agents(app)?;
     let record = records

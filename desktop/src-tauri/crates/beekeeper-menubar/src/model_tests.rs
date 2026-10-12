@@ -344,13 +344,13 @@ fn app_rows_are_shown_under_lease_and_their_absence_is_disclosed() {
 #[test]
 fn host_warnings_become_notices() {
     let mut status = status(live());
-    status.warnings = vec![Warning::seat_restage_requires_desktop(3)];
+    status.warnings = vec![Warning::seat_custody_pending(3)];
     status.sessions.unavailable = Some("the provider has not written state.json yet".into());
     let model = model(&HostView::Reachable(status), NOW);
     assert!(model
         .notices
         .iter()
-        .any(|notice| notice.contains("waiting to be re-staged")));
+        .any(|notice| notice.contains("seat-custody recovery request(s) are unresolved")));
     assert!(model
         .notices
         .iter()

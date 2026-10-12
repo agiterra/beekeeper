@@ -1,6 +1,17 @@
 //! Authorized public behavior, applied through the existing turn preface.
 use super::*;
 
+fn pinned_definition_matches(
+    request: &Origin,
+    definition_id: &str,
+    linked_id: Option<&str>,
+    private_id: Option<&str>,
+) -> bool {
+    request.definition_event_id.as_deref() == Some(definition_id)
+        && request.linked_definition_event_id.as_deref() == linked_id
+        && request.private_definition_event_id.as_deref() == private_id
+}
+
 impl Provider {
     pub(super) async fn conversation_definition_head(
         &self,
@@ -300,9 +311,12 @@ impl Provider {
                 .as_deref()
                 .and_then(|id| origins.requests.get(id));
             if running_origin.is_none_or(|request| {
-                request.definition_event_id.as_deref() != Some(event.id.to_hex().as_str())
-                    || request.linked_definition_event_id != linked_id
-                    || request.private_definition_event_id != private_id
+                !pinned_definition_matches(
+                    request,
+                    &event.id.to_hex(),
+                    linked_id.as_deref(),
+                    private_id.as_deref(),
+                )
             }) {
                 return Err(fail("AGENT_DEFINITION_UPDATE_PENDING"));
             }
@@ -325,5 +339,71 @@ impl Provider {
         self.save_conversation_origins(&origins)
             .map_err(|_| fail("AGENT_DEFINITION_UNAVAILABLE"))?;
         Ok(Some(instructions))
+    }
+}
+
+#[cfg(test)]
+mod private_pin_boundary_tests {
+    use super::*;
+    fn persisted(private: Option<&str>, linked: Option<&str>) -> Origin {
+        serde_json::from_value(serde_json::json!({
+            "actor":"fixture-actor","channel":Uuid::nil(),"root":"root","event":"request",
+            "target":{"driver":"csp","instanceId":"fixture","sessionId":"session","generation":1},
+            "definitionEventId":"accepted30177","linkedDefinitionEventId":linked,
+            "privateDefinitionEventId":private,"instructions":"pinned private instructions"
+        }))
+        .unwrap()
+    }
+    #[test]
+    fn changing_private_pin_cannot_enter_an_open_turn_with_unchanged_public_revision() {
+        let original = persisted(Some("private-a"), None);
+        let bytes = serde_json::to_vec(&original).unwrap();
+        let recovered: Origin = serde_json::from_slice(&bytes).unwrap();
+        assert!(pinned_definition_matches(
+            &recovered,
+            "accepted30177",
+            None,
+            Some("private-a")
+        ));
+        assert!(!pinned_definition_matches(
+            &recovered,
+            "accepted30177",
+            None,
+            Some("private-b")
+        ));
+        assert!(!pinned_definition_matches(
+            &recovered,
+            "accepted30177",
+            Some("private-a"),
+            None
+        ));
+        assert_eq!(
+            recovered.instructions.as_deref(),
+            Some("pinned private instructions")
+        );
+        assert!(recovered.linked_definition_event_id.is_none());
+    }
+    #[test]
+    fn legacy_public_pin_replay_remains_public_without_a_private_pin_requirement() {
+        let original = persisted(None, Some("public30175"));
+        let mut value = serde_json::to_value(original).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("privateDefinitionEventId");
+        let recovered: Origin = serde_json::from_value(value).unwrap();
+        assert!(pinned_definition_matches(
+            &recovered,
+            "accepted30177",
+            Some("public30175"),
+            None
+        ));
+        assert!(!pinned_definition_matches(
+            &recovered,
+            "accepted30177",
+            Some("new-public30175"),
+            None
+        ));
+        assert!(recovered.private_definition_event_id.is_none());
     }
 }

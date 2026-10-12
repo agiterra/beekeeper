@@ -1,4 +1,4 @@
-//! Management observation and one-way legacy import; no desktop executor.
+//! Modern host management observation; no desktop executor.
 use super::{
     known_acp_runtime, managed_agent_log_path, normalize_agent_args, ManagedAgentRecord,
     ManagedAgentSummary,
@@ -16,19 +16,8 @@ pub(crate) use metadata::{
     resolve_session_title, runtime_metadata_env_vars, DISPLAY_NAME_ENV_VAR, SESSION_TITLE_ENV_VAR,
 };
 mod effective_summary;
-mod legacy_import;
-mod legacy_native;
 #[cfg(test)]
 mod test_fixtures;
-pub(crate) use legacy_import::{
-    inspect_legacy_generation, inspect_stopped_legacy_generation, process_is_running,
-    quiesce_legacy_generation, LegacyAgentGeneration,
-};
-pub(crate) use legacy_native::{
-    inspect_legacy_launch, preflight_legacy_native_context, read_legacy_native_context,
-    resolve_stopped_legacy_workspace, LegacyNativeLaunch,
-};
-
 /// Configure the underlying CLI for a runtime discovery probe; never launches it.
 pub(crate) fn configure_runtime_cli(
     command: &mut std::process::Command,
@@ -105,10 +94,10 @@ pub fn build_managed_agent_summary(
     } else {
         None
     };
-    let enabled_on_host = match transfer.as_ref().map(|transfer| &transfer.phase) {
-        Some(beekeeper_host_core::ownership::Phase::Adopted) => true,
-        Some(beekeeper_host_core::ownership::Phase::HostStopped) => false,
-        _ => record.start_on_app_launch,
+    let (host_owned, enabled_on_host) = if record.backend == BackendKind::Local {
+        modern_host_summary(transfer.as_ref())
+    } else {
+        (false, record.start_on_app_launch)
     };
     let (status, pid, log_path) = if record.backend != BackendKind::Local {
         (
@@ -122,18 +111,11 @@ pub fn build_managed_agent_summary(
             String::new(),
         )
     } else {
-        let host_owned = transfer.as_ref().is_some_and(|transfer| {
-            matches!(
-                transfer.phase,
-                beekeeper_host_core::ownership::Phase::Adopted
-                    | beekeeper_host_core::ownership::Phase::HostStopped
-            )
-        });
         (
             if host_owned {
                 "host_managed"
             } else {
-                "migration_required"
+                "recreation_required"
             }
             .to_string(),
             None,
@@ -248,4 +230,44 @@ pub fn find_managed_agent_mut<'a>(
         .iter_mut()
         .find(|record| record.pubkey == pubkey)
         .ok_or_else(|| format!("agent {pubkey} not found"))
+}
+
+/// Host ownership and enabled intent must come from canonical modern enrollment.
+fn modern_host_summary(
+    transfer: Option<&beekeeper_host_core::ownership::Transfer>,
+) -> (bool, bool) {
+    use beekeeper_host_core::ownership::{is_modern_enrollment, Phase};
+    match transfer.filter(|transfer| is_modern_enrollment(transfer)) {
+        Some(transfer) if transfer.phase == Phase::Adopted => (true, true),
+        Some(transfer) if transfer.phase == Phase::HostStopped => (true, false),
+        _ => (false, false),
+    }
+}
+
+#[cfg(test)]
+mod ownership_summary_tests {
+    use super::*;
+    use beekeeper_host_core::ownership::{Phase, Transfer};
+
+    #[test]
+    fn historical_adoption_never_projects_modern_host_ownership_or_enabled_state() {
+        let operation = uuid::Uuid::new_v4().to_string();
+        let mut held = Transfer {
+            operation_id: operation.clone(),
+            actor_pubkey: "actor".into(),
+            relay_url: "ws://isolated.invalid".into(),
+            legacy_nonce: uuid::Uuid::new_v4().to_string(),
+            definition_event_id: "retained-head".into(),
+            target: None,
+            phase: Phase::Adopted,
+        };
+        assert_eq!(modern_host_summary(Some(&held)), (false, false));
+        held.legacy_nonce = format!("fresh-identity:{operation}");
+        assert_eq!(modern_host_summary(Some(&held)), (true, true));
+        held.phase = Phase::HostStopped;
+        assert_eq!(modern_host_summary(Some(&held)), (true, false));
+        held.phase = Phase::Prepared;
+        assert_eq!(modern_host_summary(Some(&held)), (false, false));
+        assert_eq!(modern_host_summary(None), (false, false));
+    }
 }

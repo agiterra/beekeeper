@@ -683,8 +683,6 @@ fn build_initialize_params() -> serde_json::Value {
 pub struct AcpClient {
     /// The agent child process (kept alive to prevent zombie).
     child: Child,
-    /// Non-secret facts from the actual assembled child environment.
-    native_launch: NativeLaunchFacts,
     /// Write end of the agent's stdin pipe, shared with the router's
     /// answerer so a between-turn request can be answered while nobody holds
     /// the client.
@@ -1428,37 +1426,6 @@ impl EnvFence {
     }
 }
 
-/// Exact non-secret launch facts used only for protected native-context export.
-#[derive(Clone, Debug)]
-pub(crate) struct NativeLaunchFacts {
-    pub command: String,
-    pub home_environment: std::collections::BTreeMap<String, String>,
-}
-impl NativeLaunchFacts {
-    fn capture(command: &str, cmd: &tokio::process::Command, inherits: bool) -> Self {
-        let explicit: std::collections::BTreeMap<_, _> = cmd.as_std().get_envs().collect();
-        let mut home_environment = std::collections::BTreeMap::new();
-        for key in ["HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"] {
-            let value = match explicit.get(std::ffi::OsStr::new(key)) {
-                Some(Some(value)) => Some(value.to_os_string()),
-                Some(None) => None,
-                None if inherits => std::env::var_os(key),
-                None => None,
-            };
-            if let Some(value) = value.and_then(|value| value.into_string().ok()) {
-                let path = std::path::Path::new(&value);
-                if path.is_absolute() && path.is_dir() {
-                    home_environment.insert(key.into(), value);
-                }
-            }
-        }
-        Self {
-            command: command.into(),
-            home_environment,
-        }
-    }
-}
-
 impl AcpClient {
     /// Kill the agent subprocess and wait for it to exit (no zombies).
     ///
@@ -1595,7 +1562,7 @@ impl AcpClient {
             fence,
             post_fence_env,
         )?;
-        Self::from_command(cmd, command, true)
+        Self::from_command(cmd, command)
     }
 
     /// Spawn `command args…` inside a host-prepared execution boundary, with
@@ -1611,7 +1578,7 @@ impl AcpClient {
         launch: &BoundedLaunch,
     ) -> Result<Self, AcpError> {
         let cmd = Self::build_bounded_command(command, args, launch);
-        Self::from_command(cmd, command, false)
+        Self::from_command(cmd, command)
     }
 
     /// Spawn the agent from a prepared launch **without** its boundary,
@@ -1627,7 +1594,7 @@ impl AcpClient {
         launch: &BoundedLaunch,
     ) -> Result<Self, AcpError> {
         let cmd = Self::launch_command(command.to_owned(), args.to_vec(), launch);
-        Self::from_command(cmd, command, false)
+        Self::from_command(cmd, command)
     }
 
     /// Assemble a bounded child `Command` without spawning it.
@@ -1664,12 +1631,7 @@ impl AcpClient {
     }
 
     /// Spawn an assembled command and wire up its stdio.
-    fn from_command(
-        mut cmd: tokio::process::Command,
-        command: &str,
-        inherits: bool,
-    ) -> Result<Self, AcpError> {
-        let native_launch = NativeLaunchFacts::capture(command, &cmd, inherits);
+    fn from_command(mut cmd: tokio::process::Command, command: &str) -> Result<Self, AcpError> {
         let standard_adapter =
             match crate::config::normalize_agent_command_identity(command).as_str() {
                 "claude-agent-acp" | "claude-code-acp" | "claude-code" | "claudecode" => {
@@ -1706,7 +1668,6 @@ impl AcpClient {
 
         Ok(Self {
             child,
-            native_launch,
             stdin,
             inbox,
             router,
@@ -1741,11 +1702,6 @@ impl AcpClient {
             protocol_version: 1,
             turn_clock: std::sync::Arc::new(SystemTurnClock),
         })
-    }
-
-    /// Actual selected command and non-secret native home variables, never credential values.
-    pub(crate) fn native_launch_facts(&self) -> &NativeLaunchFacts {
-        &self.native_launch
     }
 
     /// Replace the clock this client's turn deadlines are measured against.
@@ -9348,33 +9304,5 @@ sleep 5
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), printer).await;
         let _ = std::fs::remove_dir_all(&cwd);
         println!("LIVE PASS marker={marker}");
-    }
-}
-
-#[cfg(test)]
-mod native_launch_fact_tests {
-    use super::*;
-    #[test]
-    fn native_launch_facts_use_actual_overrides_and_fence_removals() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut command = tokio::process::Command::new("adapter");
-        command
-            .env("HOME", directory.path())
-            .env("CODEX_HOME", directory.path())
-            .env_remove("CLAUDE_CONFIG_DIR")
-            .env("SECRET_TOKEN", "do-not-export");
-        let facts = NativeLaunchFacts::capture("/adapter/codex-acp", &command, true);
-        assert_eq!(facts.command, "/adapter/codex-acp");
-        assert_eq!(facts.home_environment.len(), 2);
-        assert_eq!(
-            facts.home_environment["HOME"],
-            directory.path().to_string_lossy()
-        );
-        assert!(!facts.home_environment.contains_key("SECRET_TOKEN"));
-        assert!(!facts.home_environment.contains_key("CLAUDE_CONFIG_DIR"));
-        let empty = tokio::process::Command::new("adapter");
-        assert!(NativeLaunchFacts::capture("adapter", &empty, false)
-            .home_environment
-            .is_empty());
     }
 }

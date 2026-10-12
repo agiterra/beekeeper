@@ -1,27 +1,20 @@
-//! Re-staging agent seats for a provider this app did not start.
+//! Scoped custody adapter for explicit role-seat requests from the host provider.
 //!
-//! When the app owned the provider, its supervisor handed the pid straight to
-//! the re-stage path: spawn the child, wait up to 30 seconds for
-//! `seat-requests.json` to name that pid, then re-stage. The app no longer
-//! spawns anything, so the handshake inverts — and the inverted version is the
-//! better design even without a daemon. The file **already** names the current
-//! live child, so there is nothing to wait for: the app reads the pid the host
-//! reports, compares it to the pid in the file, and acts when they agree.
+//! Canonical fresh managed-agent Create persists scoped host custody. Ordinary
+//! managed responsibilities (including project/persona configurations without an
+//! explicit role-seat request) recover in the provider without this desktop poll.
+//! The desktop does not supervise their execution, admission, restart or stop.
 //!
-//! # Why this stays in the app
+//! Explicit one-shot role-pack requests retain their existing client custody
+//! adapter: it loads the local managed identity under the store lock and supplies
+//! the requested seat material only when the request file names the host's exact
+//! live provider generation. This is bootstrap/custody work, not an executor or a
+//! general migration mechanism.
 //!
-//! `restage_actor_seats_for_provider` takes an `AppHandle` and an `AppState`,
-//! holds the managed-agent store lock, loads managed-agent records and reads
-//! the relay. None of that can move to a headless host, and managed agents are
-//! out of this landing's scope anyway.
-//!
-//! # The degradation, disclosed
-//!
-//! With no Beekeeper running, seats are not re-staged until one next runs. That
-//! is acceptable — seats belong to managed agents, which are still the app's —
-//! but it must be *visible*, so the host's `status` carries
-//! `SEAT_RESTAGE_REQUIRES_DESKTOP` whenever rows are waiting. A degradation
-//! nobody is told about is how a person concludes the product is broken.
+//! If those explicit requests remain pending while no client is available, the
+//! provider reports `SEAT_CUSTODY_PENDING`. That warning describes only
+//! this role-seat custody fallback; it does not make desktop presence a general
+//! prerequisite for canonical fresh host-managed agents.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

@@ -353,6 +353,8 @@ pub(super) fn install_adopted_roles(
         .map_err(|_| invalid("Managed-agent storage lock is unavailable."))?;
     let definitions = load_personas(app).map_err(external)?;
     let agents = load_managed_agents(app).map_err(external)?;
+    let prior_pubkeys: std::collections::HashSet<_> =
+        agents.iter().map(|r| r.pubkey.clone()).collect();
     let teams = load_teams(app).map_err(external)?;
     let installation = journal
         .installation
@@ -405,6 +407,17 @@ pub(super) fn install_adopted_roles(
     association::associate_installation(&mut result.agents, &draft.project_ref, &result.installed)
         .map_err(invalid)?;
     save_personas(app, &result.definitions).map_err(external)?;
+    for row in &result.agents {
+        if !prior_pubkeys.contains(&row.pubkey) && !row.pubkey.is_empty() {
+            crate::commands::agents::headless_management::reserve_fresh_host_agent(
+                app,
+                row,
+                &draft.relay_url,
+                false,
+            )
+            .map_err(external)?;
+        }
+    }
     save_managed_agents(app, &result.agents).map_err(external)?;
     association::retain_installed_agents(app, &store, &result.agents, &result.installed);
     let mut next_teams: Vec<_> = teams
@@ -556,6 +569,8 @@ pub async fn project_team_setup_install_adopted_roles(
 ) -> Result<ProjectTeamActivation, SetupError> {
     let (root, scope) = context(&app, &state, &project_ref, &expected_relay_url)?;
     let draft = bound_draft(&root, &scope, &setup_id)?;
+    crate::commands::agents::headless_management::require_clean_setup(&app, &draft.relay_url)
+        .map_err(external)?;
     let _guard = PUBLICATION_LOCK.lock().await;
     verify_context(&state, &scope)?;
     let mut journal = load_journal(&draft)?
@@ -810,6 +825,18 @@ pub async fn project_team_setup_start_lead(
         .lead
         .as_ref()
         .ok_or_else(|| invalid("The saved project lead reservation disappeared."))?;
+    // Fresh role installation reserves canonical enrollment before any Start.
+    // Configured-only custody is materialized once its authorized channel exists.
+    let lead_actor = lead.lead_pubkey.clone();
+    crate::commands::agents::headless_management::enroll_new_host_agent(
+        &app,
+        &state,
+        &lead_actor,
+        &draft.relay_url,
+        false,
+    )
+    .await
+    .map_err(external)?;
     let create_command_id = lead
         .create_command_id
         .as_deref()

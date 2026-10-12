@@ -129,8 +129,8 @@ export const managedAgentLogFocusRefetchPolicy = {
 export const relayAgentsQueryKey = ["relay-agents"] as const;
 export const managedAgentsQueryKey = ["managed-agents"] as const;
 /** Prefix shared by full-head and local-only ownership observations. */
-export const managedAgentHostTransferQueryKey = (pubkey: string) =>
-  ["managed-agent-host-transfer", pubkey] as const;
+export const managedAgentHostStatusQueryKey = (pubkey: string) =>
+  ["managed-agent-host-status", pubkey] as const;
 export const personasQueryKey = ["personas"] as const;
 export const acpRuntimesQueryKey = ["acp-runtimes"] as const;
 export const acpAuthMethodsQueryKey = ["acp-auth-methods"] as const;
@@ -697,7 +697,10 @@ export function useSetManagedAgentStartOnAppLaunchMutation() {
       pubkey: string;
       startOnAppLaunch: boolean;
     }) => setManagedAgentStartOnAppLaunch(pubkey, startOnAppLaunch),
-    onSettled: async () => {
+    onSettled: async (_result, _error, variables) => {
+      await queryClient.invalidateQueries({
+        queryKey: managedAgentHostStatusQueryKey(variables.pubkey),
+      });
       await queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
       await queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey });
     },

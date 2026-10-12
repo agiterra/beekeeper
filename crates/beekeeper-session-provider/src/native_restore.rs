@@ -376,18 +376,6 @@ impl Provider {
                     .map_err(RestoreObstacle::Prerequisite)?,
             );
         }
-        let native_import = crate::managed_configuration::native(
-            &self.config,
-            record.actor.as_deref(),
-            &record.command_id,
-            record.channel_id,
-            &record.cwd,
-            &descriptor,
-        )
-        .map_err(RestoreObstacle::Prerequisite)?;
-        if let Some((_, environment, _)) = &native_import {
-            agent_env.extend(environment.clone());
-        }
         let mut seat_skills = seat_skills;
         if seat_skills.is_none() {
             if let Some(settings) = &private_settings {
@@ -420,7 +408,6 @@ impl Provider {
             agent_env,
             deletion_check,
             retirement_check: (self.rest_client.clone(), self.relay_self.clone()),
-            native_import,
             config: self.config.clone(),
             media: self.media.clone(),
             events: self.sessions.event_sender(),
@@ -633,7 +620,6 @@ pub(crate) struct RestoreJob {
     /// `(project, reader, head already seen)` when a deletion re-check runs.
     deletion_check: Option<(String, RestClient, Option<u64>)>,
     retirement_check: (Option<RestClient>, Option<String>),
-    native_import: Option<crate::managed_configuration::NativeImport>,
     config: Config,
     media: Option<MediaFetcher>,
     events: mpsc::Sender<session::SessionEvent>,
@@ -718,7 +704,6 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
         agent_env,
         deletion_check,
         retirement_check,
-        native_import,
         config,
         media,
         events,
@@ -824,11 +809,7 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
     if let Some(reason) = execution.native_refusal() {
         return finish(RestoreOutcome::NativeRefused(reason.to_owned()));
     }
-    if let Some(import) = &native_import {
-        if let Err(failure) = crate::managed_configuration::materialize(import, &execution) {
-            return finish(RestoreOutcome::Unplanned(failure));
-        }
-    }
+
     let execution_state = execution.state();
     let request = CreateRequest {
         execution,

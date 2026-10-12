@@ -122,14 +122,12 @@ test("matches a stored community URL against canonical backend rows", () => {
   );
 });
 
-test("quiesced custody discloses pending adoption even without local runtime prerequisites", () => {
-  const pending = runtime({
+test("backend clean-start refusal stays visible when local prerequisites are absent", () => {
+  const blocked = runtime({
     lifecycle: "failed",
     localSetup: false,
     pid: null,
-    error:
-      "Legacy execution quiesced; host adoption is pending. Availability is unconfirmed.",
+    error: "Previous desktop record retained. Recreate through headless setup.",
   });
-  assert.equal(agentCommunityAvailability(pending), "Unavailable");
-  assert.equal(agentCommunityStatusDetail(pending), pending.error);
+  assert.equal(agentCommunityStatusDetail(blocked), blocked.error);
 });

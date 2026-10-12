@@ -1,3 +1,4 @@
+import type { ManagedAgentStatus } from "./types/managedAgentStatus";
 import type { AuthStatus } from "./types/authPreflight";
 import type { ManagedAgentConfigSource } from "./types/managedAgentConfigSource";
 
@@ -316,18 +317,13 @@ export type ManagedAgent = {
    * a respawn — the pinned snapshot is all the config that remains.
    */
   personaOrphaned: boolean;
-  /**
-   * `true` when the running process was spawned with a config that no longer
-   * matches what a spawn would use today — a plain restart would change what
-   * runs. Complements `personaOutOfDate` ("a respawn would change it").
-   * Always `false` for stopped agents.
-   */
+  /** Backend reports a required host restart; missing evidence is not success. */
   needsRestart: boolean;
   /** Non-empty iff `needsRestart` is true. Empty when Rust omits the field. */
   restartDiff: RestartDiffEntry[];
   /** Per-agent env vars. Layered on top of persona envVars. */
   envVars: Record<string, string>;
-  status: "running" | "stopped" | "deployed" | "not_deployed";
+  status: ManagedAgentStatus;
   pid: number | null;
   createdAt: string;
   updatedAt: string;

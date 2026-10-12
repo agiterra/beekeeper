@@ -166,6 +166,8 @@ pub async fn install_crew_role_packs(
 ) -> Result<InstallCrewRolePacksResponse, CrewRoleInstallError> {
     let names = names.unwrap_or_default();
     let pinned_relay = crew_role_install_relay(&state, &expected_relay_url)?;
+    super::agents::headless_management::require_clean_setup(&app, &pinned_relay)
+        .map_err(CrewRoleInstallError::store)?;
     let owner_keys = state.signing_keys().map_err(CrewRoleInstallError::keys)?;
     let directory = directory.trim().to_string();
     if directory.is_empty() {
@@ -218,6 +220,18 @@ pub async fn install_crew_role_packs(
         // Definitions first: `save_personas` preserves the instance half of the
         // unified store, and `save_managed_agents` preserves the definition
         // half, so writing them in this order never drops either.
+        let fresh_relay = crate::relay::relay_ws_url_with_override(&state);
+        for row in &result.agents {
+            if !before.iter().any(|old| old.pubkey == row.pubkey) && !row.pubkey.is_empty() {
+                super::agents::headless_management::reserve_fresh_host_agent(
+                    &app,
+                    row,
+                    &fresh_relay,
+                    false,
+                )
+                .map_err(CrewRoleInstallError::store)?;
+            }
+        }
         save_personas(&app, &result.definitions).map_err(CrewRoleInstallError::store)?;
         save_managed_agents(&app, &result.agents).map_err(CrewRoleInstallError::store)?;
 

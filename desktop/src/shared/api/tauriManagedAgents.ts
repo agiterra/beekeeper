@@ -125,44 +125,25 @@ export async function reconcileManagedAgentRuntimes(
   return invokeTauri("reconcile_managed_agent_runtimes", { communities });
 }
 
-export type ManagedAgentHostTransfer = {
-  operationId: string;
-  actorPubkey: string;
+/** Local custody/status observation; availability is separate from ownership. */
+export type ManagedAgentHostStatus = {
   relayUrl: string;
-  definitionEventId: string;
-  legacyNonce: string;
-  phase:
-    | "prepared"
-    | "quiesced"
-    | "adopted"
-    | "hostStopped"
-    | "restoring"
-    | "legacyRestored";
-  target: {
-    driver: string;
-    instanceId: string;
-    sessionId: string;
-    generation: number;
-  } | null;
-};
-export type ManagedAgentHostTransferInfo = {
-  relayUrl: string;
-  revision: string;
-  /** False when no current signed head was observed; empty revision is not proof. */
-  revisionAvailable?: boolean;
+  revision: string | null;
+  revisionAvailable: boolean;
   commissioned: boolean;
-  /** Verified local custody/backend eligibility; unknown must not enable retries. */
-  migrationEligible?: boolean;
-  transfer: ManagedAgentHostTransfer | null;
-  channel: string | null;
-  cwd: string | null;
+  ownershipPhase: "adopted" | "hostStopped" | null;
+  legacyRecreationRequired: boolean;
+  legacyConflict: string | null;
+  ownershipPendingReason?: string | null;
+  freshCreationPending?: boolean;
+  runtimeAvailable: boolean | null;
 };
 
-export function getManagedAgentHostTransfer(
+export function getManagedAgentHostStatus(
   pubkey: string,
   options?: { localOnly?: boolean },
-): Promise<ManagedAgentHostTransferInfo> {
-  return invokeTauri("get_managed_agent_host_transfer", {
+): Promise<ManagedAgentHostStatus> {
+  return invokeTauri("get_managed_agent_host_status", {
     pubkey,
     ...(options?.localOnly ? { localOnly: true } : {}),
   });
