@@ -420,10 +420,9 @@ test("upload progress floats above the dock and lifts Jump to latest", async ({
   await page.getByTestId("send-message").click();
   const uploadMotion = page.getByTestId("composer-upload-progress-motion");
   await expect(uploadMotion).toBeVisible();
-  await timeline.evaluate((element) => {
-    element.scrollTop = Math.max(500, element.scrollHeight / 2);
-    element.dispatchEvent(new Event("scroll", { bubbles: true }));
-  });
+  // Reader input releases the send's bottom pin; a synthetic scroll does not.
+  await timeline.hover();
+  await page.mouse.wheel(0, -1_000);
   await expect(jumpToLatest).toBeVisible();
   await page.waitForTimeout(250);
 
