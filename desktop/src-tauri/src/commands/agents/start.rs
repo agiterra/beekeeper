@@ -7,6 +7,7 @@ pub async fn start_managed_agent(
     expected_relay_url: Option<String>,
     expected_signer_pubkey: Option<String>,
     replay_floor_unix: Option<u64>,
+    conversation_channel_id: Option<uuid::Uuid>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ManagedAgentSummary, String> {
@@ -26,6 +27,7 @@ pub async fn start_managed_agent(
             &pubkey,
             relay.as_str(),
             replay_floor_unix,
+            conversation_channel_id,
         )
         .await?;
     } else {
@@ -41,9 +43,29 @@ pub async fn start_managed_agent(
         )
         .await?;
     }
-    let record = load_managed_agents(&app)?
-        .into_iter()
-        .find(|r| r.pubkey == pubkey)
-        .ok_or("agent cache unavailable after start")?;
+    let record = {
+        let _store = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        let mut records = load_managed_agents(&app)?;
+        let record = find_managed_agent_mut(&mut records, &pubkey)?;
+        // A failed initial enrollment is historical once the shared Start
+        // has verified this execution. Keep unrelated runtime errors intact.
+        let stale_enrollment = record.backend == BackendKind::Local
+            && record
+                .last_error
+                .as_deref()
+                .is_some_and(|message| message.starts_with("HOST_ENROLLMENT_UNCONFIRMED:"));
+        if stale_enrollment {
+            record.last_error = None;
+            record.last_error_code = None;
+        }
+        let record = record.clone();
+        if stale_enrollment {
+            save_managed_agents(&app, &records)?;
+        }
+        record
+    };
     summarize_host_record(&app, &record)
 }

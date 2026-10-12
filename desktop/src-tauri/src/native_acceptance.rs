@@ -129,6 +129,7 @@ async fn execute(app: &AppHandle, scenario: &Scenario, action: Action) -> Result
                 Some(scenario.relay_url.clone()),
                 Some(scenario.expected_owner.clone()),
                 None,
+                None,
                 app.clone(),
                 app.state::<AppState>(),
             )

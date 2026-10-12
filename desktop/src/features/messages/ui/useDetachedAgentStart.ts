@@ -10,7 +10,7 @@ import { getErrorMessage } from "./useMentionSendFlow.helpers";
 
 /**
  * Detached starts still in flight, keyed by the full tenant scope the wake
- * asserts: `(scoped relay URL, expected signer, agent pubkey)`.
+ * asserts: `(scoped relay URL, expected signer, agent pubkey, local conversation channel)`.
  *
  * Awaiting the start used to make a duplicate unreachable: `isPending` was a
  * hard early return in the composer's send handler, so no second send could
@@ -110,8 +110,8 @@ function warnAgentMayNotRespond(agentName: string, detail: string): void {
  * `false` return) and the user's next send re-fires it.
  *
  * Returns whether this call actually fired a wake: a start already in flight
- * for the same agent under the same asserted scope — relay *and* signer — is
- * suppressed, since the wake is per-agent rather than per-message and the
+ * for the same agent under the same asserted scope — relay, signer and local channel — is
+ * suppressed, since the wake is per-responsibility rather than per-message and the
  * first start's replay floor is earlier than the second message.
  *
  * Local host starts retain their durable enrollment/replay boundary; a wake
@@ -127,6 +127,7 @@ function warnAgentMayNotRespond(agentName: string, detail: string): void {
 export function useDetachedAgentStart(): (
   agent: ManagedAgent,
   replayFloorUnix?: number,
+  conversationChannelId?: string,
 ) => boolean {
   const startAgentMutateAsync = useStartManagedAgentMutation().mutateAsync;
   const { activeCommunity } = useCommunities();
@@ -145,7 +146,11 @@ export function useDetachedAgentStart(): (
   const expectedSignerPubkey =
     normalizePubkey(identityQuery.data?.pubkey ?? "") || undefined;
   return React.useCallback(
-    (agent: ManagedAgent, replayFloorUnix?: number) => {
+    (
+      agent: ManagedAgent,
+      replayFloorUnix?: number,
+      conversationChannelId?: string,
+    ) => {
       if (!expectedRelayUrl || !expectedSignerPubkey) {
         // Fail closed: an unscoped start resolves the relay and the signing
         // identity at execution time, so it can land on whichever tenant is
@@ -166,7 +171,7 @@ export function useDetachedAgentStart(): (
       // canonicalized at capture, matching `assert_expected_signer`'s
       // case-insensitive compare, so two casings of one identity cannot split
       // the key.
-      const key = `${expectedRelayUrl}\u0000${expectedSignerPubkey}\u0000${normalizePubkey(agent.pubkey)}`;
+      const key = `${expectedRelayUrl}\u0000${expectedSignerPubkey}\u0000${normalizePubkey(agent.pubkey)}\u0000${agent.backend.type === "local" ? (conversationChannelId ?? "") : ""}`;
       if (inFlightDetachedStarts.has(key)) {
         // One wake serves both messages. A local duplicate is a backend no-op
         // anyway, but a provider redeploy can replace a harness that had just
@@ -181,6 +186,8 @@ export function useDetachedAgentStart(): (
         pubkey: agent.pubkey,
         expectedRelayUrl,
         expectedSignerPubkey,
+        conversationChannelId:
+          agent.backend.type === "local" ? conversationChannelId : undefined,
         replayFloorUnix:
           agent.backend.type === "local"
             ? undefined

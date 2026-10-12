@@ -40,6 +40,8 @@ struct Operation {
     request: Value,
     event: Event,
     #[serde(default)]
+    memberships: Vec<Event>,
+    #[serde(default)]
     result: Option<Value>,
 }
 
@@ -74,6 +76,15 @@ pub async fn start_remote(
             management::configuration::require_private_channel(client, args.channel).await?;
         }
     }
+    let members = channel_members(client, args.channel).await?;
+    if !members
+        .iter()
+        .any(|key| key == &client.keys().public_key().to_hex())
+    {
+        return Err(Error::Refused(
+            "caller must join the requested conversation channel".into(),
+        ));
+    }
     let request = serde_json::to_value(args).map_err(local::fail)?;
     let path = local::operation_path(context, args.operation_id)?
         .with_file_name(format!("remote-start-{}.json", args.operation_id));
@@ -95,33 +106,31 @@ pub async fn start_remote(
         let rows = crate::lifecycle::inventory(&scope, client).await?;
         let mut active = Vec::new();
         for row in rows {
-            if !crate::lifecycle::terminal(&row, client).await? {
+            // Inventory remains actor-wide for uncertainty. A healthy DM
+            // responsibility does not fulfill an explicit stream responsibility.
+            let terminal = crate::lifecycle::terminal(&row, client).await?;
+            if !terminal && row.channel_id == args.channel {
+                if row.provider_authority != args.provider_authority {
+                    return Err(Error::Conflict(
+                        "requested channel already has another execution owner".into(),
+                    ));
+                }
                 active.push(row)
+            } else if !terminal
+                && !matches!(
+                    row.status,
+                    beekeeper_core::coding_session_payload::SessionStatus::Idle
+                        | beekeeper_core::coding_session_payload::SessionStatus::Running
+                        | beekeeper_core::coding_session_payload::SessionStatus::WaitingForInput
+                        | beekeeper_core::coding_session_payload::SessionStatus::Interrupted
+                )
+            {
+                return Err(Error::Unconfirmed("another responsibility has unconfirmed startup or quiescence; no additional execution requested".into()));
             }
         }
         if !active.is_empty() {
-            let observation = crate::lifecycle::status(&scope, client).await?;
-            let runtime_available =
-                observation["responsibilities"]
-                    .as_array()
-                    .is_some_and(|observed| {
-                        observed.iter().any(|entry| {
-                            active.iter().any(|row| {
-                                row.provider_authority == args.provider_authority
-                                    && row.channel_id == args.channel
-                                    && entry["responsibility"]["target"]
-                                        == serde_json::json!(row.target)
-                                    && entry["responsibility"]["channelId"]
-                                        == row.channel_id.to_string()
-                                    && entry["responsibility"]["providerAuthority"]
-                                        == row.provider_authority
-                                    && entry["runtime_available"] == true
-                            })
-                        })
-                    });
-            return Ok(
-                json!({"agent_pubkey":args.agent_pubkey,"execution_created":false,"already_adopted":true,"runtime_available":runtime_available,"pending":!runtime_available,"availability":if runtime_available {"verified_unexpired_provider_lease"} else {"no_current_live_lease"},"configuration_application":"unconfirmed","observation":observation,"responsibilities":active}),
-            );
+            return observe_remote_start(args, &json!({"responsibilities":active}), client).await?
+                .ok_or_else(|| Error::Unconfirmed("existing requested-channel responsibility has no exact current runtime/project observation; no execution requested".into()));
         }
         let content: beekeeper_core::managed_agent::ManagedAgentEventContent =
             serde_json::from_str(&head.content).map_err(local::fail)?;
@@ -149,9 +158,25 @@ pub async fn start_remote(
             beekeeper_sdk::build_coding_session_lifecycle_command(args.channel, &payload)
                 .map_err(local::fail)?,
         )?;
+        let mut memberships = Vec::new();
+        for participant in [&args.agent_pubkey, &args.provider_authority] {
+            if !members.iter().any(|key| key == participant) {
+                memberships.push(
+                    client.sign_event_unchecked(
+                        beekeeper_sdk::build_add_member(
+                            args.channel,
+                            participant,
+                            Some(beekeeper_sdk::MemberRole::Bot),
+                        )
+                        .map_err(local::fail)?,
+                    )?,
+                );
+            }
+        }
         let held = Operation {
             request,
             event,
+            memberships,
             result: None,
         };
         local::save(&path, &held)?;
@@ -166,6 +191,18 @@ pub async fn start_remote(
         )
         .await;
     }
+    for membership in &operation.memberships {
+        management::submit(client, membership).await?;
+    }
+    let members = channel_members(client, args.channel).await?;
+    if ![&args.agent_pubkey, &args.provider_authority]
+        .iter()
+        .all(|participant| members.iter().any(|key| key == *participant))
+    {
+        return Err(Error::Unconfirmed(
+            "requested channel membership remains pending; retry the same operation".into(),
+        ));
+    }
     management::submit(client, &operation.event).await?;
     let result=match crate::receipts::await_create_receipt(client,&args.channel.to_string(),&args.operation_id.to_string(),&args.provider_authority,args.wait_secs).await {
         crate::receipts::CreateWaitOutcome::Confirmed{target,receipt_event_id,..}=>json!({"operation_id":args.operation_id,"agent_pubkey":args.agent_pubkey,"revision":args.expected_revision,"target":target,"receipt_event_id":receipt_event_id,"host_admitted":true,"ownership":"worker_reconciled","runtime_account":"unconfirmed","configuration_application":"unconfirmed"}),
@@ -178,6 +215,48 @@ pub async fn start_remote(
     crate::lifecycle::observe_created_start(result, args.channel, &args.provider_authority, client)
         .await
 }
+#[path = "remote_start_observe.rs"]
+mod observe;
+pub use observe::observe_remote_start;
+
+/// Only relay-signed current membership can authorize channel-scoped work.
+async fn channel_members(
+    client: &impl RelayTransport,
+    channel: Uuid,
+) -> Result<Vec<String>, Error> {
+    let relay = client.relay_identity().await?;
+    let rows = client
+        .query_all(json!({"kinds":[39002],"#d":[channel]}))
+        .await?;
+    let membership = rows
+        .into_iter()
+        .filter_map(|row| serde_json::from_value::<Event>(row).ok())
+        .filter(|event| {
+            event.kind.as_u16() == 39002
+                && event.pubkey.to_hex() == relay
+                && event.verify().is_ok()
+                && event
+                    .tags
+                    .iter()
+                    .any(|tag| tag.as_slice() == ["d", &channel.to_string()])
+        })
+        .max_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| b.id.cmp(&a.id))
+        })
+        .ok_or_else(|| Error::Refused("requested channel membership unavailable".into()))?;
+    Ok(membership
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            (tag.as_slice().first().is_some_and(|kind| kind == "p"))
+                .then(|| tag.as_slice().get(1).cloned())
+                .flatten()
+        })
+        .collect())
+}
+
 /// Restart first proves every observed responsibility terminal using the shared actor-wide stop.
 pub async fn restart_remote(
     stop: &LifecycleRequest,
@@ -198,195 +277,5 @@ pub async fn restart_remote(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use nostr::{EventBuilder, Keys, Kind, Tag};
-    use std::sync::Mutex;
-    struct Relay {
-        owner: Keys,
-        provider: Keys,
-        actor: Keys,
-        definition: Event,
-        events: Mutex<Vec<Event>>,
-    }
-    fn profile(owner: &Keys, key: &Keys) -> Event {
-        let auth =
-            beekeeper_sdk::nip_oa::compute_auth_tag(owner, &key.public_key(), "").expect("auth");
-        EventBuilder::new(Kind::Metadata, "{}")
-            .tags([
-                Tag::parse(serde_json::from_str::<Vec<String>>(&auth).expect("auth values"))
-                    .expect("tag"),
-            ])
-            .sign_with_keys(key)
-            .expect("profile")
-    }
-    impl RelayTransport for Relay {
-        fn keys(&self) -> &Keys {
-            &self.owner
-        }
-        fn relay_url(&self) -> &str {
-            "ws://127.0.0.1:31337"
-        }
-        fn verified_auth_tag_owner_hex(&self) -> Result<Option<String>, Error> {
-            Ok(None)
-        }
-        fn scoped(&self, _: Keys, _: String) -> Result<Self, Error> {
-            Err(Error::Other("no actor transport required".into()))
-        }
-        async fn relay_identity(&self) -> Result<String, Error> {
-            Ok(self.provider.public_key().to_hex())
-        }
-        async fn query_all(&self, filter: Value) -> Result<Vec<Value>, Error> {
-            let rows = match filter["kinds"][0].as_u64().expect("explicit kind") {
-                30177 => vec![self.definition.clone()],
-                0 => vec![profile(
-                    &self.owner,
-                    if filter["authors"][0] == self.actor.public_key().to_hex() {
-                        &self.actor
-                    } else {
-                        &self.provider
-                    },
-                )],
-                44221 | 44224 => self
-                    .events
-                    .lock()
-                    .expect("events")
-                    .iter()
-                    .filter(|event| {
-                        event.kind.as_u16() as u64 == filter["kinds"][0].as_u64().expect("kind")
-                    })
-                    .cloned()
-                    .collect(),
-                _ => vec![],
-            };
-            Ok(rows
-                .into_iter()
-                .map(|event| serde_json::to_value(event).expect("event"))
-                .collect())
-        }
-        async fn submit_event(&self, event: Event) -> Result<Value, Error> {
-            assert_eq!(event.kind.as_u16(), 44221);
-            assert_eq!(event.pubkey, self.owner.public_key());
-            let payload=beekeeper_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(&event.content).expect("payload");
-            let target = beekeeper_core::coding_session_command::CodingSessionTarget {
-                driver: "codex-acp".into(),
-                instance_id: "fixture".into(),
-                session_id: Uuid::new_v4().to_string(),
-                generation: 1,
-            };
-            let key = beekeeper_sdk::coding_session::coding_session_lifecycle_receipt_semantic_key(
-                &payload.command_id,
-            );
-            let receipt = EventBuilder::new(
-                Kind::Custom(44224),
-                serde_json::to_string(
-                    &beekeeper_core::coding_session_payload::LifecycleReceipt::created(
-                        &payload.command_id,
-                        &target,
-                    ),
-                )
-                .expect("receipt"),
-            )
-            .tags([
-                Tag::parse([
-                    "h",
-                    event
-                        .tags
-                        .iter()
-                        .find(|tag| tag.as_slice()[0] == "h")
-                        .expect("h")
-                        .as_slice()[1]
-                        .as_str(),
-                ])
-                .expect("h"),
-                Tag::parse([
-                    "cslr-v",
-                    beekeeper_sdk::coding_session::CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
-                ])
-                .expect("version"),
-                Tag::parse(["csl-command", &payload.command_id]).expect("command"),
-                Tag::parse(["csl-key", &key]).expect("key"),
-            ])
-            .sign_with_keys(&self.provider)
-            .expect("signed receipt");
-            self.events.lock().expect("events").extend([event, receipt]);
-            Ok(json!({"accepted":true,"message":"stored"}))
-        }
-    }
-    #[tokio::test]
-    async fn owner_remote_start_uses_only_caller_journal_and_exact_signed_retry() {
-        let owner = Keys::generate();
-        let actor = Keys::generate();
-        let provider = Keys::generate();
-        let content = beekeeper_core::managed_agent::ManagedAgentEventContent {
-            name: "Remote".into(),
-            system_prompt: Some("ordinary work".into()),
-            model: Some("default".into()),
-            persona_id: None,
-            provider: None,
-            persona_source_version: None,
-            parallelism: 1,
-            respond_to: beekeeper_core::managed_agent::RespondTo::OwnerOnly,
-            respond_to_allowlist: vec![],
-            home_role: None,
-            project_digest: None,
-            project_withdrawn: false,
-        };
-        let definition = beekeeper_sdk::managed_agent::build_managed_agent_event(
-            &actor.public_key().to_hex(),
-            &content,
-        )
-        .expect("definition")
-        .sign_with_keys(&owner)
-        .expect("signed head");
-        let args = RemoteStartRequest {
-            operation_id: Uuid::new_v4(),
-            agent_pubkey: actor.public_key().to_hex(),
-            expected_revision: definition.id.to_hex(),
-            channel: Uuid::new_v4(),
-            provider_authority: provider.public_key().to_hex(),
-            provider_instance: "codex-primary".into(),
-            project: None,
-            wait_secs: 1,
-        };
-        let client = Relay {
-            owner,
-            provider,
-            actor,
-            definition,
-            events: Mutex::new(vec![]),
-        };
-        let home = tempfile::tempdir().expect("caller home");
-        let context = Context {
-            home: home.path().into(),
-            instance: beekeeper_host_core::layout::Instance::Dev,
-            native_home: None,
-        };
-        let first = start_remote(&args, &client, &context)
-            .await
-            .expect("remote accepted");
-        assert_eq!(first["host_admitted"], true);
-        assert!(!home.path().join("host/config.json").exists());
-        assert!(!home.path().join("actors").exists());
-        assert_eq!(
-            start_remote(&args, &client, &context).await.expect("retry"),
-            first
-        );
-        assert_eq!(
-            client
-                .events
-                .lock()
-                .expect("events")
-                .iter()
-                .filter(|event| event.kind.as_u16() == 44221)
-                .count(),
-            1
-        );
-        let mut changed = args.clone();
-        changed.provider_instance = "different".into();
-        assert!(matches!(
-            start_remote(&changed, &client, &context).await,
-            Err(Error::Conflict(_))
-        ));
-    }
-}
+#[path = "remote_start_tests.rs"]
+mod tests;

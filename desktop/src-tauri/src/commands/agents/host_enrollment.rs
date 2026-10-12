@@ -427,6 +427,10 @@ pub(super) fn require_no_legacy_conflict(
     };
     old_evidence_clear(record.runtime_pid, Ok(receipt_present))
 }
+#[path = "host_conversation.rs"]
+mod conversation;
+pub(super) use conversation::start_conversation;
+
 pub(super) async fn start_existing(
     app: &AppHandle,
     record: &ManagedAgentRecord,

@@ -14,6 +14,7 @@ export async function startManagedAgent(
     expectedRelayUrl?: string;
     expectedSignerPubkey?: string;
     replayFloorUnix?: number;
+    conversationChannelId?: string;
   },
 ): Promise<ManagedAgent> {
   const response = await invokeTauri<RawManagedAgent>("start_managed_agent", {
@@ -21,6 +22,7 @@ export async function startManagedAgent(
     expectedRelayUrl: options?.expectedRelayUrl ?? null,
     expectedSignerPubkey: options?.expectedSignerPubkey ?? null,
     replayFloorUnix: options?.replayFloorUnix ?? null,
+    conversationChannelId: options?.conversationChannelId ?? null,
   });
   return fromRawManagedAgent(response);
 }

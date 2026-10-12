@@ -214,6 +214,18 @@ with a TypeScript lookup table or an id comparison in a component.
     persona/team/managed-agent caches; they must never invalidate the remote
     relay directory.
 
+## Headless conversation admission
+
+A host-managed agent's availability in one channel does not establish its
+conversation responsibility in another. Mention sends retain the actual
+published channel alongside relay and signer, then use shared management to
+admit or observe that exact responsibility after publication. Channel members
+can retry an owned local agent with **Enable conversation here**, without
+resending its messages. Membership, author policy and protected execution
+scope remain worker/relay checks; no community-wide read grant is inferred.
+Remote deployment keeps its existing replay-timestamp contract. Harness,
+provider, model and effort configuration rules above are unchanged.
+
 ## Channel-only runtime controls
 
 Desktop observer controls identify a channel, not a thread session. The harness

@@ -32,7 +32,16 @@ pub async fn restart_managed_agent(
     restart_relay_for_active(&relay_ws_url_with_override(&state), &pinned_relay)?;
     // Reuse the shared start adapter, including adopted successor ownership.
     // Calling the legacy preflight directly would refuse or bypass that branch.
-    start_managed_agent(pubkey, Some(pinned_relay), Some(signer), None, app, state).await
+    start_managed_agent(
+        pubkey,
+        Some(pinned_relay),
+        Some(signer),
+        None,
+        None,
+        app,
+        state,
+    )
+    .await
 }
 
 #[cfg(test)]

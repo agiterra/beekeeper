@@ -29,6 +29,7 @@ pub(crate) async fn start_host_pair_with_floor(
     actor: &str,
     relay: &str,
     floor: Option<u64>,
+    conversation_channel: Option<uuid::Uuid>,
 ) -> Result<(), String> {
     if floor.is_some() {
         return Err("explicit replay floor requires a new CLI responsibility".into());
@@ -37,7 +38,10 @@ pub(crate) async fn start_host_pair_with_floor(
     if record.backend != BackendKind::Local {
         return Err("remote lifecycle uses its provider boundary".into());
     }
-    enrollment::start_existing(app, &record, relay).await
+    match conversation_channel {
+        Some(channel) => enrollment::start_conversation(app, &record, relay, channel).await,
+        None => enrollment::start_existing(app, &record, relay).await,
+    }
 }
 
 pub(crate) async fn stop_host_pair(

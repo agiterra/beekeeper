@@ -332,6 +332,33 @@ test("a wake with no queued floor captures fire time", async () => {
   rendered.unmount();
 });
 
+test("local wakes retain exact conversation channel and coalesce only that channel", async () => {
+  holdStarts = true;
+  const { act, rendered } = await renderDetachedStart();
+  const local = { ...AGENT_RECORD, backend: { type: "local" } };
+  await act(async () => {
+    assert.equal(
+      rendered.result.current.startDetached(local, 123, "general-channel"),
+      true,
+    );
+    assert.equal(
+      rendered.result.current.startDetached(local, 124, "general-channel"),
+      false,
+    );
+    assert.equal(
+      rendered.result.current.startDetached(local, 125, "other-channel"),
+      true,
+    );
+    await settle();
+  });
+  assert.deepEqual(
+    startCalls.map((call) => call.conversationChannelId),
+    ["general-channel", "other-channel"],
+  );
+  assert.ok(startCalls.every((call) => call.replayFloorUnix === null));
+  rendered.unmount();
+});
+
 test("local mention wake preserves host replay ownership instead of supplying a send-time floor", async () => {
   const { act, rendered } = await renderDetachedStart();
   const local = { ...AGENT_RECORD, backend: { type: "local" } };
@@ -348,6 +375,27 @@ test("local mention wake preserves host replay ownership instead of supplying a 
     assert.equal(call.expectedSignerPubkey, SELF);
     assert.equal(call.pubkey, AGENT);
   }
+  rendered.unmount();
+});
+
+test("a delayed local send keeps captured channel, community and signer together", async () => {
+  const { act, rendered } = await renderDetachedStart();
+  const capturedStart = rendered.result.current.startDetached;
+  const capturedChannel = "original-general";
+  await act(async () => rendered.result.current.switchCommunity("community-b"));
+  await act(async () => {
+    capturedStart(
+      { ...AGENT_RECORD, backend: { type: "local" } },
+      1234,
+      capturedChannel,
+    );
+    await settle();
+  });
+  assert.equal(startCalls.length, 1);
+  assert.equal(startCalls[0].conversationChannelId, capturedChannel);
+  assert.equal(startCalls[0].expectedRelayUrl, RELAY_A);
+  assert.equal(startCalls[0].expectedSignerPubkey, SELF);
+  assert.equal(startCalls[0].replayFloorUnix, null);
   rendered.unmount();
 });
 

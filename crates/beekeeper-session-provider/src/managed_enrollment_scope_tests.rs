@@ -249,3 +249,6 @@ async fn prior_accepted_channel_stages_its_workspace_without_rewriting_latest_en
     );
     server.abort();
 }
+
+#[path = "managed_enrollment_additional_tests.rs"]
+mod additional;

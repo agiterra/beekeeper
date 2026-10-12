@@ -506,6 +506,7 @@ export function MembersSidebar({
     actionErrorMessage,
     actionNoticeMessage,
     handleLifecycleAction: handleAgentLifecycleAction,
+    handleEnableConversation,
     handleRemoveMember,
     isActionPending,
   } = useMembersSidebarActions({
@@ -654,6 +655,9 @@ export function MembersSidebar({
             void changeRoleMutation.mutateAsync({ pubkey: m.pubkey, role });
           }}
           onEditRespondTo={memberIsBot ? setEditRespondToAgent : undefined}
+          onEnableConversation={
+            viewerIsOwner ? handleEnableConversation : undefined
+          }
           onManagedAgentAction={(agent) => {
             void handleAgentLifecycleAction(agent, managedAgentRuntime);
           }}

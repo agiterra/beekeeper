@@ -120,6 +120,7 @@ export function useEnsureAgentMentionsReady({
             if (
               (isProviderBackedAgent(readyAgent) &&
                 readyAgent.status !== "deployed") ||
+              readyAgent.backend.type === "local" ||
               (!isProviderBackedAgent(readyAgent) &&
                 !isManagedAgentRunning(readyAgent))
             ) {

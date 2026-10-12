@@ -171,23 +171,19 @@ export async function attachManagedAgentToChannel(
   let started = false;
 
   if (ensureRunning) {
-    // Running agents (local or provider) auto-discover new channel membership
-    // via the harness's membership notifications — no restart needed. Only
-    // not-yet-running agents need a start/deploy call before the first mention
-    // can reach them. For a local agent the status check and the start are both
-    // pair-scoped to the active community: `agent.status` reflects that
-    // community's (agent, relay) pair, and `startManagedAgent` spawns that same
-    // pair — so this ensures the pair the caller is attaching to, never
-    // another community's.
+    // Host execution is admitted per conversation channel. A live context in
+    // another channel does not establish a route here; shared management
+    // safely observes/reuses this exact responsibility. Remote deployments
+    // retain their existing channel-discovery contract.
     const isRemote = input.agent.backend.type === "provider";
-    const needsStart = isRemote
-      ? input.agent.status !== "deployed"
-      : input.agent.status !== "running" && input.agent.status !== "deployed";
+    const needsStart = isRemote ? input.agent.status !== "deployed" : true; // Host conversations require an exact channel responsibility.
     if (needsStart) {
       if (input.detachedStart) {
         input.detachedStart(input.agent);
       } else {
-        agent = await startManagedAgent(input.agent.pubkey);
+        agent = await startManagedAgent(input.agent.pubkey, {
+          conversationChannelId: channelId,
+        });
         started = true;
       }
     }

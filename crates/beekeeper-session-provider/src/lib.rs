@@ -12376,6 +12376,19 @@ mod tests {
         (relay, control.queries, server)
     }
 
+    pub(crate) async fn spawn_test_relay_with_identity(
+        keys: &Keys,
+        events: Vec<Event>,
+    ) -> (
+        HarnessRelay,
+        Arc<Mutex<Vec<serde_json::Value>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (relay, control, server) = spawn_recording_test_relay(keys, events).await;
+        *control.relay_self.lock().expect("relay identity") = Some(keys.public_key().to_hex());
+        (relay, control.queries, server)
+    }
+
     async fn spawn_recording_test_relay(
         keys: &Keys,
         events: Vec<Event>,

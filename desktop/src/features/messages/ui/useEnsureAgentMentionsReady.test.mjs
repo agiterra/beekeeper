@@ -110,7 +110,7 @@ test("a stopped member agent is queued for a post-publish wake, never fired", as
   rendered.unmount();
 });
 
-test("only agents that are not up are queued", async () => {
+test("host agents queue channel admission even when another responsibility is up", async () => {
   const runningLocal = managedAgent({ status: "running" });
   const undeployedProvider = managedAgent({
     pubkey: OTHER_AGENT,
@@ -135,8 +135,8 @@ test("only agents that are not up are queued", async () => {
   assert.deepEqual(result.errors, []);
   assert.deepEqual(
     result.agentsToWake.map((wake) => wake.agent.pubkey),
-    [OTHER_AGENT],
-    "a running agent needs no wake; a not-deployed provider agent does",
+    [MEMBER_AGENT, OTHER_AGENT],
+    "local availability in another channel does not admit this channel; remote deployment keeps its contract",
   );
   rendered.unmount();
 });

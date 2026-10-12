@@ -129,7 +129,7 @@ pub fn validate_workspace(
 }
 
 mod remote_start;
-pub use remote_start::{restart_remote, start_remote, RemoteStartRequest};
+pub use remote_start::{observe_remote_start, restart_remote, start_remote, RemoteStartRequest};
 
 mod lifecycle;
 mod lifecycle_retry;

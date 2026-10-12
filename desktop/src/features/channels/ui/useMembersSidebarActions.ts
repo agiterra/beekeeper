@@ -141,6 +141,31 @@ export function useMembersSidebarActions({
     }
   }
 
+  async function handleEnableConversation(agent: ManagedAgent) {
+    if (!channelId || !relayUrl || agent.backend.type !== "local") return;
+    clearActionFeedback();
+    setActiveActionKey(`conversation:${agent.pubkey}`);
+    try {
+      await startManagedAgentMutation.mutateAsync({
+        pubkey: agent.pubkey,
+        expectedRelayUrl: relayUrl,
+        expectedSignerPubkey: currentPubkey,
+        conversationChannelId: channelId,
+      });
+      setActionNoticeMessage(
+        `Conversation enabled for ${agent.name} in this channel.`,
+      );
+    } catch (error) {
+      setActionErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Conversation admission remains unconfirmed.",
+      );
+    } finally {
+      setActiveActionKey(null);
+    }
+  }
+
   async function handleLifecycleAction(
     agent: ManagedAgent,
     runtime?: ManagedAgentRuntimeStatus,
@@ -308,6 +333,7 @@ export function useMembersSidebarActions({
     actionErrorMessage,
     actionNoticeMessage,
     handleLifecycleAction,
+    handleEnableConversation,
     handleRemoveAll,
     handleRemoveMember,
     handleRespawnAll,

@@ -13,6 +13,10 @@ use nostr::{Event, Keys};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+#[path = "managed_enrollment_channel.rs"]
+mod managed_enrollment_channel;
+use managed_enrollment_channel::additional_workspace;
+
 fn refused(message: &str) -> CreateFailure {
     crate::execution_scope::refuse("AGENT_ENROLLMENT_UNAVAILABLE", message)
 }
@@ -226,7 +230,10 @@ async fn stage_with_context(
                 .and_then(Value::as_str)
                 .map(std::path::PathBuf::from)
                 .ok_or_else(|| refused("enrolled workspace missing"))?
-        } else {
+        } else if state
+            .sessions()
+            .any(|record| record.actor.as_deref() == Some(actor) && record.channel_id == channel)
+        {
             accepted_workspace(
                 config,
                 state,
@@ -236,6 +243,16 @@ async fn stage_with_context(
                 requested_project,
                 &owner,
             )?
+        } else {
+            additional_workspace(
+                config,
+                state,
+                rest,
+                &value,
+                (actor, channel, &owner),
+                ownership_context.as_ref(),
+            )
+            .await?
         };
     let revision = current.id.to_hex();
     // The original protected signed enrollment predates queued inputs. Never
@@ -337,6 +354,7 @@ async fn stage_with_context(
     )?;
     Ok(())
 }
+
 fn accepted_workspace(
     config: &Config,
     state: &StateStore,

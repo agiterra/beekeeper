@@ -558,11 +558,14 @@ export function useMentionSendFlow({
             draft.capturedThreadContext,
             draft.preparedLinkPreviews != null,
           );
-          // Only an accepted publish can wake an agent. Each queued wake uses
-          // its enqueue-time replay floor so the new process can replay this
-          // mention even after a delayed start.
+          // Wake only after publish, with its captured channel and pre-publish
+          // floor (remote deployments), including delayed sends.
           for (const wake of agentsToWake) {
-            startAgentDetached(wake.agent, wake.replayFloorUnix);
+            startAgentDetached(
+              wake.agent,
+              wake.replayFloorUnix,
+              sendChannelId ?? draft.capturedChannelId ?? undefined,
+            );
           }
           if (signal?.aborted || isSendCancelled()) return;
           if (revalidatedExplicitAgentPubkeys.length > 0) {
