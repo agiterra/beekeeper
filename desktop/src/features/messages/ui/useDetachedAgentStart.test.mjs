@@ -262,8 +262,16 @@ async function importIdentity(act, rendered, client, pubkey) {
   await waitForIdentity(act, rendered, pubkey);
 }
 
-const AGENT_RECORD = { pubkey: AGENT, name: "fizz" };
-const OTHER_AGENT_RECORD = { pubkey: OTHER_AGENT, name: "buzz" };
+const AGENT_RECORD = {
+  pubkey: AGENT,
+  name: "fizz",
+  backend: { type: "provider", providerPubkey: "c".repeat(64) },
+};
+const OTHER_AGENT_RECORD = {
+  ...AGENT_RECORD,
+  pubkey: OTHER_AGENT,
+  name: "buzz",
+};
 
 /** Lets queued microtasks (the mutation, and the map's `finally`) run. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -321,6 +329,25 @@ test("a wake with no queued floor captures fire time", async () => {
       startCalls[0].replayFloorUnix <= after,
     "callers with no queued floor keep the fire-time capture",
   );
+  rendered.unmount();
+});
+
+test("local mention wake preserves host replay ownership instead of supplying a send-time floor", async () => {
+  const { act, rendered } = await renderDetachedStart();
+  const local = { ...AGENT_RECORD, backend: { type: "local" } };
+  for (const floor of [undefined, 1_234_567]) {
+    await act(async () => {
+      rendered.result.current.startDetached(local, floor);
+      await settle();
+    });
+  }
+  assert.equal(startCalls.length, 2);
+  for (const call of startCalls) {
+    assert.equal(call.replayFloorUnix, null);
+    assert.equal(call.expectedRelayUrl, RELAY_A);
+    assert.equal(call.expectedSignerPubkey, SELF);
+    assert.equal(call.pubkey, AGENT);
+  }
   rendered.unmount();
 });
 

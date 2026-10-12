@@ -86,18 +86,37 @@ static NEST_DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new
 /// may result in a filesystem operation). Subsequent calls are no-ops — the
 /// `OnceLock` is set exactly once.
 ///
+/// `BEEKEEPER_NEST_ROOT` selects an explicit absolute workspace root; an invalid
+/// override refuses nest access instead of falling back into another scope.
+///
 /// `is_dev` should be `true` when the running binary is a dev build — i.e.
 /// when the Tauri app-data directory name starts with `"io.agiterra.beekeeper.app.dev"`.
 /// Pass `false` for production (signed DMG) builds.
 pub fn init_nest_dir(is_dev: bool) {
     let suffix = if is_dev { NEST_DIR_DEV } else { NEST_DIR_PROD };
-    let path = dirs::home_dir().map(|h| h.join(suffix));
+    // Explicit workspace scope is independent of HOME and the OS Keychain.
+    // Candidate bundles can isolate the shared nest even on Finder launch.
+    let path = match std::env::var_os("BEEKEEPER_NEST_ROOT") {
+        Some(root) => {
+            let root = PathBuf::from(root);
+            if root.is_absolute() {
+                Some(root)
+            } else {
+                eprintln!(
+                    "beekeeper-desktop: BEEKEEPER_NEST_ROOT must be absolute; nest access refused"
+                );
+                None
+            }
+        }
+        None => dirs::home_dir().map(|h| h.join(suffix)),
+    };
     // set() is a no-op when already initialized, which is correct: only the
     // first call (at boot, before any filesystem work) should win.
     let _ = NEST_DIR.set(path);
 }
 
-/// Returns the nest root path (`~/.beekeeper` for prod, `~/.beekeeper-dev` for dev),
+/// Returns the explicit `BEEKEEPER_NEST_ROOT`, or the default nest root
+/// (`~/.beekeeper` for prod, `~/.beekeeper-dev` for dev),
 /// or `None` if the home directory cannot be resolved.
 ///
 /// If [`init_nest_dir`] has not been called yet (e.g. in unit tests), falls

@@ -85,3 +85,15 @@ blob must be recreated once (their nsecs are not migrated).
 
 The main checkout now also gets a "dev"-badged dock icon (previously
 worktree-only), so the two instances are visually distinct.
+
+### Explicit test nest scope
+
+`BEEKEEPER_NEST_ROOT` selects an absolute shared workspace path instead of the
+OS home's `.beekeeper` or `.beekeeper-dev`. An invalid relative value refuses
+nest access. Keep the final directory name `.beekeeper-dev` for a dev instance
+or `.beekeeper` for production, because host instance discovery uses that name.
+This isolates workspace writes; app data still follows the bundle identifier,
+Keychain custody follows its configured service/account, and host custody and
+control use `BEEKEEPER_HOST_HOME` / `BEEKEEPER_HOST_SOCK`. Changing `HOME` alone
+does not establish those boundaries, and Finder may restore the OS home.
+A test bundle should bake these explicit scopes into its launch environment.

@@ -59,7 +59,7 @@ pub(crate) fn stage_configuration(
     }
     save(
         &dir.join("enrollment.json"),
-        &json!({"actorPubkey":actor,"channelId":args.channel,"cwd":cwd,"providerInstance":args.provider_instance.as_deref().or_else(||config.runtimes.first().filter(|_|config.runtimes.len()==1).map(|runtime|runtime.instance_ref.as_str())),"projectRef":args.project,"desiredRunning":args.activate,"definition":definition,"replayFloorUnix":args.replay_floor_unix}),
+        &json!({"actorPubkey":actor,"channelId":args.channel,"cwd":cwd,"providerInstance":args.provider_instance.as_deref().or_else(||config.runtimes.first().filter(|_|config.runtimes.len()==1).map(|runtime|runtime.instance_ref.as_str())),"projectRef":args.project,"desiredRunning":args.activate,"definition":definition,"replayFloorUnix":args.replay_floor_unix.unwrap_or(definition.created_at.as_secs())}),
     )?;
     Ok(())
 }

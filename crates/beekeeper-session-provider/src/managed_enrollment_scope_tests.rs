@@ -89,7 +89,7 @@ async fn prior_accepted_channel_stages_its_workspace_without_rewriting_latest_en
     let latest_cwd = dir.path().join("latest");
     std::fs::create_dir(&latest_cwd).expect("latest workspace");
     let enrollment_path = actor_dir.join("enrollment.json");
-    write(&enrollment_path, &json!({"actorPubkey":actor_hex,"channelId":latest,"providerInstance":record.provider_instance_ref,"definition":definition,"cwd":latest_cwd,"projectRef":null})).expect("latest enrollment");
+    write(&enrollment_path, &json!({"actorPubkey":actor_hex,"channelId":latest,"providerInstance":record.provider_instance_ref,"definition":definition,"cwd":latest_cwd,"projectRef":null,"replayFloorUnix":definition.created_at.as_secs()})).expect("latest enrollment");
     let bytes = std::fs::read(&enrollment_path).expect("original enrollment");
     payload["commandId"] = json!(Uuid::new_v4());
     let command = payload["commandId"].as_str().expect("command").to_owned();

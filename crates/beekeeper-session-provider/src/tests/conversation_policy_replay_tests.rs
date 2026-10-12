@@ -224,3 +224,203 @@ async fn unauthorized_ordinary_author_gets_no_ambiguous_responsibility_disclosur
     host.flush(&sink).await.unwrap();
     assert!(!sink.all().iter().any(|reply| reply.kind == Kind::Custom(9)));
 }
+
+#[tokio::test]
+async fn configured_before_activation_backfills_original_same_second_message_once() {
+    configured_activation_replays_original_once(false).await;
+}
+
+#[tokio::test]
+async fn fresh_mint_floor_backfills_message_before_first_definition_once() {
+    configured_activation_replays_original_once(true).await;
+}
+
+async fn configured_activation_replays_original_once(pre_enrollment: bool) {
+    let dir = tempfile::tempdir().expect("fixture");
+    let channel = Uuid::new_v4();
+    let actor = Keys::generate();
+    let owner = test_operator_keys();
+    let cwd = dir.path().join("checkout");
+    std::fs::create_dir(&cwd).expect("workspace");
+    let projects = write_projects(dir.path(), channel, &cwd);
+    let initial = provider(&dir.path().join("state"), Some(&projects));
+    let mut config = initial.config.clone();
+    drop(initial);
+    let log = cwd.join("activation-methods.log");
+    config.runtimes[0].agent_command = fake_agent(
+        dir.path(),
+        "activation-agent",
+        &crate::session::testing::restorable_agent(&log.to_string_lossy()),
+    );
+    let seats = dir.path().join("activation-seats.json");
+    state::atomic_write(&seats, br#"{"version":1,"pending":{}}"#).expect("seat store");
+    config.actor_seats_file = Some(seats);
+    let mut host = Provider::new(config).expect("unactivated provider");
+    let enrolled_at = now_secs().saturating_sub(3);
+    let definition_at = |text: &str, at: u64| {
+        nostr::EventBuilder::new(
+            Kind::Custom(30177),
+            serde_json::json!({"name":"Candidate worker","system_prompt":text,"parallelism":1,"respond_to":"owner-only"}).to_string(),
+        )
+        .tags([Tag::parse(["d", &actor.public_key().to_hex()]).expect("coordinate")])
+        .custom_created_at(nostr::Timestamp::from(at))
+        .sign_with_keys(owner)
+        .expect("signed definition")
+    };
+    // First-time commissioning may persist its signed definition only after the
+    // original message is sent. In that case the minted identity's durable floor
+    // must survive both first enrollment and a subsequent definition revision.
+    let definition_time = enrolled_at + u64::from(pre_enrollment);
+    let original = definition_at("Configured original", definition_time);
+    let latest = definition_at("Updated before activation", definition_time + 1);
+    let addressed = |text: &str| {
+        nostr::EventBuilder::new(Kind::Custom(9), text)
+            .tags([
+                Tag::parse(["h", &channel.to_string()]).expect("channel"),
+                Tag::parse(["p", &actor.public_key().to_hex()]).expect("actor"),
+            ])
+            .custom_created_at(nostr::Timestamp::from(enrolled_at))
+            .sign_with_keys(owner)
+            .expect("signed addressed input")
+    };
+    let queued = addressed("Reply CANDIDATE-OK, original input before first activation");
+    if pre_enrollment {
+        assert!(queued.created_at < original.created_at);
+    } else {
+        assert_eq!(queued.created_at, original.created_at);
+    }
+    let (relay, queries, server) =
+        spawn_test_relay_with_events(&host.config.keys, vec![latest.clone(), queued.clone()]).await;
+    host.set_rest_client(relay.rest_client());
+    host.set_relay_self(host.config.keys.public_key().to_hex());
+    let actor_dir = host
+        .config
+        .state_dir
+        .join("actors")
+        .join(actor.public_key().to_hex());
+    beekeeper_host_core::atomic_write::create_dir_all_restricted(&actor_dir)
+        .expect("protected actor directory");
+    state::atomic_write(
+        &actor_dir.join("key"),
+        actor.secret_key().to_secret_hex().as_bytes(),
+    )
+    .expect("actor custody");
+    let auth = beekeeper_sdk::nip_oa::compute_auth_tag(owner, &actor.public_key(), "")
+        .expect("owner attestation");
+    state::atomic_write(&actor_dir.join("auth-tag.json"), auth.as_bytes()).expect("attestation");
+    // This is a configured identity, not a route grafted onto an already-running
+    // actor. Its immutable signed source predates the latest definition revision.
+    let enrollment = actor_dir.join("enrollment.json");
+    state::atomic_write(
+        &enrollment,
+        &serde_json::to_vec(&serde_json::json!({
+            "actorPubkey":actor.public_key().to_hex(), "channelId":channel,
+            "providerInstance":host.config.runtimes[0].instance_ref, "definition":original,
+            "cwd":cwd, "projectRef":null,
+            "replayFloorUnix":pre_enrollment.then_some(enrolled_at),
+        }))
+        .expect("enrollment encoding"),
+    )
+    .expect("protected enrollment");
+    assert_eq!(host.state.sessions().count(), 0);
+    host.handle_command_event(channel, &queued)
+        .await
+        .expect("pre-activation delivery");
+    assert!(!host.state.is_command_consumed(&queued.id.to_hex()));
+    assert!(host.in_flight.is_empty());
+    assert!(!log.exists(), "no runtime exists before activation");
+    host.state
+        .record_watermark(channel, now_secs() + 100)
+        .expect("other channel traffic");
+    let create = create_event(&host, channel, "candidate-first-activation");
+    let mut content: serde_json::Value = serde_json::from_str(&create.content).expect("create");
+    content["action"]["actor"] = serde_json::json!(actor.public_key().to_hex());
+    let create = nostr::EventBuilder::new(create.kind, content.to_string())
+        .tags(create.tags)
+        .sign_with_keys(owner)
+        .expect("signed activation");
+    host.handle_command_event(channel, &create)
+        .await
+        .expect("actual managed activation");
+    assert_eq!(
+        host.state.sessions().count(),
+        1,
+        "Create must open exactly one real fake-ACP runtime"
+    );
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&enrollment).expect("enrollment"))
+            .expect("enrollment JSON");
+    assert_eq!(persisted["definition"]["id"], latest.id.to_hex());
+    assert_eq!(
+        persisted["replayFloorUnix"], enrolled_at,
+        "latest settings revision and activation time cannot move past queued work"
+    );
+    assert_eq!(
+        host.subscription_replay_since(channel, None),
+        Some(enrolled_at.saturating_sub(REPLAY_GRACE_SECS))
+    );
+    let mut receiver = host.conversation_backfill.slot.take_receiver();
+    host.start_conversation_backfill()
+        .expect("actual bounded HTTP read");
+    let fetched = tokio::time::timeout(Duration::from_secs(5), off_loop::next(&mut receiver))
+        .await
+        .expect("backfill completes");
+    host.finish_conversation_backfill(fetched)
+        .await
+        .expect("existing replay admission");
+    host.flush_replays_now()
+        .await
+        .expect("same-second original admission");
+    pump_until_turn_finished(&mut host).await;
+    assert!(host.state.is_command_consumed(&queued.id.to_hex()));
+    let methods = std::fs::read_to_string(&log).expect("actual runtime methods");
+    assert_eq!(
+        methods
+            .lines()
+            .filter(|method| *method == "session/new")
+            .count(),
+        1
+    );
+    assert_eq!(
+        methods
+            .lines()
+            .filter(|method| *method == "session/prompt")
+            .count(),
+        1
+    );
+    host.handle_command_event(channel, &create)
+        .await
+        .expect("exact activation retry");
+    host.handle_command_event(channel, &queued)
+        .await
+        .expect("original input retry");
+    assert_eq!(host.state.sessions().count(), 1);
+    assert_eq!(
+        std::fs::read_to_string(&log).expect("retry methods"),
+        methods
+    );
+    assert!(host.in_flight.is_empty());
+    assert!(queries.lock().expect("queries").iter().any(|filter| {
+        filter.as_array().is_some_and(|filters| {
+            filters.iter().any(|filter| {
+                filter.get("#p").is_some()
+                    && filter["since"] == enrolled_at.saturating_sub(REPLAY_GRACE_SECS)
+            })
+        })
+    }));
+    let session = host
+        .state
+        .sessions()
+        .next()
+        .expect("session")
+        .session_id
+        .clone();
+    assert_eq!(
+        host.sessions
+            .shutdown_and_join(&session, crate::session::ACTOR_RETIRE_GRACE)
+            .await,
+        crate::session::ActorQuiescence::Joined
+    );
+    relay.shutdown().await;
+    server.abort();
+}

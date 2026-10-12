@@ -73,7 +73,11 @@ pub(super) async fn bootstrap(
         beekeeper_host_core::record::canonical_relay_key(&c.relay_url)
             != beekeeper_host_core::record::canonical_relay_key(relay)
     }) {
-        return Err("this host is commissioned for another community; commission an independently scoped host instead of replacing its running ownership".into());
+        return Err(format!(
+            "This host is commissioned for {}. Agent creation for {} is retained but blocked. Use a separately commissioned host scope for this community; changing the desktop community does not move its running executor. Existing identity and pending operation were preserved.",
+            config.as_ref().map(|c| c.relay_url.as_str()).unwrap_or("another community"),
+            relay
+        ));
     }
     if config.is_none() {
         crate::session_provider::commands::provision_coding_session_provider(
@@ -198,6 +202,16 @@ pub(crate) fn reserve_fresh_host_agent(
     let path = pair_directory(&record.pubkey, relay)?.join("fresh-reservation.json");
     reserve_receipt(&path, &record.pubkey, relay, &owner, activate)
 }
+fn fresh_replay_floor(record: &ManagedAgentRecord) -> Result<u64, String> {
+    // Fresh reservation is required before this path. This is an inclusion
+    // boundary from minting, never a claim that earlier messages executed.
+    // It also covers a message sent while first commissioning is blocked.
+    let timestamp = chrono::DateTime::parse_from_rfc3339(&record.created_at)
+        .map_err(|_| "fresh identity creation time unavailable; original intent retained")?
+        .timestamp();
+    u64::try_from(timestamp)
+        .map_err(|_| "fresh identity creation time invalid; original intent retained".into())
+}
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Enrollment {
@@ -211,6 +225,8 @@ struct Enrollment {
     provider_instance: String,
     provider_authority: String,
     activate: bool,
+    #[serde(default)]
+    replay_floor_unix: Option<u64>,
 }
 pub(crate) async fn enroll_new_host_agent(
     app: &AppHandle,
@@ -285,6 +301,7 @@ pub(crate) async fn enroll_new_host_agent(
             provider_instance: runtime.instance_ref.clone(),
             provider_authority: config.provider_pubkey.clone(),
             activate,
+            replay_floor_unix: Some(fresh_replay_floor(&record)?),
         };
         let ctx = context()?;
         let _management = ownership::management_lock(&ctx.home, ctx.instance)?;
@@ -323,6 +340,10 @@ pub(crate) async fn enroll_new_host_agent(
                 .ok_or("scoped attestation unavailable")?,
         }),
         activate: intent.activate,
+        replay_floor_unix: Some(match intent.replay_floor_unix {
+            Some(floor) => floor,
+            None => fresh_replay_floor(&record)?,
+        }),
         wait_secs: 60,
         ..Default::default()
     };

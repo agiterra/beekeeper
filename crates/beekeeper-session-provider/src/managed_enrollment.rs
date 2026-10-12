@@ -49,6 +49,15 @@ fn definition(value: &Value, actor: &str, owner: &str) -> Result<Event, CreateFa
     }
     Ok(event)
 }
+fn retain_replay_boundary(value: &mut Value, enrolled: &Event) {
+    if value
+        .get("replayFloorUnix")
+        .and_then(Value::as_u64)
+        .is_none()
+    {
+        value["replayFloorUnix"] = json!(enrolled.created_at.as_secs());
+    }
+}
 /// Existing command admission still checks transport, project grants, membership and runtime.
 /// This helper supplies only owner-authorized private execution facts already in worker custody.
 pub(crate) async fn stage(
@@ -129,7 +138,7 @@ async fn stage_with_context(
             "only the attested owner may start this managed identity",
         ));
     }
-    definition(&value, actor, &owner)?;
+    let enrolled_definition = definition(&value, actor, &owner)?;
     let rest = rest.ok_or_else(|| refused("current managed definition transport unavailable"))?;
     let owner_key =
         nostr::PublicKey::from_hex(&owner).map_err(|_| refused("actor owner invalid"))?;
@@ -229,6 +238,9 @@ async fn stage_with_context(
             )?
         };
     let revision = current.id.to_hex();
+    // The original protected signed enrollment predates queued inputs. Never
+    // substitute the latest revision or start time for this durable boundary.
+    retain_replay_boundary(&mut value, &enrolled_definition);
     value["definition"] =
         serde_json::to_value(current).map_err(|_| refused("current definition encoding failed"))?;
     write(&dir.join("enrollment.json"), &value)?;
@@ -592,6 +604,27 @@ pub(crate) fn follow_generation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replay_boundary_retains_original_signed_enrollment_across_revision_and_retry() {
+        let keys = crate::tests::test_operator_keys();
+        let old = nostr::EventBuilder::new(nostr::Kind::Custom(30177), "original")
+            .custom_created_at(nostr::Timestamp::from(123))
+            .sign_with_keys(keys)
+            .expect("signed original");
+        let newer = nostr::EventBuilder::new(nostr::Kind::Custom(30177), "updated")
+            .custom_created_at(nostr::Timestamp::from(456))
+            .sign_with_keys(keys)
+            .expect("signed update");
+        let mut value = json!({"replayFloorUnix":null});
+        retain_replay_boundary(&mut value, &old);
+        assert_eq!(value["replayFloorUnix"], 123);
+        retain_replay_boundary(&mut value, &newer);
+        assert_eq!(value["replayFloorUnix"], 123);
+        let mut explicit = json!({"replayFloorUnix":100});
+        retain_replay_boundary(&mut explicit, &old);
+        assert_eq!(explicit["replayFloorUnix"], 100);
+    }
 
     #[tokio::test]
     async fn historical_custody_without_import_flags_is_refused_before_any_restaging_write() {

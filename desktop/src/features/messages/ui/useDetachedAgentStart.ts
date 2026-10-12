@@ -114,7 +114,9 @@ function warnAgentMayNotRespond(agentName: string, detail: string): void {
  * suppressed, since the wake is per-agent rather than per-message and the
  * first start's replay floor is earlier than the second message.
  *
- * `replayFloorUnix` lets a caller pass a floor captured earlier than this
+ * Local host starts retain their durable enrollment/replay boundary; a wake
+ * must not replace it with a send timestamp. Remote provider deployment uses
+ * `replayFloorUnix` to pass a floor captured earlier than this
  * call — the send path queues its wakes during preparation and flushes them
  * only after the publish succeeds, so the floor must be the enqueue-time
  * capture (≤ the message's `created_at` by construction), not flush time,
@@ -172,17 +174,17 @@ export function useDetachedAgentStart(): (
         // failure toasts for one problem.
         return false;
       }
-      // Publish-first: the send no longer waits for the agent start. The
-      // replay floor tells the spawned harness to replay at least back to
-      // the message that wanted this wake — the enqueue-time capture when the
-      // send path queued it, or this moment for a caller with no queue — so
-      // that message is inside the harness's first subscription window
-      // however long the spawn takes.
+      // Publish-first: local host admission reuses the durable responsibility
+      // and its replay boundary. Only remote redeployment takes a send-time
+      // floor, captured before publish so that it includes the triggering input.
       const started = startAgentMutateAsync({
         pubkey: agent.pubkey,
         expectedRelayUrl,
         expectedSignerPubkey,
-        replayFloorUnix: replayFloorUnix ?? Math.floor(Date.now() / 1000),
+        replayFloorUnix:
+          agent.backend.type === "local"
+            ? undefined
+            : (replayFloorUnix ?? Math.floor(Date.now() / 1000)),
       })
         .catch((error: unknown) => {
           // This settles arbitrarily long after the send, and `<Toaster />`
