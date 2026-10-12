@@ -260,6 +260,9 @@ pub enum RuntimeProfile {
     Claude,
     /// Codex through codex-acp (candidate A).
     Codex,
+    /// A protected configured ACP adapter with private generic HOME and explicit env only.
+    /// No vendor login is inherited or native capabilities inferred.
+    GenericManaged,
     /// A runtime whose state and context requirements have not been verified
     /// under the boundary. Refused where a backend exists.
     Unsupported,
@@ -286,7 +289,7 @@ impl RuntimeProfile {
         match self {
             Self::Claude => ModelAuth::Claude,
             Self::Codex => ModelAuth::Codex,
-            Self::Unsupported | Self::NoModel => ModelAuth::None,
+            Self::GenericManaged | Self::Unsupported | Self::NoModel => ModelAuth::None,
             #[cfg(test)]
             Self::TestDouble => ModelAuth::None,
         }
@@ -323,6 +326,8 @@ pub struct PreparedExecution {
     /// the provider reads the agent's own record of a command whose streamed
     /// output may be incomplete. `None` for every other runtime.
     pub codex_home: Option<PathBuf>,
+    /// Catalog-selected private tool server, granted by this same boundary.
+    pub configured_mcp_command: Option<PathBuf>,
 }
 
 impl PreparedExecution {
@@ -380,6 +385,9 @@ pub enum ExecutionPlan {
     Legacy {
         /// Stable reason code, disclosed.
         reason: &'static str,
+        /// Protected tool selection for the existing actor-fenced unbounded launch.
+        /// This field does not claim an enforced filesystem boundary.
+        configured_mcp_command: Option<PathBuf>,
     },
 }
 
@@ -389,7 +397,7 @@ impl ExecutionPlan {
     pub fn state(&self) -> BoundaryState {
         match self {
             Self::Prepared(prepared) => prepared.state(),
-            Self::Legacy { reason } => BoundaryState::NotEnforced { reason },
+            Self::Legacy { reason, .. } => BoundaryState::NotEnforced { reason },
         }
     }
 
@@ -499,6 +507,8 @@ pub struct ScopeInputs<'a> {
     pub role_contract: Option<&'a str>,
     /// Context-MCP executable and package directory, when attached.
     pub context_mcp: Option<(&'a Path, &'a Path)>,
+    /// Protected catalog-selected tool executable, never a public definition.
+    pub configured_mcp_command: Option<&'a Path>,
     /// The `bee` the host chose for this execution.
     pub seat_bee: Option<&'a Path>,
     /// Hermit's package state on this host, used only when the working tree
@@ -562,6 +572,7 @@ impl<'a> ScopeInputs<'a> {
             seat_bundle: None,
             role_contract: None,
             context_mcp: None,
+            configured_mcp_command: None,
             seat_bee: None,
             hermit_state: None,
             host_branch: None,
@@ -634,6 +645,7 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
     if !cfg!(target_os = "macos") {
         return Ok(ExecutionPlan::Legacy {
             reason: "no-backend-for-platform",
+            configured_mcp_command: inputs.configured_mcp_command.map(Path::to_path_buf),
         });
     }
     let model = inputs.purpose != ScopePurpose::HostCommand;
@@ -839,6 +851,9 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
             }
         }
     }
+    if let Some(command) = inputs.configured_mcp_command {
+        grants.extend(executable_grants(command, "the configured tool MCP"));
+    }
     if inputs.purpose == ScopePurpose::HostCommand {
         for path in inputs.host_read.iter().filter_map(|path| canonical(path)) {
             grants.push(Grant::tree(
@@ -1041,8 +1056,19 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
     });
 
     let mut codex_home = None;
+    let mut generic_home = None;
     let mut claude = None;
     let native_history = match (model, inputs.runtime) {
+        (true, RuntimeProfile::GenericManaged) => {
+            let directory = host_dir(&dirs.state, "managed-home")?;
+            grants.push(Grant::tree(
+                &directory,
+                Access::ReadWrite,
+                "the configured adapter's private home",
+            ));
+            generic_home = Some(directory);
+            NativeHistory::Private
+        }
         (true, RuntimeProfile::Claude) => {
             let executable = crate::execution_scope_runtime::claude_executable(inputs.agent_env)
                 .ok_or_else(|| {
@@ -1104,6 +1130,7 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         git_config: &git.config,
         caches: &caches,
         codex_home: codex_home.as_deref(),
+        generic_home: generic_home.as_deref(),
         claude_config: claude.as_ref().map(|(_, config, _)| config.as_path()),
         hermit_state: hermit_state.as_deref(),
         withhold_git,
@@ -1145,6 +1172,7 @@ pub fn prepare(inputs: &ScopeInputs<'_>) -> Result<ExecutionPlan, CreateFailure>
         full_access: false,
         operator_git_withheld: withhold_git,
         codex_home,
+        configured_mcp_command: inputs.configured_mcp_command.map(Path::to_path_buf),
     })))
 }
 
@@ -1918,7 +1946,7 @@ pub(crate) fn xcrun_cache_dir() -> Option<PathBuf> {
 
 /// The scope digest: project, seat, runtime, working tree and agents rights.
 fn scope_digest(inputs: &ScopeInputs<'_>, tree: &Path, agents: &str) -> String {
-    let facts = format!(
+    let mut facts = format!(
         "v{SCOPE_VERSION}\nproject={}\nactor={}\ndriver={}\nruntime={:?}\ntree={}\nagents={agents}\nrole={}\n",
         inputs.project_ref.unwrap_or(""),
         inputs.actor.unwrap_or(""),
@@ -1927,6 +1955,9 @@ fn scope_digest(inputs: &ScopeInputs<'_>, tree: &Path, agents: &str) -> String {
         tree.display(),
         inputs.role_contract.unwrap_or(""),
     );
+    if let Some(command) = inputs.configured_mcp_command {
+        facts.push_str(&format!("mcp={}\n", command.display()));
+    }
     hex::encode(Sha256::digest(facts.as_bytes()))
 }
 
@@ -1939,6 +1970,8 @@ struct ScopeEnv<'a> {
     codex_home: Option<&'a Path>,
     claude_config: Option<&'a Path>,
     hermit_state: Option<&'a Path>,
+    /// Private HOME for an explicitly configured generic adapter.
+    generic_home: Option<&'a Path>,
     /// Keep the operator's ssh agent out of the environment.
     withhold_git: bool,
     /// The proxy every proxy variable names, when egress is confined.
@@ -2030,6 +2063,9 @@ fn resolve_env(
         // existing login — while its state is private.
         scoped.push(("CLAUDE_SECURESTORAGE_CONFIG_DIR", String::new()));
         scoped.push(("CLAUDE_CODE_TMPDIR", text(scope.temp)));
+    }
+    if let Some(home) = scope.generic_home {
+        scoped.push(("HOME", text(home)));
     }
     if let Some(home) = scope.codex_home {
         scoped.push(("CODEX_HOME", text(home)));
@@ -2194,77 +2230,9 @@ impl crate::Provider {
     }
 }
 
-/// [`crate::Provider::execution_plan`] from the provider's configuration
-/// alone, so a restore can prepare its scope off the run loop (SV-76).
-pub(crate) fn execution_plan_for(
-    config: &crate::config::Config,
-    facts: &LaunchFacts<'_>,
-) -> Result<ExecutionPlan, CreateFailure> {
-    let projects = crate::commands::ProjectsFile::load(config.projects_file.as_deref());
-    let project_checkout = facts
-        .project_ref
-        .and_then(|project| projects.projects.get(project))
-        .cloned();
-    let agents = facts
-        .seat_skills
-        .and_then(|skills| skills.agents_checkout.as_ref())
-        .map(|agents| (agents.path.as_path(), agents.writable()))
-        .or_else(|| facts.unseated_agents.map(|path| (path, false)));
-    let role_contract = role_contract(facts.role, facts.seat_skills);
-    let hermit_state = crate::execution_scope_host::host_hermit_state();
-    // Every bounded session gets the host's own `bee`: offline commands
-    // work for all, and relay commands still need the identity only a
-    // seat is given.
-    let bee = crate::seat_bee::host_seat_bee().map(|(bee, _)| bee.path.clone());
-    let runtime_roots =
-        crate::runtime_installations::roots(&config.state_dir, facts.runtime_instance, facts.cwd)?;
-    let mut inputs = ScopeInputs::new(
-        ScopePurpose::Session,
-        &config.state_dir,
-        facts.session_id,
-        facts.cwd,
-    );
-    inputs.project_ref = facts.project_ref;
-    inputs.project_checkout = project_checkout.as_deref();
-    inputs.association = facts.association;
-    inputs.actor = facts.actor;
-    inputs.driver = facts.driver;
-    inputs.runtime = config
-        .runtime_profile_override
-        .unwrap_or_else(|| RuntimeProfile::for_driver(facts.driver));
-    inputs.runtime_roots = &runtime_roots;
-    inputs.agent_command = facts.agent_command;
-    inputs.agent_args = facts.agent_args;
-    inputs.agent_env = facts.agent_env;
-    inputs.identity_env = facts.identity_env;
-    inputs.agents_checkout = agents;
-    inputs.seat_bundle = facts.seat_skills.map(|skills| skills.bundle_dir.as_path());
-    inputs.role_contract = role_contract.as_deref();
-    inputs.context_mcp = facts
-        .rehydration
-        .map(|mcp| (mcp.command.as_path(), mcp.package_dir.as_path()));
-    inputs.seat_bee = bee.as_deref();
-    inputs.hermit_state = hermit_state.as_deref();
-    inputs.prior = facts.prior;
-    inputs.isolation = config.session_isolation;
-    let mut plan = prepare(&inputs)?;
-    if let ExecutionPlan::Prepared(prepared) = &mut plan {
-        let granted = crate::full_access::granted(&config.state_dir, facts.session_id);
-        // A provider that confines egress runs no session outside the
-        // boundary: full access would remove the network rule with it.
-        // The session then discloses the boundary it actually runs in.
-        if granted && config.session_isolation.egress.proxy().is_some() {
-            tracing::warn!(
-                target: "csp::scope",
-                session_id = %facts.session_id,
-                "full access was granted for this session, but this provider confines \
-                 session egress, so it runs inside the boundary"
-            );
-        }
-        prepared.full_access = granted && config.session_isolation.egress.proxy().is_none();
-    }
-    Ok(plan)
-}
+#[path = "execution_scope_launch.rs"]
+mod launch;
+pub(crate) use launch::execution_plan_for;
 
 /// [`crate::Provider::stage_unseated_agents`] from the provider's
 /// configuration alone, so a restore can stage off the run loop (SV-76).

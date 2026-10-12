@@ -217,7 +217,7 @@ impl Provider {
                 relay.map(HarnessRelay::event_publisher),
             )
             .await;
-        self.finish_restore(run)
+        self.finish_restore(run).await
     }
 
     /// Everything a restore decides before it waits on anything: steps 1–5,
@@ -236,6 +236,12 @@ impl Provider {
         let Some(record) = self.state.session(session_id).cloned() else {
             return Err(RestoreObstacle::ProviderUnavailable);
         };
+        if self
+            .state
+            .unresolved_start_target(&record.target(&self.config.instance_id))
+        {
+            return Err(RestoreObstacle::Prerequisite(crate::execution_scope::refuse(payload::CREATE_START_OUTCOME_UNCONFIRMED, "startup effects remain uncertain; no native restore child is launched until explicit repair")));
+        }
         if record.closed {
             return Err(RestoreObstacle::ProviderUnavailable);
         }
@@ -261,15 +267,30 @@ impl Provider {
         {
             return Err(RestoreObstacle::AlreadyLive);
         }
+        if !self.recovered_group_absent(&record.target(&self.config.instance_id)) {
+            return Err(RestoreObstacle::Prerequisite(crate::execution_scope::refuse("SESSION_QUIESCENCE_UNCONFIRMED", "the predecessor group is present or unknown; no native restore child is launched")));
+        }
         // 3. A cursor to reattach to.
         let Some(resume_cursor) = record.resume_cursor.clone() else {
             return Err(RestoreObstacle::NoResumeCursor);
         };
         // 4. A runtime to reattach with.
-        let Some(descriptor) = self.config.runtime(&record.provider_instance_ref).cloned() else {
+        let Some(mut descriptor) = self.config.runtime(&record.provider_instance_ref).cloned()
+        else {
             return Err(RestoreObstacle::ProviderUnavailable);
         };
 
+        let private_settings =
+            crate::managed_configuration::Settings::load(&self.config, record.actor.as_deref())
+                .map_err(RestoreObstacle::Prerequisite)?;
+        if descriptor.instance_ref == "managed-actor" && private_settings.is_none() {
+            return Err(RestoreObstacle::Prerequisite(crate::execution_scope::refuse("AGENT_PRIVATE_CONFIG_UNAVAILABLE", "managed-actor runtime requires protected configured adapter; no placeholder fallback")));
+        }
+        if let Some(settings) = &private_settings {
+            settings
+                .apply_runtime(&mut descriptor)
+                .map_err(RestoreObstacle::Prerequisite)?;
+        }
         // The *current* target: this reopens a generation, it does not mint
         // one. Everything a consumer already has bound to this session — the
         // 44223 it is rendering, the lease semantic key, the operation fence —
@@ -345,9 +366,36 @@ impl Provider {
             &target,
             &seat_command_id,
         );
-        let agent_env =
+        let mut agent_env =
             crate::runtime_credentials::environment(&self.config.state_dir, &descriptor)
                 .map_err(RestoreObstacle::Prerequisite)?;
+        if let Some(settings) = &private_settings {
+            agent_env.extend(
+                settings
+                    .environment()
+                    .map_err(RestoreObstacle::Prerequisite)?,
+            );
+        }
+        let native_import = crate::managed_configuration::native(
+            &self.config,
+            record.actor.as_deref(),
+            &record.command_id,
+            record.channel_id,
+            &record.cwd,
+            &descriptor,
+        )
+        .map_err(RestoreObstacle::Prerequisite)?;
+        if let Some((_, environment, _)) = &native_import {
+            agent_env.extend(environment.clone());
+        }
+        let mut seat_skills = seat_skills;
+        if seat_skills.is_none() {
+            if let Some(settings) = &private_settings {
+                seat_skills = settings
+                    .skills(&self.config.state_dir, &record.session_id)
+                    .map_err(RestoreObstacle::Prerequisite)?;
+            }
+        }
         // The deletion re-check every start and resume makes, read in the slow
         // half and applied in `finish_restore`.
         let deletion_check = match (record.project_ref.clone(), self.rest_client.clone()) {
@@ -357,6 +405,8 @@ impl Provider {
             }
             _ => None,
         };
+        self.stage_reopening(session_id, &target)
+            .map_err(|_| RestoreObstacle::ProviderUnavailable)?;
         Ok(RestoreJob {
             ownership_admission,
             record,
@@ -369,6 +419,8 @@ impl Provider {
             seat_skills,
             agent_env,
             deletion_check,
+            retirement_check: (self.rest_client.clone(), self.relay_self.clone()),
+            native_import,
             config: self.config.clone(),
             media: self.media.clone(),
             events: self.sessions.event_sender(),
@@ -381,7 +433,7 @@ impl Provider {
     ///
     /// `Err` is reserved, as on [`Self::restore_generation`], for a durable
     /// write that failed after the adapter was attached.
-    pub(crate) fn finish_restore(
+    pub(crate) async fn finish_restore(
         &mut self,
         run: RestoreRun,
     ) -> anyhow::Result<Result<(), RestoreObstacle>> {
@@ -397,7 +449,7 @@ impl Provider {
         if let Some((project, fact)) = project_fact {
             self.apply_project_fact(&project, &fact);
             if fact == crate::project_deletion::ProjectFact::Deleted {
-                self.stop_project_executions(&project);
+                self.stop_project_executions(&project).await;
             }
         }
         // One-shot, exactly as the create and resume paths treat it: the entry
@@ -415,7 +467,7 @@ impl Provider {
                     code = failure.code,
                     "a generation could not be reopened: {}", failure.message
                 );
-                return Ok(Err(RestoreObstacle::ProviderUnavailable));
+                return Ok(Err(RestoreObstacle::Prerequisite(failure)));
             }
             RestoreOutcome::NativeRefused(reason) => {
                 return Ok(Err(RestoreObstacle::Rejected(reason)));
@@ -461,7 +513,10 @@ impl Provider {
         });
         let already_attached = self.sessions.handle(&session_id).is_some();
         if !still_current || already_attached || !started.is_live() {
-            started.discard();
+            let proof = started.discard().await;
+            if proof == session::ActorQuiescence::Unproven {
+                tracing::warn!(target: "csp::restore", "unattached restore retirement is unproven; reopening fence retained");
+            }
             tracing::info!(
                 target: "csp::restore",
                 %session_id,
@@ -477,7 +532,10 @@ impl Provider {
         }
         if let Some(guard) = ownership_admission.as_ref() {
             if let Err(failure) = guard.recheck() {
-                started.discard();
+                let proof = started.discard().await;
+                if proof == session::ActorQuiescence::Unproven {
+                    tracing::warn!(target: "csp::restore", "unattached restore retirement is unproven; reopening fence retained");
+                }
                 return Ok(Err(RestoreObstacle::Prerequisite(failure)));
             }
         }
@@ -499,7 +557,16 @@ impl Provider {
         // describe the generation, and this reopened it rather than replacing
         // it. `pack_ref` is absent too — no pack was re-resolved here, and
         // restating one would claim a staging decision nobody made.
+        let group_id = self
+            .sessions
+            .handle(&target.session_id)
+            .and_then(session::SessionHandle::child_group);
         if let Err(error) = self.state.update_session(&record.session_id, |stored| {
+            stored.process_witness = Some(crate::process_witness::ExecutionProcessWitness {
+                target: target.clone(),
+                group_id,
+                quiesced: false,
+            });
             if stored.resume_cursor.as_deref() != Some(startup.acp_session_id.as_str()) {
                 stored.resume_cursor = Some(startup.acp_session_id.clone());
             }
@@ -565,6 +632,8 @@ pub(crate) struct RestoreJob {
     agent_env: Vec<(String, String)>,
     /// `(project, reader, head already seen)` when a deletion re-check runs.
     deletion_check: Option<(String, RestClient, Option<u64>)>,
+    retirement_check: (Option<RestClient>, Option<String>),
+    native_import: Option<crate::managed_configuration::NativeImport>,
     config: Config,
     media: Option<MediaFetcher>,
     events: mpsc::Sender<session::SessionEvent>,
@@ -648,6 +717,8 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
         seat_skills,
         agent_env,
         deletion_check,
+        retirement_check,
+        native_import,
         config,
         media,
         events,
@@ -666,6 +737,37 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
         seat_command_id: seat_command_id.clone(),
         project_fact: project_fact.clone(),
         outcome,
+    };
+    if let Err(failure) = crate::agent_retirement::observe(
+        &config,
+        retirement_check.0.as_ref(),
+        retirement_check.1.as_deref(),
+        record.actor.as_deref(),
+    )
+    .await
+    {
+        return finish(RestoreOutcome::Unplanned(failure));
+    }
+    let private_settings =
+        match crate::managed_configuration::Settings::load(&config, record.actor.as_deref()) {
+            Ok(value) => value,
+            Err(failure) => return finish(RestoreOutcome::Unplanned(failure)),
+        };
+    let idle_timeout = match private_settings
+        .as_ref()
+        .map(|settings| settings.duration("idle_timeout_seconds", config.idle_timeout))
+        .transpose()
+    {
+        Ok(value) => value.unwrap_or(config.idle_timeout),
+        Err(failure) => return finish(RestoreOutcome::Unplanned(failure)),
+    };
+    let max_turn_duration = match private_settings
+        .as_ref()
+        .map(|settings| settings.duration("max_turn_duration_seconds", config.max_turn_duration))
+        .transpose()
+    {
+        Ok(value) => value.unwrap_or(config.max_turn_duration),
+        Err(failure) => return finish(RestoreOutcome::Unplanned(failure)),
     };
     let deleted = project_fact
         .as_ref()
@@ -722,6 +824,11 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
     if let Some(reason) = execution.native_refusal() {
         return finish(RestoreOutcome::NativeRefused(reason.to_owned()));
     }
+    if let Some(import) = &native_import {
+        if let Err(failure) = crate::managed_configuration::materialize(import, &execution) {
+            return finish(RestoreOutcome::Unplanned(failure));
+        }
+    }
     let execution_state = execution.state();
     let request = CreateRequest {
         execution,
@@ -743,15 +850,32 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
         seat: seat_identity,
         post_fence_env,
         seat_skills,
-        idle_timeout: config.idle_timeout,
+        idle_timeout,
         answer_stall_timeout: config.answer_stall_timeout,
         emit_raw_sdk_frames: config.emit_raw_sdk_frames,
-        max_turn_duration: config.max_turn_duration,
+        max_turn_duration,
         idle_shutdown: config.session_idle_shutdown,
         include_thoughts: config.include_thoughts,
         transcript_paragraph_flush: config.transcript_paragraph_flush,
     };
-    let started = Box::new(SessionManager::start(request, events).await);
+    let started = SessionManager::start(request, events).await;
+    if let Err(failure) = crate::agent_retirement::observe(
+        &config,
+        retirement_check.0.as_ref(),
+        retirement_check.1.as_deref(),
+        record.actor.as_deref(),
+    )
+    .await
+    {
+        if let Ok(started) = started {
+            let proof = started.discard().await;
+            if proof == session::ActorQuiescence::Unproven {
+                tracing::warn!(target: "csp::restore", "unattached restore retirement is unproven; reopening fence retained");
+            }
+        }
+        return finish(RestoreOutcome::Unplanned(failure));
+    }
+    let started = Box::new(started);
     finish(RestoreOutcome::Started {
         started,
         execution_state,

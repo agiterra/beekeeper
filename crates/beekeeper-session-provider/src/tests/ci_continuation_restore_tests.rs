@@ -3,8 +3,8 @@
 //!
 //! Every test here follows the same shape, because it is the shape of the bug.
 //! One provider creates an execution and registers a CI continuation against
-//! it, then **dies** — dropped, nothing flushed, no actor asked to stop, which
-//! is what a `kill -9` leaves behind. A second provider opens the same state
+//! it, then disconnects after its real child has joined, without flushing.
+//! Actual abrupt worker death with a surviving child is covered by the process-witness crash suite; it must remain pending. A second provider opens the same state
 //! directory and has to answer the promise. Before this lane it always
 //! answered `turn_dropped/NO_LIVE_EXECUTION`: the record survived, the adapter
 //! did not, and the honest-but-useless disposition was the only one available.
@@ -156,11 +156,11 @@ struct Killed {
     record: crate::state::SessionRecord,
 }
 
-/// One provider's whole life before a `kill -9`: create, register, and die.
+/// Create and register, then prove cooperative child exit before worker restart.
 ///
 /// The adapter is the ordinary cooperative fake, so the ACP cursor the record
-/// stores is a real one from a real `session/new`. Nothing is flushed and no
-/// actor is asked to stop — that is the state under test.
+/// stores is a real one from a real `session/new`. Nothing is flushed; the
+/// actual child is joined so recovery may safely reattach that native cursor.
 async fn register_and_die(dir: &Path, seat: Option<&str>, ready: bool) -> Killed {
     let cwd = dir.join("checkout");
     std::fs::create_dir_all(&cwd).expect("mkdir");
@@ -171,6 +171,7 @@ async fn register_and_die(dir: &Path, seat: Option<&str>, ready: bool) -> Killed
         write_restore_seat(dir, "create-1", actor);
     }
     let mut provider = provider(&state_dir, Some(&projects));
+    witness_fixture_retirement(&mut provider).await;
     let create = create_in_ci_project(&provider, channel_id, "create-1", seat);
     provider
         .handle_command_event(channel_id, &create)
@@ -202,6 +203,14 @@ async fn register_and_die(dir: &Path, seat: Option<&str>, ready: bool) -> Killed
         .expect("record")
         .clone();
     let next_seq = record.next_seq;
+    assert_eq!(
+        provider
+            .sessions
+            .shutdown_and_join(&target.session_id, session::ACTOR_RETIRE_GRACE)
+            .await,
+        session::ActorQuiescence::Joined,
+        "cooperative predecessor must actually exit before strict restore"
+    );
     drop(provider);
     Killed {
         projects,
@@ -217,15 +226,17 @@ async fn register_and_die(dir: &Path, seat: Option<&str>, ready: bool) -> Killed
 /// A different adapter build than the one before the restart, which is both
 /// realistic and useful: the method log this one writes can only contain calls
 /// made *after* the restart.
-fn restarted_with(dir: &Path, killed: &Killed, name: &str, script: &str) -> Provider {
+async fn restarted_with(dir: &Path, killed: &Killed, name: &str, script: &str) -> Provider {
     let agent = fake_agent(dir, name, script);
-    Provider::new(config_of(
+    let mut provider = Provider::new(config_of(
         Keys::generate(),
         &killed.state_dir,
         Some(&killed.projects),
         agent,
     ))
-    .expect("provider")
+    .expect("provider");
+    witness_fixture_retirement(&mut provider).await;
+    provider
 }
 
 /// Every ACP method the fake adapter was asked for, in order.
@@ -277,7 +288,8 @@ async fn a_waiting_registration_restores_the_generation_and_delivers_one_turn() 
         &killed,
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
-    );
+    )
+    .await;
     restarted.recover().await.expect("recover");
 
     restarted
@@ -333,7 +345,7 @@ async fn a_waiting_registration_restores_the_generation_and_delivers_one_turn() 
     assert!(!asked.contains(&"session/new".to_owned()), "{asked:?}");
 
     // Field by field: the *only* thing a restore may change about the durable
-    // record is its transcript sequence (which advances because the restore
+    // record is process launch facts and its transcript sequence (which advances because the restore
     // published a row) and, if the adapter had reported one, the effective
     // model. Everything else has to be what it was, because everything else
     // describes the generation rather than the process behind it. Stated as an
@@ -352,6 +364,30 @@ async fn a_waiting_registration_restores_the_generation_and_delivers_one_turn() 
     assert_this_platforms_recorded_boundary(before.execution_boundary.as_ref());
     assert_this_platforms_recorded_boundary(after.execution_boundary.as_ref());
     after.execution_boundary = before.execution_boundary.clone();
+    // Generation identity is stable; the actual newly attached child group is not.
+    let witness = after
+        .process_witness
+        .as_ref()
+        .expect("actual restored process witness");
+    assert_eq!(witness.target, killed.target);
+    assert_eq!(
+        witness.group_id,
+        restarted
+            .sessions
+            .handle(&killed.target.session_id)
+            .expect("restored child")
+            .child_group()
+    );
+    assert_ne!(
+        witness.group_id,
+        before
+            .process_witness
+            .as_ref()
+            .expect("predecessor witness")
+            .group_id
+    );
+    assert!(!witness.quiesced);
+    before.process_witness = after.process_witness.clone();
     assert_eq!(before, after);
 
     // The one-shot custody was spent by the restore, not left at rest.
@@ -378,7 +414,8 @@ async fn a_ready_registration_restores_the_generation_and_delivers_one_turn() {
         &killed,
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
-    );
+    )
+    .await;
     restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
@@ -412,7 +449,8 @@ async fn an_unseated_execution_restores_with_the_cursor_alone() {
         &killed,
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
-    );
+    )
+    .await;
     restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
@@ -444,7 +482,8 @@ async fn a_second_delivery_after_a_restore_is_still_fenced_to_one_turn() {
         &killed,
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
-    );
+    )
+    .await;
     restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
@@ -494,7 +533,8 @@ async fn a_seat_that_has_not_been_restaged_defers_and_then_delivers_once() {
         &killed,
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
-    );
+    )
+    .await;
     restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
@@ -563,7 +603,8 @@ async fn a_seat_that_never_arrives_expires_naming_custody() {
         &killed,
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
-    );
+    )
+    .await;
     restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("defer");
@@ -608,7 +649,8 @@ async fn an_adapter_that_rejects_the_reattachment_refuses_and_starts_no_conversa
         &killed,
         "load-rejecting-agent",
         &load_rejecting_agent(&log.to_string_lossy()),
-    );
+    )
+    .await;
     restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
@@ -650,7 +692,8 @@ async fn an_adapter_with_no_reattachment_refuses_as_unsupported() {
         &killed,
         "unreattachable-agent",
         &unreattachable_agent(&log.to_string_lossy()),
-    );
+    )
+    .await;
     restarted.recover().await.expect("recover");
 
     restarted.run_ci_continuation_tick().await.expect("tick");
@@ -684,7 +727,8 @@ async fn an_execution_with_no_cursor_refuses_before_it_spawns() {
         &killed,
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
-    );
+    )
+    .await;
     restarted.recover().await.expect("recover");
     restarted
         .state
@@ -766,6 +810,7 @@ async fn the_seat_request_ledger_follows_create_resume_and_stop() {
     let actor = "cd".repeat(32);
     write_restore_seat(dir.path(), "create-1", &actor);
     let mut provider = provider(&state_dir, Some(&projects));
+    witness_fixture_retirement(&mut provider).await;
 
     let create = seated_create_event(&provider, channel_id, "create-1", &actor, "lead");
     provider
@@ -789,7 +834,10 @@ async fn the_seat_request_ledger_follows_create_resume_and_stop() {
 
     // A resume moves the generation, and the key custody is filed under moves
     // with it.
-    provider.sessions.shutdown(&target.session_id);
+    provider
+        .sessions
+        .shutdown_and_join(&target.session_id, session::ACTOR_RETIRE_GRACE)
+        .await;
     write_restore_seat(dir.path(), "resume-1", &actor);
     let resume =
         lifecycle_target_event(&provider, channel_id, "resume-1", "session.resume", &target);
@@ -835,7 +883,8 @@ async fn restore_rejects_a_different_pack_or_relay_before_spawning() {
         &killed,
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
-    );
+    )
+    .await;
     restarted.recover().await.expect("recover");
     for extra in [
         serde_json::json!({"relayUrl":"wss://wrong.example"}),
@@ -870,7 +919,8 @@ async fn restore_refuses_an_adapter_that_cannot_keep_the_recorded_model() {
         &killed,
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
-    );
+    )
+    .await;
     restarted.recover().await.expect("recover");
     restarted
         .state
@@ -947,7 +997,7 @@ async fn publishes_at_once(provider: &mut Provider) {
 async fn a_hung_ci_reopen_does_not_hold_transcript_publication() {
     let dir = tempfile::tempdir().expect("tempdir");
     let killed = register_and_die(dir.path(), None, true).await;
-    let mut restarted = restarted_with(dir.path(), &killed, "silent-agent", SILENT_AGENT);
+    let mut restarted = restarted_with(dir.path(), &killed, "silent-agent", SILENT_AGENT).await;
     restarted.recover().await.expect("recover");
     restarted.restore_off_loop = true;
 
@@ -989,7 +1039,7 @@ async fn a_hung_ci_reopen_does_not_hold_transcript_publication() {
 async fn a_ci_reopen_that_never_finishes_is_bounded_and_answered() {
     let dir = tempfile::tempdir().expect("tempdir");
     let killed = register_and_die(dir.path(), None, true).await;
-    let mut restarted = restarted_with(dir.path(), &killed, "silent-agent", SILENT_AGENT);
+    let mut restarted = restarted_with(dir.path(), &killed, "silent-agent", SILENT_AGENT).await;
     restarted.recover().await.expect("recover");
     restarted.restore_off_loop = true;
     restarted.ci_restore.timeout = Duration::from_millis(300);
@@ -1035,7 +1085,8 @@ async fn an_off_loop_ci_reopen_delivers_one_turn_to_the_promised_generation() {
         &killed,
         "restorable-agent",
         &restorable_agent(&log.to_string_lossy()),
-    );
+    )
+    .await;
     restarted.recover().await.expect("recover");
     restarted.restore_off_loop = true;
     let mut answers = restarted.take_ci_restore_answers();

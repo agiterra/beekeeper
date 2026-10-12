@@ -23,6 +23,12 @@ fn adapter_pid(provider: &Provider, session_id: &str) -> u32 {
         .expect("a spawned adapter has a pid")
 }
 
+/// A long-lived descendant deliberately survives ordinary TERM; terminal
+/// observation must include the whole group, not just the quick ACP parent.
+fn delayed_descendant_agent() -> String {
+    format!("trap '' TERM\n{}", lingering_agent())
+}
+
 /// A stopped execution is its adapter's whole process group gone from the
 /// OS — the grandchild it left running included — not a dropped handle.
 async fn assert_stopped(pid: u32, what: &str) {
@@ -93,7 +99,7 @@ async fn a_revoked_seat_stops_its_own_running_execution_and_it_does_not_resume()
 
     // Both seats' executions are running, each with a grandchild in its
     // adapter's process group.
-    let agent = fake_agent(dir.path(), "lingering-agent", &lingering_agent());
+    let agent = fake_agent(dir.path(), "lingering-agent", &delayed_descendant_agent());
     for id in [&session_id, &bystander_id] {
         provider
             .sessions
@@ -135,6 +141,10 @@ async fn a_revoked_seat_stops_its_own_running_execution_and_it_does_not_resume()
     let stopped = provider.state().session(&session_id).expect("record");
     assert!(stopped.closed, "the revoked seat's execution was stopped");
     assert!(stopped.authority_withdrawn.is_some(), "{stopped:?}");
+    assert!(
+        group_is_gone(seat_pid),
+        "revocation returned/published terminal state before the delayed descendant was gone"
+    );
     assert_stopped(seat_pid, "the revoked seat's execution").await;
     let bystander = provider.state().session(&bystander_id).expect("bystander");
     assert!(
@@ -262,7 +272,7 @@ async fn project_provider(
         .to_string(),
     )
     .expect("projects");
-    let agent = fake_agent(dir, "lingering-agent", &lingering_agent());
+    let agent = fake_agent(dir, "lingering-agent", &delayed_descendant_agent());
     let mut provider = Provider::new(config_of(
         Keys::generate(),
         &dir.join("state"),
@@ -329,7 +339,11 @@ async fn a_deleted_project_stops_its_running_execution_and_no_execution_of_it_re
         .state
         .insert_session(bystander)
         .expect("insert bystander");
-    let agent = fake_agent(dir.path(), "lingering-bystander", &lingering_agent());
+    let agent = fake_agent(
+        dir.path(),
+        "lingering-bystander",
+        &delayed_descendant_agent(),
+    );
     provider
         .sessions
         .create(legacy_request(
@@ -361,7 +375,7 @@ async fn a_deleted_project_stops_its_running_execution_and_no_execution_of_it_re
             .await
             .expect("a deletion event within the deadline")
             .expect("listener open");
-        provider.handle_project_deletion_event(event);
+        provider.handle_project_deletion_event(event).await;
         if provider
             .state()
             .session(&session_id)
@@ -373,6 +387,7 @@ async fn a_deleted_project_stops_its_running_execution_and_no_execution_of_it_re
     let record = provider.state().session(&session_id).expect("record");
     assert!(record.closed, "the deleted project's execution was stopped");
     assert!(record.authority_withdrawn.is_some());
+    assert!(group_is_gone(execution_pid), "cascade withdrawal returned/published terminal state before the delayed descendant was gone");
     assert_stopped(execution_pid, "the deleted project's execution").await;
     assert!(
         !group_is_gone(bystander_pid),
@@ -453,19 +468,23 @@ async fn only_an_applied_deletion_of_the_head_this_host_saw_stops_anything() {
         matches!(fact, project_deletion::ProjectFact::Present { .. }),
         "{fact:?}"
     );
-    provider.handle_project_deletion_event(project_deletion::ProjectDeletionEvent::Checked {
-        project: project_ref.clone(),
-        tombstone_at: head_created + 1,
-        fact,
-    });
+    provider
+        .handle_project_deletion_event(project_deletion::ProjectDeletionEvent::Checked {
+            project: project_ref.clone(),
+            tombstone_at: head_created + 1,
+            fact,
+        })
+        .await;
 
     // A judgement of that old tombstone arriving late, after the newer head
     // was witnessed: stale, so it stops nothing.
-    provider.handle_project_deletion_event(project_deletion::ProjectDeletionEvent::Checked {
-        project: project_ref.clone(),
-        tombstone_at: head_created + 1,
-        fact: project_deletion::ProjectFact::Deleted,
-    });
+    provider
+        .handle_project_deletion_event(project_deletion::ProjectDeletionEvent::Checked {
+            project: project_ref.clone(),
+            tombstone_at: head_created + 1,
+            fact: project_deletion::ProjectFact::Deleted,
+        })
+        .await;
 
     // Not applied: the head the tombstone is newer than is still served.
     {

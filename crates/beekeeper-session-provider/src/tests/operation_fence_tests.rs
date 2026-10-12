@@ -165,6 +165,7 @@ async fn a_duplicate_team_wake_pointer_is_refused_and_spends_no_turn() {
     let refused: Vec<String> = ledger(&state_dir, "refusals.jsonl")
         .into_iter()
         .filter_map(|record| record["commandId"].as_str().map(str::to_owned))
+        .filter(|id| id.starts_with("wake-")) // Create has its own durable terminal answer.
         .collect();
     assert_eq!(
         refused,
@@ -512,6 +513,10 @@ async fn the_same_pointer_to_a_later_generation_is_a_different_operation() {
             .expect("session")
             .session_id
             .clone();
+        first
+            .sessions
+            .shutdown_and_join(&session_id, session::ACTOR_RETIRE_GRACE)
+            .await;
         session_id
     };
 

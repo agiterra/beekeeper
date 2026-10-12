@@ -216,7 +216,9 @@ pub(super) fn classify_trusted_signers(
         Err(_) => Err(unknown_observation(
             "TRUST_CONFIG_INVALID",
             "Trusted provider signer metadata is malformed or unreadable",
-            Some("Repair global-agent-config.json without changing key custody, then re-read readiness"),
+            Some(
+                "Repair global-agent-config.json without changing key custody, then re-read readiness",
+            ),
         )),
     }
 }

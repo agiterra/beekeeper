@@ -81,6 +81,7 @@ async fn rig_for(actor: Option<&str>) -> Rig {
         agent,
     ))
     .expect("provider");
+    witness_fixture_retirement(&mut provider).await;
     let create = match actor {
         Some(actor) => {
             write_actor_seats(dir.path(), "create-1", actor);

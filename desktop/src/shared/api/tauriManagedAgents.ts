@@ -119,16 +119,6 @@ export async function restartManagedAgentRuntime(
   return invokeTauri("restart_managed_agent_runtime", { pubkey, relayUrl });
 }
 
-export async function putManagedAgentRuntimeLifecycle(
-  outerPubkey: string,
-  payload: unknown,
-): Promise<ManagedAgentRuntimeStatus> {
-  return invokeTauri("put_managed_agent_runtime_lifecycle", {
-    outerPubkey,
-    payload,
-  });
-}
-
 export async function reconcileManagedAgentRuntimes(
   communities: readonly { relayUrl: string }[],
 ): Promise<ManagedAgentRuntimeStatus[]> {
@@ -158,7 +148,11 @@ export type ManagedAgentHostTransfer = {
 export type ManagedAgentHostTransferInfo = {
   relayUrl: string;
   revision: string;
+  /** False when no current signed head was observed; empty revision is not proof. */
+  revisionAvailable?: boolean;
   commissioned: boolean;
+  /** Verified local custody/backend eligibility; unknown must not enable retries. */
+  migrationEligible?: boolean;
   transfer: ManagedAgentHostTransfer | null;
   channel: string | null;
   cwd: string | null;
@@ -172,28 +166,4 @@ export function getManagedAgentHostTransfer(
     pubkey,
     ...(options?.localOnly ? { localOnly: true } : {}),
   });
-}
-export function prepareManagedAgentHostTransfer(input: {
-  pubkey: string;
-  relayUrl: string;
-  operationId: string;
-  definitionEventId: string;
-  channel: string;
-  cwd: string;
-}): Promise<ManagedAgentHostTransfer> {
-  return invokeTauri("prepare_managed_agent_host_transfer", input);
-}
-export function adoptManagedAgentHostTransfer(input: {
-  pubkey: string;
-  relayUrl: string;
-  operationId: string;
-}): Promise<{ host_admitted: boolean; receipt_event_id: string }> {
-  return invokeTauri("adopt_managed_agent_host_transfer", input);
-}
-export function rollbackManagedAgentHostTransfer(input: {
-  pubkey: string;
-  relayUrl: string;
-  operationId: string;
-}): Promise<ManagedAgentHostTransfer> {
-  return invokeTauri("rollback_managed_agent_host_transfer", input);
 }

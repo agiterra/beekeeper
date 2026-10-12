@@ -27,14 +27,17 @@ use futures_util::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::{mpsc, oneshot, watch};
 use uuid::Uuid;
 
+#[path = "session_mcp.rs"]
+mod mcp;
+#[cfg(test)]
+use mcp::rehydration_mcp_servers;
+
 #[path = "session_steer_guard.rs"]
 mod steer_guard;
 
 use tokio::sync::broadcast;
 
-use beekeeper_acp::acp::{
-    AcpClient, AcpError, EnvVar, McpServer, StopReason, SystemPromptTransport, TurnWireSummary,
-};
+use beekeeper_acp::acp::{AcpClient, AcpError, StopReason, SystemPromptTransport, TurnWireSummary};
 use beekeeper_acp::observer::{context_for, ObserverEvent, ObserverHandle};
 use beekeeper_acp::steer::{
     IdleGuard, LateSteerAck, NotDeliveredReason, SteerInput, SteerResolution, UnknownReason,
@@ -42,9 +45,11 @@ use beekeeper_acp::steer::{
 };
 use beekeeper_acp::TurnUsage;
 use beekeeper_core::coding_session_command::{
-    coding_session_target_key, CodingSessionDelivery, CodingSessionTarget, TurnAttachment,
+    CodingSessionDelivery, CodingSessionTarget, TurnAttachment,
 };
-use beekeeper_core::coding_session_context::validate_coding_session_first_turn_brief_json;
+
+#[cfg(test)]
+use beekeeper_core::coding_session_command::coding_session_target_key;
 
 use crate::payload::{PROVIDER_AUTH_REQUIRED, PROVIDER_UNAVAILABLE};
 use crate::transcript::TranscriptTranslator;
@@ -1205,6 +1210,11 @@ impl SessionHandle {
         let _ = self.shutdown.send(true);
     }
 
+    /// Captured live child group. Persisting it permits observation only, never signalling.
+    pub(crate) fn child_group(&self) -> Option<u32> {
+        self.child_pid
+    }
+
     /// The agent child's pid, for the test that has to watch its group die.
     #[cfg(test)]
     pub(crate) fn child_pid_for_tests(&self) -> Option<u32> {
@@ -1220,17 +1230,41 @@ impl SessionHandle {
     /// its client kills the child through `kill_on_drop` — and the caller is
     /// told which of the two happened.
     async fn shutdown_and_join(&self, grace: std::time::Duration) -> ActorQuiescence {
+        // Custody remains fenced while descendants are being observed terminal.
+        crate::assignment_custody::fence_seat(&self.session_id);
         let _ = self.shutdown.send(true);
         let handle = match self.actor.lock() {
             Ok(mut slot) => slot.take(),
             Err(poisoned) => poisoned.into_inner().take(),
         };
         let Some(handle) = handle else {
-            return ActorQuiescence::AlreadyGone;
+            return if kill_process_group_and_watch(
+                self.child_pid,
+                &self.session_id,
+                CHILD_REAP_BOUND,
+            )
+            .await
+            {
+                crate::assignment_custody::clear_seat_fence(&self.session_id);
+                ActorQuiescence::AlreadyGone
+            } else {
+                ActorQuiescence::Unproven
+            };
         };
         let abort = handle.abort_handle();
         match tokio::time::timeout(grace, handle).await {
-            Ok(_) => ActorQuiescence::Joined,
+            Ok(_) => {
+                // The ACP task reaps its direct child, but terminal custody also
+                // requires its long-lived MCP/tool descendants to be gone.
+                if kill_process_group_and_watch(self.child_pid, &self.session_id, CHILD_REAP_BOUND)
+                    .await
+                {
+                    crate::assignment_custody::clear_seat_fence(&self.session_id);
+                    ActorQuiescence::Joined
+                } else {
+                    ActorQuiescence::Unproven
+                }
+            }
             Err(_) => {
                 tracing::warn!(
                     target: "csp::session",
@@ -1286,8 +1320,8 @@ impl StartedSession {
 
     /// End an actor that will never be attached: the state it was started
     /// for changed while it started (SV-76, a restore run off the loop).
-    pub(crate) fn discard(self) {
-        self.handle.shutdown();
+    pub(crate) async fn discard(self) -> ActorQuiescence {
+        self.handle.shutdown_and_join(ACTOR_RETIRE_GRACE).await
     }
 }
 
@@ -2376,7 +2410,7 @@ pub(crate) fn boundary_briefing(execution: &crate::execution_scope::ExecutionPla
             }
             text
         }
-        crate::execution_scope::ExecutionPlan::Legacy { reason } => format!(
+        crate::execution_scope::ExecutionPlan::Legacy { reason, .. } => format!(
             "\n\nNo project boundary is enforced for this session ({reason}): only these \
              instructions keep it to this project's files. Read and write only inside your \
              working directory, and do not read other projects' files."
@@ -2490,7 +2524,7 @@ async fn open_agent_session(
 ) -> Result<OpenedSession, OpenFailure> {
     // The host's own servers. A bounded Claude execution loads the project's
     // own `.mcp.json` natively; a host server replaces a same-named one.
-    let mcp_servers = rehydration_mcp_servers(request)?;
+    let mcp_servers = mcp::servers(request)?;
     let attached = request.rehydration_mcp.as_ref();
     // "Rehydrated" is a claim about prior work, not about tooling: an
     // execution that has the context MCP but nothing earlier under its
@@ -2693,69 +2727,6 @@ async fn open_agent_session(
         bootstrap_transport,
         pending_briefing,
     })
-}
-
-/// Build the sole private context MCP descriptor for an ACP session open.
-///
-/// The MCP receives only the package path and the generation directory holding
-/// it. Provider credentials, the opaque native-session cursor, the package id
-/// and the agent's runtime environment are deliberately absent. Invalid paths
-/// fail before any session open and are described without echoing host-private
-/// values.
-fn rehydration_mcp_servers(request: &CreateRequest) -> Result<Vec<McpServer>, AcpError> {
-    let Some(descriptor) = request.rehydration_mcp.as_ref() else {
-        return Ok(Vec::new());
-    };
-    if !descriptor.command.is_absolute()
-        || !descriptor.package_path.is_absolute()
-        || !descriptor.package_dir.is_absolute()
-    {
-        return Err(AcpError::Protocol(
-            "session context MCP command and package paths must be absolute".into(),
-        ));
-    }
-    validate_coding_session_first_turn_brief_json(&descriptor.first_turn_brief).map_err(
-        |error| {
-            AcpError::Protocol(format!(
-                "session context first-turn brief is invalid: {error}"
-            ))
-        },
-    )?;
-    let command = descriptor.command.to_str().ok_or_else(|| {
-        AcpError::Protocol("session context MCP command path must be valid UTF-8".into())
-    })?;
-    let package_path = descriptor.package_path.to_str().ok_or_else(|| {
-        AcpError::Protocol("session context MCP package path must be valid UTF-8".into())
-    })?;
-    let package_dir = descriptor.package_dir.to_str().ok_or_else(|| {
-        AcpError::Protocol("session context MCP package directory must be valid UTF-8".into())
-    })?;
-    Ok(vec![McpServer {
-        name: "beekeeper-session-context".into(),
-        command: command.to_owned(),
-        args: Vec::new(),
-        // Each name in both spellings too, for a context sidecar built before
-        // the BUZZ_ → BEEKEEPER_ rename.
-        env: EnvVar::with_legacy_mirrors(vec![
-            EnvVar {
-                name: "BEEKEEPER_SESSION_CONTEXT_PACKAGE".into(),
-                value: package_path.to_owned(),
-            },
-            EnvVar {
-                name: "BEEKEEPER_SESSION_CONTEXT_PACKAGE_DIR".into(),
-                value: package_dir.to_owned(),
-            },
-            // Which execution the sidecar is *serving*, so `session_inbox` can
-            // page the commands addressed to this seat instead of every
-            // sibling's. A public wire identity, not a credential: it is the
-            // same `cs-target` key every one of this execution's events
-            // already carries.
-            EnvVar {
-                name: "BEEKEEPER_SESSION_CONTEXT_SELF_TARGET".into(),
-                value: coding_session_target_key(&request.target),
-            },
-        ]),
-    }])
 }
 
 /// Map an ACP startup failure onto a receipt error code.
@@ -4302,6 +4273,7 @@ server.serve_forever()
             transcript_paragraph_flush: false,
             execution: crate::execution_scope::ExecutionPlan::Legacy {
                 reason: "unit-test",
+                configured_mcp_command: None,
             },
         }
     }
@@ -4890,7 +4862,7 @@ done
     /// 2026-08-18. Handing the script to an interpreter sidesteps the class
     /// entirely — `bash` only ever *reads* the file, and the kernel's busy
     /// check applies to `execve`, not to `open`.
-    fn request(script: String, cwd: &std::path::Path) -> CreateRequest {
+    pub(super) fn request(script: String, cwd: &std::path::Path) -> CreateRequest {
         let mut request = request_command("bash".into(), cwd);
         request.agent_args = vec![script];
         request
@@ -4929,6 +4901,7 @@ done
             transcript_paragraph_flush: false,
             execution: crate::execution_scope::ExecutionPlan::Legacy {
                 reason: "unit-test",
+                configured_mcp_command: None,
             },
         }
     }
@@ -8100,3 +8073,7 @@ mod seat_skill_materialization_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "session_start_retirement_tests.rs"]
+mod start_retirement_tests;

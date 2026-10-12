@@ -210,7 +210,10 @@ async fn model_switch_survives_a_resume() {
         .await
         .expect("switch");
     pump_until_switch(&mut provider).await;
-    provider.sessions.shutdown(&target.session_id);
+    provider
+        .sessions
+        .shutdown_and_join(&target.session_id, session::ACTOR_RETIRE_GRACE)
+        .await;
     let resume =
         lifecycle_target_event(&provider, channel_id, "resume-1", "session.resume", &target);
     provider

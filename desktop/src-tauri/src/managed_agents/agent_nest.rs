@@ -269,33 +269,6 @@ pub fn agent_home(app: &AppHandle, record: &ManagedAgentRecord) -> AgentHome {
     }
 }
 
-/// The directory this agent's process runs in, and the directory its pack's
-/// skills are written into.
-///
-/// `None` — inherit the parent's working directory — only when neither a nest
-/// nor the shared workdir can be resolved, which is
-/// [`super::default_agent_workdir`]'s existing sandboxed-environment answer. A
-/// nest that cannot be created is reported and falls back to the shared
-/// workdir: an agent that ran yesterday still runs today.
-pub fn agent_workdir(app: &AppHandle, record: &ManagedAgentRecord) -> Option<PathBuf> {
-    match agent_home(app, record) {
-        AgentHome::Shared => super::default_agent_workdir(),
-        AgentHome::Nest => match ensure_agent_nest(app, &record.pubkey) {
-            Ok(nest) => Some(nest),
-            Err(error) => {
-                tracing::warn!(
-                    agent = %record.name,
-                    pubkey = %record.pubkey,
-                    %error,
-                    "agent nest: could not create this agent's own nest; \
-                     falling back to the shared workdir, where its pack will be refused"
-                );
-                super::default_agent_workdir()
-            }
-        },
-    }
-}
-
 /// Take this agent off the shared-home list, so its next spawn is in its own
 /// nest.
 ///

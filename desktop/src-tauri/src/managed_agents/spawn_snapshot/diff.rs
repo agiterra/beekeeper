@@ -10,23 +10,29 @@
 //! the serializable entry is built. Comparing masked forms would let two
 //! secrets with colliding suffixes read as "no drift".
 
-use serde::Serialize;
-use serde_json::{Map, Value};
+use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use serde_json::Map;
+use serde_json::Value;
 
+#[cfg(test)]
 use super::SpawnConfigSnapshot;
+#[cfg(test)]
 use crate::managed_agents::AcpAvailabilityStatus;
 
 /// Synthetic field id for adapter-availability drift, which lives outside the
 /// snapshot: it describes the environment around the process, not the config
 /// the process was spawned with.
+#[cfg(test)]
 const ADAPTER_AVAILABILITY_FIELD: &str = "adapter_availability";
 
+#[cfg(test)]
 const MASK: &str = "••••";
 
 /// One changed field. `field` is a dotted path built from serde field names,
 /// with dynamic map keys appended verbatim (`env.OPENAI_API_KEY`). The UI
 /// humanizes it generically and must never switch on its value.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RestartDiffEntry {
     pub field: String,
     pub change: RestartChange,
@@ -34,7 +40,7 @@ pub struct RestartDiffEntry {
 
 /// How a changed field is presented. The UI switches on `kind` — a closed set
 /// — and renders any `field` path.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RestartChange {
     /// Safe scalar or array shown verbatim. `null` means absent.
@@ -57,6 +63,7 @@ pub enum RestartChange {
 }
 
 /// How a leaf at `path` may be displayed.
+#[cfg(test)]
 #[derive(Clone, Copy, PartialEq)]
 enum MaskPolicy {
     /// Shown verbatim.
@@ -74,6 +81,7 @@ enum MaskPolicy {
 ///
 /// A new snapshot field needs an arm here only if it can carry a credential or
 /// is too large to render; everything else falls through to `Plain`.
+#[cfg(test)]
 fn policy_for(path: &str) -> MaskPolicy {
     match path {
         // Arbitrary user text — a rendered before/after would be unbounded as
@@ -116,6 +124,7 @@ fn policy_for(path: &str) -> MaskPolicy {
 ///
 /// Character-based throughout: byte slicing can panic on a multi-byte value or
 /// disclose the wrong suffix.
+#[cfg(test)]
 fn mask(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
     match chars.len() {
@@ -125,6 +134,7 @@ fn mask(value: &str) -> String {
 }
 
 /// Character count of a text leaf; `None` when the leaf is absent.
+#[cfg(test)]
 fn char_count(value: &Value) -> Option<usize> {
     match value {
         Value::Null => None,
@@ -135,6 +145,7 @@ fn char_count(value: &Value) -> Option<usize> {
 }
 
 /// Masked rendering of a leaf; `None` when the leaf is absent.
+#[cfg(test)]
 fn masked(policy: MaskPolicy, value: &Value) -> Option<String> {
     match (policy, value) {
         (_, Value::Null) => None,
@@ -145,6 +156,7 @@ fn masked(policy: MaskPolicy, value: &Value) -> Option<String> {
     }
 }
 
+#[cfg(test)]
 fn change_for(policy: MaskPolicy, before: &Value, after: &Value) -> RestartChange {
     match policy {
         MaskPolicy::Plain => RestartChange::Value {
@@ -164,6 +176,7 @@ fn change_for(policy: MaskPolicy, before: &Value, after: &Value) -> RestartChang
 
 /// Lexicographically sorted union of both maps' keys, so entry order — and
 /// therefore the UI's "first N plus and-N-more" truncation — is stable.
+#[cfg(test)]
 fn key_union<'a>(before: &'a Map<String, Value>, after: &'a Map<String, Value>) -> Vec<&'a str> {
     let mut keys: Vec<&str> = before
         .keys()
@@ -175,6 +188,7 @@ fn key_union<'a>(before: &'a Map<String, Value>, after: &'a Map<String, Value>) 
     keys
 }
 
+#[cfg(test)]
 fn child_path(parent: &str, key: &str) -> String {
     if parent.is_empty() {
         key.to_string()
@@ -183,6 +197,7 @@ fn child_path(parent: &str, key: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn walk(
     path: &str,
     before: Option<&Value>,
@@ -220,6 +235,7 @@ fn walk(
 }
 
 /// The redacted diff of two snapshots, in stable path order.
+#[cfg(test)]
 fn diff(before: &SpawnConfigSnapshot, after: &SpawnConfigSnapshot) -> Vec<RestartDiffEntry> {
     let mut entries = Vec::new();
     walk(
@@ -231,6 +247,7 @@ fn diff(before: &SpawnConfigSnapshot, after: &SpawnConfigSnapshot) -> Vec<Restar
     entries
 }
 
+#[cfg(test)]
 fn availability_value(status: Option<&AcpAvailabilityStatus>) -> Value {
     status
         .and_then(|status| serde_json::to_value(status).ok())
@@ -242,6 +259,7 @@ fn availability_value(status: Option<&AcpAvailabilityStatus>) -> Value {
 /// tracks no live pair for — stopped, or `runtime_pid`-adopted across an app
 /// restart, whose spawn config was never stamped and so can never be shown to
 /// have drifted.
+#[cfg(test)]
 pub(crate) struct TrackedSpawnState<'a> {
     pub stamped: &'a SpawnConfigSnapshot,
     pub current: &'a SpawnConfigSnapshot,
@@ -253,9 +271,9 @@ pub(crate) struct TrackedSpawnState<'a> {
 /// field and the badge, which is `!result.is_empty()`.
 ///
 /// Empty for an un-stamped agent (see [`TrackedSpawnState`]) and for an
-/// orphaned instance: `spawn_agent_child` refuses to spawn an orphan before
-/// any side effect, so "Restart required" would offer an action guaranteed to
-/// fail. The UI surfaces `persona_orphaned` instead.
+/// orphaned instance: missing definition custody cannot authorize an applied
+/// configuration claim. The UI surfaces `persona_orphaned` instead.
+#[cfg(test)]
 pub(crate) fn eligible_restart_diff(
     persona_orphaned: bool,
     tracked: Option<TrackedSpawnState<'_>>,
@@ -282,6 +300,7 @@ pub(crate) fn eligible_restart_diff(
 /// The canonical snapshot with every leaf passed through [`policy_for`],
 /// rendered as JSON text. Backs `SpawnConfigSnapshot`'s manual `Debug` so a
 /// log line can never disclose what the wire diff redacts.
+#[cfg(test)]
 pub(crate) fn redacted_canonical(value: &Value) -> String {
     fn redact(path: &str, value: &Value) -> Value {
         match value {

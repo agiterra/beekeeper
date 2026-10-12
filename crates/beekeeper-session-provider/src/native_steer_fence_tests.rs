@@ -106,7 +106,7 @@ async fn native_steer_queued_behind_ack_is_fenced_before_runtime_write() {
         })
         .expect("claim execution");
     provider
-        .enforce_claim_for_genesis(&genesis)
+        .enforce_claim_for_genesis(&genesis).await
         .expect("fence former operator");
     assert_eq!(
         dispositions(&provider, "steer-second"),
@@ -240,7 +240,7 @@ async fn a_steer_fenced_while_unanswered_is_refused_when_it_comes_back_undeliver
             });
         })
         .expect("claim");
-    provider.enforce_claim_for_genesis(&genesis).expect("fence");
+    provider.enforce_claim_for_genesis(&genesis).await.expect("fence");
     assert!(
         provider
             .in_flight

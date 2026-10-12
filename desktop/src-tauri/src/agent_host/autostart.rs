@@ -229,7 +229,7 @@ pub(crate) fn ensure_registered(_app: &AppHandle, probe: Probe) -> Registration 
         let mut registration = install::status(Service::AgentHost, &home, instance);
         registration.warnings.push(format!(
             "{HOST_BINARY} was not found beside this app, so the agent host cannot be registered \
-             to start at login — your agents will stop when you quit Beekeeper. Reinstall the \
+             to start at login. Reinstall the \
              app, or install the host yourself with `bee host install`."
         ));
         return registration;
@@ -239,8 +239,8 @@ pub(crate) fn ensure_registered(_app: &AppHandle, probe: Probe) -> Registration 
         Err(error) => {
             let mut registration = install::status(Service::AgentHost, &home, instance);
             registration.warnings.push(format!(
-                "the agent host could not be registered to start at login ({error}) — your \
-                 agents will stop when you quit Beekeeper"
+                "the agent host could not be registered to start at login ({error}). \
+                 An already running host remains independent of this app; automatic startup is unconfirmed"
             ));
             registration
         }
@@ -395,12 +395,12 @@ mod tests {
             program: None,
             warnings: vec![format!(
                 "{HOST_BINARY} was not found beside this app, so the agent host cannot be \
-                 registered to start at login — your agents will stop when you quit Beekeeper."
+                 registered to start at login. Host availability and automatic startup are unconfirmed."
             )],
             domain: Domain::User,
         };
         assert!(!registration.installed);
-        assert!(registration.warnings[0].contains("stop when you quit"));
+        assert!(registration.warnings[0].contains("automatic startup are unconfirmed"));
         // And the wire keeps it machine-readable *and* human-readable.
         let json = serde_json::to_string(&registration).expect("encode");
         assert!(json.contains("\"installed\":false"), "{json}");

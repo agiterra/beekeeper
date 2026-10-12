@@ -270,18 +270,14 @@ export function hasStrictLifecycleReceiptValues(
   ) {
     return false;
   }
-  // A create that never reached a session names none: `failed` is the one
-  // lifecycle status whose `session` is `None`
-  // (`LifecycleReceipt::failed`, crates/beekeeper-core/src/coding_session_payload.rs:338).
-  // Every other status this reader accepts always carries a target
-  // (`validate_lifecycle_receipt`, coding_session_payload.rs:629-636), so the
-  // session-target check runs only past this branch. `code` here is a bounded
-  // identifier, not a closed set — the same callers that produce it
-  // (`PROVIDER_UNAVAILABLE`, `SESSION_LIMIT`, …) show it is open, and Rust's
-  // own general error check only bounds its length.
+  // Failed normally names no execution. Interrupted startup may retain a
+  // strictly validated reserved target, without claiming creation or stop.
   if (content.status === "failed") {
     return (
-      content.session === null &&
+      (content.session === null ||
+        (isPlainObject(content.error) &&
+          content.error.code === "CREATE_START_OUTCOME_UNCONFIRMED" &&
+          hasStrictSessionTargetValues(content.session))) &&
       isPlainObject(content.error) &&
       boundedString(content.error.code, MAX_IDENTIFIER_BYTES) &&
       boundedString(content.error.message, MAX_RECEIPT_ERROR_MESSAGE_BYTES)

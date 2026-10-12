@@ -16,11 +16,10 @@ use tauri::AppHandle;
 use crate::{
     app_state::AppState,
     managed_agents::{
-        agent_readiness, current_instance_id, find_managed_agent_mut, known_acp_runtime,
-        load_global_agent_config, load_managed_agents, load_personas, record_agent_command,
-        resolve_effective_agent_env, save_global_agent_config, save_managed_agents,
-        stop_managed_agent_process, sync_managed_agent_processes, validate_global_config,
-        AgentReadiness, BackendKind, GlobalAgentConfig,
+        agent_readiness, find_managed_agent_mut, known_acp_runtime, load_global_agent_config,
+        load_managed_agents, load_personas, record_agent_command, resolve_effective_agent_env,
+        save_global_agent_config, save_managed_agents, validate_global_config, AgentReadiness,
+        BackendKind, GlobalAgentConfig,
     },
 };
 
@@ -33,9 +32,9 @@ use crate::{
 pub struct GlobalAgentConfigSaveResult {
     /// The persisted global config (after strip-on-write).
     pub config: GlobalAgentConfig,
-    /// Number of local agents successfully stopped and restarted.
+    /// Number of local agents whose configuration was reconciled by the host.
     pub restarted_count: u32,
-    /// Number of agents whose stop succeeded but respawn failed.
+    /// Number of agents whose host configuration application remains unconfirmed.
     pub failed_restart_count: u32,
 }
 
@@ -64,12 +63,7 @@ pub async fn set_global_agent_config(
     config: GlobalAgentConfig,
     app: AppHandle,
 ) -> Result<GlobalAgentConfigSaveResult, String> {
-    // ── Phase 1: disk write (sync, spawn_blocking) ────────────────────────
-    //
-    // Validate, snapshot old config, write new config, collect pre-filter
-    // candidate pubkeys (local backend + recorded PID + old NotReady + new
-    // Ready).  The candidate list is a hint — eligibility is re-checked under
-    // lock in Phase 2 after sync_managed_agent_processes.
+    // Persist validated defaults, then reconcile affected host-owned configurations.
     let app_for_write = app.clone();
     let phase1 = tokio::task::spawn_blocking(move || {
         validate_global_config(&config)?;
@@ -93,21 +87,12 @@ pub async fn set_global_agent_config(
     .map_err(|e| format!("spawn_blocking failed: {e}"))??;
     let (new_global, old_global, candidates, personas_snapshot) = phase1;
 
-    // ── Phase 2: async restart (outside spawn_blocking) ──────────────────
-    //
-    // For each candidate: stop under the lock (re-verifying eligibility after
-    // sync_managed_agent_processes), then start via start_local_agent_with_preflight
-    // — the same path as a manual restart.  This ensures owner_hex is computed
-    // and passed (NIP-OA auth_tag fallback), the persona is re-snapshotted, and
-    // last_error is persisted on failure.
-    //
-    // Errors are non-fatal; the caller always receives the saved config.
-    // failed_restart_count surfaces stops that succeeded but respawn failed.
+    // Runtime application occurs at the shared host boundary; saved configuration is distinct.
     let mut restarted_count: u32 = 0;
     let mut failed_restart_count: u32 = 0;
     if !candidates.is_empty() {
         for pubkey in &candidates {
-            let outcome = restart_local_agent_on_config_change(
+            let outcome = reconcile_agent_on_config_change(
                 &app,
                 pubkey,
                 &old_global,
@@ -117,7 +102,7 @@ pub async fn set_global_agent_config(
             .await;
             match outcome {
                 RestartOutcome::Restarted => restarted_count += 1,
-                RestartOutcome::FailedAfterStop => failed_restart_count += 1,
+                RestartOutcome::Failed => failed_restart_count += 1,
                 RestartOutcome::Skipped => {}
             }
         }
@@ -133,10 +118,10 @@ pub async fn set_global_agent_config(
 /// Outcome of a single per-agent restart attempt in Phase 2.
 #[derive(Debug)]
 enum RestartOutcome {
-    /// Stop succeeded and the agent re-launched with the new config.
+    /// Host reconciliation acknowledged the updated configuration.
     Restarted,
-    /// Stop succeeded but the subsequent spawn failed.
-    FailedAfterStop,
+    /// Host reconciliation failed or remains unconfirmed.
+    Failed,
     /// Eligibility check failed under lock — agent skipped without touching it.
     Skipped,
 }
@@ -146,13 +131,13 @@ enum RestartOutcome {
 ///
 /// Pre-lock hint used by Phase 1 of `set_global_agent_config`. Eligibility is
 /// re-verified under lock in Phase 2. The personas snapshot is threaded to
-/// `restart_local_agent_on_config_change` so it is not reloaded per agent.
+/// `reconcile_agent_on_config_change` so it is not reloaded per agent.
 ///
-/// An agent is a candidate when it is a local backend with a recorded PID, and
+/// An agent is a candidate when it uses the local host boundary and
 /// either:
 /// - its readiness transitions `NotReady → Ready` (was blocked on missing
 ///   provider/model key, now unblocked), OR
-/// - it was already `Ready`, its process is currently alive, and its effective
+/// - it was already `Ready`, its effective
 ///   env changed (provider, model, or env var update that needs a restart to
 ///   take effect, since env is baked at spawn time).
 fn collect_restart_candidates(
@@ -178,24 +163,10 @@ fn collect_restart_candidates(
             return (Vec::new(), Vec::new());
         }
     };
-    use tauri::Manager;
-    let state = app.state::<AppState>();
-    let mut runtimes = state
-        .managed_agent_processes
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-
     let candidates = records
         .iter()
         .filter(|record| {
             if record.backend != BackendKind::Local {
-                return false;
-            }
-            let has_live_runtime = runtimes.iter_mut().any(|(key, runtime)| {
-                key.pubkey.eq_ignore_ascii_case(&record.pubkey)
-                    && runtime.child.try_wait().ok().flatten().is_none()
-            });
-            if !has_live_runtime {
                 return false;
             }
             let effective_cmd = record_agent_command(record, &all_personas);
@@ -221,154 +192,49 @@ fn collect_restart_candidates(
     (candidates, all_personas)
 }
 
-/// Stop-then-start a local agent whose effective env changed under the new
-/// global config.
-///
-/// This is the per-agent restart step in Phase 2 of `set_global_agent_config`.
-/// It mirrors the semantics of a manual agent restart:
-///
-/// 1. **Stop under lock** — acquires the store lock, calls
-///    `sync_managed_agent_processes`, re-verifies eligibility (local backend,
-///    live process, effective env changed or readiness transition), then stops
-///    the process and saves the record.  The lock is released before the start
-///    so `start_local_agent_with_preflight` can re-acquire it cleanly.
-///    `personas_snapshot` is reused here instead of loading from disk again.
-///
-/// 2. **Start via the normal preflight path** — calls
-///    `start_local_agent_with_preflight`, which computes and passes `owner_hex`
-///    (NIP-OA fallback for legacy records without `auth_tag`), re-snapshots the
-///    persona (agent starts with current persona config), saves the updated
-///    record, and retains the event for relay sync.  On failure, `last_error` is
-///    persisted under lock so the UI surfaces a diagnosable stopped state.
-///
-/// All errors are logged to stderr. Returns `RestartOutcome::FailedAfterStop`
-/// when the stop succeeded but the spawn failed — the caller surfaces this as
-/// `failed_restart_count` so the UI can prompt the user to check the Agents tab.
-async fn restart_local_agent_on_config_change(
+/// Reconcile changed configuration through the sole execution owner.
+async fn reconcile_agent_on_config_change(
     app: &AppHandle,
     pubkey: &str,
     old_global: &GlobalAgentConfig,
     new_global: &GlobalAgentConfig,
     personas_snapshot: &[crate::managed_agents::AgentDefinition],
 ) -> RestartOutcome {
-    // ── Step 1: stop under lock, re-verifying eligibility ─────────────────
-    let app_for_stop = app.clone();
-    let pubkey_owned = pubkey.to_string();
-    let old_global_clone = old_global.clone();
-    let new_global_clone = new_global.clone();
-    let personas_owned = personas_snapshot.to_vec();
-
-    let stop_result = tokio::task::spawn_blocking(move || {
-        use tauri::Manager;
-        let state = app_for_stop.state::<AppState>();
-
-        let _store_guard = state
-            .managed_agents_store_lock
-            .lock()
-            .map_err(|e| format!("failed to acquire store lock: {e}"))?;
-
-        let mut records = load_managed_agents(&app_for_stop)?;
-        let mut runtimes = state
-            .managed_agent_processes
-            .lock()
-            .map_err(|e| format!("failed to acquire runtimes lock: {e}"))?;
-
-        // Sync process state so PID liveness reflects current reality.
-        let (sync_changed, _) = sync_managed_agent_processes(
-            &mut records,
-            &mut runtimes,
-            &current_instance_id(&app_for_stop),
-        );
-        if sync_changed {
-            save_managed_agents(&app_for_stop, &records)?;
-        }
-
-        // Re-check eligibility under lock with current record state.
-        let record = records
-            .iter()
-            .find(|r| r.pubkey == pubkey_owned)
-            .ok_or_else(|| format!("agent {pubkey_owned} not found"))?;
-
-        if record.backend != BackendKind::Local {
-            return Err(format!("agent {pubkey_owned} is no longer a local agent"));
-        }
-        let runtime_keys =
-            crate::managed_agents::managed_agent_runtime_keys(&runtimes, &pubkey_owned);
-        if runtime_keys.is_empty() {
-            return Err(format!(
-                "agent {pubkey_owned} no longer has a live pair runtime after sync"
-            ));
-        }
-
-        // Re-check the eligibility predicate under lock:
-        //   (old NotReady && new Ready)  OR  (old Ready && env changed)
-        // TODO: busy/mid-turn deferral would slot in here
-        //
-        // Reuse personas_snapshot from Phase 1 — avoids loading personas again
-        // per agent when the save-command personas haven't changed.
-        let effective_cmd = record_agent_command(record, &personas_owned);
-        let runtime_meta = known_acp_runtime(&effective_cmd);
-        let old_effective =
-            resolve_effective_agent_env(record, &personas_owned, runtime_meta, &old_global_clone);
-        let new_effective =
-            resolve_effective_agent_env(record, &personas_owned, runtime_meta, &new_global_clone);
-        let old_ready = matches!(agent_readiness(&old_effective), AgentReadiness::Ready);
-        let new_ready = matches!(agent_readiness(&new_effective), AgentReadiness::Ready);
-        // Under lock, the alive check was already done above via process_is_running.
-        let env_changed = old_ready && old_effective.env != new_effective.env;
-        if !should_restart_on_config_change(old_ready, new_ready, env_changed) {
-            return Err(format!(
-                "agent {pubkey_owned} restart condition no longer valid under lock"
-            ));
-        }
-
-        // Stop the process.
-        let record_mut = find_managed_agent_mut(&mut records, &pubkey_owned)?;
-        stop_managed_agent_process(&app_for_stop, record_mut, &mut runtimes)?;
-        save_managed_agents(&app_for_stop, &records)?;
-
-        Ok(runtime_keys)
-    })
-    .await;
-
-    let runtime_keys = match stop_result {
-        Ok(Ok(runtime_keys)) => runtime_keys,
-        Ok(Err(e)) => {
-            eprintln!(
-                "beekeeper-desktop: set_global_agent_config: skipping restart of {pubkey}: {e}"
-            );
-            return RestartOutcome::Skipped;
-        }
-        Err(e) => {
-            eprintln!(
-                "beekeeper-desktop: set_global_agent_config: spawn_blocking failed for stop of {pubkey}: {e}"
-            );
-            return RestartOutcome::Skipped;
-        }
-    };
-
-    let relay_urls: Vec<_> = runtime_keys.into_iter().map(|key| key.relay_url).collect();
     use tauri::Manager;
     let state = app.state::<AppState>();
-    match super::agents::start_local_agent_pairs_with_preflight(app, &state, pubkey, &relay_urls)
-        .await
-    {
-        Ok(_) => {
-            eprintln!(
-                "beekeeper-desktop: set_global_agent_config: restarted agent {pubkey} with updated config"
-            );
-            RestartOutcome::Restarted
+    let result = async {
+        let records = load_managed_agents(app)?;
+        let record = records
+            .iter()
+            .find(|r| r.pubkey == pubkey)
+            .ok_or("agent not found")?;
+        if record.backend != BackendKind::Local {
+            return Ok(false);
         }
-        Err(e) => {
-            eprintln!(
-                "beekeeper-desktop: set_global_agent_config: failed to start {pubkey} after restart: {e}"
-            );
-            if let Err(save_err) = persist_last_error(app, pubkey, &e) {
-                eprintln!(
-                    "beekeeper-desktop: set_global_agent_config: failed to persist last_error for {pubkey}: {save_err}"
-                );
-            }
-            RestartOutcome::FailedAfterStop
+        let command = record_agent_command(record, personas_snapshot);
+        let runtime = known_acp_runtime(&command);
+        let old = resolve_effective_agent_env(record, personas_snapshot, runtime, old_global);
+        let new = resolve_effective_agent_env(record, personas_snapshot, runtime, new_global);
+        let old_ready = matches!(agent_readiness(&old), AgentReadiness::Ready);
+        let new_ready = matches!(agent_readiness(&new), AgentReadiness::Ready);
+        if !should_restart_on_config_change(old_ready, new_ready, old_ready && old.env != new.env) {
+            return Ok(false);
+        }
+        let relay = crate::relay::effective_agent_relay_url(
+            &record.relay_url,
+            &crate::relay::relay_ws_url_with_override(&state),
+        );
+        super::agents::host_transfer::reconcile_host_agent(app, &state, pubkey, &relay, true)
+            .await?;
+        Ok::<bool, String>(true)
+    }
+    .await;
+    match result {
+        Ok(true) => RestartOutcome::Restarted,
+        Ok(false) => RestartOutcome::Skipped,
+        Err(error) => {
+            let _ = persist_last_error(app, pubkey, &error);
+            RestartOutcome::Failed
         }
     }
 }
@@ -396,7 +262,7 @@ fn persist_last_error(app: &AppHandle, pubkey: &str, error: &str) -> Result<(), 
 ///
 /// Extracted so the restart decision logic can be unit-tested without an
 /// `AppHandle` or `EffectiveAgentEnv`.  Both `collect_restart_candidates` and
-/// the under-lock eligibility check in `restart_local_agent_on_config_change`
+/// the under-lock eligibility check in `reconcile_agent_on_config_change`
 /// delegate to this predicate.
 ///
 /// Conditions:

@@ -136,6 +136,7 @@ pub(super) fn execute(
     state: &AppState,
     project_ref: &str,
     expect_agents: &[String],
+    snapshot: &[crate::managed_agents::ManagedAgentRecord],
 ) -> Result<ProjectAgentTeardownReceipt, String> {
     let project = super::normalized(project_ref)?;
 
@@ -164,6 +165,8 @@ pub(super) fn execute(
             doomed.len()
         ));
     }
+
+    require_unchanged_deletion_snapshot(&agents, snapshot, &doomed)?;
 
     let remote = remote_deployed_agents(&agents, &doomed);
     if !remote.is_empty() {
@@ -213,7 +216,6 @@ pub(super) fn execute(
     // ── Phase 3: stop. A stuck process is logged, never fatal — one of them
     // must not abandon a multi-agent teardown half-way.
     let mut skipped: Vec<String> = Vec::new();
-    stop_doomed_processes(app, state, &mut agents, &doomed, &mut skipped);
 
     // ── Phase 4: commit, in the one order that works.
     agents.retain(|record| !doomed.contains(&record.pubkey));
@@ -248,12 +250,14 @@ pub(super) fn execute(
     // A tombstone published for a record that then failed to delete would say
     // the agent is gone while this computer still runs it.
     for (pubkey, persona_id) in &persona_ids {
-        crate::commands::purge_managed_agent_side_effects(
+        if let Err(error) = crate::commands::purge_managed_agent_side_effects(
             app,
             state,
             pubkey,
             persona_id.as_deref(),
-        );
+        ) {
+            skipped.push(format!("shared retirement completed; local custody cleanup for {pubkey} remains pending: {error}"));
+        }
     }
     for (_, d_tag) in &doomed_definitions {
         crate::commands::personas::tombstone_persona_pending(app, state, d_tag);
@@ -306,28 +310,25 @@ fn back_up_stores(app: &AppHandle, project_ref: &str) -> Result<Vec<String>, Str
     Ok(written)
 }
 
-/// Stop each doomed agent's process, holding the process lock per agent.
-///
-/// The process lock is taken and released around each stop rather than held
-/// across the loop: `stop` polls for up to a second, and holding it for the
-/// whole set would block every other agent operation for that long.
-fn stop_doomed_processes(
-    app: &AppHandle,
-    state: &AppState,
-    agents: &mut [crate::managed_agents::ManagedAgentRecord],
-    doomed: &BTreeSet<String>,
-    skipped: &mut Vec<String>,
-) {
-    for record in agents.iter_mut().filter(|r| doomed.contains(&r.pubkey)) {
-        let Ok(mut runtimes) = state.managed_agent_processes.lock() else {
-            skipped.push(format!("stopping \"{}\" (lock unavailable)", record.name));
-            continue;
-        };
-        if let Err(error) =
-            crate::managed_agents::stop_managed_agent_process(app, record, &mut runtimes)
+/// Fail closed if configuration, actor set or custody changed while shared deletion awaited receipts.
+pub(in crate::commands) fn require_unchanged_deletion_snapshot(
+    records: &[crate::managed_agents::ManagedAgentRecord],
+    snapshot: &[crate::managed_agents::ManagedAgentRecord],
+    expected: &BTreeSet<String>,
+) -> Result<(), String> {
+    if snapshot.len() != expected.len() || snapshot.iter().any(|r| !expected.contains(&r.pubkey)) {
+        return Err("deletion snapshot no longer names the exact actor set".into());
+    }
+    for before in snapshot {
+        let after = records
+            .iter()
+            .find(|r| r.pubkey == before.pubkey)
+            .ok_or("deletion snapshot actor disappeared; source custody retained")?;
+        if serde_json::to_value(before).map_err(|e| e.to_string())?
+            != serde_json::to_value(after).map_err(|e| e.to_string())?
         {
-            // Logged, not fatal: see the phase comment above.
-            skipped.push(format!("stopping \"{}\" ({error})", record.name));
+            return Err("agent configuration changed during shared deletion; source custody retained; retry".into());
         }
     }
+    Ok(())
 }

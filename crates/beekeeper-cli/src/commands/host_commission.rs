@@ -214,14 +214,7 @@ pub async fn commission(
             .transpose()?,
         written_at: chrono::Utc::now().to_rfc3339(),
     };
-    provision::write_commissioning(&home, &config, &identity).map_err(CliError::Other)?;
-    identity.private_key_nsec.clear();
-    store.upsert(&relay, identity.clone());
-    atomic_write::atomic_write_json_restricted(
-        &store_path,
-        &serde_json::to_vec_pretty(&store).map_err(|e| CliError::Other(e.to_string()))?,
-    )
-    .map_err(CliError::Other)?;
+    persist_commissioned_custody(&home, &config, &store_path, &mut store, &identity)?;
     let tag =
         Tag::parse(auth).map_err(|_| CliError::Auth("invalid provider attestation tag".into()))?;
     let client = BeekeeperClient::new(
@@ -242,6 +235,29 @@ pub async fn commission(
         "runtime_account":"unconfirmed","worker":"not_started","home":home,"state_dir":config.provider_state_dir})
     );
     Ok(())
+}
+
+// A headless caller has not verified a Keychain write. Preserve only the scoped
+// provider key in restricted custody; a different client's secret-store adapter
+// may remove its inline copy only after establishing its own durable custody.
+fn persist_commissioned_custody(
+    home: &std::path::Path,
+    config: &config::HostConfig,
+    store_path: &std::path::Path,
+    store: &mut record::CodingSessionProviderStore,
+    identity: &record::CodingSessionProviderRecord,
+) -> Result<(), CliError> {
+    // Serialize explicit full commissioning with scoped limit patches and
+    // desktop preservation; no lock is held while contacting the relay.
+    let _lock = beekeeper_host_core::ownership::management_lock(home, config.instance)
+        .map_err(CliError::Other)?;
+    provision::write_commissioning(home, config, identity).map_err(CliError::Other)?;
+    store.upsert(&config.relay_url, identity.clone());
+    atomic_write::atomic_write_json_restricted(
+        store_path,
+        &serde_json::to_vec_pretty(store).map_err(|error| CliError::Other(error.to_string()))?,
+    )
+    .map_err(CliError::Other)
 }
 
 fn executable(path: &std::path::Path) -> Result<PathBuf, CliError> {
@@ -285,4 +301,77 @@ fn executable(path: &std::path::Path) -> Result<PathBuf, CliError> {
         }
     }
     Ok(found)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr::ToBech32;
+    #[test]
+    fn repeated_headless_commission_retains_scoped_fallback_without_owner_custody() {
+        let home = tempfile::tempdir().expect("isolated home");
+        let owner = Keys::generate();
+        let identity =
+            provision::mint_provider_record(&owner, "ws://127.0.0.1:3037").expect("mint");
+        let base = home.path().join("service/session-provider");
+        atomic_write::create_dir_all_restricted(&base).expect("private base");
+        let store_path = base.join(record::STORE_FILE_NAME);
+        let config = config::HostConfig {
+            version: config::HOST_CONFIG_VERSION,
+            instance: layout::Instance::Production,
+            relay_url: identity.relay_url.clone(),
+            provider_pubkey: identity.provider_pubkey.clone(),
+            session_provider_base_dir: base.clone(),
+            provider_state_dir: base.join(&identity.provider_pubkey),
+            runtimes: Vec::new(),
+            max_sessions: None,
+            turn_idle_timeout_secs: None,
+            turn_budget: None,
+            provider_command: None,
+            written_at: identity.created_at.clone(),
+        };
+        let mut store = record::load_provider_store_from(&store_path).expect("new store");
+        persist_commissioned_custody(home.path(), &config, &store_path, &mut store, &identity)
+            .expect("commission");
+        let mut restored =
+            record::load_provider_store_from(&store_path).expect("reload no Keychain");
+        let scoped = restored
+            .get(&identity.relay_url)
+            .expect("retained identity")
+            .clone();
+        assert!(!scoped.private_key_nsec.is_empty());
+        assert!(scoped.provider_pubkey == identity.provider_pubkey);
+        assert!(
+            Keys::parse(&scoped.private_key_nsec)
+                .expect("scoped key")
+                .public_key()
+                .to_hex()
+                == identity.provider_pubkey
+        );
+        persist_commissioned_custody(home.path(), &config, &store_path, &mut restored, &scoped)
+            .expect("supported retry");
+        let reloaded = record::load_provider_store_from(&store_path).expect("retry reload");
+        assert!(
+            reloaded
+                .get(&identity.relay_url)
+                .expect("same identity")
+                .private_key_nsec
+                == scoped.private_key_nsec
+        );
+        let bytes = std::fs::read_to_string(&store_path).expect("private store");
+        assert!(!bytes.contains(&owner.secret_key().to_secret_hex()));
+        assert!(!bytes.contains(&owner.secret_key().to_bech32().expect("owner encoding")));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&store_path)
+                    .expect("metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
 }

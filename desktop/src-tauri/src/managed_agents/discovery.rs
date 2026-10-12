@@ -13,12 +13,11 @@ mod adapter_availability;
 mod auth_preflight;
 mod auth_settlement;
 mod presets;
+#[cfg(test)]
+pub(crate) use adapter_availability::availability_drift;
+pub(crate) use adapter_availability::cache_adapter_availability;
 use adapter_availability::clear_adapter_availability_cache;
-pub(crate) use adapter_availability::{
-    adapter_availability_cached, availability_drift, cache_adapter_availability,
-};
-mod renamed_commands;
-pub(crate) use renamed_commands::renamed_bundled_command;
+pub(super) mod renamed_commands;
 use renamed_commands::resolve_with_renamed_fallback;
 mod runtime_metadata;
 #[macro_use]

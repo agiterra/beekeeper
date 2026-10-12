@@ -341,3 +341,35 @@ fi"#;
         );
     }
 }
+
+#[test]
+fn explicit_codex_home_uses_last_launch_override_and_never_falls_back_for_invalid_selection() {
+    let home = tempfile::tempdir().expect("fixture home");
+    let first = home.path().join("first");
+    let selected = home.path().join("selected");
+    let env = vec![
+        ("CODEX_HOME".into(), first.to_string_lossy().into_owned()),
+        ("CODEX_HOME".into(), selected.to_string_lossy().into_owned()),
+        ("OPENAI_API_KEY".into(), "fixture-not-a-credential".into()),
+    ];
+    let login = CodexLogin::from_host(home.path(), &env);
+    assert_eq!(login.operator_home, selected);
+    let invalid = CodexLogin::from_host(
+        home.path(),
+        &[
+            ("CODEX_HOME".into(), "relative-account".into()),
+            ("OPENAI_API_KEY".into(), "fixture-not-a-credential".into()),
+        ],
+    );
+    assert!(!invalid.operator_home.is_absolute());
+    assert!(prepare_codex_home(home.path(), &invalid).is_err());
+    let existing = std::env::var_os("CODEX_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| home.path().join(".codex"));
+    assert_eq!(
+        CodexLogin::from_host(home.path(), &[]).operator_home,
+        existing,
+        "unconfigured ordinary path preserves existing source selection"
+    );
+}

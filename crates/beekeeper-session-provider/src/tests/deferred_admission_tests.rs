@@ -187,6 +187,7 @@ async fn an_undecidable_wake_expires_and_stops_blocking_the_seats_later_work() {
     let channel_id = Uuid::new_v4();
     let projects = write_projects(dir.path(), channel_id, &cwd);
     let mut provider = provider(&state, Some(&projects));
+    witness_fixture_retirement(&mut provider).await;
     provider
         .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
         .await
@@ -313,6 +314,7 @@ async fn a_wake_that_cannot_be_held_is_refused_by_the_provider_rather_than_lost(
     let channel_id = Uuid::new_v4();
     let projects = write_projects(dir.path(), channel_id, &cwd);
     let mut provider = provider(&state, Some(&projects));
+    witness_fixture_retirement(&mut provider).await;
     provider
         .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
         .await

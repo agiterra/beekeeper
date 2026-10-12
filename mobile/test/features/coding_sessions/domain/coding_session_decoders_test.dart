@@ -302,6 +302,39 @@ void main() {
       );
     });
 
+    test('uncertain startup may retain only a validated reserved target', () {
+      final base = receiptEvent(
+        commandId: 'uncertain',
+        status: 'failed',
+        error: {
+          'code': 'CREATE_START_OUTCOME_UNCONFIRMED',
+          'message': 'startup effects unknown',
+        },
+      );
+      final payload = jsonDecode(base.content) as Map<String, dynamic>;
+      payload['session'] = target().toJson();
+      final decoded = decodeCodingSessionReceipt(
+        _withContent(base, jsonEncode(payload)),
+      );
+      expect(decoded.value!.status, CodingSessionReceiptStatus.failed);
+      expect(decoded.value!.session, isNotNull);
+      payload['error']['code'] = 'SESSION_LIMIT';
+      expect(
+        decodeCodingSessionReceipt(
+          _withContent(base, jsonEncode(payload)),
+        ).value,
+        isNull,
+      );
+      payload['error']['code'] = 'CREATE_START_OUTCOME_UNCONFIRMED';
+      payload['session']['generation'] = 0;
+      expect(
+        decodeCodingSessionReceipt(
+          _withContent(base, jsonEncode(payload)),
+        ).value,
+        isNull,
+      );
+    });
+
     test('failed carries no session and requires an error', () {
       expect(
         decodeCodingSessionReceipt(

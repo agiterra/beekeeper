@@ -3,8 +3,6 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use tauri::{AppHandle, Manager};
-
 use crate::app_state::AppState;
 
 pub(crate) const ACP_SESSION_POLICY_ENV_VAR: &str = "BEEKEEPER_ACP_SESSION_POLICY";
@@ -36,7 +34,7 @@ impl AppState {
     }
 }
 
-/// Desktop-owned ACP session policy applied to every managed-agent launch.
+/// Persisted policy projected into the existing remote deployment boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AcpSessionPolicy {
     Channel,
@@ -60,32 +58,13 @@ impl AcpSessionPolicy {
     }
 }
 
-/// Resolve the persisted experiment state at the shared launch boundary.
+/// Resolve persisted policy for the deployment projection.
 pub(crate) fn acp_session_policy(state: &AppState) -> AcpSessionPolicy {
     AcpSessionPolicy::from_thread_scoped_enabled(
         state
             .thread_scoped_acp_sessions_enabled()
             .load(Ordering::Acquire),
     )
-}
-
-pub(crate) fn apply_acp_session_policy_env(
-    command: &mut std::process::Command,
-    policy: AcpSessionPolicy,
-) {
-    command.env(ACP_SESSION_POLICY_ENV_VAR, policy.as_str());
-}
-
-/// Resolve the effective policy, apply it to `command`, and return it so the
-/// caller can stamp the same value onto the spawn snapshot (env and badge can
-/// never disagree about what the child launched with).
-pub(crate) fn apply_app_acp_session_policy_env(
-    app: &AppHandle,
-    command: &mut std::process::Command,
-) -> AcpSessionPolicy {
-    let policy = acp_session_policy(app.state::<AppState>().inner());
-    apply_acp_session_policy_env(command, policy);
-    policy
 }
 
 pub(crate) fn insert_acp_session_policy_env(
@@ -101,14 +80,6 @@ pub(crate) fn insert_acp_session_policy_env(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn command_policy(command: &std::process::Command) -> Option<&str> {
-        command
-            .get_envs()
-            .find(|(key, _)| *key == ACP_SESSION_POLICY_ENV_VAR)
-            .and_then(|(_, value)| value)
-            .and_then(std::ffi::OsStr::to_str)
-    }
 
     #[test]
     fn absent_or_disabled_experiment_selects_channel_policy() {
@@ -129,12 +100,10 @@ mod tests {
     }
 
     #[test]
-    fn local_launch_env_receives_the_selected_policy() {
-        let mut command = std::process::Command::new("true");
-        command.env(ACP_SESSION_POLICY_ENV_VAR, "ambient");
-
-        apply_acp_session_policy_env(&mut command, AcpSessionPolicy::Thread);
-
-        assert_eq!(command_policy(&command), Some("thread"));
+    fn remote_deployment_policy_map_overrides_ambient_selection() {
+        let mut environment =
+            BTreeMap::from([(ACP_SESSION_POLICY_ENV_VAR.into(), "ambient".into())]);
+        insert_acp_session_policy_env(&mut environment, AcpSessionPolicy::Thread);
+        assert_eq!(environment[ACP_SESSION_POLICY_ENV_VAR], "thread");
     }
 }

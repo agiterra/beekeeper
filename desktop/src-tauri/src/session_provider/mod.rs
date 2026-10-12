@@ -65,14 +65,20 @@ mod tests;
 /// Root directory for every coding-session provider artifact.
 ///
 /// Created on demand so a fresh install does not need a migration step.
-pub(crate) fn session_provider_base_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("failed to resolve app data dir: {error}"))?
-        .join("session-provider");
-    std::fs::create_dir_all(&dir)
-        .map_err(|error| format!("failed to create session-provider dir: {error}"))?;
+pub(crate) fn session_provider_base_dir(_app: &AppHandle) -> Result<PathBuf, String> {
+    let home = beekeeper_host_core::layout::home_dir()?;
+    let instance = crate::agent_host::instance();
+    // Existing host state (including Solo sessions) retains its explicitly
+    // commissioned path. New installations use the same host-owned root as CLI.
+    let config = beekeeper_host_core::config::HostConfig::load(
+        &beekeeper_host_core::layout::host_config_path(&home, instance),
+    )?;
+    let dir = config
+        .map(|c| c.session_provider_base_dir)
+        .unwrap_or_else(|| {
+            beekeeper_host_core::layout::host_dir(&home, instance).join("service/session-provider")
+        });
+    beekeeper_host_core::atomic_write::create_dir_all_restricted(&dir)?;
     Ok(dir)
 }
 

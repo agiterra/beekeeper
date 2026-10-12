@@ -67,13 +67,21 @@ fn require(
         Phase::Quiesced => {
             matches!(admission, Admission::Create { command, initial_turn: false } if command == transfer.operation_id)
         }
-        Phase::HostStopped => matches!(
-            admission,
+        Phase::HostStopped => match admission {
             Admission::Create {
+                command,
                 initial_turn: false,
-                ..
+            } => {
+                if transfer.target.is_none() && transfer.legacy_nonce.starts_with("fresh-identity:")
+                {
+                    command == transfer.operation_id
+                        && transfer.legacy_nonce == format!("fresh-identity:{command}")
+                } else {
+                    true
+                }
             }
-        ),
+            _ => false,
+        },
         Phase::Prepared | Phase::Restoring | Phase::LegacyRestored => false,
     };
     if allowed {
@@ -130,6 +138,40 @@ pub(crate) fn admit(
     let Some((home, instance)) = context()? else {
         return Ok(None);
     };
+    let activation = match admission {
+        Admission::Create {
+            command,
+            initial_turn: false,
+        } => {
+            let path = config
+                .state_dir
+                .join("actors")
+                .join(actor)
+                .join("enrollment.json");
+            let value = crate::managed_configuration::protected(&path)?;
+            value.and_then(|value| {
+                if value
+                    .get("activationOperation")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(command)
+                {
+                    value
+                        .get("enrolledOperation")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                } else {
+                    None
+                }
+            })
+        }
+        _ => None,
+    };
+    let admission = activation
+        .as_deref()
+        .map_or(admission, |command| Admission::Create {
+            command,
+            initial_turn: false,
+        });
     require(&home, instance, actor, &config.relay_url, admission)?;
     let lock = ownership::try_admission_lock(&home, instance, actor, &config.relay_url).map_err(|_| crate::execution_scope::refuse("ACTOR_OWNERSHIP_BUSY", "another startup or ownership transition is in progress for this participant; retry at its next boundary"))?;
     require(&home, instance, actor, &config.relay_url, admission)?;
@@ -237,10 +279,8 @@ mod tests {
         )
         .is_ok());
         transfer.phase = Phase::Restoring;
-        ownership::advance(home.path(), Instance::Dev, transfer.clone()).expect("restoring");
-        assert!(require(home.path(), Instance::Dev, &actor, relay, Admission::Resume).is_err());
+        assert!(ownership::advance(home.path(), Instance::Dev, transfer.clone()).is_err());
         transfer.phase = Phase::LegacyRestored;
-        ownership::advance(home.path(), Instance::Dev, transfer).expect("legacy restored");
-        assert!(require(home.path(), Instance::Dev, &actor, relay, Admission::Turn).is_err());
+        assert!(ownership::advance(home.path(), Instance::Dev, transfer).is_err());
     }
 }

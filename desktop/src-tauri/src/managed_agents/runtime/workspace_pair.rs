@@ -37,3 +37,23 @@ pub(crate) fn resolve_workspace_pair_key(
         crate::relay::effective_agent_relay_url(record_relay_url, workspace_relay_url);
     ManagedAgentRuntimeKey::new(pubkey.to_string(), &effective_relay).ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn observation_uses_active_community_without_borrowing_record_pin() {
+        let actor = "ab".repeat(32);
+        let key =
+            resolve_workspace_pair_key(&actor, "wss://other.example", "wss://selected.example/")
+                .unwrap();
+        assert_eq!(key.relay_url, "wss://selected.example");
+        assert_eq!(key.pubkey, actor);
+        assert!(resolve_workspace_pair_key(
+            "not-an-actor",
+            "wss://other.example",
+            "wss://selected.example"
+        )
+        .is_none());
+    }
+}

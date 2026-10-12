@@ -680,7 +680,7 @@ pub async fn mint_agent_card(
         _ => {
             return Err(
                 "Agent has no avatar image. Set an avatar before minting a card.".to_string(),
-            )
+            );
         }
     };
 
@@ -826,7 +826,7 @@ pub async fn mint_agent_card(
                     return Err(
                         "Card round-trip verification failed: expected a locked envelope."
                             .to_string(),
-                    )
+                    );
                 }
             }
         }

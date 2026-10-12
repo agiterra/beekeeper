@@ -661,116 +661,7 @@ impl RespondToArg {
     }
 }
 
-#[derive(Subcommand)]
-pub enum AgentsCmd {
-    /// Commission an identity and its attributed headless work context.
-    Create(commands::agent_management::CreateArgs),
-    /// Publish an authorized revision of an existing managed identity.
-    Update(commands::agent_management::UpdateArgs),
-    /// Open a prefilled create-agent form in the owner's Beekeeper Desktop
-    DraftCreate {
-        /// Current channel UUID; the new agent is added here after save
-        #[arg(long)]
-        channel: String,
-        /// Proposed agent name
-        #[arg(long)]
-        display_name: String,
-        /// Proposed instructions; use '-' to read from stdin
-        #[arg(long)]
-        system_prompt: String,
-    },
-    /// Open a prefilled edit-agent form in the owner's Beekeeper Desktop
-    DraftUpdate {
-        /// Current channel UUID
-        #[arg(long)]
-        channel: String,
-        /// Current name of the personal agent to update
-        #[arg(long)]
-        agent_name: String,
-        #[arg(long)]
-        display_name: Option<String>,
-        /// Replacement instructions; use '-' to read from stdin
-        #[arg(long)]
-        system_prompt: Option<String>,
-        #[arg(long)]
-        runtime: Option<String>,
-        #[arg(long)]
-        provider: Option<String>,
-        #[arg(long)]
-        model: Option<String>,
-        #[arg(long, value_enum)]
-        respond_to: Option<RespondToArg>,
-    },
-    /// Submit a NIP-IA archive request for an identity (kind 9035)
-    #[command(
-        after_help = "Auth flow: when target != signer, the CLI fetches the target's kind:0 and \
-attaches its owner-auth tag. On extraction failure it retries once (common cause: profile \
-republish in progress). If the retry also fails, the command exits with an error — use \
---admin to bypass this guard when your key is a relay admin.\n\n\
-Suggested --reason codes (unknown values are allowed): rotated, retired, \
-bot-rebuilt, left-organization, spam\n\n\
-Archiving a third-party identity is a human owner/admin action: an agent \
-running under BEEKEEPER_AUTH_TAG signs as itself, so it can only ever satisfy \
-the self path (target == signer) — not the owner-of-agent path for another \
-identity.\n\n\
-Examples:\n  \
-bee agents archive <PUBKEY> --reason retired\n  \
-bee agents archive <PUBKEY> --reason bot-rebuilt --replaced-by <NEW_PUBKEY>"
-    )]
-    Archive {
-        /// Target identity pubkey (hex)
-        target_pubkey: String,
-        /// Machine-readable reason code, max 64 UTF-8 bytes
-        #[arg(long)]
-        reason: Option<String>,
-        /// Rotation pointer pubkey (hex); must differ from the target
-        #[arg(long)]
-        replaced_by: Option<String>,
-        /// Optional human-readable note (not parsed for authorization)
-        #[arg(long, default_value = "")]
-        content: String,
-        /// Allow sending without owner-auth attestation after extraction fails
-        /// (relay-admin path). Use only when your key is a relay admin; ordinary
-        /// owners do not need this flag. Without it, auth-extraction failure after
-        /// one automatic retry is a hard error rather than a silent bare send.
-        #[arg(long, default_value_t = false)]
-        admin: bool,
-    },
-    /// Submit a NIP-IA unarchive request for an identity (kind 9036)
-    #[command(
-        after_help = "Auth flow: same as `archive` — retries kind:0 fetch once on \
-extraction failure, then exits with an error if still unresolvable. Use --admin to bypass \
-for relay-admin callers.\n\n\
-Examples:\n  \
-bee agents unarchive <PUBKEY> --reason returned"
-    )]
-    Unarchive {
-        /// Target identity pubkey (hex)
-        target_pubkey: String,
-        /// Machine-readable reason code, max 64 UTF-8 bytes
-        #[arg(long)]
-        reason: Option<String>,
-        /// Optional human-readable note (not parsed for authorization)
-        #[arg(long, default_value = "")]
-        content: String,
-        /// Allow sending without owner-auth attestation after extraction fails
-        /// (relay-admin path). Use only when your key is a relay admin; ordinary
-        /// owners do not need this flag. Without it, auth-extraction failure after
-        /// one automatic retry is a hard error rather than a silent bare send.
-        #[arg(long, default_value_t = false)]
-        admin: bool,
-    },
-    /// Read the relay's current NIP-IA archive snapshot (kind 13535)
-    #[command(
-        after_help = "Verifies the snapshot's NIP-11 `self` authorship, event id, signature, \
-and NIP-70 `-` protection tag before trusting it. Any trust failure is a \
-nonzero-exit error, never a false-empty success — this command's whole \
-purpose is verification.\n\n\
-Examples:\n  \
-bee agents archived"
-    )]
-    Archived,
-}
+pub use commands::agent_management::AgentsCmd;
 
 #[derive(Subcommand)]
 pub enum MessagesCmd {
@@ -6960,8 +6851,15 @@ mod tests {
                 "archive",
                 "archived",
                 "create",
+                "delete",
                 "draft-create",
                 "draft-update",
+                "restart",
+                "restart-remote",
+                "start",
+                "start-remote",
+                "status",
+                "stop",
                 "unarchive",
                 "update"
             ]
@@ -7325,7 +7223,7 @@ mod tests {
             // C1: `publish` and `status` (spec § 5.1), plus the offline
             // `example` (ledger 206 A).
             ("actions", 3),
-            ("agents", 7),
+            ("agents", 14),
             ("canvas", 2),
             ("channels", 16),
             // C5 (SV-34): list, open, screenshot, close, watch.

@@ -697,7 +697,10 @@ done
             "bash",
             &[script.to_string_lossy().into_owned()],
             &[],
-            &crate::execution_scope::ExecutionPlan::Legacy { reason: "test" },
+            &crate::execution_scope::ExecutionPlan::Legacy {
+                reason: "test",
+                configured_mcp_command: None,
+            },
             Duration::from_secs(5),
         )
         .await

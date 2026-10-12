@@ -32,6 +32,7 @@ use crate::managed_agents::{
 
 #[path = "project_agent_teardown_execute.rs"]
 mod execute_impl;
+pub(in crate::commands) use execute_impl::require_unchanged_deletion_snapshot;
 use execute_impl::{execute, live_project_sessions, retained_paths};
 
 /// What a teardown would remove, and what it would refuse.
@@ -107,9 +108,33 @@ pub async fn run_project_agent_teardown(
     expect_agents: Vec<String>,
     app: AppHandle,
 ) -> Result<ProjectAgentTeardownReceipt, String> {
+    let state = app.state::<AppState>();
+    let plan = build_plan(&app, &state, &project_ref)?;
+    let expected: BTreeSet<_> = expect_agents.iter().cloned().collect();
+    let actual: BTreeSet<_> = plan.agents.iter().map(|a| a.pubkey.clone()).collect();
+    if expected != actual {
+        return Err("agent set changed; reopen the teardown inventory".into());
+    }
+    if !plan.remote_deployed.is_empty() {
+        return Err("remote deployments must be revoked before project teardown".into());
+    }
+    let records = load_managed_agents(&app)?;
+    let snapshot: Vec<_> = records
+        .iter()
+        .filter(|r| expected.contains(&r.pubkey))
+        .cloned()
+        .collect();
+    let relay = crate::relay::relay_ws_url_with_override(&state);
+    for record in &snapshot {
+        if record.backend == crate::managed_agents::BackendKind::Local {
+            let pair = crate::relay::effective_agent_relay_url(&record.relay_url, &relay);
+            super::agents::host_transfer::delete_host_agent_snapshot(&app, &state, record, &pair)
+                .await?;
+        }
+    }
     tokio::task::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let receipt = execute(&app, &state, &project_ref, &expect_agents)?;
+        let receipt = execute(&app, &state, &project_ref, &expect_agents, &snapshot)?;
         // Outside the lock. Without this the deleted agents stay in every
         // picker and list until some unrelated refresh, which reads as the
         // delete having silently failed.

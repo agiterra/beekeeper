@@ -778,3 +778,35 @@ test("a half-written fence is refused rather than read as `not fenced`", () => {
     false,
   );
 });
+
+test("uncertain startup retains a validated target without claiming creation", () => {
+  const receipt = {
+    schema: "buzz-coding-session-lifecycle-receipt/v1",
+    commandId: "uncertain-start",
+    status: "failed",
+    session: BASE.session,
+    error: {
+      code: "CREATE_START_OUTCOME_UNCONFIRMED",
+      message: "startup effects unknown",
+    },
+  };
+  assert.equal(
+    hasStrictLifecycleReceiptJson(JSON.stringify(receipt), receipt) &&
+      hasStrictLifecycleReceiptValues(receipt),
+    true,
+  );
+  assert.equal(
+    hasStrictLifecycleReceiptValues({
+      ...receipt,
+      error: { ...receipt.error, code: "SESSION_LIMIT" },
+    }),
+    false,
+  );
+  assert.equal(
+    hasStrictLifecycleReceiptValues({
+      ...receipt,
+      session: { ...receipt.session, generation: 0 },
+    }),
+    false,
+  );
+});

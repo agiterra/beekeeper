@@ -210,6 +210,8 @@ pub struct Outbox {
     signer: String,
     pending: Vec<Pending>,
     accepted: HashMap<(u32, String), OutboxEntry>,
+    // Exact parked bytes indexed from the existing ledger, never acceptance proof.
+    parked_events: HashMap<nostr::EventId, nostr::Event>,
     paused_until: Option<Instant>,
     background_interval: Duration,
     background_next_at: Option<Instant>,
@@ -242,6 +244,7 @@ impl Outbox {
         let path = dir.join(OUTBOX_FILE);
         let mut pending: Vec<Pending> = Vec::new();
         let mut acked: HashSet<String> = HashSet::new();
+        let mut parked_events = HashMap::new();
         let mut fenced_by_signer = 0usize;
         let mut fenced_by_key = 0usize;
         let mut superseded_ids = Vec::new();
@@ -276,6 +279,13 @@ impl Outbox {
                 Ok(LedgerRow::Park { id, .. }) => {
                     // A parked row is finished exactly as an acked row is; it
                     // is counted separately only so status can disclose it.
+                    if let Some(entry) = rows
+                        .iter()
+                        .find(|entry| entry.id == id)
+                        .filter(|entry| entry.signer == signer || delegate(&entry.event))
+                    {
+                        parked_events.insert(entry.event.id, entry.event.clone());
+                    }
                     acked.insert(id);
                     parked = parked.saturating_add(1);
                 }
@@ -353,6 +363,7 @@ impl Outbox {
         let mut outbox = Self {
             path,
             signer: signer.to_owned(),
+            parked_events,
             pending,
             accepted,
             paused_until: None,
@@ -435,9 +446,8 @@ impl Outbox {
 
     /// The signed events still awaiting delivery, oldest first.
     ///
-    /// For tests only: a caller that wants to *send* one takes it through the
-    /// ordinary drain, which is the only path that records the attempt.
-    #[cfg(test)]
+    /// Recovery may inspect durable completion proofs. Sending still takes
+    /// the ordinary drain, the only path that records a delivery attempt.
     pub(crate) fn pending_events(&self) -> impl Iterator<Item = &nostr::Event> {
         self.pending.iter().map(|row| &row.entry.event)
     }
@@ -449,6 +459,21 @@ impl Outbox {
             .iter()
             .map(|row| (row.entry.kind, row.entry.semantic_key.clone()))
             .collect()
+    }
+
+    /// Whether these exact bytes were permanently parked in the existing ledger.
+    /// This prevents retry, but never certifies relay acceptance or physical exit.
+    pub(crate) fn is_parked_event(&self, event: &nostr::Event) -> bool {
+        self.parked_events
+            .get(&event.id)
+            .is_some_and(|parked| parked.content == event.content && parked.pubkey == event.pubkey)
+    }
+
+    /// Exact durable relay-accepted event for this semantic identity.
+    pub(crate) fn accepted_event(&self, kind: u32, semantic_key: &str) -> Option<&nostr::Event> {
+        self.accepted
+            .get(&(kind, semantic_key.to_owned()))
+            .map(|entry| &entry.event)
     }
 
     /// Content of the latest relay-accepted status for this exact identity.
@@ -692,6 +717,7 @@ impl Outbox {
             match outcome {
                 Ok(()) => {
                     if entry.kind == 44223
+                        || entry.kind == beekeeper_core::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT
                         || (entry.kind == beekeeper_core::kind::KIND_STREAM_MESSAGE
                             && entry.semantic_key.starts_with("conversation:"))
                     {
@@ -840,6 +866,10 @@ impl Outbox {
             reason: reason.to_owned(),
             at,
         })?;
+        if let Some(row) = self.pending.iter().find(|row| row.entry.id == id) {
+            self.parked_events
+                .insert(row.entry.event.id, row.entry.event.clone());
+        }
         self.pending.retain(|row| row.entry.id != id);
         self.parked = self.parked.saturating_add(1);
         Ok(())

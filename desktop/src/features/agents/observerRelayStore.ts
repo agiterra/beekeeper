@@ -4,7 +4,6 @@ import { subscribeToAgentObserverFrames } from "@/shared/api/observerRelay";
 import type { RelayEvent, ManagedAgent } from "@/shared/api/types";
 import type { ControlResultFrame } from "@/shared/api/types";
 import { putAgentSessionConfig } from "@/shared/api/tauri";
-import { putManagedAgentRuntimeLifecycle } from "@/shared/api/tauriManagedAgents";
 import { getIdentity } from "@/shared/api/tauriIdentity";
 import { decryptObserverEvent } from "@/shared/api/tauriObserver";
 import {
@@ -509,12 +508,6 @@ function processLiveObserverEvents(
       // Keep that authoritative scope when dispatching to the request waiter;
       // the encrypted payload is not allowed to replace it.
       dispatchControlResult(agentPubkey, parsed.payload, parsed.channelId);
-    } else if (parsed.kind === "managed_agent_runtime_lifecycle") {
-      void putManagedAgentRuntimeLifecycle(agentPubkey, parsed.payload).catch(
-        (error) => {
-          console.debug("Late/untracked lifecycle frame dropped:", error);
-        },
-      );
     }
   }
 

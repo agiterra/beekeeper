@@ -204,9 +204,9 @@ pub struct UpdateManagedAgentRequest {
     #[serde(default)]
     pub name: Option<String>,
     /// Absent = don't touch. null = clear to agent default. "id" = set.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::util::double_option")]
     pub model: Option<Option<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::util::double_option")]
     pub system_prompt: Option<Option<String>>,
     /// Absent = don't touch. Present = replace the env_vars map entirely.
     #[serde(default)]
@@ -475,5 +475,30 @@ mod tests {
         )
         .expect("a create payload without provenance should deserialize");
         assert_eq!(request.catalog_source, None);
+    }
+}
+
+#[cfg(test)]
+mod clear_patch_tests {
+    use super::UpdateManagedAgentRequest;
+
+    #[test]
+    fn model_and_prompt_distinguish_absent_clear_and_set() {
+        let absent: UpdateManagedAgentRequest =
+            serde_json::from_value(serde_json::json!({"pubkey":"actor"})).unwrap();
+        assert_eq!(absent.model, None);
+        assert_eq!(absent.system_prompt, None);
+        let clear: UpdateManagedAgentRequest = serde_json::from_value(
+            serde_json::json!({"pubkey":"actor","model":null,"systemPrompt":null}),
+        )
+        .unwrap();
+        assert_eq!(clear.model, Some(None));
+        assert_eq!(clear.system_prompt, Some(None));
+        let set: UpdateManagedAgentRequest = serde_json::from_value(
+            serde_json::json!({"pubkey":"actor","model":"chosen","systemPrompt":"instructions"}),
+        )
+        .unwrap();
+        assert_eq!(set.model, Some(Some("chosen".into())));
+        assert_eq!(set.system_prompt, Some(Some("instructions".into())));
     }
 }

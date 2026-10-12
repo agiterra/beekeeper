@@ -865,11 +865,14 @@ pub async fn team_readiness(
     } else {
         ProjectPackSourceProbe::NotProbed
     };
+    let active_agents =
+        crate::commands::agents::host_transfer::active_host_agent_pubkeys(&app, &state).await;
+    let active_error = active_agents.as_ref().err().cloned();
     let local_app = app.clone();
     let local_project_ref = project_ref.clone();
     let local = tauri::async_runtime::spawn_blocking(move || {
         gather(
-            &AppReadinessHost(&local_app),
+            &AppReadinessHost(&local_app, active_agents),
             local_project_ref,
             selected_roles,
             hiring_policy_enabled,
@@ -881,6 +884,15 @@ pub async fn team_readiness(
     let wire =
         wire::observe_team_wire(&app, &project_ref, &expected_relay_url, &channel_ids).await?;
     let mut response = wire::fold_trusted_team_wire(local, wire);
+    if let Some(error) = active_error {
+        response.facts.push(TeamReadinessFact::local(
+            "team",
+            "HOST_AGENT_AVAILABILITY_UNOBSERVED",
+            TeamReadinessFactState::Unknown,
+            format!("Agent availability could not be observed from the host: {error}"),
+        ));
+        wire::summarize(&mut response);
+    }
     // Asked last, and asked at all because a session was founded on a goal it
     // could not finish: whether this session's team could publish and trigger
     // this project's actions (ledger 186). Appended after the fold so it sits

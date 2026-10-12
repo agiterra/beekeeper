@@ -185,3 +185,60 @@ fn linked_instance_absent_fields_leave_host_values_intact() {
     assert_eq!(record.provider.as_deref(), Some("openai"));
     assert_eq!(record.runtime.as_deref(), Some("codex"));
 }
+
+#[test]
+fn prospective_patch_preserves_absent_fields_and_applies_explicit_clears_and_replacement() {
+    let mut source = provider_record(false);
+    source.backend = crate::managed_agents::BackendKind::Local;
+    source.model = Some("old-model".into());
+    source.provider = Some("old-provider".into());
+    source.system_prompt = Some("Old prompt".into());
+    source.env_vars.insert("OLD_VARIABLE".into(), "old".into());
+    source.relay_url = "wss://pinned.example".into();
+    source.private_key_nsec = "synthetic-custody".into();
+    let absent: UpdateManagedAgentRequest =
+        serde_json::from_value(serde_json::json!({"pubkey":"agent","name":"Renamed"}))
+            .expect("name patch");
+    let (renamed, _) = prospective_record(&source, &absent, &[]).expect("name edit");
+    assert_eq!(renamed.model, source.model);
+    assert_eq!(renamed.system_prompt, source.system_prompt);
+    assert_eq!(renamed.env_vars, source.env_vars);
+    assert_eq!(renamed.relay_url, source.relay_url);
+    let patch: UpdateManagedAgentRequest = serde_json::from_value(serde_json::json!({
+        "pubkey":"agent", "model":null, "provider":null, "systemPrompt":null,
+        "envVars":{"NEW_VARIABLE":"new"}, "agentCommand":"/opt/isolated/custom-adapter",
+        "harnessOverride":true, "agentArgs":["--fixture"], "parallelism":2
+    }))
+    .expect("configuration patch");
+    let (next, _) = prospective_record(&source, &patch, &[]).expect("configuration edit");
+    assert!(next.model.is_none() && next.provider.is_none() && next.system_prompt.is_none());
+    assert_eq!(
+        next.env_vars,
+        BTreeMap::from([("NEW_VARIABLE".into(), "new".into())])
+    );
+    assert_eq!(
+        next.agent_command_override.as_deref(),
+        Some("/opt/isolated/custom-adapter")
+    );
+    assert_eq!(next.agent_command, source.agent_command);
+    assert_eq!(next.agent_args, ["--fixture"]);
+    assert_eq!(next.parallelism, 2);
+    assert_eq!(next.private_key_nsec, source.private_key_nsec);
+    assert_eq!(source.model.as_deref(), Some("old-model"));
+}
+
+#[test]
+fn prospective_patch_rejects_reserved_credentials_and_empty_allowlist() {
+    let patch: UpdateManagedAgentRequest = serde_json::from_value(serde_json::json!({
+        "pubkey":"agent", "envVars":{"BEEKEEPER_PRIVATE_KEY":"synthetic-key"}
+    }))
+    .expect("reserved env patch");
+    assert!(prospective_record(&provider_record(false), &patch, &[]).is_err());
+    let patch: UpdateManagedAgentRequest = serde_json::from_value(serde_json::json!({
+        "pubkey":"agent", "respondTo":"allowlist", "respondToAllowlist":[]
+    }))
+    .expect("access patch");
+    let error =
+        prospective_record(&provider_record(false), &patch, &[]).expect_err("empty allowlist");
+    assert!(error.contains("requires at least one pubkey"));
+}

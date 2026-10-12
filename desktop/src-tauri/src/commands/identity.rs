@@ -542,10 +542,21 @@ pub async fn sign_out(app: tauri::AppHandle) -> Result<(), String> {
         );
     }
 
-    // Stop all managed agents before restart so they don't race the wipe.
-    if let Err(e) = crate::shutdown::shutdown_managed_agents(&app) {
-        eprintln!("buzz-desktop sign-out: agent shutdown: {e}");
+    // A historical Solo provider can still own a commissioned path beneath
+    // client data. Refuse the destructive client reset until that state has an
+    // independent host path; never erase it as a sign-out side effect.
+    let host_home = beekeeper_host_core::layout::home_dir()?;
+    if let Some(config) = beekeeper_host_core::config::HostConfig::load(
+        &beekeeper_host_core::layout::host_config_path(&host_home, crate::agent_host::instance()),
+    )? {
+        let client_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        if config.provider_state_dir.starts_with(&client_data)
+            || config.session_provider_base_dir.starts_with(&client_data)
+        {
+            return Err("This installation's existing session state must be moved to independent host storage before signing out; your sessions and credentials were preserved.".into());
+        }
     }
+    // Signing out removes this client identity; host-owned work continues.
 
     // Write the reset sentinel — destruction happens on next boot.
     let data_dir = app

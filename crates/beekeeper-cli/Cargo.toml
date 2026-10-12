@@ -20,6 +20,7 @@ path = "src/main.rs"
 # registration. Local-only, like `bee session`: no relay, no key.
 beekeeper-host = { path = "../beekeeper-host" }
 beekeeper-host-core = { path = "../beekeeper-host-core" }
+beekeeper-agent-management = { path = "../beekeeper-agent-management" }
 # CLI argument parsing — derive macros + env var support (BEEKEEPER_API_TOKEN auto-wired)
 clap = { version = "4", features = ["derive", "env"] }
 

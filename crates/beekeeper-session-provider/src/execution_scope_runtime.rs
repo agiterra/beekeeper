@@ -220,10 +220,13 @@ impl CodexLogin {
     /// `agent_env`.
     pub(crate) fn from_host(home: &Path, agent_env: &[(String, String)]) -> Self {
         Self {
-            operator_home: std::env::var_os("CODEX_HOME")
-                .map(PathBuf::from)
-                .filter(|path| path.is_absolute())
-                .unwrap_or_else(|| home.join(".codex")),
+            operator_home: match agent_env.iter().rev().find(|(key, _)| key == "CODEX_HOME") {
+                Some((_, path)) => PathBuf::from(path),
+                None => std::env::var_os("CODEX_HOME")
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_absolute())
+                    .unwrap_or_else(|| home.join(".codex")),
+            },
             api_key: codex_api_key_configured(agent_env),
         }
     }
@@ -241,6 +244,12 @@ pub(crate) fn prepare_codex_home(
     login: &CodexLogin,
 ) -> Result<CodexHome, CreateFailure> {
     let operator_home = &login.operator_home;
+    if !operator_home.is_absolute() {
+        return Err(refuse(
+            EXECUTION_BOUNDARY_UNAVAILABLE,
+            "configured Codex home must be absolute; no other account was selected",
+        ));
+    }
     let codex_home = crate::execution_scope::host_dir(state, "codex-home")?;
     let anchor = Grant::file(
         &codex_home,

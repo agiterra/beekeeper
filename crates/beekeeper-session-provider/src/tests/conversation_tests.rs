@@ -11,6 +11,11 @@ async fn routed_provider(
     std::fs::create_dir_all(&cwd).expect("checkout");
     let projects = write_projects(dir, channel, &cwd);
     let mut host = provider(&dir.join("state"), Some(&projects));
+    // Actor startup now verifies current relay-signed retirement before opening.
+    // Establish the mock transport/authority before create, just as run_with does.
+    let (initial_relay, _, _initial_server) = spawn_test_relay(&host.config.keys, None).await;
+    host.set_rest_client(initial_relay.rest_client());
+    host.set_relay_self(host.config.keys.public_key().to_hex());
     let seats = dir.join("conversation-actor-seats.json");
     state::atomic_write(&seats, &serde_json::to_vec(&serde_json::json!({"version":1,"pending":{"conversation-create":{"pubkey":actor.public_key().to_hex(),"nsec":actor.secret_key().to_secret_hex(),"authTag":null,"relayUrl":host.config.relay_url}}})).expect("custody json")).expect("actor seat");
     host.config.actor_seats_file = Some(seats);
@@ -74,6 +79,7 @@ fn install_routes(host: &Provider, channel: Uuid, actor: &Keys, targets: Vec<Cod
                 actor_pubkey: actor.public_key().to_hex(),
                 channel_id: channel,
                 target,
+                replay_floor_unix: None,
             })
             .collect(),
     };
@@ -134,6 +140,16 @@ async fn conversation_runs_once_through_existing_replay_and_returns_actor_thread
         "assistant answer returned to origin"
     );
     let config = host.config.clone();
+    let live_sessions: Vec<_> = host
+        .state
+        .sessions()
+        .map(|record| record.session_id.clone())
+        .collect();
+    for session_id in live_sessions {
+        host.sessions
+            .shutdown_and_join(&session_id, crate::session::ACTOR_RETIRE_GRACE)
+            .await;
+    }
     drop(host);
     let mut restarted = Provider::new(config).expect("restart");
     restarted
@@ -250,6 +266,16 @@ async fn conversation_actor_outbox_survives_restart_but_key_withdrawal_fences_pu
     )
     .expect("blocked reply");
     let config = host.config.clone();
+    let live_sessions: Vec<_> = host
+        .state
+        .sessions()
+        .map(|record| record.session_id.clone())
+        .collect();
+    for session_id in live_sessions {
+        host.sessions
+            .shutdown_and_join(&session_id, crate::session::ACTOR_RETIRE_GRACE)
+            .await;
+    }
     drop(host);
     let mut host = Provider::new(config.clone()).expect("reload scoped reply");
     let sink = CollectingSink::new();
@@ -314,14 +340,36 @@ async fn conversation_native_restore_uses_persistent_scoped_custody_and_withdraw
         })
         .expect("saved native cursor");
     let config = host.config.clone();
+    let live_sessions: Vec<_> = host
+        .state
+        .sessions()
+        .map(|record| record.session_id.clone())
+        .collect();
+    for session_id in live_sessions {
+        host.sessions
+            .shutdown_and_join(&session_id, crate::session::ACTOR_RETIRE_GRACE)
+            .await;
+    }
     drop(host);
     let mut host = Provider::new(config.clone()).expect("worker restart");
     assert!(
         host.prepare_restore(&target.session_id).is_ok(),
         "accepted actor-only context retains scoped native restore custody without a restaged seat"
     );
+    // Preparing a reopen is durable intent, even if this inspection drops its
+    // job. Use an independent joined fixture for the withdrawn-custody check.
+    let missing_dir = tempfile::tempdir().expect("independent custody fixture");
+    let (mut missing, missing_target) = routed_provider(missing_dir.path(), channel, &actor).await;
+    missing
+        .sessions
+        .shutdown_and_join(
+            &missing_target.session_id,
+            crate::session::ACTOR_RETIRE_GRACE,
+        )
+        .await;
     std::fs::remove_file(
-        config
+        missing
+            .config
             .state_dir
             .join("actors")
             .join(actor.public_key().to_hex())
@@ -329,7 +377,7 @@ async fn conversation_native_restore_uses_persistent_scoped_custody_and_withdraw
     )
     .expect("withdraw custody");
     assert!(matches!(
-        host.prepare_restore(&target.session_id),
+        missing.prepare_restore(&missing_target.session_id),
         Err(crate::native_restore::RestoreObstacle::ActorUnavailable)
     ));
 }
@@ -339,7 +387,7 @@ async fn conversation_after_worker_restart_loads_native_cursor_once_without_new_
     let dir = tempfile::tempdir().expect("tempdir");
     let channel = Uuid::new_v4();
     let actor = Keys::generate();
-    let (host, target) = routed_provider(dir.path(), channel, &actor).await;
+    let (mut host, target) = routed_provider(dir.path(), channel, &actor).await;
     let cursor = host
         .state
         .session(&target.session_id)
@@ -348,6 +396,16 @@ async fn conversation_after_worker_restart_loads_native_cursor_once_without_new_
         .clone();
     let rest = host.rest_client.clone();
     let mut config = host.config.clone();
+    let live_sessions: Vec<_> = host
+        .state
+        .sessions()
+        .map(|record| record.session_id.clone())
+        .collect();
+    for session_id in live_sessions {
+        host.sessions
+            .shutdown_and_join(&session_id, crate::session::ACTOR_RETIRE_GRACE)
+            .await;
+    }
     drop(host);
     let log = dir.path().join("checkout").join("native-methods.log");
     config.runtimes[0].agent_command = fake_agent(
@@ -357,6 +415,7 @@ async fn conversation_after_worker_restart_loads_native_cursor_once_without_new_
     );
     let mut host = Provider::new(config).expect("restart");
     host.rest_client = rest;
+    host.set_relay_self(host.config.keys.public_key().to_hex());
     host.recover().await.expect("existing crash reconciliation");
     let request = message(channel, &actor, None, test_operator_keys());
     host.handle_command_event(channel, &request)
@@ -789,6 +848,16 @@ async fn declined_ambiguous_request_stays_declined_after_stop_and_worker_restart
         .expect("one responsibility stopped");
     let rest = host.rest_client.clone();
     let mut config = host.config.clone();
+    let live_sessions: Vec<_> = host
+        .state
+        .sessions()
+        .map(|record| record.session_id.clone())
+        .collect();
+    for session_id in live_sessions {
+        host.sessions
+            .shutdown_and_join(&session_id, crate::session::ACTOR_RETIRE_GRACE)
+            .await;
+    }
     drop(host);
     let log = dir
         .path()
@@ -801,6 +870,7 @@ async fn declined_ambiguous_request_stays_declined_after_stop_and_worker_restart
     );
     let mut restarted = Provider::new(config).expect("worker restart");
     restarted.rest_client = rest;
+    restarted.set_relay_self(restarted.config.keys.public_key().to_hex());
     restarted
         .handle_command_event(channel, &declined)
         .await
@@ -872,8 +942,15 @@ async fn legacy_owner_abstains_and_adoption_never_replays_legacy_handled_input()
         ownership::advance(home.path(), Instance::Dev, transfer.clone()).expect("prepared fixture");
         if restored {
             transfer.phase = Phase::LegacyRestored;
-            ownership::advance(home.path(), Instance::Dev, transfer.clone())
-                .expect("restored fixture");
+            // Historical journals are readable, but E must never newly enter
+            // restored legacy execution. Seed only this restricted old fixture.
+            beekeeper_host_core::atomic_write::atomic_write_json_restricted(
+                &beekeeper_host_core::layout::host_dir(home.path(), Instance::Dev)
+                    .join("managed-ownership.json"),
+                &serde_json::to_vec(&serde_json::json!({"transfers":[transfer],"history":[]}))
+                    .unwrap(),
+            )
+            .unwrap();
         }
         let input = message(channel, &actor, None, test_operator_keys());
         let lock = ownership::admission_lock(
@@ -995,6 +1072,16 @@ async fn busy_ownership_terminal_answer_survives_later_watermark_and_outer_recov
         .watermark(channel)
         .is_some_and(|mark| mark > busy.created_at.as_secs()));
     let config = host.config.clone();
+    let live_sessions: Vec<_> = host
+        .state
+        .sessions()
+        .map(|record| record.session_id.clone())
+        .collect();
+    for session_id in live_sessions {
+        host.sessions
+            .shutdown_and_join(&session_id, crate::session::ACTOR_RETIRE_GRACE)
+            .await;
+    }
     drop(host);
     let mut restarted = Provider::new(config).expect("outer recovery worker restart");
     restarted.conversation_ownership_context = Some((home.path().to_path_buf(), Instance::Dev));
@@ -1032,3 +1119,6 @@ async fn busy_ownership_terminal_answer_survives_later_watermark_and_outer_recov
                 .any(|tag| tag.as_slice().get(1) == Some(&later.id.to_hex()))
             && !event.content.starts_with("Request ")));
 }
+
+#[path = "conversation_policy_replay_tests.rs"]
+mod policy_replay;

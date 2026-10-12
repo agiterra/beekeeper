@@ -103,7 +103,10 @@ pub(super) trait ReadinessHost {
     fn provider_process(&self, pubkey: &str) -> CodingSessionProviderProcessState;
 }
 
-pub(super) struct AppReadinessHost<'a>(pub(super) &'a AppHandle);
+pub(super) struct AppReadinessHost<'a>(
+    pub(super) &'a AppHandle,
+    pub(super) Result<HashSet<String>, String>,
+);
 
 impl ReadinessHost for AppReadinessHost<'_> {
     fn owner_pubkey(&self) -> Result<String, String> {
@@ -124,23 +127,7 @@ impl ReadinessHost for AppReadinessHost<'_> {
     }
 
     fn live_agent_pubkeys(&self) -> Result<HashSet<String>, String> {
-        self.0
-            .state::<AppState>()
-            .managed_agent_processes
-            .lock()
-            .map(|rows| {
-                rows.iter()
-                    .filter(|(_, runtime)| {
-                        !matches!(
-                            runtime.lifecycle,
-                            crate::managed_agents::ManagedAgentRuntimeLifecycle::Failed
-                                | crate::managed_agents::ManagedAgentRuntimeLifecycle::Stopped
-                        )
-                    })
-                    .map(|(key, _)| key.pubkey.clone())
-                    .collect()
-            })
-            .map_err(|_| "managed-agent process inventory is unavailable".into())
+        self.1.clone()
     }
 
     fn runtimes(&self) -> Vec<StrictRuntimeDiagnostic> {

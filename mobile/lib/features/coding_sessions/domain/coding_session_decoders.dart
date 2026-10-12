@@ -339,11 +339,12 @@ CodingSessionDecoded<CodingSessionReceipt> decodeCodingSessionReceipt(
       CodingSessionDecodeReason.malformedPayload,
     );
   }
-  // `failed` is the one status with no execution: it reports that the create
-  // never minted one. Every other status names the execution it is about,
-  // including the turn statuses that answer "that generation is stale".
+  // Failed usually names no execution. Interrupted startup may retain a
+  // validated reserved target without certifying creation or termination.
   if (status == CodingSessionReceiptStatus.failed) {
-    if (payload['session'] != null || error == null) {
+    final uncertainTarget =
+        error?.code == 'CREATE_START_OUTCOME_UNCONFIRMED' && target != null;
+    if (error == null || (payload['session'] != null && !uncertainTarget)) {
       return const CodingSessionDecoded.failed(
         CodingSessionDecodeReason.malformedPayload,
       );

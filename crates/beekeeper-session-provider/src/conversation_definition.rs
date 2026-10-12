@@ -2,27 +2,21 @@
 use super::*;
 
 impl Provider {
-    /// Reconcile the authorized public behavior at turn admission, then retain
-    /// that exact revision with this request for deterministic recovery.
-    pub(crate) async fn conversation_instructions(
-        &mut self,
-        command_id: &str,
-        operator: &str,
-    ) -> Result<Option<String>, crate::session::CreateFailure> {
+    pub(super) async fn conversation_definition_head(
+        &self,
+        actor_hex: &str,
+    ) -> Result<
+        (
+            nostr::PublicKey,
+            Event,
+            beekeeper_core::managed_agent::ManagedAgentEventContent,
+        ),
+        crate::session::CreateFailure,
+    > {
         let fail = |code| {
-            crate::execution_scope::refuse(code,
-            "this participant's authorized definition is unavailable or cannot be applied safely; no conversation turn was admitted")
+            crate::execution_scope::refuse(code, "the participant's authorized definition is unavailable; no conversation turn was admitted")
         };
-        let mut origins = self
-            .conversation_origins()
-            .map_err(|_| fail("AGENT_DEFINITION_UNAVAILABLE"))?;
-        let Some(origin) = origins.requests.get(command_id).cloned() else {
-            return Ok(None);
-        };
-        if origin.definition_event_id.is_some() && self.state.is_command_consumed(command_id) {
-            return Ok(origin.instructions);
-        }
-        let actor = nostr::PublicKey::from_hex(&origin.actor)
+        let actor = nostr::PublicKey::from_hex(actor_hex)
             .map_err(|_| fail("AGENT_DEFINITION_UNAVAILABLE"))?;
         let tag = fs::read_to_string(
             self.config
@@ -74,18 +68,132 @@ impl Provider {
             definition.system_prompt.as_deref(),
         )
         .map_err(|_| fail("AGENT_DEFINITION_UNAVAILABLE"))?;
-        use beekeeper_core::managed_agent::RespondTo;
-        let permitted = match definition.respond_to {
-            RespondTo::OwnerOnly => operator == owner.to_hex(),
-            RespondTo::Allowlist => definition
-                .respond_to_allowlist
-                .iter()
-                .any(|p| p == operator),
-            RespondTo::Anyone => true,
+        Ok((owner, event.clone(), definition))
+    }
+
+    pub(crate) async fn conversation_author_allowed(
+        &self,
+        actor_hex: &str,
+        channel: Uuid,
+        author: &str,
+    ) -> Result<bool, crate::session::CreateFailure> {
+        let (owner, _, definition) = self.conversation_definition_head(actor_hex).await?;
+        let settings = crate::managed_configuration::Settings::load(&self.config, Some(actor_hex))?;
+        let enforced_owner_only = match settings
+            .as_ref()
+            .and_then(|settings| settings.record.get("enforced_owner_only"))
+        {
+            None => false,
+            Some(serde_json::Value::Bool(value)) => *value,
+            _ => {
+                return Err(crate::execution_scope::refuse(
+                    "AGENT_PRIVATE_CONFIG_UNAVAILABLE",
+                    "private author policy is malformed; no conversation turn was admitted",
+                ))
+            }
         };
-        if !permitted {
+        let rest = self.rest_client.as_ref().ok_or_else(|| {
+            crate::execution_scope::refuse(
+                "AGENT_DEFINITION_UNAVAILABLE",
+                "definition transport unavailable",
+            )
+        })?;
+        Ok(beekeeper_acp::ordinary_author_allowed(
+            beekeeper_acp::OrdinaryAuthorPolicy {
+                respond_to: definition.respond_to,
+                allowlist: &definition.respond_to_allowlist,
+                author,
+                owner: &owner.to_hex(),
+                enforced_owner_only,
+            },
+            channel,
+            rest,
+        )
+        .await)
+    }
+
+    pub(crate) async fn conversation_capability(
+        &mut self,
+        channel: Uuid,
+        event_id: &str,
+        operator: &str,
+        content: &str,
+    ) -> Result<Option<crate::commands::ConversationCapability>, crate::session::CreateFailure>
+    {
+        let failure = || {
+            crate::execution_scope::refuse(
+                "UNAUTHORIZED_OPERATOR",
+                "ordinary author capability does not match its signed origin",
+            )
+        };
+        let Ok(command) = crate::commands::decode_turn_command(content) else {
+            return Ok(None);
+        };
+        if self.state.is_command_consumed(&command.command_id)
+            || self.state.is_command_refused(&command.command_id)
+        {
+            return Ok(None);
+        }
+        let origins = self.conversation_origins().map_err(|_| failure())?;
+        let Some(origin) = origins.requests.get(&command.command_id) else {
+            return Ok(None);
+        };
+        if origin.channel != channel
+            || origin.event != event_id
+            || origin.event != command.command_id
+            || origin.target != command.target
+            || origin.author.as_deref() != Some(operator)
+        {
+            return Ok(None);
+        }
+        if !self
+            .conversation_author_allowed(&origin.actor, channel, operator)
+            .await?
+        {
+            return Err(failure());
+        }
+        Ok(Some(crate::commands::ConversationCapability {
+            command_id: command.command_id,
+            event_id: event_id.into(),
+            target: command.target,
+            author: operator.into(),
+            channel,
+        }))
+    }
+
+    /// Reconcile the authorized public behavior at turn admission, then retain
+    /// that exact revision with this request for deterministic recovery.
+    pub(crate) async fn conversation_instructions(
+        &mut self,
+        command_id: &str,
+        operator: &str,
+    ) -> Result<Option<String>, crate::session::CreateFailure> {
+        let fail = |code| {
+            crate::execution_scope::refuse(code,
+            "this participant's authorized definition is unavailable or cannot be applied safely; no conversation turn was admitted")
+        };
+        let mut origins = self
+            .conversation_origins()
+            .map_err(|_| fail("AGENT_DEFINITION_UNAVAILABLE"))?;
+        let Some(origin) = origins.requests.get(command_id).cloned() else {
+            return Ok(None);
+        };
+        if origin.definition_event_id.is_some() && self.state.is_command_consumed(command_id) {
+            return Ok(origin.instructions);
+        }
+        let actor = nostr::PublicKey::from_hex(&origin.actor)
+            .map_err(|_| fail("AGENT_DEFINITION_UNAVAILABLE"))?;
+        let (owner, event, definition) = self.conversation_definition_head(&origin.actor).await?;
+        if !self
+            .conversation_author_allowed(&origin.actor, origin.channel, operator)
+            .await?
+        {
             return Err(fail("UNAUTHORIZED_OPERATOR"));
         }
+        let rest = self
+            .rest_client
+            .as_ref()
+            .ok_or_else(|| fail("AGENT_DEFINITION_UNAVAILABLE"))?;
         let record = self
             .state
             .session(&origin.target.session_id)
@@ -99,46 +207,62 @@ impl Provider {
             return Err(fail("AGENT_PROVIDER_UPDATE_PENDING"));
         }
         let mut linked_id = None;
+        let mut private_id = None;
         let mut prompt = definition.system_prompt.clone().unwrap_or_default();
         let mut desired_model = definition.model.as_deref();
         let linked;
         if let Some(persona_id) = definition.persona_id.as_deref() {
-            let rows = rest
-                .query(&[nostr::Filter::new()
-                    .kind(Kind::Custom(beekeeper_core::kind::KIND_PERSONA as u16))
-                    .author(owner)
-                    .identifier(persona_id)])
-                .await
-                .map_err(|_| fail("AGENT_DEFINITION_PACK_UNAVAILABLE"))?;
-            let head = rows
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|row| serde_json::from_value::<Event>(row.clone()).ok())
-                .filter(|candidate| {
-                    candidate.pubkey == owner
-                        && candidate.kind == Kind::Custom(beekeeper_core::kind::KIND_PERSONA as u16)
-                        && candidate.verify().is_ok()
-                        && candidate.tags.iter().any(|tag| {
-                            let parts = tag.as_slice();
-                            parts.first().is_some_and(|v| v == "d")
-                                && parts.get(1).is_some_and(|v| v == persona_id)
-                        })
-                })
-                .max_by_key(|candidate| (candidate.created_at, std::cmp::Reverse(candidate.id)))
-                .ok_or_else(|| fail("AGENT_DEFINITION_PACK_UNAVAILABLE"))?;
-            // Only the existing shared projection is supported. A protected
-            // owner-only pack is never read using an owner's credential.
-            if !head
-                .tags
-                .iter()
-                .any(|tag| tag.as_slice() == ["shared", "true"])
-            {
-                return Err(fail("AGENT_DEFINITION_PACK_UNAVAILABLE"));
-            }
-            linked =
-                serde_json::from_str::<beekeeper_core::persona::PersonaEventContent>(&head.content)
+            linked = if let Some((pin, content)) =
+                crate::managed_configuration::private_persona::load(
+                    &self.config,
+                    &origin.actor,
+                    &event,
+                    owner,
+                    persona_id,
+                )? {
+                private_id = Some(pin.id.to_hex());
+                content
+            } else {
+                let rows = rest
+                    .query(&[nostr::Filter::new()
+                        .kind(Kind::Custom(beekeeper_core::kind::KIND_PERSONA as u16))
+                        .author(owner)
+                        .identifier(persona_id)])
+                    .await
                     .map_err(|_| fail("AGENT_DEFINITION_PACK_UNAVAILABLE"))?;
+                let head = rows
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|row| serde_json::from_value::<Event>(row.clone()).ok())
+                    .filter(|candidate| {
+                        candidate.pubkey == owner
+                            && candidate.kind
+                                == Kind::Custom(beekeeper_core::kind::KIND_PERSONA as u16)
+                            && candidate.verify().is_ok()
+                            && candidate.tags.iter().any(|tag| {
+                                let parts = tag.as_slice();
+                                parts.first().is_some_and(|v| v == "d")
+                                    && parts.get(1).is_some_and(|v| v == persona_id)
+                            })
+                    })
+                    .max_by_key(|candidate| (candidate.created_at, std::cmp::Reverse(candidate.id)))
+                    .ok_or_else(|| fail("AGENT_DEFINITION_PACK_UNAVAILABLE"))?;
+                // Public linked heads retain their existing sharing requirement.
+                if !head
+                    .tags
+                    .iter()
+                    .any(|tag| tag.as_slice() == ["shared", "true"])
+                {
+                    return Err(fail("AGENT_DEFINITION_PACK_UNAVAILABLE"));
+                }
+                let linked = serde_json::from_str::<beekeeper_core::persona::PersonaEventContent>(
+                    &head.content,
+                )
+                .map_err(|_| fail("AGENT_DEFINITION_PACK_UNAVAILABLE"))?;
+                linked_id = Some(head.id.to_hex());
+                linked
+            };
             if linked
                 .runtime
                 .as_deref()
@@ -158,7 +282,6 @@ impl Provider {
             // binding. A pack cannot switch account or inject environment.
             prompt = linked.system_prompt.clone().unwrap_or_default();
             desired_model = linked.model.as_deref().filter(|v| !v.trim().is_empty());
-            linked_id = Some(head.id.to_hex());
         }
         if desired_model.is_some_and(|desired| {
             record
@@ -179,14 +302,16 @@ impl Provider {
             if running_origin.is_none_or(|request| {
                 request.definition_event_id.as_deref() != Some(event.id.to_hex().as_str())
                     || request.linked_definition_event_id != linked_id
+                    || request.private_definition_event_id != private_id
             }) {
                 return Err(fail("AGENT_DEFINITION_UPDATE_PENDING"));
             }
         }
         let instructions = format!(
-            "Participant definition {} (linked {}, owner {}, actor {}):\n{}",
+            "Participant definition {} (linked {}, private pin {}, owner {}, actor {}):\n{}",
             event.id.to_hex(),
             linked_id.as_deref().unwrap_or("none"),
+            private_id.as_deref().unwrap_or("none"),
             owner.to_hex(),
             actor.to_hex(),
             prompt
@@ -194,6 +319,7 @@ impl Provider {
         if let Some(request) = origins.requests.get_mut(command_id) {
             request.definition_event_id = Some(event.id.to_hex());
             request.linked_definition_event_id = linked_id;
+            request.private_definition_event_id = private_id;
             request.instructions = Some(instructions.clone());
         }
         self.save_conversation_origins(&origins)

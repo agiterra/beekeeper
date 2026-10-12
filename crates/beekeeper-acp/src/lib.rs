@@ -283,6 +283,57 @@ async fn author_allowed(
     }
 }
 
+/// Verified owner and current public policy for one ordinary conversation author.
+/// This grants no session steering, interruption, lifecycle or administrative authority.
+pub struct OrdinaryAuthorPolicy<'a> {
+    /// Current owner-signed participant response policy.
+    pub respond_to: beekeeper_core::managed_agent::RespondTo,
+    /// Current owner-signed explicit external authors.
+    pub allowlist: &'a [String],
+    /// Pubkey from the verified signed ordinary input.
+    pub author: &'a str,
+    /// NIP-OA verified owner of the addressed participant.
+    pub owner: &'a str,
+    /// Private installation policy can narrow, never broaden, the public mode.
+    pub enforced_owner_only: bool,
+}
+
+/// Reuse the harness's author/sibling and DM gate without starting a harness.
+/// Unknown channel metadata keeps the existing fail-closed DM behavior.
+pub async fn ordinary_author_allowed(
+    policy: OrdinaryAuthorPolicy<'_>,
+    channel_id: Uuid,
+    rest_client: &relay::RestClient,
+) -> bool {
+    let respond_to = if policy.enforced_owner_only {
+        RespondTo::OwnerOnly
+    } else {
+        match policy.respond_to {
+            beekeeper_core::managed_agent::RespondTo::OwnerOnly => RespondTo::OwnerOnly,
+            beekeeper_core::managed_agent::RespondTo::Allowlist => RespondTo::Allowlist,
+            beekeeper_core::managed_agent::RespondTo::Anyone => RespondTo::Anyone,
+        }
+    };
+    // Owner-only has identical permission in every channel; the direct owner
+    // likewise needs no metadata lookup. Every external widening still resolves
+    // the channel through the existing fail-closed DM gate.
+    let is_dm = if policy.author == policy.owner || matches!(respond_to, RespondTo::OwnerOnly) {
+        true
+    } else {
+        let channel_info = pool::ChannelInfoResolver::new(HashMap::new(), rest_client.clone());
+        is_dm_channel(channel_id, &channel_info).await
+    };
+    author_allowed(
+        &respond_to,
+        &policy.allowlist.iter().cloned().collect(),
+        policy.author,
+        is_dm,
+        &OwnerCache::new(Some(policy.owner.into())),
+        rest_client,
+    )
+    .await
+}
+
 /// Resolve whether `channel_id` is a DM, for the inbound author gate.
 ///
 /// Resolution order:

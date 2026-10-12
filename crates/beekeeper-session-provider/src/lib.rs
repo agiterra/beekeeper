@@ -35,16 +35,26 @@ pub mod action_step_store;
 pub mod action_steps;
 pub mod actor_seats;
 mod agent_fence;
+mod agent_retirement;
 pub mod agents_checkout;
 pub mod agents_plan_blob;
+mod authority_stop;
 mod branch_authority;
 pub mod execution_scope;
 mod execution_scope_git;
 pub mod execution_scope_host;
 pub(crate) mod execution_scope_runtime;
 pub mod full_access;
+mod lifecycle_outcome;
+mod managed_configuration;
+mod managed_enrollment;
+mod process_witness;
 mod project_deletion;
+mod provider_identity;
 pub mod sandbox_seed_host;
+mod session_create;
+mod session_resume;
+mod session_stop;
 pub mod session_title_mode;
 // The durable host-owned queue that puts a seat on its exact input (lane 185,
 // moved here by lane 202 so the party holding the turn gate owns the order).
@@ -487,6 +497,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     };
 
     let mut provider = Provider::new(config)?;
+    provider.state.establish_import_readback()?;
     provider
         .outbox
         .set_background_interval(Duration::from_secs(3));
@@ -508,6 +519,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     .await?;
     relay.set_startup_watermark(now_secs()).await?;
     provider.set_rest_client(relay.rest_client());
+    provider.ensure_identity_profile().await?;
 
     // Witness the relay identity (NIP-11 `self`), over the same origin the
     // whole authenticated command stream already trusts. Without it,
@@ -572,6 +584,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     // identity retry, the authority-chain re-read, and a CI continuation's
     // generation reopen each run on their own task, one at a time, bounded,
     // and are applied in their own arm below.
+    let mut conversation_backfills = provider.conversation_backfill.slot.take_receiver();
     let mut relay_identity_answers = provider.take_relay_identity_answers();
     let mut claim_reverify_answers = provider.take_claim_reverify_answers();
     let mut ci_restore_answers = provider.take_ci_restore_answers();
@@ -626,8 +639,8 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
             }
             event = relay.next_event() => match event {
                 Some(event) => {
-                    if let Err(error) = provider
-                        .handle_relay_event(&mut relay, event.channel_id, &event.event)
+                    if let Err(error) = Box::pin(provider
+                        .handle_relay_event(&mut relay, event.channel_id, &event.event))
                         .await
                     {
                         tracing::error!(target: "csp", "failed to handle event: {error}");
@@ -659,7 +672,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 }
             }
             event = project_deletion::next_event(&mut project_deletion_events) => {
-                provider.handle_project_deletion_event(event);
+                provider.handle_project_deletion_event(event).await;
             }
             ready = auto_title::next_ready(&mut title_ready) => {
                 if let Err(error) = provider.enqueue_generated_title(ready) {
@@ -685,6 +698,11 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
             fetched = team_wake_fetch::next_fetched(&mut team_wake_fetches) => {
                 if let Err(error) = provider.finish_team_wake_fetch(fetched, &publisher).await {
                     tracing::warn!(target: "csp::team_wake", "team wake processing failed: {error}");
+                }
+            }
+            fetched = off_loop::next(&mut conversation_backfills) => {
+                if let Err(error) = provider.finish_conversation_backfill(fetched).await {
+                    tracing::warn!(target: "csp::conversation", "migration replay prerequisite failed: {error}");
                 }
             }
             answer = off_loop::next(&mut relay_identity_answers) => {
@@ -715,6 +733,9 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 }
             }
             _ = ticker.tick() => {
+                if let Err(error) = provider.start_conversation_backfill() {
+                    tracing::warn!(target: "csp::conversation", "migration replay start failed: {error}");
+                }
                 // Hot-reload: an operator who adds a project to the file should
                 // see it offered without restarting the provider.
                 if let Err(error) = provider.refresh_catalog(false) {
@@ -1160,6 +1181,7 @@ pub struct Provider {
     /// Turn commands held for reordering while a channel's subscription is
     /// replaying history. See [`ReplayWindow`].
     replay: ReplayWindow,
+    conversation_backfill: conversation::backfill::Backfill,
 }
 
 /// What [`Provider::apply_turn_decision`] actually did with one command.
@@ -1410,6 +1432,7 @@ impl Provider {
             model_switch: Default::default(),
             media,
             replay: ReplayWindow::default(),
+            conversation_backfill: Default::default(),
         })
     }
 
@@ -1530,17 +1553,32 @@ impl Provider {
     /// anyway. What it buys is the ordering guarantee below, which is only
     /// obtainable with a reader in hand.
     pub async fn recover(&mut self) -> anyhow::Result<()> {
-        // Best-effort: a state directory that refuses the sweep must not stop
-        // the provider from coming back up. The consequence is disk, not
-        // correctness — the reader of those files is already gone.
-        if let Err(error) = context_store::remove_all_context_packages(&self.config.state_dir) {
-            tracing::warn!(
-                target: "csp::context",
-                "leftover verified-context packages could not be swept: {error}"
-            );
+        // Pending terminal intent means private recovery context is still owned.
+        // Package→session mapping is not durable, so retain the entire derived
+        // cache conservatively until every known stop fence is resolved.
+        let pending_start =
+            self.state
+                .terminal_dispositions()
+                .iter()
+                .any(|(_, disposition)| {
+                    disposition.lifecycle_start.as_ref().is_some_and(|intent| {
+                        intent.phase != state::LifecycleStartPhase::BeforeEffects
+                    })
+                });
+        let pending_stop = pending_start || self.state.sessions().any(|record| {
+            if (!record.closed || record.process_witness.is_some()) && !self.recovered_group_absent(&record.target(&self.config.instance_id)) { return true; }
+            !matches!(std::fs::symlink_metadata(self.config.state_dir.join(format!("stop-quiescence-{}.json",record.session_id))), Err(error) if error.kind()==std::io::ErrorKind::NotFound)
+        });
+        if pending_stop {
+            tracing::warn!(target:"csp::context","verified-context sweep deferred: unresolved execution quiescence retains private recovery packages");
+        } else if let Err(error) =
+            context_store::remove_all_context_packages(&self.config.state_dir)
+        {
+            tracing::warn!(target:"csp::context","leftover verified-context packages could not be swept: {error}");
         }
         self.sweep_redaction_vault();
         self.flush_terminal_dispositions()?;
+        self.recover_verified_stops()?;
         self.recover_ci_continuations()?;
         self.recover_steer_attempts()?;
         let orphans: Vec<(String, String)> = self
@@ -1835,9 +1873,14 @@ impl Provider {
         // and re-delivered commands are no-ops under the consumed-command
         // dedupe (`AlreadyConsumed`). Commands older than the grace on a
         // watermark-less channel remain lost by design.
-        self.state
+        let ordinary = self
+            .state
             .watermark(channel_id)
-            .or_else(|| membership_created_at.map(|floor| floor.saturating_sub(REPLAY_GRACE_SECS)))
+            .or_else(|| membership_created_at.map(|floor| floor.saturating_sub(REPLAY_GRACE_SECS)));
+        match (ordinary, self.conversation_replay_since(channel_id)) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     /// Route one relay event.
@@ -1874,13 +1917,13 @@ impl Provider {
                     self.stop_for_withdrawn_authority(
                         &session_id,
                         "this provider was removed from the session's channel",
-                    )?;
+                    )
+                    .await?;
                 }
                 relay.unsubscribe_channel(channel_id).await?;
             }
             _ => {
-                self.handle_command_event_inner(channel_id, event, Some(&*relay))
-                    .await?;
+                Box::pin(self.handle_command_event_inner(channel_id, event, Some(&*relay))).await?;
             }
         }
         Ok(())
@@ -2078,7 +2121,7 @@ impl Provider {
         let operator_pubkey = event.pubkey.to_hex();
         match kind {
             beekeeper_core::kind::KIND_STREAM_MESSAGE => {
-                let Some(content) = self.conversation_command(channel_id, event)? else {
+                let Some(content) = self.admit_conversation_event(channel_id, event).await? else {
                     return Ok(());
                 };
                 if self.replay.open_until.contains_key(&channel_id) {
@@ -2108,14 +2151,14 @@ impl Provider {
                 }
             }
             KIND_CODING_SESSION_LIFECYCLE_COMMAND => {
-                self.on_lifecycle(
+                Box::pin(self.on_lifecycle(
                     channel_id,
                     created_at,
                     &operator_pubkey,
                     &event.id.to_hex(),
                     &event.content,
                     relay,
-                )
+                ))
                 .await?;
             }
             KIND_CODING_SESSION_COMMAND => {
@@ -2178,7 +2221,7 @@ impl Provider {
                 self.on_team_transaction(channel_id, event)?;
             }
             KIND_CODING_SESSION_CLOSURE => {
-                self.on_closure(event);
+                self.on_closure(event).await;
             }
             KIND_WORKFLOW_HOST_STEP_REQUESTED => {
                 self.on_host_step_requested(event);
@@ -2235,7 +2278,7 @@ impl Provider {
     /// relay validated the envelope before storing it, so anything that fails
     /// to decode here is a version skew, and a version skew must not stop
     /// this provider from serving turns.
-    fn on_closure(&mut self, event: &Event) {
+    async fn on_closure(&mut self, event: &Event) {
         let payload = match beekeeper_core::coding_session_closure::decode_coding_session_closure(
             &event.content,
         ) {
@@ -2252,7 +2295,7 @@ impl Provider {
         if !payload.action.is_closed() {
             return;
         }
-        let released = self.release_settled_umbrella(&payload.session_ref);
+        let released = self.release_settled_umbrella(&payload.session_ref).await;
         if released == 0 {
             // Said out loud because "nothing to release" and "released
             // everything" are indistinguishable from the outside, and the
@@ -3245,6 +3288,26 @@ impl Provider {
         content: &str,
         relay: Option<&HarnessRelay>,
     ) -> anyhow::Result<()> {
+        if let Err(failure) = managed_enrollment::stage(
+            &self.config,
+            &self.state,
+            self.rest_client.as_ref(),
+            channel_id,
+            operator_pubkey,
+            content,
+        )
+        .await
+        {
+            let command_id = beekeeper_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(content).map(|payload| payload.command_id).unwrap_or_default();
+            if !command_id.is_empty() {
+                self.state.consume_command(&command_id, now_secs())?;
+                return self.enqueue_receipt(
+                    channel_id,
+                    &command_id,
+                    &LifecycleReceipt::failed(&command_id, failure.code, &failure.message),
+                );
+            }
+        }
         // Re-read on every command so an operator can fix a missing working
         // directory and republish without restarting the provider.
         let projects = ProjectsFile::load(self.config.projects_file.as_deref());
@@ -3252,6 +3315,8 @@ impl Provider {
         // seat entry can republish the create without restarting the provider.
         let actor_seats =
             crate::actor_seats::ActorSeatsFile::load(self.config.actor_seats_file.as_deref());
+        self.flush_terminal_dispositions()?;
+        self.recover_verified_stops()?;
         let decision = decide_lifecycle(
             &self.context(channel_id, &projects, &actor_seats, operator_pubkey),
             channel_id,
@@ -3260,6 +3325,8 @@ impl Provider {
         );
         match decision {
             LifecycleDecision::Ignore(reason) => {
+                self.flush_terminal_dispositions()?;
+                self.recover_verified_stops()?;
                 log_ignored("session.create", &reason);
                 Ok(())
             }
@@ -3429,7 +3496,9 @@ impl Provider {
                         return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
                     }
                 }
-                self.create_session(plan, relay).await
+                // Bound the nested dispatch poll stack as for the rewind path;
+                // startup now carries the durable lifecycle and private launch state.
+                Box::pin(self.create_session(plan, relay)).await
             }
             LifecycleDecision::Resume(plan) if self.rewind_in_flight(&plan.target.session_id) => {
                 self.refuse_during_rewind(&plan.command_id, plan.channel_id)
@@ -3445,7 +3514,7 @@ impl Provider {
             LifecycleDecision::Rewind(plan) => {
                 Box::pin(self.start_rewind(plan, event_id, relay)).await
             }
-            LifecycleDecision::Stop(plan) => self.stop_session(plan),
+            LifecycleDecision::Stop(plan) => self.stop_session(plan).await,
         }
     }
 
@@ -3628,756 +3697,6 @@ impl Provider {
                 "could not clear the agent seat's key material: {error}"
             );
         }
-    }
-
-    async fn create_session(
-        &mut self,
-        plan: CreatePlan,
-        relay: Option<&HarnessRelay>,
-    ) -> anyhow::Result<()> {
-        let outbox_before = self.outbox.pending_keys();
-        self.state.consume_command(&plan.command_id, now_secs())?;
-        let ownership_admission = match host_ownership::admit(
-            &self.config,
-            plan.actor.as_deref(),
-            host_ownership::Admission::Create {
-                command: &plan.command_id,
-                initial_turn: plan.initial_turn.is_some(),
-            },
-        ) {
-            Ok(guard) => guard,
-            Err(failure) => {
-                return self.enqueue_receipt(
-                    plan.channel_id,
-                    &plan.command_id,
-                    &LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message),
-                )
-            }
-        };
-
-        // Infallible in practice: `decide_lifecycle` only mints a plan whose
-        // ref matched a descriptor, and the runtime list never changes while
-        // the provider runs. Failing the receipt is still better than a panic.
-        let Some(descriptor) = self.config.runtime(&plan.runtime_instance_ref).cloned() else {
-            let receipt = LifecycleReceipt::failed(
-                &plan.command_id,
-                payload::PROVIDER_UNAVAILABLE,
-                &format!(
-                    "runtime {} disappeared between decision and dispatch",
-                    plan.runtime_instance_ref
-                ),
-            );
-            return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
-        };
-
-        // A hired seat never runs in somebody else's tree. Item 80(a)/(b):
-        // three seats joined one umbrella with the working directory the
-        // dialog remembered — the checkout the app itself runs from — and
-        // shared a git index and a HEAD, so each one's commits and branch
-        // switches landed under the others. Refused before anything is
-        // provisioned, and the staged key goes with the refusal.
-        if plan.actor.is_some() {
-            let refusal = {
-                let live: Vec<session::LiveWorkdirClaim> = plan
-                    .session_ref
-                    .as_deref()
-                    .map(|umbrella| {
-                        self.state
-                            .sessions()
-                            .filter(|record| {
-                                !record.closed && record.session_ref.as_deref() == Some(umbrella)
-                            })
-                            .map(|record| session::LiveWorkdirClaim {
-                                cwd: record.cwd.clone(),
-                                role: record.role.clone(),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                session::seated_workdir_refusal(&plan.cwd, &live, &session::shared_workdir_roots())
-            };
-            if let Some(failure) = refusal {
-                tracing::warn!(
-                    target: "csp",
-                    command_id = %plan.command_id,
-                    code = failure.code,
-                    "seated create refused: {}", failure.message
-                );
-                self.forget_actor_seat(&plan.command_id);
-                let receipt =
-                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
-            }
-        }
-
-        let target = CodingSessionTarget {
-            driver: descriptor.driver.clone(),
-            instance_id: self.config.instance_id.clone(),
-            session_id: Uuid::new_v4().to_string(),
-            generation: 1,
-        };
-        // Full access ticked at creation was granted to this command's id;
-        // it moves to the session before the session is prepared (ledger 303).
-        match full_access::transfer(&self.config.state_dir, &plan.command_id, &target.session_id) {
-            Ok(true) => tracing::info!(
-                target: "csp::scope",
-                session_id = %target.session_id,
-                "full access granted at creation"
-            ),
-            Ok(false) => {}
-            Err(error) => tracing::warn!(
-                target: "csp::scope",
-                "full access granted at creation could not be applied; the session runs bounded: {error}"
-            ),
-        }
-        let rehydration = self
-            .prepare_rehydration_context(
-                RehydrationTarget {
-                    scope: RehydrationScope::Create,
-                    command_id: &plan.command_id,
-                    channel_id: plan.channel_id,
-                    session_ref: plan.session_ref.as_deref(),
-                    genesis_ref: plan.genesis_ref.as_deref(),
-                    package_id: &target.session_id,
-                },
-                relay,
-            )
-            .await;
-        let context_package_id = rehydration
-            .descriptor
-            .as_ref()
-            .map(|descriptor| descriptor.package_id.clone());
-        let unavailable_reason = rehydration.unavailable_reason;
-        let rehydration_mcp = rehydration.descriptor;
-
-        // Custody, resolved as late as possible and held as briefly as
-        // possible: the seat is read here, converted straight into the child's
-        // post-fence environment, and dropped at the end of this function. It
-        // is deliberately not carried in `CreatePlan`, in `SessionRecord`, or
-        // in anything this function logs.
-        //
-        // `decide_lifecycle` already refused a create whose seat this host does
-        // not hold, so reaching this branch with no entry means the file moved
-        // underneath us between the decision and the dispatch. That is still a
-        // refusal, and the same one: an execution labelled as an agent that
-        // cannot act as one is the lie this code exists to prevent.
-        let (seat_identity, post_fence_env, seat_skills, seat_pack_ref) = match plan
-            .actor
-            .as_deref()
-        {
-            None => (None, Vec::new(), None, None),
-            Some(actor) => {
-                let seats = crate::actor_seats::ActorSeatsFile::load(
-                    self.config.actor_seats_file.as_deref(),
-                );
-                match seats.seat(&plan.command_id) {
-                    Some(seat) if seat.pubkey == actor => {
-                        let identity = session::SeatIdentity {
-                            actor_pubkey: seat.pubkey.clone(),
-                            role: plan.role.clone().unwrap_or_default(),
-                            relay_url: seat.relay_url.clone(),
-                        };
-                        // The pack is a host-local path staged beside the key,
-                        // read here for the same reason the key is: it names
-                        // machine state a signed create must never carry. Its
-                        // `packRef` is the opposite kind of fact — the same on
-                        // every machine — and is kept for the wire.
-                        let skills = seat_skills(seat, &self.config.state_dir, &target.session_id);
-                        let pack_ref = seat.pack_ref.clone();
-                        (
-                            Some(identity),
-                            // The umbrella's project, so `bee pulse update`
-                            // writes where the operator is looking rather than
-                            // minting a project of its own (ledger 80 d) —
-                            // plus the one `bee` this host chose, named
-                            // absolutely and put first on the seat's PATH
-                            // (item 103 finding 1).
-                            seat.post_fence_env_with_bee(
-                                plan.role.as_deref(),
-                                plan.project_ref.as_deref(),
-                                crate::seat_bee::host_seat_bee().map(|(bee, _)| bee),
-                                std::env::var_os("PATH").as_ref(),
-                            ),
-                            skills,
-                            pack_ref,
-                        )
-                    }
-                    _ => {
-                        self.forget_actor_seat(&plan.command_id);
-                        self.discard_orphaned_context_package(context_package_id.as_deref());
-                        let receipt = LifecycleReceipt::failed(
-                            &plan.command_id,
-                            payload::ACTOR_UNAVAILABLE,
-                            "the agent seat's key material is no longer held by this host",
-                        );
-                        return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
-                    }
-                }
-            }
-        };
-        // SV-33: every execution, seated or not, may drive its own preview.
-        let mut post_fence_env = post_fence_env;
-        crate::preview_grant::push_preview_env(
-            &mut post_fence_env,
-            &self.config,
-            plan.channel_id,
-            &target,
-            &plan.command_id,
-        );
-        let seat_compose_ref = seat_skills
-            .as_ref()
-            .and_then(|skills| skills.compose_ref.clone());
-
-        let agent_env = match runtime_credentials::environment(&self.config.state_dir, &descriptor)
-        {
-            Ok(env) => env,
-            Err(failure) => {
-                if plan.actor.is_some() {
-                    self.forget_actor_seat(&plan.command_id);
-                }
-                self.state.consume_command(&plan.command_id, now_secs())?;
-                let receipt =
-                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
-            }
-        };
-        // An unseated execution reads its project's agents repository from a
-        // read-only clone the host stages for it — never the host's own cache.
-        // Revalidated at every start: an execution of a deleted project does
-        // not start, and its own context is prepared or the start refused.
-        let unseated_agents = if self.project_deleted(plan.project_ref.as_deref()).await {
-            Err(execution_scope::refuse(
-                execution_scope::EXECUTION_SCOPE_INVALID,
-                "this project was deleted, so no execution of it starts",
-            ))
-        } else if plan.actor.is_none() {
-            self.stage_unseated_agents(plan.project_ref.as_deref(), &target.session_id)
-                .await
-        } else {
-            Ok(None)
-        };
-        // The execution scope, from this create's own project, seat and
-        // rights — before any process exists.
-        let execution = match unseated_agents
-            .as_ref()
-            .map_err(Clone::clone)
-            .and_then(|_| {
-                self.execution_plan(&execution_scope::LaunchFacts {
-                    session_id: &target.session_id,
-                    runtime_instance: &descriptor.instance_ref,
-                    project_ref: plan.project_ref.as_deref(),
-                    association: if plan.workspace_bound {
-                        execution_scope::WorkspaceAssociation::HostBound
-                    } else {
-                        execution_scope::WorkspaceAssociation::Unbound
-                    },
-                    unseated_agents: unseated_agents.as_ref().ok().and_then(Option::as_deref),
-                    actor: plan.actor.as_deref(),
-                    driver: &descriptor.driver,
-                    cwd: &plan.cwd,
-                    agent_command: &descriptor.agent_command,
-                    agent_args: &descriptor.agent_args,
-                    agent_env: &agent_env,
-                    identity_env: &post_fence_env,
-                    seat_skills: seat_skills.as_ref(),
-                    role: plan.role.as_deref(),
-                    rehydration: rehydration_mcp.as_ref(),
-                    prior: None,
-                })
-            }) {
-            Ok(execution) => execution,
-            Err(failure) => {
-                tracing::warn!(
-                    target: "csp",
-                    command_id = %plan.command_id,
-                    code = failure.code,
-                    "session creation refused: {}", failure.message
-                );
-                if plan.actor.is_some() {
-                    self.forget_actor_seat(&plan.command_id);
-                }
-                self.discard_orphaned_context_package(context_package_id.as_deref());
-                let receipt =
-                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
-            }
-        };
-        let execution_binding = execution.binding().cloned();
-        let execution_state = execution.state();
-
-        let request = CreateRequest {
-            execution,
-            media: self.media.clone(),
-            target: target.clone(),
-            channel_id: plan.channel_id,
-            cwd: plan.cwd.clone(),
-            title: plan.title.clone(),
-            model: plan.model.clone(),
-            resume_cursor: None,
-            // Never strict: an ordinary create or resume may legitimately
-            // end up in a fresh conversation, and says so on the wire.
-            strict_native: false,
-            rehydration_mcp,
-            agent_command: descriptor.agent_command.clone(),
-            agent_args: descriptor.agent_args.clone(),
-            agent_env,
-            seat: seat_identity,
-            post_fence_env,
-            seat_skills,
-            idle_timeout: self.config.idle_timeout,
-            answer_stall_timeout: self.config.answer_stall_timeout,
-            emit_raw_sdk_frames: self.config.emit_raw_sdk_frames,
-            max_turn_duration: self.config.max_turn_duration,
-            idle_shutdown: self.config.session_idle_shutdown,
-            include_thoughts: self.config.include_thoughts,
-            transcript_paragraph_flush: self.config.transcript_paragraph_flush,
-        };
-
-        let events = self.sessions.event_sender();
-        let startup_future = SessionManager::start(request, events);
-        let started = self
-            .await_with_lease_maintenance(startup_future, relay.map(HarnessRelay::event_publisher))
-            .await;
-        // One-shot, whichever way the spawn went: the child either has the key
-        // or never will, so the copy at rest has no further purpose.
-        if plan.actor.is_some() {
-            self.forget_actor_seat(&plan.command_id);
-        }
-        let started = match started {
-            Ok(started) => started,
-            Err(failure) => {
-                tracing::warn!(
-                    target: "csp",
-                    command_id = %plan.command_id,
-                    code = failure.code,
-                    "session creation failed: {}", failure.message
-                );
-                // No session record and no refresh entry will ever name this
-                // package, so it has to go now or not at all.
-                self.discard_orphaned_context_package(context_package_id.as_deref());
-                let receipt =
-                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
-            }
-        };
-        if let Some(guard) = ownership_admission.as_ref() {
-            if let Err(failure) = guard.recheck() {
-                started.discard();
-                self.discard_orphaned_context_package(context_package_id.as_deref());
-                return self.enqueue_receipt(
-                    plan.channel_id,
-                    &plan.command_id,
-                    &LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message),
-                );
-            }
-        }
-        let startup = self.sessions.attach(started);
-        // What this exact process answered at `initialize`, recorded before
-        // any metadata is built from it.
-        self.steering
-            .insert(target.session_id.clone(), startup.steering_supported);
-        self.prompt_image
-            .insert(target.session_id.clone(), startup.prompt_image_supported);
-        self.model_switch
-            .witness(&target.session_id, startup.model_switch_supported);
-
-        // Cloned before the plan is partially moved into the record below.
-        let hire_ref = plan.hire_ref.clone();
-        let record = SessionRecord {
-            session_id: target.session_id.clone(),
-            generation: target.generation,
-            channel_id: plan.channel_id,
-            command_id: plan.command_id.clone(),
-            generation_command_id: Some(plan.command_id.clone()),
-            provider_instance_ref: descriptor.instance_ref.clone(),
-            runtime: descriptor.runtime.clone(),
-            driver: descriptor.driver.clone(),
-            cwd: plan.cwd.clone(),
-            project_ref: plan.project_ref.clone(),
-            repo_ref: plan.repo_ref.clone(),
-            session_ref: plan.session_ref.clone(),
-            genesis_ref: plan.genesis_ref.clone(),
-            actor: plan.actor.clone(),
-            role: plan.role.clone(),
-            compose_ref: seat_compose_ref,
-            execution_binding,
-            execution_boundary: crate::execution_scope::recorded_state(&execution_state),
-            authority_withdrawn: None,
-            project_head_seen_at: plan
-                .project_ref
-                .as_deref()
-                .and_then(|project| self.seen_project_head(project)),
-            pack_ref: seat_pack_ref,
-            founder_pubkey: Some(plan.founder_pubkey.clone()),
-            granted_operators: std::collections::BTreeSet::new(),
-            granted_viewers: std::collections::BTreeSet::new(),
-            authority_seq: 0,
-            model: startup.model.clone().or_else(|| plan.model.clone()),
-            model_requested: plan.model.clone(),
-            // What the adapter reports at open is its *selection* — for
-            // claude-agent-acp the picker label (`opus`, `default`) — a request,
-            // not the model that answers (ledger 272(d)). Unknown until a
-            // turn's own result frame names one.
-            model_effective: None,
-            routing: plan.routing.clone(),
-            resume_cursor: Some(startup.acp_session_id.clone()),
-            title: plan.title.clone(),
-            created_at_ms: now_ms(),
-            next_seq: 1,
-            next_lease_sequence: 1,
-            bootstrap_transport: startup.bootstrap_transport,
-            open_turn: None,
-            closed: false,
-            created_by: Some(plan.created_by.clone()),
-            // Seeded from the umbrella, not left at `NoClaim`. A create that
-            // reaches here under a claimed umbrella has already satisfied the
-            // fence — it is the claimant, on the claimed body — but the record
-            // it mints must carry the claim, or every later turn on this new
-            // execution walks straight past a fence its siblings are behind.
-            // An umbrella this provider holds no other record of folds to
-            // `NoClaim`, and the first accepted receipt fills it in.
-            handover: match plan.genesis_ref.as_deref() {
-                None => ClaimState::NoClaim,
-                Some(genesis_ref) => {
-                    // The chain this create was fenced against, in preference
-                    // to the local siblings: on a machine joining the umbrella
-                    // for the first time there are no siblings, and that is
-                    // the record that most needs to carry the claim.
-                    let local = commands::umbrella_claim(&self.state, plan.channel_id, genesis_ref);
-                    if matches!(plan.verified_claim, ClaimState::NoClaim) {
-                        local
-                    } else {
-                        plan.verified_claim.clone()
-                    }
-                }
-            },
-            retired: None,
-        };
-        self.state.insert_session(record)?;
-        // Settlement: the record carrying the resolved cwd is now durable, so
-        // the one-shot hint that produced it is spent and leaves a marker
-        // saying what it produced. Deliberately after the persist and never
-        // before it — see `consume_pending_hint`.
-        self.consume_pending_hint(
-            &plan.command_id,
-            Some((plan.cwd.as_path(), target.session_id.as_str())),
-        );
-        // A seated create is the first moment this generation's custody could
-        // ever need re-staging, so the request is stated as soon as the record
-        // that implies it is durable.
-        self.publish_seat_requests();
-        // First create under an umbrella records who opened it. The D9 budget
-        // exempts that pubkey and no other — an execution-scoped exemption
-        // would let a delegated seat create its own session and buy itself an
-        // unbounded allowance out of the crew's.
-        if let Some(session_ref) = plan.session_ref.as_deref() {
-            self.state
-                .claim_umbrella_founder(session_ref, &plan.founder_pubkey)?;
-        }
-
-        if let Some(package_id) = context_package_id {
-            self.context_refresh.insert(
-                target.session_id.clone(),
-                ContextRefreshState::opened(package_id),
-            );
-        }
-
-        // Who asked for this seat. Resolved after the record exists, because
-        // the requester's role and reply address are read out of *this*
-        // provider's own durable seat records — the same lookup a 44220 from a
-        // sibling goes through — and never out of the hire's content.
-        let attribution = self
-            .hire_attribution(
-                &plan.command_id,
-                plan.channel_id,
-                hire_ref.as_deref(),
-                relay,
-            )
-            .await;
-        if let Some(commands::HireAttribution::Disputed { claimed, signer }) = &attribution {
-            tracing::warn!(
-                target: "csp::hire",
-                command_id = %plan.command_id,
-                %claimed,
-                %signer,
-                "the hire this create answers claims a requester that did not sign it; the brief \
-                 is delivered unattributed"
-            );
-            self.enqueue_transcript(
-                plan.channel_id,
-                &target,
-                None,
-                payload::status_item(HIRE_REQUESTER_DISPUTED_STATUS),
-                Priority::High,
-            )?;
-        }
-        // Only a claim the hire's own signer made is attribution. Everything
-        // else — unclaimed, unreadable, disputed — delivers the founder-shaped
-        // turn this path has always delivered, because an unknown requester
-        // rendered as an attributed one is the exact failure this field exists
-        // to end.
-        let requester = match &attribution {
-            Some(commands::HireAttribution::Attributed(pubkey)) => Some(pubkey.clone()),
-            _ => None,
-        };
-        let initial_framing = match (&plan.initial_turn, requester.as_deref()) {
-            (Some(text), Some(requester)) => self.turn_framing(
-                &target.session_id,
-                requester,
-                CodingSessionDelivery::Boundary,
-                plan.channel_id,
-                text,
-            ),
-            _ => None,
-        };
-        let initial_operator = initial_framing
-            .as_ref()
-            .map(|framing| framing.sender_pubkey.clone())
-            .unwrap_or_else(|| plan.founder_pubkey.clone());
-        // A seat's first turn carries its situation card.
-        let initial_card = match &plan.initial_turn {
-            Some(text) => {
-                self.seat_situation_card(&target.session_id, text, plan.hire_ref.as_deref())
-                    .await
-            }
-            None => None,
-        };
-        let initial_framing = situation_card::attach_situation_card(
-            initial_framing,
-            initial_card,
-            plan.channel_id,
-            &initial_operator,
-            CodingSessionDelivery::Boundary,
-        );
-
-        if let Some((status, reason)) = create_disclosure(&startup.continuity, unavailable_reason) {
-            self.enqueue_transcript(
-                plan.channel_id,
-                &target,
-                None,
-                payload::status_item_with_reason(status, reason),
-                Priority::High,
-            )?;
-        }
-        // What this execution runs inside, disclosed on every open: enforced
-        // with its backend, or not enforced with the reason.
-        self.enqueue_transcript(
-            plan.channel_id,
-            &target,
-            None,
-            execution_scope::boundary_status_item(&execution_state),
-            Priority::High,
-        )?;
-        // What the provider's isolation settings withheld, when any did.
-        for item in crate::session_isolation::isolation_status_items(&execution_state) {
-            self.enqueue_transcript(plan.channel_id, &target, None, item, Priority::High)?;
-        }
-
-        // A genesis may already carry an accepted authority chain — another
-        // execution under the same umbrella can be granted operators before
-        // this one exists. Fold those verified grants in now; live receipts
-        // extend from here. Best-effort: a failed backfill leaves the session
-        // founder-only until the next receipt or restart, never open.
-        //
-        // And its verdict is *kept*, because the initial turn below is handed
-        // straight to the actor's mailbox without passing through
-        // `decide_turn`. The create was already fenced against a chain read
-        // before this adapter started; this is the second read, after the
-        // record exists, and between those two moments a takeover can be
-        // accepted. Ignoring what it learned is how a fenced execution still
-        // ran its first prompt.
-        let mut authority_refusal: Option<String> = None;
-        if let Some(genesis_ref) = plan.genesis_ref.clone() {
-            match relay {
-                Some(relay) => {
-                    let rest = relay.rest_client();
-                    match self
-                        .backfill_session_authority(&target.session_id, &rest)
-                        .await
-                    {
-                        Ok(true) => {}
-                        // Incomplete is not unclaimed: the umbrella joins the
-                        // pending set and the first turn waits rather than
-                        // running on the assumption that nothing changed.
-                        Ok(false) => {
-                            self.claims_pending_reverification
-                                .insert(genesis_ref.clone());
-                            authority_refusal = Some(format!(
-                                "{}: this umbrella's authority chain could not be verified, so \
-                                 whether the session has been handed over is not yet known and \
-                                 the first turn was not delivered",
-                                commands::AUTHORITY_NOT_REVERIFIED
-                            ));
-                        }
-                        Err(error) => {
-                            tracing::warn!(
-                                target: "csp::authority",
-                                session_id = %target.session_id,
-                                "authority backfill at create failed: {error}"
-                            );
-                            self.claims_pending_reverification
-                                .insert(genesis_ref.clone());
-                            authority_refusal = Some(format!(
-                                "{}: this umbrella's authority chain could not be read, so the \
-                                 first turn was not delivered",
-                                commands::AUTHORITY_NOT_REVERIFIED
-                            ));
-                        }
-                    }
-                }
-                None => {
-                    self.claims_pending_reverification
-                        .insert(genesis_ref.clone());
-                    authority_refusal = Some(format!(
-                        "{}: no relay reader was available to verify this umbrella's authority \
-                         chain, so the first turn was not delivered",
-                        commands::AUTHORITY_NOT_REVERIFIED
-                    ));
-                }
-            }
-            // What the second read actually learned. A takeover or a void
-            // accepted between the create's own fence check and this moment
-            // lands here, and the prompt does not go out.
-            //
-            // Judged with the create's **signer**, not `initial_operator` and
-            // not the founder. For a genesis-bearing create the founder is the
-            // genesis's signer, so a claimant reconstructing somebody else's
-            // session has a founder who is not them — and attributing their
-            // own seeded first turn to that founder made this branch refuse
-            // the very continuation the handover exists to allow, on the body
-            // they had just claimed. A non-claimant signer on the claimed
-            // body, and any signer on a body the claim does not name, are
-            // still refused.
-            if authority_refusal.is_none() {
-                if let Some(refusal) = self.state.session(&target.session_id).and_then(|record| {
-                    commands::handover_fence(record, &plan.created_by, &self.pubkey_hex)
-                }) {
-                    authority_refusal = Some(format!("{}: {}", refusal.code, refusal.message));
-                }
-            }
-        }
-
-        // The umbrella's published policy, read *here* and not earlier: the
-        // predicate for "who may set policy" is the founder plus this
-        // session's `granted_operators`, and that set is empty until the
-        // authority backfill directly above has folded the chain. Read before
-        // the backfill — as this call used to be — and only the founder's
-        // ceiling could ever bind a create, because the grant set the fold
-        // consults did not exist yet. Still ahead of the budget check below,
-        // which is what may now be enforcing the ceiling this read records.
-        self.refresh_policy_turn_budget(&target.session_id, relay)
-            .await;
-
-        // The initial turn is *dispatched* before the receipt is decided, so
-        // `created_with_failed_initial_turn` means exactly what a consumer can
-        // act on: the session exists but its first turn never reached the agent.
-        // A turn that reaches the agent and then fails is a transcript
-        // `result{error}`, not a lifecycle outcome — the session is fine and the
-        // operator can simply try again.
-        // D9 / contract B, on the one turn path that never passes through
-        // `decide_turn`: a create's first turn is handed straight to the
-        // actor's mailbox, so without this check one signed create would run —
-        // and charge — a turn at an exhausted allowance, with no receipt
-        // saying so. Same predicate as a 44220 turn's, so the two paths can
-        // never disagree about who is exempt.
-        let budget_refusal = plan.initial_turn.as_ref().and_then(|_| {
-            commands::exhausted_umbrella_budget(
-                &self.state,
-                self.config.turn_budget,
-                plan.session_ref
-                    .as_deref()
-                    .and_then(|session_ref| self.policy_turn_budget(session_ref)),
-                plan.session_ref.as_deref(),
-                &plan.founder_pubkey,
-            )
-        });
-        let dispatch_error = match (&plan.initial_turn, self.sessions.handle(&target.session_id)) {
-            // The handover fence and the authority read, ahead of the budget:
-            // a turn nobody may send is not a turn that spent an allowance.
-            (Some(_), _) if authority_refusal.is_some() => authority_refusal.clone(),
-            _ if budget_refusal.is_some() => budget_refusal.map(|(used, limit, source)| {
-                format!(
-                    "{}: {}, so the first turn was not delivered",
-                    payload::BUDGET_EXHAUSTED,
-                    commands::budget_exhausted_message(used, limit, source)
-                )
-            }),
-            (None, _) => None,
-            (Some(_), None) => Some("session actor stopped before the first turn".to_owned()),
-            (Some(text), Some(handle)) => handle
-                .deliver(SessionCommand::Turn {
-                    // The create's own `commandId`, not a derived one: the
-                    // first turn's `user_prompt` echo has to name a command
-                    // the operator actually sent, or the prompt they typed
-                    // into the create dialog is the one prompt in the session
-                    // they cannot join to anything.
-                    command_id: plan.command_id.clone(),
-                    text: text.clone(),
-                    // A create's brief is text: 44221 carries no attachment
-                    // field, so there is nothing to forward here.
-                    attachments: Vec::new(),
-                    // Who drove this first turn. The create's verified signer
-                    // by default — the same fact that made them founder — but
-                    // a create that answers a hire whose requester equals the
-                    // hire's own signer is delivering *that seat's* brief, and
-                    // the signed transcript has to say so.
-                    operator_pubkey: Some(initial_operator.clone()),
-                    // Framed exactly like a 44220 from the same seat: a hired
-                    // seat's first words are a message from its lead, not
-                    // words its founder typed.
-                    framing: initial_framing.clone(),
-                })
-                .err()
-                .map(|error| format!("could not deliver the first turn: {error:?}")),
-        };
-
-        let receipt = match &dispatch_error {
-            None => LifecycleReceipt::created(&plan.command_id, &target),
-            Some(message) => LifecycleReceipt::created_with_failed_initial_turn(
-                &plan.command_id,
-                &target,
-                message,
-            ),
-        };
-        self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt)?;
-        let status = if plan.initial_turn.is_some() && dispatch_error.is_none() {
-            SessionStatus::Running
-        } else {
-            SessionStatus::Idle
-        };
-        // Started, not awaited: the first metadata publication goes out now,
-        // without a branch, and is corrected when the observation lands. Waiting
-        // here would delay this session's metadata *and* — because the probe ran
-        // on the provider loop — every other session's transcripts.
-        self.spawn_git_probe(&target.session_id);
-        self.publish_metadata(plan.channel_id, &target, status)?;
-        self.record_first_lease_prerequisites(&target, &outbox_before);
-
-        tracing::info!(
-            target: "csp",
-            command_id = %plan.command_id,
-            session_id = %target.session_id,
-            "session created"
-        );
-        // If the second chain read learned a claim that fences this body, the
-        // adapter that was started a moment ago can never take a turn. Release
-        // it here — after the create's own receipt and metadata, so the
-        // consumer sees the session appear and then go `disconnected` with the
-        // handover block on it, rather than a create that answers nothing.
-        if plan.genesis_ref.is_some()
-            && self
-                .state
-                .session(&target.session_id)
-                .is_some_and(|record| {
-                    commands::handover_fence(record, &self.pubkey_hex, &self.pubkey_hex)
-                        .is_some_and(|refusal| refusal.code == payload::HANDOVER_FENCED)
-                })
-        {
-            if let Some(genesis_ref) = plan.genesis_ref.clone() {
-                self.enforce_claim_for_genesis(&genesis_ref)?;
-            }
-        }
-        Ok(())
     }
 
     /// Await one potentially slow actor startup while continuing to renew every
@@ -4825,547 +4144,6 @@ impl Provider {
         self.resume_generation(plan, relay, None).await
     }
 
-    /// The resume path, shared by `session.resume`, `session.restart` and —
-    /// with `rewind` — `session.rewind` (SV-29). A rewind opens the next
-    /// generation with **no** native cursor (`session/new`) and a context
-    /// package cut at the rewind, answers with its `rewind` object, and turns
-    /// every failure to open into `REWIND_NOT_RESTARTED`
-    /// ([`Self::rewind_not_restarted`]) rather than a bare refusal.
-    pub(crate) async fn resume_generation(
-        &mut self,
-        plan: ResumePlan,
-        relay: Option<&HarnessRelay>,
-        rewind: Option<crate::rewind::RewindOpen>,
-    ) -> anyhow::Result<()> {
-        let outbox_before = self.outbox.pending_keys();
-        // Every refusal below consumes the command, so the seat the desktop
-        // staged for it will never be read: it goes with the refusal, the same
-        // one-shot rule the create path follows. Reads the record rather than
-        // the custody file, so an unseated resume does no extra work.
-        let seated = self
-            .state
-            .session(&plan.target.session_id)
-            .is_some_and(|record| record.actor.is_some());
-        if self
-            .sessions
-            .handle(&plan.target.session_id)
-            .is_some_and(session::SessionHandle::is_live)
-        {
-            self.state.consume_command(&plan.command_id, now_secs())?;
-            if seated {
-                self.forget_actor_seat(&plan.command_id);
-            }
-            let receipt = LifecycleReceipt::failed(
-                &plan.command_id,
-                SESSION_ALREADY_ATTACHED,
-                "the execution is already attached on this provider",
-            );
-            return self
-                .answer_resume_failure(&plan, rewind, receipt, relay)
-                .await;
-        }
-
-        let Some(record) = self.state.session(&plan.target.session_id).cloned() else {
-            return Ok(());
-        };
-        let ownership_admission = match host_ownership::admit(
-            &self.config,
-            record.actor.as_deref(),
-            host_ownership::Admission::Resume,
-        ) {
-            Ok(guard) => guard,
-            Err(failure) => {
-                self.state.consume_command(&plan.command_id, now_secs())?;
-                let receipt =
-                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self
-                    .answer_resume_failure(&plan, rewind, receipt, relay)
-                    .await;
-            }
-        };
-
-        // Revalidated at every start: an execution whose own authority was
-        // withdrawn does not come back under it.
-        if let Some(reason) = record.authority_withdrawn.as_deref() {
-            self.state.consume_command(&plan.command_id, now_secs())?;
-            if seated {
-                self.forget_actor_seat(&plan.command_id);
-            }
-            let receipt = LifecycleReceipt::failed(
-                &plan.command_id,
-                payload::ACTOR_UNAVAILABLE,
-                &format!("{reason}, so this execution will not be resumed"),
-            );
-            return self
-                .answer_resume_failure(&plan, rewind, receipt, relay)
-                .await;
-        }
-        let Some(descriptor) = self.config.runtime(&record.provider_instance_ref).cloned() else {
-            self.state.consume_command(&plan.command_id, now_secs())?;
-            if seated {
-                self.forget_actor_seat(&plan.command_id);
-            }
-            let receipt = LifecycleReceipt::failed(
-                &plan.command_id,
-                PROVIDER_UNAVAILABLE,
-                "the execution's runtime is no longer installed",
-            );
-            return self
-                .answer_resume_failure(&plan, rewind, receipt, relay)
-                .await;
-        };
-        let Some(generation) = record
-            .generation
-            .checked_add(1)
-            .filter(|value| *value <= beekeeper_core::coding_session_command::MAX_SAFE_GENERATION)
-        else {
-            self.state.consume_command(&plan.command_id, now_secs())?;
-            if seated {
-                self.forget_actor_seat(&plan.command_id);
-            }
-            let receipt = LifecycleReceipt::failed(
-                &plan.command_id,
-                PROVIDER_UNAVAILABLE,
-                "the execution generation cannot advance further",
-            );
-            return self
-                .answer_resume_failure(&plan, rewind, receipt, relay)
-                .await;
-        };
-        let target = CodingSessionTarget {
-            driver: record.driver.clone(),
-            instance_id: self.config.instance_id.clone(),
-            session_id: record.session_id.clone(),
-            generation,
-        };
-        let previous_semantic_key = coding_session_target_key(&self.target_for(&record));
-        let package_id = Uuid::new_v4().to_string();
-        // A rewind's package is cut at the rewind; everything else's is whole.
-        let cuts: Vec<context_projector::ContextCut> =
-            rewind.iter().map(|open| open.cut.clone()).collect();
-        let rehydration = self
-            .prepare_rehydration_context_cut(
-                RehydrationTarget {
-                    scope: RehydrationScope::Resume,
-                    command_id: &plan.command_id,
-                    channel_id: record.channel_id,
-                    session_ref: record.session_ref.as_deref(),
-                    genesis_ref: record.genesis_ref.as_deref(),
-                    package_id: &package_id,
-                },
-                cuts.clone(),
-                relay,
-            )
-            .await;
-        // A rewound generation never reattaches the native cursor: it still
-        // remembers the rewound turns. `session/new`, seeded from the record.
-        let resume_cursor = if rewind.is_some() {
-            None
-        } else {
-            record.resume_cursor.clone()
-        };
-        let context_package_id = rehydration
-            .descriptor
-            .as_ref()
-            .map(|descriptor| descriptor.package_id.clone());
-        // `prepare_rehydration_context` speaks the create path's language: a
-        // missing umbrella `sessionRef`/`genesisRef` there means this is the
-        // session's first execution. On a resume an earlier generation of this
-        // very execution already ran — its turns are in the transcript this row
-        // lands in — so the same missing pair means only that the execution was
-        // never created under an umbrella. Publishing `no_prior_execution` here
-        // would render "this is the session's first execution, so there was no
-        // prior work to carry" directly above that prior work.
-        let unavailable_reason = match rehydration.unavailable_reason {
-            Some("no_prior_execution") => Some("no_umbrella_context"),
-            other => other,
-        };
-        let rehydration_mcp = rehydration.descriptor;
-
-        // A resumed agent seat needs its identity again, and the entry that
-        // carried it was consumed by the create. So the resume names its own
-        // custody entry, keyed by the resume command's own `commandId` — the
-        // same one-shot hand-off, one generation later.
-        //
-        // Refusing is the only honest answer when it is absent. The alternative
-        // — reattach the execution with the fence intact — produces a
-        // generation whose 44223 still says `agentRef: <seat>` while the
-        // process behind it holds no credentials at all, which is precisely the
-        // "control that lies about what it enforces" class of bug.
-        let (seat_identity, post_fence_env, seat_skills, seat_pack_ref) =
-            match record.actor.as_deref() {
-                None => (None, Vec::new(), None, None),
-                Some(actor) => {
-                    let seats = crate::actor_seats::ActorSeatsFile::load(
-                        self.config.actor_seats_file.as_deref(),
-                    );
-                    let conversation_seat = self.conversation_actor_seat(&record)?;
-                    match seats.seat(&plan.command_id).or(conversation_seat.as_ref()) {
-                        Some(seat) if seat.pubkey == actor => {
-                            let identity = session::SeatIdentity {
-                                actor_pubkey: seat.pubkey.clone(),
-                                role: record.role.clone().unwrap_or_default(),
-                                relay_url: seat.relay_url.clone(),
-                            };
-                            // A resume re-materializes the pack's skills: the
-                            // workdir may have moved on since the create, and the
-                            // write is a no-op when it has not.
-                            let skills =
-                                seat_skills(seat, &self.config.state_dir, &record.session_id);
-                            // …and re-states which pack that was, because a resume
-                            // may have been staged from a moved ref. The new
-                            // generation's 44223 must describe the pack it is
-                            // actually running, not the one the create ran.
-                            let pack_ref = seat.pack_ref.clone();
-                            (
-                                Some(identity),
-                                // Same coordinate the create carried: a resumed
-                                // generation writes the same project's pulse — and
-                                // the same host-chosen `bee`, so a reconnect does
-                                // not quietly change which binary the seat runs.
-                                seat.post_fence_env_with_bee(
-                                    record.role.as_deref(),
-                                    record.project_ref.as_deref(),
-                                    crate::seat_bee::host_seat_bee().map(|(bee, _)| bee),
-                                    std::env::var_os("PATH").as_ref(),
-                                ),
-                                skills,
-                                pack_ref,
-                            )
-                        }
-                        _ => {
-                            self.state.consume_command(&plan.command_id, now_secs())?;
-                            self.forget_actor_seat(&plan.command_id);
-                            self.discard_orphaned_context_package(context_package_id.as_deref());
-                            // Precise about which fact is missing: this host may
-                            // well hold the agent's key and simply have staged
-                            // nothing under *this* command. Saying "this host does
-                            // not hold the key" on the machine that does is the
-                            // falsehood class this project treats as a bug.
-                            let receipt = LifecycleReceipt::failed(
-                            &plan.command_id,
-                            payload::ACTOR_UNAVAILABLE,
-                            "no key material was staged for this reconnect; reconnect from the \
-                             host that holds this agent's key",
-                        );
-                            return self
-                                .answer_resume_failure(&plan, rewind, receipt, relay)
-                                .await;
-                        }
-                    }
-                }
-            };
-        // SV-33: every execution, seated or not, may drive its own preview.
-        let mut post_fence_env = post_fence_env;
-        crate::preview_grant::push_preview_env(
-            &mut post_fence_env,
-            &self.config,
-            record.channel_id,
-            &target,
-            &plan.command_id,
-        );
-        let seat_compose_ref = seat_skills
-            .as_ref()
-            .and_then(|skills| skills.compose_ref.clone());
-
-        let agent_env = match runtime_credentials::environment(&self.config.state_dir, &descriptor)
-        {
-            Ok(env) => env,
-            Err(failure) => {
-                self.state.consume_command(&plan.command_id, now_secs())?;
-                if record.actor.is_some() {
-                    self.forget_actor_seat(&plan.command_id);
-                }
-                self.discard_orphaned_context_package(context_package_id.as_deref());
-                let receipt =
-                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self
-                    .answer_resume_failure(&plan, rewind, receipt, relay)
-                    .await;
-            }
-        };
-        // Same scope derivation as the create, from the record — plus the
-        // record's binding, so native history is reattached only to the scope
-        // that wrote it.
-        // Revalidated at every start: an execution of a deleted project does
-        // not start, and its own context is prepared or the start refused.
-        let unseated_agents = if self.project_deleted(record.project_ref.as_deref()).await {
-            Err(execution_scope::refuse(
-                execution_scope::EXECUTION_SCOPE_INVALID,
-                "this project was deleted, so no execution of it starts",
-            ))
-        } else if record.actor.is_none() {
-            self.stage_unseated_agents(record.project_ref.as_deref(), &record.session_id)
-                .await
-        } else {
-            Ok(None)
-        };
-        let execution = match unseated_agents
-            .as_ref()
-            .map_err(Clone::clone)
-            .and_then(|_| {
-                self.execution_plan(&execution_scope::LaunchFacts {
-                    session_id: &record.session_id,
-                    runtime_instance: &descriptor.instance_ref,
-                    project_ref: record.project_ref.as_deref(),
-                    association: execution_scope::recorded_association(&record),
-                    unseated_agents: unseated_agents.as_ref().ok().and_then(Option::as_deref),
-                    actor: record.actor.as_deref(),
-                    driver: &record.driver,
-                    cwd: &record.cwd,
-                    agent_command: &descriptor.agent_command,
-                    agent_args: &descriptor.agent_args,
-                    agent_env: &agent_env,
-                    identity_env: &post_fence_env,
-                    seat_skills: seat_skills.as_ref(),
-                    role: record.role.as_deref(),
-                    rehydration: rehydration_mcp.as_ref(),
-                    prior: Some((record.execution_binding.as_ref(), resume_cursor.as_deref())),
-                })
-            }) {
-            Ok(execution) => execution,
-            Err(failure) => {
-                self.state.consume_command(&plan.command_id, now_secs())?;
-                if record.actor.is_some() {
-                    self.forget_actor_seat(&plan.command_id);
-                }
-                self.discard_orphaned_context_package(context_package_id.as_deref());
-                let receipt =
-                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self
-                    .answer_resume_failure(&plan, rewind, receipt, relay)
-                    .await;
-            }
-        };
-        let execution_binding = execution.binding().cloned();
-        let execution_state = execution.state();
-
-        let request = CreateRequest {
-            execution,
-            media: self.media.clone(),
-            target: target.clone(),
-            channel_id: record.channel_id,
-            cwd: record.cwd.clone(),
-            title: record.title.clone(),
-            model: record.model.clone(),
-            resume_cursor: resume_cursor.clone(),
-            // Never strict: an ordinary create or resume may legitimately
-            // end up in a fresh conversation, and says so on the wire.
-            strict_native: false,
-            rehydration_mcp,
-            agent_command: descriptor.agent_command.clone(),
-            agent_args: descriptor.agent_args.clone(),
-            agent_env,
-            seat: seat_identity,
-            post_fence_env,
-            seat_skills,
-            idle_timeout: self.config.idle_timeout,
-            answer_stall_timeout: self.config.answer_stall_timeout,
-            emit_raw_sdk_frames: self.config.emit_raw_sdk_frames,
-            max_turn_duration: self.config.max_turn_duration,
-            idle_shutdown: self.config.session_idle_shutdown,
-            include_thoughts: self.config.include_thoughts,
-            transcript_paragraph_flush: self.config.transcript_paragraph_flush,
-        };
-        let events = self.sessions.event_sender();
-        #[cfg(test)]
-        let started = if rewind.is_some() && std::mem::take(&mut self.rewind_fail_next_open) {
-            drop(request);
-            Err(session::CreateFailure {
-                code: PROVIDER_UNAVAILABLE,
-                message: "injected: the rewound generation's adapter did not start".into(),
-            })
-        } else {
-            let startup_future = SessionManager::start(request, events);
-            self.await_with_lease_maintenance(
-                startup_future,
-                relay.map(HarnessRelay::event_publisher),
-            )
-            .await
-        };
-        #[cfg(not(test))]
-        let started = {
-            let startup_future = SessionManager::start(request, events);
-            self.await_with_lease_maintenance(
-                startup_future,
-                relay.map(HarnessRelay::event_publisher),
-            )
-            .await
-        };
-        if record.actor.is_some() {
-            self.forget_actor_seat(&plan.command_id);
-        }
-        let started = match started {
-            Ok(started) => started,
-            Err(failure) => {
-                self.state.consume_command(&plan.command_id, now_secs())?;
-                // The resume minted a fresh package id, and the refresh entry
-                // that would name it is only inserted after a successful open;
-                // the previous generation's entry still points elsewhere. Drop
-                // this one here or nothing will.
-                self.discard_orphaned_context_package(context_package_id.as_deref());
-                let receipt =
-                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self
-                    .answer_resume_failure(&plan, rewind, receipt, relay)
-                    .await;
-            }
-        };
-        if let Some(guard) = ownership_admission.as_ref() {
-            if let Err(failure) = guard.recheck() {
-                started.discard();
-                self.state.consume_command(&plan.command_id, now_secs())?;
-                self.discard_orphaned_context_package(context_package_id.as_deref());
-                let receipt =
-                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-                return self
-                    .answer_resume_failure(&plan, rewind, receipt, relay)
-                    .await;
-            }
-        }
-        let startup = self.sessions.attach(started);
-        self.steering
-            .insert(record.session_id.clone(), startup.steering_supported);
-        self.prompt_image
-            .insert(record.session_id.clone(), startup.prompt_image_supported);
-        self.model_switch
-            .witness(&record.session_id, startup.model_switch_supported);
-
-        if let Err(error) = self.state.update_session(&record.session_id, |record| {
-            record.generation = generation;
-            record.generation_command_id = Some(plan.command_id.clone());
-            record.next_seq = 1;
-            record.next_lease_sequence = 1;
-            record.open_turn = None;
-            record.closed = false;
-            record.resume_cursor = Some(startup.acp_session_id.clone());
-            record.execution_binding = execution_binding.clone();
-            record.execution_boundary = crate::execution_scope::recorded_state(&execution_state);
-            // This generation's pack, not the previous one's: a seat restaged
-            // from a moved ref runs a different commit, and the 44223 has to
-            // say which.
-            record.pack_ref = seat_pack_ref.clone();
-            record.compose_ref = seat_compose_ref.clone();
-            if startup.model.is_some() {
-                record.model = startup.model.clone();
-            }
-            // `model_effective` is left as the last turn's own report: the
-            // selection the adapter reports at open is a request, never an
-            // effective model (ledger 272(d)). A record written before that
-            // rule may hold a picker label there; it is cleared, not carried.
-            if record
-                .model_effective
-                .as_deref()
-                .is_some_and(crate::price_table::is_picker_label)
-            {
-                record.model_effective = None;
-            }
-        }) {
-            self.sessions.shutdown(&record.session_id);
-            return Err(error.into());
-        }
-        // An admitted generation continues the same responsibility; preserve
-        // consumed request targets while moving future thread inputs forward.
-        self.refresh_conversation_generation(&self.target_for(&record), &target)?;
-        // The generation's command id just moved to this resume's, and that is
-        // the key custody is filed under. Restate it before anything else can
-        // read the old one.
-        self.publish_seat_requests();
-        self.established_leases.remove(&previous_semantic_key);
-        self.pending_leases.remove(&previous_semantic_key);
-        self.state.consume_command(&plan.command_id, now_secs())?;
-
-        // The previous generation's package is unreferenced from here: a
-        // resume only proceeds against an execution that is not live, so its
-        // sidecar is gone, and this open minted a fresh package id and a fresh
-        // directory. Dropping it now is what keeps a long-lived session from
-        // leaking one package directory per resume.
-        self.discard_context_packages(&target.session_id);
-        if let Some(package_id) = context_package_id {
-            let mut refresh = ContextRefreshState::opened(package_id);
-            refresh.cuts = cuts;
-            self.context_refresh
-                .insert(target.session_id.clone(), refresh);
-        }
-
-        // Only the two restarted arms can carry a package reason. On a native
-        // resume or load the adapter re-attached its own conversation, so
-        // whether a verified package could also be built is irrelevant to what
-        // the agent can see, and naming a failure there would imply a loss that
-        // did not happen. `session_rehydrated` lost nothing either.
-        // A rewind answers with its own receipt and opening row (SV-29).
-        let (receipt, opening_item) = if let Some(open) = rewind {
-            crate::rewind::rewound_answer(
-                &plan.command_id,
-                &target,
-                open,
-                &startup.continuity,
-                unavailable_reason,
-            )
-        } else {
-            let (receipt, status, reason) = match startup.continuity {
-                SessionContinuity::Resumed => (
-                    LifecycleReceipt::resumed(&plan.command_id, &target),
-                    "session_resumed",
-                    None,
-                ),
-                SessionContinuity::Loaded => (
-                    LifecycleReceipt::resumed(&plan.command_id, &target),
-                    "session_loaded",
-                    None,
-                ),
-                SessionContinuity::Rehydrated => (
-                    LifecycleReceipt::resumed(&plan.command_id, &target),
-                    "session_rehydrated",
-                    None,
-                ),
-                SessionContinuity::RestartedWithoutContext { reason } => (
-                    LifecycleReceipt::resumed_without_context(&plan.command_id, &target, reason),
-                    "session_restarted_without_context",
-                    unavailable_reason,
-                ),
-                SessionContinuity::Fresh => (
-                    LifecycleReceipt::resumed_without_context(
-                        &plan.command_id,
-                        &target,
-                        "the provider had no saved session cursor",
-                    ),
-                    "session_restarted_without_context",
-                    unavailable_reason,
-                ),
-            };
-            (receipt, payload::status_item_with_reason(status, reason))
-        };
-        self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt)?;
-        self.enqueue_transcript(plan.channel_id, &target, None, opening_item, Priority::High)?;
-        self.enqueue_transcript(
-            plan.channel_id,
-            &target,
-            None,
-            execution_scope::boundary_status_item(&execution_state),
-            Priority::High,
-        )?;
-        // What the provider's isolation settings withheld, when any did.
-        for item in crate::session_isolation::isolation_status_items(&execution_state) {
-            self.enqueue_transcript(plan.channel_id, &target, None, item, Priority::High)?;
-        }
-        self.publish_metadata(plan.channel_id, &target, SessionStatus::Idle)?;
-        self.record_first_lease_prerequisites(&target, &outbox_before);
-        // A restart lost every in-memory policy ceiling, and a resume is where
-        // a seat comes back. Re-read it here or the umbrella runs unbounded
-        // under a policy its founder published and can see.
-        self.refresh_policy_turn_budget(&target.session_id, relay)
-            .await;
-        tracing::info!(
-            target: "csp",
-            command_id = %plan.command_id,
-            session_id = %target.session_id,
-            generation,
-            "session generation attached"
-        );
-        Ok(())
-    }
-
     /// Release the host slot every execution under a settled umbrella holds.
     ///
     /// ## Why this exists
@@ -5407,27 +4185,45 @@ impl Provider {
     ///
     /// Returns the number of executions released, so callers can log
     /// something truthful about a closure that had nothing to release.
-    fn release_settled_umbrella(&mut self, session_ref: &str) -> usize {
-        // Only sessions this provider is actually running. A record already
-        // marked closed, or one whose actor has exited on its own, holds no
-        // slot and must not be re-released — that would queue a second lease
-        // release and a second Stopped metadata for a session that already
-        // published both.
+    async fn release_settled_umbrella(&mut self, session_ref: &str) -> usize {
+        // Closed state is not physical exit proof. Reconcile interrupted cleanup
+        // even when a predecessor crashed before writing its stop marker.
         let live: Vec<String> = self
-            .sessions
-            .live_session_ids()
-            .map(str::to_owned)
-            .filter(|session_id| {
-                self.state.session(session_id).is_some_and(|record| {
-                    record.session_ref.as_deref() == Some(session_ref) && !record.closed
-                })
+            .state
+            .sessions()
+            .filter(|record| {
+                record.session_ref.as_deref() == Some(session_ref)
+                    && (!record.closed
+                        || self
+                            .config
+                            .state_dir
+                            .join(format!("stop-quiescence-{}.json", record.session_id))
+                            .exists()
+                        || !self.recovered_group_absent(&record.target(&self.config.instance_id)))
             })
+            .map(|record| record.session_id.clone())
             .collect();
-
+        let mut released = 0;
         for session_id in &live {
             // Durable intent first, exactly as `stop_session` orders it: if
             // this write fails the actor stays live and no contradictory
             // ephemeral state has escaped.
+            let Some(target) = self
+                .state
+                .session(session_id)
+                .map(|record| record.target(&self.config.instance_id))
+            else {
+                continue;
+            };
+            if let Err(error) = crate::session_stop::begin_quiescence(
+                &self.config,
+                &target,
+                "settled-umbrella",
+                self.sessions.handle(session_id).is_some() || self.recovered_group_absent(&target),
+            ) {
+                tracing::warn!(target: "csp", %session_id, "could not persist settled stop intent: {}", error.message);
+                continue;
+            }
             if let Err(error) = self.state.update_session(session_id, |record| {
                 record.closed = true;
                 record.open_turn = None;
@@ -5452,9 +4248,13 @@ impl Provider {
                      to TTL expiry: {error}"
                 );
             }
-            self.sessions.shutdown(session_id);
+            if let Err(error) = self.quiesce_cleanup(&target, "settled-umbrella").await {
+                tracing::warn!(target:"csp",%session_id,"settled context retained: {error}");
+                continue;
+            }
             self.discard_context_packages(session_id);
             self.forget_redactions(session_id);
+            released += 1;
             tracing::info!(
                 target: "csp",
                 %session_id,
@@ -5467,7 +4267,7 @@ impl Provider {
         if !live.is_empty() {
             self.publish_seat_requests();
         }
-        live.len()
+        released
     }
 
     /// Spec § 4.9, **Restart with current definition**: detach the live
@@ -5511,10 +4311,21 @@ impl Provider {
             // could believe they held the tree (Astra's third look, R2). The
             // predecessor is ended here: the task is joined, and its own
             // `run` kills and reaps the agent's process group on the way out.
-            let quiescence = self
-                .sessions
-                .shutdown_and_join(&session_id, session::ACTOR_RETIRE_GRACE)
-                .await;
+            if let Err(error) = self.quiesce_cleanup(&plan.target, &plan.command_id).await {
+                return self.refuse_with_staged_answer(
+                    plan.channel_id,
+                    &plan.command_id,
+                    &LifecycleReceipt::failed(
+                        &plan.command_id,
+                        "SESSION_QUIESCENCE_UNCONFIRMED",
+                        &error.to_string(),
+                    ),
+                    Some(coding_session_lifecycle_receipt_semantic_key(
+                        &plan.command_id,
+                    )),
+                );
+            }
+            let quiescence = session::ActorQuiescence::Joined;
             self.discard_context_packages(&session_id);
             self.publish_metadata(plan.channel_id, &plan.target, SessionStatus::Disconnected)?;
             tracing::info!(
@@ -5536,78 +4347,6 @@ impl Provider {
         .await
     }
 
-    fn stop_session(&mut self, plan: StopPlan) -> anyhow::Result<()> {
-        let session_id = plan.target.session_id.clone();
-        let target_key = coding_session_target_key(&plan.target);
-        prepare_terminal_stop(
-            self,
-            |provider| {
-                // Persist terminal intent before a release can escape. If this
-                // write fails, the actor remains live and no contradictory
-                // ephemeral state is queued.
-                provider.state.update_session(&session_id, |record| {
-                    record.closed = true;
-                    record.open_turn = None;
-                })?;
-                Ok(())
-            },
-            |provider| {
-                // The release still precedes every durable terminal fact.
-                // Arrival is sequence-fenced, while this clean ordering avoids
-                // a transient live assertion after an intentional stop.
-                match provider.queue_lease(&session_id, CodingSessionLeaseState::Released) {
-                    Ok(()) => Ok(()),
-                    Err(error) => {
-                        // Never let an older queued/established live assertion
-                        // escape after durable stopping intent. The terminal
-                        // facts below complete; TTL handles the missing release.
-                        provider.pending_leases.remove(&target_key);
-                        provider.established_leases.remove(&target_key);
-                        Err(error)
-                    }
-                }
-            },
-        )?;
-        // A stopped generation must stop asking for custody: re-staging a key
-        // for an execution that can never take another turn would leave usable
-        // key material on disk for nothing.
-        self.publish_seat_requests();
-        let mut completion_errors = Vec::new();
-        if let Err(error) = self.state.consume_command(&plan.command_id, now_secs()) {
-            completion_errors.push(format!("consume stop command: {error}"));
-        }
-        self.sessions.shutdown(&plan.target.session_id);
-        self.discard_context_packages(&plan.target.session_id);
-        // Stop is terminal, so the operator will not be reading this
-        // transcript's redactions back. A resume deliberately does *not* do
-        // this: there the session continues and the note is still wanted.
-        self.forget_redactions(&plan.target.session_id);
-        let receipt = LifecycleReceipt::stopped(&plan.command_id, &plan.target);
-        if let Err(error) = self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt) {
-            completion_errors.push(format!("enqueue stopped receipt: {error}"));
-        }
-        if let Err(error) =
-            self.publish_metadata(plan.channel_id, &plan.target, SessionStatus::Stopped)
-        {
-            completion_errors.push(format!("enqueue stopped metadata: {error}"));
-        }
-        tracing::info!(
-            target: "csp",
-            command_id = %plan.command_id,
-            session_id = %plan.target.session_id,
-            "session stopped"
-        );
-        if completion_errors.is_empty() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(completion_errors.join("; ")))
-        }
-    }
-
-    /// Whether the relay shows `project_ref`'s deletion applied, re-checked at
-    /// every start and resume. Records the head it sees. `false` when there
-    /// is no project, no relay yet, or the answer is unknown: a deletion is
-    /// acted on only when shown.
     async fn project_deleted(&mut self, project_ref: Option<&str>) -> bool {
         let (Some(project), Some(rest)) = (project_ref, self.rest_client.clone()) else {
             return false;
@@ -5617,7 +4356,7 @@ impl Provider {
         self.apply_project_fact(project, &fact);
         let deleted = fact == project_deletion::ProjectFact::Deleted;
         if deleted {
-            self.stop_project_executions(project);
+            self.stop_project_executions(project).await;
         }
         deleted
     }
@@ -5652,7 +4391,10 @@ impl Provider {
     }
 
     /// A candidate is judged off the loop; a judgement is applied here.
-    fn handle_project_deletion_event(&mut self, event: project_deletion::ProjectDeletionEvent) {
+    async fn handle_project_deletion_event(
+        &mut self,
+        event: project_deletion::ProjectDeletionEvent,
+    ) {
         match event {
             project_deletion::ProjectDeletionEvent::Candidate {
                 project,
@@ -5689,7 +4431,7 @@ impl Provider {
                     .seen_project_head(&project)
                     .is_some_and(|seen| seen > tombstone_at);
                 if fact == project_deletion::ProjectFact::Deleted && !superseded {
-                    self.stop_project_executions(&project);
+                    self.stop_project_executions(&project).await;
                 }
             }
         }
@@ -5741,105 +4483,6 @@ impl Provider {
         }
     }
 
-    /// Stop every open execution of a deleted project.
-    fn stop_project_executions(&mut self, project: &str) {
-        let affected: Vec<String> = self
-            .state
-            .sessions()
-            .filter(|record| !record.closed && record.project_ref.as_deref() == Some(project))
-            .map(|record| record.session_id.clone())
-            .collect();
-        for session_id in affected {
-            if let Err(error) = self
-                .stop_for_withdrawn_authority(&session_id, "this execution's project was deleted")
-            {
-                tracing::error!(target: "csp::projects", %session_id, "could not stop: {error}");
-            }
-        }
-        // SV-55: the deleted project's sessions' checkpoint refs go with it,
-        // retired off the loop (git, with a per-repository ceiling).
-        let retirements = project_deletion::checkpoint_retirements(
-            self.state.sessions().map(|record| {
-                (
-                    record.session_id.as_str(),
-                    record.project_ref.as_deref(),
-                    record.cwd.as_path(),
-                )
-            }),
-            project,
-        );
-        if !retirements.is_empty() {
-            tokio::spawn(project_deletion::retire_checkpoint_refs(retirements));
-        }
-    }
-
-    /// Stop one execution whose own authority was withdrawn, through the same
-    /// terminal path an operator's stop takes: the record is closed and
-    /// marked before anything else, the lease released, admitted turns
-    /// refused, and the adapter's whole process group stopped. A resume or
-    /// restore of the record is refused afterwards
-    /// ([`state::SessionRecord::authority_withdrawn`]).
-    fn stop_for_withdrawn_authority(
-        &mut self,
-        session_id: &str,
-        reason: &str,
-    ) -> anyhow::Result<()> {
-        let Some(record) = self.state.session(session_id).cloned() else {
-            return Ok(());
-        };
-        if record.closed {
-            return Ok(());
-        }
-        let target = self.target_for(&record);
-        let target_key = coding_session_target_key(&target);
-        prepare_terminal_stop(
-            self,
-            |provider| {
-                provider.state.update_session(session_id, |record| {
-                    record.closed = true;
-                    record.open_turn = None;
-                    record.authority_withdrawn = Some(reason.to_owned());
-                })?;
-                Ok(())
-            },
-            |provider| match provider.queue_lease(session_id, CodingSessionLeaseState::Released) {
-                Ok(()) => Ok(()),
-                Err(error) => {
-                    provider.pending_leases.remove(&target_key);
-                    provider.established_leases.remove(&target_key);
-                    Err(error)
-                }
-            },
-        )?;
-        self.publish_seat_requests();
-        let admitted: Vec<String> = self
-            .in_flight
-            .iter()
-            .filter(|(_, turn)| turn.session_id == session_id)
-            .map(|(command_id, _)| command_id.clone())
-            .collect();
-        for command_id in admitted {
-            self.in_flight.remove(&command_id);
-            let receipt = LifecycleReceipt::failed(
-                &command_id,
-                payload::ACTOR_UNAVAILABLE,
-                &format!("{reason}, so this turn will not run"),
-            );
-            if let Err(error) = self.enqueue_receipt(record.channel_id, &command_id, &receipt) {
-                tracing::warn!(target: "csp", %command_id, "could not refuse a withdrawn turn: {error}");
-            }
-        }
-        self.sessions.shutdown(session_id);
-        self.discard_context_packages(session_id);
-        if let Err(error) =
-            self.publish_metadata(record.channel_id, &target, SessionStatus::Stopped)
-        {
-            tracing::warn!(target: "csp", %session_id, "could not publish the withdrawn stop: {error}");
-        }
-        tracing::warn!(target: "csp", %session_id, "execution stopped: {reason}");
-        Ok(())
-    }
-
     async fn on_turn(
         &mut self,
         channel_id: Uuid,
@@ -5857,11 +4500,25 @@ impl Provider {
         // A turn never resolves a working directory or a seat; both empty maps
         // keep the context type honest without touching the disk.
         let actor_seats = crate::actor_seats::ActorSeatsFile::default();
-        let decision = commands::decide_turn(
-            &self.context(channel_id, &projects, &actor_seats, operator_pubkey),
-            created_at,
-            content,
-        );
+        let permission = self
+            .conversation_capability(channel_id, event_id, operator_pubkey, content)
+            .await;
+        let context = self.context(channel_id, &projects, &actor_seats, operator_pubkey);
+        let decision = match permission {
+            Ok(Some(capability)) => {
+                commands::decide_conversation_turn(&context, created_at, content, &capability)
+            }
+            Ok(None) => commands::decide_turn(&context, created_at, content),
+            Err(failure) => match commands::decode_turn_command(content) {
+                Ok(command) => TurnDecision::Fail {
+                    command_id: command.command_id,
+                    target: command.target,
+                    code: failure.code,
+                    message: failure.message,
+                },
+                Err(_) => commands::decide_turn(&context, created_at, content),
+            },
+        };
         // A host answer that is actually admitted (authority, budget, and
         // every other ordinary gate already ran inside `decide_turn`) is
         // recorded, never delivered: the command is this computer's own
@@ -6016,6 +4673,27 @@ impl Provider {
         registration_event_id: &str,
         decision: TurnDecision,
     ) -> anyhow::Result<TurnDisposition> {
+        if let TurnDecision::Start {
+            command_id, target, ..
+        } = &decision
+        {
+            let actor = self
+                .state
+                .session(&target.session_id)
+                .and_then(|record| record.actor.clone());
+            if let Err(failure) = self.require_actor_not_retired(actor.as_deref()).await {
+                self.state.consume_command(command_id, now_secs())?;
+                self.forget_deferred_turn(command_id);
+                let receipt = LifecycleReceipt::turn_refused(
+                    command_id,
+                    target,
+                    failure.code,
+                    &failure.message,
+                );
+                self.enqueue_receipt(channel_id, command_id, &receipt)?;
+                return Ok(TurnDisposition::Answered(failure.code.into()));
+            }
+        }
         // The verification-input fence (ledger 133). Before anything is
         // written to a runtime: a turn that carries an assignment pointer to a
         // seat whose role publishes a claim about a commit opens only when the
@@ -7742,7 +6420,8 @@ impl Provider {
         // for the umbrella, after every local record of it has folded, so a
         // record cannot be interrupted on a claim its sibling has applied and
         // it has not.
-        self.enforce_claim_for_genesis(&accepted.genesis_ref)?;
+        self.enforce_claim_for_genesis(&accepted.genesis_ref)
+            .await?;
         Ok(())
     }
 
@@ -7805,7 +6484,7 @@ impl Provider {
     /// Idempotent, and safe to call after any claim progress: a record with
     /// nothing fenced is left completely alone, so a replayed receipt and a
     /// tick retry that folds the same link stop nothing twice.
-    fn enforce_claim_for_genesis(&mut self, genesis_ref: &str) -> anyhow::Result<()> {
+    async fn enforce_claim_for_genesis(&mut self, genesis_ref: &str) -> anyhow::Result<()> {
         let sessions: Vec<SessionRecord> = self
             .state
             .sessions()
@@ -8004,8 +6683,19 @@ impl Provider {
             // (3) custody. Only when the body itself is fenced: on the claimed
             //     body the claimant is still working here, and taking its
             //     actor away would be the fence undoing the handover.
-            if body_fenced && (stopped_something || self.sessions.handle(&session_id).is_some()) {
-                self.sessions.shutdown(&session_id);
+            if body_fenced
+                && (stopped_something
+                    || self.sessions.handle(&session_id).is_some()
+                    || !self.recovered_group_absent(&target))
+            {
+                if let Err(error) = self.quiesce_cleanup(&target, "handover-body-fenced").await {
+                    // The signed chain still folded and fences this body. A
+                    // pending physical cleanup is not a failed authority read.
+                    tracing::warn!(target:"csp::authority",%session_id,"accepted handover remains fenced; physical cleanup pending: {error}");
+                    self.enqueue_transcript(record.channel_id,&target,None,payload::status_item_with_reason("SESSION_QUIESCENCE_UNCONFIRMED",Some("accepted handover fences this body; child-group absence remains unproved and private context is retained")),Priority::High)?;
+                    self.publish_metadata(record.channel_id, &target, SessionStatus::Disconnected)?;
+                    continue;
+                }
                 self.discard_context_packages(&session_id);
                 self.publish_metadata(record.channel_id, &target, SessionStatus::Disconnected)?;
             }
@@ -8213,7 +6903,8 @@ impl Provider {
                 && !record.closed
                 && record.actor.as_deref() == Some(accepted.grantee_pubkey.as_str())
             {
-                self.stop_for_withdrawn_authority(session_id, "this execution's seat was revoked")?;
+                self.stop_for_withdrawn_authority(session_id, "this execution's seat was revoked")
+                    .await?;
             }
         }
         tracing::info!(
@@ -8419,7 +7110,7 @@ impl Provider {
         // of — a receipt whose transition would not resolve marked the
         // umbrella pending, and the tick that later folded it cleared the
         // fence without ever stopping the old body's turn.
-        if let Err(error) = self.enforce_claim_for_genesis(genesis_ref) {
+        if let Err(error) = self.enforce_claim_for_genesis(genesis_ref).await {
             tracing::error!(
                 target: "csp::authority",
                 %genesis_ref,
@@ -8856,6 +7547,7 @@ impl Provider {
         self.state.stage_terminal_disposition(
             command_id,
             state::TerminalDisposition {
+                lifecycle_start: None,
                 semantic_key: outbox_key.unwrap_or_else(|| {
                     coding_session_turn_receipt_semantic_key(command_id, receipt.status)
                 }),
@@ -8897,6 +7589,7 @@ impl Provider {
         self.state.stage_terminal_disposition(
             disposition_key,
             state::TerminalDisposition {
+                lifecycle_start: None,
                 semantic_key: disposition_key.to_owned(),
                 event,
             },
@@ -8923,10 +7616,15 @@ impl Provider {
         outbox_key: Option<String>,
     ) -> anyhow::Result<()> {
         self.conversation_receipt(command_id, receipt)?;
-        let event = self.sign_receipt(channel_id, command_id, receipt)?;
+        let event = if receipt.status.is_turn_stage() {
+            self.sign_receipt(channel_id, command_id, receipt)?
+        } else {
+            self.lifecycle_event(channel_id, receipt)?
+        };
         self.state.stage_terminal_disposition(
             command_id,
             state::TerminalDisposition {
+                lifecycle_start: None,
                 semantic_key: outbox_key.unwrap_or_else(|| {
                     coding_session_turn_receipt_semantic_key(command_id, receipt.status)
                 }),
@@ -8940,12 +7638,63 @@ impl Provider {
     /// Retry projections of fenced decisions, preserving the original signed bytes.
     fn flush_terminal_dispositions(&mut self) -> anyhow::Result<()> {
         for (command_id, disposition) in self.state.terminal_dispositions() {
-            self.outbox.enqueue(
+            if disposition
+                .lifecycle_start
+                .as_ref()
+                .is_some_and(|intent| intent.phase == state::LifecycleStartPhase::BeforeEffects)
+            {
+                continue;
+            }
+            if self.outbox.is_parked_event(&disposition.event) {
+                // Permanent refusal is a disclosed publication gap, not a new
+                // delivery attempt and never proof of quiescence/acceptance.
+                continue;
+            }
+            if self
+                .outbox
+                .accepted_event(
+                    KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+                    &disposition.semantic_key,
+                )
+                .is_some_and(|event| {
+                    event.id == disposition.event.id && event.content == disposition.event.content
+                })
+            {
+                // The retained uncertainty is an admission fence, not a request
+                // to republish an already-accepted answer or churn metadata.
+                continue;
+            }
+            if self
+                .outbox
+                .pending_content(
+                    KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+                    &disposition.semantic_key,
+                )
+                .is_some_and(|content| content != disposition.event.content)
+            {
+                // An earlier retryable refusal is still awaiting delivery. It
+                // cannot be silently replaced by this exact verified answer.
+                // Keep the proof/marker until delivery or a renewed stop attempt.
+                continue;
+            }
+            let retained = self.outbox.enqueue(
                 KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
                 &disposition.semantic_key,
                 Priority::Live,
-                disposition.event,
+                disposition.event.clone(),
             )?;
+            if !retained
+                && !self
+                    .outbox
+                    .pending_events()
+                    .any(|event| event.id == disposition.event.id)
+            {
+                continue;
+            }
+            self.reconcile_verified_stop(&disposition.event)?;
+            if let Some(intent) = &disposition.lifecycle_start {
+                self.publish_uncertain_start(intent)?;
+            }
             self.state.finish_terminal_disposition(&command_id)?;
         }
         Ok(())
@@ -8961,6 +7710,9 @@ impl Provider {
         outbox_key: Option<&str>,
     ) -> anyhow::Result<()> {
         self.conversation_receipt(command_id, receipt)?;
+        if !receipt.status.is_turn_stage() && self.state.has_staged_disposition(command_id) {
+            return self.project_lifecycle_outcome(channel_id, command_id, receipt);
+        }
         let content = serde_json::to_string(receipt)?;
         let (event, semantic_key) = if receipt.status.is_turn_stage() {
             (
@@ -13166,6 +11918,8 @@ mod tests {
     mod hire_requester_tests;
     #[path = "host_result_wake_tests.rs"]
     mod host_result_wake_tests;
+    #[path = "import_admission_race_tests.rs"]
+    mod import_admission_race_tests;
     #[path = "model_switch_tests.rs"]
     mod model_switch_tests;
     #[path = "observed_gate_row_tests.rs"]
@@ -13596,7 +12350,18 @@ mod tests {
         spawn_test_relay_with_events(keys, event.into_iter().collect()).await
     }
 
-    async fn spawn_test_relay_with_events(
+    // Actor admission requires a genuine witnessed relay retirement read even
+    // in tests. This establishes transport facts; it does not bypass any gate.
+    async fn witness_fixture_retirement(provider: &mut Provider) {
+        let (relay, _, server) =
+            spawn_test_relay_with_events(&provider.config.keys, Vec::new()).await;
+        provider.set_rest_client(relay.rest_client());
+        assert!(provider.witness_relay_identity().await);
+        // Test runtime owns this detached listener and cancels it at teardown.
+        drop(server);
+    }
+
+    pub(crate) async fn spawn_test_relay_with_events(
         keys: &Keys,
         events: Vec<Event>,
     ) -> (
@@ -13941,7 +12706,7 @@ mod tests {
         server.abort();
     }
 
-    fn test_operator_keys() -> &'static Keys {
+    pub(crate) fn test_operator_keys() -> &'static Keys {
         static KEYS: OnceLock<Keys> = OnceLock::new();
         KEYS.get_or_init(Keys::generate)
     }
@@ -14041,7 +12806,7 @@ mod tests {
     }
 
     /// A provider wired to a cooperative scripted agent.
-    fn provider(state_dir: &Path, projects: Option<&Path>) -> Provider {
+    pub(crate) fn provider(state_dir: &Path, projects: Option<&Path>) -> Provider {
         let agent = fake_agent(state_dir_parent(state_dir), "good-agent", GOOD_AGENT);
         Provider::new(config_of(Keys::generate(), state_dir, projects, agent)).expect("provider")
     }
@@ -14115,12 +12880,13 @@ mod tests {
 
     /// The off-macOS expectations above, checked on every platform against
     /// the production mapping of the plan off-macOS `prepare` returns
-    /// (`ExecutionPlan::Legacy { reason: "no-backend-for-platform" }`): the
+    /// (`ExecutionPlan::Legacy { reason: "no-backend-for-platform", configured_mcp_command: None }`): the
     /// transcript disclosure and the recorded boundary are exactly those.
     #[test]
     fn the_off_macos_boundary_expectations_are_the_unenforced_plans_own_disclosure() {
         let state = execution_scope::ExecutionPlan::Legacy {
             reason: "no-backend-for-platform",
+            configured_mcp_command: None,
         }
         .state();
         assert_eq!(
@@ -14223,7 +12989,7 @@ mod tests {
         }
     }
 
-    fn write_projects(dir: &Path, channel_id: Uuid, cwd: &Path) -> std::path::PathBuf {
+    pub(crate) fn write_projects(dir: &Path, channel_id: Uuid, cwd: &Path) -> std::path::PathBuf {
         let path = dir.join("projects.json");
         std::fs::write(
             &path,
@@ -14259,7 +13025,7 @@ mod tests {
         path
     }
 
-    fn create_event(provider: &Provider, channel_id: Uuid, command_id: &str) -> Event {
+    pub(crate) fn create_event(provider: &Provider, channel_id: Uuid, command_id: &str) -> Event {
         create_event_inner(
             provider,
             channel_id,
@@ -14771,6 +13537,7 @@ mod tests {
         SessionRecord {
             execution_binding: None,
             execution_boundary: None,
+            process_witness: None,
             authority_withdrawn: None,
             project_head_seen_at: None,
             session_id: Uuid::new_v4().to_string(),
@@ -14922,7 +13689,7 @@ mod tests {
         )
     }
 
-    fn lifecycle_target_event(
+    pub(crate) fn lifecycle_target_event(
         provider: &Provider,
         channel_id: Uuid,
         command_id: &str,
@@ -15666,7 +14433,10 @@ mod tests {
             target.session_id.clone(),
             ContextRefreshState::opened(previous_package.clone()),
         );
-        provider.sessions.shutdown(&target.session_id);
+        provider
+            .sessions
+            .shutdown_and_join(&target.session_id, session::ACTOR_RETIRE_GRACE)
+            .await;
 
         let resume =
             lifecycle_target_event(&provider, channel_id, "resume-1", "session.resume", &target);
@@ -16024,7 +14794,10 @@ mod tests {
             .next()
             .expect("session")
             .target(&provider.config.instance_id);
-        provider.sessions.shutdown(&target.session_id);
+        provider
+            .sessions
+            .shutdown_and_join(&target.session_id, session::ACTOR_RETIRE_GRACE)
+            .await;
 
         let resume =
             lifecycle_target_event(&provider, channel_id, "resume-1", "session.resume", &target);
@@ -16079,7 +14852,10 @@ mod tests {
         assert_eq!(record.session_ref.as_deref(), Some(UMBRELLA));
         assert_eq!(record.genesis_ref, None);
         let target = record.target(&provider.config.instance_id);
-        provider.sessions.shutdown(&target.session_id);
+        provider
+            .sessions
+            .shutdown_and_join(&target.session_id, session::ACTOR_RETIRE_GRACE)
+            .await;
 
         let resume =
             lifecycle_target_event(&provider, channel_id, "resume-1", "session.resume", &target);
@@ -16127,7 +14903,10 @@ mod tests {
             .next()
             .expect("session")
             .target(&provider.config.instance_id);
-        provider.sessions.shutdown(&target.session_id);
+        provider
+            .sessions
+            .shutdown_and_join(&target.session_id, session::ACTOR_RETIRE_GRACE)
+            .await;
 
         let resume =
             lifecycle_target_event(&provider, channel_id, "resume-1", "session.resume", &target);
@@ -18057,7 +16836,7 @@ mod tests {
         assert_eq!(provider.sessions.live_count(), 0);
 
         assert_eq!(
-            provider.release_settled_umbrella(umbrella),
+            provider.release_settled_umbrella(umbrella).await,
             0,
             "nothing left to release"
         );
@@ -18092,6 +16871,7 @@ mod tests {
         let projects = write_projects(dir.path(), channel_id, &cwd);
         let seats = write_actor_seats(dir.path(), "create-1", &"cd".repeat(32));
         let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        witness_fixture_retirement(&mut provider).await;
 
         let event =
             seated_create_event(&provider, channel_id, "create-1", &"cd".repeat(32), "lead");
@@ -18169,6 +16949,7 @@ mod tests {
         );
         write_actor_seats_with(dir.path(), "create-1", &owner, extra);
         let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        witness_fixture_retirement(&mut provider).await;
 
         let event = seated_create_event(&provider, channel_id, "create-1", &owner, "lead");
         provider
@@ -18202,6 +16983,7 @@ mod tests {
         let projects = write_projects(dir.path(), channel_id, &cwd);
         write_actor_seats(dir.path(), "create-1", &"cd".repeat(32));
         let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        witness_fixture_retirement(&mut provider).await;
         let event =
             seated_create_event(&provider, channel_id, "create-1", &"cd".repeat(32), "lead");
         provider
@@ -18244,6 +17026,7 @@ mod tests {
         extra.insert("packRef".to_string(), staged.clone());
         write_actor_seats_with(dir.path(), "create-1", &owner, extra);
         let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        witness_fixture_retirement(&mut provider).await;
 
         let event = seated_create_event(&provider, channel_id, "create-1", &owner, "lead");
         provider
@@ -18311,6 +17094,7 @@ mod tests {
         let actor = "cd".repeat(32);
         let seats = write_actor_seats(dir.path(), "create-1", &actor);
         let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        witness_fixture_retirement(&mut provider).await;
 
         // The lead is already working in that checkout, under this umbrella.
         let mut lead = governed_record(channel_id, &cwd, &"ab".repeat(32));
@@ -18444,6 +17228,7 @@ mod tests {
         let projects = write_projects(dir.path(), channel_id, &cwd);
         write_actor_seats(dir.path(), "create-1", &actor);
         let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        witness_fixture_retirement(&mut provider).await;
 
         let create = seated_create_event(&provider, channel_id, "create-1", &actor, "lead");
         provider
@@ -18500,6 +17285,7 @@ mod tests {
         let projects = write_projects(dir.path(), channel_id, &cwd);
         write_actor_seats(dir.path(), "create-1", &actor);
         let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        witness_fixture_retirement(&mut provider).await;
 
         let create = seated_create_event(&provider, channel_id, "create-1", &actor, "builder");
         provider
@@ -18590,6 +17376,7 @@ mod tests {
         let projects = write_projects(dir.path(), channel_id, &cwd);
         write_actor_seats(dir.path(), "create-1", &actor);
         let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        witness_fixture_retirement(&mut provider).await;
 
         let create = seated_create_event(&provider, channel_id, "create-1", &actor, "builder");
         provider
@@ -18771,6 +17558,7 @@ mod tests {
         let projects = write_projects(dir.path(), channel_id, &cwd);
         write_actor_seats(dir.path(), "create-1", &actor);
         let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        witness_fixture_retirement(&mut provider).await;
 
         let create = seated_create_event(&provider, channel_id, "create-1", &actor, "lead");
         provider
@@ -18784,7 +17572,10 @@ mod tests {
             .expect("session")
             .target(&provider.config.instance_id);
         assert_eq!(previous.generation, 1);
-        provider.sessions.shutdown(&previous.session_id);
+        provider
+            .sessions
+            .shutdown_and_join(&previous.session_id, session::ACTOR_RETIRE_GRACE)
+            .await;
 
         // The reconnect's own one-shot hand-off, same pubkey, new command.
         let seats = write_actor_seats(dir.path(), "resume-1", &actor);
@@ -19414,7 +18205,12 @@ mod tests {
                 .expect("create");
             let record = first.state().sessions().next().expect("session");
             assert_eq!(record.resume_cursor.as_deref(), Some("saved-acp-session"));
-            record.session_id.clone()
+            let session_id = record.session_id.clone();
+            first
+                .sessions
+                .shutdown_and_join(&session_id, session::ACTOR_RETIRE_GRACE)
+                .await;
+            session_id
         };
 
         let mut restarted = Provider::new(config_of(
@@ -19532,6 +18328,7 @@ mod tests {
                 .insert_session(SessionRecord {
                     execution_binding: None,
                     execution_boundary: None,
+                    process_witness: None,
                     authority_withdrawn: None,
                     project_head_seen_at: None,
                     session_id: "11111111-1111-4111-8111-111111111111".into(),
@@ -22211,6 +21008,8 @@ done
         // A directory where the refusal ledger's file belongs: every append to
         // it fails, which is the same `io::Error` class a full or read-only
         // state directory raises.
+        std::fs::remove_file(state_dir.join("refusals.jsonl"))
+            .expect("remove existing terminal ledger for fault injection");
         std::fs::create_dir_all(state_dir.join("refusals.jsonl")).expect("sabotage");
 
         provider
@@ -23895,7 +22694,10 @@ done
                 });
             })
             .expect("claim");
-        provider.enforce_claim_for_genesis(&genesis).expect("fence");
+        provider
+            .enforce_claim_for_genesis(&genesis)
+            .await
+            .expect("fence");
 
         assert_eq!(
             dispositions(&provider, "steer-queued"),
@@ -23980,7 +22782,10 @@ done
                 });
             })
             .expect("claim");
-        provider.enforce_claim_for_genesis(&genesis).expect("fence");
+        provider
+            .enforce_claim_for_genesis(&genesis)
+            .await
+            .expect("fence");
         assert_eq!(
             dispositions(&provider, "steer-late-fence"),
             vec![SteerDisposition::Intent],
@@ -24503,7 +23308,10 @@ done
             .expect("steer");
         let held = hold_until_steer_resolved(&mut provider).await;
         claim_for_a_stranger(&mut provider, &target.session_id);
-        provider.enforce_claim_for_genesis(&genesis).expect("fence");
+        provider
+            .enforce_claim_for_genesis(&genesis)
+            .await
+            .expect("fence");
         assert_eq!(
             dispositions(&provider, "steer-x"),
             vec![SteerDisposition::Prevented],
@@ -24666,7 +23474,10 @@ done
         // prompt.
         tokio::time::sleep(Duration::from_millis(300)).await;
         claim_for_a_stranger(&mut provider, &target.session_id);
-        provider.enforce_claim_for_genesis(&genesis).expect("fence");
+        provider
+            .enforce_claim_for_genesis(&genesis)
+            .await
+            .expect("fence");
         assert!(provider.state().is_command_refused("steer-y"));
         assert!(!provider.in_flight.contains_key("steer-y"));
         // The held prompt is cancelled by the fence; the queued fallback is

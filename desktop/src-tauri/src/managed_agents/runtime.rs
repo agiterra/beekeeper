@@ -1,83 +1,51 @@
-use std::collections::HashMap;
-
-use tauri::{AppHandle, Manager};
-
-use super::agent_env::{build_beekeeper_agent_provider_defaults, idle_pool_sleep_env};
-
-use crate::{
-    managed_agents::{
-        append_log_marker, known_acp_runtime, login_shell_path, managed_agent_log_path,
-        missing_command_message, normalize_agent_args, open_log_file, resolve_command,
-        spawn_key_refusal, KnownAcpRuntime, ManagedAgentPairRuntime, ManagedAgentRecord,
-        ManagedAgentRuntimeKey, ManagedAgentSummary,
-    },
-    util::now_iso,
+//! Management observation and one-way legacy import; no desktop executor.
+use super::{
+    known_acp_runtime, managed_agent_log_path, normalize_agent_args, ManagedAgentRecord,
+    ManagedAgentSummary,
 };
-
-mod workspace_pair;
-pub(crate) use workspace_pair::workspace_pair_key;
-// The pure core is referenced only from the unit tests; re-exporting it
-// unconditionally would be an unused import in a release build.
-#[cfg(test)]
-pub(crate) use workspace_pair::resolve_workspace_pair_key;
-
+use tauri::AppHandle;
 mod path;
 pub(in crate::managed_agents) use path::build_augmented_path;
 pub(crate) use path::{compose_path_entries, should_skip_claude_executable, should_use_inherited};
-
-pub(crate) use super::access_policy::{build_respond_to_env_with_policy, RespondToEnv};
-
+mod workspace_pair;
+pub(crate) use workspace_pair::workspace_pair_key;
 mod metadata;
+#[cfg(test)]
+pub(crate) use metadata::REPLAY_FLOOR_ENV_VAR;
 pub(crate) use metadata::{
-    apply_agent_display_env, apply_replay_floor_env, child_rust_log_filter, resolve_session_title,
-    runtime_metadata_env_vars, DISPLAY_NAME_ENV_VAR, REPLAY_FLOOR_ENV_VAR, SESSION_TITLE_ENV_VAR,
+    resolve_session_title, runtime_metadata_env_vars, DISPLAY_NAME_ENV_VAR, SESSION_TITLE_ENV_VAR,
 };
-
-mod stop;
-pub(crate) use stop::{managed_agent_runtime_keys, quiesce_managed_agent_pair};
-pub use stop::{stop_managed_agent_process, stop_managed_agent_workspace_pair};
-
-mod sweep;
-pub(crate) use sweep::sweep_untracked_bundle_harnesses;
-
-mod process;
+mod effective_summary;
+mod legacy_import;
+mod legacy_native;
 #[cfg(test)]
-use process::{
-    beekeeper_marker_entry, name_matches_interpreter, name_matches_known_binary,
-    terminate_runtime_receipt_with, valid_agent_runtime_receipt_with,
+mod test_fixtures;
+pub(crate) use legacy_import::{
+    inspect_legacy_generation, inspect_stopped_legacy_generation, process_is_running,
+    quiesce_legacy_generation, LegacyAgentGeneration,
 };
-pub(crate) use process::{
-    current_instance_id, process_belongs_to_us, process_has_beekeeper_marker, process_is_running,
-    terminate_process, terminate_untracked_pair_runtime, valid_agent_runtime_receipt,
+pub(crate) use legacy_native::{
+    inspect_legacy_launch, preflight_legacy_native_context, read_legacy_native_context,
+    resolve_stopped_legacy_workspace, LegacyNativeLaunch,
 };
 
-mod ownership;
-use ownership::desktop_owns_marked_process;
-pub(crate) use ownership::require_desktop_runtime_owner;
-
-mod orphan_sweep;
-#[cfg(target_os = "macos")]
-use orphan_sweep::proc_pidinfo;
-pub(crate) use orphan_sweep::{
-    sweep_orphaned_agent_processes, sweep_system_agent_processes,
-    sweep_system_agent_processes_with_grace,
-};
-#[cfg(target_os = "macos")]
-use orphan_sweep::{BSDInfo, PROC_PIDTBSDINFO};
-#[cfg(unix)]
-use process::resolve_pgids_and_kill;
-
-mod instance_reaper;
-pub(crate) use instance_reaper::reap_dead_instance_agents;
-#[cfg(test)]
-use instance_reaper::{buffer_contains_identifier, is_desktop_binary};
-
-// Exact-path harness sweep lives in runtime/sweep.rs (re-exported above).
-
-mod lifecycle;
-#[cfg(test)]
-use lifecycle::kill_stale_tracked_processes_with;
-pub use lifecycle::{kill_stale_tracked_processes, sync_managed_agent_processes};
+/// Configure the underlying CLI for a runtime discovery probe; never launches it.
+pub(crate) fn configure_runtime_cli(
+    command: &mut std::process::Command,
+    runtime: Option<&super::KnownAcpRuntime>,
+) {
+    let Some(runtime) = runtime else {
+        return;
+    };
+    if runtime.id != "claude" {
+        return;
+    }
+    if let Some(path) = runtime.underlying_cli.and_then(super::resolve_command) {
+        if !should_skip_claude_executable(&path, cfg!(windows)) {
+            command.env("CLAUDE_CODE_EXECUTABLE", path);
+        }
+    }
+}
 
 /// Classify an agent's persona against the live catalog for the Agents-menu
 /// drift indicator. Returns `(out_of_date, orphaned)`.
@@ -111,7 +79,6 @@ fn persona_drift_state(
 pub fn build_managed_agent_summary(
     app: &AppHandle,
     record: &ManagedAgentRecord,
-    runtimes: &HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
     personas: &[crate::managed_agents::types::AgentDefinition],
     teams: &[crate::managed_agents::TeamRecord],
     global_config: &crate::managed_agents::GlobalAgentConfig,
@@ -123,55 +90,57 @@ pub fn build_managed_agent_summary(
     // as stopped here — matching by pubkey alone would show every community a
     // green light as long as any pair anywhere is alive.
     let pair_key = workspace_pair_key(app, record);
-    let pair_runtime = pair_key.as_ref().and_then(|key| runtimes.get(key));
-
-    let (status, pid, log_path) = if record.backend != BackendKind::Local {
-        // Two-axis status model for remote agents:
-        //
-        //   Control-plane (this field): "deployed" = provider has been invoked and
-        //   returned a backend_agent_id. "not_deployed" = no deploy call yet (or it
-        //   failed). This axis tracks whether infrastructure *exists*, not whether
-        //   the process is currently running.
-        //
-        //   Live axis (relay presence, polled by frontend): online/away/offline.
-        //   Shown as a PresenceDot next to the agent name. This is the real-time
-        //   signal for whether the harness is connected.
-        //
-        // After !shutdown the agent goes offline (presence) but stays "deployed"
-        // (infrastructure still exists). This is intentional — the provider may
-        // have allocated a VM/container that persists across process restarts.
-        // A future provider `undeploy` operation (v2) will handle teardown.
-        let status = if record.backend_agent_id.is_some() {
-            "deployed".to_string()
-        } else {
-            "not_deployed".to_string()
-        };
-        (status, None, String::new())
+    let transfer = if record.backend == BackendKind::Local {
+        pair_key.as_ref().and_then(|key| {
+            let home = beekeeper_host_core::layout::home_dir().ok()?;
+            beekeeper_host_core::ownership::for_pair(
+                &home,
+                crate::agent_host::instance(),
+                &key.pubkey,
+                &key.relay_url,
+            )
+            .ok()
+            .flatten()
+        })
     } else {
-        let persisted_pid = record.runtime_pid.filter(|pid| process_is_running(*pid));
-        if let Some(runtime) = pair_runtime {
-            (
-                "running".to_string(),
-                Some(runtime.child.id()),
-                runtime.log_path.display().to_string(),
+        None
+    };
+    let enabled_on_host = match transfer.as_ref().map(|transfer| &transfer.phase) {
+        Some(beekeeper_host_core::ownership::Phase::Adopted) => true,
+        Some(beekeeper_host_core::ownership::Phase::HostStopped) => false,
+        _ => record.start_on_app_launch,
+    };
+    let (status, pid, log_path) = if record.backend != BackendKind::Local {
+        (
+            if record.backend_agent_id.is_some() {
+                "deployed"
+            } else {
+                "not_deployed"
+            }
+            .to_string(),
+            None,
+            String::new(),
+        )
+    } else {
+        let host_owned = transfer.as_ref().is_some_and(|transfer| {
+            matches!(
+                transfer.phase,
+                beekeeper_host_core::ownership::Phase::Adopted
+                    | beekeeper_host_core::ownership::Phase::HostStopped
             )
-        } else if let Some(pid) = persisted_pid {
-            (
-                "running".to_string(),
-                Some(pid),
-                managed_agent_log_path(app, &record.pubkey)?
-                    .display()
-                    .to_string(),
-            )
-        } else {
-            (
-                "stopped".to_string(),
-                None,
-                managed_agent_log_path(app, &record.pubkey)?
-                    .display()
-                    .to_string(),
-            )
-        }
+        });
+        (
+            if host_owned {
+                "host_managed"
+            } else {
+                "migration_required"
+            }
+            .to_string(),
+            None,
+            managed_agent_log_path(app, &record.pubkey)?
+                .display()
+                .to_string(),
+        )
     };
 
     let (persona_out_of_date, persona_orphaned) = persona_drift_state(record, personas);
@@ -181,51 +150,10 @@ pub fn build_managed_agent_summary(
     let (effective_runtime, runtime_source) =
         effective_summary::summary_effective_runtime(record, personas, global_config);
 
-    // Restart badge: the running process stamped the effective spawn config
-    // it was launched with; recompute a prospective one from current disk
-    // state and report every differing field. Only the tracked live pair for
-    // THIS workspace can drift — stopped agents spawn fresh, adopted
-    // (runtime_pid-only) processes have no stamp to compare, and pairs running
-    // for other communities are judged in their own community (comparing them
-    // against this workspace's relay would flag a spurious restart on every
-    // community switch).
-    //
-    // Adapter-availability drift (codex only) contributes its own synthetic
-    // entry, so an out-of-band adapter change (manual npm install/downgrade)
-    // that Phase-1 auto-restart doesn't cover still shows the user what moved.
-    // The cache is read-only here — no subprocess is spawned.
-    //
-    // Global config drives both the prospective snapshot and the descriptor
-    // env layering below — the caller loads it once and passes it in, so
-    // list-style callers pay one disk read per call rather than one per record.
-
-    // The prospective side is computed only for a tracked pair: an unstamped
-    // agent has nothing to compare against.
-    let tracked_spawn = pair_key.as_ref().zip(pair_runtime).map(|(key, runtime)| {
-        let current = crate::managed_agents::spawn_snapshot::prospective_spawn_config_snapshot(
-            record,
-            personas,
-            teams,
-            &key.relay_url,
-            global_config,
-            super::owner_only_access_build(),
-            super::acp_session_policy(app.state::<crate::app_state::AppState>().inner()),
-        );
-        (runtime, current)
-    });
-    let restart_diff = crate::managed_agents::spawn_snapshot::eligible_restart_diff(
-        persona_orphaned,
-        tracked_spawn.as_ref().map(|(runtime, current)| {
-            crate::managed_agents::spawn_snapshot::TrackedSpawnState {
-                stamped: &runtime.spawn_config,
-                current,
-                stamped_availability: runtime.adapter_availability.as_ref(),
-                current_availability: super::adapter_availability_cached(),
-            }
-        }),
-    );
-    // One vector is the whole truth: badge on ⟺ there is a diff to show.
-    let needs_restart = !restart_diff.is_empty();
+    // Accepted host configuration and relay execution evidence own restart state.
+    // A desktop process stamp cannot certify that state.
+    let restart_diff = Vec::new();
+    let needs_restart = false;
 
     // Resolve the effective harness via the single typed descriptor — same resolver
     // as spawn, so the UI reflects the persona's current harness (or explicit pin).
@@ -304,7 +232,7 @@ pub fn build_managed_agent_summary(
         last_exit_code: record.last_exit_code,
         last_error: record.last_error.clone(),
         last_error_code: record.last_error_code,
-        start_on_app_launch: record.start_on_app_launch,
+        start_on_app_launch: enabled_on_host,
         auto_restart_on_config_change: record.auto_restart_on_config_change,
         log_path,
         respond_to: record.respond_to,
@@ -321,677 +249,3 @@ pub fn find_managed_agent_mut<'a>(
         .find(|record| record.pubkey == pubkey)
         .ok_or_else(|| format!("agent {pubkey} not found"))
 }
-
-/// Pure decision function for the inbound author gate env vars.
-///
-/// Returns the env vars to **set** and the env vars to **remove**. Removal is
-/// belt-and-suspenders: an inherited parent env var must not leak into a
-/// child agent and silently change its security posture.
-///
-/// The `owner_hex` argument is the current workspace owner pubkey. It's used
-/// as a fallback for legacy records (`auth_tag.is_none()`) — without it, the
-/// harness's owner cache stays empty and `owner-only` / `allowlist` modes
-/// drop everything.
-///
-/// Returns `Err(...)` if the record's allowlist fails validation. The harness
-/// validates too, but doing it here means we never spawn a doomed process.
-pub(crate) fn build_respond_to_env(
-    record: &ManagedAgentRecord,
-    owner_hex: Option<&str>,
-) -> Result<RespondToEnv, String> {
-    build_respond_to_env_with_policy(record, owner_hex, super::owner_only())
-}
-
-pub(crate) fn configure_runtime_cli(
-    command: &mut std::process::Command,
-    runtime: Option<&KnownAcpRuntime>,
-) {
-    let Some(runtime) = runtime else {
-        return;
-    };
-    if runtime.id != "claude" {
-        return;
-    }
-    if let Some(cli_path) = runtime.underlying_cli.and_then(resolve_command) {
-        // On Windows, `.cmd` and `.bat` files are batch shims — they cannot be
-        // passed directly to `CreateProcess` and cause EINVAL when the Claude
-        // adapter tries to spawn them (issue #2397). Skip setting
-        // `CLAUDE_CODE_EXECUTABLE` for shim paths so the adapter falls back to
-        // its own PATH lookup and finds the real binary instead.
-        // Non-Windows: `.cmd`/`.bat` are valid executables and must be assigned.
-        if should_skip_claude_executable(&cli_path, cfg!(windows)) {
-            return;
-        }
-        command.env("CLAUDE_CODE_EXECUTABLE", cli_path);
-    }
-}
-
-/// Spawn an agent process without holding any locks on records or runtimes.
-/// Returns the child process and log path on success. The caller is responsible
-/// for updating `ManagedAgentRecord` fields and inserting into the runtimes map.
-///
-/// `owner_hex`: the workspace owner's pubkey, used as a fallback for legacy
-/// records that have no NIP-OA `auth_tag`. See `build_respond_to_env`.
-pub fn spawn_agent_child(
-    app: &AppHandle,
-    record: &ManagedAgentRecord,
-    relay_url: &str,
-    lazy: bool,
-    owner_hex: Option<&str>,
-    replay_floor_unix: Option<u64>,
-) -> Result<crate::managed_agents::ManagedAgentProcess, String> {
-    require_desktop_runtime_owner(&record.pubkey, relay_url)?;
-    if let Some(error) = spawn_key_refusal(record) {
-        return Err(error);
-    }
-    let runtime_key = ManagedAgentRuntimeKey::new(record.pubkey.clone(), relay_url)?;
-    // Resolve the effective harness (agent command) from the linked persona, so
-    // persona harness edits propagate on the next spawn; an explicit per-agent
-    // override wins. `agent_args` and `mcp_command` are pure derivations of the
-    // command, so we recompute them from the effective value rather than the
-    // frozen record snapshot. Mirrors the model resolution below.
-    let personas = super::load_personas(app).unwrap_or_default();
-    let teams = super::load_teams(app).unwrap_or_default();
-    // Load global config once; used for runtime_metadata_env_vars (model/provider fallback)
-    // and for the env-var merge at spawn time.
-    let global = crate::managed_agents::load_global_agent_config(app).unwrap_or_default();
-
-    // Resolve model/provider/prompt ONCE, here, at the shared spawn boundary —
-    // the single source both the env writes below and the spawn-config snapshot
-    // read from. Previously prompt was read from the record's own (possibly
-    // stale, Phase-A-snapshot) bytes while model/provider were resolved live
-    // from `personas`; a definition edit landing between a caller's snapshot
-    // apply and this spawn could hand a fresh model/provider to a stale
-    // prompt. This also folds in orphan refusal via `require_resolved`: every
-    // caller (interactive start, launch restore, `start_managed_agent_process`)
-    // inherits it — no caller can bypass this by reaching `spawn_agent_child`
-    // directly. Checked before any side effect (log marker, log file, process
-    // spawn) so a refused spawn leaves no trace.
-    let effective_cfg = crate::managed_agents::effective_config::resolve_effective_config(
-        record, &personas, &global,
-    )
-    .require_resolved()?;
-
-    // Single typed resolver: validates runtime id (dangling harness → Err), resolves
-    // command, args (instance wins over definition default), and the full env layer stack.
-    // This is the sole path for harness-definition lookup — spawn, snapshot,
-    // summary, and model probes all consume this descriptor rather than
-    // assembling values inline.
-    // Like the orphan refusal above, this runs before any side effect so a refused
-    // spawn leaves no trace.
-    let descriptor =
-        crate::managed_agents::resolve_effective_harness_descriptor(record, &personas, &global)
-            .map_err(|e| {
-                format!(
-                    "cannot spawn agent {}: {}",
-                    record.pubkey,
-                    crate::managed_agents::user_facing_harness_error(&e)
-                )
-            })?;
-    let effective_command = &descriptor.command;
-    let agent_args = &descriptor.args;
-
-    let log_path = super::managed_agent_runtime_log_path(app, &runtime_key)?;
-    append_log_marker(
-        &log_path,
-        &format!(
-            "\n=== starting {} ({}) at {} ===",
-            record.name,
-            record.pubkey,
-            now_iso()
-        ),
-    )?;
-
-    let stdout = open_log_file(&log_path)?;
-    let stderr = stdout
-        .try_clone()
-        .map_err(|error| format!("failed to clone log handle: {error}"))?;
-    let resolved_acp_command = resolve_command(&record.acp_command)
-        .ok_or_else(|| missing_command_message(&record.acp_command, "ACP harness command"))?;
-    let effective_mcp_command = known_acp_runtime(effective_command)
-        .and_then(|r| r.mcp_command)
-        .unwrap_or("");
-    let resolved_mcp_command: Option<std::path::PathBuf> = if effective_mcp_command.is_empty() {
-        None
-    } else {
-        match resolve_command(effective_mcp_command) {
-            Some(path) => Some(path),
-            None => {
-                eprintln!(
-                    "beekeeper-desktop: mcp_command {effective_mcp_command:?} not found, skipping"
-                );
-                None
-            }
-        }
-    };
-    // Resolve agent command to a full path (DMG launches have minimal PATH).
-    let resolved_agent_command = resolve_command(effective_command)
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| effective_command.clone());
-
-    // The caller supplies the explicit canonical pair relay. This is the only
-    // relay this child may connect to, regardless of the record/workspace default.
-    let effective_relay_url = runtime_key.relay_url.clone();
-
-    // Augment PATH for DMG launches so child processes can find:
-    //   - bundled CLI via ~/.local/bin symlink
-    //   - nvm-managed node/npm (nvm initializes only in interactive shells)
-    //   - bundled sidecars (bee, beekeeper-acp, etc.) via exe parent (Contents/MacOS/)
-    //   - runtimes (node, python, etc.) via login shell PATH
-    let nvm_bin = dirs::home_dir()
-        .as_deref()
-        .and_then(super::find_nvm_default_bin);
-    let augmented_path = build_augmented_path(
-        dirs::home_dir(),
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf)),
-        login_shell_path(),
-        nvm_bin,
-    );
-
-    let mut command = std::process::Command::new(&resolved_acp_command);
-    // This agent's own nest, or the shared home for an agent minted before
-    // nests existed and never moved (`AgentHome`). The pack write below is
-    // refused in the shared case, which is exactly what the agent card
-    // discloses — it is not a silent failure.
-    if let Some(home) = super::agent_nest::agent_workdir(app, record) {
-        // Pack skills, before the child exists. Reported, never fatal — and
-        // refused while this workdir is shared rather than one seat's own.
-        super::nest::materialize_persona_skills_logged(record, &home, &log_path);
-        command.current_dir(home);
-    }
-    command.stdin(std::process::Stdio::null());
-    command.stdout(std::process::Stdio::from(stdout));
-    command.stderr(std::process::Stdio::from(stderr));
-    if let Some(ref path) = augmented_path {
-        command.env("PATH", path);
-    }
-    command.env("RUST_LOG", child_rust_log_filter());
-    command.env("BEEKEEPER_PRIVATE_KEY", &record.private_key_nsec);
-    command.env("BEEKEEPER_RELAY_URL", &effective_relay_url);
-    command.env("BEEKEEPER_ACP_LAZY_POOL", lazy.to_string());
-    command.env("BEEKEEPER_ACP_IDLE_POOL_SLEEP", idle_pool_sleep_env(lazy));
-    // A floor belongs only to a publish-first invocation. Clear any inherited
-    // parent value before descriptor env is applied below.
-    command.env_remove(REPLAY_FLOOR_ENV_VAR);
-    command.env("BEEKEEPER_ACP_AGENT_COMMAND", &resolved_agent_command);
-    command.env("BEEKEEPER_ACP_AGENT_ARGS", agent_args.join(","));
-    let mcp_cmd = resolved_mcp_command
-        .as_deref()
-        .unwrap_or(std::path::Path::new(""));
-    command.env("BEEKEEPER_ACP_MCP_COMMAND", mcp_cmd);
-    // Enable MCP hook tools (_Stop, _PostCompact) for agents that need them.
-    // Uses "*" because build_mcp_servers() hard-codes the server name to "buzz-mcp".
-    let runtime_meta = known_acp_runtime(effective_command);
-    if runtime_meta.is_some_and(|r| r.mcp_hooks) {
-        command.env("MCP_HOOK_SERVERS", "*");
-    }
-
-    // ── Readiness check: set setup-payload if agent is not ready ─────────────
-    //
-    // Build the effective env the agent would have at start-time, run the
-    // readiness predicate, and if anything is missing, serialize the payload
-    // into BEEKEEPER_ACP_SETUP_PAYLOAD.  beekeeper-acp detects this env var on startup
-    // and enters the minimal setup-listener mode instead of the agent pool.
-    //
-    // SECURITY: BEEKEEPER_ACP_SETUP_PAYLOAD is in RESERVED_ENV_KEYS so user env
-    // cannot set it, but we also explicitly remove it after writing user env
-    // to guard against the parent-process environment. We then set it only
-    // when desktop has computed NotReady — the desktop is the sole readiness
-    // source and beekeeper-acp only transports the payload.
-    //
-    // The JSON format mirrors `setup_mode::SetupPayload` in beekeeper-acp:
-    //   { "agent_name": "...", "agent_pubkey": "...", "requirements": [{ "surface": "...", ... }] }
-    //
-    // `spawned_setup_mode` is captured outside the block so it can be stamped
-    // on `ManagedAgentProcess` — used by `install_acp_runtime` to target only
-    // stuck agents for auto-restart.
-    let spawned_setup_mode;
-    {
-        use crate::managed_agents::readiness::EffectiveAgentEnv;
-        use crate::managed_agents::{agent_readiness, AgentReadiness, Requirement};
-
-        // Construct EffectiveAgentEnv from the descriptor computed above — no second
-        // resolver call; the descriptor's env is already the fully layered result.
-        let effective = EffectiveAgentEnv {
-            env: descriptor.env.clone(),
-            config_file_path: runtime_meta.and_then(|r| r.config_file_path),
-            effective_command: descriptor.command.clone(),
-        };
-        // Compute the optional payload before touching the command.
-        let setup_payload_json =
-            if let AgentReadiness::NotReady { requirements } = agent_readiness(&effective) {
-                let reqs: Vec<serde_json::Value> = requirements
-                    .into_iter()
-                    .map(|r| match r {
-                        Requirement::NormalizedField { field } => serde_json::json!({
-                            "surface": "normalized_field",
-                            "field": field,
-                        }),
-                        Requirement::EnvKey { key } => serde_json::json!({
-                            "surface": "env_key",
-                            "key": key,
-                        }),
-                        Requirement::CliLogin {
-                            probe_args,
-                            setup_copy,
-                            availability,
-                        } => serde_json::json!({
-                            "surface": "cli_login",
-                            "probe_args": probe_args,
-                            "setup_copy": setup_copy,
-                            "availability": availability,
-                        }),
-                        Requirement::CliConfigInvalid {
-                            probe_args,
-                            setup_copy,
-                            diagnostic,
-                        } => serde_json::json!({
-                            "surface": "cli_config_invalid",
-                            "probe_args": probe_args,
-                            "setup_copy": setup_copy,
-                            "diagnostic": diagnostic,
-                        }),
-                        Requirement::GitBash => serde_json::json!({
-                            "surface": "git_bash",
-                        }),
-                        Requirement::MissingBinary { command } => serde_json::json!({
-                            "surface": "missing_binary",
-                            "command": command,
-                        }),
-                    })
-                    .collect();
-                let payload = serde_json::json!({
-                    "agent_name": record.name,
-                    "agent_pubkey": record.pubkey,
-                    "requirements": reqs,
-                });
-                match serde_json::to_string(&payload) {
-                    Ok(json) => Some(json),
-                    Err(e) => {
-                        eprintln!(
-                            "beekeeper-desktop: failed to serialize setup payload for {}: {e}",
-                            record.name
-                        );
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-        spawned_setup_mode = setup_payload_json.is_some();
-
-        // Strip the key from the process-spawned command on every path.
-        // Two independent guards protect the invariant:
-        //   1. BEEKEEPER_ACP_SETUP_PAYLOAD is in RESERVED_ENV_KEYS, so
-        //      merged_user_env() can never write it via saved/persona env.
-        //   2. This env_remove() clears any ambient parent-process value
-        //      inherited by std::process::Command before we conditionally
-        //      set the desktop-computed trusted value below.
-        // Note: merged_user_env() is written further below in this function;
-        // ordering relative to that call is NOT what makes this safe — the
-        // reserved-key strip (guard 1) handles user env regardless of order.
-        command.env_remove("BEEKEEPER_ACP_SETUP_PAYLOAD");
-
-        // Set the payload only when desktop computed NotReady.
-        if let Some(json) = setup_payload_json {
-            command.env("BEEKEEPER_ACP_SETUP_PAYLOAD", json);
-            eprintln!(
-                "beekeeper-desktop: agent {} not ready — spawning in setup-listener mode",
-                record.name
-            );
-        }
-    }
-    // Emit BEEKEEPER_ACP_IDLE_TIMEOUT only when explicitly set; the harness
-    // DEFAULT_IDLE_TIMEOUT_SECS is the single source of truth. The deprecated
-    // BEEKEEPER_ACP_TURN_TIMEOUT pinned agents to a stale default (320s).
-    if let Some(idle) = record.idle_timeout_seconds {
-        command.env("BEEKEEPER_ACP_IDLE_TIMEOUT", idle.to_string());
-    }
-
-    if let Some(max_dur) = record.max_turn_duration_seconds {
-        command.env("BEEKEEPER_ACP_MAX_TURN_DURATION", max_dur.to_string());
-    }
-    let acp_n = super::acp_agents_value(effective_command, record.parallelism);
-    command.env("BEEKEEPER_ACP_AGENTS", acp_n);
-    command.env("BEEKEEPER_ACP_MULTIPLE_EVENT_HANDLING", "steer");
-    command.env("BEEKEEPER_ACP_DEDUP", "queue");
-    if let Some(meta) = runtime_meta {
-        for (key, value) in meta.default_env {
-            if std::env::var(key).is_err() {
-                command.env(key, value);
-            }
-        }
-    }
-    let team_instructions = super::spawn_snapshot::effective_team_instructions(record, &teams);
-    if let Some(instructions) = &team_instructions {
-        command.env("BEEKEEPER_ACP_TEAM_INSTRUCTIONS", instructions);
-    } else {
-        command.env_remove("BEEKEEPER_ACP_TEAM_INSTRUCTIONS");
-    }
-
-    // Prompt, model, and provider all come from the single `effective_cfg`
-    // resolved at the top of this function — the SAME resolve the spawn-config
-    // snapshot reads, so env write and restart badge cannot disagree. Linked
-    // instances never consult the record's own model/provider/prompt bytes;
-    // definition-less instances fall back to their own fields, then global.
-    //
-    // Derive the mesh decision BEFORE moving fields out — `relay_mesh_model_id`
-    // is the single authoritative gate; the mesh-llm block below MUST use it
-    // rather than re-deriving from `effective_provider` to keep preflight and
-    // spawn semantics in lock-step (see `EffectiveAgentConfig::relay_mesh_model_id`).
-    #[cfg(feature = "mesh-llm")]
-    let mesh_model_id = effective_cfg.relay_mesh_model_id();
-    let effective_prompt = effective_cfg.system_prompt.value;
-    let effective_model = effective_cfg.model.value;
-    let effective_provider = effective_cfg.provider.value;
-
-    if let Some(prompt) = &effective_prompt {
-        command.env("BEEKEEPER_ACP_SYSTEM_PROMPT", prompt);
-    } else {
-        command.env_remove("BEEKEEPER_ACP_SYSTEM_PROMPT");
-    }
-    // Shared compute stores `auto`, but the wire name is MeshLLM's virtual
-    // `mesh` model. Translate here too, so the harness and the LLM client are
-    // told the same thing: `BEEKEEPER_ACP_MODEL=auto` would name a model the mesh
-    // never advertises, leaving beekeeper-acp to warn and fall back on every new
-    // session while `BEEKEEPER_AGENT_MODEL` said `mesh`.
-    #[cfg(feature = "mesh-llm")]
-    let acp_model = match (&mesh_model_id, effective_model.as_deref()) {
-        (Some(mesh_model_id), _) => Some(super::relay_mesh_wire_model(mesh_model_id).to_string()),
-        (None, model) => model.map(str::to_owned),
-    };
-    #[cfg(not(feature = "mesh-llm"))]
-    let acp_model = effective_model.as_deref().map(str::to_owned);
-    if let Some(model) = acp_model.as_deref() {
-        command.env("BEEKEEPER_ACP_MODEL", model);
-    } else {
-        command.env_remove("BEEKEEPER_ACP_MODEL");
-    }
-    // Session title for the harness to pass out-of-band on `session/new`. The
-    // adapter names the session after it; it never reaches the prompt, so this
-    // is display metadata only. The spawn-config snapshot records the same
-    // resolve, so a rename raises the restart badge instead of leaving the
-    // process stale.
-    apply_agent_display_env(
-        &mut command,
-        resolve_session_title(record.display_name.as_deref(), &record.name),
-    );
-    build_beekeeper_agent_provider_defaults(&mut command);
-    if let Some(meta) = runtime_meta {
-        for (key, value) in runtime_metadata_env_vars(
-            meta.model_env_var,
-            meta.provider_env_var,
-            meta.provider_locked,
-            effective_model.as_deref(),
-            effective_provider.as_deref(),
-        ) {
-            command.env(key, value);
-        }
-    }
-    command.env_remove("BEEKEEPER_ACP_PRIVATE_KEY");
-    command.env_remove("BEEKEEPER_ACP_API_TOKEN");
-    command.env_remove("BEEKEEPER_API_TOKEN");
-
-    if let Some(ref auth_tag) = record.auth_tag {
-        command.env("BEEKEEPER_AUTH_TAG", auth_tag);
-    } else {
-        command.env_remove("BEEKEEPER_AUTH_TAG");
-    }
-
-    // Inbound author gate: who is this agent allowed to respond to?
-    // Validation is strict here — a malformed allowlist on disk fails before
-    // we spawn anything (the harness would also reject it, but we'd rather
-    // fail with a clear error than crash-loop the child).
-    let (gate_set, gate_remove) = build_respond_to_env(record, owner_hex)?;
-    for (key, value) in &gate_set {
-        command.env(key, value);
-    }
-    for key in &gate_remove {
-        command.env_remove(key);
-    }
-
-    command.env("BEEKEEPER_ACP_RELAY_OBSERVER", "true");
-
-    // ── Git credential helper for Beekeeper relay ──────────────────────────
-    //
-    // Agents need to clone/push repos hosted on the Beekeeper relay's git
-    // server, which authenticates via NIP-98. The `git-credential-nostr`
-    // binary signs auth events using the agent's nostr key.
-    //
-    // We configure git via GIT_CONFIG_COUNT env vars (ephemeral, no
-    // filesystem writes) scoped to the relay's git URL so we don't
-    // interfere with other remotes (e.g. GitHub).
-    //
-    // NOSTR_PRIVATE_KEY mirrors BEEKEEPER_PRIVATE_KEY — keep in sync.
-    if let Some(cred_helper) = resolve_command("git-credential-nostr") {
-        let relay_http_url = crate::relay::relay_http_base_url(&effective_relay_url);
-
-        command.env("NOSTR_PRIVATE_KEY", &record.private_key_nsec);
-        command.env("GIT_TERMINAL_PROMPT", "0");
-        command.env("GIT_CONFIG_COUNT", "2");
-        command.env(
-            "GIT_CONFIG_KEY_0",
-            format!("credential.{relay_http_url}/git.helper"),
-        );
-        let helper = cred_helper.to_string_lossy().replace('\\', "/");
-        command.env("GIT_CONFIG_VALUE_0", helper);
-        command.env(
-            "GIT_CONFIG_KEY_1",
-            format!("credential.{relay_http_url}/git.useHttpPath"),
-        );
-        command.env("GIT_CONFIG_VALUE_1", "true");
-    } else {
-        eprintln!(
-            "beekeeper-desktop: git-credential-nostr not found — agent {} will not have automatic Beekeeper git auth",
-            record.name,
-        );
-    }
-
-    // ── User env vars: definition floor + global + live persona + agent overrides ──
-    //
-    // `descriptor.env` is the fully-layered result from `resolve_effective_harness_descriptor`:
-    // baked floor → runtime metadata → definition env (harness author defaults) →
-    // global → live persona → per-agent, with reserved-key and malformed-key filtering
-    // applied. Writing it last lets user-provided values win over every Beekeeper-set env
-    // written above — reserved keys were already stripped from descriptor.env so they
-    // cannot clobber BEEKEEPER_PRIVATE_KEY, NOSTR_PRIVATE_KEY, etc.
-    for (key, value) in &descriptor.env {
-        command.env(key, value);
-    }
-    // This is a Desktop policy, not a user environment preference. It is
-    // reserved before descriptor layering and written after it so local and
-    // provider launches cannot disagree about the harness session boundary.
-    let acp_session_policy = super::apply_app_acp_session_policy_env(app, &mut command);
-    // The one-shot publish timestamp is invocation state, so it wins over
-    // descriptor env after all saved layers have been applied.
-    apply_replay_floor_env(&mut command, replay_floor_unix);
-    configure_runtime_cli(&mut command, runtime_meta);
-
-    // Beekeeper shared compute is stored as a native provider; derive the OpenAI-compatible
-    // transport at spawn time and scrub any unrelated ambient OpenAI key.
-    // Gate on `mesh_model_id` (derived from `effective_cfg.relay_mesh_model_id()`
-    // above) — not on `effective_provider` directly — so the mesh gate here
-    // uses the same trim semantics as the preflight callers.
-    #[cfg(feature = "mesh-llm")]
-    if let Some(ref mesh_model_id) = mesh_model_id {
-        let mesh_env = super::relay_mesh_process_env(&descriptor.env, mesh_model_id);
-        command.env_remove("OPENAI_API_KEY");
-        for (key, value) in mesh_env {
-            command.env(key, value);
-        }
-    }
-
-    let start_nonce = ownership::stamp_desktop_ownership(&mut command, app, &log_path);
-    super::apply_legacy_env_names(&mut command);
-
-    // Stamp the effective spawn config from the values that populated the
-    // `Command` above, BEFORE spawning. Re-resolving after `spawn()` would let
-    // a persona/harness/global edit landing in between stamp the NEW config
-    // onto a child running the OLD one, silently suppressing the badge.
-    let spawn_config = super::spawn_snapshot::SpawnConfigSnapshot::from_inputs(
-        super::spawn_snapshot::SpawnConfigInputs {
-            record,
-            descriptor: &descriptor,
-            relay_url: &effective_relay_url,
-            team_instructions: team_instructions.as_deref(),
-            system_prompt: effective_prompt.as_deref(),
-            model: effective_model.as_deref(),
-            provider: effective_provider.as_deref(),
-            enforced_owner_only: super::owner_only_access_build(),
-            session_policy: acp_session_policy,
-        },
-    );
-
-    // Spawn the harness in its own process group so we can kill the entire
-    // tree (harness + MCP servers + agent subprocesses) on shutdown.
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    // Windows: suppress the harness console window. Without this a bare
-    // terminal pops for beekeeper-acp.exe and lingers (the app itself sets
-    // windows_subsystem="windows", but the spawned child does not inherit it).
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    let child = command.spawn().map_err(|error| {
-        format!(
-            "failed to spawn `{}` for agent {}: {error}",
-            resolved_acp_command.display(),
-            record.name
-        )
-    })?;
-
-    // Stamp the adapter availability for runtimes with a version gate (codex
-    // only). The summary builder compares this against the current cached value
-    // to detect out-of-band adapter changes after spawn (Phase-2 badge fallback).
-    // Non-codex runtimes get `None` — nothing changes for them.
-    // When the cache is cold (e.g. Doctor just installed and cleared the cache),
-    // `adapter_availability_cached()` returns `None`, so the stamp is `None` and
-    // the drift check is skipped until discovery warms the cache — preventing a
-    // false restart badge immediately after auto-restart.
-    let spawned_adapter_availability = if runtime_meta.is_some_and(|r| r.id == "codex") {
-        super::adapter_availability_cached()
-    } else {
-        None
-    };
-
-    // Receipt persistence belongs to the caller's atomic register transition.
-
-    // Windows: assign the harness to a Job Object so its whole tree dies with
-    // the handle. The Unix process-group equivalent is set above.
-    #[cfg(windows)]
-    return Ok(super::process_lifecycle::finish_spawn(
-        child,
-        log_path,
-        spawn_config,
-        spawned_setup_mode,
-        spawned_adapter_availability,
-        start_nonce,
-        &record.name,
-    ));
-    #[cfg(not(windows))]
-    Ok(crate::managed_agents::ManagedAgentProcess {
-        child,
-        log_path,
-        spawn_config,
-        setup_mode: spawned_setup_mode,
-        adapter_availability: spawned_adapter_availability,
-        start_nonce,
-    })
-}
-
-pub fn start_managed_agent_process(
-    app: &AppHandle,
-    record: &mut ManagedAgentRecord,
-    runtimes: &mut HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
-    owner_hex: Option<&str>,
-    pinned_relay_url: Option<&str>,
-    replay_floor_unix: Option<u64>,
-) -> Result<(), String> {
-    let active_relay_url = {
-        use tauri::Manager;
-        let state = app.state::<crate::app_state::AppState>();
-        crate::relay::relay_ws_url_with_override(&state)
-    };
-    let relay_url = process_relay_url(&record.relay_url, &active_relay_url, pinned_relay_url);
-    let key = ManagedAgentRuntimeKey::new(record.pubkey.clone(), &relay_url)?;
-    if let Some(runtime) = runtimes.get_mut(&key) {
-        if runtime
-            .child
-            .try_wait()
-            .map_err(|error| format!("failed to inspect running process: {error}"))?
-            .is_none()
-        {
-            return Ok(());
-        }
-
-        runtimes.remove(&key);
-        super::remove_agent_runtime_receipt(app, &key);
-    }
-
-    // Scalar PIDs are migration-only and never establish pair liveness.
-    record.runtime_pid = None;
-
-    let mut process = spawn_agent_child(
-        app,
-        record,
-        &key.relay_url,
-        false,
-        owner_hex,
-        replay_floor_unix,
-    )?;
-    let now = now_iso();
-    let receipt = super::ManagedAgentRuntimeReceipt {
-        key: key.clone(),
-        pid: process.child.id(),
-        desktop_instance_id: current_instance_id(app),
-        started_at: now.clone(),
-    };
-    if let Err(error) = super::write_agent_runtime_receipt(app, &receipt) {
-        let _ = terminate_process(process.child.id());
-        let _ = process.child.wait();
-        return Err(error);
-    }
-
-    record.updated_at = now.clone();
-    record.last_started_at = Some(now);
-    record.last_stopped_at = None;
-    record.last_exit_code = None;
-    record.last_error = None;
-    record.last_error_code = None;
-
-    runtimes.insert(key, ManagedAgentPairRuntime::starting(process));
-    Ok(())
-}
-
-fn process_relay_url(record: &str, active: &str, pinned: Option<&str>) -> String {
-    pinned
-        .map(str::to_owned)
-        .unwrap_or_else(|| crate::relay::effective_agent_relay_url(record, active))
-}
-
-#[cfg(test)]
-#[test]
-fn pinned_process_relay_survives_a_switch_after_recheck() {
-    assert_eq!(
-        process_relay_url("", "wss://relay-b.example", Some("wss://relay-a.example")),
-        "wss://relay-a.example"
-    );
-}
-
-mod effective_summary;
-
-#[cfg(test)]
-mod test_fixtures;
-
-#[cfg(test)]
-mod tests;

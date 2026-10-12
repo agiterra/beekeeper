@@ -11,6 +11,7 @@ members = [
     "crates/beekeeper-audit",
     "crates/beekeeper-acp",
     "crates/beekeeper-agent",
+    "crates/beekeeper-agent-management",
     "crates/sprig",
     "crates/beekeeper-test-client",
     "crates/beekeeper-ws-client",

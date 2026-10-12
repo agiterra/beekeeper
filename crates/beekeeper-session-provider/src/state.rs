@@ -29,6 +29,13 @@
 //! items at the same sequence as a conflict it must surface, while a gap is
 //! simply a sequence it never sees.
 
+#[path = "state_import.rs"]
+mod import;
+
+#[path = "state_lifecycle.rs"]
+mod lifecycle;
+pub(crate) use lifecycle::{lifecycle_fingerprint, LifecycleStartIntent, LifecycleStartPhase};
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
@@ -237,6 +244,9 @@ pub struct SessionRecord {
     /// diagnostics. `None` for a record written before the boundary existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_boundary: Option<crate::execution_scope::RecordedBoundary>,
+    /// Actual child group, or interrupted reopen intent; never a signalling authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_witness: Option<crate::process_witness::ExecutionProcessWitness>,
     /// Why this execution's own authority was withdrawn — its seat revoked,
     /// or this provider removed from its channel. Set when the process is
     /// stopped for it; a resume or restore of the record is refused while it
@@ -762,6 +772,9 @@ pub struct SteerAttemptRecord {
 pub(crate) struct TerminalDisposition {
     pub semantic_key: String,
     pub event: nostr::Event,
+    /// Optional existing lifecycle start reservation and effect boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_start: Option<LifecycleStartIntent>,
 }
 
 /// Durable provider state rooted at one directory.
@@ -794,6 +807,14 @@ pub(crate) struct FaultPlan {
     pub fail_next_refusal_append: bool,
     /// Fail the next [`StateStore::consume_command`].
     pub fail_next_command_append: bool,
+    /// Fail the start effect-boundary write, after command consumption.
+    pub fail_next_lifecycle_effects_write: bool,
+    /// Fail receipt projection only after a verified joined Stop.
+    pub fail_next_verified_stop_projection: bool,
+    /// Interrupt Create after an actual ACP child is attached, before record commit.
+    pub fail_next_create_record_write: bool,
+    /// Interrupt after accepted record but before initial-turn delivery.
+    pub fail_next_create_initial_delivery: bool,
     /// Fail the next [`StateStore::consume_operation`].
     pub fail_next_operation_append: bool,
     /// Fail the next steer-attempt append ([`StateStore::stage_steer_intent`]
@@ -985,6 +1006,19 @@ impl StateStore {
     pub(crate) fn finish_terminal_disposition(&mut self, command_id: &str) -> io::Result<()> {
         self.record_refusal(command_id, now_secs())?;
         let previous = self.snapshot.clone();
+        if self
+            .snapshot
+            .terminal_dispositions
+            .get(command_id)
+            .is_some_and(|disposition| {
+                disposition
+                    .lifecycle_start
+                    .as_ref()
+                    .is_some_and(|intent| intent.phase != LifecycleStartPhase::BeforeEffects)
+            })
+        {
+            return Ok(()); // Uncertain startup remains an admission/recovery fence.
+        }
         self.snapshot.terminal_dispositions.remove(command_id);
         self.persist_or_restore(previous)
     }
@@ -1745,6 +1779,7 @@ mod tests {
         SessionRecord {
             execution_binding: None,
             execution_boundary: None,
+            process_witness: None,
             authority_withdrawn: None,
             project_head_seen_at: None,
             session_id: session_id.to_owned(),

@@ -31,12 +31,19 @@ pub mod env;
 pub mod layout;
 pub mod logs;
 pub mod managed_node;
+pub mod managed_runtime;
+pub mod migration_backup;
+pub mod native_artifacts;
 pub mod ownership;
 pub mod path_env;
 pub mod project;
+pub mod provider_boundary;
 pub mod provision;
 pub mod record;
 
 #[cfg(test)]
 #[path = "contract_tests.rs"]
 mod contract_tests;
+
+/// Explicit scoped limit configuration shared by management clients.
+pub mod host_limits;

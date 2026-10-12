@@ -32,6 +32,8 @@ mod model_tests;
 mod models;
 #[cfg(target_os = "macos")]
 mod mouse_nav;
+#[cfg(all(feature = "native-acceptance", debug_assertions))]
+mod native_acceptance;
 mod native_websocket;
 mod nostr_bind;
 pub mod nostr_convert;
@@ -68,7 +70,7 @@ use deep_link::{
 use huddle::HuddlePhase;
 use initial_window::show_main_window;
 use initial_window::*;
-use managed_agents::{backfill_persona_snapshots, ensure_nest, try_regenerate_nest};
+use managed_agents::{ensure_nest, try_regenerate_nest};
 #[cfg(all(feature = "mesh-llm", target_os = "macos"))]
 use shutdown::{hard_exit_after_mesh_shutdown, relaunch_after_mesh_shutdown};
 use shutdown::{is_restart_request, shut_down_app};
@@ -88,8 +90,17 @@ pub fn run() {
     // Must run before anything else touches tauri::async_runtime.
     #[cfg(feature = "mesh-llm")]
     crate::mesh_llm::install_big_stack_worker_runtime();
-    let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+    let builder = tauri::Builder::default();
+    #[cfg(all(feature = "native-acceptance", debug_assertions))]
+    let isolated_driver = native_acceptance::isolated_scope_requested();
+    #[cfg(not(all(feature = "native-acceptance", debug_assertions)))]
+    let isolated_driver = false;
+    // A named disposable backend driver may coexist with the old-generation
+    // fixture guard. Production client singleton behavior remains unchanged.
+    let builder = if isolated_driver {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // Focus the existing window when a duplicate instance launches.
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_focus();
@@ -101,7 +112,8 @@ pub fn run() {
                 }
             }
         }))
-        .plugin(tauri_plugin_deep_link::init())
+    };
+    let builder = builder.plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -406,9 +418,7 @@ pub fn run() {
             // restore_managed_agents_on_launch so no agent spawns from an empty
             // snapshot. Synchronous and best-effort — a failure here must not
             // block launch, but a missing persona is logged loudly inside.
-            if let Err(e) = backfill_persona_snapshots(&app_handle) {
-                eprintln!("beekeeper-desktop: persona-snapshot backfill failed: {e}");
-            }
+
 
             // Warm the loaded-harness registry BEFORE restore so cold-launch
             // agent spawns can resolve custom/preset runtime ids without
@@ -551,45 +561,6 @@ pub fn run() {
                     .store(true, Ordering::Release);
             }
 
-            // Periodic sweep: reap orphaned agents from dead instances every 60s.
-            // Catches agents that escaped both the Justfile trap and boot-time
-            // reaping (e.g. a `just dev` Ctrl+C leak that only gets collected
-            // by a different instance's periodic sweep).
-            let sweep_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                use std::collections::HashSet;
-                use std::time::Duration;
-                use tauri::Manager;
-                let instance_id = managed_agents::current_instance_id(&sweep_handle);
-                let state = sweep_handle.state::<AppState>();
-                // Two-tick grace: only reap same-instance orphans seen on two
-                // consecutive sweeps. Prevents killing a legitimately-starting
-                // agent that spawned between the skip-list snapshot and the scan.
-                let mut prev_orphans: HashSet<u32> = HashSet::new();
-                loop {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
-                    // Collect PIDs of our own live agents to avoid killing them.
-                    let skip_pids: Vec<u32> = state
-                        .managed_agent_processes
-                        .lock()
-                        .map(|runtimes| runtimes.values().map(|rt| rt.child.id()).collect())
-                        .unwrap_or_default();
-                    let prev = prev_orphans.clone();
-                    let inst = instance_id.clone();
-                    // Run the blocking syscall work off the async executor.
-                    let new_orphans = tauri::async_runtime::spawn_blocking(move || {
-                        let orphans = managed_agents::sweep_system_agent_processes_with_grace(
-                            &inst, &skip_pids, &prev,
-                        );
-                        managed_agents::reap_dead_instance_agents(&inst, &skip_pids);
-                        orphans
-                    })
-                    .await
-                    .unwrap_or_default();
-                    prev_orphans = new_orphans;
-                }
-            });
-
             // Finish any verifier/runner input establishment a previous run
             // left pending. Durable and host-owned on purpose: before this,
             // checking out an assignment's commit in a seat's tree ran from a
@@ -633,6 +604,8 @@ pub fn run() {
                     }
                 });
             }
+            #[cfg(all(feature = "native-acceptance", debug_assertions))]
+            native_acceptance::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(handlers::invoke_handler())

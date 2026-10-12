@@ -230,7 +230,7 @@ fn create_refuses_an_actor_and_says_where_seats_come_from() {
     let message =
         usage_message(refuse_unsupported_create_flags(Some(&pk(ALICE)), None, None).unwrap_err());
     assert!(message.contains("ACTOR_UNAVAILABLE"), "got {message}");
-    assert!(message.contains("desktop"), "got {message}");
+    assert!(message.contains("bee agents create"), "got {message}");
 }
 
 #[test]

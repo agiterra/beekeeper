@@ -27,6 +27,9 @@ use crate::session_provider::store::{
 };
 use crate::session_provider::trust;
 
+#[path = "limit_settings.rs"]
+mod limits;
+
 /// Serialize the load-mint-save sequence. React development mode may issue the
 /// provisioning command twice while checking effect cleanup; without a lock,
 /// both calls can observe an empty store and mint competing identities.
@@ -77,7 +80,6 @@ pub async fn install_agent_host_autostart(
     let relay_url = relay_ws_url_with_override(&state);
     // The app's own host steps aside first: the login item starts one at
     // once, and two hosts must never race for one socket.
-    let _ = tokio::task::spawn_blocking(crate::agent_host::app_scoped::stop).await;
     // Warnings are not an error: a registration that could not be written
     // travels in `status.host.autostart.warnings`, and failing the command
     // would leave the surface with nothing to show but a toast.
@@ -166,21 +168,30 @@ pub async fn coding_session_capacity_settings(
     host: State<'_, AgentHost>,
 ) -> Result<CodingSessionCapacitySettings, String> {
     let store = crate::session_provider::store::load_provider_store(&app)?;
+    let desired = limits::desired(&app, &store)?;
     let in_force = host
         .snapshot()
         .await
         .status
         .and_then(|status| status.provider_settings_in_force);
     Ok(CodingSessionCapacitySettings {
-        max_sessions: store.max_sessions,
+        max_sessions: desired
+            .as_ref()
+            .map_or(store.max_sessions, |config| config.max_sessions),
         default_max_sessions: beekeeper_session_provider_pkg::config::DEFAULT_MAX_SESSIONS,
         running_max_sessions: in_force.and_then(|settings| settings.max_sessions),
-        turn_idle_timeout_secs: store.turn_idle_timeout_secs,
+        turn_idle_timeout_secs: desired
+            .as_ref()
+            .map_or(store.turn_idle_timeout_secs, |config| {
+                config.turn_idle_timeout_secs
+            }),
         default_turn_idle_timeout_secs:
             beekeeper_session_provider_pkg::config::DEFAULT_IDLE_TIMEOUT_SECS,
         running_turn_idle_timeout_secs: in_force
             .and_then(|settings| settings.turn_idle_timeout_secs),
-        turn_budget: store.turn_budget,
+        turn_budget: desired
+            .as_ref()
+            .map_or(store.turn_budget, |config| config.turn_budget),
         default_turn_budget: beekeeper_session_provider_pkg::config::DEFAULT_TURN_BUDGET,
         running_turn_budget: in_force.and_then(|settings| settings.turn_budget),
     })
@@ -195,6 +206,11 @@ pub async fn set_coding_session_capacity(
     max_sessions: Option<usize>,
 ) -> Result<CodingSessionCapacitySettings, String> {
     let mut store = crate::session_provider::store::load_provider_store(&app)?;
+    limits::edit(
+        &app,
+        &store,
+        beekeeper_host_core::host_limits::LimitPatch::MaxSessions(max_sessions),
+    )?;
     store.max_sessions = max_sessions;
     crate::session_provider::store::save_provider_store(&app, &store)?;
     coding_session_capacity_settings(app, host).await
@@ -218,6 +234,11 @@ pub async fn set_coding_session_turn_idle_timeout(
         return Err("a turn idle timeout of zero seconds would end every turn immediately; leave it unset for the provider default".to_string());
     }
     let mut store = crate::session_provider::store::load_provider_store(&app)?;
+    limits::edit(
+        &app,
+        &store,
+        beekeeper_host_core::host_limits::LimitPatch::TurnIdleTimeout(turn_idle_timeout_secs),
+    )?;
     store.turn_idle_timeout_secs = turn_idle_timeout_secs;
     crate::session_provider::store::save_provider_store(&app, &store)?;
     coding_session_capacity_settings(app, host).await
@@ -238,6 +259,11 @@ pub async fn set_coding_session_turn_budget(
     turn_budget: Option<u64>,
 ) -> Result<CodingSessionCapacitySettings, String> {
     let mut store = crate::session_provider::store::load_provider_store(&app)?;
+    limits::edit(
+        &app,
+        &store,
+        beekeeper_host_core::host_limits::LimitPatch::TurnBudget(turn_budget),
+    )?;
     store.turn_budget = turn_budget;
     crate::session_provider::store::save_provider_store(&app, &store)?;
     coding_session_capacity_settings(app, host).await

@@ -1390,6 +1390,7 @@ done
                 agent,
                 ExecutionPlan::Legacy {
                     reason: "unit-test",
+                    configured_mcp_command: None,
                 },
             ))
             .await

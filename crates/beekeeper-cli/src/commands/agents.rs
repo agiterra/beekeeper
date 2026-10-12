@@ -13,6 +13,18 @@ pub async fn dispatch(command: AgentsCmd, client: &BeekeeperClient) -> Result<()
     match command {
         AgentsCmd::Create(args) => super::agent_management::create(&args, client).await,
         AgentsCmd::Update(args) => super::agent_management::update(&args, client).await,
+        AgentsCmd::Status(args) => super::agent_management::status(&args, client).await,
+        AgentsCmd::StartRemote(args) => super::agent_management::start_remote(&args, client).await,
+        AgentsCmd::RestartRemote(args) => {
+            super::agent_management::restart_remote(&args, client).await
+        }
+        AgentsCmd::Start(args) => super::agent_management::start(&args, client).await,
+        AgentsCmd::Stop(args) => super::agent_management::stop(&args, client).await,
+        AgentsCmd::Restart(args) => super::agent_management::restart(&args, client).await,
+        AgentsCmd::Delete(args) => super::agent_management::delete(&args, client).await,
+        AgentsCmd::SupplyMigrationDefinition(args) => {
+            super::agent_management::supply_migration_definition(&args, client)
+        }
         AgentsCmd::DraftCreate {
             channel,
             display_name,

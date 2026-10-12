@@ -229,7 +229,7 @@ pub(crate) fn runtime_probe_target(instance_ref: &str) -> Result<RuntimeProbeTar
 /// checked here: a signed-out runtime still advertises, and a create against it
 /// fails through the existing `PROVIDER_AUTH_REQUIRED` receipt path.
 pub(crate) fn build_runtime_descriptors() -> Vec<RuntimeDescriptor> {
-    HOST_RUNTIMES
+    let mut descriptors: Vec<_> = HOST_RUNTIMES
         .iter()
         .filter_map(|runtime| {
             let resolved = resolve_adapter(runtime);
@@ -264,7 +264,9 @@ pub(crate) fn build_runtime_descriptors() -> Vec<RuntimeDescriptor> {
                 capabilities: None,
             })
         })
-        .collect()
+        .collect();
+    descriptors.push(beekeeper_host_core::managed_runtime::descriptor());
+    descriptors
 }
 
 /// Classify one runtime's install/auth readiness from resolution facts and an
@@ -458,7 +460,12 @@ mod tests {
         assert!(!claude.agent_command.is_empty());
         // Non-claude descriptors appear only with a resolved absolute command.
         for descriptor in &descriptors {
-            if descriptor.instance_ref != "claude-primary" {
+            if ![
+                "claude-primary",
+                beekeeper_host_core::managed_runtime::INSTANCE_REF,
+            ]
+            .contains(&descriptor.instance_ref.as_str())
+            {
                 assert!(std::path::Path::new(&descriptor.agent_command).is_absolute());
             }
         }

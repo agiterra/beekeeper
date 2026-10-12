@@ -1,7 +1,7 @@
 use super::*;
 
 /// NIP-49 spec vector — a real ncryptsec blob for injection payloads.
-const NCRYPTSEC: &str = "ncryptsec1qgg9947rlpvqu76pj5ecreduf9jxhselq2nae2kghhvd5g7dgjtcxfqtd67p9m0w57lspw8gsq6yphnm8623nsl8xn9j4jdzz84zm3frztj3z7s35vpzmqf6ksu8r89qk5z2zxfmu5gv8th8wclt0h4p";
+pub(super) const NCRYPTSEC: &str = "ncryptsec1qgg9947rlpvqu76pj5ecreduf9jxhselq2nae2kghhvd5g7dgjtcxfqtd67p9m0w57lspw8gsq6yphnm8623nsl8xn9j4jdzz84zm3frztj3z7s35vpzmqf6ksu8r89qk5z2zxfmu5gv8th8wclt0h4p";
 
 fn assert_guard_error(err: &str) {
     assert!(
@@ -262,12 +262,13 @@ fn src_rust_files() -> Vec<std::path::PathBuf> {
 /// guard + adding an injection test for the new site.
 const EVENTS_INVENTORY: &[(&str, usize, usize)] = &[
     // Production egress boundaries (see egress_guard.rs table):
-    ("src/relay.rs", 2, 2),                             // boundaries 2, 4
-    ("src/relay/submit.rs", 1, 1),                      // boundaries 1 + 3 (shared funnel)
-    ("src/huddle/pipeline.rs", 1, 1),                   // boundary 5
-    ("src/commands/team_snapshot.rs", 1, 1),            // boundary 6
+    ("src/relay.rs", 2, 2),                              // boundaries 2, 4
+    ("src/relay/submit.rs", 1, 1),                       // boundaries 1 + 3 (shared funnel)
+    ("src/huddle/pipeline.rs", 1, 1),                    // boundary 5
+    ("src/commands/team_snapshot.rs", 1, 1),             // boundary 6
     ("src/commands/personas/snapshot/import.rs", 2, 1), // boundary 7 + its in-file injection-test fixture URL
     ("src/native_websocket.rs", 0, 2),                  // boundary 8 (WS frames; no events URL)
+    ("src/commands/agents/headless_transport.rs", 1, 1), // shared management signing adapter
     // Test-only fixtures — no production egress, no guard:
     (
         "src/managed_agents/project_association_carry_tests.rs",

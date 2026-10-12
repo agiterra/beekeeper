@@ -7,7 +7,7 @@ pub(crate) mod agent_nest;
 pub(crate) mod agent_snapshot;
 pub(crate) mod agent_snapshot_envelope;
 pub(crate) mod team_snapshot;
-pub(crate) use access_policy::{owner_only, owner_only_access_build, projected_access_with_policy};
+pub(crate) use access_policy::{owner_only_access_build, projected_access_with_policy};
 pub(crate) use agent_env::{
     baked_build_env, build_beekeeper_agent_provider_defaults, discovery_env_with_baked_floor,
 };
@@ -37,8 +37,6 @@ pub(crate) mod parallelism;
 mod persona_avatars;
 pub(crate) mod persona_events;
 mod personas;
-#[cfg(windows)]
-mod process_lifecycle;
 pub(crate) mod project_admission;
 pub(crate) mod project_agent_association;
 pub(crate) mod project_association_authority;
@@ -104,11 +102,9 @@ pub(crate) use managed_node_paths::*;
 pub use nest::*;
 pub use parallelism::{acp_agents_value, effective_parallelism, harness_max_parallelism};
 pub use personas::*;
-#[cfg(windows)]
-pub use process_lifecycle::*;
 pub(crate) use readiness::{
     agent_readiness, resolve_effective_agent_env, resolve_effective_harness_descriptor,
-    AgentReadiness, Requirement,
+    AgentReadiness,
 };
 pub use relay_mesh::*;
 pub use repos::{
@@ -116,13 +112,14 @@ pub use repos::{
     write_persisted_repos_dir,
 };
 pub use restore::*;
+#[cfg(test)]
 pub(crate) use runtime::REPLAY_FLOOR_ENV_VAR;
 pub use runtime::*;
 pub use runtime_commands::*;
 pub use runtime_types::*;
 pub(crate) use session_policy::{
-    acp_session_policy, apply_app_acp_session_policy_env, insert_acp_session_policy_env,
-    AcpSessionPolicy, ManagedAgentExperimentState, ACP_SESSION_POLICY_ENV_VAR,
+    acp_session_policy, insert_acp_session_policy_env, AcpSessionPolicy,
+    ManagedAgentExperimentState, ACP_SESSION_POLICY_ENV_VAR,
 };
 pub use storage::*;
 pub(crate) use storage_readiness::{

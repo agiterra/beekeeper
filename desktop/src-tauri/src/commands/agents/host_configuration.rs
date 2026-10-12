@@ -1,0 +1,486 @@
+//! Client patch translation and delivery handles; the shared service owns effects.
+use super::*;
+#[path = "host_private_persona.rs"]
+pub(super) mod private_persona;
+use crate::managed_agents::{UpdateManagedAgentRequest, UpdateManagedAgentResponse};
+use beekeeper_agent_management::{LifecycleRequest, UpdateRequest};
+use beekeeper_host_core::atomic_write;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use uuid::Uuid;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ConfigurationIntent {
+    operation_id: Uuid,
+    owner_pubkey: String,
+    expected_revision: String,
+    desired_hash: String,
+    was_active: bool,
+    quiesced: bool,
+    accepted_revision: Option<String>,
+    restarted: bool,
+    complete: bool,
+}
+
+fn save_intent(path: &Path, intent: &ConfigurationIntent) -> Result<(), String> {
+    atomic_write::atomic_write_json_restricted(
+        path,
+        &serde_json::to_vec(intent).map_err(|e| e.to_string())?,
+    )
+}
+fn read_intent(path: &Path) -> Result<Option<ConfigurationIntent>, String> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if !metadata.file_type().is_file() || metadata.len() > 64 * 1024 {
+        return Err("configuration delivery handle is not bounded regular custody".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err("configuration delivery handle permissions are unsafe".into());
+        }
+    }
+    serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+async fn configuration_operation(
+    app: &AppHandle,
+    state: &AppState,
+    actor: &str,
+    relay: &str,
+    public: &beekeeper_core_pkg::managed_agent::ManagedAgentEventContent,
+    private: &PrivateConfiguration,
+    expected_source: Option<&ManagedAgentRecord>,
+) -> Result<(PathBuf, ConfigurationIntent), String> {
+    let owner_pubkey = Transport::owner(app, relay)?.keys().public_key().to_hex();
+    let desired_hash = hex::encode(Sha256::digest(
+        serde_json::to_vec(&json!({"public":public,"private":private.record}))
+            .map_err(|e| e.to_string())?,
+    ));
+    let key = crate::managed_agents::ManagedAgentRuntimeKey::new(actor, relay)?;
+    let ctx = context()?;
+    let dir = layout::host_dir(&ctx.home, ctx.instance)
+        .join("management/desktop-configuration")
+        .join(key.runtime_id());
+    atomic_write::create_dir_all_restricted(&dir)?;
+    let path = dir.join(format!("configure-{desired_hash}.json"));
+    let current = head(app, relay, actor).await?;
+    let held = {
+        let _lock = ownership::management_lock(&ctx.home, ctx.instance)?;
+        read_intent(&path)?
+    };
+    if let Some(held) = held.as_ref() {
+        if held.owner_pubkey != owner_pubkey || held.desired_hash != desired_hash {
+            return Err("configuration delivery payload conflicts".into());
+        }
+        if !held.complete || held.accepted_revision.as_deref() == Some(current.id.to_hex().as_str())
+        {
+            return Ok((path, held.clone()));
+        }
+    }
+    // A fresh edit never replaces an unseen newer owner revision. Retry uses
+    // its original expected revision and the service's exact signed journal.
+    let expected_public = expected_source
+        .map(crate::managed_agents::agent_events::agent_event_content)
+        .unwrap_or_else(|| public.clone());
+    let current_public: beekeeper_core_pkg::managed_agent::ManagedAgentEventContent =
+        serde_json::from_str(&current.content).map_err(|_| "accepted definition is malformed")?;
+    if current_public.public_projection() != expected_public {
+        return Err(format!(
+            "stale configuration cache; effective revision is {}; refresh before editing",
+            current.id
+        ));
+    }
+    let was_active = lifecycle::active_host_agent_pubkeys(app, state)
+        .await?
+        .contains(actor);
+    let next = ConfigurationIntent {
+        operation_id: Uuid::new_v4(),
+        owner_pubkey,
+        expected_revision: current.id.to_hex(),
+        desired_hash,
+        was_active,
+        quiesced: false,
+        accepted_revision: None,
+        restarted: false,
+        complete: false,
+    };
+    let _lock = ownership::management_lock(&ctx.home, ctx.instance)?;
+    if let Some(old) = read_intent(&path)? {
+        if !old.complete || old.accepted_revision.as_deref() == Some(current.id.to_hex().as_str()) {
+            return Ok((path, old));
+        }
+        save_intent(
+            &dir.join(format!("completed-{}.json", old.operation_id)),
+            &old,
+        )?;
+    }
+    save_intent(&path, &next)?;
+    Ok((path, next))
+}
+
+async fn configure(
+    app: &AppHandle,
+    state: &AppState,
+    desired: &ManagedAgentRecord,
+    relay: &str,
+    restart: bool,
+    expected_source: Option<&ManagedAgentRecord>,
+) -> Result<(PathBuf, ConfigurationIntent), String> {
+    let (public, mut private) = configuration_view(app, desired)?;
+    let expected = expected_source.unwrap_or(desired);
+    if record_for_pair(app, &desired.pubkey, relay)? != *expected {
+        return Err("client source changed before private configuration projection".into());
+    }
+    private_persona::attach_private_persona(app, state, desired, relay, &mut private)?;
+    let (path, mut intent) = configuration_operation(
+        app,
+        state,
+        &desired.pubkey,
+        relay,
+        &public,
+        &private,
+        expected_source,
+    )
+    .await?;
+    let current = head(app, relay, &desired.pubkey).await?;
+    let before: beekeeper_core_pkg::managed_agent::ManagedAgentEventContent =
+        serde_json::from_str(&current.content).map_err(|_| "accepted definition is malformed")?;
+    let policy_changed = before.respond_to != public.respond_to
+        || before.respond_to_allowlist != public.respond_to_allowlist;
+    if !intent.quiesced && (policy_changed || (restart && intent.was_active)) {
+        if current.id.to_hex() != intent.expected_revision {
+            return Err(
+                "configuration revision changed before quiescence; no new stop was dispatched"
+                    .into(),
+            );
+        }
+        let request = LifecycleRequest {
+            operation_id: Uuid::new_v5(&intent.operation_id, b"configuration-quiescence"),
+            agent_pubkey: desired.pubkey.clone(),
+            channels: Vec::new(),
+            wait_secs: 60,
+        };
+        let stopped =
+            beekeeper_agent_management::stop(&request, &Transport::owner(app, relay)?, &context()?)
+                .await
+                .map_err(|e| e.to_string())?;
+        if stopped.get("terminal").and_then(Value::as_bool) != Some(true) {
+            return Err(
+                "configuration withheld: previous access/execution termination remains pending"
+                    .into(),
+            );
+        }
+        intent.quiesced = true;
+        save_intent(&path, &intent)?;
+    }
+    crate::relay::assert_expected_signer(
+        Some(&intent.owner_pubkey),
+        &state.signing_keys()?.public_key().to_hex(),
+    )?;
+    let request = UpdateRequest {
+        operation_id: intent.operation_id,
+        agent_pubkey: desired.pubkey.clone(),
+        expected_revision: intent.expected_revision.clone(),
+        display_name: None,
+        system_prompt: None,
+        model: None,
+        home: Some(context()?.home),
+        public_definition: Some(public),
+        private_config: Some(private),
+    };
+    let outcome =
+        beekeeper_agent_management::update(&request, &Transport::owner(app, relay)?, &context()?)
+            .await
+            .map_err(|e| e.to_string())?;
+    if outcome.get("relay_accepted").and_then(Value::as_bool) != Some(true) {
+        return Err("configuration publication remains unconfirmed".into());
+    }
+    intent.accepted_revision = Some(
+        outcome
+            .get("effectiveRevision")
+            .and_then(Value::as_str)
+            .ok_or("accepted revision unavailable")?
+            .into(),
+    );
+    acknowledge_revision(
+        app,
+        state,
+        relay,
+        &desired.pubkey,
+        intent
+            .accepted_revision
+            .as_deref()
+            .ok_or("accepted revision unavailable")?,
+    )
+    .await?;
+    save_intent(&path, &intent)?;
+    Ok((path, intent))
+}
+
+async fn acknowledge_revision(
+    app: &AppHandle,
+    state: &AppState,
+    relay: &str,
+    actor: &str,
+    revision: &str,
+) -> Result<(), String> {
+    use crate::managed_agents::retention::{
+        active_retention_scope, get_retained_event, open_retention_db, retain_inbound_event,
+        InboundOutcome, RetainedEvent,
+    };
+    use nostr::JsonUtil;
+    let accepted = head(app, relay, actor).await?;
+    if accepted.id.to_hex() != revision {
+        return Err(
+            "Configuration accepted; a newer shared revision superseded cache reconciliation"
+                .into(),
+        );
+    }
+    let scope = active_retention_scope(app, state)?;
+    if beekeeper_host_core::record::canonical_relay_key(&scope.relay_url)
+        != beekeeper_host_core::record::canonical_relay_key(relay)
+        || scope.owner_keys.public_key() != accepted.pubkey
+    {
+        return Err(
+            "Configuration accepted; client identity/community changed before cache acknowledgment"
+                .into(),
+        );
+    }
+    let conn = open_retention_db(&scope.db_path)?;
+    let retained = RetainedEvent {
+        kind: 30177,
+        pubkey: accepted.pubkey.to_hex(),
+        d_tag: actor.into(),
+        content: accepted.content.clone(),
+        created_at: accepted.created_at.as_secs() as i64,
+        raw_event: accepted.as_json(),
+        pending_sync: false,
+    };
+    if retain_inbound_event(&conn, &retained)? == InboundOutcome::Skipped {
+        let exact = get_retained_event(&conn, 30177, &accepted.pubkey.to_hex(), actor)?
+            .is_some_and(|row| !row.pending_sync && row.raw_event == accepted.as_json());
+        if !exact {
+            return Err("Configuration accepted; a newer client publication is pending; refresh and reconcile".into());
+        }
+    }
+    Ok(())
+}
+
+async fn finish_configuration(
+    app: &AppHandle,
+    desired: &ManagedAgentRecord,
+    relay: &str,
+    path: &Path,
+    mut intent: ConfigurationIntent,
+) -> Result<(), String> {
+    if intent.was_active && intent.quiesced && !intent.restarted {
+        importer::ensure_enrolled(app, desired, relay, true)
+            .await
+            .map_err(|e| {
+                format!("Configuration accepted; successor admission remains unconfirmed: {e}")
+            })?;
+        intent.restarted = true;
+        save_intent(path, &intent)?;
+    }
+    intent.complete = true;
+    save_intent(path, &intent)
+}
+
+pub(crate) async fn reconcile_host_agent(
+    app: &AppHandle,
+    state: &AppState,
+    actor: &str,
+    relay: &str,
+    restart: bool,
+) -> Result<(), String> {
+    let record = record_for_pair(app, actor, relay)?;
+    if record.backend != BackendKind::Local {
+        return Err("remote settings use their provider boundary".into());
+    }
+    if ownership::for_pair(&context()?.home, context()?.instance, actor, relay)?.is_none() {
+        importer::ensure_enrolled(app, &record, relay, false).await?;
+    }
+    let (path, intent) = configure(app, state, &record, relay, restart, None).await?;
+    if record_for_pair(app, actor, relay)? != record {
+        return Err(
+            "Configuration accepted; client cache changed during reconciliation; refresh required"
+                .into(),
+        );
+    }
+    finish_configuration(app, &record, relay, &path, intent).await
+}
+
+pub(crate) async fn update_if_adopted(
+    input: &UpdateManagedAgentRequest,
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<Option<UpdateManagedAgentResponse>, String> {
+    let source = load_managed_agents(app)?
+        .into_iter()
+        .find(|r| r.pubkey == input.pubkey)
+        .ok_or("agent not found")?;
+    if source.backend != BackendKind::Local {
+        return Ok(None);
+    }
+    let relay = crate::relay::effective_agent_relay_url(
+        &source.relay_url,
+        &crate::relay::relay_ws_url_with_override(state),
+    );
+    let (mut desired, policy_changed) =
+        crate::commands::agent_models::prospective_record(&source, input, &load_personas(app)?)?;
+    let next_relay = crate::relay::effective_agent_relay_url(
+        &desired.relay_url,
+        &crate::relay::relay_ws_url_with_override(state),
+    );
+    if beekeeper_host_core::record::canonical_relay_key(&next_relay)
+        != beekeeper_host_core::record::canonical_relay_key(&relay)
+    {
+        return Err("another community requires its own authorized host enrollment; this edit did not move the identity".into());
+    }
+    if ownership::for_pair(
+        &context()?.home,
+        context()?.instance,
+        &source.pubkey,
+        &relay,
+    )?
+    .is_none()
+    {
+        importer::ensure_enrolled(app, &source, &relay, false).await?;
+    }
+    let (path, intent) = configure(
+        app,
+        state,
+        &desired,
+        &relay,
+        desired.auto_restart_on_config_change || policy_changed,
+        Some(&source),
+    )
+    .await?;
+    crate::relay::assert_expected_signer(
+        Some(&intent.owner_pubkey),
+        &state.signing_keys()?.public_key().to_hex(),
+    )?;
+    {
+        let _lock = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        let mut records = load_managed_agents(app)?;
+        let current = records
+            .iter_mut()
+            .find(|r| r.pubkey == source.pubkey)
+            .ok_or("Configuration accepted; source cache disappeared")?;
+        if *current != source {
+            return Err(
+                "Configuration accepted; client cache changed before commit; refresh required"
+                    .into(),
+            );
+        }
+        desired.updated_at = crate::util::now_iso();
+        *current = desired.clone();
+        save_managed_agents(app, &records)?;
+    }
+    let mut warning=Some("Configuration accepted; runtime application remains unconfirmed until observed through relay work.".into());
+    if let Err(error) = finish_configuration(app, &desired, &relay, &path, intent).await {
+        warning = Some(error);
+    }
+    if source.name != desired.name {
+        match nostr::Keys::parse(&desired.private_key_nsec) {
+            Ok(keys) if keys.public_key().to_hex() == desired.pubkey => {
+                if let Err(error) = crate::relay::sync_managed_agent_profile(
+                    state,
+                    &relay,
+                    &keys,
+                    &desired.name,
+                    desired.avatar_url.as_deref(),
+                    desired.auth_tag.as_deref(),
+                )
+                .await
+                {
+                    warning = Some(format!(
+                        "Configuration accepted; identity profile publication remains unconfirmed: {error}"
+                    ));
+                }
+            }
+            _ => {
+                warning =
+                    Some("Configuration accepted; scoped profile custody is unavailable.".into())
+            }
+        }
+    }
+    Ok(Some(UpdateManagedAgentResponse {
+        agent: super::super::summarize_host_record(app, &desired)?,
+        profile_sync_error: warning,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interrupted_configuration_retains_exact_operation_and_quiescence_before_retry() {
+        let dir = tempfile::tempdir().expect("delivery fixture");
+        let path = dir.path().join("configuration.json");
+        let mut intent = ConfigurationIntent {
+            operation_id: Uuid::new_v4(),
+            owner_pubkey: "ab".repeat(32),
+            expected_revision: "cd".repeat(32),
+            desired_hash: "ef".repeat(32),
+            was_active: true,
+            quiesced: false,
+            accepted_revision: None,
+            restarted: false,
+            complete: false,
+        };
+        save_intent(&path, &intent).expect("stage before any effects");
+        intent.quiesced = true;
+        save_intent(&path, &intent).expect("persist verified stop");
+        let recovered = read_intent(&path)
+            .expect("read interrupted delivery")
+            .expect("persisted");
+        assert_eq!(recovered.operation_id, intent.operation_id);
+        assert_eq!(recovered.expected_revision, intent.expected_revision);
+        assert!(recovered.quiesced && recovered.was_active);
+        assert!(!recovered.complete && !recovered.restarted);
+        assert!(recovered.accepted_revision.is_none());
+        let raw = std::fs::read_to_string(&path).expect("handle JSON");
+        assert!(
+            !raw.contains("private_key") && !raw.contains("auth_tag") && !raw.contains("env_vars")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configuration_retry_refuses_shared_permissions_symlinks_and_unbounded_handles() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = tempfile::tempdir().expect("delivery fixture");
+        let path = dir.path().join("handle.json");
+        std::fs::write(&path, "{}").expect("fixture file");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("permissions");
+        assert!(read_intent(&path)
+            .expect_err("shared custody")
+            .contains("permissions"));
+        let alias = dir.path().join("alias.json");
+        symlink(&path, &alias).expect("fixture alias");
+        assert!(read_intent(&alias)
+            .expect_err("symlink custody")
+            .contains("regular"));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .expect("permissions");
+        std::fs::write(&path, vec![b'a'; 64 * 1024 + 1]).expect("oversized fixture");
+        assert!(read_intent(&path)
+            .expect_err("unbounded custody")
+            .contains("bounded"));
+    }
+}

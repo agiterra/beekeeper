@@ -384,7 +384,7 @@ fn install_acp_runtime_blocking(
 #[derive(Debug)]
 enum InstallRestartOutcome {
     Restarted,
-    FailedAfterStop,
+    Failed,
     Skipped,
 }
 
@@ -400,6 +400,7 @@ enum InstallRestartOutcome {
 /// - its effective command maps to `runtime_id`,
 /// - it was **spawned in setup-listener mode** (`setup_mode`), AND
 /// - its readiness **now computes `Ready`** (install fixed the blocker).
+#[cfg(test)]
 fn should_restart_after_install(
     is_local: bool,
     pid_alive: bool,
@@ -416,16 +417,11 @@ async fn restart_setup_mode_agents_after_install(
     app: &tauri::AppHandle,
     runtime_id: &str,
 ) -> (u32, u32) {
-    use crate::{
-        app_state::AppState,
-        managed_agents::{
-            agent_readiness, known_acp_runtime, load_global_agent_config, load_managed_agents,
-            load_personas, record_agent_command, resolve_effective_agent_env, AgentReadiness,
-            BackendKind,
-        },
+    use crate::managed_agents::{
+        agent_readiness, known_acp_runtime, load_global_agent_config, load_managed_agents,
+        load_personas, record_agent_command, resolve_effective_agent_env, AgentReadiness,
+        BackendKind,
     };
-    use tauri::Manager;
-
     // ── Pre-scan: collect candidate pubkeys without holding locks ────────────
     let app_for_scan = app.clone();
     let runtime_id_owned = runtime_id.to_string();
@@ -434,13 +430,6 @@ async fn restart_setup_mode_agents_after_install(
         let personas = load_personas(&app_for_scan).unwrap_or_default();
         let global = load_global_agent_config(&app_for_scan).unwrap_or_default();
 
-        // Read the runtimes map to check setup_mode stamps.
-        let state_inner = app_for_scan.state::<AppState>();
-        let runtimes = state_inner
-            .managed_agent_processes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-
         records
             .iter()
             .filter(|record| {
@@ -448,11 +437,6 @@ async fn restart_setup_mode_agents_after_install(
                 let effective_cmd = record_agent_command(record, &personas);
                 let runtime_matches =
                     known_acp_runtime(&effective_cmd).is_some_and(|r| r.id == runtime_id_owned);
-                let setup_mode = runtimes
-                    .iter()
-                    .find(|(key, _)| key.pubkey == record.pubkey)
-                    .map(|(_, p)| p.setup_mode)
-                    .unwrap_or(false);
                 let effective = resolve_effective_agent_env(
                     record,
                     &personas,
@@ -460,17 +444,7 @@ async fn restart_setup_mode_agents_after_install(
                     &global,
                 );
                 let now_ready = matches!(agent_readiness(&effective), AgentReadiness::Ready);
-                let pid_alive = runtimes.iter().any(|(key, runtime)| {
-                    key.pubkey.eq_ignore_ascii_case(&record.pubkey)
-                        && crate::managed_agents::process_is_running(runtime.child.id())
-                });
-                should_restart_after_install(
-                    is_local,
-                    pid_alive,
-                    runtime_matches,
-                    setup_mode,
-                    now_ready,
-                )
+                is_local && runtime_matches && now_ready
             })
             .map(|r| r.pubkey.clone())
             .collect::<Vec<_>>()
@@ -489,7 +463,7 @@ async fn restart_setup_mode_agents_after_install(
         let outcome = restart_single_agent_after_install(app, pubkey, runtime_id).await;
         match outcome {
             InstallRestartOutcome::Restarted => restarted_count += 1,
-            InstallRestartOutcome::FailedAfterStop => failed_restart_count += 1,
+            InstallRestartOutcome::Failed => failed_restart_count += 1,
             InstallRestartOutcome::Skipped => {}
         }
     }
@@ -497,147 +471,42 @@ async fn restart_setup_mode_agents_after_install(
     (restarted_count, failed_restart_count)
 }
 
-/// Stop-then-start a single setup-mode agent after a successful adapter install.
-///
-/// Mirrors `restart_local_agent_on_config_change` from `global_agent_config.rs`:
-/// eligibility is re-verified under the store lock before the stop, then the
-/// agent is restarted via `start_local_agent_with_preflight`.
+/// Ask the shared execution owner to reconcile newly installed dependencies.
 async fn restart_single_agent_after_install(
     app: &tauri::AppHandle,
     pubkey: &str,
     runtime_id: &str,
 ) -> InstallRestartOutcome {
-    use crate::{
-        app_state::AppState,
-        managed_agents::{
-            agent_readiness, current_instance_id, find_managed_agent_mut, known_acp_runtime,
-            load_global_agent_config, load_managed_agents, load_personas, record_agent_command,
-            resolve_effective_agent_env, save_managed_agents, stop_managed_agent_process,
-            sync_managed_agent_processes, AgentReadiness, BackendKind,
-        },
-    };
     use tauri::Manager;
-
-    let app_for_stop = app.clone();
-    let pubkey_owned = pubkey.to_string();
-    let runtime_id_owned = runtime_id.to_string();
-
-    let stop_result = tokio::task::spawn_blocking(move || {
-        let state = app_for_stop.state::<AppState>();
-
-        let _store_guard = state
-            .managed_agents_store_lock
-            .lock()
-            .map_err(|e| format!("failed to acquire store lock: {e}"))?;
-
-        let mut records = load_managed_agents(&app_for_stop)?;
-        let mut runtimes = state
-            .managed_agent_processes
-            .lock()
-            .map_err(|e| format!("failed to acquire runtimes lock: {e}"))?;
-
-        // Sync process state so PID liveness reflects current reality.
-        let (sync_changed, _) = sync_managed_agent_processes(
-            &mut records,
-            &mut runtimes,
-            &current_instance_id(&app_for_stop),
-        );
-        if sync_changed {
-            save_managed_agents(&app_for_stop, &records)?;
-        }
-
-        // Re-verify eligibility under lock.
+    let state = app.state::<crate::app_state::AppState>();
+    let result = async {
+        let records = crate::managed_agents::load_managed_agents(app)?;
         let record = records
             .iter()
-            .find(|r| r.pubkey == pubkey_owned)
-            .ok_or_else(|| format!("agent {pubkey_owned} not found"))?;
-
-        if record.backend != BackendKind::Local {
-            return Err(format!("agent {pubkey_owned} is no longer a local agent"));
+            .find(|r| r.pubkey == pubkey)
+            .ok_or("agent not found")?;
+        let personas = crate::managed_agents::load_personas(app)?;
+        let command = crate::managed_agents::record_agent_command(record, &personas);
+        if record.backend != crate::managed_agents::BackendKind::Local
+            || crate::managed_agents::known_acp_runtime(&command).is_none_or(|r| r.id != runtime_id)
+        {
+            return Ok(false);
         }
-        let runtime_keys =
-            crate::managed_agents::managed_agent_runtime_keys(&runtimes, &pubkey_owned);
-        if runtime_keys.is_empty() {
-            return Err(format!(
-                "agent {pubkey_owned} no longer has a live pair runtime after sync"
-            ));
-        }
-
-        let personas = load_personas(&app_for_stop).unwrap_or_default();
-        let global = load_global_agent_config(&app_for_stop).unwrap_or_default();
-
-        let effective_cmd = record_agent_command(record, &personas);
-        let runtime_matches =
-            known_acp_runtime(&effective_cmd).is_some_and(|r| r.id == runtime_id_owned);
-        if !runtime_matches {
-            return Err(format!(
-                "agent {pubkey_owned} runtime no longer matches {runtime_id_owned} under lock"
-            ));
-        }
-
-        let setup_mode = runtimes
-            .iter()
-            .find(|(key, _)| key.pubkey == pubkey_owned)
-            .map(|(_, p)| p.setup_mode)
-            .unwrap_or(false);
-        if !setup_mode {
-            return Err(format!(
-                "agent {pubkey_owned} is not in setup mode under lock — skipping"
-            ));
-        }
-
-        let runtime_meta = known_acp_runtime(&effective_cmd);
-        let effective = resolve_effective_agent_env(record, &personas, runtime_meta, &global);
-        if !matches!(agent_readiness(&effective), AgentReadiness::Ready) {
-            return Err(format!(
-                "agent {pubkey_owned} readiness is still NotReady after install — not bouncing"
-            ));
-        }
-
-        // Stop the process.
-        let record_mut = find_managed_agent_mut(&mut records, &pubkey_owned)?;
-        stop_managed_agent_process(&app_for_stop, record_mut, &mut runtimes)?;
-        save_managed_agents(&app_for_stop, &records)?;
-
-        Ok(runtime_keys)
-    })
+        let relay = crate::relay::effective_agent_relay_url(
+            &record.relay_url,
+            &crate::relay::relay_ws_url_with_override(&state),
+        );
+        super::agents::host_transfer::reconcile_host_agent(app, &state, pubkey, &relay, true)
+            .await?;
+        Ok::<bool, String>(true)
+    }
     .await;
-
-    let runtime_keys = match stop_result {
-        Ok(Ok(runtime_keys)) => runtime_keys,
-        Ok(Err(e)) => {
-            eprintln!("beekeeper-desktop: install_acp_runtime: skipping restart of {pubkey}: {e}");
-            return InstallRestartOutcome::Skipped;
-        }
-        Err(e) => {
-            eprintln!(
-                "beekeeper-desktop: install_acp_runtime: spawn_blocking failed for stop of {pubkey}: {e}"
-            );
-            return InstallRestartOutcome::Skipped;
-        }
-    };
-
-    let relay_urls: Vec<_> = runtime_keys.into_iter().map(|key| key.relay_url).collect();
-    let state = app.state::<AppState>();
-    match super::agents::start_local_agent_pairs_with_preflight(app, &state, pubkey, &relay_urls)
-        .await
-    {
-        Ok(_) => {
-            eprintln!(
-                "beekeeper-desktop: install_acp_runtime: restarted setup-mode agent {pubkey} after install"
-            );
-            InstallRestartOutcome::Restarted
-        }
-        Err(e) => {
-            eprintln!(
-                "beekeeper-desktop: install_acp_runtime: failed to start {pubkey} after install: {e}"
-            );
-            if let Err(save_err) = persist_last_error_on_install(app, pubkey, &e) {
-                eprintln!(
-                    "beekeeper-desktop: install_acp_runtime: failed to persist last_error for {pubkey}: {save_err}"
-                );
-            }
-            InstallRestartOutcome::FailedAfterStop
+    match result {
+        Ok(true) => InstallRestartOutcome::Restarted,
+        Ok(false) => InstallRestartOutcome::Skipped,
+        Err(error) => {
+            let _ = persist_last_error_on_install(app, pubkey, &error);
+            InstallRestartOutcome::Failed
         }
     }
 }

@@ -1,38 +1,11 @@
-//! Headless enrollment and public configuration writes using existing contracts.
-//!
-//! A restricted operation journal precedes publication. It retains exact signed
-//! events and accepted execution targets, so a lost reply never changes identity
-//! or creates another logical responsibility on retry. Runtime execution remains
-//! the session provider's; this module does not supervise processes.
-
-use std::fs::File;
-use std::path::{Path, PathBuf};
-
-use beekeeper_core::coding_session_command::CodingSessionTarget;
-use beekeeper_core::coding_session_identity::ProviderInstanceAlias;
-use beekeeper_core::coding_session_lifecycle_command::{
-    CodingSessionLifecycleAction, CodingSessionLifecycleCommandPayload,
-    CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
-};
-use beekeeper_core::managed_agent::{
-    validate_agent_definition_text, ManagedAgentEventContent, RespondTo,
-};
-use beekeeper_host_core::{
-    atomic_write, config::HostConfig, env::PROJECTS_FILE_NAME, layout, provision, record,
-};
+//! Argument and output adapters for the shared headless management service.
+use crate::{client::BeekeeperClient, error::CliError, validate::read_or_stdin, RespondToArg};
 use clap::Args;
-use nostr::{Event, Keys, Tag, Timestamp};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use std::path::PathBuf;
 use uuid::Uuid;
-
-use super::sessions::crew_cmds::{await_create_receipt, CreateWaitOutcome};
-
-#[path = "agent_management/local.rs"]
-pub(super) mod local;
-use crate::{client::BeekeeperClient, error::CliError, validate::read_or_stdin};
-use local::*;
-
+#[path = "agent_management_import_evidence.rs"]
+mod import_evidence;
+pub use import_evidence::{supply_migration_definition, SupplyMigrationDefinitionArgs};
 /// Commission one attributed ordinary participant on an existing headless host.
 #[derive(Args, Debug)]
 pub struct CreateArgs {
@@ -78,6 +51,18 @@ pub struct CreateArgs {
     /// Maximum seconds to wait for the provider's signed create receipt.
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=300))]
     pub wait_secs: u64,
+    /// Configure custody and identity without admitting execution.
+    #[arg(long)]
+    pub no_start: bool,
+    /// Verified replay boundary; earlier/same-second uncertain legacy requests are disclosed.
+    #[arg(long)]
+    pub replay_floor_unix: Option<u64>,
+    /// Complete safe public definition JSON; supported optional fields may be cleared.
+    #[arg(long)]
+    pub definition_file: Option<PathBuf>,
+    /// Owner-only executor-private settings JSON; never sent publicly.
+    #[arg(long)]
+    pub private_config_file: Option<PathBuf>,
 }
 
 /// Publish a new public configuration revision as its authorized owner.
@@ -104,484 +89,458 @@ pub struct UpdateArgs {
     /// Requester's journal home; no host files or socket are required for update.
     #[arg(long)]
     pub home: Option<PathBuf>,
+    /// Complete safe public definition JSON; supported optional fields may be cleared.
+    #[arg(long)]
+    pub definition_file: Option<PathBuf>,
+    /// Owner-only local executor-private configuration JSON.
+    #[arg(long)]
+    pub private_config_file: Option<PathBuf>,
 }
 
-async fn submit(client: &BeekeeperClient, event: &Event) -> Result<(), CliError> {
-    if event.pubkey != client.keys().public_key() {
-        return Err(CliError::Auth(
-            "event signer does not match scoped transport identity".into(),
-        ));
-    }
-    beekeeper_core::verify_event(event)
-        .map_err(|_| CliError::Auth("journal event signature or identity is invalid".into()))?;
-    // Persisted requests may predate the relay's publication clock window.
-    // Reuse only their exact verified stored event, through the same authorized
-    // signer transport. Never refresh a journal event's timestamp or signature.
-    if exact_event_stored(&client.query_all(exact_event_filter(event)).await?, event) {
-        return Ok(());
-    }
-    let raw = client.submit_event(event.clone()).await?;
-    match super::parse_write_response(&raw, "operation event already accepted") {
-        Ok(_) => Ok(()),
-        Err(CliError::Conflict(_)) => {
-            let rows = client.query_all(exact_event_filter(event)).await?;
-            if exact_event_stored(&rows, event) {
-                Ok(())
-            } else {
-                Err(CliError::Conflict(format!("relay reported a duplicate or dominated publication, but exact signed event {} is not stored; original operation preserved", event.id)))
-            }
-        }
-        Err(error) => Err(error),
-    }
+fn context(home: &Option<PathBuf>) -> Result<beekeeper_agent_management::Context, CliError> {
+    Ok(beekeeper_agent_management::Context {
+        home: home
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(beekeeper_host_core::layout::home_dir)
+            .map_err(CliError::Other)?,
+        instance: beekeeper_host_core::layout::Instance::from_env().map_err(CliError::Usage)?,
+        native_home: std::env::var_os("HOME").map(PathBuf::from),
+    })
 }
-
-fn exact_event_filter(event: &Event) -> Value {
-    let mut filter = json!({"kinds":[event.kind.as_u16()],"ids":[event.id.to_hex()],"authors":[event.pubkey.to_hex()]});
-    if let Some(channel) = event.tags.iter().find_map(|tag| {
-        let fields = tag.as_slice();
-        (fields.first().is_some_and(|value| value == "h"))
-            .then(|| fields.get(1))
-            .flatten()
-    }) {
-        filter["#h"] = json!([channel]);
-    }
-    filter
+fn create_request(
+    args: &CreateArgs,
+) -> Result<beekeeper_agent_management::CreateRequest, CliError> {
+    Ok(beekeeper_agent_management::CreateRequest {
+        operation_id: args.operation_id,
+        channel: args.channel,
+        display_name: args.display_name.clone(),
+        system_prompt: read_or_stdin(&args.system_prompt)?,
+        home: None,
+        cwd: args.cwd.clone(),
+        project: args.project.clone(),
+        model: args.model.clone(),
+        provider_instance: args.provider_instance.clone(),
+        agent_pubkey: args.agent_pubkey.clone(),
+        adopt_agent_pubkey: args.adopt_agent_pubkey.clone(),
+        key_file: args.key_file.clone(),
+        auth_tag_file: args.auth_tag_file.clone(),
+        wait_secs: args.wait_secs,
+        activate: !args.no_start,
+        replay_floor_unix: args.replay_floor_unix,
+        public_definition: read_json(args.definition_file.as_deref(), false)?,
+        private_config: read_json(args.private_config_file.as_deref(), true)?
+            .map(|record| beekeeper_agent_management::PrivateConfiguration { record }),
+        ..Default::default()
+    })
 }
-
-fn exact_event_stored(rows: &[Value], expected: &Event) -> bool {
-    rows.iter()
-        .filter_map(|row| serde_json::from_value::<Event>(row.clone()).ok())
-        .any(|held| {
-            held.id == expected.id
-                && held.sig == expected.sig
-                && beekeeper_core::verify_event(&held).is_ok()
-        })
-}
-
-/// Create identity and attributed Solo execution, admitting its route only after a verified receipt.
 pub async fn create(args: &CreateArgs, client: &BeekeeperClient) -> Result<(), CliError> {
-    let owner = owner(client)?;
-    let home = home(&args.home)?;
-    let _lock = management_lock(&home)?;
-    let config = HostConfig::load(&layout::host_config_path(
-        &home,
-        layout::Instance::from_env().map_err(CliError::Usage)?,
-    ))
-    .map_err(fail)?
-    .ok_or_else(|| {
-        CliError::Usage("host has not been commissioned; run bee host commission first".into())
-    })?;
-    if record::canonical_relay_key(&config.relay_url)
-        != record::canonical_relay_key(&crate::client::to_ws_url(client.relay_url()))
-    {
-        return Err(CliError::Auth(
-            "active relay does not match commissioned host".into(),
-        ));
-    }
-    let store = record::load_provider_store_from(&config.record_store_path()).map_err(fail)?;
-    let provider = store
-        .get(&config.relay_url)
-        .ok_or_else(|| fail("commissioned provider record is missing"))?;
-    if provider.provider_pubkey != config.provider_pubkey {
-        return Err(CliError::Refused(
-            "commissioned provider record/config identities disagree".into(),
-        ));
-    }
-    let provider_key = nostr::PublicKey::from_hex(&provider.provider_pubkey).map_err(fail)?;
-    let provider_owner = beekeeper_sdk::nip_oa::verify_auth_tag(
-        provider
-            .auth_tag
-            .as_deref()
-            .ok_or_else(|| fail("provider owner attestation is missing"))?,
-        &provider_key,
-    )
-    .map_err(fail)?;
-    if provider_owner.to_hex() != owner {
-        return Err(CliError::Auth(
-            "signer does not own this commissioned provider".into(),
-        ));
-    }
-    let runtime = match args.provider_instance.as_deref() {
-        Some(alias) => config
-            .runtimes
-            .iter()
-            .find(|runtime| runtime.instance_ref == alias),
-        None if config.runtimes.len() == 1 => config.runtimes.first(),
-        None => {
-            return Err(CliError::Usage(
-                "--provider-instance is required when the host offers multiple runtimes".into(),
-            ))
-        }
-    }
-    .ok_or_else(|| CliError::Usage("provider runtime instance is not commissioned".into()))?;
-    let prompt = read_or_stdin(&args.system_prompt)?;
-    validate_agent_definition_text(&args.display_name, &prompt).map_err(CliError::Usage)?;
-    let cwd = std::fs::canonicalize(&args.cwd)
-        .map_err(|_| CliError::Usage("--cwd must name an existing checkout".into()))?;
-    validate_checkout(&cwd, &home, &config.provider_state_dir)?;
-    if !cwd.is_dir() {
-        return Err(CliError::Usage("--cwd must be a directory".into()));
-    }
-    let model = args
-        .model
-        .clone()
-        .unwrap_or_else(|| runtime.default_model.clone());
-    let project = args
-        .project
-        .as_deref()
-        .map(|value| {
-            beekeeper_core::kind::normalize_project_coordinate(value)
-                .ok_or_else(|| CliError::Usage("--project must be 30621:<creator>:<slug>".into()))
-        })
-        .transpose()?;
-    let project_public = if let Some(project) = project.as_deref() {
-        Some(authorize_project(client, project, &owner).await?)
-    } else {
-        None
-    };
-    let transfer = if let Some(actor) = &args.adopt_agent_pubkey {
-        let transfer = beekeeper_host_core::ownership::for_pair(
-            &home,
-            config.instance,
-            actor,
-            &config.relay_url,
-        )
-        .map_err(fail)?
-        .ok_or_else(|| {
-            CliError::Refused("identity adoption requires a staged ownership transfer".into())
-        })?;
-        if transfer.operation_id != args.operation_id.to_string()
-            || !matches!(
-                transfer.phase,
-                beekeeper_host_core::ownership::Phase::Quiesced
-                    | beekeeper_host_core::ownership::Phase::Adopted
-            )
-        {
-            return Err(CliError::Refused("adoption requires the matching operation and a verified quiesced legacy generation".into()));
-        }
-        Some(transfer)
-    } else {
-        None
-    };
-    let request = json!({"type":"create","owner":owner,"relay":config.relay_url,"channel":args.channel,
-        "name":args.display_name,"prompt":prompt,"cwd":cwd,"model":model,"runtime":runtime.instance_ref,
-        "existingActor":args.agent_pubkey,"adoptActor":args.adopt_agent_pubkey,"adoptRevision":transfer.as_ref().map(|value| &value.definition_event_id),
-        "project":project});
-    let successor_boundary = successor::prepare(
-        &home,
-        &config,
-        args.agent_pubkey.as_deref(),
-        args.operation_id,
-    )?;
-    if let Some(boundary) = &successor_boundary {
-        successor::require_prior_stops(
-            &config,
-            provider,
-            boundary,
-            args.operation_id,
-            None,
-            client,
-        )
-        .await?;
-    }
-    let path = operation_path(&home, args.operation_id)?;
-    let mut minted = None;
-    let mut operation = match read_operation(&path, &request)? {
-        Some(operation) => operation,
-        None => {
-            let actor = match transfer.as_ref() {
-                Some(transfer) => existing_identity(args, &owner, &transfer.actor_pubkey)?,
-                None => match args.agent_pubkey.as_deref() {
-                    Some(actor) => {
-                        let (key, auth_tag) =
-                            actor_custody(&config.provider_state_dir, actor, None)?;
-                        let keys = Keys::parse(&key)
-                            .map_err(|_| fail("existing actor custody key is invalid"))?;
-                        let attester =
-                            beekeeper_sdk::nip_oa::verify_auth_tag(&auth_tag, &keys.public_key())
-                                .map_err(fail)?;
-                        if attester.to_hex() != owner {
-                            return Err(CliError::Auth(
-                                "existing actor is attested by another owner".into(),
-                            ));
-                        }
-                        provision::MintedAgentIdentity {
-                            keys,
-                            pubkey: actor.into(),
-                            private_key_nsec: key,
-                            auth_tag,
-                        }
-                    }
-                    None => provision::mint_agent_identity(client.keys()).map_err(fail)?,
-                },
-            };
-            let content = ManagedAgentEventContent {
-                name: args.display_name.clone(),
-                persona_id: None,
-                system_prompt: Some(prompt.clone()),
-                model: Some(model.clone()),
-                provider: None,
-                persona_source_version: None,
-                parallelism: 1,
-                respond_to: RespondTo::OwnerOnly,
-                respond_to_allowlist: vec![],
-                home_role: None,
-                project_digest: if project_public == Some(true) {
-                    project
-                        .as_deref()
-                        .and_then(beekeeper_core::project_agent_association::project_agent_digest)
-                } else {
-                    None
-                },
-                project_withdrawn: project_public == Some(false),
-            };
-            let (public, profile) = if transfer.is_some() || args.agent_pubkey.is_some() {
-                let public = current_head(client, &actor.pubkey).await?;
-                if transfer
-                    .as_ref()
-                    .is_some_and(|value| public.id.to_hex() != value.definition_event_id)
-                {
-                    return Err(CliError::Conflict(format!(
-                        "adoption definition changed; effective revision is {}",
-                        public.id
-                    )));
-                }
-                let existing: ManagedAgentEventContent =
-                    serde_json::from_str(&public.content).map_err(fail)?;
-                if existing.name != args.display_name
-                    || (existing.persona_id.is_none()
-                        && (existing.system_prompt.as_deref().unwrap_or_default() != prompt
-                            || existing
-                                .model
-                                .as_ref()
-                                .is_some_and(|selected| selected != &model)))
-                {
-                    return Err(CliError::Conflict(
-                        "adoption must preserve the existing name, instructions and model".into(),
-                    ));
-                }
-                let profiles = client
-                    .query_all(json!({"kinds":[0],"authors":[actor.pubkey],"limit":1}))
-                    .await?;
-                let profile = profiles.into_iter().filter_map(|value| serde_json::from_value::<Event>(value).ok())
-                    .find(|event| event.pubkey == actor.keys.public_key() && beekeeper_core::verify_event(event).is_ok())
-                    .ok_or_else(|| CliError::Refused("existing signed agent profile is unavailable; refusing to replace it during adoption".into()))?;
-                (public, profile)
-            } else {
-                let public = client.sign_event_unchecked(
-                    beekeeper_sdk::managed_agent::build_managed_agent_event(
-                        &actor.pubkey,
-                        &content,
-                    )
-                    .map_err(fail)?,
-                )?;
-                let auth_values: Vec<String> =
-                    serde_json::from_str(&actor.auth_tag).map_err(fail)?;
-                let profile = beekeeper_sdk::build_profile(
-                    Some(&args.display_name),
-                    Some(&args.display_name),
-                    None,
-                    None,
-                    None,
-                )
-                .map_err(fail)?
-                .tags([Tag::parse(auth_values).map_err(fail)?])
-                .sign_with_keys(&actor.keys)
-                .map_err(fail)?;
-                (public, profile)
-            };
-            let payload = CodingSessionLifecycleCommandPayload {
-                schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.into(),
-                command_id: args.operation_id.to_string(),
-                action: CodingSessionLifecycleAction::SessionCreate {
-                    project_ref: project.clone(),
-                    repo_ref: None,
-                    session_ref: None,
-                    genesis_ref: None,
-                    provider_instance_ref: ProviderInstanceAlias::from_wire(&runtime.instance_ref)
-                        .map_err(fail)?,
-                    provider_authority_pubkey: config.provider_pubkey.clone(),
-                    model: Some(model),
-                    title: Some(args.display_name.clone()),
-                    initial_turn: None,
-                    actor: Some(actor.pubkey.clone()),
-                    role: None,
-                    hire_ref: None,
-                    routing: None,
-                },
-            };
-            let create = client.sign_event_unchecked(
-                beekeeper_sdk::build_coding_session_lifecycle_command(args.channel, &payload)
-                    .map_err(fail)?,
-            )?;
-            let member = client.sign_event_unchecked(actor_membership(
-                args.channel,
-                &actor.pubkey,
-                args.agent_pubkey.is_some() || args.adopt_agent_pubkey.is_some(),
-            )?)?;
-            let provider_member = client.sign_event_unchecked(
-                beekeeper_sdk::build_add_member(args.channel, &config.provider_pubkey, None)
-                    .map_err(fail)?,
-            )?;
-            let mut events = vec![public, profile, member, provider_member];
-            if let Some(project) = project.as_deref() {
-                let roster = super::projects::project_roster(client, project).await?;
-                for participant in [&actor.pubkey, &config.provider_pubkey] {
-                    if !roster.iter().any(|(key, role)| {
-                        key == participant && matches!(role.as_str(), "owner" | "collaborator")
-                    }) {
-                        events.push(
-                            client.sign_event_unchecked(
-                                beekeeper_sdk::managed_agent::build_project_member_admission(
-                                    project,
-                                    participant,
-                                    "collaborator",
-                                )
-                                .map_err(fail)?,
-                            )?,
-                        );
-                    }
-                }
-            }
-            events.push(create);
-            let operation = Operation {
-                request: request.clone(),
-                actor_pubkey: actor.pubkey.clone(),
-                events,
-                target: None,
-                receipt_event_id: None,
-                predecessor: successor_boundary.clone(),
-            };
-            // Reserve the identity before custody/publication. A crash in the
-            // following custody handoff is explicitly blocked on retry, never
-            // repaired by silently minting a different participant.
-            save(&path, &operation)?;
-            minted = Some(actor);
-            operation
-        }
-    };
-    if let Some(boundary) = &successor_boundary {
-        if operation
-            .predecessor
+    let request = create_request(args)?;
+    let outcome =
+        beekeeper_agent_management::create(&request, client, &context(&args.home)?).await?;
+    println!("{outcome}");
+    Ok(())
+}
+pub async fn update(args: &UpdateArgs, client: &BeekeeperClient) -> Result<(), CliError> {
+    let request = beekeeper_agent_management::UpdateRequest {
+        operation_id: args.operation_id,
+        agent_pubkey: args.agent_pubkey.clone(),
+        expected_revision: args.expected_revision.clone(),
+        display_name: args.display_name.clone(),
+        system_prompt: args
+            .system_prompt
             .as_ref()
-            .is_some_and(|held| held != boundary)
-        {
-            return Err(CliError::Conflict("successor operation was prepared against a different stopped owner; original operation preserved".into()));
-        }
-        if operation.predecessor.is_none() {
-            operation.predecessor = Some(boundary.clone());
-            save(&path, &operation)?;
+            .map(|v| read_or_stdin(v))
+            .transpose()?,
+        model: args.model.clone(),
+        home: None,
+        public_definition: read_json(args.definition_file.as_deref(), false)?,
+        private_config: read_json(args.private_config_file.as_deref(), true)?
+            .map(|record| beekeeper_agent_management::PrivateConfiguration { record }),
+    };
+    let outcome =
+        beekeeper_agent_management::update(&request, client, &context(&args.home)?).await?;
+    println!("{outcome}");
+    Ok(())
+}
+pub(super) mod local {
+    pub(crate) fn validate_checkout(
+        cwd: &std::path::Path,
+        home: &std::path::Path,
+        state: &std::path::Path,
+    ) -> Result<(), crate::error::CliError> {
+        let native = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        beekeeper_agent_management::validate_workspace(cwd, home, state, native.as_deref())
+            .map_err(Into::into)
+    }
+}
+
+pub(crate) use beekeeper_agent_management::authorize_project;
+
+fn read_json<T: serde::de::DeserializeOwned>(
+    path: Option<&std::path::Path>,
+    private: bool,
+) -> Result<Option<T>, CliError> {
+    let Some(path) = path else { return Ok(None) };
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| CliError::Usage("configuration file unavailable".into()))?;
+    if !metadata.file_type().is_file() || metadata.len() > 1024 * 1024 {
+        return Err(CliError::Usage(
+            "configuration must be a bounded regular JSON file".into(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if private && metadata.permissions().mode() & 0o077 != 0 {
+            return Err(CliError::Usage(
+                "private configuration file must be owner-only".into(),
+            ));
         }
     }
-    let initial = minted
-        .as_ref()
-        .map(|actor| (actor.private_key_nsec.as_str(), actor.auth_tag.as_str()));
-    let (key, auth) = actor_custody(&config.provider_state_dir, &operation.actor_pubkey, initial)?;
-    let actor_keys = Keys::parse(&key).map_err(|_| fail("actor custody key is invalid"))?;
-    let auth_parts: Vec<String> =
-        serde_json::from_str(&auth).map_err(|_| fail("actor attestation is malformed"))?;
-    let actor_client = BeekeeperClient::new(
-        client.relay_url().into(),
-        actor_keys,
-        Some(Tag::parse(auth_parts).map_err(|_| fail("actor attestation is malformed"))?),
-        Some(auth.clone()),
-    )?;
-    if operation.target.is_none() {
-        stage_actor(
-            &config,
-            &args.operation_id.to_string(),
-            &operation.actor_pubkey,
-            &args.display_name,
-            (&key, &auth),
-            &cwd,
-            project.as_deref(),
-        )?;
-        for event in &operation.events {
-            let transport = event_transport(event, client, &actor_client)?;
-            submit(transport, event).await?;
+    #[cfg(not(unix))]
+    let _ = private;
+    serde_json::from_slice(
+        &std::fs::read(path)
+            .map_err(|_| CliError::Usage("configuration file unreadable".into()))?,
+    )
+    .map(Some)
+    .map_err(|_| CliError::Usage("configuration JSON malformed".into()))
+}
+/// Actor-wide signed lifecycle request with a caller-local immutable journal.
+#[derive(Args, Debug)]
+pub struct LifecycleArgs {
+    /// Stable operation identity; retry unchanged.
+    #[arg(long)]
+    pub operation_id: Uuid,
+    /// Managed actor public key.
+    #[arg(long)]
+    pub agent_pubkey: String,
+    /// Known actor channel; discovery supplements these hints.
+    #[arg(long)]
+    pub channel: Vec<Uuid>,
+    /// Caller-local journal home, not executor access.
+    #[arg(long)]
+    pub home: Option<PathBuf>,
+    /// Signed receipt observation bound.
+    #[arg(long, default_value_t=60, value_parser=clap::value_parser!(u64).range(1..=300))]
+    pub wait_secs: u64,
+}
+impl LifecycleArgs {
+    fn request(&self) -> beekeeper_agent_management::LifecycleRequest {
+        beekeeper_agent_management::LifecycleRequest {
+            operation_id: self.operation_id,
+            agent_pubkey: self.agent_pubkey.clone(),
+            channels: self.channel.clone(),
+            wait_secs: self.wait_secs,
         }
-        match await_create_receipt(client, &args.channel.to_string(), &args.operation_id.to_string(), &config.provider_pubkey, args.wait_secs).await {
-            CreateWaitOutcome::Confirmed {target,receipt_event_id,..} => {
-                operation.target=Some(target); operation.receipt_event_id=Some(receipt_event_id); save(&path,&operation)?;
-            }
-            CreateWaitOutcome::Refused {error,..} => return Err(CliError::Refused(format!("provider refused operation {}: {}",args.operation_id,serde_json::to_string(&error).map_err(fail)?))),
-            CreateWaitOutcome::Conflicted {detail} => return Err(CliError::Conflict(detail)),
-            CreateWaitOutcome::Unconfirmed {query_failed} => return Err(CliError::Unconfirmed(format!("operation {} remains unconfirmed (receipt_query_failed={query_failed}); retry the same operation and unchanged arguments",args.operation_id))),
-        }
     }
-    let target = operation
-        .target
-        .as_ref()
-        .ok_or_else(|| fail("confirmed operation has no target"))?;
-    install_route(
-        &config.provider_state_dir,
-        &operation.actor_pubkey,
-        args.channel,
-        target,
-    )?;
-    if let Some(mut transfer) = transfer {
-        transfer.phase = beekeeper_host_core::ownership::Phase::Adopted;
-        transfer.target = Some(target.clone());
-        beekeeper_host_core::ownership::advance(&home, config.instance, transfer).map_err(fail)?;
-    }
-    if args.agent_pubkey.is_some() {
-        successor::reconcile(
-            &home,
-            &config,
-            provider,
-            &operation,
-            args.operation_id,
-            operation.predecessor.as_ref(),
-            client,
-        )
-        .await?;
-    }
+}
+/// Owner deletion bound to the exact public definition; missing terminal proof stays pending.
+#[derive(Args, Debug)]
+pub struct DeleteArgs {
+    /// Actor-wide lifecycle scope.
+    #[command(flatten)]
+    pub lifecycle: LifecycleArgs,
+    /// Exact current owner30177 event ID.
+    #[arg(long)]
+    pub expected_revision: String,
+    /// Info/deploy-only remote provider cannot acknowledge termination.
+    #[arg(long)]
+    pub remote_deployment: bool,
+}
+pub async fn status(args: &LifecycleArgs, client: &BeekeeperClient) -> Result<(), CliError> {
     println!(
         "{}",
-        json!({"operation_id":args.operation_id,"agent_pubkey":operation.actor_pubkey,
-        "revision":operation.events.first().ok_or_else(|| fail("operation has no configuration event"))?.id.to_hex(),"host_admitted":true,"receipt_event_id":operation.receipt_event_id,
-        "target":target,"conversation_route":"installed","runtime_account":"unconfirmed"})
+        beekeeper_agent_management::status(&args.request(), client).await?
+    );
+    Ok(())
+}
+pub async fn stop(args: &LifecycleArgs, client: &BeekeeperClient) -> Result<(), CliError> {
+    println!(
+        "{}",
+        beekeeper_agent_management::stop(&args.request(), client, &context(&args.home)?).await?
+    );
+    Ok(())
+}
+pub async fn start(args: &CreateArgs, client: &BeekeeperClient) -> Result<(), CliError> {
+    println!(
+        "{}",
+        beekeeper_agent_management::start(&create_request(args)?, client, &context(&args.home)?)
+            .await?
+    );
+    Ok(())
+}
+pub async fn delete(args: &DeleteArgs, client: &BeekeeperClient) -> Result<(), CliError> {
+    let scope = &args.lifecycle;
+    let request = beekeeper_agent_management::DeleteRequest {
+        operation_id: scope.operation_id,
+        agent_pubkey: scope.agent_pubkey.clone(),
+        channels: scope.channel.clone(),
+        wait_secs: scope.wait_secs,
+        expected_revision: args.expected_revision.clone(),
+        remote_deployment: args.remote_deployment,
+    };
+    println!(
+        "{}",
+        beekeeper_agent_management::delete(&request, client, &context(&scope.home)?).await?
     );
     Ok(())
 }
 
-fn actor_membership(
-    channel: Uuid,
-    actor: &str,
-    existing_identity: bool,
-) -> Result<nostr::EventBuilder, CliError> {
-    // Native directory discovery uses the channel's automated designation.
-    // This is independent of SessionCreate's optional team role. A bare add
-    // preserves an existing identity's channel role, including elevated roles.
-    let role = (!existing_identity).then_some(beekeeper_sdk::MemberRole::Bot);
-    beekeeper_sdk::build_add_member(channel, actor, role).map_err(fail)
+/// Stop and successor admission retain two distinct stable operation identities.
+#[derive(Args, Debug)]
+pub struct RestartArgs {
+    /// Successor definition/context; requires --agent-pubkey.
+    #[command(flatten)]
+    pub create: CreateArgs,
+    /// Stable UUID for actor-wide stop, distinct from successor --operation-id.
+    #[arg(long)]
+    pub stop_operation_id: Uuid,
+}
+pub async fn restart(args: &RestartArgs, client: &BeekeeperClient) -> Result<(), CliError> {
+    let actor = args
+        .create
+        .agent_pubkey
+        .clone()
+        .ok_or_else(|| CliError::Usage("restart requires --agent-pubkey".into()))?;
+    if args.stop_operation_id == args.create.operation_id {
+        return Err(CliError::Usage(
+            "stop and successor operations must differ".into(),
+        ));
+    }
+    let stop = beekeeper_agent_management::LifecycleRequest {
+        operation_id: args.stop_operation_id,
+        agent_pubkey: actor,
+        channels: vec![args.create.channel],
+        wait_secs: args.create.wait_secs,
+    };
+    println!(
+        "{}",
+        beekeeper_agent_management::restart(
+            &stop,
+            &create_request(&args.create)?,
+            client,
+            &context(&args.create.home)?
+        )
+        .await?
+    );
+    Ok(())
 }
 
-fn event_transport<'a>(
-    event: &Event,
-    owner: &'a BeekeeperClient,
-    actor: &'a BeekeeperClient,
-) -> Result<&'a BeekeeperClient, CliError> {
-    if event.pubkey == owner.keys().public_key() {
-        Ok(owner)
-    } else if event.pubkey == actor.keys().public_key() && event.kind == nostr::Kind::Metadata {
-        Ok(actor)
-    } else {
-        Err(CliError::Auth(
-            "journal event has no authorized scoped transport".into(),
-        ))
+/// Public owner start with no executor filesystem/socket.
+#[derive(Args, Debug)]
+pub struct RemoteStartArgs {
+    /// Stable caller operation UUID.
+    #[arg(long)]
+    pub operation_id: Uuid,
+    /// Existing owner-attested actor.
+    #[arg(long)]
+    pub agent_pubkey: String,
+    /// Exact current public definition revision.
+    #[arg(long)]
+    pub expected_revision: String,
+    /// Enrolled private or public transport channel.
+    #[arg(long)]
+    pub channel: Uuid,
+    /// Existing owner-attested worker public key.
+    #[arg(long)]
+    pub provider_authority: String,
+    /// Commissioned runtime alias.
+    #[arg(long)]
+    pub provider_instance: String,
+    /// Existing authorized project association.
+    #[arg(long)]
+    pub project: Option<String>,
+    /// Caller journal home; no executor filesystem is needed.
+    #[arg(long)]
+    pub home: Option<PathBuf>,
+    #[arg(long, default_value_t=60, value_parser=clap::value_parser!(u64).range(1..=300))]
+    pub wait_secs: u64,
+}
+#[derive(Args, Debug)]
+pub struct RemoteRestartArgs {
+    /// Relay-only successor request.
+    #[command(flatten)]
+    pub start: RemoteStartArgs,
+    /// Distinct actor-wide stop operation.
+    #[arg(long)]
+    pub stop_operation_id: Uuid,
+}
+fn remote_request(args: &RemoteStartArgs) -> beekeeper_agent_management::RemoteStartRequest {
+    beekeeper_agent_management::RemoteStartRequest {
+        operation_id: args.operation_id,
+        agent_pubkey: args.agent_pubkey.clone(),
+        expected_revision: args.expected_revision.clone(),
+        channel: args.channel,
+        provider_authority: args.provider_authority.clone(),
+        provider_instance: args.provider_instance.clone(),
+        project: args.project.clone(),
+        wait_secs: args.wait_secs,
     }
 }
+pub async fn start_remote(
+    args: &RemoteStartArgs,
+    client: &BeekeeperClient,
+) -> Result<(), CliError> {
+    println!(
+        "{}",
+        beekeeper_agent_management::start_remote(
+            &remote_request(args),
+            client,
+            &context(&args.home)?
+        )
+        .await?
+    );
+    Ok(())
+}
+pub async fn restart_remote(
+    args: &RemoteRestartArgs,
+    client: &BeekeeperClient,
+) -> Result<(), CliError> {
+    let stop = beekeeper_agent_management::LifecycleRequest {
+        operation_id: args.stop_operation_id,
+        agent_pubkey: args.start.agent_pubkey.clone(),
+        channels: vec![args.start.channel],
+        wait_secs: args.start.wait_secs,
+    };
+    println!(
+        "{}",
+        beekeeper_agent_management::restart_remote(
+            &stop,
+            &remote_request(&args.start),
+            client,
+            &context(&args.start.home)?
+        )
+        .await?
+    );
+    Ok(())
+}
 
-#[path = "agent_management/successor.rs"]
-mod successor;
-
-#[path = "agent_management/configuration.rs"]
-mod configuration;
-pub(super) use configuration::authorize_project;
-use configuration::current_head;
-pub use configuration::update;
-
-#[cfg(test)]
-#[path = "agent_management/tests.rs"]
-mod tests;
+#[derive(clap::Subcommand)]
+pub enum AgentsCmd {
+    /// Commission an identity and its attributed headless work context.
+    Create(CreateArgs),
+    /// Publish an authorized revision of an existing managed identity.
+    #[command(visible_alias = "configure")]
+    Update(UpdateArgs),
+    /// Observe exact signed responsibilities and current runtime lease evidence.
+    Status(LifecycleArgs),
+    /// Start through shared host custody; already adopted execution is reused.
+    Start(CreateArgs),
+    /// Start an enrolled actor using relay-only shared management.
+    StartRemote(RemoteStartArgs),
+    /// Stop all observed responsibilities, retaining custody until confirmed.
+    Stop(LifecycleArgs),
+    /// Await actor-wide terminal stop, then admit a new responsibility.
+    Restart(RestartArgs),
+    /// Stop all responsibilities then start using relay-only shared management.
+    RestartRemote(RemoteRestartArgs),
+    /// Retire and tombstone only with truthful actor-wide terminal proof.
+    Delete(DeleteArgs),
+    /// Retain an original signed definition as migration evidence; never starts or repairs execution.
+    SupplyMigrationDefinition(SupplyMigrationDefinitionArgs),
+    /// Open a prefilled create-agent form in the owner's Beekeeper Desktop
+    DraftCreate {
+        /// Current channel UUID; the new agent is added here after save
+        #[arg(long)]
+        channel: String,
+        /// Proposed agent name
+        #[arg(long)]
+        display_name: String,
+        /// Proposed instructions; use '-' to read from stdin
+        #[arg(long)]
+        system_prompt: String,
+    },
+    /// Open a prefilled edit-agent form in the owner's Beekeeper Desktop
+    DraftUpdate {
+        /// Current channel UUID
+        #[arg(long)]
+        channel: String,
+        /// Current name of the personal agent to update
+        #[arg(long)]
+        agent_name: String,
+        #[arg(long)]
+        display_name: Option<String>,
+        /// Replacement instructions; use '-' to read from stdin
+        #[arg(long)]
+        system_prompt: Option<String>,
+        #[arg(long)]
+        runtime: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long, value_enum)]
+        respond_to: Option<RespondToArg>,
+    },
+    /// Submit a NIP-IA archive request for an identity (kind 9035)
+    #[command(
+        after_help = "Auth flow: when target != signer, the CLI fetches the target's kind:0 and \
+attaches its owner-auth tag. On extraction failure it retries once (common cause: profile \
+republish in progress). If the retry also fails, the command exits with an error — use \
+--admin to bypass this guard when your key is a relay admin.\n\n\
+Suggested --reason codes (unknown values are allowed): rotated, retired, \
+bot-rebuilt, left-organization, spam\n\n\
+Archiving a third-party identity is a human owner/admin action: an agent \
+running under BEEKEEPER_AUTH_TAG signs as itself, so it can only ever satisfy \
+the self path (target == signer) — not the owner-of-agent path for another \
+identity.\n\n\
+Examples:\n  \
+bee agents archive <PUBKEY> --reason retired\n  \
+bee agents archive <PUBKEY> --reason bot-rebuilt --replaced-by <NEW_PUBKEY>"
+    )]
+    Archive {
+        /// Target identity pubkey (hex)
+        target_pubkey: String,
+        /// Machine-readable reason code, max 64 UTF-8 bytes
+        #[arg(long)]
+        reason: Option<String>,
+        /// Rotation pointer pubkey (hex); must differ from the target
+        #[arg(long)]
+        replaced_by: Option<String>,
+        /// Optional human-readable note (not parsed for authorization)
+        #[arg(long, default_value = "")]
+        content: String,
+        /// Allow sending without owner-auth attestation after extraction fails
+        /// (relay-admin path). Use only when your key is a relay admin; ordinary
+        /// owners do not need this flag. Without it, auth-extraction failure after
+        /// one automatic retry is a hard error rather than a silent bare send.
+        #[arg(long, default_value_t = false)]
+        admin: bool,
+    },
+    /// Submit a NIP-IA unarchive request for an identity (kind 9036)
+    #[command(
+        after_help = "Auth flow: same as `archive` — retries kind:0 fetch once on \
+extraction failure, then exits with an error if still unresolvable. Use --admin to bypass \
+for relay-admin callers.\n\n\
+Examples:\n  \
+bee agents unarchive <PUBKEY> --reason returned"
+    )]
+    Unarchive {
+        /// Target identity pubkey (hex)
+        target_pubkey: String,
+        /// Machine-readable reason code, max 64 UTF-8 bytes
+        #[arg(long)]
+        reason: Option<String>,
+        /// Optional human-readable note (not parsed for authorization)
+        #[arg(long, default_value = "")]
+        content: String,
+        /// Allow sending without owner-auth attestation after extraction fails
+        /// (relay-admin path). Use only when your key is a relay admin; ordinary
+        /// owners do not need this flag. Without it, auth-extraction failure after
+        /// one automatic retry is a hard error rather than a silent bare send.
+        #[arg(long, default_value_t = false)]
+        admin: bool,
+    },
+    /// Read the relay's current NIP-IA archive snapshot (kind 13535)
+    #[command(
+        after_help = "Verifies the snapshot's NIP-11 `self` authorship, event id, signature, \
+and NIP-70 `-` protection tag before trusting it. Any trust failure is a \
+nonzero-exit error, never a false-empty success — this command's whole \
+purpose is verification.\n\n\
+Examples:\n  \
+bee agents archived"
+    )]
+    Archived,
+}

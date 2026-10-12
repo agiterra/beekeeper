@@ -11,15 +11,11 @@ import {
   loadCommunities,
 } from "@/features/communities/communityStorage";
 import {
-  adoptManagedAgentHostTransfer,
   getManagedAgentHostTransfer,
-  prepareManagedAgentHostTransfer,
-  rollbackManagedAgentHostTransfer,
   startManagedAgent,
   type ManagedAgentHostTransferInfo,
 } from "@/shared/api/tauriManagedAgents";
 import { Button } from "@/shared/ui/button";
-import { Input } from "@/shared/ui/input";
 
 const descriptions: Record<string, string> = {
   prepared: "Custody preserved. Legacy shutdown has not been acknowledged.",
@@ -29,9 +25,9 @@ const descriptions: Record<string, string> = {
   hostStopped:
     "The host execution stopped. Start opens a new context with the same identity.",
   restoring:
-    "Host admissions are fenced. Every responsibility must stop before restoring desktop ownership.",
+    "Host admissions are fenced. Migration is blocked; reconcile the recorded host responsibilities.",
   legacyRestored:
-    "Desktop ownership restored. Preserved credentials remain available.",
+    "Preserved custody requires host migration before execution can start.",
 };
 
 export type HostTransferPhase = NonNullable<
@@ -70,8 +66,6 @@ export function HostTransferPanel({
     canonicalRelayUrl(transferQuery.data?.relayUrl ?? "") === activePair
       ? (transferQuery.data ?? null)
       : null;
-  const [channel, setChannel] = useState("");
-  const [cwd, setCwd] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -87,8 +81,6 @@ export function HostTransferPanel({
         observed.current !== null && observed.current !== identity;
       observed.current = identity;
       onPhaseChange?.(value.transfer?.phase ?? null);
-      setChannel((previous) => value.channel ?? previous);
-      setCwd((previous) => value.cwd ?? previous);
       if (changed || explicitlyRefreshed)
         void queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
     },
@@ -116,65 +108,13 @@ export function HostTransferPanel({
   }, [transferQuery.error]);
 
   async function move() {
-    if (!info) return;
+    if (!info?.migrationEligible) return;
     setBusy(true);
     setError(null);
     try {
-      let transfer = info.transfer;
-      const storageKey = `beekeeper-host-transfer:${info.relayUrl}:${pubkey}`;
-      if (
-        !transfer ||
-        transfer.phase === "legacyRestored" ||
-        transfer.phase === "prepared"
-      ) {
-        const operationId =
-          transfer?.phase === "prepared"
-            ? transfer.operationId
-            : transfer?.phase === "legacyRestored"
-              ? crypto.randomUUID()
-              : (localStorage.getItem(storageKey) ?? crypto.randomUUID());
-        localStorage.setItem(storageKey, operationId);
-        transfer = await prepareManagedAgentHostTransfer({
-          pubkey,
-          relayUrl: info.relayUrl,
-          operationId,
-          definitionEventId: info.revision,
-          channel: channel.trim(),
-          cwd: cwd.trim(),
-        });
-      }
-      if (transfer.phase === "quiesced" || transfer.phase === "adopted") {
-        await adoptManagedAgentHostTransfer({
-          pubkey,
-          relayUrl: info.relayUrl,
-          operationId: transfer.operationId,
-        });
-      }
-      await refresh();
-    } catch (reason) {
-      setError(String(reason));
-      await refresh().catch(() => {});
-    } finally {
-      setBusy(false);
-      void queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
-      void queryClient.invalidateQueries({
-        queryKey: managedAgentHostTransferQueryKey(pubkey),
+      await startManagedAgent(pubkey, {
+        expectedRelayUrl: info.relayUrl,
       });
-    }
-  }
-  async function rollback() {
-    if (!info?.transfer) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await rollbackManagedAgentHostTransfer({
-        pubkey,
-        relayUrl: info.relayUrl,
-        operationId: info.transfer.operationId,
-      });
-      localStorage.removeItem(
-        `beekeeper-host-transfer:${info.relayUrl}:${pubkey}`,
-      );
       await refresh();
     } catch (reason) {
       setError(String(reason));
@@ -203,73 +143,35 @@ export function HostTransferPanel({
         onClick={() => setExpanded((value) => !value)}
       >
         {phase && phase !== "legacyRestored"
-          ? "Host management"
-          : "Move to host"}
+          ? "Migration status"
+          : "Retry migration"}
       </Button>
       {expanded ? (
         <>
           <p className="text-sm text-muted-foreground">
             The host keeps this agent running when Beekeeper is closed. Existing
-            credentials, settings and history are preserved. The host starts a
-            fresh execution context; it does not resume the legacy runtime
-            session.
+            credentials and settings stay in custody. Migration preserves
+            existing native context only after verification. If that context
+            cannot be verified, migration is blocked for repair; it does not
+            create a fresh context as a fallback.
           </p>
           {phase ? (
             <p className="text-sm" data-testid="agent-host-transfer-phase">
               {descriptions[phase]}
             </p>
           ) : null}
-          {info && !info.commissioned ? (
-            <p className="text-sm">
-              Commission this host with <code>bee host commission</code> before
-              moving the agent.
-            </p>
-          ) : null}
-          {!phase || phase === "prepared" || phase === "legacyRestored" ? (
-            <>
-              <label
-                className="text-sm"
-                htmlFor={`host-transfer-channel-${pubkey}`}
-              >
-                Conversation channel UUID
-                <Input
-                  id={`host-transfer-channel-${pubkey}`}
-                  aria-label="Conversation channel UUID"
-                  value={channel}
-                  onChange={(event) => setChannel(event.target.value)}
-                  disabled={busy || managementPending}
-                />
-              </label>
-              <label
-                className="text-sm"
-                htmlFor={`host-transfer-cwd-${pubkey}`}
-              >
-                Working directory
-                <Input
-                  id={`host-transfer-cwd-${pubkey}`}
-                  aria-label="Working directory"
-                  placeholder="/absolute/project/path"
-                  value={cwd}
-                  onChange={(event) => setCwd(event.target.value)}
-                  disabled={busy || managementPending}
-                />
-              </label>
-            </>
-          ) : null}
           {!phase ||
           ["prepared", "quiesced", "legacyRestored"].includes(phase) ? (
             <Button
               data-testid="agent-host-transfer-move"
               onClick={() => void move()}
-              disabled={
-                busy ||
-                managementPending ||
-                !info?.commissioned ||
-                !channel.trim() ||
-                !cwd.trim()
-              }
+              disabled={busy || managementPending || !info?.migrationEligible}
             >
-              {busy ? "Reconciling…" : phase ? "Continue move" : "Move to host"}
+              {busy
+                ? "Reconciling…"
+                : phase
+                  ? "Continue migration"
+                  : "Retry migration"}
             </Button>
           ) : null}
           {phase === "hostStopped" ? (
@@ -297,25 +199,6 @@ export function HostTransferPanel({
               }}
             >
               Start a new host context
-            </Button>
-          ) : null}
-          {phase &&
-          [
-            "prepared",
-            "quiesced",
-            "adopted",
-            "hostStopped",
-            "restoring",
-          ].includes(phase) ? (
-            <Button
-              variant="outline"
-              data-testid="agent-host-transfer-rollback"
-              disabled={busy || managementPending}
-              onClick={() => void rollback()}
-            >
-              {phase === "prepared"
-                ? "Cancel move and retain desktop ownership"
-                : "Stop host work and restore desktop ownership"}
             </Button>
           ) : null}
           <Button

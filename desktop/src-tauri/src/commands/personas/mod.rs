@@ -3,10 +3,9 @@ use tauri::AppHandle;
 use crate::{
     app_state::AppState,
     managed_agents::{
-        current_instance_id, delete_agent_key, load_managed_agents, load_personas, load_teams,
-        save_managed_agents, save_personas, stop_managed_agent_process,
-        sync_managed_agent_processes, try_regenerate_nest, validate_persona_activation_change,
-        validate_persona_deletion, AgentDefinition, ManagedAgentRecord,
+        load_managed_agents, load_personas, load_teams, save_managed_agents, save_personas,
+        try_regenerate_nest, validate_persona_activation_change, validate_persona_deletion,
+        AgentDefinition, ManagedAgentRecord,
     },
     util::now_iso,
 };
@@ -112,6 +111,37 @@ fn commit_cascade_agents(
 #[tauri::command]
 pub async fn delete_persona(id: String, app: AppHandle) -> Result<(), String> {
     use tauri::Manager;
+    let state = app.state::<AppState>();
+    let personas = load_personas(&app)?;
+    let persona = personas
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or("persona not found")?;
+    validate_persona_deletion(
+        persona,
+        load_teams(&app)?
+            .iter()
+            .any(|t| t.persona_ids.contains(&id)),
+    )?;
+    let records = load_managed_agents(&app)?;
+    let expected: std::collections::HashSet<_> =
+        collect_cascade_pubkeys(&records, &id).into_iter().collect();
+    if !collect_remote_deployed(&records, &expected).is_empty() {
+        return Err("definition has deployed remote instances; revoke those deployments before deleting the definition".into());
+    }
+    let snapshot: Vec<_> = records
+        .iter()
+        .filter(|r| expected.contains(&r.pubkey))
+        .cloned()
+        .collect();
+    let relay = crate::relay::relay_ws_url_with_override(&state);
+    for record in &snapshot {
+        if record.backend == crate::managed_agents::BackendKind::Local {
+            let pair = crate::relay::effective_agent_relay_url(&record.relay_url, &relay);
+            super::agents::host_transfer::delete_host_agent_snapshot(&app, &state, record, &pair)
+                .await?;
+        }
+    }
     tokio::task::spawn_blocking(move || {
         let state = app.state::<AppState>();
 
@@ -147,25 +177,6 @@ pub async fn delete_persona(id: String, app: AppHandle) -> Result<(), String> {
             // then released before Phase 2 stops). Every fallible read/lock is
             // here; an error leaves all state intact and the command is retryable.
             let mut agents = load_managed_agents(&app)?;
-            {
-                let mut runtimes = state
-                    .managed_agent_processes
-                    .lock()
-                    .map_err(|error| error.to_string())?;
-                let (sync_changed, exited_pubkeys) = sync_managed_agent_processes(
-                    &mut agents,
-                    &mut runtimes,
-                    &current_instance_id(&app),
-                );
-                if sync_changed {
-                    save_managed_agents(&app, &agents)?;
-                }
-                for pk in &exited_pubkeys {
-                    state.clear_agent_session_caches(pk);
-                }
-                // runtimes drops here (process lock released before Phase 2).
-            }
-
             // Build the cascade set. HashSet for O(1) membership in Phase 3.
             let cascade: std::collections::HashSet<String> =
                 collect_cascade_pubkeys(&agents, &id).into_iter().collect();
@@ -182,29 +193,11 @@ pub async fn delete_persona(id: String, app: AppHandle) -> Result<(), String> {
                 ));
             }
 
-            // ── Phase 2: Stop ───────────────────────────────────────────────
-            //
-            // Best-effort stop each running cascade instance. Lock ordering:
-            // store lock (held) → process lock acquired per-agent and released
-            // between stops so the process lock is not held across the full poll
-            // cycle (stop_managed_agent_process polls 100ms×10 before SIGKILL).
-            //
-            // Per-agent stop errors are swallowed — these records are deleted in
-            // Phase 3 regardless. Intentional difference from delete_managed_agent
-            // (single-agent, fatal on stop failure); here the cascade is multi-agent
-            // and deletion must proceed even if one instance cannot be stopped.
-            for pk in &cascade {
-                if let Some(rec) = agents.iter_mut().find(|a| a.pubkey == *pk) {
-                    let mut runtimes = state
-                        .managed_agent_processes
-                        .lock()
-                        .map_err(|error| error.to_string())?;
-                    if let Err(e) = stop_managed_agent_process(&app, rec, &mut runtimes) {
-                        eprintln!("beekeeper-desktop: delete_persona: failed to stop agent {pk}: {e}");
-                    }
-                    // runtimes drops here (per-agent, process lock not held across stops).
-                }
-            }
+            if cascade != expected { return Err("agent set changed during shared deletion; source custody retained".into()); }
+            super::project_agent_teardown::require_unchanged_deletion_snapshot(
+                &agents, &snapshot, &cascade.iter().cloned().collect(),
+            )?;
+
 
             // ── Phase 3: Commit ─────────────────────────────────────────────
             //
@@ -234,10 +227,7 @@ pub async fn delete_persona(id: String, app: AppHandle) -> Result<(), String> {
             // Side effects — strictly after records leave disk.
             for pk in &cascade {
                 state.clear_agent_session_caches(pk);
-                // Remove nsec from keyring after the record is gone.
-                delete_agent_key(pk);
-                super::agents::tombstone_managed_agent_pending(&app, &state, pk);
-                super::agents::archive_managed_agent_pending(&app, &state, pk, Some(&id));
+                super::agents::purge_managed_agent_side_effects(&app, &state, pk, Some(&id))?;
             }
             tombstone_persona_pending(&app, &state, &d_tag);
 

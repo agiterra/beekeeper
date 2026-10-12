@@ -4,8 +4,11 @@
 login — or at boot, on a Mac nobody logs in to — survives every Beekeeper
 launch, quit and update, and installs on a server with no GUI anywhere.
 
-Quitting Beekeeper closes the client; host-managed work continues. Legacy
-agents that have not been transferred remain owned by the desktop.
+Quitting Beekeeper closes the client; host-managed work continues. Desktop
+creation and agent controls use the shared headless management implementation.
+Existing desktop records pass through a one-way upgrade importer; blocked
+migration preserves source custody and reports repair rather than launching a
+desktop executor. See [migration and recovery](agent-migration.md).
 
 ```
 login or boot (launchd/systemd)  login (launchd)
@@ -33,11 +36,11 @@ content from the relay as they always did.
 restarting it on the backoff ladder, stopping it with SIGINT so its durable
 outbox flushes, and taking its state directory over from a stale owner.
 
-**Owns through the provider:** participants created through headless setup or
-explicitly transferred from the desktop. Their conversation responsibilities
-use the provider's existing runtime execution and survive client quit.
-Untransferred legacy `beekeeper-acp` children remain desktop-owned until an
-explicit, reversible handoff; closing the desktop still ends those children.
+**Owns through the provider:** participants created through CLI or desktop and
+eligible records imported at setup. Their conversation responsibilities use
+the provider's existing runtime execution and survive client quit. The desktop
+retains credential custody, signing, presentation and local bootstrap adapters;
+it has no legacy agent launch, supervision, sweep or restore-owner path.
 
 **Cannot see:** the provider's relay connection. The host *supervises* the
 provider rather than linking it in, so it holds no relay socket of its own and
@@ -297,7 +300,7 @@ for why that is not a substrate control channel.
 | `start` / `stop` / `restart` | the provider child; the host keeps running |
 | `bind` | re-read `host.json` — the community switch |
 | `adopt-identity` | re-read the key file after the app wrote it |
-| `push-activity` | the app contributes its managed-agent rows, under a lease |
+| `push-activity` | historical protocol operation; current desktop does not publish executor activity |
 
 The secret never crosses the socket. The app writes the `0600` file and
 `adopt-identity` only says "look again", so a socket capture reveals nothing

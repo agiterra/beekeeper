@@ -46,6 +46,11 @@ pub const TRANSCRIPT_SCHEMA: &str = "buzz-coding-session-transcript/v1";
 /// The receipt error code the consumer pins for a create that succeeded but
 /// whose initial turn did not.
 pub const INITIAL_TURN_FAILED: &str = "INITIAL_TURN_FAILED";
+
+/// Startup may have produced effects but no accepted outcome was established.
+/// A Failed receipt with this code may retain its reserved validated target;
+/// it does not certify Created, Live or terminal process quiescence.
+pub const CREATE_START_OUTCOME_UNCONFIRMED: &str = "CREATE_START_OUTCOME_UNCONFIRMED";
 /// No working directory could be resolved for the create command.
 pub const PROJECT_CWD_UNRESOLVED: &str = "PROJECT_CWD_UNRESOLVED";
 /// The provider is already running as many sessions as it will run.
@@ -954,7 +959,14 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
                     .as_ref()
                     .is_some_and(|error| error.code == CONTEXT_NOT_RECOVERED)
         }
-        ReceiptStatus::Failed => receipt.session.is_none() && receipt.error.is_some(),
+        ReceiptStatus::Failed => {
+            receipt.error.is_some()
+                && (receipt.session.is_none()
+                    || receipt
+                        .error
+                        .as_ref()
+                        .is_some_and(|error| error.code == CREATE_START_OUTCOME_UNCONFIRMED))
+        }
         // Every turn status names the execution the 44220 addressed, even the
         // refusals: "which session did this refer to" is the first thing an
         // operator asks.
@@ -3011,6 +3023,32 @@ mod tests {
         wrong = serde_json::to_value(LifecycleReceipt::failed("c", SESSION_LIMIT, "x")).unwrap();
         wrong["session"] = serde_json::to_value(target()).unwrap();
         assert!(decode_coding_session_lifecycle_receipt(&wrong.to_string()).is_err());
+    }
+
+    #[test]
+    fn uncertain_start_failed_target_is_bounded_and_never_a_success() {
+        let mut receipt = LifecycleReceipt::failed(
+            "create-uncertain",
+            CREATE_START_OUTCOME_UNCONFIRMED,
+            "startup effects unknown",
+        );
+        receipt.session = Some(target());
+        assert_eq!(
+            decode_coding_session_lifecycle_receipt(&serde_json::to_string(&receipt).unwrap())
+                .unwrap(),
+            receipt
+        );
+        receipt.error.as_mut().unwrap().code = SESSION_LIMIT.into();
+        assert!(
+            decode_coding_session_lifecycle_receipt(&serde_json::to_string(&receipt).unwrap())
+                .is_err()
+        );
+        receipt.error.as_mut().unwrap().code = CREATE_START_OUTCOME_UNCONFIRMED.into();
+        receipt.session.as_mut().unwrap().generation = 0;
+        assert!(
+            decode_coding_session_lifecycle_receipt(&serde_json::to_string(&receipt).unwrap())
+                .is_err()
+        );
     }
 
     #[test]

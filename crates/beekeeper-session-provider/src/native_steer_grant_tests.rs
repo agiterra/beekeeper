@@ -137,7 +137,7 @@ async fn native_steer_queued_fence_failures_preserve_a_restart_answer() {
             std::fs::create_dir(path).expect("block append or rename");
         }
         provider
-            .enforce_claim_for_genesis(&genesis)
+            .enforce_claim_for_genesis(&genesis).await
             .expect_err("injected persistence failure");
         let mut answered = HashSet::new();
         for (id, target) in &commands {

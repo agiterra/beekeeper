@@ -3006,3 +3006,86 @@ mod tests {
         );
     }
 }
+
+impl beekeeper_agent_management::RelayTransport for BeekeeperClient {
+    async fn relay_identity(&self) -> Result<String, beekeeper_agent_management::Error> {
+        let response = self
+            .http
+            .get(&self.relay_url)
+            .header("Accept", "application/nostr+json")
+            .send()
+            .await
+            .map_err(|_| {
+                beekeeper_agent_management::Error::Other("relay identity query unavailable".into())
+            })?;
+        if !response.status().is_success() {
+            return Err(beekeeper_agent_management::Error::Refused(
+                "relay identity query refused".into(),
+            ));
+        }
+        let value: serde_json::Value = response.json().await.map_err(|_| {
+            beekeeper_agent_management::Error::Other("relay identity malformed".into())
+        })?;
+        value
+            .get("self")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                beekeeper_agent_management::Error::Refused("relay identity absent".into())
+            })
+    }
+    fn keys(&self) -> &Keys {
+        BeekeeperClient::keys(self)
+    }
+    fn relay_url(&self) -> &str {
+        BeekeeperClient::relay_url(self)
+    }
+    fn verified_auth_tag_owner_hex(
+        &self,
+    ) -> Result<Option<String>, beekeeper_agent_management::Error> {
+        BeekeeperClient::verified_auth_tag_owner_hex(self).map_err(management_transport_error)
+    }
+    fn scoped(
+        &self,
+        keys: Keys,
+        auth_tag: String,
+    ) -> Result<Self, beekeeper_agent_management::Error> {
+        let parts: Vec<String> = serde_json::from_str(&auth_tag).map_err(|_| {
+            beekeeper_agent_management::Error::Auth("actor attestation malformed".into())
+        })?;
+        let tag = nostr::Tag::parse(parts).map_err(|_| {
+            beekeeper_agent_management::Error::Auth("actor attestation malformed".into())
+        })?;
+        Self::new(self.relay_url().into(), keys, Some(tag), Some(auth_tag))
+            .map_err(management_transport_error)
+    }
+    async fn query_all(
+        &self,
+        filter: serde_json::Value,
+    ) -> Result<Vec<serde_json::Value>, beekeeper_agent_management::Error> {
+        BeekeeperClient::query_all(self, filter)
+            .await
+            .map_err(management_transport_error)
+    }
+    async fn submit_event(
+        &self,
+        event: nostr::Event,
+    ) -> Result<serde_json::Value, beekeeper_agent_management::Error> {
+        let raw = BeekeeperClient::submit_event(self, event)
+            .await
+            .map_err(management_transport_error)?;
+        serde_json::from_str(&raw).map_err(|_| {
+            beekeeper_agent_management::Error::Other("relay response malformed".into())
+        })
+    }
+}
+fn management_transport_error(error: CliError) -> beekeeper_agent_management::Error {
+    use beekeeper_agent_management::Error;
+    match error {
+        CliError::Auth(v) => Error::Auth(v),
+        CliError::Conflict(v) => Error::Conflict(v),
+        CliError::Refused(v) => Error::Refused(v),
+        CliError::NotFound(v) => Error::NotFound(v),
+        other => Error::Other(other.to_string()),
+    }
+}

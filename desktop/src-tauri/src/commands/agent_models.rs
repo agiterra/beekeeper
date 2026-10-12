@@ -18,12 +18,11 @@ use super::agent_update_rollback::{rollback_failed_agent_update, AgentUpdateRoll
 use crate::{
     app_state::AppState,
     managed_agents::{
-        current_instance_id, discovery_env_with_baked_floor, find_managed_agent_mut,
-        known_acp_runtime, load_global_agent_config, load_managed_agents, load_personas,
-        managed_agent_avatar_url, missing_command_message, normalize_agent_args, resolve_command,
-        save_managed_agents, sync_managed_agent_processes, try_regenerate_nest, AgentModelInfo,
-        AgentModelsResponse, ManagedAgentRecord, UpdateManagedAgentRequest,
-        UpdateManagedAgentResponse, DEFAULT_ACP_COMMAND,
+        discovery_env_with_baked_floor, find_managed_agent_mut, known_acp_runtime,
+        load_global_agent_config, load_managed_agents, load_personas, managed_agent_avatar_url,
+        missing_command_message, normalize_agent_args, resolve_command, save_managed_agents,
+        try_regenerate_nest, AgentModelInfo, AgentModelsResponse, ManagedAgentRecord,
+        UpdateManagedAgentRequest, UpdateManagedAgentResponse, DEFAULT_ACP_COMMAND,
     },
     relay::{relay_ws_url_with_override, sync_managed_agent_profile},
     util::now_iso,
@@ -44,19 +43,7 @@ pub async fn get_agent_models(
             .managed_agents_store_lock
             .lock()
             .map_err(|e| e.to_string())?;
-        let mut records = load_managed_agents(&app)?;
-        let mut runtimes = state
-            .managed_agent_processes
-            .lock()
-            .map_err(|e| e.to_string())?;
-        let (sync_changed, exited_pubkeys) =
-            sync_managed_agent_processes(&mut records, &mut runtimes, &current_instance_id(&app));
-        if sync_changed {
-            save_managed_agents(&app, &records)?;
-        }
-        for pubkey in &exited_pubkeys {
-            state.clear_agent_session_caches(pubkey);
-        }
+        let records = load_managed_agents(&app)?;
 
         let record = records
             .iter()
@@ -699,6 +686,7 @@ use databricks::{discover_databricks_models, DatabricksAuthIntent};
 
 #[path = "agent_models_update.rs"]
 mod update;
+pub(in crate::commands) use update::prospective_record;
 pub use update::update_managed_agent;
 pub(super) use update::{flush_managed_agent_policy, managed_agent_access_policy_changed};
 

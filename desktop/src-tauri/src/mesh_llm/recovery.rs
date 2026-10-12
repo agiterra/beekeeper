@@ -275,7 +275,8 @@ pub(crate) async fn rearm_relay_mesh_for_running_agents(app: &AppHandle) -> Resu
         .as_ref()
         .map(|runtime| runtime.mode());
     let recovery = recover_stale_mesh_runtime(&state, MeshRecoveryUrgency::Watchdog).await;
-    let active_pubkeys = active_managed_agent_pubkeys(&state);
+    let active_pubkeys =
+        crate::commands::agents::host_transfer::active_host_agent_pubkeys(app, &state).await?;
     // Mesh participation is resolved through the same definition-authoritative
     // path as spawn/restore (#1968): definition → global fallback. A linked
     // instance's own bytes never contribute.
@@ -361,19 +362,6 @@ pub(crate) async fn rearm_relay_mesh_for_running_agents(app: &AppHandle) -> Resu
     first_error.map_or(Ok(()), Err)
 }
 
-fn active_managed_agent_pubkeys(state: &AppState) -> HashSet<String> {
-    state
-        .managed_agent_processes
-        .lock()
-        .map(|guard| {
-            guard
-                .keys()
-                .map(|key| key.pubkey.to_ascii_lowercase())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// Effective mesh model for a record that is actively running, or `None`
 /// when the record is not a running relay-mesh consumer. Resolution goes
 /// through `resolve_effective_relay_mesh_model_id` (definition → global
@@ -386,10 +374,7 @@ fn running_relay_mesh_model_id(
     global: &crate::managed_agents::GlobalAgentConfig,
 ) -> Option<String> {
     let running = record.backend == crate::managed_agents::BackendKind::Local
-        && active_pubkeys.contains(&record.pubkey.to_ascii_lowercase())
-        && record
-            .runtime_pid
-            .is_none_or(crate::managed_agents::process_is_running);
+        && active_pubkeys.contains(&record.pubkey.to_ascii_lowercase());
     if !running {
         return None;
     }

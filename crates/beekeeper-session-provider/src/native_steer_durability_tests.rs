@@ -217,7 +217,7 @@ async fn native_steer_queued_refusal_survives_failed_snapshot_and_regrant() {
     std::fs::rename(&snapshot, snapshot.with_extension("saved")).expect("save snapshot");
     std::fs::create_dir(&snapshot).expect("block snapshot");
     provider
-        .enforce_claim_for_genesis(&genesis)
+        .enforce_claim_for_genesis(&genesis).await
         .expect_err("refusal snapshot failed");
     std::fs::remove_dir(&snapshot).expect("unblock");
     std::fs::rename(snapshot.with_extension("saved"), &snapshot).expect("restore snapshot");

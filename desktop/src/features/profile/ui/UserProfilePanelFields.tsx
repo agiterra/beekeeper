@@ -62,7 +62,7 @@ const AGENT_SETTINGS_LABELS = new Set([
   "Who can send instructions",
   "ACP command",
   "MCP command",
-  "Start on launch",
+  "Enabled on host",
 ]);
 const DIAGNOSTICS_LABELS = new Set(["Status", "Last error"]);
 
@@ -386,7 +386,7 @@ export function buildOwnerFields({
     fields.push({
       displayValue: managedAgent.startOnAppLaunch ? "Yes" : "No",
       icon: Server,
-      label: "Start on launch",
+      label: "Enabled on host",
       testId: "user-profile-start-on-launch",
     });
   }

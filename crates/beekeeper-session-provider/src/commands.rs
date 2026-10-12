@@ -192,6 +192,8 @@ pub enum LifecycleDecision {
 /// A validated, resolved create request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatePlan {
+    /// Exact channel/signer/payload identity bound by durable admission intent.
+    pub request_fingerprint: String,
     /// The verified signer of the 44221 that asked for this execution.
     ///
     /// Distinct from [`Self::founder_pubkey`], and the distinction is the
@@ -537,10 +539,23 @@ pub fn decide_lifecycle(
     if !provider_authority_pubkey.eq_ignore_ascii_case(context.provider_pubkey) {
         return LifecycleDecision::Ignore(Ignored::NotAddressed);
     }
-    if context.state.is_command_consumed(&payload.command_id) {
+    let fingerprint =
+        crate::state::lifecycle_fingerprint(channel_id, context.operator_pubkey, content);
+    let safe_retry = matches!(
+        &payload.action,
+        CodingSessionLifecycleAction::SessionCreate { .. }
+    ) && context
+        .state
+        .retry_before_effects(&payload.command_id, &fingerprint);
+    if context.state.is_command_consumed(&payload.command_id) && !safe_retry {
         return LifecycleDecision::Ignore(Ignored::AlreadyConsumed);
     }
-    if context.past_horizon(created_at) {
+    if context.state.is_command_refused(&payload.command_id) && !safe_retry {
+        return LifecycleDecision::Ignore(Ignored::AlreadyRefused {
+            command_id: payload.command_id,
+        });
+    }
+    if context.past_horizon(created_at) && !safe_retry {
         return LifecycleDecision::Ignore(Ignored::PastHorizon);
     }
 
@@ -883,7 +898,11 @@ pub fn decide_lifecycle(
         };
     };
 
+    if context.state.unresolved_actor_start(actor.as_deref()) {
+        return LifecycleDecision::Fail {command_id:payload.command_id.clone(),code:"CREATE_START_OUTCOME_UNCONFIRMED",message:"a prior startup for this actor remains uncertain; repair its reserved responsibility before admitting another".into()};
+    }
     LifecycleDecision::Create(Box::new(CreatePlan {
+        request_fingerprint: fingerprint,
         created_by: context.operator_pubkey.to_owned(),
         // Nothing is known about the umbrella's claim at decision time: this
         // decision runs before any relay read. `on_lifecycle` resolves the
@@ -990,6 +1009,39 @@ pub fn decide_turn_command(
     context: &CommandContext<'_>,
     created_at: u64,
     command: TurnCommand,
+) -> TurnDecision {
+    decide_turn_command_with_author(context, created_at, command, None)
+}
+
+/// A verified ordinary input author capability bound to one original signed event.
+/// It permits only starting that event's routed turn, never explicit steering or interruption.
+pub(crate) struct ConversationCapability {
+    pub(crate) command_id: String,
+    pub(crate) event_id: String,
+    pub(crate) target: CodingSessionTarget,
+    pub(crate) author: String,
+    pub(crate) channel: Uuid,
+}
+
+/// Admit one verified conversation start through the unchanged execution/resource fences.
+pub(crate) fn decide_conversation_turn(
+    context: &CommandContext<'_>,
+    created_at: u64,
+    content: &str,
+    capability: &ConversationCapability,
+) -> TurnDecision {
+    let command = match decode_turn_command(content) {
+        Ok(command) => command,
+        Err(error) => return TurnDecision::Ignore(Ignored::Malformed(error)),
+    };
+    decide_turn_command_with_author(context, created_at, command, Some(capability))
+}
+
+fn decide_turn_command_with_author(
+    context: &CommandContext<'_>,
+    created_at: u64,
+    command: TurnCommand,
+    capability: Option<&ConversationCapability>,
 ) -> TurnDecision {
     // Any driver this provider's runtimes mint is acceptable; the session id
     // (a UUID) plus generation fence everything downstream, so two runtimes
@@ -1099,7 +1151,15 @@ pub fn decide_turn_command(
             message: refusal.message,
         };
     }
-    if !operator_may_steer(record, context.operator_pubkey) {
+    let ordinary_author = capability.is_some_and(|capability| {
+        capability.command_id == command.command_id
+            && capability.event_id == command.command_id
+            && capability.target == command.target
+            && capability.author == context.operator_pubkey
+            && capability.channel == context.channel_id
+            && matches!(command.action, TurnAction::Start { .. })
+    });
+    if !ordinary_author && !operator_may_steer(record, context.operator_pubkey) {
         return TurnDecision::Fail {
             command_id: command.command_id,
             target: command.target,
@@ -2154,6 +2214,7 @@ mod tests {
         SessionRecord {
             execution_binding: None,
             execution_boundary: None,
+            process_witness: None,
             authority_withdrawn: None,
             project_head_seen_at: None,
             session_id: session_id.to_owned(),

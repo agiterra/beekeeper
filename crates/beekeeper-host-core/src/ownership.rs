@@ -1,9 +1,13 @@
-//! Durable, reversible transfer of a participant/community pair.
+//! Durable one-way import and sole host custody of a participant/community pair.
 //!
 //! This journal grants no relay authority and never kills a PID. The legacy
 //! custodian verifies its tracked generation has stopped before quiescence;
 //! adoption requires the existing provider's verified create receipt. Both
 //! custodians refuse to execute while transfer is between owners.
+#[path = "ownership_import.rs"]
+mod import_definition;
+pub use import_definition::revise_quiesced_import_definition;
+
 use std::path::Path;
 
 use beekeeper_core::coding_session_command::CodingSessionTarget;
@@ -25,11 +29,11 @@ pub enum Phase {
     Quiesced,
     /// Verified provider adoption makes the host the sole execution owner.
     Adopted,
-    /// Host admission is fenced while all accepted responsibilities are stopped.
+    /// Historical rollback fence; retained for reading old journals, never newly entered.
     Restoring,
-    /// The host execution stopped; neither owner may run before restoration.
+    /// Host execution is stopped; only verified host admission may succeed it.
     HostStopped,
-    /// Preserved legacy custody was restored after the host stopped.
+    /// Historical restored custody; retained for one-way import, never newly entered.
     LegacyRestored,
 }
 
@@ -81,10 +85,31 @@ pub fn management_lock(home: &Path, instance: Instance) -> Result<std::fs::File,
     Ok(lock)
 }
 
-/// Serialize runtime admission with a rollback fence for one participant pair.
+// Internal short-lived serialization for the shared journal, independent of
+// caller management/pair locks. No await or admission lock is acquired here.
+fn journal_lock(home: &Path, instance: Instance) -> Result<std::fs::File, String> {
+    let dir = layout::host_dir(home, instance).join("management");
+    atomic_write::create_dir_all_restricted(&dir)?;
+    let path = dir.join("ownership-journal.lock");
+    if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err("ownership journal lock must not be a symlink".into());
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).read(true).write(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let lock = options.open(path).map_err(|e| e.to_string())?;
+    lock.lock().map_err(|e| e.to_string())?;
+    Ok(lock)
+}
+
+/// Serialize runtime admission and verified stop/import boundaries for one pair.
 /// This is separate from the client management lock: clients may await relay
 /// receipts while the worker admits their execution. Hold through runtime
-/// startup and durable record insertion, or through `begin_restoration`.
+/// startup and durable record insertion, or through a verified stop boundary.
 pub fn admission_lock(
     home: &Path,
     instance: Instance,
@@ -143,28 +168,6 @@ fn open_admission_lock(
     Ok(lock)
 }
 
-/// Fence new host admissions before enumerating and stopping every accepted
-/// responsibility. Caller holds the pair admission lock. Existing stop receipts
-/// must still be verified before advancing to legacy restoration.
-pub fn begin_restoration(
-    home: &Path,
-    instance: Instance,
-    actor: &str,
-    relay: &str,
-) -> Result<Transfer, String> {
-    let mut current =
-        for_pair(home, instance, actor, relay)?.ok_or("no ownership transfer to restore")?;
-    if current.phase == Phase::Restoring {
-        return Ok(current);
-    }
-    if !matches!(current.phase, Phase::Adopted | Phase::HostStopped) {
-        return Err("restoration requires verified host adoption".into());
-    }
-    current.phase = Phase::Restoring;
-    advance(home, instance, current.clone())?;
-    Ok(current)
-}
-
 fn read(home: &Path, instance: Instance) -> Result<Journal, String> {
     let path = layout::host_dir(home, instance).join("managed-ownership.json");
     match std::fs::read(&path) {
@@ -191,19 +194,153 @@ pub fn for_pair(
         .find(|t| t.actor_pubkey.eq_ignore_ascii_case(actor) && t.relay_url == relay))
 }
 
-/// Refuse legacy execution after quiescence, including across client restart.
-pub fn require_legacy_owner(
+/// Record sole host custody for a newly enrolled identity after the shared
+/// service verifies its custody/publication and, when running, create receipt.
+/// A stopped enrollment has no execution target. Existing legacy/import
+/// ownership cannot be overwritten by this fresh-identity boundary.
+#[allow(clippy::too_many_arguments)]
+pub fn record_host_enrollment(
     home: &Path,
     instance: Instance,
     actor: &str,
     relay: &str,
+    operation: &str,
+    revision: &str,
+    target: Option<CodingSessionTarget>,
 ) -> Result<(), String> {
-    if let Some(t) = for_pair(home, instance, actor, relay)? {
-        if !matches!(t.phase, Phase::Prepared | Phase::LegacyRestored) {
-            return Err(format!("agent ownership is {:?} for operation {}; use its accepted session through the relay", t.phase, t.operation_id));
+    nostr::PublicKey::from_hex(actor).map_err(|_| "invalid enrolled actor")?;
+    nostr::EventId::from_hex(revision).map_err(|_| "invalid enrolled revision")?;
+    uuid::Uuid::parse_str(operation).map_err(|_| "enrollment requires operation UUID")?;
+    let _journal_lock = journal_lock(home, instance)?;
+    let mut journal = read(home, instance)?;
+    let relay = canonical_relay_key(relay);
+    let next = Transfer {
+        operation_id: operation.into(),
+        actor_pubkey: actor.to_ascii_lowercase(),
+        relay_url: relay,
+        legacy_nonce: format!("fresh-identity:{operation}"),
+        definition_event_id: revision.into(),
+        phase: if target.is_some() {
+            Phase::Adopted
+        } else {
+            Phase::HostStopped
+        },
+        target,
+    };
+    if let Some(held) = journal
+        .transfers
+        .iter_mut()
+        .find(|t| t.actor_pubkey == next.actor_pubkey && t.relay_url == next.relay_url)
+    {
+        if *held == next {
+            return Ok(());
         }
+        if held.phase == Phase::HostStopped
+            && held.target.is_none()
+            && next.phase == Phase::Adopted
+            && next.target.is_some()
+            && held.operation_id == next.operation_id
+            && held.definition_event_id == next.definition_event_id
+            && held.legacy_nonce == next.legacy_nonce
+        {
+            // Only the exact configured fresh enrollment may be completed by
+            // its verified receipt. A legacy/import nonce never matches this.
+            *held = next;
+        } else {
+            return Err(
+                "existing ownership must be reconciled; fresh enrollment cannot replace it".into(),
+            );
+        }
+    } else {
+        journal.transfers.push(next);
     }
-    Ok(())
+    atomic_write::atomic_write_json_restricted(
+        &layout::host_dir(home, instance).join("managed-ownership.json"),
+        &serde_json::to_vec_pretty(&journal).map_err(|_| "cannot encode enrolled ownership")?,
+    )
+}
+
+/// Replace the signed definition revision of an unstarted fresh enrollment.
+/// Callers must hold the pair admission lock and verify the new owner-signed
+/// head readback before this compare-and-swap. The internal journal lock
+/// serializes different pairs; a worker must not acquire client management. Imported custody
+/// and any enrollment with an execution target are never changed here.
+#[allow(clippy::too_many_arguments)]
+pub fn revise_fresh_configured_enrollment(
+    home: &Path,
+    instance: Instance,
+    actor: &str,
+    relay: &str,
+    operation: &str,
+    previous_revision: &str,
+    verified_revision: &str,
+) -> Result<(), String> {
+    nostr::EventId::from_hex(verified_revision)
+        .map_err(|_| "invalid verified definition revision")?;
+    let _journal_lock = journal_lock(home, instance)?;
+    let mut journal = read(home, instance)?;
+    let relay = canonical_relay_key(relay);
+    let held = journal
+        .transfers
+        .iter_mut()
+        .find(|t| t.actor_pubkey.eq_ignore_ascii_case(actor) && t.relay_url == relay)
+        .ok_or("fresh configured enrollment unavailable")?;
+    if held.phase != Phase::HostStopped
+        || held.target.is_some()
+        || held.operation_id != operation
+        || held.legacy_nonce != format!("fresh-identity:{operation}")
+        || (held.definition_event_id != previous_revision
+            && held.definition_event_id != verified_revision)
+    {
+        return Err("definition revision update requires exact unstarted fresh enrollment".into());
+    }
+    held.definition_event_id = verified_revision.into();
+    atomic_write::atomic_write_json_restricted(
+        &layout::host_dir(home, instance).join("managed-ownership.json"),
+        &serde_json::to_vec_pretty(&journal).map_err(|_| "cannot encode configured ownership")?,
+    )
+}
+
+/// Follow one verified resume of the same adopted execution.
+/// The worker must hold pair admission and durably accept the new record before
+/// calling this exact-target compare-and-swap, then publish its Resumed receipt.
+/// Custody, operation, definition and history remain unchanged. Unmanaged pairs
+/// are untouched; an existing managed pair never accepts a stale/foreign target.
+pub fn follow_generation(
+    home: &Path,
+    instance: Instance,
+    actor: &str,
+    relay: &str,
+    previous: &CodingSessionTarget,
+    next: &CodingSessionTarget,
+) -> Result<(), String> {
+    if previous.driver != next.driver
+        || previous.instance_id != next.instance_id
+        || previous.session_id != next.session_id
+        || previous.generation.checked_add(1) != Some(next.generation)
+    {
+        return Err(
+            "resume requires the immediately following generation of the same execution".into(),
+        );
+    }
+    let _journal_lock = journal_lock(home, instance)?;
+    let mut journal = read(home, instance)?;
+    let relay = canonical_relay_key(relay);
+    let Some(held) = journal
+        .transfers
+        .iter_mut()
+        .find(|t| t.actor_pubkey.eq_ignore_ascii_case(actor) && t.relay_url == relay)
+    else {
+        return Ok(());
+    };
+    if held.phase != Phase::Adopted || held.target.as_ref() != Some(previous) {
+        return Err("resume ownership target is stale or not adopted".into());
+    }
+    held.target = Some(next.clone());
+    atomic_write::atomic_write_json_restricted(
+        &layout::host_dir(home, instance).join("managed-ownership.json"),
+        &serde_json::to_vec_pretty(&journal).map_err(|_| "cannot encode resumed ownership")?,
+    )
 }
 
 /// Record an acknowledged terminal provider execution without restoring the
@@ -243,6 +380,7 @@ pub fn successor(
     revision: &str,
     target: CodingSessionTarget,
 ) -> Result<(), String> {
+    let _journal_lock = journal_lock(home, instance)?;
     let mut journal = read(home, instance)?;
     let relay = canonical_relay_key(relay);
     let Some(index) = journal
@@ -294,6 +432,7 @@ pub fn advance(home: &Path, instance: Instance, mut next: Transfer) -> Result<()
     next.actor_pubkey.make_ascii_lowercase();
     next.relay_url = canonical_relay_key(&next.relay_url);
     url::Url::parse(&next.relay_url).map_err(|_| "invalid transfer relay")?;
+    let _journal_lock = journal_lock(home, instance)?;
     let mut journal = read(home, instance)?;
     if let Some(index) = journal.transfers.iter().position(|t| {
         t.actor_pubkey == next.actor_pubkey
@@ -324,17 +463,16 @@ pub fn advance(home: &Path, instance: Instance, mut next: Transfer) -> Result<()
         let allowed = matches!(
             (&old.phase, &next.phase),
             (Phase::Prepared, Phase::Quiesced)
-                | (Phase::Prepared, Phase::LegacyRestored)
                 | (Phase::Quiesced, Phase::Adopted)
                 | (Phase::Adopted, Phase::HostStopped)
-                | (Phase::Adopted, Phase::Restoring)
-                | (Phase::HostStopped, Phase::Restoring)
-                | (Phase::Restoring, Phase::LegacyRestored)
-                | (Phase::HostStopped, Phase::LegacyRestored)
-                | (Phase::Quiesced, Phase::LegacyRestored)
+                | (Phase::Quiesced, Phase::HostStopped)
         );
         if !allowed {
             return Err("ownership transfer cannot skip a verified boundary".into());
+        }
+        if old.phase == Phase::Quiesced && next.phase == Phase::HostStopped && next.target.is_some()
+        {
+            return Err("paused import requires no accepted execution target".into());
         }
         if next.phase == Phase::Adopted && next.target.is_none() {
             return Err("adoption requires verified accepted execution".into());
@@ -378,7 +516,7 @@ mod tests {
         );
     }
     #[test]
-    fn interrupted_handoff_refuses_duplicate_owner_and_rollback_requires_host_stop() {
+    fn one_way_import_cannot_restore_legacy_execution() {
         let home = tempfile::tempdir().unwrap();
         let mut t = Transfer {
             operation_id: "op-1".into(),
@@ -390,50 +528,367 @@ mod tests {
             phase: Phase::Prepared,
         };
         advance(home.path(), Instance::Dev, t.clone()).unwrap();
-        require_legacy_owner(home.path(), Instance::Dev, &t.actor_pubkey, &t.relay_url).unwrap();
+        for phase in [Phase::LegacyRestored, Phase::Restoring, Phase::Adopted] {
+            let mut skipped = t.clone();
+            skipped.phase = phase;
+            assert!(advance(home.path(), Instance::Dev, skipped).is_err());
+        }
         t.phase = Phase::Quiesced;
         advance(home.path(), Instance::Dev, t.clone()).unwrap();
-        advance(home.path(), Instance::Dev, t.clone()).unwrap();
-        assert!(
-            require_legacy_owner(home.path(), Instance::Dev, &t.actor_pubkey, &t.relay_url)
-                .is_err()
-        );
-        t.target = Some(CodingSessionTarget {
+        let mut wrong = t.clone();
+        wrong.phase = Phase::HostStopped;
+        wrong.target = Some(CodingSessionTarget {
             driver: "codex-acp".into(),
             instance_id: "primary".into(),
             session_id: uuid_for_test(),
             generation: 1,
         });
-        t.phase = Phase::Adopted;
-        advance(home.path(), Instance::Dev, t.clone()).unwrap();
-        t.phase = Phase::LegacyRestored;
-        assert!(advance(home.path(), Instance::Dev, t.clone()).is_err());
+        assert!(advance(home.path(), Instance::Dev, wrong).is_err());
         t.phase = Phase::HostStopped;
         advance(home.path(), Instance::Dev, t.clone()).unwrap();
-        {
-            let _admission =
-                admission_lock(home.path(), Instance::Dev, &t.actor_pubkey, &t.relay_url).unwrap();
-            t = begin_restoration(home.path(), Instance::Dev, &t.actor_pubkey, &t.relay_url)
-                .unwrap();
-            assert_eq!(t.phase, Phase::Restoring);
-            assert!(require_legacy_owner(
-                home.path(),
-                Instance::Dev,
-                &t.actor_pubkey,
-                &t.relay_url
-            )
-            .is_err());
-            assert_eq!(
-                begin_restoration(home.path(), Instance::Dev, &t.actor_pubkey, &t.relay_url)
-                    .unwrap(),
-                t
-            );
-        }
-        t.phase = Phase::LegacyRestored;
-        advance(home.path(), Instance::Dev, t.clone()).unwrap();
-        require_legacy_owner(home.path(), Instance::Dev, &t.actor_pubkey, &t.relay_url).unwrap();
-        t.legacy_nonce = "different".into();
-        assert!(advance(home.path(), Instance::Dev, t).is_err());
+        assert_eq!(
+            for_pair(home.path(), Instance::Dev, &t.actor_pubkey, &t.relay_url)
+                .unwrap()
+                .unwrap()
+                .legacy_nonce,
+            "generation-1"
+        );
+        let mut restored = t.clone();
+        restored.phase = Phase::LegacyRestored;
+        assert!(advance(home.path(), Instance::Dev, restored).is_err());
+        successor(
+            home.path(),
+            Instance::Dev,
+            &t.actor_pubkey,
+            &t.relay_url,
+            "op-2",
+            &t.definition_event_id,
+            CodingSessionTarget {
+                driver: "codex-acp".into(),
+                instance_id: "primary".into(),
+                session_id: uuid_for_test(),
+                generation: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            for_pair(home.path(), Instance::Dev, &t.actor_pubkey, &t.relay_url)
+                .unwrap()
+                .unwrap()
+                .phase,
+            Phase::Adopted
+        );
+        assert_eq!(
+            serde_json::from_str::<Phase>("\"legacyRestored\"").unwrap(),
+            Phase::LegacyRestored
+        );
+        assert_eq!(
+            serde_json::from_str::<Phase>("\"restoring\"").unwrap(),
+            Phase::Restoring
+        );
+    }
+    #[test]
+    fn exact_fresh_configured_enrollment_can_complete_without_overwriting_import() {
+        let home = tempfile::tempdir().unwrap();
+        let actor = "ab".repeat(32);
+        let relay = "wss://relay.example";
+        let revision = "cd".repeat(32);
+        let operation = uuid_for_test();
+        record_host_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &operation,
+            &revision,
+            None,
+        )
+        .unwrap();
+        let initial = for_pair(home.path(), Instance::Dev, &actor, relay)
+            .unwrap()
+            .unwrap();
+        let target = CodingSessionTarget {
+            driver: "codex-acp".into(),
+            instance_id: "primary".into(),
+            session_id: uuid_for_test(),
+            generation: 1,
+        };
+        assert!(record_host_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            "00000000-0000-0000-0000-000000000002",
+            &revision,
+            Some(target.clone())
+        )
+        .is_err());
+        assert!(record_host_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &operation,
+            &"ef".repeat(32),
+            Some(target.clone())
+        )
+        .is_err());
+        assert_eq!(
+            for_pair(home.path(), Instance::Dev, &actor, relay)
+                .unwrap()
+                .unwrap(),
+            initial
+        );
+        record_host_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &operation,
+            &revision,
+            Some(target.clone()),
+        )
+        .unwrap();
+        record_host_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &operation,
+            &revision,
+            Some(target),
+        )
+        .unwrap();
+        assert_eq!(
+            for_pair(home.path(), Instance::Dev, &actor, relay)
+                .unwrap()
+                .unwrap()
+                .phase,
+            Phase::Adopted
+        );
+        let imported_home = tempfile::tempdir().unwrap();
+        atomic_write::create_dir_all_restricted(&layout::host_dir(
+            imported_home.path(),
+            Instance::Dev,
+        ))
+        .unwrap();
+        let mut imported = initial;
+        imported.legacy_nonce = "verified-old-generation".into();
+        atomic_write::atomic_write_json_restricted(
+            &layout::host_dir(imported_home.path(), Instance::Dev).join("managed-ownership.json"),
+            &serde_json::to_vec(&Journal {
+                transfers: vec![imported],
+                history: vec![],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(record_host_enrollment(
+            imported_home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &operation,
+            &revision,
+            Some(CodingSessionTarget {
+                driver: "codex-acp".into(),
+                instance_id: "primary".into(),
+                session_id: uuid_for_test(),
+                generation: 1
+            })
+        )
+        .is_err());
+    }
+    #[test]
+    fn only_exact_unstarted_fresh_enrollment_revision_can_change() {
+        let home = tempfile::tempdir().unwrap();
+        let actor = "ab".repeat(32);
+        let relay = "wss://relay.example";
+        let operation = uuid_for_test();
+        let old = "cd".repeat(32);
+        let new = "ef".repeat(32);
+        record_host_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &operation,
+            &old,
+            None,
+        )
+        .unwrap();
+        assert!(revise_fresh_configured_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            "wrong",
+            &old,
+            &new
+        )
+        .is_err());
+        assert!(revise_fresh_configured_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &operation,
+            &"01".repeat(32),
+            &new
+        )
+        .is_err());
+        revise_fresh_configured_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &operation,
+            &old,
+            &new,
+        )
+        .unwrap();
+        revise_fresh_configured_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &operation,
+            &old,
+            &new,
+        )
+        .unwrap();
+        let target = CodingSessionTarget {
+            driver: "codex-acp".into(),
+            instance_id: "primary".into(),
+            session_id: uuid_for_test(),
+            generation: 1,
+        };
+        record_host_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &operation,
+            &new,
+            Some(target),
+        )
+        .unwrap();
+        assert!(revise_fresh_configured_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &operation,
+            &new,
+            &old
+        )
+        .is_err());
+    }
+    #[test]
+    fn independent_pair_updates_preserve_all_enrollments() {
+        let home = tempfile::tempdir().unwrap();
+        std::thread::scope(|scope| {
+            let mut tasks = Vec::new();
+            for index in 1u8..=16 {
+                let path = home.path();
+                tasks.push(scope.spawn(move || {
+                    let actor = format!("{index:02x}").repeat(32);
+                    record_host_enrollment(
+                        path,
+                        Instance::Dev,
+                        &actor,
+                        "wss://relay.example",
+                        &uuid_for_test(),
+                        &"cd".repeat(32),
+                        None,
+                    )
+                    .unwrap();
+                }));
+            }
+            for task in tasks {
+                task.join().unwrap();
+            }
+        });
+        assert_eq!(
+            read(home.path(), Instance::Dev).unwrap().transfers.len(),
+            16
+        );
+    }
+    #[test]
+    fn resume_follows_only_exact_next_generation_and_preserves_custody() {
+        let home = tempfile::tempdir().unwrap();
+        let actor = "ab".repeat(32);
+        let relay = "wss://relay.example";
+        let previous = CodingSessionTarget {
+            driver: "codex-acp".into(),
+            instance_id: "primary".into(),
+            session_id: uuid_for_test(),
+            generation: 1,
+        };
+        record_host_enrollment(
+            home.path(),
+            Instance::Dev,
+            &actor,
+            relay,
+            &uuid_for_test(),
+            &"cd".repeat(32),
+            Some(previous.clone()),
+        )
+        .unwrap();
+        let before = for_pair(home.path(), Instance::Dev, &actor, relay)
+            .unwrap()
+            .unwrap();
+        let mut next = previous.clone();
+        next.generation = 2;
+        let mut wrong = next.clone();
+        wrong.session_id = "foreign-session".into();
+        assert!(
+            follow_generation(home.path(), Instance::Dev, &actor, relay, &previous, &wrong)
+                .is_err()
+        );
+        wrong = next.clone();
+        wrong.driver = "foreign-driver".into();
+        assert!(
+            follow_generation(home.path(), Instance::Dev, &actor, relay, &previous, &wrong)
+                .is_err()
+        );
+        wrong = next.clone();
+        wrong.instance_id = "foreign-runtime".into();
+        assert!(
+            follow_generation(home.path(), Instance::Dev, &actor, relay, &previous, &wrong)
+                .is_err()
+        );
+        wrong = next.clone();
+        wrong.generation = 3;
+        assert!(
+            follow_generation(home.path(), Instance::Dev, &actor, relay, &previous, &wrong)
+                .is_err()
+        );
+        assert_eq!(
+            for_pair(home.path(), Instance::Dev, &actor, relay)
+                .unwrap()
+                .unwrap(),
+            before
+        );
+        follow_generation(home.path(), Instance::Dev, &actor, relay, &previous, &next).unwrap();
+        let mut expected = before;
+        expected.target = Some(next.clone());
+        assert_eq!(
+            for_pair(home.path(), Instance::Dev, &actor, relay)
+                .unwrap()
+                .unwrap(),
+            expected
+        );
+        assert!(read(home.path(), Instance::Dev).unwrap().history.is_empty());
+        assert!(
+            follow_generation(home.path(), Instance::Dev, &actor, relay, &previous, &next).is_err()
+        );
+        host_stopped(home.path(), Instance::Dev, &actor, relay, &next).unwrap();
+        let mut later = next.clone();
+        later.generation = 3;
+        assert!(
+            follow_generation(home.path(), Instance::Dev, &actor, relay, &next, &later).is_err()
+        );
     }
     fn uuid_for_test() -> String {
         "00000000-0000-0000-0000-000000000001".into()

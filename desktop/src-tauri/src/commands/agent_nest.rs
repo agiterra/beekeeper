@@ -13,8 +13,7 @@ use tauri::{AppHandle, Manager};
 use crate::{
     app_state::AppState,
     managed_agents::{
-        current_instance_id, ensure_agent_nest, find_managed_agent_mut, leave_shared_home,
-        load_managed_agents, save_managed_agents, sync_managed_agent_processes,
+        ensure_agent_nest, find_managed_agent_mut, leave_shared_home, load_managed_agents,
         ManagedAgentSummary,
     },
 };
@@ -34,26 +33,15 @@ pub async fn give_agent_its_own_nest(
     pubkey: String,
     app: AppHandle,
 ) -> Result<ManagedAgentSummary, String> {
-    tokio::task::spawn_blocking(move || {
+    let saved_app = app.clone();
+    let saved_pubkey = pubkey.clone();
+    let result = tokio::task::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let _store_guard = state
             .managed_agents_store_lock
             .lock()
             .map_err(|error| error.to_string())?;
         let mut records = load_managed_agents(&app)?;
-        let mut runtimes = state
-            .managed_agent_processes
-            .lock()
-            .map_err(|error| error.to_string())?;
-
-        let (sync_changed, exited_pubkeys) =
-            sync_managed_agent_processes(&mut records, &mut runtimes, &current_instance_id(&app));
-        if sync_changed {
-            save_managed_agents(&app, &records)?;
-        }
-        for exited in &exited_pubkeys {
-            state.clear_agent_session_caches(exited);
-        }
 
         // Refuse an unknown agent before touching the disk.
         find_managed_agent_mut(&mut records, &pubkey)?;
@@ -66,8 +54,28 @@ pub async fn give_agent_its_own_nest(
             .iter()
             .find(|record| record.pubkey == pubkey)
             .ok_or_else(|| format!("agent {pubkey} not found"))?;
-        super::agents::summarize_from_disk(&app, record, &runtimes)
+        super::agents::summarize_host_record(&app, record)
     })
     .await
-    .map_err(|error| format!("spawn_blocking failed: {error}"))?
+    .map_err(|error| format!("spawn_blocking failed: {error}"))??;
+    let state = saved_app.state::<AppState>();
+    let record = load_managed_agents(&saved_app)?
+        .into_iter()
+        .find(|r| r.pubkey == saved_pubkey)
+        .ok_or("agent not found")?;
+    if record.backend == crate::managed_agents::BackendKind::Local {
+        let relay = crate::relay::effective_agent_relay_url(
+            &record.relay_url,
+            &crate::relay::relay_ws_url_with_override(&state),
+        );
+        super::agents::host_transfer::reconcile_host_agent(
+            &saved_app,
+            &state,
+            &saved_pubkey,
+            &relay,
+            false,
+        )
+        .await?;
+    }
+    Ok(result)
 }

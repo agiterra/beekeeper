@@ -11,10 +11,13 @@ const actor = "ab".repeat(32);
 const operation = "87173c50-92e0-4a74-a6e6-38373f6f0a60";
 let calls = [];
 let phase = "quiesced";
-let dropAdoption = false;
+let dropStart = false;
 let queryClient = new QueryClient();
 let currentOperation = operation;
 let getterUnavailable = false;
+let eligible = true;
+let commissioned = true;
+let headAvailable = true;
 function seedCommunity() {
   localStorage.setItem(
     "buzz-communities",
@@ -48,8 +51,10 @@ before(() => {
         if (getterUnavailable) throw new Error("community head unavailable");
         return {
           relayUrl: "ws://127.0.0.1:3037",
-          revision: args.localOnly ? "" : "cd".repeat(32),
-          commissioned: true,
+          revision: args.localOnly || !headAvailable ? "" : "cd".repeat(32),
+          revisionAvailable: !args.localOnly && headAvailable,
+          commissioned,
+          migrationEligible: eligible,
           channel: "9202c9e9-8bfc-4a20-8a5f-ae134e563edb",
           cwd: "/isolated/project",
           transfer:
@@ -63,16 +68,8 @@ before(() => {
                 },
         };
       }
-      if (command === "adopt_managed_agent_host_transfer") {
-        if (dropAdoption) throw new Error("acceptance reply lost");
-        phase = "adopted";
-        return { host_admitted: true };
-      }
-      if (command === "rollback_managed_agent_host_transfer") {
-        phase = "legacyRestored";
-        return { phase };
-      }
       if (command === "start_managed_agent") {
+        if (dropStart) throw new Error("acceptance reply lost");
         phase = "adopted";
         return {
           pubkey: actor,
@@ -89,9 +86,12 @@ afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
   calls = [];
   phase = "quiesced";
-  dropAdoption = false;
+  dropStart = false;
   currentOperation = operation;
   getterUnavailable = false;
+  eligible = true;
+  commissioned = true;
+  headAvailable = true;
   localStorage.clear();
   seedCommunity();
   queryClient.clear();
@@ -123,50 +123,57 @@ async function mount() {
     ),
   );
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Host management" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /^(Migration status|Retry migration)$/,
+      }),
+    );
   });
   return { act, fireEvent, screen, waitFor };
 }
-test("lost adoption reply retries the persisted operation without preparing or starting legacy execution", async () => {
-  dropAdoption = true;
+test("lost management reply retries shared start without client-generated transfer operations", async () => {
+  dropStart = true;
   const { act, fireEvent, screen } = await mount();
   await act(async () => {
     fireEvent.click(screen.getByTestId("agent-host-transfer-move"));
   });
   assert.match(screen.getByRole("alert").textContent, /acceptance reply lost/);
-  dropAdoption = false;
+  dropStart = false;
   await act(async () => {
     fireEvent.click(screen.getByTestId("agent-host-transfer-move"));
   });
-  const adoptions = calls.filter(
-    (c) => c.command === "adopt_managed_agent_host_transfer",
+  const starts = calls.filter((c) => c.command === "start_managed_agent");
+  assert.equal(starts.length, 2);
+  assert.ok(
+    starts.every(
+      (c) =>
+        c.args.pubkey === actor &&
+        c.args.expectedRelayUrl === "ws://127.0.0.1:3037",
+    ),
   );
-  assert.equal(adoptions.length, 2);
-  assert.ok(adoptions.every((c) => c.args.operationId === operation));
-  assert.ok(!calls.some((c) => /prepare_|start_managed/.test(c.command)));
+  assert.ok(starts.every((c) => !("operationId" in c.args)));
+  assert.ok(!calls.some((c) => /prepare_|adopt_|rollback_/.test(c.command)));
+  assert.equal(
+    localStorage.getItem(
+      `beekeeper-host-transfer:ws://127.0.0.1:3037:${actor}`,
+    ),
+    null,
+  );
   assert.match(
     screen.getByTestId("agent-host-transfer-phase").textContent,
     /Host accepted/,
   );
   assert.equal(screen.queryByTestId("agent-host-transfer-move"), null);
 });
-test("prepared transfer can cancel without claiming a stopped host execution", async () => {
+test("migration never offers a control that restores desktop execution", async () => {
   phase = "prepared";
-  const { act, fireEvent, screen } = await mount();
-  assert.match(
-    screen.getByTestId("agent-host-transfer-phase").textContent,
-    /shutdown has not been acknowledged/,
-  );
-  await act(async () => {
-    fireEvent.click(screen.getByTestId("agent-host-transfer-rollback"));
-  });
-  const rollback = calls.find(
-    (c) => c.command === "rollback_managed_agent_host_transfer",
-  );
-  assert.equal(rollback.args.operationId, operation);
-  assert.match(
-    screen.getByTestId("agent-host-transfer-phase").textContent,
-    /Desktop ownership restored/,
+  const { screen } = await mount();
+  assert.equal(screen.queryByTestId("agent-host-transfer-rollback"), null);
+  assert.equal(screen.queryByText(/restore desktop ownership/i), null);
+  assert.ok(
+    !calls.some(
+      (entry) => entry.command === "rollback_managed_agent_host_transfer",
+    ),
   );
 });
 
@@ -174,8 +181,8 @@ test("stopped primary offers an explicit fresh context through the shared start 
   phase = "hostStopped";
   const { act, fireEvent, screen } = await mount();
   assert.match(
-    screen.getByText(/does not resume the legacy runtime session/).textContent,
-    /fresh execution context/,
+    screen.getByText(/Migration preserves existing/).textContent,
+    /blocked for repair/,
   );
   await act(async () => {
     fireEvent.click(screen.getByTestId("agent-host-transfer-start"));
@@ -266,29 +273,6 @@ test("directory controls follow observed ownership without treating host admissi
   }
 });
 
-test("rollback invalidates the managed record cached under the central query key", async () => {
-  phase = "adopted";
-  queryClient.setQueryData(managedAgentsQueryKey, [
-    { pubkey: actor, lastError: "old adopted operation" },
-  ]);
-  const { act, fireEvent, screen } = await mount();
-  assert.equal(
-    queryClient.getQueryState(managedAgentsQueryKey).isInvalidated,
-    false,
-  );
-  await act(async () => {
-    fireEvent.click(screen.getByTestId("agent-host-transfer-rollback"));
-  });
-  assert.match(
-    screen.getByTestId("agent-host-transfer-phase").textContent,
-    /Desktop ownership restored/,
-  );
-  assert.equal(
-    queryClient.getQueryState(managedAgentsQueryKey).isInvalidated,
-    true,
-  );
-});
-
 test("management settling invalidates a successor operation even when phase stays adopted", async () => {
   phase = "adopted";
   queryClient.setQueryData(managedAgentsQueryKey, [
@@ -340,7 +324,7 @@ test("directory rereads ownership when a management action settles without a loc
   assert.equal(screen.getByTestId("agent-detail-stop").disabled, true);
 });
 
-test("profile successor refreshes an already-mounted directory panel before rollback, without local-only revision poisoning", async () => {
+test("profile successor refreshes an already-mounted directory panel without local-only revision poisoning", async () => {
   phase = "adopted";
   queryClient.setQueryData(
     [
@@ -350,7 +334,7 @@ test("profile successor refreshes an already-mounted directory panel before roll
     ],
     { revision: "", transfer: { phase, operationId: operation } },
   );
-  const { act, fireEvent, screen } = await mount();
+  const { act, screen } = await mount();
   const React = await import("react");
   const { renderHook, waitFor } = await import("@testing-library/react");
   const { useAgentLifecycleActions } = await import(
@@ -409,16 +393,7 @@ test("profile successor refreshes an already-mounted directory panel before roll
     "Move requires the full verified head, never local-only empty revision",
   );
   assert.equal(full.state.data.transfer.operationId, successor);
-  await act(async () =>
-    fireEvent.click(screen.getByTestId("agent-host-transfer-rollback")),
-  );
-  assert.equal(
-    calls.find(
-      (entry) => entry.command === "rollback_managed_agent_host_transfer",
-    ).args.operationId,
-    successor,
-    "open directory must use the current canonical successor on first rollback click",
-  );
+  assert.equal(screen.queryByTestId("agent-host-transfer-rollback"), null);
 });
 
 test("community switch with unavailable new head removes old-pair rollback and controls", async () => {
@@ -442,9 +417,13 @@ test("community switch with unavailable new head removes old-pair rollback and c
   const { React, act, screen, props, view, waitFor } = await mountDetail();
   const { fireEvent } = await import("@testing-library/react");
   await act(async () =>
-    fireEvent.click(screen.getByRole("button", { name: "Host management" })),
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /^(Migration status|Retry migration)$/,
+      }),
+    ),
   );
-  assert.ok(screen.getByTestId("agent-host-transfer-rollback"));
+  assert.equal(screen.queryByTestId("agent-host-transfer-rollback"), null);
   getterUnavailable = true;
   localStorage.setItem("buzz-active-community-id", "second");
   const { AgentDirectoryDetail } = await import("./AgentDirectoryDetail.tsx");
@@ -463,4 +442,42 @@ test("community switch with unavailable new head removes old-pair rollback and c
   assert.equal(screen.getByTestId("agent-detail-start").disabled, true);
   assert.equal(screen.getByTestId("agent-detail-stop").disabled, true);
   assert.equal(screen.getByTestId("agent-detail-restart").disabled, true);
+});
+
+test("eligible migration retries bootstrap through shared start without manual execution inputs", async () => {
+  phase = null;
+  commissioned = false;
+  headAvailable = false;
+  const { act, fireEvent, screen } = await mount();
+  assert.equal(screen.queryByLabelText("Conversation channel UUID"), null);
+  assert.equal(screen.queryByLabelText("Working directory"), null);
+  assert.equal(screen.queryByText(/Commission this host/), null);
+  assert.equal(screen.getByTestId("agent-host-transfer-move").disabled, false);
+  await act(async () =>
+    fireEvent.click(screen.getByTestId("agent-host-transfer-move")),
+  );
+  assert.equal(
+    calls.filter((c) => c.command === "start_managed_agent").length,
+    1,
+  );
+  assert.equal(
+    screen
+      .getByTestId("agent-host-transfer")
+      .getAttribute("data-observed-phase"),
+    "adopted",
+  );
+});
+
+test("unknown or ineligible custody never enables migration retry", async () => {
+  phase = "prepared";
+  eligible = false;
+  const { act, fireEvent, screen } = await mount();
+  assert.equal(screen.getByTestId("agent-host-transfer-move").disabled, true);
+  await act(async () =>
+    fireEvent.click(screen.getByTestId("agent-host-transfer-move")),
+  );
+  assert.equal(
+    calls.filter((c) => c.command === "start_managed_agent").length,
+    0,
+  );
 });

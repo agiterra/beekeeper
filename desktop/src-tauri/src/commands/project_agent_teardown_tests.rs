@@ -104,3 +104,26 @@ fn the_keys_this_reads_are_the_ones_the_provider_writes() {
         vec!["74495ca8-2aeb-4f25-9f40-3124be1c476f".to_string()],
     );
 }
+
+#[test]
+fn shared_deletion_snapshot_refuses_changed_custody_configuration_or_actor_set() {
+    use super::execute_impl::require_unchanged_deletion_snapshot;
+    let original: crate::managed_agents::ManagedAgentRecord = serde_json::from_value(serde_json::json!({
+        "pubkey":"actor", "name":"Agent", "relay_url":"ws://localhost:3037", "acp_command":"",
+        "agent_command":"codex-acp", "agent_args":[], "mcp_command":"", "turn_timeout_seconds":0,
+        "created_at":"", "updated_at":"", "last_started_at":null,"last_stopped_at":null,
+        "last_exit_code":null,"last_error":null, "private_key_nsec":"source-custody"
+    })).expect("record fixture");
+    let expected = std::collections::BTreeSet::from([original.pubkey.clone()]);
+    let snapshot = vec![original.clone()];
+    assert!(require_unchanged_deletion_snapshot(&snapshot, &snapshot, &expected).is_ok());
+    let mut changed = original.clone();
+    changed.private_key_nsec = "replacement-custody".into();
+    assert!(require_unchanged_deletion_snapshot(&[changed], &snapshot, &expected).is_err());
+    let mut changed = original;
+    changed.model = Some("new-model".into());
+    assert!(require_unchanged_deletion_snapshot(&[changed], &snapshot, &expected).is_err());
+    assert!(require_unchanged_deletion_snapshot(&[], &snapshot, &expected).is_err());
+    let widened = std::collections::BTreeSet::from(["actor".into(), "other".into()]);
+    assert!(require_unchanged_deletion_snapshot(&snapshot, &snapshot, &widened).is_err());
+}

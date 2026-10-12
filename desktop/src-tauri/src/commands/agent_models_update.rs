@@ -52,6 +52,116 @@ pub(crate) async fn flush_managed_agent_policy(
     }
 }
 
+/// Translate the UI patch using the existing canonical configuration/clearing rules.
+pub(in crate::commands) fn prospective_record(
+    source: &ManagedAgentRecord,
+    input: &UpdateManagedAgentRequest,
+    personas: &[crate::managed_agents::AgentDefinition],
+) -> Result<(ManagedAgentRecord, bool), String> {
+    let mut prospective = source.clone();
+    let record = &mut prospective;
+    if let Some(name_update) = input.name.clone() {
+        let trimmed = name_update.trim().to_string();
+        if !trimmed.is_empty() && trimmed != record.name {
+            record.name = trimmed;
+        }
+    }
+    apply_model_provider_prompt_update(
+        record,
+        input.model.clone(),
+        input.provider.clone(),
+        input.system_prompt.clone(),
+        input.runtime.clone(),
+    )?;
+    if let Some(parallelism) = input.parallelism {
+        record.parallelism = parallelism;
+    }
+    // turn_timeout_seconds is intentionally not applied here —
+    // BEEKEEPER_ACP_TURN_TIMEOUT is deprecated and ignored by the harness.
+    // Use idle_timeout_seconds or max_turn_duration_seconds instead.
+    // Store the relay override exactly as supplied (trimmed). An explicit
+    // value pins the agent; empty falls back to the workspace relay at
+    // read-time. A name-only edit (relay_url == None) leaves the pin intact.
+    if let Some(relay_url) = input.relay_url.clone() {
+        record.relay_url = relay_url.trim().to_string();
+    }
+    if let Some(acp_command) = input.acp_command.clone() {
+        record.acp_command = acp_command;
+    }
+    // Harness edit: the persona's runtime is authoritative, so an explicit
+    // `agent_command_override` is persisted ONLY when the user picks a
+    // command that diverges from the persona, and the empty/whitespace
+    // "Inherit from persona" sentinel clears both the pin and the
+    // materialized record runtime. A name-only edit
+    // (`agent_command == None`) leaves the pin intact. `harness_override`
+    // threads the user's explicit intent — see `apply_agent_command_update`
+    // and `update_time_agent_command_override` for the full resolution
+    // rules.
+    if let Some(agent_command) = input.agent_command.clone() {
+        crate::managed_agents::apply_agent_command_update(
+            record,
+            personas,
+            &agent_command,
+            input.harness_override,
+        );
+    }
+    if let Some(agent_args) = input.agent_args.clone() {
+        record.agent_args = agent_args;
+    }
+    // mcp_command is intentionally not applied here — the effective MCP
+    // command is always catalog-derived (known_acp_runtime at spawn time)
+    // and the per-record field is never read by the runtime.
+    if let Some(env_vars) = input.env_vars.clone() {
+        crate::managed_agents::validate_user_env_keys(&env_vars)?;
+        record.env_vars = env_vars;
+    }
+
+    // Native provider/model fields are authoritative. Keep the typed marker
+    // derived for new records while retaining legacy typed records for
+    // non-native providers.
+    if record.provider.as_deref() == Some(crate::managed_agents::RELAY_MESH_PROVIDER_ID) {
+        let model_ref = record
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(crate::managed_agents::RELAY_MESH_AUTO_MODEL_ID)
+            .to_string();
+        record.model = Some(model_ref.clone());
+        record.relay_mesh = Some(crate::managed_agents::RelayMeshConfig { model_ref });
+    }
+
+    // Inbound author gate: merge patch onto current values, then validate
+    // the merged state. This lets a single update switch to Allowlist AND
+    // supply pubkeys atomically.
+    let prospective_mode = input.respond_to.unwrap_or(record.respond_to);
+    let prospective_allowlist = match input.respond_to_allowlist.as_ref() {
+        Some(list) => crate::managed_agents::validate_respond_to_allowlist(list)?,
+        None => record.respond_to_allowlist.clone(),
+    };
+    if prospective_mode == crate::managed_agents::RespondTo::Allowlist
+        && prospective_allowlist.is_empty()
+    {
+        return Err(
+            "respond-to mode 'allowlist' requires at least one pubkey in the allowlist".to_string(),
+        );
+    }
+    let access_policy_changed = managed_agent_access_policy_changed(
+        record.respond_to,
+        &record.respond_to_allowlist,
+        prospective_mode,
+        &prospective_allowlist,
+        crate::managed_agents::owner_only_access_build(),
+    );
+    ensure_access_policy_change_supported(record, access_policy_changed)?;
+
+    record.respond_to = prospective_mode;
+    if input.respond_to_allowlist.is_some() {
+        record.respond_to_allowlist = prospective_allowlist;
+    }
+    Ok((prospective, access_policy_changed))
+}
+
 /// Update mutable fields on an existing managed agent record.
 ///
 /// Most runtime config changes take effect on the next agent spawn. Access
@@ -75,147 +185,28 @@ pub async fn update_managed_agent(
             .lock()
             .map_err(|e| e.to_string())?;
         let mut records = load_managed_agents(&app)?;
-        let mut runtimes = state
-            .managed_agent_processes
-            .lock()
-            .map_err(|e| e.to_string())?;
-        let (_, exited_pubkeys) =
-            sync_managed_agent_processes(&mut records, &mut runtimes, &current_instance_id(&app));
-        for pubkey in &exited_pubkeys {
-            state.clear_agent_session_caches(pubkey);
-        }
 
         let record = find_managed_agent_mut(&mut records, &input.pubkey)?;
         let previous_record = record.clone();
 
-        let mut name_changed = false;
-        if let Some(name_update) = input.name {
-            let trimmed = name_update.trim().to_string();
-            if !trimmed.is_empty() && trimmed != record.name {
-                record.name = trimmed;
-                name_changed = true;
-            }
-        }
-        apply_model_provider_prompt_update(
-            record,
-            input.model,
-            input.provider,
-            input.system_prompt,
-            input.runtime,
-        )?;
-        if let Some(parallelism) = input.parallelism {
-            record.parallelism = parallelism;
-        }
-        // turn_timeout_seconds is intentionally not applied here —
-        // BEEKEEPER_ACP_TURN_TIMEOUT is deprecated and ignored by the harness.
-        // Use idle_timeout_seconds or max_turn_duration_seconds instead.
-        // Store the relay override exactly as supplied (trimmed). An explicit
-        // value pins the agent; empty falls back to the workspace relay at
-        // read-time. A name-only edit (relay_url == None) leaves the pin intact.
-        if let Some(relay_url) = input.relay_url {
-            record.relay_url = relay_url.trim().to_string();
-        }
-        if let Some(acp_command) = input.acp_command {
-            record.acp_command = acp_command;
-        }
-        // Harness edit: the persona's runtime is authoritative, so an explicit
-        // `agent_command_override` is persisted ONLY when the user picks a
-        // command that diverges from the persona, and the empty/whitespace
-        // "Inherit from persona" sentinel clears both the pin and the
-        // materialized record runtime. A name-only edit
-        // (`agent_command == None`) leaves the pin intact. `harness_override`
-        // threads the user's explicit intent — see `apply_agent_command_update`
-        // and `update_time_agent_command_override` for the full resolution
-        // rules.
-        if let Some(agent_command) = input.agent_command {
-            let personas = load_personas(&app).unwrap_or_default();
-            crate::managed_agents::apply_agent_command_update(
-                record,
-                &personas,
-                &agent_command,
-                input.harness_override,
-            );
-        }
-        if let Some(agent_args) = input.agent_args {
-            record.agent_args = agent_args;
-        }
-        // mcp_command is intentionally not applied here — the effective MCP
-        // command is always catalog-derived (known_acp_runtime at spawn time)
-        // and the per-record field is never read by the runtime.
-        if let Some(env_vars) = input.env_vars {
-            crate::managed_agents::validate_user_env_keys(&env_vars)?;
-            record.env_vars = env_vars;
-        }
-
-        // Native provider/model fields are authoritative. Keep the typed marker
-        // derived for new records while retaining legacy typed records for
-        // non-native providers.
-        if record.provider.as_deref() == Some(crate::managed_agents::RELAY_MESH_PROVIDER_ID) {
-            let model_ref = record
-                .model
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or(crate::managed_agents::RELAY_MESH_AUTO_MODEL_ID)
-                .to_string();
-            record.model = Some(model_ref.clone());
-            record.relay_mesh = Some(crate::managed_agents::RelayMeshConfig { model_ref });
-        }
-
-        // Inbound author gate: merge patch onto current values, then validate
-        // the merged state. This lets a single update switch to Allowlist AND
-        // supply pubkeys atomically.
-        let prospective_mode = input.respond_to.unwrap_or(record.respond_to);
-        let prospective_allowlist = match input.respond_to_allowlist.as_ref() {
-            Some(list) => crate::managed_agents::validate_respond_to_allowlist(list)?,
-            None => record.respond_to_allowlist.clone(),
-        };
-        if prospective_mode == crate::managed_agents::RespondTo::Allowlist
-            && prospective_allowlist.is_empty()
-        {
-            return Err(
-                "respond-to mode 'allowlist' requires at least one pubkey in the allowlist"
-                    .to_string(),
-            );
-        }
-        let access_policy_changed = managed_agent_access_policy_changed(
-            record.respond_to,
-            &record.respond_to_allowlist,
-            prospective_mode,
-            &prospective_allowlist,
-            crate::managed_agents::owner_only_access_build(),
-        );
-        ensure_access_policy_change_supported(record, access_policy_changed)?;
+        let personas = load_personas(&app)?;
+        let (prospective, access_policy_changed) = prospective_record(record, &input, &personas)?;
+        let name_changed = prospective.name != record.name;
+        *record = prospective;
 
         // Revoke the currently running local gate before persisting or
         // advertising the replacement policy. Keeping this inside the same
         // store/process critical section prevents another command or a status
         // refresh from observing a saved narrow policy while the old broad
         // process is still alive. A stop failure aborts before mutation.
-        let mut access_restart_relays = Vec::new();
-        if access_policy_changed && record.backend == crate::managed_agents::BackendKind::Local {
-            access_restart_relays =
-                crate::managed_agents::managed_agent_runtime_keys(&runtimes, &record.pubkey)
-                    .into_iter()
-                    .map(|key| key.relay_url)
-                    .collect();
-            if access_restart_relays.is_empty() && record.runtime_pid.is_some() {
-                access_restart_relays.push(crate::relay::effective_agent_relay_url(
-                    &record.relay_url,
-                    &relay_ws_url_with_override(&state),
-                ));
-            }
-            if !access_restart_relays.is_empty() {
-                crate::managed_agents::stop_managed_agent_process(&app, record, &mut runtimes)?;
-            }
-        }
-
-        record.respond_to = prospective_mode;
-        // Preserve the persisted allowlist across mode toggles — only replace
-        // when the caller explicitly supplied a new list.
-        if input.respond_to_allowlist.is_some() {
-            record.respond_to_allowlist = prospective_allowlist;
-        }
+        let access_restart_relays = if record.backend == crate::managed_agents::BackendKind::Local {
+            vec![crate::relay::effective_agent_relay_url(
+                &record.relay_url,
+                &relay_ws_url_with_override(&state),
+            )]
+        } else {
+            Vec::new()
+        };
 
         record.updated_at = now_iso();
 
@@ -256,7 +247,7 @@ pub async fn update_managed_agent(
             None
         };
 
-        let summary = { super::super::agents::summarize_from_disk(&app, record, &runtimes)? };
+        let summary = { super::super::agents::summarize_host_record(&app, record)? };
         let rollback = name_changed
             .then(|| AgentUpdateRollback::new(previous_record, record, access_policy_changed));
         (
@@ -315,13 +306,8 @@ pub async fn update_managed_agent(
             let restart_suffix = if access_restart_relays.is_empty() {
                 String::new()
             } else {
-                match super::super::agents::start_local_agent_pairs_with_preflight(
-                    &app,
-                    &state,
-                    &summary.pubkey,
-                    &access_restart_relays,
-                )
-                .await
+                match reconcile_local_update(&app, &state, &summary.pubkey, &access_restart_relays)
+                    .await
                 {
                     Ok(_) => String::new(),
                     Err(error) => format!(
@@ -341,7 +327,7 @@ pub async fn update_managed_agent(
     }
 
     if !access_restart_relays.is_empty() {
-        summary = super::super::agents::start_local_agent_pairs_with_preflight(
+        summary = reconcile_local_update(
             &app,
             &state,
             &summary.pubkey,
@@ -359,6 +345,24 @@ pub async fn update_managed_agent(
         agent: summary,
         profile_sync_error: profile_sync_error.take(),
     })
+}
+
+async fn reconcile_local_update(
+    app: &AppHandle,
+    state: &AppState,
+    pubkey: &str,
+    relays: &[String],
+) -> Result<crate::managed_agents::ManagedAgentSummary, String> {
+    for relay in relays {
+        super::super::agents::host_transfer::reconcile_host_agent(app, state, pubkey, relay, true)
+            .await?;
+    }
+    let records = load_managed_agents(app)?;
+    let record = records
+        .iter()
+        .find(|r| r.pubkey == pubkey)
+        .ok_or("agent not found")?;
+    super::super::agents::summarize_host_record(app, record)
 }
 
 #[cfg(test)]

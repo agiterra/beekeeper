@@ -646,14 +646,6 @@ pub(crate) fn try_delete_agent_key(pubkey: &str) -> Result<(), String> {
     }
 }
 
-/// Remove an agent's key from the keyring (best-effort). Called when an agent
-/// is deleted so its secret does not linger in the OS store.
-pub fn delete_agent_key(pubkey: &str) {
-    if let Err(e) = try_delete_agent_key(pubkey) {
-        eprintln!("beekeeper-desktop: failed to delete agent {pubkey} key from keyring: {e}");
-    }
-}
-
 /// Atomic, symlink-preserving JSON write.
 /// Resolves symlinks so the tmp+rename happens at the real target path,
 /// preserving any symlink at `path`.
@@ -691,32 +683,6 @@ pub(crate) fn atomic_write_json_restricted(path: &Path, payload: &[u8]) -> Resul
         .map_err(|e| format!("write {}: {e}", resolved.display()))?;
     file.commit()
         .map_err(|e| format!("commit {}: {e}", resolved.display()))
-}
-
-/// Maximum log file size before rotation (10 MB).
-const MAX_LOG_FILE_SIZE: u64 = 10 * 1024 * 1024;
-
-/// If `path` exceeds [`MAX_LOG_FILE_SIZE`], rotate it to `<path>.1`.
-fn maybe_rotate_log(path: &Path) {
-    let size = match fs::metadata(path) {
-        Ok(m) => m.len(),
-        Err(_) => return,
-    };
-    if size <= MAX_LOG_FILE_SIZE {
-        return;
-    }
-    let mut rotated = path.as_os_str().to_owned();
-    rotated.push(".1");
-    let _ = fs::rename(path, &rotated);
-}
-
-pub(crate) fn open_log_file(path: &Path) -> Result<File, String> {
-    maybe_rotate_log(path);
-    OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|error| format!("failed to open log file {}: {error}", path.display()))
 }
 
 /// Start a new install-log session at `path`: keep the previous run as
@@ -775,39 +741,9 @@ fn open_install_log(path: &Path, truncate: bool) -> Result<File, String> {
         .map_err(|error| format!("failed to open log file {}: {error}", path.display()))
 }
 
-pub(crate) fn append_log_marker(path: &Path, message: &str) -> Result<(), String> {
-    let mut file = open_log_file(path)?;
-    writeln!(file, "{message}").map_err(|error| format!("failed to write log marker: {error}"))
-}
-
 fn agent_pids_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = managed_agents_base_dir(app)?.join("agent-pids");
-    fs::create_dir_all(&dir)
-        .map_err(|error| format!("failed to create agent-pids dir: {error}"))?;
     Ok(dir)
-}
-
-/// Persist a pair-scoped runtime receipt atomically. Callers must register the
-/// process in memory in the same runtime transition; on write failure they must
-/// terminate the child before releasing that transition.
-pub fn write_agent_runtime_receipt(
-    app: &AppHandle,
-    receipt: &ManagedAgentRuntimeReceipt,
-) -> Result<(), String> {
-    let path = agent_pids_dir(app)?.join(format!("{}.json", receipt.key.runtime_id()));
-    let payload = serde_json::to_vec(receipt)
-        .map_err(|error| format!("failed to serialize runtime receipt: {error}"))?;
-    atomic_write_json_restricted(&path, &payload)
-}
-
-pub fn remove_agent_runtime_receipt(app: &AppHandle, key: &ManagedAgentRuntimeKey) {
-    if let Ok(dir) = agent_pids_dir(app) {
-        let _ = fs::remove_file(dir.join(format!("{}.json", key.runtime_id())));
-    }
-}
-
-pub fn remove_agent_runtime_receipt_path(path: &Path) {
-    let _ = fs::remove_file(path);
 }
 
 pub fn read_all_agent_runtime_receipts(
@@ -828,33 +764,6 @@ pub fn read_all_agent_runtime_receipts(
             serde_json::from_slice(&bytes)
                 .ok()
                 .map(|receipt| (path, receipt))
-        })
-        .collect()
-}
-
-/// Remove the PID file for an agent (e.g. on normal stop).
-pub fn remove_agent_pid_file(app: &AppHandle, pubkey: &str) {
-    if let Ok(dir) = agent_pids_dir(app) {
-        let _ = fs::remove_file(dir.join(format!("{pubkey}.pid")));
-    }
-}
-
-/// Read all PID files from `agent-pids/`, returning `(pubkey, pid)` pairs.
-pub fn read_all_agent_pid_files(app: &AppHandle) -> Vec<(String, u32)> {
-    let Ok(dir) = agent_pids_dir(app) else {
-        return Vec::new();
-    };
-    let Ok(entries) = fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name();
-            let name = name.to_str()?;
-            let pubkey = name.strip_suffix(".pid")?;
-            let pid: u32 = fs::read_to_string(entry.path()).ok()?.trim().parse().ok()?;
-            Some((pubkey.to_string(), pid))
         })
         .collect()
 }
@@ -914,7 +823,8 @@ fn bytecount_newlines(buf: &[u8]) -> usize {
     buf.iter().filter(|&&b| b == b'\n').count()
 }
 
-/// A meaningful error recovered from an exited agent's log tail.
+#[cfg(test)]
+/// A historical parser fixture for an error recovered from an exited agent's log tail.
 pub struct AgentLogError {
     /// The full log line, wrapped as `Agent reported error…` for display.
     pub message: String,
@@ -924,6 +834,7 @@ pub struct AgentLogError {
     pub code: Option<i64>,
 }
 
+#[cfg(test)]
 pub fn meaningful_agent_error_from_log(path: &Path) -> Option<AgentLogError> {
     let tail = read_log_tail(path, 200).ok()?;
     tail.lines().rev().map(str::trim).find_map(|line| {

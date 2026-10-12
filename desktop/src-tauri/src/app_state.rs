@@ -15,7 +15,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::huddle::HuddleState;
 pub(crate) use crate::identity_storage::{IdentityStorage, RecoveryState, ResolvedIdentity};
 use crate::managed_agents::config_bridge::SessionConfigCache;
-use crate::managed_agents::{ManagedAgentPairRuntime, ManagedAgentRuntimeKey};
+use crate::managed_agents::ManagedAgentRuntimeKey;
 
 mod readiness;
 pub(crate) use readiness::KEYCHAIN_UNAVAILABLE;
@@ -45,13 +45,10 @@ pub struct AppState {
     pub managed_agent_experiments: crate::managed_agents::ManagedAgentExperimentState,
     /// Shared shutdown signal checked by launch-time agent restoration.
     pub shutdown_started: AtomicBool,
-    /// Serializes every managed-runtime transition that changes the protected
-    /// PID set: spawn/register, adoption, stop, shutdown, and sweep snapshots.
-    /// Never perform network I/O while holding this lock.
-    pub managed_agent_runtime_transition: Mutex<()>,
+    /// Serializes client configuration/custody cache writes.
+    /// Shared management owns execution; never await while holding this lock.
     pub managed_agents_store_lock: Mutex<()>,
     pub channel_templates_store_lock: Mutex<()>,
-    pub managed_agent_processes: Mutex<HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>>,
     pub provider_deploy_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     pub huddle_state: Mutex<HuddleState>,
     pub huddle_audio: crate::huddle::tts_settings::HuddleAudioSettingsState,
@@ -211,11 +208,9 @@ pub fn build_app_state() -> AppState {
         managed_agent_restore_pending: AtomicBool::new(false),
         managed_agent_experiments: crate::managed_agents::ManagedAgentExperimentState::default(),
         shutdown_started: AtomicBool::new(false),
-        managed_agent_runtime_transition: Mutex::new(()),
         identity_mutation: Mutex::new(()),
         managed_agents_store_lock: Mutex::new(()),
         channel_templates_store_lock: Mutex::new(()),
-        managed_agent_processes: Mutex::new(HashMap::new()),
         provider_deploy_locks: Mutex::new(HashMap::new()),
         session_config_cache: Mutex::new(HashMap::new()),
         huddle_state: Mutex::new(HuddleState::default()),
@@ -255,12 +250,6 @@ impl AppState {
     pub fn put_session_cache(&self, key: ManagedAgentRuntimeKey, cache: SessionConfigCache) {
         if let Ok(mut map) = self.session_config_cache.lock() {
             map.insert(key, cache);
-        }
-    }
-
-    pub fn clear_agent_session_cache(&self, key: &ManagedAgentRuntimeKey) {
-        if let Ok(mut map) = self.session_config_cache.lock() {
-            map.remove(key);
         }
     }
 

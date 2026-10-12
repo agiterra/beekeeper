@@ -257,7 +257,7 @@ pub fn prepare_host_command(
     release_scope_dir_lock(scope.state_dir, &owner, scope_lock);
     match prepared {
         Ok(ExecutionPlan::Prepared(prepared)) => Ok(HostLaunchPlan::Bounded(prepared.launch)),
-        Ok(ExecutionPlan::Legacy { reason }) => Ok(HostLaunchPlan::Unenforced { reason }),
+        Ok(ExecutionPlan::Legacy { reason, .. }) => Ok(HostLaunchPlan::Unenforced { reason }),
         Err(failure) => Err(PrepareRefusal {
             code: if failure.code == EXECUTION_BOUNDARY_UNAVAILABLE {
                 ACTION_BOUNDARY_UNAVAILABLE

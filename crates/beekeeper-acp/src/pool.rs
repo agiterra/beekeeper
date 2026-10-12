@@ -168,7 +168,13 @@ impl SessionState {
         self.canvas_sections.remove(scope);
         self.pulse_cache.remove(scope);
         self.deliveries.remove(scope);
-        self.sessions.remove(scope).is_some()
+        let Some(cursor) = self.sessions.remove(scope) else {
+            return false;
+        };
+        if let Err(error) = crate::quiescence::forget_native_cursor(&cursor) {
+            tracing::warn!("native upgrade context retirement unavailable: {error}");
+        }
+        true
     }
 
     /// Invalidate every session scope belonging to `channel_id`.
@@ -192,6 +198,11 @@ impl SessionState {
 
     /// Invalidate all sessions and turn counters (e.g. after agent exit).
     pub fn invalidate_all(&mut self) {
+        for cursor in self.sessions.values() {
+            if let Err(error) = crate::quiescence::forget_native_cursor(cursor) {
+                tracing::warn!("native upgrade context retirement unavailable: {error}");
+            }
+        }
         self.sessions.clear();
         self.turn_counts.clear();
         self.heartbeat_session = None;
@@ -2034,6 +2045,21 @@ pub async fn run_prompt_task(
                             scope.telemetry_label()
                         );
                         agent.state.sessions.insert(scope.clone(), sid.clone());
+                        if let Err(error) = crate::quiescence::persist_native_context(
+                            crate::quiescence::NativeContextCapture {
+                                actor: &ctx.agent_keys.public_key().to_hex(),
+                                relay: &ctx.relay_url,
+                                worker: agent.index,
+                                channel: &scope.channel_id().to_string(),
+                                root: scope.root_event_id(),
+                                cursor: &sid,
+                                runtime: &agent.agent_name,
+                                cwd: &ctx.cwd,
+                                launch: agent.acp.native_launch_facts(),
+                            },
+                        ) {
+                            tracing::warn!("native upgrade context unavailable: {error}");
+                        }
                         agent
                             .state
                             .deliveries

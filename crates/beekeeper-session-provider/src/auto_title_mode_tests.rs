@@ -242,6 +242,7 @@ fn record(founder: &str) -> crate::state::SessionRecord {
     crate::state::SessionRecord {
         execution_binding: None,
         execution_boundary: None,
+        process_witness: None,
         authority_withdrawn: None,
         project_head_seen_at: None,
         session_id: "session-1".into(),

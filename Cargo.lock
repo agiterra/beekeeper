@@ -696,6 +696,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "beekeeper-agent-management"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "beekeeper-core",
+ "beekeeper-host-core",
+ "beekeeper-sdk",
+ "beekeeper-session-provider",
+ "chrono",
+ "nostr 0.44.7",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "beekeeper-audit"
 version = "0.1.0"
 dependencies = [
@@ -762,6 +782,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "beekeeper-agent-management",
  "beekeeper-core",
  "beekeeper-host",
  "beekeeper-host-core",
@@ -943,13 +964,16 @@ dependencies = [
  "beekeeper-sdk",
  "chrono",
  "dirs",
+ "hex",
  "nostr 0.44.7",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "tracing",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

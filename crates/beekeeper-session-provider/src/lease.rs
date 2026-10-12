@@ -99,6 +99,7 @@ mod tests {
         SessionRecord {
             execution_binding: None,
             execution_boundary: None,
+            process_witness: None,
             authority_withdrawn: None,
             project_head_seen_at: None,
             session_id: "11111111-1111-4111-8111-111111111111".into(),

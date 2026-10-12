@@ -154,7 +154,7 @@ pub(super) async fn probe_project_pack_source(
         Err(error) => {
             return ProjectPackSourceProbe::Unavailable {
                 reason: format!("the project's role packs could not be read: {error}"),
-            }
+            };
         }
     };
     // With a project source present, a row without a refusal is a row the

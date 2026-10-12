@@ -513,7 +513,7 @@ fn extract_managed_node_zip(
                 return Err(format!(
                     "Node.js zip contains unsafe path: {}",
                     entry.name()
-                ))
+                ));
             }
         };
         if entry.is_dir() {

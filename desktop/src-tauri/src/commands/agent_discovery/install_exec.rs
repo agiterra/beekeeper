@@ -363,7 +363,7 @@ impl Settle {
                 Ok(Settled::Drained) => self.drained += 1,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return Collected::Deadline,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    return Collected::Disconnected
+                    return Collected::Disconnected;
                 }
             }
         }

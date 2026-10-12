@@ -51,7 +51,6 @@ pub(crate) mod app_scoped {
     pub(crate) fn ensure_running() -> Result<(), String> {
         Ok(())
     }
-    pub(crate) fn stop() {}
 }
 
 /// Which Beekeeper instance this app is, in the host's vocabulary.

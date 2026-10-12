@@ -169,6 +169,21 @@ pub fn print_error(e: &CliError) {
     eprintln!("{}", obj);
 }
 
+impl From<beekeeper_agent_management::Error> for CliError {
+    fn from(error: beekeeper_agent_management::Error) -> Self {
+        use beekeeper_agent_management::Error;
+        match error {
+            Error::Usage(v) => Self::Usage(v),
+            Error::Auth(v) => Self::Auth(v),
+            Error::Conflict(v) => Self::Conflict(v),
+            Error::NotFound(v) => Self::NotFound(v),
+            Error::Refused(v) => Self::Refused(v),
+            Error::Unconfirmed(v) => Self::Unconfirmed(v),
+            Error::Other(v) => Self::Other(v),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

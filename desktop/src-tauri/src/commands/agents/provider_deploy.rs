@@ -6,7 +6,7 @@ use crate::{
     app_state::AppState,
     managed_agents::{
         discover_provider_candidates, load_managed_agents, provider_deploy,
-        resolve_provider_binary, save_managed_agents, BackendKind, REPLAY_FLOOR_ENV_VAR,
+        resolve_provider_binary, save_managed_agents, BackendKind,
     },
     util::now_iso,
 };
@@ -124,90 +124,7 @@ pub(crate) async fn deploy_to_provider(
     result
 }
 
-/// Check caller-captured relay and signer against the rebuilt provider payload.
-/// Scoped callers fail closed when either payload field is unavailable.
-fn assert_payload_scope(
-    agent_json: &serde_json::Value,
-    expected_relay_url: Option<&str>,
-    expected_signer_pubkey: Option<&str>,
-) -> Result<(), String> {
-    let has_expectation = |value: Option<&str>| {
-        value
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_some()
-    };
-    match agent_json
-        .get("relay_url")
-        .and_then(serde_json::Value::as_str)
-    {
-        Some(relay) => crate::relay::assert_expected_relay_scope(
-            expected_relay_url,
-            &crate::relay::relay_http_base_url(relay),
-        )?,
-        None if has_expectation(expected_relay_url) => {
-            return Err("deploy payload carries no relay; not deployed".to_string());
-        }
-        None => {}
-    }
-    match agent_json
-        .get("launch")
-        .and_then(|launch| launch.get("owner_pubkey"))
-        .and_then(serde_json::Value::as_str)
-    {
-        Some(owner) => crate::relay::assert_expected_signer(expected_signer_pubkey, owner)?,
-        None if has_expectation(expected_signer_pubkey) => {
-            return Err("deploy payload carries no owner identity; not deployed".to_string());
-        }
-        None => {}
-    }
-    Ok(())
-}
-
-/// Inject a one-shot publish timestamp into the exact provider launch payload.
-/// A persisted `launch.env` floor is removed because it would override
-/// `policy_env` in provider launch precedence.
-fn apply_replay_floor(agent_json: &mut serde_json::Value, replay_floor_unix: Option<u64>) {
-    let Some(floor) = replay_floor_unix else {
-        return;
-    };
-    let Some(launch) = agent_json
-        .get_mut("launch")
-        .and_then(serde_json::Value::as_object_mut)
-    else {
-        return;
-    };
-    if let Some(env) = launch
-        .get_mut("env")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        let keys: Vec<String> = env
-            .keys()
-            .filter(|key| key.eq_ignore_ascii_case(REPLAY_FLOOR_ENV_VAR))
-            .cloned()
-            .collect();
-        for key in keys {
-            env.remove(&key);
-        }
-    }
-    match launch
-        .get_mut("policy_env")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        Some(policy_env) => {
-            policy_env.insert(
-                REPLAY_FLOOR_ENV_VAR.to_string(),
-                serde_json::Value::String(floor.to_string()),
-            );
-        }
-        None => {
-            launch.insert(
-                "policy_env".to_string(),
-                serde_json::json!({ (REPLAY_FLOOR_ENV_VAR): floor.to_string() }),
-            );
-        }
-    }
-}
+use beekeeper_host_core::provider_boundary::{apply_replay_floor, assert_payload_scope};
 
 fn policy_matches_payload(
     record: &crate::managed_agents::ManagedAgentRecord,
@@ -248,6 +165,7 @@ fn apply_deploy_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::managed_agents::REPLAY_FLOOR_ENV_VAR;
 
     fn record() -> crate::managed_agents::ManagedAgentRecord {
         serde_json::from_value(serde_json::json!({

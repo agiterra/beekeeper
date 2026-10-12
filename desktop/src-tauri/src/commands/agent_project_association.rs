@@ -122,11 +122,7 @@ pub async fn associate_managed_agent_with_project(
         // Content-diffed: a no-op association queues nothing new, and a
         // publish an earlier save missed is re-queued.
         super::agents::retain_managed_agent_pending(&app, &state, &records[index]);
-        let runtimes = state
-            .managed_agent_processes
-            .lock()
-            .map_err(|error| error.to_string())?;
-        super::agents::summarize_from_disk(&app, &records[index], &runtimes)
+        super::agents::summarize_host_record(&app, &records[index])
     })
     .await
     .map_err(|error| format!("spawn_blocking failed: {error}"))??;
@@ -139,6 +135,28 @@ pub async fn associate_managed_agent_with_project(
         std::slice::from_ref(&agent_pubkey),
     )
     .await;
+    let state = app.state::<AppState>();
+    let record = load_managed_agents(&app)?
+        .into_iter()
+        .find(|r| r.pubkey == agent_pubkey)
+        .ok_or("agent not found")?;
+    if record.backend == crate::managed_agents::BackendKind::Local {
+        let relay = crate::relay::effective_agent_relay_url(
+            &record.relay_url,
+            &crate::relay::relay_ws_url_with_override(&state),
+        );
+        super::agents::host_transfer::reconcile_host_agent(
+            &app,
+            &state,
+            &agent_pubkey,
+            &relay,
+            false,
+        )
+        .await
+        .map_err(|error| {
+            format!("Project association was saved; host application remains unconfirmed: {error}")
+        })?;
+    }
     Ok(AssociateManagedAgentWithProjectResult {
         agent,
         roster_added: !roster.added.is_empty(),

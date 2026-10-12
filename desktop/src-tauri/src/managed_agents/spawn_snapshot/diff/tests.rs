@@ -426,41 +426,6 @@ fn no_sentinel_reaches_snapshot_debug_output() {
     assert!(rendered.contains("goose"));
 }
 
-#[test]
-fn no_sentinel_reaches_the_owning_process_debug_output() {
-    // `ManagedAgentProcess` derives `Debug` and delegates to the snapshot's
-    // manual impl — this pins that the derive can never become the leak path.
-    #[cfg(unix)]
-    let program = "/usr/bin/true";
-    #[cfg(windows)]
-    let program = "true";
-    let child = std::process::Command::new(program)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("spawn placeholder child");
-    let process = crate::managed_agents::ManagedAgentProcess {
-        child,
-        log_path: std::path::PathBuf::new(),
-        spawn_config: seeded_with_sentinels(),
-        setup_mode: false,
-        adapter_availability: None,
-        start_nonce: "test-nonce".to_string(),
-        #[cfg(windows)]
-        job: None,
-    };
-    let rendered = format!("{process:?}");
-    assert!(
-        !rendered.contains("SENTINEL"),
-        "process Debug leaked a secret"
-    );
-    assert!(
-        !rendered.contains("token="),
-        "process Debug leaked a query token"
-    );
-}
-
 // ── B1: the eligible vector is the single source of the badge ────────────
 
 fn eligible(
@@ -558,7 +523,7 @@ fn unstamped_availability_is_not_drift() {
 #[test]
 fn unstamped_agent_yields_no_badge_and_no_entries() {
     // A `runtime_pid`-adopted process — and any agent this workspace tracks no
-    // live pair for — has no `ManagedAgentProcess`, so no spawn config was ever
+    // live pair for — has no accepted runtime snapshot, so no applied config was ever
     // stamped. With nothing to compare against there is no drift to report, and
     // the badge derives from that emptiness. Distinct from the case above,
     // where a real pair IS tracked and only its availability stamp is absent.

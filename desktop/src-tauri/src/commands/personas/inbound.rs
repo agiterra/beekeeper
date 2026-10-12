@@ -81,18 +81,9 @@ pub async fn reconcile_inbound_persona_event(
     match restart {
         Some(InboundRuntimeRefresh::Local { pubkey, relay_urls }) => {
             let state = app.state::<AppState>();
-            super::super::agents::start_local_agent_pairs_with_preflight(
-                &app,
-                &state,
-                &pubkey,
-                &relay_urls,
-            )
-            .await
-            .map_err(|error| {
-                format!(
-                    "Inbound agent access was saved, but its runtime failed to restart with the new policy: {error}"
-                )
-            })?;
+            for relay in &relay_urls {
+                super::super::agents::host_transfer::reconcile_host_agent(&app, &state, &pubkey, relay, true).await.map_err(|error| format!("Inbound agent access was saved, but host application remains unconfirmed: {error}"))?;
+            }
         }
         Some(InboundRuntimeRefresh::Provider {
             pubkey, agent_json, ..
@@ -276,32 +267,14 @@ fn reconcile_inbound_persona_event_blocking(
                     .ok_or_else(|| format!("agent {d_tag} disappeared during inbound apply"))?;
                 match &record.backend {
                     crate::managed_agents::BackendKind::Local => {
-                        let mut runtimes = state
-                            .managed_agent_processes
-                            .lock()
-                            .map_err(|error| error.to_string())?;
-                        let mut relay_urls =
-                            crate::managed_agents::managed_agent_runtime_keys(&runtimes, &d_tag)
-                                .into_iter()
-                                .map(|key| key.relay_url)
-                                .collect::<Vec<_>>();
-                        if relay_urls.is_empty() && record.runtime_pid.is_some() {
-                            relay_urls.push(crate::relay::effective_agent_relay_url(
-                                &record.relay_url,
-                                &crate::relay::relay_ws_url_with_override(&state),
-                            ));
-                        }
-                        if !relay_urls.is_empty() {
-                            crate::managed_agents::stop_managed_agent_process(
-                                &app,
-                                record,
-                                &mut runtimes,
-                            )?;
-                            runtime_refresh = Some(InboundRuntimeRefresh::Local {
-                                pubkey: d_tag.clone(),
-                                relay_urls,
-                            });
-                        }
+                        let relay = crate::relay::effective_agent_relay_url(
+                            &record.relay_url,
+                            &crate::relay::relay_ws_url_with_override(&state),
+                        );
+                        runtime_refresh = Some(InboundRuntimeRefresh::Local {
+                            pubkey: d_tag.clone(),
+                            relay_urls: vec![relay],
+                        });
                     }
                     crate::managed_agents::BackendKind::Provider { .. }
                         if record.backend_agent_id.is_some() =>

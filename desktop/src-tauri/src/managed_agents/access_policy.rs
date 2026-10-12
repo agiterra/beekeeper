@@ -37,18 +37,17 @@
 //! agents can send instructions." (`RespondToField.tsx`). The dropdown label
 //! stays "Only me", which is the audience the user picks.
 
-use super::{validate_respond_to_allowlist, ManagedAgentRecord, RespondTo};
+#[cfg(test)]
+use super::validate_respond_to_allowlist;
+use super::{ManagedAgentRecord, RespondTo};
 
+#[cfg(test)]
 pub(crate) type RespondToEnv = (Vec<(&'static str, String)>, Vec<&'static str>);
 
 /// Release packaging sets `BEEKEEPER_BUILD_AGENT_ACCESS_OWNER_ONLY`; OSS/custom
 /// builds do not.
 pub(crate) fn owner_only_access_build() -> bool {
     option_env!("BEEKEEPER_DESKTOP_BUILD_AGENT_ACCESS_OWNER_ONLY").is_some()
-}
-
-pub(crate) fn owner_only() -> bool {
-    owner_only_with_policy(owner_only_access_build())
 }
 
 pub(crate) fn owner_only_with_policy(owner_only_access: bool) -> bool {
@@ -71,6 +70,7 @@ pub(crate) fn projected_access_with_policy(
 /// Build the inbound-author access environment for a launched agent. The
 /// explicit policy input keeps owner-only access enforcement testable without
 /// weakening the production caller's compile-time decision.
+#[cfg(test)]
 pub(crate) fn build_respond_to_env_with_policy(
     record: &ManagedAgentRecord,
     owner_hex: Option<&str>,

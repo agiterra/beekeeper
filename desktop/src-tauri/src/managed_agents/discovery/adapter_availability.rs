@@ -34,28 +34,13 @@ pub(crate) fn cache_adapter_availability(status: AcpAvailabilityStatus) {
     }
 }
 
-/// Return the most recently cached codex-acp adapter availability, or
-/// `None` if no discovery has run yet.
-///
-/// This is a **read from cache only** — it never spawns a subprocess.  The
-/// value is populated by `discover_acp_runtimes` and invalidated by
-/// `clear_resolve_cache`.  When the cache is cold, returning `None` defers
-/// the drift check until discovery has produced a real value, preventing
-/// a fabricated `AdapterMissing` stamp from triggering a false restart badge
-/// on a newly restarted process.
-pub(crate) fn adapter_availability_cached() -> Option<AcpAvailabilityStatus> {
-    adapter_availability_cache()
-        .lock()
-        .ok()
-        .and_then(|g| g.clone())
-}
-
 /// Pure predicate: does the stamped adapter availability differ from the
 /// current cached availability?
 ///
 /// Returns `false` whenever either side is `None` (unknown) — "no data" is
 /// not evidence of drift.  This is extracted for unit testing without global
 /// state and used by `build_managed_agent_summary`.
+#[cfg(test)]
 pub(crate) fn availability_drift(
     stamped: Option<&AcpAvailabilityStatus>,
     current: Option<AcpAvailabilityStatus>,

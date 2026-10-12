@@ -114,7 +114,9 @@ fn project_scoped_persona_sharing(
         )
     });
     if let Err(error) = projected {
-        eprintln!("beekeeper-desktop: persona-share-projection unavailable, reporting every agent as unshared: {error}");
+        eprintln!(
+            "beekeeper-desktop: persona-share-projection unavailable, reporting every agent as unshared: {error}"
+        );
         for persona in personas {
             persona.shared = false;
         }

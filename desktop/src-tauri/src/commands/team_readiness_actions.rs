@@ -188,7 +188,7 @@ pub async fn observe_project_action_ownership(
         Err(error) => {
             return ProjectActionOwnership::Unreadable {
                 detail: format!("the relay did not answer for this project's roster ({error})"),
-            }
+            };
         }
     };
     let mut owners = vec![creator];

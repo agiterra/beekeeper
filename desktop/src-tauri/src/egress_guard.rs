@@ -14,6 +14,7 @@
 //! | 6 | `submit_engram_event` (team snapshot) | `commands/team_snapshot.rs` |
 //! | 7 | `submit_engram_event` (persona import) | `commands/personas/snapshot/import.rs` |
 //! | 8 | native websocket send loop (all webview relay WS) | `native_websocket.rs` |
+//! | 9 | shared management signing adapter | `commands/agents/headless_transport.rs` |
 //!
 //! The inventory-completeness test in `egress_guard_tests.rs` asserts that
 //! every `/events` URL-construction site in the tree calls this guard, so a
@@ -56,3 +57,9 @@ pub fn assert_no_key_backup_bytes(body: &[u8], context: &'static str) -> Result<
 #[cfg(test)]
 #[path = "egress_guard_tests.rs"]
 mod tests;
+
+/// Existing public NIP-49 vector for serialized egress injection regressions.
+#[cfg(test)]
+pub(crate) fn injection_fixture() -> &'static str {
+    tests::NCRYPTSEC
+}

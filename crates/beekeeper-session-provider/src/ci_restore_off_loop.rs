@@ -100,7 +100,7 @@ impl Provider {
     pub(crate) async fn finish_ci_restore(&mut self, done: CiRestoreDone) -> anyhow::Result<()> {
         self.ci_restore.settle();
         let CiRestoreDone { command_id, run } = done;
-        let restored = self.finish_restore(run)?;
+        let restored = self.finish_restore(run).await?;
         if !self.settle_ci_restore(&command_id, restored)? {
             return Ok(());
         }

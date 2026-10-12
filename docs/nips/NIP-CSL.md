@@ -808,7 +808,18 @@ statuses, lifecycle continuation uses:
 - `resumed_without_context`: `session` is the new-generation target and
   `error` is `{ "code": "CONTEXT_NOT_RECOVERED", "message": "..." }`;
 - `stopped`: `session` is the stopped exact target and `error` is `null`;
-- `failed`: unchanged, with `session: null` and a stable error object.
+- `failed`: `session: null` and a stable error object, except the bounded
+  startup-uncertainty case below.
+
+A `failed` receipt with error code `CREATE_START_OUTCOME_UNCONFIRMED` may
+carry the exact reserved `session` target. It records an interrupted create
+whose startup or initial-turn effects cannot be proved. It establishes neither
+successful creation nor termination. The provider retains its durable admission
+fence; clients verify the original create, provider authority, channel and exact
+target before retaining the responsibility in pending management inventory.
+Missing metadata or a missing runtime handle cannot clear this uncertainty.
+Other `failed` error codes still require `session: null`; consumers must not
+automatically restart or repeat uncertain effects.
 
 Authority refusals use stable codes: `GENESIS_NOT_FOUND` when an exact genesis
 cannot be resolved and verified, and `UNAUTHORIZED_OPERATOR` when the signer

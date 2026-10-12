@@ -57,6 +57,7 @@ impl EffectiveAgentConfig {
     /// or trailing whitespace.  The provider is trimmed before matching;
     /// a blank effective model falls back to "auto", mirroring
     /// `apply_relay_mesh_env`'s own rule.
+    #[cfg(test)]
     pub fn relay_mesh_model_id(&self) -> Option<String> {
         if self.provider.value.as_deref().map(str::trim) != Some(RELAY_MESH_PROVIDER_ID) {
             return None;
@@ -375,6 +376,7 @@ pub fn resolve_effective_runtime_id(
 /// never spawns (see `require_resolved`), so it never needs a mesh preflight
 /// either; the caller's own orphan handling downstream is unaffected, this
 /// just avoids tripping mesh bootstrap for a start that will be refused.
+#[cfg(test)]
 pub fn resolve_effective_relay_mesh_model_id(
     record: &ManagedAgentRecord,
     definitions: &[AgentDefinition],

@@ -5,7 +5,7 @@
 //! `(pubkey, kind, d_tag)` where `d_tag` is the agent's pubkey. They mirror the
 //! persona event flow (see `persona_events`): the same retention store and
 //! flush loop publish them — this module only owns the kind-specific
-//! projection, build, content-hash, and tombstone.
+//! projection, build and content-hash. Shared management owns retirement.
 //!
 //! # Security: opt-IN allowlist, never record-minus-denylist
 //!
@@ -22,8 +22,9 @@
 //! - any runtime field (`runtime_pid`, `last_*`, `backend_agent_id`, …) — these
 //!   mutate on every start/stop and describe transient process state.
 
+#[cfg(test)]
 use beekeeper_core_pkg::kind::KIND_MANAGED_AGENT;
-use nostr::{EventBuilder, Kind, Tag};
+use nostr::EventBuilder;
 
 use super::ManagedAgentRecord;
 #[cfg(test)]
@@ -91,19 +92,6 @@ pub fn managed_agent_content_from_event(
 ) -> Result<ManagedAgentEventContent, String> {
     serde_json::from_str(event.content.as_ref())
         .map_err(|e| format!("failed to parse managed-agent event content: {e}"))
-}
-
-/// Build a NIP-09 deletion (kind:5) targeting an agent's kind:30177 event.
-///
-/// Carries a single `a`-tag with the NIP-33 coordinate
-/// `30177:<owner>:<d_tag>` and no `e`-tag: an `e`-tag routes the relay to the
-/// event-id deletion path, leaving the parameterized-replaceable coordinate
-/// live. The coordinate delete removes the agent for every client and across
-/// reboots.
-pub fn build_agent_delete(d_tag: &str, owner_pubkey_hex: &str) -> Result<EventBuilder, String> {
-    let coord = format!("{KIND_MANAGED_AGENT}:{owner_pubkey_hex}:{d_tag}");
-    let tag = Tag::parse(["a", coord.as_str()]).map_err(|e| format!("invalid a-tag: {e}"))?;
-    Ok(EventBuilder::new(Kind::Custom(5), "").tags(vec![tag]))
 }
 
 #[cfg(test)]
@@ -608,36 +596,5 @@ mod tests {
         }));
         assert!(withdrawn.project_withdrawn, "the marker key parses");
         assert_eq!(withdrawn.project_digest, None);
-    }
-
-    #[test]
-    fn build_agent_delete_has_single_a_tag_no_e_tag() {
-        const OWNER: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-        let builder = build_agent_delete(
-            "abababababababababababababababababababababababababababababababab",
-            OWNER,
-        )
-        .unwrap();
-        let keys = nostr::Keys::generate();
-        let event = builder.sign_with_keys(&keys).unwrap();
-
-        assert_eq!(event.kind, Kind::Custom(5));
-
-        let a_tags: Vec<&[String]> = event
-            .tags
-            .iter()
-            .map(|t| t.as_slice())
-            .filter(|v| v.first().map(String::as_str) == Some("a"))
-            .collect();
-        assert_eq!(a_tags.len(), 1);
-        assert_eq!(
-            a_tags[0][1],
-            format!("{KIND_MANAGED_AGENT}:{OWNER}:{}", "ab".repeat(32))
-        );
-
-        assert!(event
-            .tags
-            .iter()
-            .all(|t| t.as_slice().first().map(String::as_str) != Some("e")));
     }
 }

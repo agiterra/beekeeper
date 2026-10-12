@@ -17,6 +17,7 @@ fn record(session_id: &str, command_id: &str) -> SessionRecord {
     SessionRecord {
         execution_binding: None,
         execution_boundary: None,
+        process_witness: None,
         authority_withdrawn: None,
         project_head_seen_at: None,
         session_id: session_id.to_owned(),

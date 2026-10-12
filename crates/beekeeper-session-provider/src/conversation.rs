@@ -14,6 +14,10 @@ use uuid::Uuid;
 
 use crate::{publish::Priority, Provider};
 
+#[path = "conversation_admission.rs"]
+mod admission;
+#[path = "conversation_backfill.rs"]
+pub(crate) mod backfill;
 #[path = "conversation_definition.rs"]
 mod definition;
 
@@ -35,6 +39,10 @@ pub struct ConversationRoute {
     pub channel_id: Uuid,
     /// Exact accepted execution and generation.
     pub target: CodingSessionTarget,
+    /// Immutable pre-drain capture lower bound for migration replay.
+    /// This is not evidence that an earlier request was consumed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_floor_unix: Option<u64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -44,17 +52,23 @@ struct Origin {
     channel: Uuid,
     root: String,
     event: String,
+    #[serde(default)]
+    author: Option<String>,
     target: CodingSessionTarget,
     #[serde(default)]
     definition_event_id: Option<String>,
     #[serde(default)]
     linked_definition_event_id: Option<String>,
     #[serde(default)]
+    private_definition_event_id: Option<String>,
+    #[serde(default)]
     instructions: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
 struct Origins {
+    #[serde(default)]
+    legacy_answers: BTreeMap<String, String>,
     requests: BTreeMap<String, Origin>,
     bindings: BTreeMap<String, CodingSessionTarget>,
 }
@@ -242,6 +256,7 @@ impl Provider {
     }
 
     /// Translate a verified ordinary channel message into the existing turn protocol.
+    #[cfg(test)]
     pub(crate) fn conversation_command(
         &mut self,
         channel: Uuid,
@@ -267,11 +282,22 @@ impl Provider {
 
     /// Explicit context seam also keeps isolated ownership tests free of
     /// process-global environment mutation.
+    #[cfg(test)]
     pub(crate) fn conversation_command_at(
         &mut self,
         channel: Uuid,
         event: &Event,
         context: Option<(&std::path::Path, beekeeper_host_core::layout::Instance)>,
+    ) -> anyhow::Result<Option<String>> {
+        self.conversation_command_authorized_at(channel, event, context, None)
+    }
+
+    fn conversation_command_authorized_at(
+        &mut self,
+        channel: Uuid,
+        event: &Event,
+        context: Option<(&std::path::Path, beekeeper_host_core::layout::Instance)>,
+        permitted_actor: Option<&str>,
     ) -> anyhow::Result<Option<String>> {
         event.verify()?;
         let declined_key = format!("conversation:{}:ambiguous", event.id.to_hex());
@@ -344,10 +370,11 @@ impl Provider {
                         .is_some_and(|record| {
                             record.actor.as_deref() == Some(&actor)
                                 && record.channel_id == channel
-                                && crate::commands::operator_may_steer(
-                                    record,
-                                    &event.pubkey.to_hex(),
-                                )
+                                && (permitted_actor == Some(actor.as_str())
+                                    || crate::commands::operator_may_steer(
+                                        record,
+                                        &event.pubkey.to_hex(),
+                                    ))
                         })
             })
             .collect();
@@ -378,9 +405,11 @@ impl Provider {
                 channel,
                 root,
                 event: event_id.clone(),
+                author: Some(event.pubkey.to_hex()),
                 target: candidates[0].target.clone(),
                 definition_event_id: None,
                 linked_definition_event_id: None,
+                private_definition_event_id: None,
                 instructions: None,
             };
             self.conversation_reply(&origin, &format!("{event_id}:ambiguous"),
@@ -415,9 +444,11 @@ impl Provider {
                 channel,
                 root,
                 event: event_id.clone(),
+                author: Some(event.pubkey.to_hex()),
                 target: candidates[0].target.clone(),
                 definition_event_id: None,
                 linked_definition_event_id: None,
+                private_definition_event_id: None,
                 instructions: None,
             };
             let text = if active.is_empty() {
@@ -434,15 +465,20 @@ impl Provider {
             channel,
             root,
             event: event_id.clone(),
+            author: Some(event.pubkey.to_hex()),
             target: target.clone(),
             definition_event_id: None,
             linked_definition_event_id: None,
+            private_definition_event_id: None,
             instructions: None,
         };
         // Persist origin and binding before mailbox admission; retries reconstruct
         // identical command bytes and use the provider's existing consumed ledger.
         origins.bindings.insert(binding_key, target.clone());
-        origins.requests.entry(event_id.clone()).or_insert(origin);
+        let request = origins.requests.entry(event_id.clone()).or_insert(origin);
+        if request.author.is_none() {
+            request.author = Some(event.pubkey.to_hex());
+        }
         self.save_conversation_origins(&origins)?;
         let payload = CodingSessionCommandPayload {
             schema: CODING_SESSION_COMMAND_SCHEMA.to_owned(),

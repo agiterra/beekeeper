@@ -578,6 +578,7 @@ pub fn apply_persona_snapshot(record: &mut ManagedAgentRecord, persona: &AgentDe
 /// Orphaned records (persona deleted) pass through unchanged: the caller's
 /// own orphan handling — refusing to spawn, snapshotting as `(None, None, None)`
 /// — runs on the real record downstream, not on this preview.
+#[cfg(test)]
 pub fn preview_prospective_persona_snapshot(
     record: &ManagedAgentRecord,
     personas: &[AgentDefinition],

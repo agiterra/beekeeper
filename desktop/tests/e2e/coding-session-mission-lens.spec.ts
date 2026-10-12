@@ -1266,9 +1266,10 @@ test("Mission stream stays within its own width at 900px", async ({ page }) => {
   const drawerClose = page
     .getByRole("button", { name: "Close", exact: true })
     .last();
-  if (await drawerClose.isVisible().catch(() => false)) {
-    await drawerClose.click();
-  }
+  // Resizing commits the narrow Sheet asynchronously. Require its control
+  // before closing it; a non-waiting visibility probe can skip the action.
+  await expect(drawerClose).toBeVisible();
+  await drawerClose.click();
   await expect(
     page.getByTestId("coding-session-mission-inspector"),
   ).toHaveCount(0);

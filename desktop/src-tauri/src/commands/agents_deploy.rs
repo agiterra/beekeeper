@@ -142,31 +142,17 @@ pub(super) fn build_launch_block_with_session_policy(
     // verbatim, and a pre-rename image reads only `BUZZ_*` and ships only
     // `buzz-*` executables: sent new-names-only, its agent would start without
     // its prompt, model and policy, or not start at all, and say nothing.
-    let launch_env = beekeeper_core_pkg::env_compat::mirror_map(launch_env);
-    let policy_env = beekeeper_core_pkg::env_compat::mirror_map(policy_env);
-    serde_json::json!({
-        "command": wire_command_name(&descriptor.command),
-        "args": descriptor.args,
-        "env": launch_env,
-        "policy_env": policy_env,
-        "owner_pubkey": owner_pubkey,
-    })
+    beekeeper_host_core::provider_boundary::launch_payload(
+        &descriptor.command,
+        &descriptor.args,
+        launch_env,
+        policy_env,
+        owner_pubkey,
+    )
 }
 
-/// The command name a remote provider forwards to the pod.
-///
-/// The bundled harnesses go out under the `buzz-*` names every sprig image
-/// ships, so an older provider (which forwards the name verbatim) and an older
-/// image both still find the binary. A current provider maps either spelling.
-/// Anything else, including a path, is sent as given.
-fn wire_command_name(command: &str) -> &str {
-    match command {
-        "beekeeper-acp" => "buzz-acp",
-        "beekeeper-agent" => "buzz-agent",
-        "beekeeper-dev-mcp" => "buzz-dev-mcp",
-        other => other,
-    }
-}
+#[cfg(test)]
+use beekeeper_host_core::provider_boundary::wire_command_name;
 
 pub(super) fn ensure_remote_provider_supported(provider: Option<&str>) -> Result<(), String> {
     if provider.map(str::trim) == Some(crate::managed_agents::RELAY_MESH_PROVIDER_ID) {
@@ -252,27 +238,27 @@ pub(super) fn deploy_payload_json(
 ) -> serde_json::Value {
     let (respond_to, respond_to_allowlist) =
         crate::managed_agents::projected_access_with_policy(record, projections.owner_only_access);
-    serde_json::json!({
-        "name": &record.name,
-        "relay_url": relay_url,
-        "private_key_nsec": &record.private_key_nsec,
-        "auth_tag": &record.auth_tag,
-        "agent_command": &record.agent_command,
-        "agent_args": &record.agent_args,
-        "system_prompt": projections.effective_prompt,
-        "model": projections.effective_model,
-        "provider": projections.effective_provider,
-        "turn_timeout_seconds": record.turn_timeout_seconds,
-        "idle_timeout_seconds": record.idle_timeout_seconds,
-        "max_turn_duration_seconds": record.max_turn_duration_seconds,
-        // Legacy top-level field: projected from the same resolved descriptor as
-        // launch.policy_env["BEEKEEPER_ACP_AGENTS"] — the two are always consistent.
-        "parallelism": projections.effective_parallelism,
-        "respond_to": respond_to,
-        "respond_to_allowlist": respond_to_allowlist,
-        "env_vars": merged_env,
-        "launch": launch,
-    })
+    beekeeper_host_core::provider_boundary::deploy_payload(
+        beekeeper_host_core::provider_boundary::ProviderDeployPayload {
+            name: &record.name,
+            relay_url,
+            private_key_nsec: &record.private_key_nsec,
+            auth_tag: record.auth_tag.as_deref(),
+            agent_command: &record.agent_command,
+            agent_args: &record.agent_args,
+            system_prompt: projections.effective_prompt,
+            model: projections.effective_model,
+            provider: projections.effective_provider,
+            turn_timeout_seconds: record.turn_timeout_seconds,
+            idle_timeout_seconds: record.idle_timeout_seconds,
+            max_turn_duration_seconds: record.max_turn_duration_seconds,
+            parallelism: projections.effective_parallelism,
+            respond_to: respond_to.as_str(),
+            respond_to_allowlist: &respond_to_allowlist,
+            env_vars: merged_env,
+            launch,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -542,8 +528,7 @@ mod tests {
         );
 
         assert_eq!(
-            launch["policy_env"]["BEEKEEPER_ACP_AGENTS"],
-            "4",
+            launch["policy_env"]["BEEKEEPER_ACP_AGENTS"], "4",
             "launch.policy_env[BEEKEEPER_ACP_AGENTS] must pass through requested 4 for live Goose descriptor"
         );
         assert_eq!(

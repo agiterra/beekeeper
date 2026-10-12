@@ -428,6 +428,7 @@ async fn an_undecided_wake_stays_decidable_under_the_same_command_id() {
     std::fs::create_dir_all(&checkout).expect("mkdir");
     let head = repo_with_commit(&checkout);
     let mut provider = provider(&state_dir, None);
+    witness_fixture_retirement(&mut provider).await;
     let channel_id = Uuid::new_v4();
     let record = seat_record(channel_id, &checkout, Some("verifier"));
     let target = provider.target_for(&record);

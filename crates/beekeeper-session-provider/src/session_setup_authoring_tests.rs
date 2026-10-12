@@ -143,6 +143,7 @@ async fn setup_first_turn_reaches_real_child_with_draft_cwd_brief_and_shipped_ro
         .create(CreateRequest {
             execution: crate::execution_scope::ExecutionPlan::Legacy {
                 reason: "unit-test",
+                configured_mcp_command: None,
             },
             target: CodingSessionTarget {
                 driver: crate::agent_fence::CLAUDE_DRIVER.into(),

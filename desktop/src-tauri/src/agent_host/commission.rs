@@ -5,11 +5,11 @@
 //! never needs the owner's signing key. Commissioning writes everything needed to serve
 //! that identity with nobody logged in:
 //!
-//! - `host.json` — the relay, the pubkey, the runtime offer, the stored
-//!   limits, and **the absolute path of the provider's state directory**. That
-//!   directory stays under the app's own app-data tree, because five app
-//!   modules write into it; a host that reconstructed the path from its own
-//!   idea of where app data lives would be right on exactly one machine.
+//! - `host.json` — the relay, pubkey, explicit runtime offer, limits and
+//!   absolute custody paths. Existing operator commissioning is preserved
+//!   on desktop reopen, including a CLI-selected state directory and runtimes
+//!   absent from the desktop's PATH. Discovery supplies first-commissioning
+//!   defaults; it never replaces an existing same-scope configuration.
 //! - `provider-key` — a `0600` file holding the nsec.
 //!
 //! # Why the app hands the key over at all
@@ -46,6 +46,9 @@ use beekeeper_host_core::layout;
 use beekeeper_host_core::record::{CodingSessionProviderRecord, CodingSessionProviderStore};
 use tauri::AppHandle;
 
+#[path = "commission_selection.rs"]
+mod selection;
+
 /// Why the app is writing the host's config — which shapes nothing about the
 /// files, only which op is sent and therefore how it reads in the host's log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,8 +59,8 @@ pub(crate) enum Commissioning {
     RelayChanged,
 }
 
-/// Write `host.json` and the key file for `record`, then ask a running host to
-/// pick them up.
+/// Preserve existing same-scope commissioning, or write first defaults and
+/// scoped provider custody, then ask a running host to pick them up.
 ///
 /// Returns whether a host was listening. `false` is not a failure — a machine
 /// where the host is not yet installed or not yet running is the ordinary case
@@ -83,7 +86,7 @@ pub(crate) async fn commission_host(
         provider_pubkey: record.provider_pubkey.clone(),
         session_provider_base_dir: base_dir,
         provider_state_dir: state_dir,
-        runtimes: crate::session_provider::runtimes::build_runtime_descriptors(),
+        runtimes: Vec::new(),
         max_sessions: store.max_sessions,
         turn_idle_timeout_secs: store.turn_idle_timeout_secs,
         turn_budget: store.turn_budget,
@@ -93,7 +96,20 @@ pub(crate) async fn commission_host(
         provider_command: None,
         written_at: crate::util::now_iso(),
     };
-    beekeeper_host_core::provision::write_commissioning(&home, &config, record)?;
+    {
+        // Serialize preservation with explicit scoped limit edits. Drop before
+        // notifying the host: no client lock is held across IPC.
+        let _lock = beekeeper_host_core::ownership::management_lock(&home, instance)?;
+        let config = selection::select(
+            selection::load_existing(&layout::host_config_path(&home, instance))?,
+            config,
+            record,
+            store,
+            reason,
+            crate::session_provider::runtimes::build_runtime_descriptors,
+        )?;
+        beekeeper_host_core::provision::write_commissioning(&home, &config, record)?;
+    }
 
     // The secret does not travel on the wire; this only says "look again".
     // Which op is sent is chosen for the host's log rather than for behaviour

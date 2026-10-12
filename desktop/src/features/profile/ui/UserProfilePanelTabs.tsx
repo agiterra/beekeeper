@@ -743,7 +743,7 @@ export function ProfileRuntimeTabContent({
   showDiagnosticsIngress: boolean;
 }) {
   const startOnLaunchFieldIndex = configurationFields.findIndex(
-    (field) => field.label === "Start on launch",
+    (field) => field.label === "Enabled on host",
   );
   const startOnLaunchField = configurationFields[startOnLaunchFieldIndex];
   const StartOnLaunchIcon = startOnLaunchField?.icon;

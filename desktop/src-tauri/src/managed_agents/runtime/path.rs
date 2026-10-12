@@ -1,4 +1,4 @@
-//! PATH augmentation for launched managed-agent child processes.
+//! PATH composition for bounded runtime discovery probes; no executor ownership.
 
 use std::path::PathBuf;
 

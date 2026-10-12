@@ -32,8 +32,7 @@ use beekeeper_core::coding_session_lifecycle_command::{
     CodingSessionLifecycleCommandPayload, CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
 };
 use beekeeper_core::coding_session_payload::{
-    context_window_usage, decode_coding_session_lifecycle_receipt, ReceiptStatus, TurnUsageReport,
-    ACTOR_ROLE_PAIR,
+    context_window_usage, ReceiptStatus, TurnUsageReport, ACTOR_ROLE_PAIR,
 };
 use beekeeper_core::kind::{
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LEASE,
@@ -42,9 +41,6 @@ use beekeeper_core::kind::{
 use beekeeper_sdk::builders::{
     build_coding_session_command, build_coding_session_genesis,
     build_coding_session_lifecycle_command,
-};
-use beekeeper_sdk::coding_session::{
-    coding_session_lifecycle_receipt_semantic_key, CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
 };
 use beekeeper_sdk::kind::{
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
@@ -955,235 +951,12 @@ pub(super) fn coding_session_navigation_url(
     format!("beekeeper://coding-session?{query}")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CreateWaitOutcome {
-    Confirmed {
-        status: ReceiptStatus,
-        receipt_event_id: String,
-        target: beekeeper_core::coding_session_command::CodingSessionTarget,
-        error: Option<beekeeper_core::coding_session_payload::ReceiptError>,
-    },
-    Refused {
-        receipt_event_id: String,
-        error: beekeeper_core::coding_session_payload::ReceiptError,
-    },
-    Unconfirmed {
-        query_failed: bool,
-    },
-    Conflicted {
-        detail: String,
-    },
-}
-
-fn same_create_answer(left: &CreateWaitOutcome, right: &CreateWaitOutcome) -> bool {
-    match (left, right) {
-        (
-            CreateWaitOutcome::Confirmed {
-                status: left_status,
-                target: left_target,
-                error: left_error,
-                ..
-            },
-            CreateWaitOutcome::Confirmed {
-                status: right_status,
-                target: right_target,
-                error: right_error,
-                ..
-            },
-        ) => {
-            left_status == right_status && left_target == right_target && left_error == right_error
-        }
-        (
-            CreateWaitOutcome::Refused {
-                error: left_error, ..
-            },
-            CreateWaitOutcome::Refused {
-                error: right_error, ..
-            },
-        ) => left_error == right_error,
-        _ => false,
-    }
-}
-
-/// Every lifecycle receipt in `events` that `provider_authority` signed for
-/// exactly `command_id` in `channel_id`, with its event id.
-///
-/// The one place a 44224 answer to a CLI-published lifecycle command is
-/// admitted: the signature verifies, the signer is the named provider, the
-/// envelope carries exactly the four tags the SDK builder writes, and the
-/// content decodes through `buzz-core`'s receipt decoder naming the same
-/// command. Anything else — an unrelated command, a wrong signer, a malformed
-/// event — is skipped, never guessed at.
-pub(crate) fn verified_command_receipts(
-    events: &[Value],
-    channel_id: &str,
-    command_id: &str,
-    provider_authority: &str,
-) -> Vec<(
-    String,
-    beekeeper_core::coding_session_payload::LifecycleReceipt,
-)> {
-    let expected_key = coding_session_lifecycle_receipt_semantic_key(command_id);
-    let expected = [
-        ["h", channel_id],
-        ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
-        ["csl-command", command_id],
-        ["csl-key", expected_key.as_str()],
-    ];
-    let mut admitted = Vec::new();
-    for raw in events {
-        let Ok(event) = serde_json::from_value::<nostr::Event>(raw.clone()) else {
-            continue;
-        };
-        if u32::from(event.kind.as_u16()) != KIND_CODING_SESSION_LIFECYCLE_RECEIPT
-            || !event
-                .pubkey
-                .to_hex()
-                .eq_ignore_ascii_case(provider_authority)
-        {
-            continue;
-        }
-        if beekeeper_core::verify_event(&event).is_err() {
-            continue;
-        }
-        if event.tags.len() != expected.len()
-            || event.tags.iter().zip(expected).any(|(got, want)| {
-                got.as_slice().len() != 2
-                    || got.as_slice()[0] != want[0]
-                    || got.as_slice()[1] != want[1]
-            })
-        {
-            continue;
-        }
-        let Ok(receipt) = decode_coding_session_lifecycle_receipt(&event.content) else {
-            continue;
-        };
-        if receipt.command_id != command_id {
-            continue;
-        }
-        admitted.push((event.id.to_hex(), receipt));
-    }
-    admitted
-}
-
-/// Select the provider's signed answer to one create. Unrelated commands,
-/// wrong signers, malformed events, and turn receipts are ignored. Two
-/// different answers are a contradiction and never get resolved by time.
-pub(super) fn classify_create_receipts(
-    events: &[Value],
-    channel_id: &str,
-    command_id: &str,
-    provider_authority: &str,
-) -> Result<Option<CreateWaitOutcome>, String> {
-    let mut answer: Option<CreateWaitOutcome> = None;
-    for (receipt_event_id, receipt) in
-        verified_command_receipts(events, channel_id, command_id, provider_authority)
-    {
-        let candidate = match receipt.status {
-            ReceiptStatus::Created | ReceiptStatus::CreatedWithFailedInitialTurn => {
-                let Some(target) = receipt.session.clone() else {
-                    continue;
-                };
-                CreateWaitOutcome::Confirmed {
-                    status: receipt.status,
-                    receipt_event_id,
-                    target,
-                    error: receipt.error.clone(),
-                }
-            }
-            ReceiptStatus::Failed => {
-                let Some(error) = receipt.error.clone() else {
-                    continue;
-                };
-                CreateWaitOutcome::Refused {
-                    receipt_event_id,
-                    error,
-                }
-            }
-            _ => continue,
-        };
-        if let Some(existing) = &answer {
-            if !same_create_answer(existing, &candidate) {
-                return Err(format!(
-                    "provider published conflicting lifecycle receipts for create {command_id}"
-                ));
-            }
-        } else {
-            answer = Some(candidate);
-        }
-    }
-    Ok(answer)
-}
-
-/// How a wait for one lifecycle command's receipt ended.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ReceiptWait<T> {
-    /// The classifier selected an answer.
-    Answered(T),
-    /// The provider signed two answers that disagree.
-    Conflicted(String),
-    /// Nothing answered before the deadline. `query_failed` says whether any
-    /// receipt query failed or was cut off, so "no receipt" is never reported
-    /// over a relay that could not be asked.
-    Unconfirmed { query_failed: bool },
-}
-
-/// Poll the exact receipt query for `command_id` until `classify` selects an
-/// answer or `timeout_secs` passes. Publishes nothing and never retries the
-/// command itself.
-pub(super) async fn await_command_receipt<T>(
-    client: &BeekeeperClient,
-    channel_id: &str,
-    command_id: &str,
-    timeout_secs: u64,
-    classify: impl Fn(&[Value]) -> Result<Option<T>, String>,
-) -> ReceiptWait<T> {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-    let mut query_failed = false;
-    let filter = json!({
-        "kinds": [KIND_CODING_SESSION_LIFECYCLE_RECEIPT],
-        "#h": [channel_id],
-        "#csl-command": [command_id],
-    });
-    loop {
-        let query = tokio::time::timeout_at(deadline, client.query_all(filter.clone())).await;
-        match query {
-            Ok(Ok(events)) => match classify(&events) {
-                Ok(Some(answer)) => return ReceiptWait::Answered(answer),
-                Ok(None) => {}
-                Err(detail) => return ReceiptWait::Conflicted(detail),
-            },
-            Ok(Err(_)) => query_failed = true,
-            Err(_) => return ReceiptWait::Unconfirmed { query_failed: true },
-        }
-        let now = tokio::time::Instant::now();
-        if now >= deadline {
-            return ReceiptWait::Unconfirmed { query_failed };
-        }
-        let next_poll = std::cmp::min(deadline, now + std::time::Duration::from_millis(500));
-        tokio::time::sleep_until(next_poll).await;
-    }
-}
-
-pub(crate) async fn await_create_receipt(
-    client: &BeekeeperClient,
-    channel_id: &str,
-    command_id: &str,
-    provider_authority: &str,
-    timeout_secs: u64,
-) -> CreateWaitOutcome {
-    let wait = await_command_receipt(client, channel_id, command_id, timeout_secs, |events| {
-        classify_create_receipts(events, channel_id, command_id, provider_authority)
-    })
-    .await;
-    match wait {
-        ReceiptWait::Answered(outcome) => outcome,
-        ReceiptWait::Conflicted(detail) => CreateWaitOutcome::Conflicted { detail },
-        ReceiptWait::Unconfirmed { query_failed } => {
-            CreateWaitOutcome::Unconfirmed { query_failed }
-        }
-    }
-}
+#[cfg(test)]
+pub(super) use beekeeper_agent_management::receipts::classify_create_receipts;
+pub(super) use beekeeper_agent_management::receipts::{
+    await_command_receipt, verified_command_receipts, ReceiptWait,
+};
+pub(crate) use beekeeper_agent_management::receipts::{await_create_receipt, CreateWaitOutcome};
 
 /// Refuse the three create flags this surface cannot honestly publish.
 ///
@@ -1193,9 +966,8 @@ pub(crate) async fn await_create_receipt(
 /// - `--actor` names a seat whose key material is host-local custody (plan D6).
 ///   A provider that cannot resolve it answers `ACTOR_UNAVAILABLE`, so a create
 ///   signed here would name a seat nothing can act as.
-/// - `--role` is the other half of the actor/role pair — `validate` rejects
-///   either alone with [`ACTOR_ROLE_PAIR`] — so with `--actor` refused, a role
-///   has nothing to attach to.
+/// - `--role` requires an attributed actor; with `--actor` refused here, a
+///   role has no identity to attach to. Attributed Solo actors need no role.
 /// - `--driver` is minted by the provider into the target it returns; a create
 ///   names a provider *instance* and *authority*, never a driver.
 pub fn refuse_unsupported_create_flags(
@@ -1207,16 +979,16 @@ pub fn refuse_unsupported_create_flags(
         return Err(CliError::Usage(
             "--actor is refused by `bee sessions create`: an agent seat's key material is \
              host-local custody the CLI does not hold, so a seat created here would be \
-             answered ACTOR_UNAVAILABLE by the provider. Create seated executions from the \
-             desktop, then address them with `bee sessions send --to <role>`."
+             answered ACTOR_UNAVAILABLE by the provider. Use `bee agents create` for \
+             host-custodied attributed execution, then address its accepted context."
                 .to_owned(),
         ));
     }
     if role.is_some() {
         return Err(CliError::Usage(format!(
             "--role is refused by `bee sessions create`: {ACTOR_ROLE_PAIR} — a role and an \
-             actor are a pair and neither is valid alone, and --actor is refused here. \
-             Create seated executions from the desktop, which holds the seat's key."
+             role requires an actor, and --actor is refused here. Use `bee agents create` \
+             for host-custodied attributed Solo execution or the existing team hire path."
         )));
     }
     if driver.is_some() {
