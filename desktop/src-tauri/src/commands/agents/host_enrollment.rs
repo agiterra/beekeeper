@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 #[path = "host_channel.rs"]
 mod discovery;
+#[path = "host_runtime_selection.rs"]
+mod runtime_selection;
 pub(super) async fn client_guard(
     app: &AppHandle,
     actor: &str,
@@ -265,20 +267,7 @@ pub(crate) async fn enroll_new_host_agent(
         held
     } else {
         let config = bootstrap(app, relay).await?;
-        let command = private
-            .record
-            .get("effective_command")
-            .and_then(Value::as_str)
-            .ok_or("runtime unavailable")?;
-        let runtime = config
-            .runtimes
-            .iter()
-            .find(|r| {
-                r.agent_command == command
-                    || crate::managed_agents::known_acp_runtime(command)
-                        .is_some_and(|known| known.id == r.runtime)
-            })
-            .ok_or("selected runtime is not commissioned")?;
+        let runtime = runtime_selection::select(&config.runtimes, &private)?;
         let cwd = context()?
             .native_home
             .ok_or("work root unavailable")?
