@@ -478,11 +478,34 @@ pub(super) async fn start_existing(
     if !ownership::is_modern_enrollment(&held) {
         return Err("historical ownership cannot authorize fresh execution; retained source is not imported or reset".into());
     }
+    let current = head(app, relay, &record.pubkey).await?;
+    let primary_channel = match held.target.as_ref() {
+        Some(target) => {
+            let scope = RemoteStartRequest {
+                operation_id: enrolled.operation,
+                agent_pubkey: record.pubkey.clone(),
+                expected_revision: current.id.to_hex(),
+                channel: enrolled.channel,
+                provider_authority: enrolled.provider_authority.clone(),
+                provider_instance: enrolled.provider_instance.clone(),
+                project: record.project_ref.clone(),
+                wait_secs: 60,
+            };
+            beekeeper_agent_management::resolve_remote_start_channel(
+                &scope,
+                target,
+                &Transport::owner(app, relay)?,
+            )
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        None => enrolled.channel,
+    };
     if held.phase == ownership::Phase::Adopted {
         let observed = beekeeper_agent_management::status(
             &beekeeper_agent_management::LifecycleRequest {
                 agent_pubkey: record.pubkey.clone(),
-                channels: vec![enrolled.channel],
+                channels: vec![primary_channel],
                 ..Default::default()
             },
             &Transport::owner(app, relay)?,
@@ -494,7 +517,7 @@ pub(super) async fn start_existing(
         if observed_live_target(
             &observed,
             &target,
-            enrolled.channel,
+            primary_channel,
             &enrolled.provider_authority,
         ) {
             return Ok(());
@@ -505,7 +528,6 @@ pub(super) async fn start_existing(
         return Err("retained ownership is pending/uncertain; diagnose its original operation rather than recreating or starting a duplicate".into());
     }
     let path = directory.join(format!("start-{}.json", held.operation_id));
-    let current = head(app, relay, &record.pubkey).await?;
     let request: RemoteStartRequest = if path.exists() {
         serde_json::from_slice(&private_bytes(&path)?).map_err(|_| "start receipt malformed")?
     } else {
@@ -513,7 +535,7 @@ pub(super) async fn start_existing(
             operation_id: Uuid::new_v4(),
             agent_pubkey: record.pubkey.clone(),
             expected_revision: current.id.to_hex(),
-            channel: enrolled.channel,
+            channel: primary_channel,
             provider_authority: enrolled.provider_authority,
             provider_instance: enrolled.provider_instance,
             project: record.project_ref.clone(),
@@ -522,7 +544,10 @@ pub(super) async fn start_existing(
         save(&path, &next)?;
         next
     };
-    if request.agent_pubkey != record.pubkey || request.expected_revision != current.id.to_hex() {
+    if request.agent_pubkey != record.pubkey
+        || request.expected_revision != current.id.to_hex()
+        || request.channel != primary_channel
+    {
         return Err("pending Start scope/revision changed; original operation retained".into());
     }
     let outcome = beekeeper_agent_management::start_remote(

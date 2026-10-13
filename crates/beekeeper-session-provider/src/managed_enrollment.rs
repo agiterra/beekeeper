@@ -434,6 +434,21 @@ pub(crate) fn complete(
     plan: &crate::commands::CreatePlan,
     target: &beekeeper_core::coding_session_command::CodingSessionTarget,
 ) -> Result<(), CreateFailure> {
+    complete_with_context(
+        config,
+        state,
+        plan,
+        target,
+        crate::host_ownership::context()?,
+    )
+}
+fn complete_with_context(
+    config: &Config,
+    state: &StateStore,
+    plan: &crate::commands::CreatePlan,
+    target: &beekeeper_core::coding_session_command::CodingSessionTarget,
+    context: Option<(std::path::PathBuf, beekeeper_host_core::layout::Instance)>,
+) -> Result<(), CreateFailure> {
     let Some(actor) = plan.actor.as_deref() else {
         return Ok(());
     };
@@ -441,7 +456,7 @@ pub(crate) fn complete(
         return Ok(());
     };
     let event = definition(&value, actor, &plan.created_by)?;
-    if let Some((home, instance)) = crate::host_ownership::context()? {
+    if let Some((home, instance)) = context {
         if let Some(held) = ownership::for_pair(&home, instance, actor, &config.relay_url)
             .map_err(|_| refused("ownership unavailable"))?
         {

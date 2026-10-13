@@ -580,3 +580,6 @@ async fn active_requested_channel_does_not_advertise_other_runtime_or_project() 
     assert_eq!(observed["pending"], true);
     assert_eq!(client.events.lock().expect("events").len(), 1);
 }
+
+#[path = "remote_start_resolve_tests.rs"]
+mod resolve_tests;

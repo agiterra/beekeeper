@@ -217,7 +217,7 @@ pub async fn start_remote(
 }
 #[path = "remote_start_observe.rs"]
 mod observe;
-pub use observe::observe_remote_start;
+pub use observe::{observe_remote_start, resolve_remote_start_channel};
 
 /// Only relay-signed current membership can authorize channel-scoped work.
 async fn channel_members(

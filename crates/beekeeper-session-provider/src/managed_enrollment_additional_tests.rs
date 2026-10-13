@@ -3,6 +3,13 @@ use super::*;
 
 #[tokio::test]
 async fn joined_additional_channel_keeps_primary_and_replays_distinct_inputs_once() {
+    channel_activation_fixture(false).await;
+}
+#[tokio::test]
+async fn configured_only_first_stream_becomes_exact_primary_without_rewriting_dm_enrollment() {
+    channel_activation_fixture(true).await;
+}
+async fn channel_activation_fixture(configured_only: bool) {
     use crate::conversation::ConversationRoutes;
     use crate::session::testing::{fake_agent, GOOD_AGENT};
     use crate::tests::{create_event, provider, test_operator_keys, write_projects};
@@ -107,16 +114,23 @@ async fn joined_additional_channel_keeps_primary_and_replays_distinct_inputs_onc
     };
     let primary_command = Uuid::new_v4().to_string();
     let first = create_for(&host, primary, &primary_command);
-    host.handle_command_event(primary, &first)
-        .await
-        .expect("actual primary create");
-    let primary_record = host
-        .state
-        .sessions()
-        .next()
-        .expect("primary accepted")
-        .clone();
-    let primary_target = host.target_for(&primary_record);
+    let primary_record = if configured_only {
+        None
+    } else {
+        host.handle_command_event(primary, &first)
+            .await
+            .expect("actual primary create");
+        Some(
+            host.state
+                .sessions()
+                .next()
+                .expect("primary accepted")
+                .clone(),
+        )
+    };
+    let primary_target = primary_record
+        .as_ref()
+        .map(|record| host.target_for(record));
     ownership::record_host_enrollment(
         home.path(),
         Instance::Dev,
@@ -124,7 +138,7 @@ async fn joined_additional_channel_keeps_primary_and_replays_distinct_inputs_onc
         &host.config.relay_url,
         &primary_command,
         &definition.id.to_hex(),
-        Some(primary_target.clone()),
+        primary_target.clone(),
     )
     .expect("modern ownership");
     let journal_before = ownership::for_pair(
@@ -171,23 +185,25 @@ async fn joined_additional_channel_keeps_primary_and_replays_distinct_inputs_onc
     )
     .await
     .is_err());
-    host.state
-        .update_session(&primary_record.session_id, |row| row.closed = true)
-        .expect("unproved closed witness");
-    assert!(stage_with_context(
-        &host.config,
-        &host.state,
-        Some(&relay.rest_client()),
-        stream,
-        &owner.public_key().to_hex(),
-        &second.content,
-        context.clone()
-    )
-    .await
-    .is_err());
-    host.state
-        .update_session(&primary_record.session_id, |row| row.closed = false)
-        .expect("healthy primary");
+    if let Some(primary_record) = &primary_record {
+        host.state
+            .update_session(&primary_record.session_id, |row| row.closed = true)
+            .expect("unproved closed witness");
+        assert!(stage_with_context(
+            &host.config,
+            &host.state,
+            Some(&relay.rest_client()),
+            stream,
+            &owner.public_key().to_hex(),
+            &second.content,
+            context.clone()
+        )
+        .await
+        .is_err());
+        host.state
+            .update_session(&primary_record.session_id, |row| row.closed = false)
+            .expect("healthy primary");
+    }
     stage_with_context(
         &host.config,
         &host.state,
@@ -195,7 +211,7 @@ async fn joined_additional_channel_keeps_primary_and_replays_distinct_inputs_onc
         stream,
         &owner.public_key().to_hex(),
         &second.content,
-        context,
+        context.clone(),
     )
     .await
     .expect("authorized additional scope");
@@ -212,45 +228,67 @@ async fn joined_additional_channel_keeps_primary_and_replays_distinct_inputs_onc
     let crate::commands::LifecycleDecision::Create(plan) = decision else {
         panic!("additional create refused: {decision:?}");
     };
-    host.create_session(*plan, None)
+    let plan = *plan;
+    host.create_session(plan.clone(), None)
         .await
-        .expect("actual second runtime");
-    assert_eq!(host.state.sessions().count(), 2);
-    assert!(
-        !host
-            .state
-            .session(&primary_record.session_id)
-            .expect("primary untouched")
-            .closed
-    );
+        .expect("actual requested runtime");
+    let accepted = host
+        .state
+        .sessions()
+        .find(|record| record.command_id == plan.command_id)
+        .expect("accepted requested channel");
+    let accepted_target = host.target_for(accepted);
+    complete_with_context(&host.config, &host.state, &plan, &accepted_target, context)
+        .expect("exact protected ownership completion");
     assert_eq!(
-        ownership::for_pair(
-            home.path(),
-            Instance::Dev,
-            &actor.public_key().to_hex(),
-            &host.config.relay_url
-        )
-        .expect("journal")
-        .expect("owner")
-        .operation_id,
-        journal_before.operation_id
+        host.state.sessions().count(),
+        if configured_only { 1 } else { 2 }
     );
+    let journal_after = ownership::for_pair(
+        home.path(),
+        Instance::Dev,
+        &actor.public_key().to_hex(),
+        &host.config.relay_url,
+    )
+    .expect("journal")
+    .expect("owner");
+    if let Some(primary_record) = &primary_record {
+        assert!(
+            !host
+                .state
+                .session(&primary_record.session_id)
+                .expect("primary untouched")
+                .closed
+        );
+        assert_eq!(journal_after.operation_id, journal_before.operation_id);
+    } else {
+        assert_eq!(journal_after.target, Some(accepted_target.clone()));
+        assert_eq!(journal_after.operation_id, plan.command_id);
+        assert_eq!(journal_after.phase, Phase::Adopted);
+        let retained: Value =
+            serde_json::from_slice(&std::fs::read(&enrollment).expect("enrollment")).expect("JSON");
+        assert_eq!(retained["channelId"], primary.to_string());
+        assert_eq!(retained["replayFloorUnix"], floor);
+        assert_eq!(accepted.channel_id, stream);
+    }
     let routes: ConversationRoutes = serde_json::from_slice(
         &std::fs::read(host.config.state_dir.join("conversation-routes.json")).expect("routes"),
     )
     .expect("JSON");
-    assert_eq!(routes.routes.len(), 2);
-    assert!(routes
-        .routes
-        .iter()
-        .any(|route| route.channel_id == primary && route.target == primary_target));
+    assert_eq!(routes.routes.len(), if configured_only { 1 } else { 2 });
+    if let Some(primary_target) = primary_target {
+        assert!(routes
+            .routes
+            .iter()
+            .any(|route| route.channel_id == primary && route.target == primary_target));
+    }
     assert!(routes
         .routes
         .iter()
         .any(|route| route.channel_id == stream && route.replay_floor_unix == Some(floor)));
     // Primary backfill settles first; then the requested stream snapshot.
     let mut receiver = host.conversation_backfill.slot.take_receiver();
-    for _ in 0..2 {
+    for _ in 0..(if configured_only { 1 } else { 2 }) {
         host.start_conversation_backfill().expect("backfill");
         let fetched = tokio::time::timeout(
             std::time::Duration::from_secs(5),
@@ -284,7 +322,7 @@ async fn joined_additional_channel_keeps_primary_and_replays_distinct_inputs_onc
             .lines()
             .filter(|line| *line == "session/new")
             .count(),
-        2
+        if configured_only { 1 } else { 2 }
     );
     assert_eq!(
         methods

@@ -1677,15 +1677,15 @@ test("mentioning an in-channel stopped managed agent publishes first and starts 
     )
     .toBeGreaterThan(baselineStartCount);
 
-  // The detached start carries a replay floor so the spawned harness's first
-  // REQ replays past the just-published message.
+  // Host admission retains its durable enrollment replay boundary and the
+  // actual published conversation channel, rather than a new send timestamp.
   const startCall = (await readCommandPayloadLog(page))
     .slice(baselinePayloadCount)
     .find((entry) => entry.command === "start_managed_agent");
-  expect(
-    (startCall?.payload as { replayFloorUnix?: number } | undefined)
-      ?.replayFloorUnix,
-  ).toBeGreaterThan(0);
+  expect(startCall?.payload).toMatchObject({
+    replayFloorUnix: null,
+    conversationChannelId: GENERAL_CHANNEL_ID,
+  });
   // It also carries the tenant scope active at the send. The start now
   // outlives the send, and a community switch only remounts the React
   // subtree, so an unscoped wake would spawn against whichever relay/identity

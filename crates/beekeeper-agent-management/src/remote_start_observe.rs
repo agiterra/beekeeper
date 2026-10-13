@@ -9,29 +9,7 @@ pub async fn observe_remote_start(
     prior: &Value,
     client: &impl RelayTransport,
 ) -> Result<Option<Value>, Error> {
-    management::configuration::current_head(client, &args.agent_pubkey).await?;
-    crate::lifecycle::provider_authorized(client, &args.agent_pubkey, &args.provider_authority)
-        .await?;
-    if let Some(project) = args.project.as_deref() {
-        if !management::authorize_project(client, project, &client.keys().public_key().to_hex())
-            .await?
-        {
-            management::configuration::require_private_channel(client, args.channel).await?;
-        }
-    }
-    let members = channel_members(client, args.channel).await?;
-    if ![
-        client.keys().public_key().to_hex(),
-        args.agent_pubkey.clone(),
-        args.provider_authority.clone(),
-    ]
-    .iter()
-    .all(|key| members.contains(key))
-    {
-        return Err(Error::Refused(
-            "caller, actor and provider must retain requested channel membership".into(),
-        ));
-    }
+    authorize_scope(args, client).await?;
     let mut targets = Vec::new();
     if let Some(target) = prior.get("target") {
         targets.push(
@@ -75,24 +53,8 @@ pub async fn observe_remote_start(
         if crate::lifecycle::terminal(row, client).await? {
             return Ok(None);
         }
-        let matches = metadata
-            .iter()
-            .filter_map(|raw| serde_json::from_value::<Event>(raw.clone()).ok())
-            .find(|event| event.id.to_hex() == row.metadata_event_id && event.verify().is_ok());
-        let Some(event) = matches else {
+        if !matching_metadata(args, row, &metadata)? {
             return Ok(None);
-        };
-        let content =
-            beekeeper_core::coding_session_payload::decode_coding_session_metadata(&event.content)
-                .map_err(local::fail)?;
-        if content.provider.as_ref().map(|alias| alias.as_str())
-            != Some(args.provider_instance.as_str())
-            || content.project_ref != args.project
-            || content.agent_ref.as_deref() != Some(args.agent_pubkey.as_str())
-        {
-            return Err(Error::Conflict(
-                "prior responsibility runtime or project scope changed".into(),
-            ));
         }
     }
     let observation = crate::lifecycle::status(&scope, client).await?;
@@ -114,4 +76,109 @@ pub async fn observe_remote_start(
         "availability":if available {"verified_unexpired_provider_lease"} else {"no_current_live_lease"},
         "observation":observation,"responsibilities":rows.into_iter().filter(|row|targets.contains(&row.target)&&row.channel_id==args.channel).collect::<Vec<_>>()}),
     ))
+}
+
+/// Resolve an accepted exact target's actual conversation channel without
+/// changing its immutable enrollment or pending Start request. Both active and
+/// stopped targets require current signed metadata and retained authorization;
+/// absence never falls back to the configured primary channel.
+pub async fn resolve_remote_start_channel(
+    args: &RemoteStartRequest,
+    target: &beekeeper_core::coding_session_command::CodingSessionTarget,
+    client: &impl RelayTransport,
+) -> Result<Uuid, Error> {
+    management::configuration::current_head(client, &args.agent_pubkey).await?;
+    crate::lifecycle::provider_authorized(client, &args.agent_pubkey, &args.provider_authority)
+        .await?;
+    let scope = LifecycleRequest {
+        agent_pubkey: args.agent_pubkey.clone(),
+        channels: vec![args.channel],
+        ..Default::default()
+    };
+    let rows = crate::lifecycle::inventory(&scope, client).await?;
+    let matches: Vec<_> = rows.iter().filter(|row| row.target == *target).collect();
+    if matches.is_empty() {
+        return Err(Error::Unconfirmed("accepted target has no current signed channel metadata; configured channel was not substituted".into()));
+    }
+    if matches.len() != 1 || matches[0].provider_authority != args.provider_authority {
+        return Err(Error::Conflict(
+            "accepted target channel or execution owner is ambiguous".into(),
+        ));
+    }
+    let row = matches[0];
+    let mut resolved = args.clone();
+    resolved.channel = row.channel_id;
+    authorize_scope(&resolved, client).await?;
+    let metadata = client
+        .query_all(
+            json!({"kinds":[44223],"authors":[args.provider_authority],"#h":[row.channel_id]}),
+        )
+        .await?;
+    if !matching_metadata(&resolved, row, &metadata)? {
+        return Err(Error::Unconfirmed("accepted target has no exact current runtime/project metadata; configured channel was not substituted".into()));
+    }
+    Ok(row.channel_id)
+}
+
+async fn authorize_scope(
+    args: &RemoteStartRequest,
+    client: &impl RelayTransport,
+) -> Result<(), Error> {
+    management::configuration::current_head(client, &args.agent_pubkey).await?;
+    crate::lifecycle::provider_authorized(client, &args.agent_pubkey, &args.provider_authority)
+        .await?;
+    if let Some(project) = args.project.as_deref() {
+        if !management::authorize_project(client, project, &client.keys().public_key().to_hex())
+            .await?
+        {
+            management::configuration::require_private_channel(client, args.channel).await?;
+        }
+    }
+    let members = channel_members(client, args.channel).await?;
+    if ![
+        client.keys().public_key().to_hex(),
+        args.agent_pubkey.clone(),
+        args.provider_authority.clone(),
+    ]
+    .iter()
+    .all(|key| members.contains(key))
+    {
+        return Err(Error::Refused(
+            "caller, actor and provider must retain requested channel membership".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn matching_metadata(
+    args: &RemoteStartRequest,
+    row: &crate::lifecycle::Responsibility,
+    metadata: &[Value],
+) -> Result<bool, Error> {
+    let event = metadata
+        .iter()
+        .filter_map(|raw| serde_json::from_value::<Event>(raw.clone()).ok())
+        .find(|event| {
+            event.id.to_hex() == row.metadata_event_id
+                && event.verify().is_ok()
+                && event.pubkey.to_hex() == args.provider_authority
+                && event.kind.as_u16() == 44223
+        });
+    let Some(event) = event else {
+        return Ok(false);
+    };
+    let content =
+        beekeeper_core::coding_session_payload::decode_coding_session_metadata(&event.content)
+            .map_err(|_| Error::Unconfirmed("accepted target metadata is malformed".into()))?;
+    if content.provider.as_ref().map(|alias| alias.as_str())
+        != Some(args.provider_instance.as_str())
+        || content.project_ref != args.project
+        || content.agent_ref.as_deref() != Some(args.agent_pubkey.as_str())
+        || content.session != row.target
+    {
+        return Err(Error::Conflict(
+            "prior responsibility runtime or project scope changed".into(),
+        ));
+    }
+    Ok(true)
 }
