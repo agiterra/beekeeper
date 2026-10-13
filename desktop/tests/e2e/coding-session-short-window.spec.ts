@@ -416,7 +416,7 @@ async function enlargeText(page: Page) {
 
 test("at 250% in a 720px window, scroll to recover, send and use header controls", async ({
   page,
-}) => {
+}, testInfo) => {
   // Wave B (SV-20): a Working status dot pulses (motion-safe:animate-pulse),
   // so every waitForAnimations here runs to its 1s ceiling. Fourteen of them
   // took this test from 18s to 31s alone, past the 30s default.
@@ -445,9 +445,11 @@ test("at 250% in a 720px window, scroll to recover, send and use header controls
   const row = page.getByTestId("coding-session-pending-turn");
   await expect(row).toHaveAttribute("data-pending-state", "unknown");
   await editor.fill("meanwhile, check CI");
-  const signedBefore = await page.evaluate(
-    () => (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).length,
-  );
+  const recoveryBefore = await page.evaluate(() => ({
+    events: window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [],
+    commands: window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? [],
+  }));
+  const signedBefore = recoveryBefore.events.length;
   const copy = row.getByTestId("coding-session-pending-turn-copy-draft");
   await reveal(page, copy);
   await waitForAnimations(page);
@@ -462,11 +464,27 @@ test("at 250% in a 720px window, scroll to recover, send and use header controls
   await reveal(page, dismiss);
   await dismiss.click();
   await expect(row).toHaveCount(0);
-  expect(
-    await page.evaluate(
-      () => (window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? []).length,
-    ),
-  ).toBe(signedBefore);
+  const recoveryAfter = await page.evaluate(() => ({
+    events: window.__BEEKEEPER_E2E_SIGNED_EVENTS__ ?? [],
+    commands: window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? [],
+  }));
+  const recoveryDiagnostic = {
+    before: recoveryBefore.events,
+    after: recoveryAfter.events,
+    eventDelta: recoveryAfter.events.slice(signedBefore),
+    commandDelta: recoveryAfter.commands.slice(recoveryBefore.commands.length),
+  };
+  await testInfo.attach("draft-recovery-signing-diagnostic", {
+    body: JSON.stringify(recoveryDiagnostic, null, 2),
+    contentType: "application/json",
+  });
+  console.info(
+    "draft-recovery-signing-diagnostic",
+    JSON.stringify(recoveryDiagnostic),
+  );
+  expect(recoveryAfter.events.length, JSON.stringify(recoveryDiagnostic)).toBe(
+    signedBefore,
+  );
 
   const provenance = page.getByTestId("coding-session-provenance-toggle");
   await reveal(page, provenance);

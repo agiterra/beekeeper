@@ -52,13 +52,11 @@
 //!
 //! # What a failure must not leave behind
 //!
-//! Nothing. No session record is written, no generation is advanced, no
-//! metadata or receipt claims an execution that does not exist, and the
-//! adapter child (if one was spawned at all) is shut down by
-//! [`crate::session::SessionManager::start`]'s own error path. The caller
-//! turns the obstacle into either a bounded retry (`ACTOR_UNAVAILABLE`, whose
-//! custody may still be re-staged before the registration expires) or a
-//! durable, visible refusal.
+//! No continuation or new generation is claimed. A staged private process
+//! witness records the actual failed startup group and positive absence proof,
+//! or retains uncertainty; a timeout is never evidence that no child spawned.
+//! Strict refusal preserves the native cursor/history. Existing Stop can retry
+//! after a retained failed-attempt group is affirmatively observed absent.
 
 use std::time::Duration;
 
@@ -192,7 +190,8 @@ impl Provider {
     /// `Ok(Ok(()))` means the generation now has a live adapter attached to
     /// the same ACP conversation it had before, and a
     /// `session_restored_native` transcript row says so. `Ok(Err(obstacle))`
-    /// means nothing was created and nothing was changed. `Err` is reserved
+    /// means no continuation was admitted. Private cleanup witnesses may
+    /// change; absent/unproved startup groups stay distinct. `Err` is reserved
     /// for a durable write that failed after the adapter was already
     /// attached — the caller cannot proceed, and the actor is shut down before
     /// the error is returned so the provider does not hold a process it has no
@@ -414,6 +413,20 @@ impl Provider {
         })
     }
 
+    fn record_discarded_restore(
+        &mut self,
+        prior: &SessionRecord,
+        witnessed: Option<&crate::process_witness::ExecutionProcessWitness>,
+        proof: session::ActorQuiescence,
+    ) -> anyhow::Result<()> {
+        if let Some(witness) = witnessed {
+            let mut witness = witness.clone();
+            witness.quiesced = proof != session::ActorQuiescence::Unproven;
+            self.record_failed_startup(prior, &witness)?;
+        }
+        Ok(())
+    }
+
     /// Apply a restore's slow half on the loop: the deletion fact it read,
     /// the seat entry it spent, and — when an adapter opened — the attach and
     /// the one write a restore may make.
@@ -431,8 +444,29 @@ impl Provider {
             seat_command_id,
             project_fact,
             outcome,
+            startup_witness,
         } = run;
         let session_id = record.session_id.clone();
+        let failed =
+            !matches!(&outcome, RestoreOutcome::Started { started, .. } if started.is_ok());
+        if failed {
+            if let Some(witness) = startup_witness.as_ref() {
+                self.record_failed_startup(&record, witness)?;
+            } else if matches!(
+                &outcome,
+                RestoreOutcome::Unplanned(_) | RestoreOutcome::NativeRefused(_)
+            ) {
+                // These explicit outcomes are returned before startup. Missing
+                // evidence on an adapter error or timeout is never absence.
+                let witness = crate::process_witness::ExecutionProcessWitness {
+                    target: target.clone(),
+                    attempted_target: None,
+                    group_id: None,
+                    quiesced: true,
+                };
+                self.record_failed_startup(&record, &witness)?;
+            }
+        }
         if let Some((project, fact)) = project_fact {
             self.apply_project_fact(&project, &fact);
             if fact == crate::project_deletion::ProjectFact::Deleted {
@@ -447,7 +481,7 @@ impl Provider {
             self.forget_actor_seat(&seat_command_id);
         }
         let (started, execution_state) = match outcome {
-            RestoreOutcome::Unplanned(failure) => {
+            RestoreOutcome::Unplanned(failure) | RestoreOutcome::TimedOut(failure) => {
                 tracing::info!(
                     target: "csp::restore",
                     %session_id,
@@ -472,8 +506,8 @@ impl Provider {
                     NATIVE_RESTORE_UNSUPPORTED => RestoreObstacle::Unsupported,
                     NATIVE_RESTORE_REJECTED => RestoreObstacle::Rejected(failure.message),
                     NO_RESUME_CURSOR => RestoreObstacle::NoResumeCursor,
-                    // Spawn, `initialize` and authentication failures all mean
-                    // the same thing here: no process, nothing created.
+                    // Startup may have spawned a child; its exact cleanup
+                    // evidence was persisted above, independently of refusal.
                     _ => RestoreObstacle::ProviderUnavailable,
                 };
                 tracing::info!(
@@ -494,13 +528,14 @@ impl Provider {
         let current = self.state.session(&session_id);
         let still_current = current.is_some_and(|current| {
             !current.closed
-                && current.generation == record.generation
+                && self.startup_still_current(&record, &target)
                 && crate::commands::handover_fence(current, &self.pubkey_hex, &self.pubkey_hex)
                     .is_none()
         });
         let already_attached = self.sessions.handle(&session_id).is_some();
         if !still_current || already_attached || !started.is_live() {
             let proof = started.discard().await;
+            self.record_discarded_restore(&record, startup_witness.as_ref(), proof)?;
             if proof == session::ActorQuiescence::Unproven {
                 tracing::warn!(target: "csp::restore", "unattached restore retirement is unproven; reopening fence retained");
             }
@@ -520,6 +555,7 @@ impl Provider {
         if let Some(guard) = ownership_admission.as_ref() {
             if let Err(failure) = guard.recheck() {
                 let proof = started.discard().await;
+                self.record_discarded_restore(&record, startup_witness.as_ref(), proof)?;
                 if proof == session::ActorQuiescence::Unproven {
                     tracing::warn!(target: "csp::restore", "unattached restore retirement is unproven; reopening fence retained");
                 }
@@ -551,6 +587,7 @@ impl Provider {
         if let Err(error) = self.state.update_session(&record.session_id, |stored| {
             stored.process_witness = Some(crate::process_witness::ExecutionProcessWitness {
                 target: target.clone(),
+                attempted_target: None,
                 group_id,
                 quiesced: false,
             });
@@ -652,11 +689,13 @@ pub(crate) struct RestoreRun {
     seat_command_id: String,
     project_fact: Option<(String, ProjectFact)>,
     outcome: RestoreOutcome,
+    startup_witness: Option<crate::process_witness::ExecutionProcessWitness>,
 }
 
 impl RestoreRun {
     /// The slow half did not finish in time. Nothing it might have opened
-    /// survives: dropping the startup future ends the adapter it spawned.
+    /// is asserted quiescent: dropping startup requests cleanup, but the
+    /// exact staged witness remains uncertain until positive absence proof.
     pub(crate) fn timed_out(meta: RestoreMeta, limit: Duration) -> Self {
         RestoreRun {
             ownership_admission: None,
@@ -664,7 +703,8 @@ impl RestoreRun {
             target: meta.target,
             seat_command_id: meta.seat_command_id,
             project_fact: None,
-            outcome: RestoreOutcome::Unplanned(crate::session::CreateFailure {
+            startup_witness: None,
+            outcome: RestoreOutcome::TimedOut(crate::session::CreateFailure {
                 code: PROVIDER_UNAVAILABLE,
                 message: format!(
                     "the generation could not be reopened within {}s",
@@ -676,6 +716,8 @@ impl RestoreRun {
 }
 
 enum RestoreOutcome {
+    /// Timeout may have cancelled a spawned child; absence remains uncertain.
+    TimedOut(crate::session::CreateFailure),
     /// Refused before anything was spawned.
     Unplanned(crate::session::CreateFailure),
     /// The scope refuses native reattachment.
@@ -722,6 +764,7 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
         seat_command_id: seat_command_id.clone(),
         project_fact: project_fact.clone(),
         outcome,
+        startup_witness: None,
     };
     if let Err(failure) = crate::agent_retirement::observe(
         &config,
@@ -839,7 +882,7 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
         include_thoughts: config.include_thoughts,
         transcript_paragraph_flush: config.transcript_paragraph_flush,
     };
-    let started = SessionManager::start(request, events).await;
+    let (started, mut startup_witness) = SessionManager::start_observed(request, events).await;
     if let Err(failure) = crate::agent_retirement::observe(
         &config,
         retirement_check.0.as_ref(),
@@ -850,17 +893,22 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
     {
         if let Ok(started) = started {
             let proof = started.discard().await;
+            startup_witness.quiesced = proof != session::ActorQuiescence::Unproven;
             if proof == session::ActorQuiescence::Unproven {
                 tracing::warn!(target: "csp::restore", "unattached restore retirement is unproven; reopening fence retained");
             }
         }
-        return finish(RestoreOutcome::Unplanned(failure));
+        let mut run = finish(RestoreOutcome::Unplanned(failure));
+        run.startup_witness = Some(startup_witness);
+        return run;
     }
     let started = Box::new(started);
-    finish(RestoreOutcome::Started {
+    let mut run = finish(RestoreOutcome::Started {
         started,
         execution_state,
-    })
+    });
+    run.startup_witness = Some(startup_witness);
+    run
 }
 
 /// Transcript status published when a generation is reopened in place.
@@ -870,3 +918,7 @@ pub(crate) async fn run_restore_job(job: RestoreJob) -> RestoreRun {
 /// reader who saw it here would look for a lifecycle receipt and a generation
 /// bump that never happened.
 pub(crate) const SESSION_RESTORED_NATIVE: &str = "session_restored_native";
+
+#[cfg(all(test, unix))]
+#[path = "native_restore_cleanup_tests.rs"]
+mod cleanup_tests;

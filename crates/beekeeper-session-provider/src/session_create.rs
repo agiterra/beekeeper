@@ -542,6 +542,7 @@ impl Provider {
             execution_boundary: crate::execution_scope::recorded_state(&execution_state),
             process_witness: Some(crate::process_witness::ExecutionProcessWitness {
                 target: target.clone(),
+                attempted_target: None,
                 quiesced: false,
                 group_id: self
                     .sessions

@@ -1352,8 +1352,71 @@ impl SessionManager {
         request: CreateRequest,
         events: mpsc::Sender<SessionEvent>,
     ) -> Result<StartedSession, CreateFailure> {
+        Self::start_inner(request, events, None).await
+    }
+
+    /// Observe only this attempt's actual spawned group and bounded absence.
+    /// A cancelled spawn without a captured group stays unproved; no PID is
+    /// reconstructed from logs, process trees or the previous generation.
+    pub(crate) async fn start_observed(
+        request: CreateRequest,
+        events: mpsc::Sender<SessionEvent>,
+    ) -> (
+        Result<StartedSession, CreateFailure>,
+        crate::process_witness::ExecutionProcessWitness,
+    ) {
+        let target = request.target.clone();
+        let observation = Arc::new(Mutex::new(StartupObservation::default()));
+        // Keep the adapter handshake off callers' inline lifecycle futures;
+        // restore and resume already carry protected session records.
+        let result = Box::pin(Self::start_inner(
+            request,
+            events,
+            Some(observation.clone()),
+        ))
+        .await;
+        let (attempted, group_id) = match observation.lock() {
+            Ok(value) => (value.attempted, value.group_id),
+            Err(_) => (true, None),
+        };
+        let mut witness = crate::process_witness::ExecutionProcessWitness {
+            target,
+            attempted_target: None,
+            group_id,
+            quiesced: false,
+        };
+        if result.is_err() {
+            if !attempted {
+                // Affirmative pre-spawn refusal, distinct from an unknown PID.
+                witness.quiesced = true;
+            } else if group_id.is_some() {
+                let deadline = tokio::time::Instant::now() + CHILD_REAP_BOUND;
+                loop {
+                    if witness.proves_absent(&witness.target) {
+                        witness.quiesced = true;
+                        break;
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }
+        }
+        (result, witness)
+    }
+
+    async fn start_inner(
+        request: CreateRequest,
+        events: mpsc::Sender<SessionEvent>,
+        observation: Option<Arc<Mutex<StartupObservation>>>,
+    ) -> Result<StartedSession, CreateFailure> {
         let observer = ObserverHandle::in_process();
-        let started = tokio::time::timeout(STARTUP_TIMEOUT, start_agent(&request, &observer)).await;
+        let started = tokio::time::timeout(
+            STARTUP_TIMEOUT,
+            start_agent(&request, &observer, observation.as_ref()),
+        )
+        .await;
         let (mut client, startup) = match started {
             Ok(Ok(started)) => started,
             Ok(Err(failure)) => return Err(failure),
@@ -1961,10 +2024,17 @@ fn write_bundle_manifest(skills: &SeatSkills, files: &[SeatSkillFile]) {
     }
 }
 
+#[derive(Default)]
+struct StartupObservation {
+    attempted: bool,
+    group_id: Option<u32>,
+}
+
 /// Spawn the adapter and open one ACP session in `request.cwd`.
 async fn start_agent(
     request: &CreateRequest,
     observer: &ObserverHandle,
+    observation: Option<&Arc<Mutex<StartupObservation>>>,
 ) -> Result<(AcpClient, SessionStartup), CreateFailure> {
     // Before the child exists, not after: a skill the agent cannot read on its
     // first turn is a skill it does not have.
@@ -2028,6 +2098,11 @@ async fn start_agent(
     // host's boundary with exactly the environment the host resolved by
     // source, and every process it starts inherits both
     // (`crate::execution_scope`).
+    if let Some(observation) = observation {
+        if let Ok(mut observed) = observation.lock() {
+            observed.attempted = true;
+        }
+    }
     let mut client = match &request.execution {
         // Granted full access by the person: the same prepared environment
         // and working directory, without the boundary around the process.
@@ -2060,6 +2135,11 @@ async fn start_agent(
         }
     }
     .map_err(|error| classify_startup_error(&error, "spawn the agent"))?;
+    if let Some(observation) = observation {
+        if let Ok(mut observed) = observation.lock() {
+            observed.group_id = client.child_pid();
+        }
+    }
     if let crate::execution_scope::ExecutionPlan::Prepared(prepared) = &request.execution {
         if let Some(options) = &prepared.claude_options {
             client.set_claude_options(options.clone());

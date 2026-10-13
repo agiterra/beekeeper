@@ -8,6 +8,11 @@ use serde::{Deserialize, Serialize};
 pub struct ExecutionProcessWitness {
     /// Exact responsibility for which this process was opened.
     pub target: CodingSessionTarget,
+    /// Failed successor attempt whose generation never committed. The owning
+    /// incumbent was proved absent before this attempt; its actual group is
+    /// still required to be absent before either responsibility can retire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempted_target: Option<CodingSessionTarget>,
     /// Actual ACP child group captured at spawn. None fences an interrupted reopen.
     pub group_id: Option<u32>,
     /// Permanent exact-generation proof after a verified join or matching group absence.
@@ -19,6 +24,14 @@ impl ExecutionProcessWitness {
     /// Presence, permission errors, PID reuse and unsupported platforms stay unproved.
     pub(crate) fn proves_absent(&self, target: &CodingSessionTarget) -> bool {
         if self.target != *target {
+            return false;
+        }
+        if self.attempted_target.as_ref().is_some_and(|attempt| {
+            attempt.driver != target.driver
+                || attempt.instance_id != target.instance_id
+                || attempt.session_id != target.session_id
+                || target.generation.checked_add(1) != Some(attempt.generation)
+        }) {
             return false;
         }
         if self.quiesced {
@@ -60,6 +73,7 @@ impl crate::Provider {
         self.state.update_session(session_id, |record| {
             record.process_witness = Some(ExecutionProcessWitness {
                 target: target.clone(),
+                attempted_target: None,
                 group_id: None,
                 quiesced: false,
             })
@@ -74,6 +88,10 @@ impl crate::Provider {
         if record.target(&self.config.instance_id) != *target {
             return Err(anyhow::anyhow!("quiescence witness target changed"));
         }
+        let attempted_target = record
+            .process_witness
+            .as_ref()
+            .and_then(|w| w.attempted_target.clone());
         let group_id = record
             .process_witness
             .as_ref()
@@ -81,11 +99,79 @@ impl crate::Provider {
         self.state.update_session(&target.session_id, |record| {
             record.process_witness = Some(ExecutionProcessWitness {
                 target: target.clone(),
+                attempted_target,
                 group_id,
                 quiesced: true,
             })
         })?;
         Ok(())
+    }
+    /// Fold a failed attempt only into its still-staged exact incumbent.
+    /// A successful successor, newer process witness or generation is never
+    /// replaced. A successor attempt retains its separate target provenance.
+    pub(crate) fn record_failed_startup(
+        &mut self,
+        prior: &crate::state::SessionRecord,
+        observed: &ExecutionProcessWitness,
+    ) -> anyhow::Result<bool> {
+        let owner = prior.target(&self.config.instance_id);
+        let same_execution = owner.driver == observed.target.driver
+            && owner.instance_id == observed.target.instance_id
+            && owner.session_id == observed.target.session_id
+            && (owner.generation == observed.target.generation
+                || owner.generation.checked_add(1) == Some(observed.target.generation));
+        if !same_execution
+            || !prior
+                .process_witness
+                .as_ref()
+                .is_some_and(|w| w.proves_absent(&owner))
+        {
+            return Err(anyhow::anyhow!(
+                "failed startup lacks exact incumbent absence provenance"
+            ));
+        }
+        if !self.startup_still_current(prior, &observed.target) {
+            return Ok(false);
+        }
+        let witness = ExecutionProcessWitness {
+            target: owner,
+            attempted_target: (observed.target.generation != prior.generation)
+                .then(|| observed.target.clone()),
+            group_id: observed.group_id,
+            quiesced: observed.quiesced,
+        };
+        self.state.update_session(&prior.session_id, |record| {
+            record.process_witness = Some(witness)
+        })?;
+        Ok(true)
+    }
+    /// Exact staging fence shared by failed cleanup and successful attachment.
+    /// Closing the incumbent is allowed here only so late cleanup can record
+    /// proof; the attachment caller separately refuses closed records.
+    pub(crate) fn startup_still_current(
+        &self,
+        prior: &crate::state::SessionRecord,
+        attempted: &CodingSessionTarget,
+    ) -> bool {
+        let owner = prior.target(&self.config.instance_id);
+        let Some(current) = self.state.session(&owner.session_id) else {
+            return false;
+        };
+        current.target(&self.config.instance_id) == owner
+            && current.resume_cursor == prior.resume_cursor
+            && current.generation_command_id == prior.generation_command_id
+            && current.execution_binding == prior.execution_binding
+            && current.provider_instance_ref == prior.provider_instance_ref
+            && current.actor == prior.actor
+            && current.project_ref == prior.project_ref
+            && current.channel_id == prior.channel_id
+            && self.sessions.handle(&owner.session_id).is_none()
+            && current.process_witness.as_ref().is_some_and(|w| {
+                w.target == *attempted
+                    && w.group_id.is_none()
+                    && !w.quiesced
+                    && w.attempted_target.is_none()
+            })
     }
     /// The existing shutdown boundary for cleanup paths that owe no lifecycle receipt.
     pub(crate) async fn quiesce_cleanup(

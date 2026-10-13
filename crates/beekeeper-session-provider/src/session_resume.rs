@@ -469,23 +469,32 @@ impl Provider {
         self.stage_reopening(&record.session_id, &target)?;
         let events = self.sessions.event_sender();
         #[cfg(test)]
-        let started = if rewind.is_some() && std::mem::take(&mut self.rewind_fail_next_open) {
-            drop(request);
-            Err(session::CreateFailure {
-                code: PROVIDER_UNAVAILABLE,
-                message: "injected: the rewound generation's adapter did not start".into(),
-            })
-        } else {
-            let startup_future = SessionManager::start(request, events);
-            self.await_with_lease_maintenance(
-                startup_future,
-                relay.map(HarnessRelay::event_publisher),
-            )
-            .await
-        };
+        let (started, failed_witness) =
+            if rewind.is_some() && std::mem::take(&mut self.rewind_fail_next_open) {
+                drop(request);
+                (
+                    Err(session::CreateFailure {
+                        code: PROVIDER_UNAVAILABLE,
+                        message: "injected: the rewound generation's adapter did not start".into(),
+                    }),
+                    crate::process_witness::ExecutionProcessWitness {
+                        target: target.clone(),
+                        attempted_target: None,
+                        group_id: None,
+                        quiesced: true,
+                    },
+                )
+            } else {
+                let startup_future = SessionManager::start_observed(request, events);
+                self.await_with_lease_maintenance(
+                    startup_future,
+                    relay.map(HarnessRelay::event_publisher),
+                )
+                .await
+            };
         #[cfg(not(test))]
-        let started = {
-            let startup_future = SessionManager::start(request, events);
+        let (started, failed_witness) = {
+            let startup_future = SessionManager::start_observed(request, events);
             self.await_with_lease_maintenance(
                 startup_future,
                 relay.map(HarnessRelay::event_publisher),
@@ -499,12 +508,12 @@ impl Provider {
             Ok(started) => started,
             Err(failure) => {
                 self.state.consume_command(&plan.command_id, now_secs())?;
-                // The resume minted a fresh package id, and the refresh entry
-                // that would name it is only inserted after a successful open.
-                // Failed startup carries no group-exit proof; retain this package
-                // under the existing reopening uncertainty fence.
-                self.retire_unattached_context(None, context_package_id.as_deref())
-                    .await;
+                let retained = self.record_failed_startup(&record, &failed_witness)?;
+                if retained && failed_witness.quiesced {
+                    self.discard_orphaned_context_package(context_package_id.as_deref());
+                } else {
+                    tracing::warn!(target: "csp::context", "failed resume cleanup is unproven or scope moved; context retained");
+                }
                 let receipt =
                     LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
                 return self
@@ -514,8 +523,12 @@ impl Provider {
         };
         if let Some(guard) = ownership_admission.as_ref() {
             if let Err(failure) = guard.recheck() {
-                self.retire_unattached_context(Some(started), context_package_id.as_deref())
+                let proof = self
+                    .retire_unattached_context(Some(started), context_package_id.as_deref())
                     .await;
+                let mut witness = failed_witness;
+                witness.quiesced = proof != session::ActorQuiescence::Unproven;
+                self.record_failed_startup(&record, &witness)?;
                 self.state.consume_command(&plan.command_id, now_secs())?;
                 let receipt =
                     LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
@@ -539,6 +552,7 @@ impl Provider {
         if let Err(error) = self.state.update_session(&record.session_id, |record| {
             record.process_witness = Some(crate::process_witness::ExecutionProcessWitness {
                 target: target.clone(),
+                attempted_target: None,
                 group_id,
                 quiesced: false,
             });
