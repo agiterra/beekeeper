@@ -217,6 +217,8 @@ export type ManagedAgentRuntimeStatus = {
   relayUrl: string;
   localSetup: boolean;
   lifecycle: ManagedAgentRuntimeLifecycle;
+  /** Verified signed relay availability; null/absent means unconfirmed. */
+  runtimeAvailable?: boolean | null;
   pid: number | null;
   error: string | null;
   logPath: string | null;

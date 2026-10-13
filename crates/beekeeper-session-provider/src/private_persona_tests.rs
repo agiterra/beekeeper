@@ -26,6 +26,7 @@ fn fixture() -> (Keys, String, Event, Snapshot) {
         actor_pubkey: actor.clone(),
         relay_url: "wss://fixture.example".into(),
         persona_id: "private".into(),
+        persona_coordinate: None,
         source_hash: hex::encode(Sha256::digest(bytes)),
         event: pin,
     };
@@ -179,7 +180,8 @@ fn private_pin_rejects_other_actor_community_persona_owner_or_source_hash() {
         &actor,
         "wss://fixture.example",
         owner.public_key(),
-        "private"
+        "private",
+        None
     )
     .is_err());
 }
@@ -193,7 +195,8 @@ fn private_pin_cannot_import_shared_event_or_tampered_signed_content() {
         &actor,
         "wss://fixture.example",
         owner.public_key(),
-        "private"
+        "private",
+        None
     )
     .is_err());
     bad = snapshot.clone();
@@ -209,7 +212,8 @@ fn private_pin_cannot_import_shared_event_or_tampered_signed_content() {
         &actor,
         "wss://fixture.example",
         owner.public_key(),
-        "private"
+        "private",
+        None
     )
     .is_err());
 }
@@ -316,7 +320,8 @@ fn duplicate_signed_coordinates_are_ambiguous_even_when_one_matches() {
         &actor,
         "wss://fixture.example",
         owner.public_key(),
-        "private"
+        "private",
+        None
     )
     .is_err());
     let bad_head = EventBuilder::new(current.kind, current.content.clone())
@@ -351,4 +356,121 @@ fn protected_private_pin_file_refuses_world_readable_or_symlink_custody() {
     let link = dir.path().join("linked.json");
     std::os::unix::fs::symlink(&path, &link).unwrap();
     assert!(super::super::protected(&link).is_err());
+}
+
+fn mapped_fixture(raw: &str, coordinate: &str) -> (Keys, String, Event, Snapshot) {
+    let (owner, actor, _, mut snapshot) = fixture();
+    snapshot.persona_id = raw.into();
+    snapshot.persona_coordinate = Some(coordinate.into());
+    snapshot.event = EventBuilder::new(Kind::Custom(30175), snapshot.event.content.clone())
+        .tags([Tag::parse(["d", coordinate]).unwrap()])
+        .sign_with_keys(&owner)
+        .unwrap();
+    let current = EventBuilder::new(
+        Kind::Custom(30177),
+        json!({
+            "name":"Actor", "persona_id":raw, "persona_source_version":snapshot.source_hash,
+            "parallelism":1, "respond_to":"owner-only"
+        })
+        .to_string(),
+    )
+    .tags([Tag::parse(["d", &actor]).unwrap()])
+    .sign_with_keys(&owner)
+    .unwrap();
+    (owner, actor, current, snapshot)
+}
+#[test]
+fn internal_builtin_and_team_ids_keep_exact_signed_coordinate_and_pinned_replay() {
+    for (raw, coordinate) in [
+        ("builtin:fizz", "builtin-fizz"),
+        ("definition-uuid", "reviewer"),
+    ] {
+        let (owner, actor, current, snapshot) = mapped_fixture(raw, coordinate);
+        let value = envelope(&actor, &current, &snapshot);
+        let before = serde_json::to_vec(&value).unwrap();
+        for _ in 0..2 {
+            let (event, content) = from_envelope(
+                &value,
+                &actor,
+                "wss://fixture.example",
+                &current,
+                owner.public_key(),
+                raw,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(event, snapshot.event);
+            assert_eq!(
+                content.system_prompt.as_deref(),
+                Some("Private protected instructions")
+            );
+            assert_eq!(serde_json::to_vec(&value).unwrap(), before);
+        }
+        assert!(validate(
+            &snapshot,
+            &actor,
+            "wss://fixture.example",
+            owner.public_key(),
+            raw,
+            None
+        )
+        .is_err());
+    }
+}
+#[test]
+fn mapped_coordinate_requires_affirmative_owner_hash_and_exact_signed_coordinate() {
+    let raw = "builtin:fizz";
+    let (owner, actor, current, snapshot) = mapped_fixture(raw, "builtin-fizz");
+    let content: serde_json::Value = serde_json::from_str(&current.content).unwrap();
+    for hash in [serde_json::Value::Null, json!("different-hash")] {
+        let mut changed = content.clone();
+        changed["persona_source_version"] = hash;
+        let current = EventBuilder::new(current.kind, changed.to_string())
+            .tags(current.tags.clone())
+            .sign_with_keys(&owner)
+            .unwrap();
+        assert!(from_envelope(
+            &envelope(&actor, &current, &snapshot),
+            &actor,
+            "wss://fixture.example",
+            &current,
+            owner.public_key(),
+            raw
+        )
+        .is_err());
+    }
+    for coordinate in [
+        None,
+        Some("forged-coordinate".to_string()),
+        Some("".to_string()),
+    ] {
+        let mut changed = snapshot.clone();
+        changed.persona_coordinate = coordinate;
+        assert!(from_envelope(
+            &envelope(&actor, &current, &changed),
+            &actor,
+            "wss://fixture.example",
+            &current,
+            owner.public_key(),
+            raw
+        )
+        .is_err());
+    }
+    for coordinate in ["-invalid", "UPPER", "not:a-slug"] {
+        let mut changed = snapshot.clone();
+        changed.persona_coordinate = Some(coordinate.into());
+        changed.event = EventBuilder::new(Kind::Custom(30175), snapshot.event.content.clone())
+            .tags([Tag::parse(["d", coordinate]).unwrap()])
+            .sign_with_keys(&owner)
+            .unwrap();
+        assert!(from_envelope(
+            &envelope(&actor, &current, &changed),
+            &actor,
+            "wss://fixture.example",
+            &current,
+            owner.public_key(),
+            raw
+        )
+        .is_err());
+    }
 }

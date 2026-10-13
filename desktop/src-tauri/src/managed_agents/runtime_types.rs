@@ -53,6 +53,9 @@ pub struct ManagedAgentRuntimeStatus {
     pub requested_relay_url: Option<String>,
     pub local_setup: bool,
     pub lifecycle: ManagedAgentRuntimeLifecycle,
+    /// Current signed relay lease observation, independent of host ownership.
+    /// `None` means availability could not be confirmed, not a stopped process.
+    pub runtime_available: Option<bool>,
     pub pid: Option<u32>,
     pub error: Option<String>,
     pub log_path: Option<String>,

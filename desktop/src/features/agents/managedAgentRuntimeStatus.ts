@@ -10,7 +10,8 @@ export type AgentCommunityAvailability =
 export function agentCommunityAvailability(
   runtime: ManagedAgentRuntimeStatus,
 ): AgentCommunityAvailability {
-  if (runtime.lifecycle === "host_managed") return "Unavailable";
+  if (runtime.lifecycle === "host_managed")
+    return runtime.runtimeAvailable === true ? "Here" : "Unavailable";
   if (!runtime.localSetup) return "Needs setup on this device";
 
   switch (runtime.lifecycle) {
@@ -29,11 +30,13 @@ export function agentCommunityAvailability(
 export function agentCommunityStatusDetail(
   runtime: ManagedAgentRuntimeStatus,
 ): string | null {
-  if (runtime.lifecycle === "host_managed")
-    return (
-      runtime.error ??
-      "Managed by the host. Inspect its work through relay session status."
-    );
+  if (runtime.lifecycle === "host_managed") {
+    if (runtime.runtimeAvailable === true)
+      return "Managed by the host. Current execution availability is verified by a signed relay lease.";
+    if (runtime.runtimeAvailable === false)
+      return "Managed by the host. No current verified execution lease is available in this community.";
+    return "Managed by the host. Runtime availability is unconfirmed; relay status could not be verified.";
+  }
   if (runtime.lifecycle === "failed" && runtime.error) return runtime.error;
   if (!runtime.localSetup)
     return "Set up this agent on this device to start it.";

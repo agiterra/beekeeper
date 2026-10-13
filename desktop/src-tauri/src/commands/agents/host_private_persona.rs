@@ -36,6 +36,7 @@ struct PinAuthority<'a> {
     actor: &'a str,
     relay: &'a str,
     id: &'a str,
+    coordinate: &'a str,
     source_hash: &'a str,
     owner: nostr::PublicKey,
     content: &'a str,
@@ -66,7 +67,17 @@ fn read_cached_pin(path: &std::path::Path, authority: &PinAuthority<'_>) -> Resu
         || value.get("relayUrl").and_then(Value::as_str) != Some(authority.relay)
         || value.get("personaId").and_then(Value::as_str) != Some(authority.id)
         || value.get("sourceHash").and_then(Value::as_str) != Some(authority.source_hash)
-        || !private_event_matches(&event, authority.owner, authority.id, authority.content)
+        || value
+            .get("personaCoordinate")
+            .and_then(Value::as_str)
+            .unwrap_or(authority.id)
+            != authority.coordinate
+        || !private_event_matches(
+            &event,
+            authority.owner,
+            authority.coordinate,
+            authority.content,
+        )
     {
         return Err("private persona pin conflicts with current source".into());
     }
@@ -114,16 +125,16 @@ pub(crate) fn attach_private_persona(
         return Err("private persona signing owner differs from actor custody".into());
     }
     let d = persona_d_tag(persona);
-    if d != id {
-        return Err("private persona identifier differs from existing NIP-AP projection".into());
-    }
     let projection = persona_event_content(persona);
     let content = serde_json::to_string(&projection).map_err(|e| e.to_string())?;
     let hash = persona_content_hash(&projection);
-    if record
-        .persona_source_version
-        .as_deref()
-        .is_some_and(|source| source != hash)
+    // Internal IDs (for example builtin:fizz) are not NIP-AP coordinates.
+    // A mapped coordinate is authorized only by an affirmative pinned hash.
+    if (d != id && record.persona_source_version.as_deref() != Some(hash.as_str()))
+        || record
+            .persona_source_version
+            .as_deref()
+            .is_some_and(|source| source != hash)
     {
         return Err("private persona differs from the pinned source; reconcile the definition explicitly before updating execution".into());
     }
@@ -150,6 +161,7 @@ pub(crate) fn attach_private_persona(
                 actor: &record.pubkey,
                 relay: &canonical,
                 id,
+                coordinate: &d,
                 source_hash: &hash,
                 owner,
                 content: &content,
@@ -157,16 +169,16 @@ pub(crate) fn attach_private_persona(
         )?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let conn = open_retention_db(&scope.db_path)?;
-            let retained = get_retained_event(&conn, 30175, &owner.to_hex(), id)?
+            let retained = get_retained_event(&conn, 30175, &owner.to_hex(), &d)?
                 .and_then(|row| serde_json::from_str::<Event>(&row.raw_event).ok())
-                .filter(|event| private_event_matches(event, owner, id, &content));
+                .filter(|event| private_event_matches(event, owner, &d, &content));
             let event = match retained {
                 Some(event) => event,
                 None => build_persona_event(persona)?
                     .sign_with_keys(&scope.owner_keys)
                     .map_err(|e| e.to_string())?,
             };
-            let value = json!({"schema":"beekeeper-private-persona/v1","actorPubkey":record.pubkey,"relayUrl":canonical,"personaId":id,"sourceHash":hash,"event":event});
+            let value = json!({"schema":"beekeeper-private-persona/v1","actorPubkey":record.pubkey,"relayUrl":canonical,"personaId":id,"personaCoordinate":d,"sourceHash":hash,"event":event});
             atomic_write::atomic_write_json_restricted(
                 &path,
                 &serde_json::to_vec(&value).map_err(|e| e.to_string())?,
@@ -239,6 +251,7 @@ mod tests {
             actor: "actor",
             relay: "wss://fixture.example",
             id: "private",
+            coordinate: "private",
             source_hash: "hash-a",
             owner: keys.public_key(),
             content: "private content",
@@ -268,6 +281,7 @@ mod tests {
             actor: "actor",
             relay: "wss://fixture.example",
             id: "private",
+            coordinate: "private",
             source_hash: "hash",
             owner: keys.public_key(),
             content: "private content",
@@ -276,5 +290,41 @@ mod tests {
         let link = dir.path().join("link.json");
         std::os::unix::fs::symlink(&path, &link).unwrap();
         assert!(read_cached_pin(&link, &scope).is_err());
+    }
+    #[test]
+    fn mapped_private_pin_keeps_internal_id_and_refuses_coordinate_drift_on_retry() {
+        let keys = nostr::Keys::generate();
+        for (id, coordinate) in [
+            ("builtin:fizz", "builtin-fizz"),
+            ("definition-uuid", "reviewer"),
+        ] {
+            let event = nostr::EventBuilder::new(nostr::Kind::Custom(30175), "private content")
+                .tags([nostr::Tag::parse(["d", coordinate]).unwrap()])
+                .sign_with_keys(&keys)
+                .unwrap();
+            let value = json!({"schema":"beekeeper-private-persona/v1", "actorPubkey":"actor", "relayUrl":"wss://fixture.example", "personaId":id, "personaCoordinate":coordinate, "sourceHash":"hash-a", "event":event});
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("pin.json");
+            atomic_write::atomic_write_json_restricted(&path, &serde_json::to_vec(&value).unwrap())
+                .unwrap();
+            let before = std::fs::read(&path).unwrap();
+            let authority = PinAuthority {
+                actor: "actor",
+                relay: "wss://fixture.example",
+                id,
+                coordinate,
+                source_hash: "hash-a",
+                owner: keys.public_key(),
+                content: "private content",
+            };
+            assert_eq!(read_cached_pin(&path, &authority).unwrap(), value);
+            assert_eq!(read_cached_pin(&path, &authority).unwrap(), value);
+            let changed = PinAuthority {
+                coordinate: "different",
+                ..authority
+            };
+            assert!(read_cached_pin(&path, &changed).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
     }
 }

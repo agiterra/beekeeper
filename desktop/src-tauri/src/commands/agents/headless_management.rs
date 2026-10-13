@@ -181,23 +181,43 @@ pub async fn get_managed_agent_host_status(
     let available = if local_only.unwrap_or(false) || phase.is_none() {
         None
     } else {
-        let request = beekeeper_agent_management::LifecycleRequest {
-            agent_pubkey: pubkey.clone(),
-            ..Default::default()
-        };
-        beekeeper_agent_management::status(&request, &Transport::owner(&app, &relay)?)
-            .await
-            .ok()
-            .and_then(|v| {
-                v.get("responsibilities")
-                    .and_then(Value::as_array)
-                    .map(|rows| rows.iter().any(|row| row["runtime_available"] == true))
-            })
+        observe_host_runtime_availability(&app, &pubkey, &relay).await
     };
     Ok(
         json!({"relayUrl":relay,"commissioned":config.is_some_and(|c|beekeeper_host_core::record::canonical_relay_key(&c.relay_url)==beekeeper_host_core::record::canonical_relay_key(&relay)),"revisionAvailable":revision.is_some(),"revision":revision,"ownershipPhase":phase,"legacyRecreationRequired":record.backend==BackendKind::Local&&held.is_none()&&!fresh_receipt,"legacyConflict":legacy_conflict,"ownershipPendingReason":ownership_pending_reason,"freshCreationPending":fresh_pending,"runtimeAvailable":available}),
     )
 }
+
+/// Read signed execution availability for an already-enrolled exact community.
+/// Ownership, local processes and idle metadata never imply a live execution.
+/// `None` discloses an unreadable/unconfirmed observation; `false` means no
+/// current verified live lease was returned by the shared management service.
+pub(crate) async fn observe_host_runtime_availability(
+    app: &AppHandle,
+    actor: &str,
+    relay: &str,
+) -> Option<bool> {
+    let ctx = context().ok()?;
+    stop_intent::require_host_ownership(&ctx, actor, relay).ok()?;
+    let transport = Transport::owner(app, relay).ok()?;
+    availability_from_transport(actor, &transport).await
+}
+async fn availability_from_transport(actor: &str, client: &impl RelayTransport) -> Option<bool> {
+    let request = beekeeper_agent_management::LifecycleRequest {
+        agent_pubkey: actor.into(),
+        ..Default::default()
+    };
+    let observed = beekeeper_agent_management::status(&request, client)
+        .await
+        .ok()?;
+    observed
+        .get("responsibilities")
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().any(|row| row["runtime_available"] == true))
+}
+#[cfg(test)]
+#[path = "host_runtime_availability_tests.rs"]
+mod availability_tests;
 
 /// Exclude custody and client lifecycle bookkeeping from executor configuration.
 fn strip_client_bookkeeping(private: &mut Value) {

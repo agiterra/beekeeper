@@ -12,6 +12,9 @@ pub(crate) struct Snapshot {
     pub actor_pubkey: String,
     pub relay_url: String,
     pub persona_id: String,
+    /// Signed NIP-AP coordinate when it differs from the internal definition ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona_coordinate: Option<String>,
     pub source_hash: String,
     pub event: Event,
 }
@@ -75,8 +78,24 @@ pub(crate) fn validate(
     relay: &str,
     owner: PublicKey,
     persona_id: &str,
+    bound_source_hash: Option<&str>,
 ) -> Result<PersonaEventContent, CreateFailure> {
     let event = &snapshot.event;
+    let coordinate = snapshot.persona_coordinate.as_deref().unwrap_or(persona_id);
+    // A protected mapping is not authority by itself. The owner-signed30177
+    // must affirmatively pin the exact source when its internal ID differs.
+    if coordinate != persona_id
+        && (bound_source_hash != Some(snapshot.source_hash.as_str())
+            || coordinate.is_empty()
+            || coordinate.len() > 64
+            || !coordinate.as_bytes()[0].is_ascii_lowercase()
+                && !coordinate.as_bytes()[0].is_ascii_digit()
+            || !coordinate
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-'))
+    {
+        return Err(refused());
+    }
     if snapshot.schema != "beekeeper-private-persona/v1"
         || snapshot.actor_pubkey != actor
         || beekeeper_host_core::record::canonical_relay_key(&snapshot.relay_url)
@@ -85,7 +104,7 @@ pub(crate) fn validate(
         || event.pubkey != owner
         || event.kind.as_u16() != beekeeper_core::kind::KIND_PERSONA as u16
         || event.verify().is_err()
-        || !exact_coordinate(event, persona_id)
+        || !exact_coordinate(event, coordinate)
         || event
             .tags
             .iter()
@@ -163,7 +182,14 @@ fn from_envelope(
     {
         return Err(refused());
     }
-    let content = validate(&snapshot, actor, relay, owner, persona_id)?;
+    let content = validate(
+        &snapshot,
+        actor,
+        relay,
+        owner,
+        persona_id,
+        definition.persona_source_version.as_deref(),
+    )?;
     Ok(Some((snapshot.event, content)))
 }
 

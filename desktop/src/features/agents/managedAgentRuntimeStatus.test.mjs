@@ -131,3 +131,41 @@ test("backend clean-start refusal stays visible when local prerequisites are abs
   });
   assert.equal(agentCommunityStatusDetail(blocked), blocked.error);
 });
+
+test("host ownership uses verified lease availability independently of local setup or pid", () => {
+  const host = runtime({
+    lifecycle: "host_managed",
+    localSetup: false,
+    pid: null,
+  });
+  assert.equal(
+    agentCommunityAvailability({ ...host, runtimeAvailable: true }),
+    "Here",
+  );
+  assert.match(
+    agentCommunityStatusDetail({ ...host, runtimeAvailable: true }),
+    /signed relay lease/,
+  );
+  assert.equal(
+    agentCommunityAvailability({ ...host, runtimeAvailable: false }),
+    "Unavailable",
+  );
+  assert.match(
+    agentCommunityStatusDetail({ ...host, runtimeAvailable: false }),
+    /No current verified execution lease/,
+  );
+  for (const runtimeAvailable of [null, undefined]) {
+    assert.equal(
+      agentCommunityAvailability({ ...host, runtimeAvailable }),
+      "Unavailable",
+    );
+    assert.match(
+      agentCommunityStatusDetail({ ...host, runtimeAvailable }),
+      /unconfirmed/,
+    );
+  }
+  assert.equal(
+    agentCommunityAvailability({ ...host, pid: 123, runtimeAvailable: false }),
+    "Unavailable",
+  );
+});
