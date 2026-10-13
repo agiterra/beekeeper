@@ -231,3 +231,36 @@ test("a host that was not told is said until a write lands", async ({
   expect(calls).toHaveLength(1);
   expect(calls[0]).toMatchObject({ titleMode: "off", provider: "off" });
 });
+
+test("declining login autostart does not claim Quit ends headless work", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    codingSessionProviderStatus: {
+      provisioned: true,
+      running: true,
+      host: {
+        reachability: { state: "reachable" },
+        socket: "/fixture/host.sock",
+        login: "declined",
+        message: "host is running",
+        autostart: {
+          installed: false,
+          path: "/fixture/login.plist",
+          warnings: [],
+        },
+      },
+    },
+  });
+  await page.goto("/");
+  await page.getByTestId("open-settings").click();
+  await page.getByTestId("profile-popover-settings").click();
+  await expect(page.getByTestId("settings-view")).toBeVisible();
+  await page.getByTestId("settings-nav-sessions").click();
+  const group = page.getByTestId("settings-agent-host");
+  await expect(group).toContainText("keep going when you quit Beekeeper");
+  await expect(page.getByTestId("host-autostart-off")).toContainText(
+    "Running sessions continue when you quit Beekeeper",
+  );
+  await expect(group).not.toContainText("end when you quit");
+});

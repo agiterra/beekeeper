@@ -30,7 +30,7 @@ export function CodingSessionsSettingsPanel() {
     <SettingsOptionGroupList>
       <SettingsOptionGroup
         data-testid="settings-agent-host"
-        description="Your coding sessions run in a background agent host, not in this window. With it installed they keep going when you quit Beekeeper and start again when you log in; without it they end with the app. A menu bar icon shows what is running either way."
+        description="Your coding sessions run in a background agent host and keep going when you quit Beekeeper. Automatic startup starts the host again when you log in. A menu bar icon shows what is running."
         title="Running when Beekeeper is closed"
       >
         <AgentHostAutostartCard />

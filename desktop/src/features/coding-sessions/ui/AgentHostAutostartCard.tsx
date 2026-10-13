@@ -104,8 +104,8 @@ export function AgentHostAutostartCard() {
           <p className="text-sm" data-testid="host-autostart-off">
             <span className="font-medium">Off.</span>{" "}
             {login === "declined"
-              ? "You chose not to install the background agent host, so your coding sessions end when you quit Beekeeper."
-              : "Your coding sessions end when you quit Beekeeper."}
+              ? "You chose not to start the agent host automatically at login. Running sessions continue when you quit Beekeeper."
+              : "The agent host does not start automatically at login. Running sessions continue when you quit Beekeeper."}
           </p>
           <p className="text-2xs text-muted-foreground">
             Turning this on installs two login items inside Beekeeper: the agent

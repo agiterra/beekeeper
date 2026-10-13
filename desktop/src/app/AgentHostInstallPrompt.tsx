@@ -24,8 +24,7 @@ import { isMacPlatform } from "@/shared/lib/platform";
  * the machine and not to a document, so it is a question rather than
  * something the app helps itself to. It also happens to be the only moment
  * anything tells a person the agent host exists — before this, the fact that
- * quitting Beekeeper ended their coding sessions was discoverable only by
- * losing work to it.
+ * login registration and current background execution were easily confused.
  *
  * **When it opens.** Only on `status.host.login === "shouldAsk"`, which is
  * Rust's answer and means: an identity is commissioned here, nothing is
@@ -102,9 +101,8 @@ function MacAgentHostInstallPrompt() {
         <DialogHeader>
           <DialogTitle>Keep your agents running?</DialogTitle>
           <DialogDescription>
-            Right now your coding sessions end when you quit Beekeeper. This
-            computer can run them in the background instead, so they keep
-            working with the app closed and start again when you log in.
+            Running coding sessions continue when you quit Beekeeper. Turn on
+            automatic startup so the agent host starts again when you log in.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-2 text-sm">
