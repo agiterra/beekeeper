@@ -281,3 +281,57 @@ test("remote profile edit retains original provider path and sends no local owne
   });
   assert.deepEqual(calls, ["definition", "actor", "done"]);
 });
+
+for (const policy of ["owner-only", "allowlist"]) {
+  test(`unrelated local prompt edit preserves ${policy} instance access over definition default`, async () => {
+    const instance = agent({
+      respondTo: policy,
+      respondToAllowlist: ["a".repeat(64)],
+    });
+    const requests = [];
+    await submitProfilePersonaDialog({
+      input: updateInput({
+        runtime: "goose",
+        systemPrompt: "new instructions",
+      }),
+      managedAgent: instance,
+      previousPersona: persona({ respondTo: "anyone", respondToAllowlist: [] }),
+      updateManagedAgent: async (request) => {
+        requests.push(request);
+        return { agent: instance, profileSyncError: null };
+      },
+      updatePersona: async () => {
+        throw new Error("unexpected definition save");
+      },
+      onDone() {},
+    });
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].respondTo, undefined);
+    assert.equal(requests[0].respondToAllowlist, undefined);
+    assert.equal(requests[0].ownedPersonaUpdate.definition.behavior, undefined);
+  });
+}
+
+test("an explicit local access edit still updates the exact instance", async () => {
+  let request;
+  const behavior = {
+    respondTo: "allowlist",
+    respondToAllowlist: ["a".repeat(64)],
+  };
+  await submitProfilePersonaDialog({
+    input: updateInput({ runtime: "goose", behavior }),
+    managedAgent: agent(),
+    previousPersona: persona({ respondTo: "anyone", respondToAllowlist: [] }),
+    updateManagedAgent: async (input) => {
+      request = input;
+      return { agent: agent(), profileSyncError: null };
+    },
+    updatePersona: async () => {
+      throw new Error("unexpected definition save");
+    },
+    onDone() {},
+  });
+  assert.equal(request.respondTo, "allowlist");
+  assert.deepEqual(request.respondToAllowlist, behavior.respondToAllowlist);
+  assert.deepEqual(request.ownedPersonaUpdate.definition.behavior, behavior);
+});

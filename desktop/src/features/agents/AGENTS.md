@@ -222,7 +222,9 @@ request. Authenticate the original signed pin and compare the accepted private
 configuration before replacing it; retain that exact comparison across retries.
 Commit the definition and instance together in the existing local store only
 after acceptance, and refresh both caches. Do not save the definition first or
-repin unrelated edits to whatever definition happens to be current. Shared,
+repin unrelated edits to whatever definition happens to be current. When access
+behavior is omitted, retain the exact instance policy and allowlist; an unrelated
+instruction edit must not apply the definition default over that override. Shared,
 builtin, team, catalog, or multiply linked definitions require their own explicit
 editing boundary. Remote-provider edits retain their existing provider contract.
 

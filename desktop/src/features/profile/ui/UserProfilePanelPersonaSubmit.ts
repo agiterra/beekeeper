@@ -106,14 +106,16 @@ export async function submitProfilePersonaDialog({
           model: input.model ?? null,
           provider: input.provider ?? null,
           envVars: input.envVars ?? previousPersona.envVars,
+          // Omitted behavior means the dialog did not edit instance access.
+          // Preserve its override rather than applying the definition default.
           respondTo: input.behavior
             ? (input.behavior.respondTo ?? null)
-            : previousPersona.respondTo,
+            : managedAgent.respondTo,
           respondToAllowlist: input.behavior
             ? input.behavior.respondTo === "allowlist"
               ? (input.behavior.respondToAllowlist ?? [])
               : []
-            : previousPersona.respondToAllowlist,
+            : managedAgent.respondToAllowlist,
           parallelism: input.behavior
             ? (input.behavior.parallelism ?? null)
             : previousPersona.parallelism,
