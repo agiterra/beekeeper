@@ -10,7 +10,10 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
  * both rely on those tags.
  */
 export function messageMentionPubkeys(
-  channel: Channel,
+  channel: Pick<
+    Channel,
+    "channelType" | "memberPubkeys" | "participantPubkeys"
+  >,
   senderPubkey: string,
   explicitMentions: readonly string[] = [],
 ): string[] {

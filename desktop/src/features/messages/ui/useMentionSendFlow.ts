@@ -41,6 +41,8 @@ import {
   useMentionMembershipResolver,
 } from "./useMentionSendFlowInvite";
 import { invokeTauri } from "@/shared/api/tauri";
+import { useIdentityQuery } from "@/shared/api/hooks";
+import { resolveMessageSendRecipients } from "@/features/messages/lib/resolveMessageSendRecipients";
 import type { CustomEmoji } from "@/shared/lib/remarkCustomEmoji";
 import type { AcpRuntime, ChannelType, ManagedAgent } from "@/shared/api/types";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
@@ -162,6 +164,7 @@ export function useMentionSendFlow({
   const managedAgentsQuery = useManagedAgentsQuery();
   const personasQuery = usePersonasQuery();
   const startAgentDetached = useDetachedAgentStart();
+  const senderPubkey = useIdentityQuery().data?.pubkey;
   const getManagedAgentsByPubkey = React.useCallback(async () => {
     const agents =
       managedAgentsQuery.data ??
@@ -286,7 +289,6 @@ export function useMentionSendFlow({
       provisionPersonaAgentMutation,
     ],
   );
-
   const clearComposer = React.useCallback(
     (postSendContent = "") => {
       setPendingNonMemberSend(null);
@@ -321,18 +323,15 @@ export function useMentionSendFlow({
       setSpoileredAttachmentUrls,
     ],
   );
-
   React.useEffect(() => {
     if (previousChannelIdRef.current === channelId) {
       return;
     }
-
     previousChannelIdRef.current = channelId;
     setPendingNonMemberSend(null);
     setNonMemberPromptError(null);
     setIsMembershipUnknown(false);
   }, [channelId]);
-
   const completeSend = React.useCallback(
     async (
       draft: PendingNonMemberMentionSend,
@@ -342,11 +341,9 @@ export function useMentionSendFlow({
       if (isCompleteSendPendingRef.current) {
         return;
       }
-
       const sendSignal = draft.preparedLinkPreviews?.signal;
       const isSendCancelled = () => sendSignal?.aborted === true;
       if (isSendCancelled()) return draft.preparedLinkPreviews?.release();
-
       isCompleteSendPendingRef.current = true;
       setIsCompleteSendPending(true);
       const preparedUpload =
@@ -414,7 +411,6 @@ export function useMentionSendFlow({
             return;
           }
         }
-
         const agentReadiness = await ensureManagedAgentMentionsReady(
           managedMentionPubkeys.filter(
             (pubkey) => !readyAgentPubkeys.has(normalizePubkey(pubkey)),
@@ -617,7 +613,6 @@ export function useMentionSendFlow({
             resolvePostSendContent?.(effectiveExplicitAgentPubkeys),
           );
         }
-
         if (!preparedUpload) {
           try {
             await finishSend([]);
@@ -678,7 +673,6 @@ export function useMentionSendFlow({
       if (isMentionSendPendingRef.current) {
         return;
       }
-
       isMentionSendPendingRef.current = true;
       setIsMentionSendPending(true);
       const isSendCancelled = () =>
@@ -704,7 +698,6 @@ export function useMentionSendFlow({
           toast.error(dmThreadAgentMentionErrorMessage);
           return;
         }
-
         let effectiveChannelId = capturedChannelId;
         if (!effectiveChannelId && onPrepareSendChannel) {
           effectiveChannelId = await onPrepareSendChannel();
@@ -713,7 +706,6 @@ export function useMentionSendFlow({
             return;
           }
         }
-
         const personaMentionResult = await createMentionedPersonaAgents(
           trimmed,
           effectiveChannelId ?? "",
@@ -730,7 +722,6 @@ export function useMentionSendFlow({
           toast.error(message);
           return;
         }
-
         const createdPersonaAgentPubkeys = personaMentionResult.pubkeys;
         const createdPersonaAgentPubkeySet = new Set(
           createdPersonaAgentPubkeys.map(normalizePubkey),
@@ -744,7 +735,25 @@ export function useMentionSendFlow({
             mentions.isAgentPubkey(pubkey) ||
             createdPersonaAgentPubkeySet.has(pubkey),
         );
-        const pubkeys = explicitMentionPubkeys;
+        let pubkeys: string[];
+        try {
+          pubkeys = await resolveMessageSendRecipients({
+            channelType,
+            senderPubkey,
+            explicitMentions: explicitMentionPubkeys,
+            resolveMembership: () => resolveMembership(effectiveChannelId),
+          });
+        } catch (error) {
+          if (isSendCancelled()) return;
+          const message = getErrorMessage(
+            error,
+            "Could not prepare DM recipients.",
+          );
+          setNonMemberPromptError(message);
+          toast.error(message);
+          return;
+        }
+        if (isSendCancelled()) return;
         const outgoingTags = [
           ...buildCustomEmojiTags(trimmed, customEmoji),
           ...linkPreviewTags,
@@ -772,7 +781,6 @@ export function useMentionSendFlow({
             !mentions.isManagedAgentPubkey(pubkey) &&
             !createdPersonaAgentPubkeySet.has(normalizePubkey(pubkey)),
         );
-
         if (promptNonMemberPubkeys.length > 0) {
           try {
             const managedAgentsByPubkey = await getManagedAgentsByPubkey();
@@ -782,7 +790,6 @@ export function useMentionSendFlow({
             );
           } catch {}
         }
-
         const pendingDraft: PendingNonMemberMentionSend = {
           capturedChannelId: effectiveChannelId,
           capturedThreadContext,
@@ -808,7 +815,6 @@ export function useMentionSendFlow({
           audienceRevision,
           explicitAgentPubkeys,
         };
-
         if (promptNonMemberPubkeys.length > 0) {
           setNonMemberPromptError(
             membership?.kind === "unknown"
@@ -819,7 +825,6 @@ export function useMentionSendFlow({
           setPendingNonMemberSend(pendingDraft);
           return;
         }
-
         sendPromoted = true;
         await completeSend(pendingDraft, pubkeys);
       } finally {
@@ -848,21 +853,19 @@ export function useMentionSendFlow({
       mentions.getDraftMentionRefs,
       onPrepareSendChannel,
       resolveMembership,
+      senderPubkey,
       activePreparedLinkPreviews,
     ],
   );
   const pendingNonMemberNames = React.useMemo(() => {
     if (!pendingNonMemberSend) return [];
-
     return pendingNonMemberSend.nonMemberPubkeys.map(
       (pubkey) =>
         mentions.getMentionDisplayName(pubkey) ?? truncatePubkey(pubkey),
     );
   }, [mentions.getMentionDisplayName, pendingNonMemberSend]);
-
   const handleSendWithoutInviting = React.useCallback(() => {
     if (!pendingNonMemberSend) return;
-
     const nonMemberPubkeys = new Set(
       pendingNonMemberSend.nonMemberPubkeys.map((pubkey) =>
         normalizePubkey(pubkey),
@@ -911,14 +914,12 @@ export function useMentionSendFlow({
         if (managedAgentsByPubkey.has(pubkey)) {
           continue;
         }
-
         if (mentions.isAgentPubkey(pubkey)) {
           relayAgentPubkeys.push(pubkey);
         } else {
           peoplePubkeys.push(pubkey);
         }
       }
-
       const errors: string[] = [];
       if (peoplePubkeys.length > 0) {
         const result = await addMembersMutation.mutateAsync({
@@ -928,7 +929,6 @@ export function useMentionSendFlow({
         });
         errors.push(...result.errors.map((error) => error.error));
       }
-
       if (relayAgentPubkeys.length > 0) {
         const result = await addMembersMutation.mutateAsync({
           channelId: pendingNonMemberSend.capturedChannelId ?? undefined,

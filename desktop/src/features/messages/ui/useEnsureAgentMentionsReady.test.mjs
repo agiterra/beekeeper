@@ -176,3 +176,35 @@ test("a non-member agent's wake queues through the attach seam instead of firing
   );
   rendered.unmount();
 });
+
+test("plain confirmed DM prepares a running local recipient for this channel without starting before publish", async () => {
+  const { resolveMessageSendRecipients } = await import(
+    "../lib/resolveMessageSendRecipients.ts"
+  );
+  const sender = "c".repeat(64);
+  const agent = managedAgent({ status: "running" });
+  const recipients = await resolveMessageSendRecipients({
+    channelType: "dm",
+    senderPubkey: sender,
+    explicitMentions: [],
+    resolveMembership: async () => ({
+      kind: "resolved",
+      memberPubkeys: new Set([sender, MEMBER_AGENT]),
+    }),
+  });
+  const rendered = await renderEnsureReady({
+    getManagedAgentsByPubkey: async () => new Map([[MEMBER_AGENT, agent]]),
+    memberPubkeys: new Set([sender, MEMBER_AGENT]),
+  });
+  const result = await rendered.result.current(recipients, CHANNEL_ID);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.pubkeys, [MEMBER_AGENT]);
+  assert.equal(result.agentsToWake.length, 1);
+  assert.equal(result.agentsToWake[0].agent, agent);
+  assert.deepEqual(
+    tauriInvocations,
+    [],
+    "existing detached flush alone starts after publication",
+  );
+  rendered.unmount();
+});
