@@ -185,7 +185,7 @@ pub(super) async fn ensure_enrolled_running(
             let observed = host.snapshot().await;
             observed.status.ok_or(observed.message)
         },
-        || host.start(),
+        || crate::session_provider::commands::ensure_host_running(app, &host, relay),
     )
     .await
 }

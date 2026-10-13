@@ -444,7 +444,7 @@ pub async fn provision_coding_session_provider(
         eprintln!("beekeeper-desktop: agent-host: {warning}");
     }
 
-    ensure_host_running(&app, &host, &relay_url).await;
+    let _ = ensure_host_running(&app, &host, &relay_url).await;
     provider_status(&app, &host, &relay_url).await
 }
 
@@ -455,18 +455,26 @@ pub async fn provision_coding_session_provider(
 /// succeeding: a provider that has been running since before this app launched
 /// never passes through a start path at all, which is exactly how run 8
 /// (2026-09-25) left the host off the roster. Reconciling on every attempt is
-/// what makes that unreachable.
-async fn ensure_host_running(app: &AppHandle, host: &AgentHost, relay_url: &str) {
-    // Without a login registration nothing else runs the host, so the app
-    // runs it for as long as it is open (ledger 302(a)).
+/// what makes that unreachable. The original Start result is returned so
+/// existing-enrollment callers can preserve a pending operation on refusal;
+/// provisioning surfaces may still disclose the error through provider status.
+pub(crate) async fn ensure_host_running(
+    app: &AppHandle,
+    host: &AgentHost,
+    relay_url: &str,
+) -> Result<(), String> {
+    // Without a login registration, reuse the persistent app-scoped bootstrap.
+    // The host owns its lifetime after bootstrap and outlives this client.
     run_app_scoped_host().await;
-    if let Err(error) = host.start().await {
+    let started = host.start().await;
+    if let Err(error) = &started {
         // Disclosed, not fatal: the status this returns to carries the
         // reachability, and the surface renders it. Failing the whole command
         // would hide a provisioning that did succeed.
         eprintln!("beekeeper-desktop: agent-host: could not start the provider: {error}");
     }
     crate::managed_agents::project_admission::reconcile_saved_project_admissions(app, relay_url);
+    started
 }
 
 /// Start the provisioned provider if it is not already supervised, then
@@ -486,7 +494,7 @@ pub async fn ensure_coding_session_provider_running(
     if let Err(error) = commission::rebind_host(&app, &host, &relay_url).await {
         eprintln!("beekeeper-desktop: agent-host: could not rebind: {error}");
     }
-    ensure_host_running(&app, &host, &relay_url).await;
+    let _ = ensure_host_running(&app, &host, &relay_url).await;
     provider_status(&app, &host, &relay_url).await
 }
 
