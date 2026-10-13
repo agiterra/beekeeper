@@ -143,8 +143,8 @@ pub(super) fn prepare_update(
 ) -> Result<(HostConfig, Value), CliError> {
     validate_record(private, actor)?;
     let config = HostConfig::load(&layout::host_config_path(&context.home, context.instance)).map_err(fail)?.ok_or_else(|| CliError::Refused("private configuration needs executor custody; remote public configuration is available separately".into()))?;
-    if record::canonical_relay_key(&config.relay_url)
-        != record::canonical_relay_key(client.relay_url())
+    if record::canonical_relay_key(&crate::to_ws_url(&config.relay_url))
+        != record::canonical_relay_key(&crate::to_ws_url(client.relay_url()))
     {
         return Err(CliError::Auth(
             "private configuration host relay mismatch".into(),
@@ -231,8 +231,8 @@ pub(super) fn snapshot_bytes(
             CliError::Refused("private snapshot requires commissioned custody".into())
         })?;
     if config.instance != context.instance
-        || record::canonical_relay_key(&config.relay_url)
-            != record::canonical_relay_key(client.relay_url())
+        || record::canonical_relay_key(&crate::to_ws_url(&config.relay_url))
+            != record::canonical_relay_key(&crate::to_ws_url(client.relay_url()))
     {
         return Err(CliError::Auth(
             "private snapshot host/community scope mismatch".into(),

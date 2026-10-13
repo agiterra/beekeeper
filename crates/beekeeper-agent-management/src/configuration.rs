@@ -120,8 +120,12 @@ pub fn private_configuration_snapshot(
     .map_err(|_| CliError::Refused("private snapshot definition malformed".into()))?;
     if value["schema"] != "beekeeper-private-agent-config/v1"
         || value["actorPubkey"] != actor
-        || value["relayUrl"].as_str().map(record::canonical_relay_key)
-            != Some(record::canonical_relay_key(client.relay_url()))
+        || value["relayUrl"]
+            .as_str()
+            .map(|relay| record::canonical_relay_key(&crate::to_ws_url(relay)))
+            != Some(record::canonical_relay_key(&crate::to_ws_url(
+                client.relay_url(),
+            )))
         || definition.pubkey != client.keys().public_key()
         || definition.kind.as_u16() != 30177
         || definition.verify().is_err()
@@ -189,7 +193,7 @@ async fn update_guarded(
                 &context.home,
                 context.instance,
                 &args.agent_pubkey,
-                client.relay_url(),
+                &crate::to_ws_url(client.relay_url()),
             )
             .map_err(fail)
         })

@@ -299,3 +299,137 @@ async fn configuration_written_before_enrollment_crash_replays_exact_operation_t
     assert_eq!(std::fs::read(path).expect("journal preserved"), original);
     assert_eq!(relay.writes.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn private_update_and_snapshot_accept_http_transport_only_for_same_commissioned_relay() {
+    for (commissioned, transport) in [
+        ("ws://127.0.0.1:31234", "http://127.0.0.1:31234"),
+        ("wss://relay.example.test", "https://relay.example.test"),
+    ] {
+        let (_home, context, mut relay, actor, head, mut desired) = fixture();
+        let path = layout::host_config_path(&context.home, context.instance);
+        let mut config = HostConfig::load(&path)
+            .expect("config read")
+            .expect("commissioned");
+        config.relay_url = commissioned.into();
+        save(&path, &config).expect("exact commissioned fixture");
+        let dir = config.provider_state_dir.join("actors").join(&actor);
+        let enrollment: Value = serde_json::from_slice(
+            &std::fs::read(dir.join("enrollment.json")).expect("enrollment bytes"),
+        )
+        .expect("enrollment");
+        super::super::private_config::commit_update(&config, &enrollment, &head, &desired)
+            .expect("commission-scoped fixture snapshot");
+        relay.url = transport.into();
+        let before = private_configuration_snapshot(&context, &relay, &actor)
+            .expect("HTTP reads exact WebSocket-scoped custody");
+        desired.record["effective_env"]["PRIVATE_OPTION"] = json!("HTTP transport update");
+        let args = request(&context, &actor, &head, desired.clone());
+        update(&args, &relay, &context)
+            .await
+            .expect("same-community private update");
+        let after = private_configuration_snapshot(&context, &relay, &actor)
+            .expect("updated protected snapshot");
+        assert_eq!(after.private.record, desired.record);
+        assert_ne!(after.snapshot_hash, before.snapshot_hash);
+        assert_eq!(relay.writes.load(Ordering::SeqCst), 1);
+        let retained = std::fs::read(dir.join("configuration.json")).expect("retained snapshot");
+        relay.url = transport
+            .replace("relay.example.test", "foreign.example.test")
+            .replace("31234", "31235");
+        assert!(matches!(
+            private_configuration_snapshot(&context, &relay, &actor),
+            Err(CliError::Auth(_))
+        ));
+        let refused = request(&context, &actor, &after.definition, desired);
+        assert!(matches!(
+            update(&refused, &relay, &context).await,
+            Err(CliError::Auth(_))
+        ));
+        let refused_path = operation_path(&context, refused.operation_id).expect("operation path");
+        let intent = std::fs::read(&refused_path).expect("refused intent retained");
+        assert!(matches!(
+            update(&refused, &relay, &context).await,
+            Err(CliError::Auth(_))
+        ));
+        assert_eq!(
+            std::fs::read(refused_path).expect("retry retains intent"),
+            intent
+        );
+        assert_eq!(
+            relay.writes.load(Ordering::SeqCst),
+            1,
+            "foreign community publishes nothing"
+        );
+        assert_eq!(
+            std::fs::read(dir.join("configuration.json")).expect("unchanged snapshot"),
+            retained
+        );
+    }
+}
+
+#[test]
+fn http_private_cas_waits_for_exact_websocket_worker_admission_lock() {
+    let (_home, context, mut relay, actor, head, mut desired) = fixture();
+    relay.url = "http://127.0.0.1:31234".into();
+    let before =
+        private_configuration_snapshot(&context, &relay, &actor).expect("HTTP protected read");
+    desired.record["effective_env"]["PRIVATE_OPTION"] = json!("serialized with worker");
+    let args = request(&context, &actor, &head, desired);
+    let held = beekeeper_host_core::ownership::admission_lock(
+        &context.home,
+        context.instance,
+        &actor,
+        "ws://127.0.0.1:31234",
+    )
+    .expect("worker exact pair lock");
+    let relay = std::sync::Arc::new(relay);
+    let thread_relay = relay.clone();
+    let thread_context = context.clone();
+    let (ready_send, ready_recv) = std::sync::mpsc::channel();
+    let (done_send, done_recv) = std::sync::mpsc::channel();
+    let hash = before.snapshot_hash.clone();
+    let thread_hash = hash.clone();
+    let thread = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        ready_send.send(()).expect("ready");
+        let outcome = runtime.block_on(update_if_private_unchanged(
+            &args,
+            &*thread_relay,
+            &thread_context,
+            &thread_hash,
+        ));
+        done_send.send(outcome).expect("outcome");
+    });
+    ready_recv
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("updater scheduled");
+    assert!(
+        matches!(
+            done_recv.recv_timeout(std::time::Duration::from_millis(250)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "HTTP CAS must remain blocked by existing WebSocket worker lock"
+    );
+    assert_eq!(relay.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        private_configuration_snapshot(&context, &*relay, &actor)
+            .expect("snapshot unchanged during admission")
+            .snapshot_hash,
+        hash
+    );
+    drop(held);
+    done_recv
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("bounded lock release continuation")
+        .expect("canonical update after worker boundary");
+    thread.join().expect("worker joined");
+    assert_eq!(relay.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        private_configuration_snapshot(&context, &*relay, &actor)
+            .expect("committed snapshot")
+            .private
+            .record["effective_env"]["PRIVATE_OPTION"],
+        "serialized with worker"
+    );
+}
