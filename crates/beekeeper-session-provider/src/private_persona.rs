@@ -72,6 +72,49 @@ fn bound_revision_matches(bound: &Event, current: &Event, actor: &str, owner: Pu
     after.remove("name");
     before == after
 }
+// The public projection omits a linked source hash. Its owner can bind that
+// private hash with the same30177 definition, signed and retained only here.
+fn private_bound_hash(
+    value: &serde_json::Value,
+    bound: &Event,
+    actor: &str,
+    owner: PublicKey,
+) -> Result<Option<String>, CreateFailure> {
+    let Some(raw) = value.get("privateDefinition") else {
+        return Ok(None);
+    };
+    let private: Event = serde_json::from_value(raw.clone()).map_err(|_| refused())?;
+    if private.pubkey != owner
+        || private.kind != bound.kind
+        || private.kind.as_u16() != beekeeper_core::kind::KIND_MANAGED_AGENT as u16
+        || private.tags != bound.tags
+        || private.created_at != bound.created_at
+        || !exact_coordinate(&private, actor)
+        || private.verify().is_err()
+    {
+        return Err(refused());
+    }
+    let public = beekeeper_core::private_managed_agent::parse_strict_json(bound.content.as_bytes())
+        .map_err(|_| refused())?;
+    let mut preimage =
+        beekeeper_core::private_managed_agent::parse_strict_json(private.content.as_bytes())
+            .map_err(|_| refused())?;
+    let fields = preimage.as_object_mut().ok_or_else(refused)?;
+    let hash = fields
+        .remove("persona_source_version")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .ok_or_else(refused)?;
+    let mut projected = public.clone();
+    if let Some(fields) = projected.as_object_mut() {
+        // A public hash, when present, is checked independently below.
+        fields.remove("persona_source_version");
+    }
+    if preimage != projected {
+        return Err(refused());
+    }
+    Ok(Some(hash))
+}
+
 pub(crate) fn validate(
     snapshot: &Snapshot,
     actor: &str,
@@ -182,13 +225,28 @@ fn from_envelope(
     {
         return Err(refused());
     }
+    let private_hash = private_bound_hash(value, &bound, actor, owner)?;
+    if private_hash
+        .as_deref()
+        .is_some_and(|hash| hash != snapshot.source_hash)
+        || definition
+            .persona_source_version
+            .as_deref()
+            .zip(private_hash.as_deref())
+            .is_some_and(|(public, private)| public != private)
+    {
+        return Err(refused());
+    }
     let content = validate(
         &snapshot,
         actor,
         relay,
         owner,
         persona_id,
-        definition.persona_source_version.as_deref(),
+        definition
+            .persona_source_version
+            .as_deref()
+            .or(private_hash.as_deref()),
     )?;
     Ok(Some((snapshot.event, content)))
 }

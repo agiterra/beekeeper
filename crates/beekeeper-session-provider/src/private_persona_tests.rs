@@ -474,3 +474,146 @@ fn mapped_coordinate_requires_affirmative_owner_hash_and_exact_signed_coordinate
         .is_err());
     }
 }
+
+fn slim_mapped_fixture(
+    raw: &str,
+    coordinate: &str,
+) -> (Keys, String, Event, Snapshot, serde_json::Value) {
+    let (owner, actor, old, snapshot) = mapped_fixture(raw, coordinate);
+    let definition: beekeeper_core::managed_agent::ManagedAgentEventContent =
+        serde_json::from_str(&old.content).unwrap();
+    let public = definition.public_projection();
+    assert!(public.persona_source_version.is_none());
+    let bound = EventBuilder::new(old.kind, serde_json::to_string(&public).unwrap())
+        .tags(old.tags.clone())
+        .custom_created_at(old.created_at)
+        .sign_with_keys(&owner)
+        .unwrap();
+    let mut preimage: serde_json::Value = serde_json::from_str(&bound.content).unwrap();
+    preimage["persona_source_version"] = json!(snapshot.source_hash);
+    let private = EventBuilder::new(bound.kind, preimage.to_string())
+        .tags(bound.tags.clone())
+        .custom_created_at(bound.created_at)
+        .sign_with_keys(&owner)
+        .unwrap();
+    let mut value = envelope(&actor, &bound, &snapshot);
+    value["privateDefinition"] = json!(private);
+    (owner, actor, bound, snapshot, value)
+}
+
+#[test]
+fn actual_slim_public_projection_uses_private_signed_hash_without_public_disclosure() {
+    for (raw, coordinate) in [
+        ("builtin:fizz", "builtin-fizz"),
+        ("definition-uuid", "reviewer"),
+    ] {
+        let (owner, actor, bound, snapshot, value) = slim_mapped_fixture(raw, coordinate);
+        assert!(!bound.content.contains(&snapshot.source_hash));
+        let before = serde_json::to_vec(&value).unwrap();
+        for _ in 0..2 {
+            let (event, content) = from_envelope(
+                &value,
+                &actor,
+                "wss://fixture.example",
+                &bound,
+                owner.public_key(),
+                raw,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(event, snapshot.event);
+            assert_eq!(
+                content.system_prompt.as_deref(),
+                Some("Private protected instructions")
+            );
+            assert_eq!(serde_json::to_vec(&value).unwrap(), before);
+        }
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove("privateDefinition");
+        assert!(from_envelope(
+            &missing,
+            &actor,
+            "wss://fixture.example",
+            &bound,
+            owner.public_key(),
+            raw
+        )
+        .is_err());
+        let mut renamed: serde_json::Value = serde_json::from_str(&bound.content).unwrap();
+        renamed["name"] = json!("Remote metadata rename");
+        let current = EventBuilder::new(bound.kind, renamed.to_string())
+            .tags(bound.tags.clone())
+            .custom_created_at(nostr::Timestamp::from(bound.created_at.as_secs() + 1))
+            .sign_with_keys(&owner)
+            .unwrap();
+        assert!(from_envelope(
+            &value,
+            &actor,
+            "wss://fixture.example",
+            &current,
+            owner.public_key(),
+            raw
+        )
+        .unwrap()
+        .is_some());
+    }
+}
+
+#[test]
+fn private_signed_source_preimage_refuses_foreign_headers_body_hash_and_duplicate_json() {
+    let (owner, actor, bound, snapshot, value) =
+        slim_mapped_fixture("builtin:fizz", "builtin-fizz");
+    let original: Event = serde_json::from_value(value["privateDefinition"].clone()).unwrap();
+    for variant in 0..10 {
+        let mut body: serde_json::Value = serde_json::from_str(&original.content).unwrap();
+        let mut keys = owner.clone();
+        let mut kind = bound.kind;
+        let mut tags = bound.tags.iter().cloned().collect::<Vec<_>>();
+        let mut time = bound.created_at;
+        match variant {
+            0 => keys = Keys::generate(),
+            1 => kind = Kind::Custom(30175),
+            2 => time = nostr::Timestamp::from(time.as_secs() + 1),
+            3 => tags = vec![Tag::parse(["d", "another-actor"]).unwrap()],
+            4 => body["name"] = json!("Unbound private name"),
+            5 => body["respond_to"] = json!("anyone"),
+            6 => body["unknown_future_policy"] = json!(true),
+            7 => body["persona_source_version"] = json!("wrong hash"),
+            8 => {
+                body.as_object_mut()
+                    .unwrap()
+                    .remove("persona_source_version");
+            }
+            _ => {}
+        }
+        let content = if variant == 9 {
+            let text = body.to_string();
+            format!(
+                "{{\"persona_source_version\":\"{}\",{}",
+                snapshot.source_hash,
+                &text[1..]
+            )
+        } else {
+            body.to_string()
+        };
+        let changed = EventBuilder::new(kind, content)
+            .tags(tags)
+            .custom_created_at(time)
+            .sign_with_keys(&keys)
+            .unwrap();
+        let mut invalid = value.clone();
+        invalid["privateDefinition"] = json!(changed);
+        assert!(
+            from_envelope(
+                &invalid,
+                &actor,
+                "wss://fixture.example",
+                &bound,
+                owner.public_key(),
+                "builtin:fizz"
+            )
+            .is_err(),
+            "variant {variant}"
+        );
+    }
+}

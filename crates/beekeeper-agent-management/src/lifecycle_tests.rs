@@ -6,6 +6,7 @@ use std::sync::{
 };
 
 struct DisappearingRelay {
+    transport_url: Option<String>,
     owner: Keys,
     relay: Keys,
     profiles: Vec<Event>,
@@ -20,7 +21,9 @@ impl RelayTransport for DisappearingRelay {
         &self.owner
     }
     fn relay_url(&self) -> &str {
-        "ws://127.0.0.1:31415"
+        self.transport_url
+            .as_deref()
+            .unwrap_or("ws://127.0.0.1:31415")
     }
     fn verified_auth_tag_owner_hex(&self) -> Result<Option<String>, Error> {
         Ok(None)
@@ -189,6 +192,7 @@ fn fixture() -> (DisappearingRelay, LifecycleRequest) {
     };
     (
         DisappearingRelay {
+            transport_url: None,
             owner,
             relay: Keys::generate(),
             profiles,
@@ -882,13 +886,13 @@ fn linked_start_compares_canonical_projection_and_exact_retained_private_inputs(
     }
 }
 
-#[test]
-fn linked_adopted_guard_reads_exact_protected_custody_and_accepted_journal() {
+#[tokio::test]
+async fn linked_adopted_guard_reads_exact_protected_custody_and_accepted_journal() {
     use beekeeper_host_core::{
         config::{HostConfig, HOST_CONFIG_VERSION},
         layout, provision,
     };
-    let (relay, scope) = fixture();
+    let (mut relay, scope) = fixture();
     let home = tempfile::tempdir().expect("isolated custody");
     let context = Context {
         home: home.path().into(),
@@ -952,6 +956,7 @@ fn linked_adopted_guard_reads_exact_protected_custody_and_accepted_journal() {
     let operation = Uuid::new_v4();
     let args = crate::CreateRequest {
         operation_id: operation,
+        channel: scope.channels[0],
         agent_pubkey: Some(actor.pubkey.clone()),
         display_name: content.name.clone(),
         system_prompt: "native instructions".into(),
@@ -996,6 +1001,30 @@ fn linked_adopted_guard_reads_exact_protected_custody_and_accepted_journal() {
     let slim = content.public_projection();
     verify_adopted_start(&args, &slim, &held, &relay, &context)
         .expect("exact retained linked request");
+    relay.definition = definition;
+    relay.profiles.push(attested_profile(
+        &relay.owner,
+        &Keys::parse(&actor.private_key_nsec).expect("fixture actor"),
+    ));
+    relay.transport_url = Some("http://127.0.0.1:31415".into());
+    for _ in 0..2 {
+        let result = start(&args, &relay, &context)
+            .await
+            .expect("HTTP observes exact adopted linked operation");
+        assert_eq!(result["execution_created"], false);
+        assert_eq!(
+            result["target"],
+            serde_json::to_value(&held.target).expect("target")
+        );
+        assert!(
+            relay
+                .published
+                .lock()
+                .expect("publication capture")
+                .is_empty(),
+            "adopted HTTP replay publishes no Create or lifecycle operation"
+        );
+    }
     let bytes = std::fs::read(dir.join("configuration.json")).expect("original bytes");
     let mut altered: Value = serde_json::from_slice(&bytes).expect("snapshot");
     altered["record"]["system_prompt"] = json!("new private instructions");

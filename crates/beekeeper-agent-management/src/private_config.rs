@@ -1,6 +1,8 @@
 //! Restricted executor materialization, independent from public30177 projection.
 use super::local::*;
 use super::*;
+#[path = "private_materialization.rs"]
+mod materialization;
 
 pub(crate) fn stage_configuration(
     _home: &Path,
@@ -8,7 +10,8 @@ pub(crate) fn stage_configuration(
     operation: &Operation,
     args: &CreateRequest,
     cwd: &Path,
-) -> Result<(), CliError> {
+    keys: &Keys,
+) -> Result<u64, CliError> {
     let actor = &operation.actor_pubkey;
     let definition = operation
         .events
@@ -16,9 +19,8 @@ pub(crate) fn stage_configuration(
         .ok_or_else(|| fail("configuration missing"))?;
     let dir = config.provider_state_dir.join("actors").join(actor);
     let historical = dir.join("enrollment.json");
-    if historical.exists() {
-        let value: Value =
-            serde_json::from_slice(&std::fs::read(&historical).map_err(fail)?).map_err(fail)?;
+    let existing = materialization::protected_json(&historical)?;
+    if let Some(value) = existing.as_ref() {
         if value.get("nativeContextRequired").and_then(Value::as_bool) == Some(true)
             || value
                 .get("nativeImportOperation")
@@ -27,6 +29,17 @@ pub(crate) fn stage_configuration(
             return Err(CliError::Refused("historical imported enrollment is retired; recreate through fresh headless setup, retained custody was not changed".into()));
         }
     }
+    let replay_floor = materialization::replay_floor(
+        existing.as_ref(),
+        definition,
+        actor,
+        args.replay_floor_unix,
+        args.channel,
+        operation.predecessor.as_ref().is_some_and(|prior| {
+            prior.phase == beekeeper_host_core::ownership::Phase::HostStopped
+                && prior.target.is_some()
+        }),
+    )?;
     atomic_write::create_dir_all_restricted(&dir).map_err(fail)?;
     if let Some(private) = &args.private_config {
         validate_record(private, actor)?;
@@ -54,14 +67,15 @@ pub(crate) fn stage_configuration(
             ));
         }
         let record = private.record.clone();
-        let snapshot = json!({"schema":"beekeeper-private-agent-config/v1","actorPubkey":actor,"relayUrl":config.relay_url,"definition":definition,"record":record,"channelId":args.channel,"cwd":cwd,"desiredRunning":args.activate});
+        let mut snapshot = json!({"schema":"beekeeper-private-agent-config/v1","actorPubkey":actor,"relayUrl":config.relay_url,"definition":definition,"record":record,"channelId":args.channel,"cwd":cwd,"desiredRunning":args.activate});
+        materialization::bind_private_definition(&mut snapshot, config, actor, keys)?;
         save(&dir.join("configuration.json"), &snapshot)?;
     }
     save(
         &dir.join("enrollment.json"),
-        &json!({"actorPubkey":actor,"channelId":args.channel,"cwd":cwd,"providerInstance":args.provider_instance.as_deref().or_else(||config.runtimes.first().filter(|_|config.runtimes.len()==1).map(|runtime|runtime.instance_ref.as_str())),"projectRef":args.project,"desiredRunning":args.activate,"definition":definition,"replayFloorUnix":args.replay_floor_unix.unwrap_or(definition.created_at.as_secs())}),
+        &json!({"actorPubkey":actor,"channelId":args.channel,"cwd":cwd,"providerInstance":args.provider_instance.as_deref().or_else(||config.runtimes.first().filter(|_|config.runtimes.len()==1).map(|runtime|runtime.instance_ref.as_str())),"projectRef":args.project,"desiredRunning":args.activate,"definition":definition,"replayFloorUnix":replay_floor}),
     )?;
-    Ok(())
+    Ok(replay_floor)
 }
 
 pub(super) fn validate_record(
@@ -280,15 +294,16 @@ pub(super) fn update_snapshot(
     enrollment: &Value,
     definition: &Event,
     private: &crate::PrivateConfiguration,
+    keys: &Keys,
 ) -> Result<Value, CliError> {
     let actor = enrollment
         .get("actorPubkey")
         .and_then(Value::as_str)
         .ok_or_else(|| fail("private enrollment actor missing"))?;
     let record = private.record.clone();
-    Ok(
-        json!({"schema":"beekeeper-private-agent-config/v1","actorPubkey":actor,"relayUrl":config.relay_url,"definition":definition,"record":record,"channelId":enrollment.get("channelId"),"cwd":enrollment.get("cwd"),"desiredRunning":enrollment.get("desiredRunning")}),
-    )
+    let mut snapshot = json!({"schema":"beekeeper-private-agent-config/v1","actorPubkey":actor,"relayUrl":config.relay_url,"definition":definition,"record":record,"channelId":enrollment.get("channelId"),"cwd":enrollment.get("cwd"),"desiredRunning":enrollment.get("desiredRunning")});
+    materialization::bind_private_definition(&mut snapshot, config, actor, keys)?;
+    Ok(snapshot)
 }
 
 pub(super) fn commit_update(
@@ -296,13 +311,14 @@ pub(super) fn commit_update(
     enrollment: &Value,
     definition: &Event,
     private: &crate::PrivateConfiguration,
+    keys: &Keys,
 ) -> Result<(), CliError> {
     let actor = enrollment
         .get("actorPubkey")
         .and_then(Value::as_str)
         .ok_or_else(|| fail("private enrollment actor missing"))?;
     let dir = config.provider_state_dir.join("actors").join(actor);
-    let snapshot = update_snapshot(config, enrollment, definition, private)?;
+    let snapshot = update_snapshot(config, enrollment, definition, private, keys)?;
     save(&dir.join("configuration.json"), &snapshot)?;
     #[cfg(test)]
     {

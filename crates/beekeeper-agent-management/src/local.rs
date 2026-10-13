@@ -364,3 +364,48 @@ pub(crate) fn install_route(
 #[cfg(test)]
 #[path = "reserved_custody_tests.rs"]
 mod custody_tests;
+
+// Completion is tied to the exact Created-receipt target retained by the caller.
+// Prefer the worker's already-installed route boundary, never the latest head time.
+pub(crate) fn completed_route_floor(
+    state: &Path,
+    actor: &str,
+    channel: Uuid,
+    target: &CodingSessionTarget,
+    explicit: Option<u64>,
+    staged: u64,
+) -> Result<Option<u64>, CliError> {
+    let path = state.join("conversation-routes.json");
+    let value: Value = match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(fail)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Some(staged)),
+        Err(error) => return Err(fail(error)),
+    };
+    let rows = value["routes"]
+        .as_array()
+        .ok_or_else(|| fail("conversation routes malformed"))?;
+    let exact = serde_json::to_value(target).map_err(fail)?;
+    let matches: Vec<_> = rows
+        .iter()
+        .filter(|row| {
+            row["actorPubkey"] == actor
+                && row["channelId"] == channel.to_string()
+                && row["target"] == exact
+        })
+        .collect();
+    if matches.len() > 1 {
+        return Err(CliError::Conflict(
+            "accepted route replay boundary is ambiguous".into(),
+        ));
+    }
+    let Some(route) = matches.first() else {
+        return Ok(Some(staged));
+    };
+    let floor = route.get("replayFloorUnix").and_then(Value::as_u64);
+    if explicit.is_some() && explicit != floor {
+        return Err(CliError::Conflict(
+            "explicit replay boundary conflicts with accepted worker route".into(),
+        ));
+    }
+    Ok(floor)
+}

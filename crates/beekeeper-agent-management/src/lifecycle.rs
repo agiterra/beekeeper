@@ -944,12 +944,11 @@ fn verify_adopted_start(
             || original.target != held.target
             || original.receipt_event_id.is_none()
             || original.request["owner"] != client.keys().public_key().to_hex()
-            || original.request["relay"]
-                .as_str()
-                .map(beekeeper_host_core::record::canonical_relay_key)
-                != Some(beekeeper_host_core::record::canonical_relay_key(
-                    client.relay_url(),
-                ))
+            || original.request["relay"].as_str().map(|relay| {
+                beekeeper_host_core::record::canonical_relay_key(&crate::to_ws_url(relay))
+            }) != Some(beekeeper_host_core::record::canonical_relay_key(
+                &crate::to_ws_url(client.relay_url()),
+            ))
             || !linked_start_inputs_match(args, &original.request)
         {
             return Err(Error::Conflict(

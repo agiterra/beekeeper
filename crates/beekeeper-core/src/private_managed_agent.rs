@@ -725,7 +725,9 @@ fn parse_tag<const N: usize>(parts: [&str; N]) -> Result<Tag, Error> {
     Tag::parse(parts).map_err(|_| Error::InvalidEnvelope("failed to build tag".into()))
 }
 
-fn parse_strict_json(bytes: &[u8]) -> Result<Value, Error> {
+/// Decode protected signed JSON without duplicate keys, including nested objects.
+/// Reject trailing content so a signature cannot conceal an alternate interpretation.
+pub fn parse_strict_json(bytes: &[u8]) -> Result<Value, Error> {
     struct StrictValue;
     impl<'de> DeserializeSeed<'de> for StrictValue {
         type Value = Value;

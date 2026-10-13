@@ -303,12 +303,25 @@ async fn update_guarded(
                 args.private_config
                     .as_ref()
                     .ok_or_else(|| fail("conditional private settings missing"))?,
+                client.keys(),
             )?;
             let desired_bytes = serde_json::to_vec_pretty(&desired).map_err(fail)?;
             if snapshot.snapshot_hash != bytes_hash(&desired_bytes) {
                 return Err(CliError::Conflict("private configuration changed during retained operation; retry cannot override it".into()));
             }
         }
+    }
+    // Validate the protected signed pin before changing the public revision.
+    if let Some((config, enrollment)) = private_boundary.as_ref() {
+        super::private_config::update_snapshot(
+            config,
+            enrollment,
+            event,
+            args.private_config
+                .as_ref()
+                .ok_or_else(|| fail("private configuration missing"))?,
+            client.keys(),
+        )?;
     }
     submit(client, event).await?;
     let effective = current_head(client, &args.agent_pubkey).await?;
@@ -326,6 +339,7 @@ async fn update_guarded(
             args.private_config
                 .as_ref()
                 .ok_or_else(|| fail("private configuration missing"))?,
+            client.keys(),
         )?;
     }
     Ok(

@@ -120,7 +120,7 @@ fn fixture() -> (
         .join(&actor.provider_pubkey);
     let enrollment = json!({"actorPubkey":actor.provider_pubkey,"channelId":Uuid::new_v4(),"cwd":home.path().join("work"),"desiredRunning":false,"definition":event});
     save(&dir.join("enrollment.json"), &enrollment).expect("enrollment");
-    super::super::private_config::commit_update(&config, &enrollment, &event, &private)
+    super::super::private_config::commit_update(&config, &enrollment, &event, &private, &keys)
         .expect("snapshot");
     let relay = Relay {
         keys,
@@ -318,8 +318,14 @@ async fn private_update_and_snapshot_accept_http_transport_only_for_same_commiss
             &std::fs::read(dir.join("enrollment.json")).expect("enrollment bytes"),
         )
         .expect("enrollment");
-        super::super::private_config::commit_update(&config, &enrollment, &head, &desired)
-            .expect("commission-scoped fixture snapshot");
+        super::super::private_config::commit_update(
+            &config,
+            &enrollment,
+            &head,
+            &desired,
+            relay.keys(),
+        )
+        .expect("commission-scoped fixture snapshot");
         relay.url = transport.into();
         let before = private_configuration_snapshot(&context, &relay, &actor)
             .expect("HTTP reads exact WebSocket-scoped custody");
@@ -433,3 +439,6 @@ fn http_private_cas_waits_for_exact_websocket_worker_admission_lock() {
         "serialized with worker"
     );
 }
+
+#[path = "configuration_private_pin_tests.rs"]
+mod private_pin_tests;

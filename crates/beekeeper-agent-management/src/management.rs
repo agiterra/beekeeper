@@ -500,7 +500,14 @@ pub async fn create(
         finish_reserved_custody(&config.provider_state_dir, &path, &mut operation, &owner)?;
     let actor_keys = Keys::parse(&key).map_err(|_| fail("actor custody key is invalid"))?;
     let actor_client = client.scoped(actor_keys, auth.clone())?;
-    stage_configuration(&context.home, &config, &operation, args, &cwd)?;
+    let staged_floor = stage_configuration(
+        &context.home,
+        &config,
+        &operation,
+        args,
+        &cwd,
+        client.keys(),
+    )?;
     if !args.activate {
         for event in &operation.events {
             let transport = event_transport(event, client, &actor_client)?;
@@ -588,7 +595,14 @@ pub async fn create(
         &operation.actor_pubkey,
         args.channel,
         target,
-        args.replay_floor_unix,
+        completed_route_floor(
+            &config.provider_state_dir,
+            &operation.actor_pubkey,
+            args.channel,
+            target,
+            args.replay_floor_unix,
+            staged_floor,
+        )?,
     )?;
     if args.agent_pubkey.is_none() {
         let revision = operation
