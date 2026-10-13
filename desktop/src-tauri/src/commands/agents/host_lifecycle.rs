@@ -129,19 +129,38 @@ pub(crate) async fn active_host_agent_pubkeys(
         {
             continue;
         }
-        let outcome = beekeeper_agent_management::status(&lifecycle(&record.pubkey), &transport)
-            .await
-            .map_err(|e| e.to_string())?;
-        if outcome
-            .get("responsibilities")
-            .and_then(Value::as_array)
-            .is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| row.get("runtime_available").and_then(Value::as_bool) == Some(true))
-            })
-        {
+        if actor_is_active(&record.pubkey, &transport).await? {
             active.insert(record.pubkey);
         }
     }
     Ok(active)
 }
+
+/// Inspect only the edited actor; unrelated retained local records are not its inventory.
+pub(super) async fn host_agent_is_active(
+    app: &AppHandle,
+    actor: &str,
+    relay: &str,
+) -> Result<bool, String> {
+    actor_is_active(actor, &Transport::owner(app, relay)?).await
+}
+
+async fn actor_is_active(
+    actor: &str,
+    transport: &impl beekeeper_agent_management::RelayTransport,
+) -> Result<bool, String> {
+    let outcome = beekeeper_agent_management::status(&lifecycle(actor), transport)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(outcome
+        .get("responsibilities")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| {
+            rows.iter()
+                .any(|row| row.get("runtime_available").and_then(Value::as_bool) == Some(true))
+        }))
+}
+
+#[cfg(test)]
+#[path = "host_lifecycle_target_tests.rs"]
+mod target_tests;

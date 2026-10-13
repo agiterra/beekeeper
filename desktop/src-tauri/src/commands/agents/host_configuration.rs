@@ -81,7 +81,7 @@ fn configuration_path(
 }
 async fn configuration_operation(
     app: &AppHandle,
-    state: &AppState,
+    _state: &AppState,
     actor: &str,
     relay: &str,
     public: &beekeeper_core_pkg::managed_agent::ManagedAgentEventContent,
@@ -135,9 +135,7 @@ async fn configuration_operation(
         // a prerequisite and must not be inferred from accepted ownership.
         false
     } else {
-        lifecycle::active_host_agent_pubkeys(app, state)
-            .await?
-            .contains(actor)
+        lifecycle::host_agent_is_active(app, actor, relay).await?
     };
     let next = ConfigurationIntent {
         operation_id: Uuid::new_v4(),

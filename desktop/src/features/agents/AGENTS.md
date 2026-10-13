@@ -224,7 +224,9 @@ Commit the definition and instance together in the existing local store only
 after acceptance, and refresh both caches. Do not save the definition first or
 repin unrelated edits to whatever definition happens to be current. When access
 behavior is omitted, retain the exact instance policy and allowlist; an unrelated
-instruction edit must not apply the definition default over that override. Shared,
+instruction edit must not apply the definition default over that override. Inspect
+execution status for the edited actor only; unrelated unadmitted records are not
+a prerequisite. Missing inventory for that actor remains unconfirmed. Shared,
 builtin, team, catalog, or multiply linked definitions require their own explicit
 editing boundary. Remote-provider edits retain their existing provider contract.
 
