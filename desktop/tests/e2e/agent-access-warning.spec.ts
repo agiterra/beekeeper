@@ -268,6 +268,16 @@ test("access save targets exact instance; shared-definition profile edit refuses
   await page
     .locator("#persona-system-prompt")
     .fill("Test unrelated prompt editing after tightening access.");
+  const readStoredConfiguration = () =>
+    page.evaluate(async () => {
+      const invoke = window.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__;
+      if (!invoke) throw new Error("Mock bridge unavailable");
+      return {
+        agents: await invoke("list_managed_agents", {}),
+        personas: await invoke("list_personas", {}),
+      };
+    });
+  const beforeRefusal = await readStoredConfiguration();
   await dialog.getByRole("button", { name: "Save changes" }).click();
   await expect(dialog).toBeVisible();
   await expect(
@@ -278,7 +288,7 @@ test("access save targets exact instance; shared-definition profile edit refuses
       )
       .first(),
   ).toBeVisible();
-  await expect(accessBadge).toHaveText("Only me");
+  expect(await readStoredConfiguration()).toEqual(beforeRefusal);
 
   const unrelatedEditCommand = await page.evaluate(
     (pubkey) =>
@@ -299,6 +309,13 @@ test("access save targets exact instance; shared-definition profile edit refuses
   expect(unrelatedEditCommand?.payload).not.toMatchObject({
     input: { respondTo: "anyone" },
   });
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await openAgentAccessDialog(page, agent.pubkey);
+  await expect(accessBadge).toHaveText("Only me");
+  await expect(page.getByTestId("agent-respond-to-select")).toHaveValue(
+    "owner-only",
+  );
 });
 
 test("a provider-backed agent's warning names the server, not this computer", async ({
