@@ -454,9 +454,9 @@ export function useCreateManagedAgentMutation() {
         bootstrapManagedAgentRuntimePairs(queryClient);
       }
     },
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
-      await queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey });
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey });
     },
   });
 }
@@ -895,11 +895,9 @@ export function useProvisionChannelManagedAgentMutation(
         },
       );
     },
-    onSettled: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey }),
-        queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey }),
-      ]);
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey });
     },
   });
 }
