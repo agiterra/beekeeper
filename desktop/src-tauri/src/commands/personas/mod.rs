@@ -36,6 +36,7 @@ pub use sharing::update_persona_and_publish;
 pub(crate) mod update;
 pub use update::update_persona;
 mod inbound;
+pub(crate) use inbound::matches_exact_managed_agent_echo;
 pub use inbound::reconcile_inbound_persona_event;
 
 #[tauri::command]

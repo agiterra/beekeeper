@@ -17,6 +17,8 @@ use crate::{
 mod exact_managed_deletion;
 
 #[cfg(test)]
+mod accepted_echo_tests;
+#[cfg(test)]
 mod carry_tests;
 #[cfg(test)]
 mod exact_managed_deletion_tests;
@@ -524,6 +526,28 @@ fn apply_inbound_persona(personas: &mut Vec<AgentDefinition>, inbound: AgentDefi
 /// no secret key to run with, so inserting a secretless shell would be useless
 /// and misleading. This diverges from the persona path, which DOES insert on no
 /// match (personas are secretless definitions). Flagged in the reconcile docs.
+/// Match only the exact public echo of an accepted owned update, retaining every
+/// private/local field of the observed source. Revision/signature checks belong
+/// to the caller; this reuses the inlet's projection rather than weakening CAS.
+pub(crate) fn matches_exact_managed_agent_echo(
+    source: &ManagedAgentRecord,
+    current: &ManagedAgentRecord,
+    accepted: ManagedAgentEventContent,
+) -> bool {
+    let mut echo = vec![source.clone()];
+    let digest = accepted.project_digest.clone();
+    let withdrawn = accepted.project_withdrawn;
+    apply_inbound_managed_agent(&mut echo, &source.pubkey, accepted);
+    carry_same_owner_project_digest(
+        &mut echo,
+        &source.pubkey,
+        true,
+        digest.as_deref(),
+        withdrawn,
+    );
+    echo.first().is_some_and(|expected| expected == current)
+}
+
 fn apply_inbound_managed_agent(
     agents: &mut [ManagedAgentRecord],
     d_tag: &str,

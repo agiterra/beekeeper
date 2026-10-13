@@ -1,5 +1,7 @@
 //! Client patch translation and delivery handles; the shared service owns effects.
 use super::*;
+#[path = "host_configuration_ack.rs"]
+mod acknowledgment;
 #[path = "host_persona_update.rs"]
 mod persona_update;
 #[path = "host_private_persona.rs"]
@@ -327,10 +329,7 @@ async fn acknowledge_revision(
     actor: &str,
     revision: &str,
 ) -> Result<(), String> {
-    use crate::managed_agents::retention::{
-        active_retention_scope, get_retained_event, open_retention_db, retain_inbound_event,
-        InboundOutcome, RetainedEvent,
-    };
+    use crate::managed_agents::retention::{active_retention_scope, RetainedEvent};
     use nostr::JsonUtil;
     let accepted = head(app, relay, actor).await?;
     if accepted.id.to_hex() != revision {
@@ -349,7 +348,6 @@ async fn acknowledge_revision(
                 .into(),
         );
     }
-    let conn = open_retention_db(&scope.db_path)?;
     let retained = RetainedEvent {
         kind: 30177,
         pubkey: accepted.pubkey.to_hex(),
@@ -359,14 +357,11 @@ async fn acknowledge_revision(
         raw_event: accepted.as_json(),
         pending_sync: false,
     };
-    if retain_inbound_event(&conn, &retained)? == InboundOutcome::Skipped {
-        let exact = get_retained_event(&conn, 30177, &accepted.pubkey.to_hex(), actor)?
-            .is_some_and(|row| !row.pending_sync && row.raw_event == accepted.as_json());
-        if !exact {
-            return Err("Configuration accepted; a newer client publication is pending; refresh and reconcile".into());
-        }
-    }
-    Ok(())
+    acknowledgment::retain_with_store_lock(
+        &state.managed_agents_store_lock,
+        &scope.db_path,
+        &retained,
+    )
 }
 
 async fn finish_configuration(
@@ -492,7 +487,32 @@ pub(crate) async fn update_if_adopted(
             .iter_mut()
             .find(|r| r.pubkey == source.pubkey)
             .ok_or("Configuration accepted; source cache disappeared")?;
-        if *current != source {
+        let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
+        if beekeeper_host_core::record::canonical_relay_key(&scope.relay_url)
+            != beekeeper_host_core::record::canonical_relay_key(&relay)
+            || scope.owner_keys.public_key().to_hex() != intent.owner_pubkey
+        {
+            return Err(
+                "Configuration accepted; identity/community changed before local commit".into(),
+            );
+        }
+        acknowledgment::require_exact_head(
+            &scope.db_path,
+            &intent.owner_pubkey,
+            &source.pubkey,
+            intent
+                .accepted_revision
+                .as_deref()
+                .ok_or("accepted revision unavailable")?,
+        )?;
+        let accepted_public = crate::managed_agents::agent_events::agent_event_content(&desired);
+        if *current != source
+            && !crate::commands::personas::matches_exact_managed_agent_echo(
+                &source,
+                current,
+                accepted_public,
+            )
+        {
             return Err(
                 "Configuration accepted; client cache changed before commit; refresh required"
                     .into(),
