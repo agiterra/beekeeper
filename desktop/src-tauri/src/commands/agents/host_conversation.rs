@@ -63,6 +63,7 @@ pub(crate) async fn start_conversation(
         &pair_directory(&record.pubkey, relay)?.join("create.json"),
     )?)
     .map_err(|_| "modern enrollment receipt unavailable")?;
+    ensure_enrolled_running(app, record, relay, &enrolled).await?;
     let transport = Transport::owner(app, relay)?;
     let current = head(app, relay, &record.pubkey).await?;
     let observed = beekeeper_agent_management::status(
@@ -163,6 +164,98 @@ pub(crate) async fn start_conversation(
     }
     Ok(())
 }
+
+/// Bootstrap only the already-commissioned modern executor. Fresh commissioning
+/// remains a separate boundary; Start never mints or binds another provider.
+pub(super) async fn ensure_enrolled_running(
+    app: &AppHandle,
+    record: &ManagedAgentRecord,
+    relay: &str,
+    enrolled: &Enrollment,
+) -> Result<(), String> {
+    let ctx = context()?;
+    let host = app.state::<crate::agent_host::AgentHost>();
+    ensure_existing_with(
+        &ctx,
+        &record.pubkey,
+        relay,
+        enrolled,
+        crate::agent_host::app_scoped::ensure_running,
+        || async {
+            let observed = host.snapshot().await;
+            observed.status.ok_or(observed.message)
+        },
+        || host.start(),
+    )
+    .await
+}
+
+async fn ensure_existing_with<B, O, S, OFut, SFut>(
+    ctx: &Context,
+    actor: &str,
+    relay: &str,
+    enrolled: &Enrollment,
+    bootstrap: B,
+    observe: O,
+    start: S,
+) -> Result<(), String>
+where
+    B: FnOnce() -> Result<(), String>,
+    O: Fn() -> OFut,
+    S: FnOnce() -> SFut,
+    OFut: std::future::Future<Output = Result<beekeeper_host::protocol::Status, String>>,
+    SFut: std::future::Future<Output = Result<(), String>>,
+{
+    stop_intent::require_host_ownership(ctx, actor, relay)?;
+    if enrolled.actor != actor || canonical(&enrolled.relay) != canonical(relay) {
+        return Err(
+            "existing enrollment scope differs; original operation retained, host was not started"
+                .into(),
+        );
+    }
+    let path = layout::host_config_path(&ctx.home, ctx.instance);
+    let config = beekeeper_host_core::config::HostConfig::load(&path)?
+        .ok_or("existing executor is not commissioned; original operation retained, no identity or config was created")?;
+    if config.instance != ctx.instance
+        || canonical(&config.relay_url) != canonical(relay)
+        || config.provider_pubkey != enrolled.provider_authority
+        || !config
+            .runtimes
+            .iter()
+            .any(|runtime| runtime.instance_ref == enrolled.provider_instance)
+    {
+        return Err("existing executor commission does not match instance/community/provider/runtime; original operation retained, no host control was sent".into());
+    }
+    bootstrap()?;
+    served_commission(&observe().await?, &config)?;
+    start().await?;
+    // Control acknowledgement is not a runtime lease. Recheck scope here;
+    // existing relay receipt and lease checks still prove agent availability.
+    if beekeeper_host_core::config::HostConfig::load(&path)?.as_ref() != Some(&config) {
+        return Err("executor commission changed during Start; original operation retained".into());
+    }
+    served_commission(&observe().await?, &config)
+}
+fn canonical(relay: &str) -> String {
+    beekeeper_host_core::record::canonical_relay_key(relay)
+}
+fn served_commission(
+    status: &beekeeper_host::protocol::Status,
+    config: &beekeeper_host_core::config::HostConfig,
+) -> Result<(), String> {
+    if status.protocol_version != beekeeper_host::protocol::PROTOCOL_VERSION
+        || canonical(&status.relay_url) != canonical(&config.relay_url)
+        || status.provider_pubkey != config.provider_pubkey
+        || status.provider_state_dir != config.provider_state_dir
+    {
+        return Err("running host serves a different or unconfirmed commission; no implicit Bind or replacement was requested".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "host_existing_bootstrap_tests.rs"]
+mod bootstrap_tests;
 
 #[cfg(test)]
 mod tests {

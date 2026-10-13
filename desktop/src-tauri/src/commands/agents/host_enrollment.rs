@@ -464,20 +464,12 @@ pub(super) async fn start_existing(
     let Some(held) =
         ownership::for_pair(&context()?.home, context()?.instance, &record.pubkey, relay)?
     else {
-        let activate = enrolled.activate;
-        drop(_guard);
-        return enroll_new_host_agent(
-            app,
-            &app.state::<AppState>(),
-            &record.pubkey,
-            relay,
-            activate,
-        )
-        .await;
+        return Err("modern ownership is unavailable; original enrollment retained, no commissioning or host control was attempted".into());
     };
     if !ownership::is_modern_enrollment(&held) {
         return Err("historical ownership cannot authorize fresh execution; retained source is not imported or reset".into());
     }
+    conversation::ensure_enrolled_running(app, record, relay, &enrolled).await?;
     let current = head(app, relay, &record.pubkey).await?;
     let primary_channel = match held.target.as_ref() {
         Some(target) => {
