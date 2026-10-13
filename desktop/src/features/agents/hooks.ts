@@ -485,7 +485,7 @@ export function useUpdateManagedAgentMutation() {
         );
       }
     },
-    onSettled: async (_data, _error, variables) => {
+    onSettled: (_data, _error, variables) => {
       // Backend republishes kind:0 on a name change (sync_managed_agent_profile),
       // so the relay has fresh profile data — but the desktop's React Query cache
       // for ["user-profile", pubkey] has a 60s staleTime and will not refetch on
@@ -501,7 +501,9 @@ export function useUpdateManagedAgentMutation() {
       // entry. Evict it first so the re-run refetches this profile.
       evictUsersBatchEntries(queryClient, [lowerPubkey]);
 
-      await Promise.all([
+      // Refetches must not delay delivery of an accepted or refused update.
+      // A disconnected profile/directory query is independent of that outcome.
+      void Promise.all([
         queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey }),
         queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey }),
         ...(variables.ownedPersonaUpdate
