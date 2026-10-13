@@ -658,8 +658,8 @@ export function MembersSidebar({
           onEnableConversation={
             viewerIsOwner ? handleEnableConversation : undefined
           }
-          onManagedAgentAction={(agent) => {
-            void handleAgentLifecycleAction(agent, managedAgentRuntime);
+          onManagedAgentAction={(agent, action) => {
+            void handleAgentLifecycleAction(agent, managedAgentRuntime, action);
           }}
           onOpenProfile={handleOpenProfile}
           onRemoveMember={handleRemoveMember}

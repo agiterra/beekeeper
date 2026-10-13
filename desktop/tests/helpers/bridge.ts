@@ -282,12 +282,14 @@ type MockBridgeOptions = {
   startHuddleReturnDelayMs?: number;
   /** Per agent+relay runtime rows for pair-scoped lifecycle commands. */
   managedAgentRuntimes?: Array<{
+    runtimeAvailable?: boolean | null;
     pubkey: string;
     relayUrl: string;
     lifecycle?:
       | "starting"
       | "listening"
       | "waking"
+      | "host_managed"
       | "ready"
       | "failed"
       | "stopped";

@@ -276,3 +276,55 @@ fn an_unreachable_host_is_not_the_same_process_state_as_a_stopped_provider() {
     ));
     assert_eq!(stopped, CodingSessionProviderProcessState::NotSupervised);
 }
+
+#[test]
+fn foreign_or_unconfirmed_scope_never_exposes_a_custody_write_directory() {
+    let ours = "a".repeat(64);
+    let host = AgentHost::new();
+    let live = ProviderChildState::Live {
+        pid: 42,
+        started_at: "now".into(),
+    };
+    for variant in 0..4 {
+        let mut observed = reachable(&ours, live.clone());
+        let served = observed.status.as_mut().unwrap();
+        match variant {
+            0 => served.relay_url = "wss://foreign.example".into(),
+            1 => served.provider_pubkey = "b".repeat(64),
+            2 => served.protocol_version += 1,
+            _ => {}
+        }
+        let saved = record(&ours);
+        let selected = if variant == 3 { None } else { Some(&saved) };
+        let status = CodingSessionProviderStatus::from_snapshot(
+            selected,
+            &host,
+            observed,
+            unregistered(),
+            beekeeper_host::install::LoginAutostart::ShouldAsk,
+        );
+        assert_eq!(status.running, Some(false));
+        assert!(
+            provider_state_dir_from(&status).is_none(),
+            "foreign live PID cannot authorize a custody write"
+        );
+        assert_eq!(
+            status.live_pid(),
+            Some(42),
+            "host's global process observation remains honest"
+        );
+    }
+    let saved = record(&ours);
+    let status = CodingSessionProviderStatus::from_snapshot(
+        Some(&saved),
+        &host,
+        reachable(&ours, live),
+        unregistered(),
+        beekeeper_host::install::LoginAutostart::ShouldAsk,
+    );
+    assert_eq!(status.running, Some(true));
+    assert_eq!(
+        provider_state_dir_from(&status),
+        Some(PathBuf::from("/data/session-provider/aaaa"))
+    );
+}

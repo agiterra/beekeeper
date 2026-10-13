@@ -49,31 +49,20 @@ use tauri::AppHandle;
 #[path = "commission_selection.rs"]
 mod selection;
 
-/// Why the app is writing the host's config — which shapes nothing about the
-/// files, only which op is sent and therefore how it reads in the host's log.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Commissioning {
-    /// A provider identity was just provisioned and handed over.
-    FirstIdentity,
-    /// The active community changed, so the host must serve another relay.
-    RelayChanged,
-}
-
 /// Preserve existing same-scope commissioning, or write first defaults and
 /// scoped provider custody, then ask a running host to pick them up.
 ///
-/// Returns whether a host was listening. `false` is not a failure — a machine
-/// where the host is not yet installed or not yet running is the ordinary case
-/// during an update, and the files are what matter: the host reads them the
-/// next time it starts.
+/// Returns whether a first identity handover reached the host. Existing
+/// same-scope commissioning returns `false` without rewriting or notifying it;
+/// a first commission with an absent host is retained for subsequent bootstrap.
 pub(crate) async fn commission_host(
     app: &AppHandle,
     host: &super::AgentHost,
     relay_url: &str,
     record: &CodingSessionProviderRecord,
     store: &CodingSessionProviderStore,
-    reason: Commissioning,
 ) -> Result<bool, String> {
+    preflight(host, relay_url, Some(&record.provider_pubkey)).await?;
     let instance = super::instance();
     let home = layout::home_dir()?;
     let base_dir = super::session_provider_base_dir(app)?;
@@ -100,26 +89,22 @@ pub(crate) async fn commission_host(
         // Serialize preservation with explicit scoped limit edits. Drop before
         // notifying the host: no client lock is held across IPC.
         let _lock = beekeeper_host_core::ownership::management_lock(&home, instance)?;
+        let existing = selection::load_existing(&layout::host_config_path(&home, instance))?;
         let config = selection::select(
-            selection::load_existing(&layout::host_config_path(&home, instance))?,
+            existing.clone(),
             config,
             record,
-            store,
-            reason,
             crate::session_provider::runtimes::build_runtime_descriptors,
         )?;
+        if existing.as_ref() == Some(&config) {
+            return Ok(false);
+        }
         beekeeper_host_core::provision::write_commissioning(&home, &config, record)?;
     }
 
-    // The secret does not travel on the wire; this only says "look again".
-    // Which op is sent is chosen for the host's log rather than for behaviour
-    // — both re-read the same files — because "the app handed me an identity"
-    // and "the app switched communities" are worth telling apart when reading
-    // back what happened on a machine.
-    let asked = match reason {
-        Commissioning::FirstIdentity => host.adopt_identity().await,
-        Commissioning::RelayChanged => host.bind().await,
-    };
+    // Only a first commission hands over custody. Existing same-scope state
+    // is observed without rewriting files or notifying a running supervisor.
+    let asked = host.adopt_identity().await;
     match asked {
         Ok(()) => Ok(true),
         Err(error) => {
@@ -132,31 +117,45 @@ pub(crate) async fn commission_host(
     }
 }
 
-/// Rewrite `host.json` for a new active relay and ask the host to rebind.
-///
-/// This is the community switch. It replaces the app's old stop-and-start of a
-/// child it owned: the host keeps its socket up throughout, so nothing
-/// watching it sees the host disappear and come back.
-pub(crate) async fn rebind_host(
-    app: &AppHandle,
+/// Validate protected disk scope before a serialized mint or control attempt.
+pub(crate) fn disk_scope(
+    relay: &str,
+    provider: Option<&str>,
+) -> Result<Option<HostConfig>, String> {
+    let instance = super::instance();
+    let home = layout::home_dir()?;
+    let existing = selection::load_existing(&layout::host_config_path(&home, instance))?;
+    selection::check_scope(existing.as_ref(), None, instance, relay, provider)?;
+    Ok(existing)
+}
+
+/// Refuse implicit commissioning or Start outside the existing disk and served
+/// scope. An absent host is allowed; an unreadable host is not proof of absence.
+pub(crate) async fn preflight(
     host: &super::AgentHost,
-    relay_url: &str,
-) -> Result<bool, String> {
-    let store = crate::session_provider::store::load_provider_store(app)?;
-    let Some(record) = store.get(relay_url).cloned() else {
-        // No identity for this relay: nothing to bind to. The host keeps
-        // serving whatever it was serving, which the app's own status display
-        // then reports as a provider for a different relay — true, and the
-        // thing a person needs to see.
-        return Ok(false);
-    };
-    commission_host(
-        app,
-        host,
-        relay_url,
-        &record,
-        &store,
-        Commissioning::RelayChanged,
-    )
-    .await
+    relay: &str,
+    provider: Option<&str>,
+) -> Result<Option<HostConfig>, String> {
+    let instance = super::instance();
+    let existing = disk_scope(relay, provider)?;
+    let observed = host.snapshot().await;
+    if observed.status.is_none()
+        && !matches!(
+            observed.reachability,
+            super::HostReachability::Absent { .. }
+        )
+    {
+        return Err(format!(
+            "executor scope is unconfirmed: {}; no commissioning or Start was requested",
+            observed.message
+        ));
+    }
+    selection::check_scope(
+        existing.as_ref(),
+        observed.status.as_ref(),
+        instance,
+        relay,
+        provider,
+    )?;
+    Ok(existing)
 }

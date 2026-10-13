@@ -41,7 +41,13 @@ static LAST_RESTAGED_PID: AtomicU32 = AtomicU32::new(0);
 /// must answer quickly and must not fail because a re-stage did. A re-stage
 /// that does not run this time is not lost — the file still names the row, and
 /// the next poll tries again.
-pub(crate) fn restage_if_needed(app: &AppHandle, state_dir: &Path, live_pid: Option<u32>) {
+pub(crate) fn restage_if_needed(
+    app: &AppHandle,
+    state_dir: &Path,
+    live_pid: Option<u32>,
+    relay_url: &str,
+    provider: &str,
+) {
     let Some(pid) = live_pid else {
         // No live child: nothing to re-stage *for*. Clear the marker so the
         // next child gets served even if it happens to reuse a pid.
@@ -68,15 +74,32 @@ pub(crate) fn restage_if_needed(app: &AppHandle, state_dir: &Path, live_pid: Opt
 
     let app = app.clone();
     let state_dir = state_dir.to_path_buf();
+    let relay_url = relay_url.to_owned();
+    let provider = provider.to_owned();
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
-        let relay_url = crate::relay::relay_ws_url_with_override(&state);
         // Never cancelled: the app is not shutting the provider down any more,
         // so there is no stop flag for this to observe.
         let never = AtomicBool::new(false);
-        match restage_actor_seats_for_provider(&app, &state, &state_dir, &relay_url, pid, &never)
-            .await
-        {
+        let result = async {
+            let host = app.state::<super::AgentHost>();
+            super::commission::preflight(&host, &relay_url, Some(&provider)).await?;
+            let observed = host.snapshot().await;
+            let exact = observed.status.as_ref().is_some_and(|served| {
+                served.provider.live_pid() == Some(pid)
+                    && served.provider_pubkey == provider
+                    && served.provider_state_dir == state_dir
+                    && beekeeper_host_core::record::canonical_relay_key(&served.relay_url)
+                        == beekeeper_host_core::record::canonical_relay_key(&relay_url)
+            });
+            if !exact {
+                return Err("seat custody target changed; original requests retained".to_string());
+            }
+            restage_actor_seats_for_provider(&app, &state, &state_dir, &relay_url, pid, &never)
+                .await
+        }
+        .await;
+        match result {
             Ok(report) => {
                 if report.requested > 0 {
                     eprintln!(

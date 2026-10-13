@@ -7,6 +7,7 @@ import {
   canonicalRelayUrl,
   findManagedAgentRuntime,
   managedAgentRuntimeKey,
+  managedAgentPairAction,
 } from "./managedAgentRuntimeStatus.ts";
 
 const runtime = (overrides = {}) => ({
@@ -168,4 +169,26 @@ test("host ownership uses verified lease availability independently of local set
     agentCommunityAvailability({ ...host, pid: 123, runtimeAvailable: false }),
     "Unavailable",
   );
+});
+
+test("host pair Start reconciles unavailable execution without claiming termination", () => {
+  const host = runtime({
+    lifecycle: "host_managed",
+    localSetup: false,
+    pid: null,
+  });
+  assert.equal(
+    managedAgentPairAction({ ...host, runtimeAvailable: true }),
+    "stop",
+  );
+  for (const runtimeAvailable of [false, null, undefined]) {
+    assert.equal(
+      managedAgentPairAction({ ...host, runtimeAvailable }),
+      "start",
+    );
+    assert.equal(
+      agentCommunityAvailability({ ...host, runtimeAvailable }),
+      "Unavailable",
+    );
+  }
 });

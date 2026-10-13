@@ -182,6 +182,7 @@ type MockManagedAgentRuntimeSeed = {
   pubkey: string;
   relayUrl: string;
   lifecycle?: MockManagedAgentRuntimeRow["lifecycle"];
+  runtimeAvailable?: boolean | null;
 };
 
 type MockRelayAgentSeed = {
@@ -1257,6 +1258,7 @@ type MockManagedAgent = RawManagedAgent & {
 // Mirrors the Rust `ManagedAgentRuntimeStatus` camelCase wire shape for the
 // pair-scoped lifecycle commands.
 type MockManagedAgentRuntimeRow = {
+  runtimeAvailable?: boolean | null;
   pubkey: string;
   relayUrl: string;
   localSetup: boolean;
@@ -1265,7 +1267,7 @@ type MockManagedAgentRuntimeRow = {
     | "listening"
     | "waking"
     | "ready"
-    | "hostManaged"
+    | "host_managed"
     | "failed"
     | "stopped";
   pid: number | null;
@@ -2769,6 +2771,7 @@ function resetMockManagedAgents(config?: E2eConfig) {
       relayUrl: seed.relayUrl,
       localSetup: true,
       lifecycle: seed.lifecycle ?? "ready",
+      runtimeAvailable: seed.runtimeAvailable,
       pid: seed.lifecycle === "stopped" ? null : 43000,
       error: null,
       logPath: null,
@@ -9475,6 +9478,13 @@ function handleManagedAgentRuntimeAction(
   const agent = getMockManagedAgent(args.pubkey);
   if (agent.backend.type !== "local") {
     throw new Error("managed runtime pairs require a local agent");
+  }
+  const owned = mockManagedAgentRuntimes.find(
+    (row) => row.pubkey === args.pubkey && row.relayUrl === args.relayUrl,
+  );
+  if (owned?.lifecycle === "host_managed") {
+    owned.runtimeAvailable = action !== "stop";
+    return { ...owned };
   }
   return {
     ...upsertMockManagedAgentRuntime(

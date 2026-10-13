@@ -317,6 +317,9 @@ pub(crate) async fn ensure_host_serving_project(
     provider_pubkey: &str,
     relay_url: &str,
 ) -> Result<bool, String> {
+    crate::agent_host::commission::preflight(host, relay_url, Some(provider_pubkey))
+        .await?
+        .ok_or("executor is not commissioned; no project admission or Start was requested")?;
     if let Err(error) = host.start().await {
         eprintln!("beekeeper-desktop: agent-host: could not start the provider: {error}");
     }

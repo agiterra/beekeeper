@@ -169,6 +169,7 @@ export function useMembersSidebarActions({
   async function handleLifecycleAction(
     agent: ManagedAgent,
     runtime?: ManagedAgentRuntimeStatus,
+    explicitAction?: "stop",
   ) {
     clearActionFeedback();
     setActiveActionKey(`agent:${agent.pubkey}`);
@@ -179,7 +180,7 @@ export function useMembersSidebarActions({
       // touches its runtimes in other communities. Provider agents keep the
       // agent-wide deploy/!shutdown flow below.
       if (agent.backend.type === "local" && relayUrl) {
-        const action = managedAgentPairAction(runtime);
+        const action = explicitAction ?? managedAgentPairAction(runtime);
         await runtimeActionMutation.mutateAsync({
           action,
           pubkey: agent.pubkey,

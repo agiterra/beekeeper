@@ -54,12 +54,14 @@ export function managedAgentRuntimeKey(
 
 export type ManagedAgentPairAction = "start" | "stop" | "restart";
 
-/** Menu action for one agent+community pair. A missing runtime row means the
- * pair is not running here, so the only sensible action is to start it. */
+/** Reconcile one agent+community pair through the shared lifecycle path.
+ * Missing availability is not termination proof; Start preserves backend fences. */
 export function managedAgentPairAction(
   runtime: ManagedAgentRuntimeStatus | undefined,
 ): ManagedAgentPairAction {
   if (!runtime || runtime.lifecycle === "stopped") return "start";
+  if (runtime.lifecycle === "host_managed" && runtime.runtimeAvailable !== true)
+    return "start";
   if (runtime.lifecycle === "failed") return "restart";
   return "stop";
 }

@@ -88,8 +88,12 @@ pub(super) async fn bootstrap(
         )
         .await?;
     }
-    crate::agent_host::app_scoped::ensure_running()?;
-    app.state::<crate::agent_host::AgentHost>().start().await?;
+    crate::session_provider::commands::ensure_host_running(
+        app,
+        &app.state::<crate::agent_host::AgentHost>(),
+        relay,
+    )
+    .await?;
     beekeeper_host_core::config::HostConfig::load(&path)?
         .ok_or_else(|| "host commissioning remains unconfirmed".into())
 }

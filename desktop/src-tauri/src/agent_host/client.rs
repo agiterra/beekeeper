@@ -178,11 +178,6 @@ impl AgentHost {
         self.lifecycle(Request::Stop).await
     }
 
-    /// Ask the host to re-read `host.json` — the community switch.
-    pub async fn bind(&self) -> Result<(), String> {
-        self.lifecycle(Request::Bind).await
-    }
-
     /// Ask the host to re-read the identity after the key file was written.
     pub async fn adopt_identity(&self) -> Result<(), String> {
         self.lifecycle(Request::AdoptIdentity).await

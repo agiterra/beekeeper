@@ -64,7 +64,7 @@ type MembersSidebarMemberCardProps = {
   onBan: (member: ChannelMember) => void;
   onChangeRole: (member: ChannelMember, role: string) => void;
   onEditRespondTo?: (agent: ManagedAgent) => void;
-  onManagedAgentAction: (agent: ManagedAgent) => void;
+  onManagedAgentAction: (agent: ManagedAgent, action?: "stop") => void;
   onEnableConversation?: (agent: ManagedAgent) => void;
   onOpenProfile?: (pubkey: string) => void;
   onRemoveMember: (member: ChannelMember) => void;
@@ -327,7 +327,7 @@ function MemberActionsMenu({
   onBan: (member: ChannelMember) => void;
   onChangeRole: (member: ChannelMember, role: string) => void;
   onEditRespondTo?: (agent: ManagedAgent) => void;
-  onManagedAgentAction: (agent: ManagedAgent) => void;
+  onManagedAgentAction: (agent: ManagedAgent, action?: "stop") => void;
   onEnableConversation?: (agent: ManagedAgent) => void;
   onRemoveMember: (member: ChannelMember) => void;
   onTimeout: (member: ChannelMember, expiresAtSecs: number) => void;
@@ -380,6 +380,16 @@ function MemberActionsMenu({
                 ? MANAGED_AGENT_PAIR_ACTION_LABELS[pairAction]
                 : getManagedAgentPrimaryActionLabel(managedAgent)}
             </DropdownMenuItem>
+            {pairAction === "start" && managedAgent.backend.type === "local" ? (
+              <DropdownMenuItem
+                data-testid={`sidebar-agent-stop-${member.pubkey}`}
+                disabled={disabled}
+                onClick={() => onManagedAgentAction(managedAgent, "stop")}
+              >
+                <Square className="h-4 w-4" />
+                Stop Agent
+              </DropdownMenuItem>
+            ) : null}
             {managedAgent.backend.type === "local" && onEnableConversation ? (
               <DropdownMenuItem
                 disabled={disabled}

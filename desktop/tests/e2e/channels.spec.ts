@@ -4876,3 +4876,46 @@ test("canceling channel deletion keeps the owned stream", async ({ page }) => {
   await expect(page.getByTestId("chat-title")).toHaveText(channelName);
   await expect(page.getByTestId("stream-list")).toContainText(channelName);
 });
+
+test("host-managed sidebar preserves uncertain Stop and restores Start without changing ownership", async ({
+  page,
+}) => {
+  const pubkey = TEST_IDENTITIES.charlie.pubkey;
+  const relay = (
+    process.env.BEEKEEPER_E2E_RELAY_URL ?? "http://localhost:3000"
+  ).replace(/^http/, "ws");
+  await installMockBridge(page, {
+    managedAgents: [
+      { pubkey, name: "charlie", status: "running", channelNames: ["general"] },
+    ],
+    managedAgentRuntimes: [
+      {
+        pubkey,
+        relayUrl: relay,
+        lifecycle: "host_managed",
+        runtimeAvailable: null,
+      },
+    ],
+  });
+  await page.goto("/");
+  await openMembersSidebar(page, "general");
+  const badge = page.getByTestId(`sidebar-managed-agent-status-${pubkey}`);
+  const primary = page.getByTestId(`sidebar-agent-action-${pubkey}`);
+  await expect(badge).toContainText("Unavailable");
+  await openMemberMenu(page, pubkey);
+  await expect(primary).toContainText("Start Agent");
+  await page.getByTestId(`sidebar-agent-stop-${pubkey}`).click();
+  await expect(badge).toContainText("Unavailable");
+  await openMemberMenu(page, pubkey);
+  await expect(primary).toContainText("Start Agent");
+  await primary.click();
+  await expect(badge).toContainText("Here");
+  await openMemberMenu(page, pubkey);
+  await expect(primary).toContainText("Stop Agent");
+  await expect(page.getByTestId(`sidebar-agent-stop-${pubkey}`)).toHaveCount(0);
+  const commands = await readCommandLog(page);
+  expect(commandCount(commands, "stop_managed_agent_runtime")).toBe(1);
+  expect(commandCount(commands, "start_managed_agent_runtime")).toBe(1);
+  expect(commandCount(commands, "stop_managed_agent")).toBe(0);
+  expect(commandCount(commands, "start_managed_agent")).toBe(0);
+});

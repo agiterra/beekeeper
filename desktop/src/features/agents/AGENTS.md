@@ -223,6 +223,8 @@ admit or observe that exact responsibility after publication. Channel members
 can retry an owned local agent with **Enable conversation here**, without
 resending its messages. Membership, author policy and protected execution
 scope remain worker/relay checks; no community-wide read grant is inferred.
+Desktop community navigation only changes the view; it never rebinds a commissioned executor. Implicit setup and Start must verify the disk and served host scope before minting custody or requesting control. A foreign scope is an actionable refusal, not an automatic transfer. Host ownership and signed availability are separate: unavailable or unconfirmed availability offers reconciled Start and retains an explicit Stop option; neither absence proves process exit.
+
 Remote deployment keeps its existing replay-timestamp contract. Harness,
 provider, model and effort configuration rules above are unchanged.
 

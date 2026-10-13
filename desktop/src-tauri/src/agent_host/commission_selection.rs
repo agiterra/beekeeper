@@ -41,23 +41,11 @@ fn validate(config: &HostConfig) -> Result<(), String> {
     parse_runtime_descriptors(&runtimes)?;
     Ok(())
 }
-fn owner(record: &CodingSessionProviderRecord) -> Result<nostr::PublicKey, String> {
-    let actor = nostr::PublicKey::from_hex(&record.provider_pubkey)
-        .map_err(|_| "provider identity invalid")?;
-    let tag = record
-        .auth_tag
-        .as_deref()
-        .ok_or("explicit rebind requires provider owner attestation")?;
-    beekeeper_sdk_pkg::nip_oa::verify_auth_tag(tag, &actor)
-        .map_err(|_| "provider owner attestation invalid".into())
-}
 
 pub(super) fn select(
     existing: Option<HostConfig>,
     mut target: HostConfig,
     record: &CodingSessionProviderRecord,
-    store: &CodingSessionProviderStore,
-    reason: Commissioning,
     discover: impl FnOnce() -> Vec<RuntimeDescriptor>,
 ) -> Result<HostConfig, String> {
     target.validate()?;
@@ -83,32 +71,37 @@ pub(super) fn select(
         // Keep paths, limits, commands, models and every capability verbatim.
         return Ok(existing);
     }
-    if reason != Commissioning::RelayChanged
-        || canonical_relay_key(&existing.relay_url) == canonical_relay_key(&target.relay_url)
-    {
-        return Err(
-            "commissioned host scope conflicts; use explicit authorized rebind/commissioning"
-                .into(),
-        );
+    Err("commissioned host scope conflicts; viewing another community cannot transfer execution; use explicit operator commissioning".into())
+}
+
+/// Check requested scope before any key mint, file write or control request.
+pub(super) fn check_scope(
+    config: Option<&HostConfig>,
+    served: Option<&beekeeper_host::protocol::Status>,
+    instance: layout::Instance,
+    relay: &str,
+    provider: Option<&str>,
+) -> Result<(), String> {
+    if let Some(config) = config {
+        validate(config)?;
+        if config.instance != instance
+            || canonical_relay_key(&config.relay_url) != canonical_relay_key(relay)
+            || provider.is_some_and(|provider| provider != config.provider_pubkey)
+        {
+            return Err("this executor is commissioned for another scope; changing the viewing community does not transfer execution; no identity, files or host control were changed".into());
+        }
     }
-    let old = store
-        .get(&existing.relay_url)
-        .filter(|old| old.provider_pubkey == existing.provider_pubkey)
-        .ok_or("foreign commissioned provider custody cannot be rebound by this desktop")?;
-    if owner(old)? != owner(record)? {
-        return Err(
-            "cross-community rebind cannot transfer another owner's provider custody".into(),
-        );
+    if let Some(served) = served {
+        let config = config.ok_or("running executor has no matching disk commission; repair explicitly without replacing its ownership")?;
+        if served.protocol_version != beekeeper_host::protocol::PROTOCOL_VERSION
+            || canonical_relay_key(&served.relay_url) != canonical_relay_key(&config.relay_url)
+            || served.provider_pubkey != config.provider_pubkey
+            || served.provider_state_dir != config.provider_state_dir
+        {
+            return Err("running executor serves another or unconfirmed scope; no implicit Bind or Start was requested".into());
+        }
     }
-    // Explicit same-owner rebind retains this machine's operator runtime offer;
-    // only selected new community identity/custody paths are replaced.
-    target.runtimes = existing.runtimes;
-    target.max_sessions = existing.max_sessions;
-    target.turn_idle_timeout_secs = existing.turn_idle_timeout_secs;
-    target.turn_budget = existing.turn_budget;
-    target.provider_command = existing.provider_command;
-    validate(&target)?;
-    Ok(target)
+    Ok(())
 }
 
 #[cfg(test)]

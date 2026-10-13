@@ -299,7 +299,7 @@ for why that is not a substrate control channel.
 | `status` | everything below, in one round trip |
 | `logs` | a bounded tail of the provider's log |
 | `start` / `stop` / `restart` | the provider child; the host keeps running |
-| `bind` | re-read `host.json` — the community switch |
+| `bind` | explicit operator rebind after supported commissioning; never a desktop community-view switch |
 | `adopt-identity` | re-read the key file after the app wrote it |
 | `push-activity` | historical protocol operation; current desktop does not publish executor activity |
 

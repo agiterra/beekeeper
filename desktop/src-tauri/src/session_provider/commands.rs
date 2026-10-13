@@ -365,6 +365,8 @@ pub async fn provision_coding_session_provider(
     host: State<'_, AgentHost>,
     expected_relay_url: Option<String>,
 ) -> Result<CodingSessionProviderStatus, String> {
+    let requested = provider_command_relay(&state, expected_relay_url.as_deref())?;
+    let existing = commission::preflight(&host, &requested, None).await?;
     let relay_url = {
         let _provision_guard = PROVISION_LOCK
             .lock()
@@ -374,7 +376,32 @@ pub async fn provision_coding_session_provider(
         // caller pin never falls through to whichever relay happens to be
         // active now.
         let relay_url = provider_command_relay(&state, expected_relay_url.as_deref())?;
+        let home = beekeeper_host_core::layout::home_dir()?;
+        let _commission_guard =
+            beekeeper_host_core::ownership::management_lock(&home, crate::agent_host::instance())?;
         let mut store = load_provider_store(&app)?;
+        let current = commission::disk_scope(
+            &relay_url,
+            store
+                .get(&relay_url)
+                .map(|record| record.provider_pubkey.as_str()),
+        )?;
+        if current != existing {
+            return Err(
+                "executor commission changed during provisioning; no identity was minted".into(),
+            );
+        }
+        if relay_url != requested {
+            return Err("community changed during provisioning; no identity was minted".into());
+        }
+        if let Some(config) = &existing {
+            if store
+                .get(&relay_url)
+                .is_none_or(|record| record.provider_pubkey != config.provider_pubkey)
+            {
+                return Err("existing commissioned provider custody is not this desktop record; no replacement identity was minted".into());
+            }
+        }
         if store.get(&relay_url).is_none() {
             let owner_keys = state.signing_keys()?;
             let record = mint_provider_record(&owner_keys, &relay_url)?;
@@ -395,6 +422,7 @@ pub async fn provision_coding_session_provider(
     let Some(record) = store.get(&relay_url).cloned() else {
         return Err("failed to provision a coding-session provider identity".to_string());
     };
+    commission::preflight(&host, &relay_url, Some(&record.provider_pubkey)).await?;
     // Trust seeding is part of provisioning, not a side effect of starting: a
     // provider whose output the desktop refuses to render is worse than one
     // that never started.
@@ -420,15 +448,7 @@ pub async fn provision_coding_session_provider(
     // Hand the identity to the agent host: write `host.json` and the 0600 key
     // file, then ask it to look. This is the moment "after Beekeeper is
     // installed and commissioned" refers to.
-    commission::commission_host(
-        &app,
-        &host,
-        &relay_url,
-        &record,
-        &store,
-        commission::Commissioning::FirstIdentity,
-    )
-    .await?;
+    commission::commission_host(&app, &host, &relay_url, &record, &store).await?;
 
     // "After Beekeeper is installed and commissioned" — this is that moment.
     // Never fatal, always disclosed: the registration is read back and travels
@@ -444,7 +464,7 @@ pub async fn provision_coding_session_provider(
         eprintln!("beekeeper-desktop: agent-host: {warning}");
     }
 
-    let _ = ensure_host_running(&app, &host, &relay_url).await;
+    ensure_host_running(&app, &host, &relay_url).await?;
     provider_status(&app, &host, &relay_url).await
 }
 
@@ -463,9 +483,13 @@ pub(crate) async fn ensure_host_running(
     host: &AgentHost,
     relay_url: &str,
 ) -> Result<(), String> {
+    let existing = commission::preflight(host, relay_url, None)
+        .await?
+        .ok_or("executor is not commissioned; provision it explicitly before Start")?;
     // Without a login registration, reuse the persistent app-scoped bootstrap.
     // The host owns its lifetime after bootstrap and outlives this client.
     run_app_scoped_host().await;
+    commission::preflight(host, relay_url, Some(&existing.provider_pubkey)).await?;
     let started = host.start().await;
     if let Err(error) = &started {
         // Disclosed, not fatal: the status this returns to carries the
@@ -488,13 +512,14 @@ pub async fn ensure_coding_session_provider_running(
     expected_relay_url: Option<String>,
 ) -> Result<CodingSessionProviderStatus, String> {
     let relay_url = provider_command_relay(&state, expected_relay_url.as_deref())?;
-    // Re-assert the commissioning first: the host may have been installed,
-    // reinstalled or pointed at another community since this identity was
-    // provisioned, and `host.json` is the only thing that tells it which.
-    if let Err(error) = commission::rebind_host(&app, &host, &relay_url).await {
-        eprintln!("beekeeper-desktop: agent-host: could not rebind: {error}");
-    }
-    let _ = ensure_host_running(&app, &host, &relay_url).await;
+    let store = load_provider_store(&app)?;
+    let provider = store
+        .get(&relay_url)
+        .map(|record| record.provider_pubkey.as_str());
+    commission::preflight(&host, &relay_url, provider)
+        .await?
+        .ok_or("executor is not commissioned; provision it explicitly before Start")?;
+    ensure_host_running(&app, &host, &relay_url).await?;
     provider_status(&app, &host, &relay_url).await
 }
 
@@ -540,6 +565,13 @@ pub async fn stop_coding_session_provider(
     host: State<'_, AgentHost>,
 ) -> Result<CodingSessionProviderStatus, String> {
     let relay_url = relay_ws_url_with_override(&state);
+    let store = load_provider_store(&app)?;
+    let provider = store
+        .get(&relay_url)
+        .map(|record| record.provider_pubkey.as_str());
+    commission::preflight(&host, &relay_url, provider)
+        .await?
+        .ok_or("executor is not commissioned for this community; no Stop was requested")?;
     // A failure here is reported, not swallowed: "stop" is a request a person
     // made, and a stop that did not happen must not read as one that did.
     host.stop().await?;

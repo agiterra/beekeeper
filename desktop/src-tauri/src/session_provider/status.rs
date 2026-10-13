@@ -127,8 +127,18 @@ impl CodingSessionProviderStatus {
         autostart: beekeeper_host::install::Registration,
         login: beekeeper_host::install::LoginAutostart,
     ) -> Self {
+        let exact_scope = record
+            .zip(snapshot.status.as_ref())
+            .is_some_and(|(record, served)| {
+                served.protocol_version == beekeeper_host::protocol::PROTOCOL_VERSION
+                    && served.provider_pubkey == record.provider_pubkey
+                    && super::canonical_relay_key(&served.relay_url)
+                        == super::canonical_relay_key(&record.relay_url)
+            });
         let running = match record {
-            Some(record) => snapshot.running(&record.provider_pubkey),
+            Some(record) if exact_scope => snapshot.running(&record.provider_pubkey),
+            Some(_) if snapshot.reachability.is_reachable() => Some(false),
+            Some(_) => None,
             // Nothing is provisioned for this relay, and the host answered:
             // that is a definite "not running", not an unknown.
             None if snapshot.reachability.is_reachable() => Some(false),
@@ -137,6 +147,7 @@ impl CodingSessionProviderStatus {
         let host_state_dir = snapshot
             .status
             .as_ref()
+            .filter(|_| exact_scope)
             .map(|status| status.provider_state_dir.clone());
         Self {
             provisioned: record.is_some(),
@@ -230,15 +241,30 @@ pub(crate) async fn provider_status(
     // generation. Canonical fresh managed custody is already persisted on the
     // host and recovers headlessly; this fallback performs no execution or
     // lifecycle control. Fire-and-forget so pending custody cannot block status.
-    match (status.live_pid(), provider_state_dir_from(&status)) {
-        (Some(pid), Some(state_dir)) => {
-            crate::agent_host::seat_restage::restage_if_needed(app, &state_dir, Some(pid))
+    match (
+        status.running,
+        status.live_pid(),
+        provider_state_dir_from(&status),
+        status.provider_pubkey.as_deref(),
+    ) {
+        (Some(true), Some(pid), Some(state_dir), Some(provider)) => {
+            crate::agent_host::seat_restage::restage_if_needed(
+                app,
+                &state_dir,
+                Some(pid),
+                relay_url,
+                provider,
+            )
         }
         // No live child, or a host that did not say where its state dir is:
         // clear the claim so the next child gets served.
-        _ => {
-            crate::agent_host::seat_restage::restage_if_needed(app, std::path::Path::new(""), None)
-        }
+        _ => crate::agent_host::seat_restage::restage_if_needed(
+            app,
+            std::path::Path::new(""),
+            None,
+            relay_url,
+            "",
+        ),
     }
     Ok(status)
 }
