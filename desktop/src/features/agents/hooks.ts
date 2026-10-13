@@ -725,9 +725,11 @@ export function useDeleteManagedAgentMutation() {
       pubkey: string;
       forceRemoteDelete?: boolean;
     }) => deleteManagedAgent(pubkey, forceRemoteDelete),
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
-      await queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey });
+    onSettled: () => {
+      // Refresh independently: directory availability must not hide retirement
+      // success or a pending/refused backend outcome from the caller.
+      void queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey });
     },
   });
 }
