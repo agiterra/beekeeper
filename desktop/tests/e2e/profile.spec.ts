@@ -2653,3 +2653,97 @@ test("settings subtitles share the Appearance secondary color", async ({
     );
   }
 });
+
+test("owned agent profile Save commits definition and instance with one command", async ({
+  page,
+}) => {
+  const pubkey = TEST_IDENTITIES.tyler.pubkey;
+  const personaId = "profile-owned-save";
+  await installMockBridge(page, {
+    acpRuntimesCatalog: [
+      {
+        id: "codex",
+        label: "Codex",
+        command: "codex-acp",
+        availability: "available",
+        default_args: [],
+        install_hint: "",
+        mcp_command: "",
+      },
+    ],
+    managedAgents: [
+      {
+        pubkey,
+        name: "Owned Save",
+        personaId,
+        runtime: "codex",
+        status: "stopped",
+        channelNames: ["general"],
+      },
+    ],
+    personas: [
+      {
+        id: personaId,
+        displayName: "Owned Save",
+        runtime: "codex",
+        systemPrompt: "Original private instructions.",
+      },
+    ],
+  });
+  await page.goto("/");
+  await openDashboardTab(page, "agents");
+  await openDirectoryAgentProfile(page, "Owned Save");
+  await page.getByTestId("user-profile-edit-agent").click();
+  const dialog = page.getByTestId("persona-dialog");
+  await expect(dialog).toBeVisible();
+  await page
+    .locator("#persona-system-prompt")
+    .fill("Updated owned private instructions.");
+  const before = await page.evaluate(
+    () => window.__BEEKEEPER_E2E_COMMAND_LOG__?.length ?? 0,
+  );
+  await dialog.getByRole("button", { name: "Save changes" }).click();
+  await expect(dialog).not.toBeVisible();
+  const updates = await page.evaluate(
+    (from) =>
+      (window.__BEEKEEPER_E2E_COMMAND_LOG__ ?? [])
+        .slice(from)
+        .filter(
+          (entry) =>
+            entry.command === "update_managed_agent" ||
+            entry.command === "update_persona",
+        ),
+    before,
+  );
+  expect(updates).toHaveLength(1);
+  expect(updates[0]).toMatchObject({
+    command: "update_managed_agent",
+    payload: {
+      input: {
+        pubkey,
+        ownedPersonaUpdate: {
+          definition: {
+            id: personaId,
+            systemPrompt: "Updated owned private instructions.",
+          },
+        },
+      },
+    },
+  });
+  const stored = await page.evaluate(async () => {
+    const invoke = window.__BEEKEEPER_E2E_INVOKE_MOCK_COMMAND__;
+    if (!invoke) throw new Error("Mock bridge unavailable");
+    return (await invoke("list_managed_agents", {})) as Array<{
+      pubkey: string;
+      system_prompt: string;
+    }>;
+  });
+  expect(stored.find((agent) => agent.pubkey === pubkey)?.system_prompt).toBe(
+    "Updated owned private instructions.",
+  );
+  await page.getByTestId("user-profile-edit-agent").click();
+  await expect(dialog).toBeVisible();
+  await expect(page.locator("#persona-system-prompt")).toHaveValue(
+    "Updated owned private instructions.",
+  );
+});

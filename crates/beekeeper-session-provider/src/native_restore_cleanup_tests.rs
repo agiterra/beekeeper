@@ -104,6 +104,8 @@ async fn rejected_native_restore_with_unreaped_group_survives_recovery_and_stop_
     let root = tempfile::tempdir().unwrap();
     let (mut provider, prior) = fixture(root.path()).await;
     let group_file = root.path().join("work/group");
+    // Reproduce the observable file-created/write-not-complete startup cut.
+    std::fs::write(&group_file, b"").unwrap();
     let gate = root.path().join("work/gate");
     let log = root.path().join("work/methods");
     let script = format!(
@@ -118,17 +120,22 @@ async fn rejected_native_restore_with_unreaped_group_survives_recovery_and_stop_
     let restore = run_restore_job(job);
     tokio::pin!(restore);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while !group_file.exists() {
+    let group = loop {
+        // Creation precedes printf's write. Wait for the actual positive PID,
+        // not merely the directory entry, before joining that process group.
+        if let Some(group) = std::fs::read_to_string(&group_file)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<i32>().ok())
+            .filter(|group| *group > 0)
+        {
+            break group;
+        }
         tokio::select! {
             _ = &mut restore => panic!("restore completed before gate"),
             _ = tokio::time::sleep(Duration::from_millis(10)) => {}
         }
         assert!(tokio::time::Instant::now() < deadline);
-    }
-    let group: i32 = std::fs::read_to_string(&group_file)
-        .unwrap()
-        .parse()
-        .unwrap();
+    };
     // This independently parented group member is killed by ACP shutdown, but
     // its exact zombie remains observable until this test joins it. Group
     // absence therefore cannot be inferred from the direct adapter's join.

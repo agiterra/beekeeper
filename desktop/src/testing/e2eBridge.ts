@@ -1,3 +1,8 @@
+import {
+  applyMockManagedAgentUpdate,
+  applyMockPersonaFields,
+  type MockManagedAgentUpdateInput,
+} from "./e2eBridgeManagedAgentUpdates.ts";
 import { mockLiveReadinessMatches } from "./e2eBridgeLiveReadiness";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { emit, listen } from "@tauri-apps/api/event";
@@ -8817,17 +8822,7 @@ async function applyMockPersonaUpdate(
   if (!persona) {
     throw new Error(`agent ${input.id} not found`);
   }
-  persona.display_name = input.displayName.trim();
-  persona.avatar_url = input.avatarUrl?.trim() || null;
-  persona.system_prompt = input.systemPrompt.trim();
-  persona.runtime = input.runtime?.trim() || null;
-  persona.model = input.model?.trim() || null;
-  persona.provider = input.provider?.trim() || null;
-  if (input.envVars !== undefined) {
-    // Absent = preserve; present = replace entirely (matches Rust handler).
-    persona.env_vars = { ...input.envVars };
-  }
-  applyMockPersonaBehavior(persona, input.behavior);
+  applyMockPersonaFields(persona, input, true);
   persona.updated_at = new Date().toISOString();
 
   await emit("agents-data-changed");
@@ -9704,36 +9699,15 @@ async function handleGetManagedAgentLog(args: {
 }
 
 async function handleUpdateManagedAgent(args: {
-  input: {
-    pubkey: string;
-    name?: string;
-    model?: string | null;
-    systemPrompt?: string | null;
-    envVars?: Record<string, string>;
-    respondTo?: "owner-only" | "allowlist" | "anyone";
-    respondToAllowlist?: string[];
-  };
+  input: MockManagedAgentUpdateInput;
 }): Promise<{ agent: RawManagedAgent; profile_sync_error: string | null }> {
   const agent = getMockManagedAgent(args.input.pubkey);
-  if (args.input.name !== undefined) {
-    agent.name = args.input.name;
-  }
-  if (args.input.model !== undefined) {
-    agent.model = args.input.model;
-  }
-  if (args.input.systemPrompt !== undefined) {
-    agent.system_prompt = args.input.systemPrompt;
-  }
-  if (args.input.envVars !== undefined) {
-    agent.env_vars = { ...args.input.envVars };
-  }
-  if (args.input.respondTo !== undefined) {
-    agent.respond_to = args.input.respondTo;
-  }
-  if (args.input.respondToAllowlist !== undefined) {
-    agent.respond_to_allowlist = args.input.respondToAllowlist;
-  }
-  agent.updated_at = new Date().toISOString();
+  applyMockManagedAgentUpdate(
+    agent,
+    args.input,
+    mockPersonas,
+    mockManagedAgents,
+  );
   return { agent: cloneManagedAgent(agent), profile_sync_error: null };
 }
 

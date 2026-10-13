@@ -166,7 +166,7 @@ test("adding an agent to a channel keeps its instruction access global", async (
   );
 });
 
-test("full agent editor tightens the exact sidebar agent instance", async ({
+test("access save targets exact instance; shared-definition profile edit refuses", async ({
   page,
 }) => {
   const agent = TEST_IDENTITIES.tyler;
@@ -227,18 +227,13 @@ test("full agent editor tightens the exact sidebar agent instance", async ({
   );
   await expect(accessBadge).toHaveText("Anyone");
 
-  await page.getByTestId(`sidebar-member-${agent.pubkey}`).click();
-  await expect(page.getByTestId("user-profile-panel")).toBeVisible();
-  await page.getByTestId("user-profile-edit-agent").click();
-  const dialog = page.getByRole("dialog", { name: "Edit agent" });
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Advanced" }).click();
-  await choosePersonaAccess(page, "Only me (default)");
-  await dialog.getByRole("tab", { name: "Customize for this agent" }).click();
-  const saveChanges = dialog.getByRole("button", { name: "Save changes" });
-  await expect(saveChanges).toBeEnabled();
-  await saveChanges.click();
-  await expect(dialog).not.toBeVisible();
+  // The ordinary instance access control remains valid even for a shared definition.
+  await openAgentAccessDialog(page, agent.pubkey);
+  await page.getByTestId("agent-respond-to-select").selectOption("owner-only");
+  await page.getByRole("button", { name: "Save access" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Manage agent access" }),
+  ).not.toBeVisible();
 
   const updateCommand = await page.evaluate(
     (pubkey) =>
@@ -257,7 +252,6 @@ test("full agent editor tightens the exact sidebar agent instance", async ({
     input: { pubkey: preferredSiblingPubkey },
   });
 
-  await page.getByTestId("channel-members-trigger").click();
   await expect(accessBadge).toHaveText("Only me");
 
   // The definition still says "anyone" after the instance-only save above.
@@ -265,6 +259,7 @@ test("full agent editor tightens the exact sidebar agent instance", async ({
   // access from the exact instance, or the submit silently widens it again.
   await page.getByTestId(`sidebar-member-${agent.pubkey}`).click();
   await page.getByTestId("user-profile-edit-agent").click();
+  const dialog = page.getByRole("dialog", { name: "Edit agent" });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Advanced" }).click();
   await expect(page.locator("#agent-respond-to")).toHaveText(
@@ -274,7 +269,16 @@ test("full agent editor tightens the exact sidebar agent instance", async ({
     .locator("#persona-system-prompt")
     .fill("Test unrelated prompt editing after tightening access.");
   await dialog.getByRole("button", { name: "Save changes" }).click();
-  await expect(dialog).not.toBeVisible();
+  await expect(dialog).toBeVisible();
+  await expect(
+    page
+      .getByText(
+        "this definition is linked to other agents; edit their configuration explicitly",
+        { exact: true },
+      )
+      .first(),
+  ).toBeVisible();
+  await expect(accessBadge).toHaveText("Only me");
 
   const unrelatedEditCommand = await page.evaluate(
     (pubkey) =>
@@ -287,7 +291,10 @@ test("full agent editor tightens the exact sidebar agent instance", async ({
     agent.pubkey,
   );
   expect(unrelatedEditCommand?.payload).toMatchObject({
-    input: { pubkey: agent.pubkey },
+    input: {
+      pubkey: agent.pubkey,
+      ownedPersonaUpdate: { definition: { id: personaId } },
+    },
   });
   expect(unrelatedEditCommand?.payload).not.toMatchObject({
     input: { respondTo: "anyone" },
