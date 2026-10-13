@@ -88,6 +88,56 @@ export async function submitProfilePersonaDialog({
         return;
       }
 
+      if (managedAgent?.backend.type === "local") {
+        if (
+          !previousPersona ||
+          managedAgent.personaId !== input.id ||
+          previousPersona.id !== input.id
+        ) {
+          throw new Error(
+            "Refresh this agent's owned definition before editing it.",
+          );
+        }
+        const desiredPersona: AgentPersona = {
+          ...previousPersona,
+          ...input,
+          avatarUrl: input.avatarUrl ?? null,
+          runtime: input.runtime ?? null,
+          model: input.model ?? null,
+          provider: input.provider ?? null,
+          envVars: input.envVars ?? previousPersona.envVars,
+          respondTo: input.behavior
+            ? (input.behavior.respondTo ?? null)
+            : previousPersona.respondTo,
+          respondToAllowlist: input.behavior
+            ? input.behavior.respondTo === "allowlist"
+              ? (input.behavior.respondToAllowlist ?? [])
+              : []
+            : previousPersona.respondToAllowlist,
+          parallelism: input.behavior
+            ? (input.behavior.parallelism ?? null)
+            : previousPersona.parallelism,
+        };
+        const patch = personaManagedAgentUpdate(managedAgent, desiredPersona, {
+          previousPersona,
+          runtimes,
+        }) ?? { pubkey: managedAgent.pubkey };
+        const result = await updateManagedAgent({
+          ...patch,
+          ownedPersonaUpdate: {
+            expectedUpdatedAt: previousPersona.updatedAt,
+            definition: input,
+          },
+        });
+        if (result.profileSyncError)
+          showAgentProfileSyncWarning(
+            result.agent.name,
+            result.profileSyncError,
+          );
+        toast.success(`Updated ${input.displayName}.`);
+        onDone();
+        return;
+      }
       const persona = await updatePersona(input);
       const agentUpdate = managedAgent
         ? personaManagedAgentUpdate(managedAgent, persona, {

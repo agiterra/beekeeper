@@ -17,7 +17,7 @@ use super::{
 /// a stored behavior group on every team-import edit. Absent group = don't touch the
 /// stored behavior group; present group = validate and replace the fields as a unit
 /// (mode and allowlist must travel together).
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PersonaBehaviorRequest {
     #[serde(default)]
@@ -97,7 +97,7 @@ pub struct CreatePersonaRequest {
     pub catalog_source: Option<CatalogSource>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdatePersonaRequest {
     pub id: String,
@@ -190,6 +190,14 @@ pub struct CreateManagedAgentRequest {
     pub relay_mesh: Option<RelayMeshConfig>,
 }
 
+/// A local profile edit's observed definition revision and complete requested body.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnedPersonaUpdateRequest {
+    pub expected_updated_at: String,
+    pub definition: UpdatePersonaRequest,
+}
+
 /// Patch request for updating a managed agent's mutable fields.
 ///
 /// Tri-state nullable semantics via `Option<Option<T>>`:
@@ -200,6 +208,9 @@ pub struct CreateManagedAgentRequest {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateManagedAgentRequest {
     pub pubkey: String,
+    /// Explicit owned definition edit, staged with this actor's shared CAS.
+    #[serde(default)]
+    pub owned_persona_update: Option<OwnedPersonaUpdateRequest>,
     /// Absent = don't touch. Present = rename the agent.
     #[serde(default)]
     pub name: Option<String>,

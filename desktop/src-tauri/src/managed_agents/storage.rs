@@ -436,6 +436,24 @@ pub fn save_managed_agents(app: &AppHandle, records: &[ManagedAgentRecord]) -> R
     write_agent_store(app, definitions, sorted)
 }
 
+/// Commit a staged definition and its keyed actor in one existing atomic store write.
+/// Caller holds the managed-agent store lock and has verified both current sources.
+pub(crate) fn save_agent_configuration(
+    app: &AppHandle,
+    definitions: &[super::AgentDefinition],
+    records: &[ManagedAgentRecord],
+) -> Result<(), String> {
+    let definitions = definitions
+        .iter()
+        .cloned()
+        .map(super::AgentDefinition::into_agent_record)
+        .collect();
+    let mut instances = records.to_vec();
+    instances.retain(|record| !is_definition_record(record));
+    persist_agent_keys(&mut instances);
+    write_agent_store(app, definitions, instances)
+}
+
 /// Save the key-less agent *definitions*, preserving the keyed instances —
 /// the definition-side mirror of [`save_managed_agents`].
 pub(crate) fn save_agent_definitions(

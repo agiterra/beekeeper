@@ -216,6 +216,16 @@ with a TypeScript lookup table or an id comparison in a component.
 
 ## Headless conversation admission
 
+Profile Edit for a host-managed agent with its own private standalone definition
+submits the definition and instance changes through one shared configuration
+request. Authenticate the original signed pin and compare the accepted private
+configuration before replacing it; retain that exact comparison across retries.
+Commit the definition and instance together in the existing local store only
+after acceptance, and refresh both caches. Do not save the definition first or
+repin unrelated edits to whatever definition happens to be current. Shared,
+builtin, team, catalog, or multiply linked definitions require their own explicit
+editing boundary. Remote-provider edits retain their existing provider contract.
+
 A host-managed agent's availability in one channel does not establish its
 conversation responsibility in another. Mention sends retain the actual
 published channel alongside relay and signer, then use shared management to

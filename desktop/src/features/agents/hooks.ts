@@ -504,6 +504,9 @@ export function useUpdateManagedAgentMutation() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey }),
         queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey }),
+        ...(variables.ownedPersonaUpdate
+          ? [queryClient.invalidateQueries({ queryKey: personasQueryKey })]
+          : []),
         queryClient.invalidateQueries({
           queryKey: ["user-profile", lowerPubkey],
         }),

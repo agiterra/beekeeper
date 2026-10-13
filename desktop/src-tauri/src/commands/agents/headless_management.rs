@@ -98,10 +98,22 @@ fn configuration_view(
     ),
     String,
 > {
-    let personas = load_personas(app)?;
+    configuration_view_with_personas(app, record, &load_personas(app)?)
+}
+fn configuration_view_with_personas(
+    app: &AppHandle,
+    record: &ManagedAgentRecord,
+    personas: &[crate::managed_agents::AgentDefinition],
+) -> Result<
+    (
+        beekeeper_core_pkg::managed_agent::ManagedAgentEventContent,
+        PrivateConfiguration,
+    ),
+    String,
+> {
     let global = crate::managed_agents::load_global_agent_config(app)?;
     let effective =
-        crate::managed_agents::resolve_effective_harness_descriptor(record, &personas, &global)?;
+        crate::managed_agents::resolve_effective_harness_descriptor(record, personas, &global)?;
     let mut private =
         serde_json::to_value(record).map_err(|_| "cannot encode private configuration")?;
     strip_client_bookkeeping(&mut private);

@@ -174,3 +174,110 @@ test("validateLinkedAgentRuntimeEdit allows unchanged or unlinked runtime prefer
     null,
   );
 });
+
+test("local profile edit stages a single actor update and never saves definition before acceptance", async () => {
+  const requests = [];
+  let done = 0;
+  await submitProfilePersonaDialog({
+    input: updateInput({ runtime: "goose", systemPrompt: "new instructions" }),
+    managedAgent: agent(),
+    previousPersona: persona({ runtime: "goose" }),
+    runtimes: [],
+    updatePersona: async () => {
+      throw new Error("definition must not be saved first");
+    },
+    updateManagedAgent: async (request) => {
+      requests.push(request);
+      return { agent: agent(), profileSyncError: null };
+    },
+    createPersona: async () => {
+      throw new Error("unexpected create");
+    },
+    createManagedAgentForPersona: async () => {
+      throw new Error("unexpected mint");
+    },
+    onDone() {
+      done++;
+    },
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(
+    requests[0].ownedPersonaUpdate.expectedUpdatedAt,
+    persona().updatedAt,
+  );
+  assert.equal(
+    requests[0].ownedPersonaUpdate.definition.systemPrompt,
+    "new instructions",
+  );
+  assert.equal(requests[0].pubkey, agent().pubkey);
+  assert.equal(done, 1);
+});
+
+test("failed or lost actor-update reply leaves local definition untouched and retries same explicit payload", async () => {
+  const requests = [];
+  let saves = 0;
+  let done = 0;
+  const options = {
+    input: updateInput({ runtime: "goose", systemPrompt: "new instructions" }),
+    managedAgent: agent(),
+    previousPersona: persona({ runtime: "goose" }),
+    runtimes: [],
+    updatePersona: async () => {
+      saves++;
+      return persona();
+    },
+    updateManagedAgent: async (request) => {
+      requests.push(request);
+      if (requests.length === 1)
+        throw new Error("publication unavailable or reply lost");
+      return { agent: agent(), profileSyncError: null };
+    },
+    createPersona: async () => {
+      throw new Error("unexpected create");
+    },
+    createManagedAgentForPersona: async () => {
+      throw new Error("unexpected mint");
+    },
+    onDone() {
+      done++;
+    },
+  };
+  await submitProfilePersonaDialog(options);
+  assert.equal(done, 0);
+  assert.equal(saves, 0);
+  await submitProfilePersonaDialog(options);
+  assert.equal(done, 1);
+  assert.equal(saves, 0);
+  assert.deepEqual(requests[0], requests[1]);
+});
+
+test("remote profile edit retains original provider path and sends no local owned edit field", async () => {
+  const calls = [];
+  await submitProfilePersonaDialog({
+    input: updateInput({ runtime: "goose", systemPrompt: "new instructions" }),
+    managedAgent: agent({
+      backend: { type: "provider", id: "remote", config: {} },
+    }),
+    previousPersona: persona({ runtime: "goose" }),
+    runtimes: [],
+    updatePersona: async () => {
+      calls.push("definition");
+      return persona({ runtime: "goose", systemPrompt: "new instructions" });
+    },
+    updateManagedAgent: async (request) => {
+      calls.push("actor");
+      assert.equal(request.ownedPersonaUpdate, undefined);
+      return { agent: agent(), profileSyncError: null };
+    },
+    createPersona: async () => {
+      throw new Error("unexpected create");
+    },
+    createManagedAgentForPersona: async () => {
+      throw new Error("unexpected mint");
+    },
+    onDone() {
+      calls.push("done");
+    },
+  });
+  assert.deepEqual(calls, ["definition", "actor", "done"]);
+});

@@ -32,6 +32,7 @@ fn private_event_matches(event: &Event, owner: nostr::PublicKey, id: &str, conte
             .iter()
             .any(|tag| tag.as_slice() == ["shared", "true"])
 }
+#[derive(Clone, Copy)]
 struct PinAuthority<'a> {
     actor: &'a str,
     relay: &'a str,
@@ -83,6 +84,111 @@ fn read_cached_pin(path: &std::path::Path, authority: &PinAuthority<'_>) -> Resu
     }
     Ok(value)
 }
+/// Authenticate the actor's retained original private source before an explicit edit.
+pub(crate) fn verify_original_pin(
+    app: &AppHandle,
+    state: &AppState,
+    record: &ManagedAgentRecord,
+    relay: &str,
+    persona: &crate::managed_agents::AgentDefinition,
+) -> Result<Value, String> {
+    let id = record
+        .persona_id
+        .as_deref()
+        .ok_or("owned persona reference absent")?;
+    let source = record
+        .persona_source_version
+        .as_deref()
+        .ok_or("owned persona source pin absent")?;
+    let scope = active_retention_scope(app, state)?;
+    let canonical = beekeeper_host_core::record::canonical_relay_key(relay);
+    if beekeeper_host_core::record::canonical_relay_key(&scope.relay_url) != canonical {
+        return Err("community changed before owned definition edit".into());
+    }
+    let actor = nostr::PublicKey::from_hex(&record.pubkey).map_err(|_| "owned actor invalid")?;
+    let owner = beekeeper_sdk_pkg::nip_oa::verify_auth_tag(
+        record
+            .auth_tag
+            .as_deref()
+            .ok_or("actor custody attestation unavailable")?,
+        &actor,
+    )
+    .map_err(|_| "actor custody attestation invalid")?;
+    if owner != scope.owner_keys.public_key() {
+        return Err("owned definition signing owner differs from actor custody".into());
+    }
+    let conn = open_retention_db(&scope.db_path)?;
+    if let Some(row) = get_retained_event(&conn, 30175, &owner.to_hex(), &persona_d_tag(persona))? {
+        let current: Event = serde_json::from_str(&row.raw_event)
+            .map_err(|_| "current owned definition authority unreadable")?;
+        if !private_event_matches(&current, owner, &persona_d_tag(persona), &current.content) {
+            return Err("current definition is shared or its owner authority is invalid; explicit local edit refused".into());
+        }
+    }
+    let key = hex::encode(Sha256::digest(format!(
+        "{}\0{}\0{}\0{}\0{}",
+        owner.to_hex(),
+        canonical,
+        record.pubkey,
+        id,
+        source
+    )));
+    let path = crate::managed_agents::managed_agents_base_dir(app)?
+        .join("private-persona-pins")
+        .join(format!("{key}.json"));
+    read_original_source_pin(
+        &path,
+        &PinAuthority {
+            actor: &record.pubkey,
+            relay: &canonical,
+            id,
+            coordinate: &persona_d_tag(persona),
+            source_hash: source,
+            owner,
+            content: "",
+        },
+    )
+}
+
+fn read_original_source_pin(
+    path: &std::path::Path,
+    authority: &PinAuthority<'_>,
+) -> Result<Value, String> {
+    let meta =
+        std::fs::symlink_metadata(path).map_err(|_| "original private source pin unavailable")?;
+    if !meta.file_type().is_file() || meta.len() > 1024 * 1024 {
+        return Err("original private source custody invalid".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o077 != 0 {
+            return Err("original private source permissions unsafe".into());
+        }
+    }
+    let value: Value = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    let event: Event = serde_json::from_value(
+        value
+            .get("event")
+            .cloned()
+            .ok_or("original source event absent")?,
+    )
+    .map_err(|e| e.to_string())?;
+    let projection: crate::managed_agents::persona_events::PersonaEventContent =
+        serde_json::from_str(&event.content).map_err(|_| "original source content invalid")?;
+    if persona_content_hash(&projection) != authority.source_hash {
+        return Err("original private source hash differs from actor pin".into());
+    }
+    read_cached_pin(
+        path,
+        &PinAuthority {
+            content: &event.content,
+            ..*authority
+        },
+    )
+}
+
 /// Attach only after the original source/configuration CAS has succeeded.
 /// Retry reuses exact locally retained/cached signed bytes; the shared writer binds30177.
 pub(crate) fn attach_private_persona(
@@ -102,6 +208,25 @@ pub(crate) fn attach_private_persona(
         .ok_or("private persona source unavailable; repair local definition")?;
     if matches.next().is_some() {
         return Err("private persona source is ambiguous".into());
+    }
+    attach_private_persona_definition(app, state, record, relay, private, persona)
+}
+
+/// Sign a caller-staged exact owned definition after its original pin was authenticated.
+pub(crate) fn attach_private_persona_definition(
+    app: &AppHandle,
+    state: &AppState,
+    record: &ManagedAgentRecord,
+    relay: &str,
+    private: &mut PrivateConfiguration,
+    persona: &crate::managed_agents::AgentDefinition,
+) -> Result<(), String> {
+    let id = record
+        .persona_id
+        .as_deref()
+        .ok_or("owned persona reference absent")?;
+    if persona.id != id {
+        return Err("owned persona reference changed".into());
     }
     if persona.shared {
         return Ok(());
@@ -326,5 +451,57 @@ mod tests {
             assert!(read_cached_pin(&path, &changed).is_err());
             assert_eq!(std::fs::read(&path).unwrap(), before);
         }
+    }
+    #[test]
+    fn explicit_edit_original_source_is_typed_hash_bound_to_exact_owner_coordinate_and_actor() {
+        let keys = nostr::Keys::generate();
+        let other = nostr::Keys::generate();
+        let content = json!({"display_name":"owned","system_prompt":"original","runtime":"codex"});
+        let typed: crate::managed_agents::persona_events::PersonaEventContent =
+            serde_json::from_value(content.clone()).unwrap();
+        let hash = persona_content_hash(&typed);
+        let raw = serde_json::to_string(&content).unwrap();
+        assert_ne!(hex::encode(Sha256::digest(raw.as_bytes())), hash);
+        let event = nostr::EventBuilder::new(nostr::Kind::Custom(30175), raw)
+            .tags([nostr::Tag::parse(["d", "owned"]).unwrap()])
+            .sign_with_keys(&keys)
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pin.json");
+        let value = json!({"schema":"beekeeper-private-persona/v1","actorPubkey":"actor","relayUrl":"wss://fixture.example","personaId":"owned","sourceHash":hash,"event":event});
+        atomic_write::atomic_write_json_restricted(&path, &serde_json::to_vec(&value).unwrap())
+            .unwrap();
+        let authority = PinAuthority {
+            actor: "actor",
+            relay: "wss://fixture.example",
+            id: "owned",
+            coordinate: "owned",
+            source_hash: &hash,
+            owner: keys.public_key(),
+            content: "",
+        };
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(read_original_source_pin(&path, &authority).unwrap(), value);
+        for wrong in [
+            PinAuthority {
+                owner: other.public_key(),
+                ..authority
+            },
+            PinAuthority {
+                coordinate: "other",
+                ..authority
+            },
+            PinAuthority {
+                actor: "other",
+                ..authority
+            },
+            PinAuthority {
+                source_hash: "wrong",
+                ..authority
+            },
+        ] {
+            assert!(read_original_source_pin(&path, &wrong).is_err());
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 }

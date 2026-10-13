@@ -599,7 +599,6 @@ export type NormalizedConfig = {
   contextLimit: NormalizedField | null;
   systemPrompt: NormalizedField | null;
 };
-
 export type RuntimeConfigSurface = {
   runtimeId: string | null;
   runtimeLabel: string | null;
@@ -609,9 +608,13 @@ export type RuntimeConfigSurface = {
   extensions: ExtensionEntry[];
   sources: ConfigSourceReport;
 };
-
 export type UpdateManagedAgentInput = {
   pubkey: string;
+  /** Explicit owned local profile edit; definition and instance commit after shared acceptance. */
+  ownedPersonaUpdate?: {
+    expectedUpdatedAt: string;
+    definition: UpdatePersonaInput;
+  };
   name?: string;
   model?: string | null;
   provider?: string | null;
@@ -716,7 +719,6 @@ export type CreatePersonaInput = {
    */
   catalogSource?: CatalogSourceCoordinate;
 };
-
 export type UpdatePersonaInput = {
   id: string;
   displayName: string;

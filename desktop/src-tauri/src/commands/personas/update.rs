@@ -19,6 +19,36 @@ use super::{pending, retain_persona_pending, trim_optional, trim_required};
 #[cfg(test)]
 mod name_propagation_tests;
 
+/// Stage the existing persona edit rules without saving or publishing anything.
+pub(crate) fn prospective_persona_edit(
+    source: &AgentDefinition,
+    input: &UpdatePersonaRequest,
+) -> Result<AgentDefinition, String> {
+    if source.id != input.id {
+        return Err("owned definition reference changed".into());
+    }
+    let mut persona = source.clone();
+    persona.display_name = trim_required(&input.display_name, "Display name")?;
+    validate_agent_definition_text(&persona.display_name, &input.system_prompt)?;
+    persona.avatar_url = trim_optional(input.avatar_url.clone());
+    persona.system_prompt = input.system_prompt.clone();
+    persona.runtime = trim_optional(input.runtime.clone());
+    persona.model = trim_optional(input.model.clone());
+    persona.provider = trim_optional(input.provider.clone());
+    persona.name_pool = input
+        .name_pool
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if let Some(env) = input.env_vars.as_ref() {
+        crate::managed_agents::validate_user_env_keys(env)?;
+        persona.env_vars = env.clone();
+    }
+    apply_persona_behavior(&mut persona, input.behavior.clone())?;
+    Ok(persona)
+}
+
 /// Return value of the `update_persona` command. Uses flatten so all
 /// `AgentDefinition` fields appear at the top level of the JSON response —
 /// backward-compatible with callers that already destructure a raw persona object.
@@ -92,10 +122,7 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
             let display_name = trim_required(&input.display_name, "Display name")?;
             let system_prompt = input.system_prompt.clone();
             validate_agent_definition_text(&display_name, &system_prompt)?;
-            let avatar_url = trim_optional(input.avatar_url);
-            let runtime = trim_optional(input.runtime);
-            let model = trim_optional(input.model);
-            let provider = trim_optional(input.provider);
+            let avatar_url = trim_optional(input.avatar_url.clone());
 
             let _store_guard = state
                 .managed_agents_store_lock
@@ -113,23 +140,7 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
             let name_changed = persona.display_name != display_name;
             let old_display_name = persona.display_name.clone();
 
-            persona.display_name = display_name;
-            persona.avatar_url = avatar_url;
-            persona.system_prompt = system_prompt;
-            persona.runtime = runtime;
-            persona.model = model;
-            persona.provider = provider;
-            persona.name_pool = input
-                .name_pool
-                .into_iter()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            if let Some(env_vars) = input.env_vars {
-                crate::managed_agents::validate_user_env_keys(&env_vars)?;
-                persona.env_vars = env_vars;
-            }
-            apply_persona_behavior(persona, input.behavior)?;
+            *persona = prospective_persona_edit(persona, &input)?;
             persona.updated_at = now_iso();
 
             let result = persona.clone();

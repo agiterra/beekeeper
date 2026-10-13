@@ -1,10 +1,13 @@
 //! Client patch translation and delivery handles; the shared service owns effects.
 use super::*;
+#[path = "host_persona_update.rs"]
+mod persona_update;
 #[path = "host_private_persona.rs"]
 pub(super) mod private_persona;
 use crate::managed_agents::{UpdateManagedAgentRequest, UpdateManagedAgentResponse};
 use beekeeper_agent_management::{LifecycleRequest, UpdateRequest};
 use beekeeper_host_core::atomic_write;
+use persona_update::StagedPersonaUpdate;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -172,13 +175,34 @@ async fn configure(
     relay: &str,
     restart: bool,
     expected_source: Option<&ManagedAgentRecord>,
+    staged_persona: Option<&StagedPersonaUpdate>,
 ) -> Result<(PathBuf, ConfigurationIntent), String> {
-    let (public, mut private) = configuration_view(app, desired)?;
+    if let Some(staged) = staged_persona {
+        staged.assert_current(&load_personas(app)?)?;
+    }
+    let (public, mut private) = match staged_persona {
+        Some(staged) => configuration_view_with_personas(
+            app,
+            desired,
+            &staged.projected_personas(&load_personas(app)?),
+        )?,
+        None => configuration_view(app, desired)?,
+    };
     let expected = expected_source.unwrap_or(desired);
     if record_for_pair(app, &desired.pubkey, relay)? != *expected {
         return Err("client source changed before private configuration projection".into());
     }
-    private_persona::attach_private_persona(app, state, desired, relay, &mut private)?;
+    match staged_persona {
+        Some(staged) => private_persona::attach_private_persona_definition(
+            app,
+            state,
+            desired,
+            relay,
+            &mut private,
+            &staged.desired,
+        )?,
+        None => private_persona::attach_private_persona(app, state, desired, relay, &mut private)?,
+    }
     let (path, mut intent) = configuration_operation(
         app,
         state,
@@ -189,9 +213,32 @@ async fn configure(
         (expected_source, None),
     )
     .await?;
+    if let Some(staged) = staged_persona {
+        if intent.expected_private_snapshot_hash.is_none() {
+            let snapshot = beekeeper_agent_management::private_configuration_snapshot(
+                &context()?,
+                &Transport::owner(app, relay)?,
+                &desired.pubkey,
+            )
+            .map_err(|e| e.to_string())?;
+            let (_, mut baseline) = configuration_view(app, expected)?;
+            baseline.record["private_persona"] = staged
+                .original_pin
+                .clone()
+                .ok_or("original source authentication absent")?;
+            if snapshot.private.record != baseline.record {
+                return Err("current accepted private configuration differs from this client source; refresh before editing the owned definition".into());
+            }
+            intent.expected_private_snapshot_hash = Some(snapshot.snapshot_hash);
+            save_intent(&path, &intent)?;
+        }
+    }
     let current = head(app, relay, &desired.pubkey).await?;
     let before: beekeeper_core_pkg::managed_agent::ManagedAgentEventContent =
         serde_json::from_str(&current.content).map_err(|_| "accepted definition is malformed")?;
+    if let Some(staged) = staged_persona {
+        staged.assert_current(&load_personas(app)?)?;
+    }
     let policy_changed = before.respond_to != public.respond_to
         || before.respond_to_allowlist != public.respond_to_allowlist;
     if !intent.quiesced && (policy_changed || (restart && intent.was_active)) {
@@ -220,6 +267,9 @@ async fn configure(
         intent.quiesced = true;
         save_intent(&path, &intent)?;
     }
+    if let Some(staged) = staged_persona {
+        staged.assert_current(&load_personas(app)?)?;
+    }
     crate::relay::assert_expected_signer(
         Some(&intent.owner_pubkey),
         &state.signing_keys()?.public_key().to_hex(),
@@ -235,10 +285,18 @@ async fn configure(
         public_definition: Some(public),
         private_config: Some(private),
     };
-    let outcome =
-        beekeeper_agent_management::update(&request, &Transport::owner(app, relay)?, &context()?)
+    let transport = Transport::owner(app, relay)?;
+    let ctx = context()?;
+    let outcome = match intent.expected_private_snapshot_hash.as_deref() {
+        Some(hash) if staged_persona.is_some() => {
+            beekeeper_agent_management::update_if_private_unchanged(
+                &request, &transport, &ctx, hash,
+            )
             .await
-            .map_err(|e| e.to_string())?;
+        }
+        _ => beekeeper_agent_management::update(&request, &transport, &ctx).await,
+    }
+    .map_err(|e| e.to_string())?;
     if outcome.get("relay_accepted").and_then(Value::as_bool) != Some(true) {
         return Err("configuration publication remains unconfirmed".into());
     }
@@ -345,7 +403,7 @@ pub(crate) async fn reconcile_host_agent(
         return Err("remote settings use their provider boundary".into());
     }
     enrollment::require_modern(app, &record, relay)?;
-    let (path, intent) = configure(app, state, &record, relay, restart, None).await?;
+    let (path, intent) = configure(app, state, &record, relay, restart, None, None).await?;
     if record_for_pair(app, actor, relay)? != record {
         return Err(
             "Configuration accepted; client cache changed during reconciliation; refresh required"
@@ -365,14 +423,43 @@ pub(crate) async fn update_if_adopted(
         .find(|r| r.pubkey == input.pubkey)
         .ok_or("agent not found")?;
     if source.backend != BackendKind::Local {
+        if input.owned_persona_update.is_some() {
+            return Err("remote definition edits use their provider boundary".into());
+        }
         return Ok(None);
     }
     let relay = crate::relay::effective_agent_relay_url(
         &source.relay_url,
         &crate::relay::relay_ws_url_with_override(state),
     );
-    let (mut desired, policy_changed) =
-        crate::commands::agent_models::prospective_record(&source, input, &load_personas(app)?)?;
+    let personas = load_personas(app)?;
+    let mut staged_persona = input
+        .owned_persona_update
+        .as_ref()
+        .map(|edit| {
+            StagedPersonaUpdate::prepare(&source, edit, &personas, &load_managed_agents(app)?)
+        })
+        .transpose()?;
+    if let Some(staged) = staged_persona.as_mut() {
+        staged.original_pin = Some(private_persona::verify_original_pin(
+            app,
+            state,
+            &source,
+            &relay,
+            &staged.source,
+        )?);
+    }
+    let projected = staged_persona
+        .as_ref()
+        .map(|staged| staged.projected_personas(&personas));
+    let (mut desired, policy_changed) = crate::commands::agent_models::prospective_record(
+        &source,
+        input,
+        projected.as_deref().unwrap_or(&personas),
+    )?;
+    if let Some(staged) = staged_persona.as_ref() {
+        staged.apply_record(&mut desired);
+    }
     let next_relay = crate::relay::effective_agent_relay_url(
         &desired.relay_url,
         &crate::relay::relay_ws_url_with_override(state),
@@ -390,6 +477,7 @@ pub(crate) async fn update_if_adopted(
         &relay,
         desired.auto_restart_on_config_change || policy_changed,
         Some(&source),
+        staged_persona.as_ref(),
     )
     .await?;
     crate::relay::assert_expected_signer(
@@ -414,7 +502,15 @@ pub(crate) async fn update_if_adopted(
         }
         desired.updated_at = crate::util::now_iso();
         *current = desired.clone();
-        save_managed_agents(app, &records)?;
+        if let Some(staged) = staged_persona.as_ref() {
+            let mut personas = load_personas(app)
+                .map_err(|e| format!("Configuration accepted; owned cache read failed: {e}"))?;
+            staged.commit_personas(&mut personas)?;
+            crate::managed_agents::storage::save_agent_configuration(app, &personas, &records)
+                .map_err(|e| format!("Configuration accepted; local cache commit failed: {e}"))?;
+        } else {
+            save_managed_agents(app, &records)?;
+        }
     }
     let mut warning=Some("Configuration accepted; runtime application remains unconfirmed until observed through relay work.".into());
     if let Err(error) = finish_configuration(app, &desired, &relay, &path, intent).await {
