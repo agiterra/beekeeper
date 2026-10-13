@@ -628,6 +628,7 @@ async fn same_management_stop_retries_only_verified_quiescence_failure_with_jour
 struct StartAvailabilityRelay {
     base: DisappearingRelay,
     lease: Option<Event>,
+    membership: Event,
 }
 impl RelayTransport for StartAvailabilityRelay {
     fn keys(&self) -> &Keys {
@@ -647,6 +648,25 @@ impl RelayTransport for StartAvailabilityRelay {
     }
     async fn query_all(&self, filter: Value) -> Result<Vec<Value>, Error> {
         match filter["kinds"][0].as_u64() {
+            Some(39002) => {
+                let tags = &self.membership.tags;
+                let matches = ["d", "p"].iter().all(|name| {
+                    filter.get(format!("#{name}")).is_none_or(|values| {
+                        tags.iter().any(|tag| {
+                            tag.as_slice().first().is_some_and(|key| key == name)
+                                && tag
+                                    .as_slice()
+                                    .get(1)
+                                    .is_some_and(|value| values[0] == *value)
+                        })
+                    })
+                });
+                Ok(if matches {
+                    vec![serde_json::to_value(&self.membership).expect("signed membership")]
+                } else {
+                    vec![]
+                })
+            }
             Some(44223) => Ok(vec![
                 serde_json::to_value(&self.base.observation).expect("signed metadata")
             ]),
@@ -675,6 +695,12 @@ async fn created_start_observes_exact_live_lease_and_adopted_replay_never_create
         .expect("provider metadata");
     let metadata: beekeeper_core::coding_session_payload::SessionMetadata =
         serde_json::from_str(&base.observation.content).expect("metadata");
+    let runtime_alias = metadata
+        .provider
+        .as_ref()
+        .expect("advertised runtime alias")
+        .as_str()
+        .to_owned();
     let target = metadata.session;
     let channel = scope.channels[0];
     let lease =
@@ -683,9 +709,19 @@ async fn created_start_observes_exact_live_lease_and_adopted_replay_never_create
         .expect("lease builder")
         .sign_with_keys(&provider)
         .expect("provider lease");
+    let membership = EventBuilder::new(Kind::Custom(39002), "")
+        .tags([
+            Tag::parse(["d", &channel.to_string()]).expect("channel"),
+            Tag::parse(["p", &base.owner.public_key().to_hex()]).expect("caller"),
+            Tag::parse(["p", &scope.agent_pubkey]).expect("actor"),
+            Tag::parse(["p", &provider.public_key().to_hex()]).expect("provider"),
+        ])
+        .sign_with_keys(&base.relay)
+        .expect("relay-signed current membership");
     let mut relay = StartAvailabilityRelay {
         base,
         lease: Some(live.clone()),
+        membership,
     };
     let remote_home = tempfile::tempdir().expect("empty second-client home");
     let remote_context = Context {
@@ -699,7 +735,7 @@ async fn created_start_observes_exact_live_lease_and_adopted_replay_never_create
         expected_revision: relay.base.definition.id.to_hex(),
         channel,
         provider_authority: provider.public_key().to_hex(),
-        provider_instance: "primary".into(),
+        provider_instance: runtime_alias,
         project: None,
         wait_secs: 1,
     };
