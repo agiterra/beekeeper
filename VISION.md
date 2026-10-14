@@ -101,7 +101,7 @@ New message type? New kind integer. Zero breaking changes.
 
 ## Architecture
 
-Rust backend, TypeScript/React clients. The server is a Cargo workspace of focused crates — relay, auth, pub/sub, search, audit, workflow engine, MCP agent interface, and more. The desktop client is a Tauri 2 app with React 19; the relay also serves a browser web client (the repo browser at `myproject.com`). See [README.md](README.md) for the full crate map.
+Rust backend, TypeScript/React clients. The server is a Cargo workspace of focused crates — relay, auth, pub/sub, search, audit, workflow engine, MCP agent interface, and more. Agent execution belongs to the headless host and its session provider, which commission and run from the CLI on any machine with no GUI. The desktop client is a Tauri 2 app with React 19 and is one management and viewing surface; the relay also serves a browser web client (the repo browser at `myproject.com`). See [README.md](README.md) for the full crate map.
 
 ---
 
@@ -189,13 +189,13 @@ See [VISION_PROJECTS.md](VISION_PROJECTS.md) for the full forge vision: the proj
 
 ## Agent Personas & Teams
 
-Agents aren't monolithic. A persona bundles a model and a system prompt. A team is a named group of personas — deploy Ralph for code review, Scout for research, Reviewer for crossfire. Built-in personas ship with the desktop client; operators define their own.
+Agents aren't monolithic. A persona bundles a model and a system prompt. A team is a named group of personas — deploy Ralph for code review, Scout for research, Reviewer for crossfire. Built-in personas ship with the product; operators define their own, and the same definitions are administered from the CLI or any authorized client.
 
 ---
 
 ## Remote Agents
 
-An agent's identity, history, and presence live on the relay — so the machine running it is replaceable. The desktop deploys agents onto remote infrastructure through swappable provider binaries, and after deploy retains no substrate control channel: status, steering, and shutdown all flow over the relay, and the agent bounds its own lifetime. See [VISION_REMOTE_AGENTS.md](VISION_REMOTE_AGENTS.md) for the full picture.
+An agent's identity, history, and presence live on the relay — so the machine running it is replaceable. An authorized client — CLI or desktop — deploys agents onto remote infrastructure through swappable provider binaries, and after deploy retains no substrate control channel: status, steering, and shutdown all flow over the relay, and the agent bounds its own lifetime. See [VISION_REMOTE_AGENTS.md](VISION_REMOTE_AGENTS.md) for the full picture.
 
 ---
 
@@ -248,7 +248,7 @@ Greenfield. Agent swarms build in parallel, integrating at the event store bound
 | ✅ | Workflow engine — YAML-as-code, execution traces, message/reaction/schedule/webhook triggers |
 | ✅ | Identity — NIP-05, public profiles, NIP-98 auth, agent protection |
 | ✅ | Agent CLI — `beekeeper-cli`, mirrors and extends the MCP surface |
-| ✅ | Agent personas and teams — desktop-managed, built-in defaults, operator-defined |
+| ✅ | Agent personas and teams — headless-managed, built-in defaults, operator-defined, desktop is one client |
 | 🚧 | Workflow approval gates — infrastructure exists (DB, API, UI); executor doesn't persist/resume (WF-08) |
 | ✅ | Huddles — WebSocket Opus voice relay + lifecycle events (recording/tracks planned) |
 | ✅ | Beekeeper Mesh — relay-gated shared AI compute (mesh-llm over iroh); members pool GPUs, agents consume via a local OpenAI-compatible endpoint |
