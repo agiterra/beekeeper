@@ -30,9 +30,11 @@ pub(crate) use configuration::{
 };
 pub(crate) use deletion::deletion_source;
 pub(crate) use enrollment::{enroll_new_host_agent, require_clean_setup, reserve_fresh_host_agent};
+#[cfg(test)]
+pub(crate) use lifecycle::UnobservedHostAgent;
 pub(crate) use lifecycle::{
     active_host_agent_pubkeys, delete_host_agent_snapshot, start_host_pair,
-    start_host_pair_with_floor, stop_host_pair,
+    start_host_pair_with_floor, stop_host_pair, HostAgentAvailability,
 };
 
 fn context() -> Result<Context, String> {

@@ -112,13 +112,64 @@ pub(crate) async fn delete_host_agent_snapshot(
     Ok(outcome)
 }
 
+/// A local agent whose relay status could not be read, with the relay's own
+/// words for why. It is not counted as available and not counted as absent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnobservedHostAgent {
+    /// The agent's hex pubkey.
+    pub pubkey: String,
+    /// The name a person reads, as recorded locally.
+    pub name: String,
+    /// The status refusal, verbatim.
+    pub reason: String,
+}
+
+/// What the relay said about this host's local same-community agents, one
+/// answer per record. One agent's refusal is that agent's row in
+/// `unobserved`, never the whole roster's failure (ledger 402, readiness path).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct HostAgentAvailability {
+    /// Agents the relay confirmed as having a runtime available.
+    pub active: HashSet<String>,
+    /// Agents whose status the relay refused to certify.
+    pub unobserved: Vec<UnobservedHostAgent>,
+}
+
+/// Fold per-agent observations into one roster. A refused observation is
+/// isolated to its agent; an active answer joins `active`; an inactive one
+/// is simply not offered.
+pub(crate) fn fold_host_agent_availability(
+    observations: impl IntoIterator<Item = (String, String, Result<bool, String>)>,
+) -> HostAgentAvailability {
+    let mut availability = HostAgentAvailability::default();
+    for (pubkey, name, observed) in observations {
+        match observed {
+            Ok(true) => {
+                availability.active.insert(pubkey);
+            }
+            Ok(false) => {}
+            Err(reason) => availability.unobserved.push(UnobservedHostAgent {
+                pubkey,
+                name,
+                reason,
+            }),
+        }
+    }
+    availability
+}
+
+/// Ask the relay about every local same-community agent record. Errors from
+/// a single agent's status (an actor with no readable channel membership is
+/// `Unconfirmed`, by design) are recorded against that agent and the loop
+/// continues; only failures before the first question (no owner transport,
+/// unreadable records) are the whole roster's `Err`.
 pub(crate) async fn active_host_agent_pubkeys(
     app: &AppHandle,
     state: &AppState,
-) -> Result<HashSet<String>, String> {
+) -> Result<HostAgentAvailability, String> {
     let relay = crate::relay::relay_ws_url_with_override(state);
     let transport = Transport::owner(app, &relay)?;
-    let mut active = HashSet::new();
+    let mut observations = Vec::new();
     for record in load_managed_agents(app)? {
         if record.backend != BackendKind::Local {
             continue;
@@ -129,11 +180,10 @@ pub(crate) async fn active_host_agent_pubkeys(
         {
             continue;
         }
-        if actor_is_active(&record.pubkey, &transport).await? {
-            active.insert(record.pubkey);
-        }
+        let observed = actor_is_active(&record.pubkey, &transport).await;
+        observations.push((record.pubkey, record.name, observed));
     }
-    Ok(active)
+    Ok(fold_host_agent_availability(observations))
 }
 
 /// Inspect only the edited actor; unrelated retained local records are not its inventory.

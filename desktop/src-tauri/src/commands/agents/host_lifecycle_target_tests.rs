@@ -105,3 +105,33 @@ async fn edited_actor_missing_inventory_remains_unconfirmed() {
         .expect_err("absence is not inactive");
     assert!(error.contains("zero work cannot be certified"));
 }
+#[test]
+fn one_refused_agent_is_isolated_from_the_rest_of_the_roster() {
+    let folded = fold_host_agent_availability([
+        ("a".repeat(64), "Active".to_string(), Ok(true)),
+        ("b".repeat(64), "Idle".to_string(), Ok(false)),
+        (
+            "c".repeat(64),
+            "Scout".to_string(),
+            Err("actor channel inventory unavailable; zero work cannot be certified".to_string()),
+        ),
+        ("d".repeat(64), "Also active".to_string(), Ok(true)),
+    ]);
+    assert_eq!(
+        folded.active,
+        HashSet::from(["a".repeat(64), "d".repeat(64)]),
+        "agents after the refusal are still observed"
+    );
+    assert_eq!(
+        folded.unobserved,
+        vec![UnobservedHostAgent {
+            pubkey: "c".repeat(64),
+            name: "Scout".into(),
+            reason: "actor channel inventory unavailable; zero work cannot be certified".into(),
+        }]
+    );
+    assert_eq!(
+        fold_host_agent_availability([]),
+        HostAgentAvailability::default()
+    );
+}

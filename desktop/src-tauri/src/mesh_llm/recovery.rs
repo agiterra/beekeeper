@@ -277,7 +277,8 @@ pub(crate) async fn rearm_relay_mesh_for_running_agents(app: &AppHandle) -> Resu
     let recovery = recover_stale_mesh_runtime(&state, MeshRecoveryUrgency::Watchdog).await;
     let active_pubkeys =
         crate::commands::agents::headless_management::active_host_agent_pubkeys(app, &state)
-            .await?;
+            .await?
+            .active;
     // Mesh participation is resolved through the same definition-authoritative
     // path as spawn/restore (#1968): definition → global fallback. A linked
     // instance's own bytes never contribute.

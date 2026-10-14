@@ -14,6 +14,7 @@ use tauri::AppHandle;
 
 use crate::app_state::KEYCHAIN_UNAVAILABLE;
 use crate::coding_sessions::workdir_store::CodingSessionWorkdirStore;
+use crate::commands::agents::headless_management::HostAgentAvailability;
 use crate::managed_agents::ManagedAgentReadinessMetadata;
 use crate::session_provider::runtimes::StrictRuntimeDiagnostic;
 use crate::session_provider::status::CodingSessionProviderProcessState;
@@ -865,9 +866,11 @@ pub async fn team_readiness(
     } else {
         ProjectPackSourceProbe::NotProbed
     };
-    let active_agents =
+    let availability =
         crate::commands::agents::headless_management::active_host_agent_pubkeys(&app, &state).await;
-    let active_error = active_agents.as_ref().err().cloned();
+    let availability_fact = host_agent_availability_fact(&availability);
+    // Unobserved agents are simply not offered as active; the fact above says so.
+    let active_agents = availability.map(|availability| availability.active);
     let local_app = app.clone();
     let local_project_ref = project_ref.clone();
     let local = tauri::async_runtime::spawn_blocking(move || {
@@ -884,13 +887,8 @@ pub async fn team_readiness(
     let wire =
         wire::observe_team_wire(&app, &project_ref, &expected_relay_url, &channel_ids).await?;
     let mut response = wire::fold_trusted_team_wire(local, wire);
-    if let Some(error) = active_error {
-        response.facts.push(TeamReadinessFact::local(
-            "team",
-            "HOST_AGENT_AVAILABILITY_UNOBSERVED",
-            TeamReadinessFactState::Unknown,
-            format!("Agent availability could not be observed from the host: {error}"),
-        ));
+    if let Some(fact) = availability_fact {
+        response.facts.push(fact);
         wire::summarize(&mut response);
     }
     // Asked last, and asked at all because a session was founded on a goal it
@@ -903,6 +901,70 @@ pub async fn team_readiness(
         wire::summarize(&mut response);
     }
     Ok(response)
+}
+
+/// The one fact a host's agent roster contributes, if any.
+///
+/// Scope is what decides blocking (`teamReadinessModel.ts` treats a local
+/// Unknown as required), so the two shapes differ there on purpose:
+///
+/// - the whole observation failed (no owner transport, unreadable records):
+///   a **local** Unknown, as before — nothing is known about any agent;
+/// - some agents were refused individually (an actor with no readable channel
+///   membership is `Unconfirmed` by design, and must stay so): a **wire**
+///   Unknown naming them, since the rest of the roster was observed and those
+///   agents are merely not counted as available.
+fn host_agent_availability_fact(
+    availability: &Result<HostAgentAvailability, String>,
+) -> Option<TeamReadinessFact> {
+    const CODE: &str = "HOST_AGENT_AVAILABILITY_UNOBSERVED";
+    match availability {
+        Err(error) => Some(TeamReadinessFact::local(
+            "team",
+            CODE,
+            TeamReadinessFactState::Unknown,
+            format!("Agent availability could not be observed from the host: {error}"),
+        )),
+        Ok(availability) if availability.unobserved.is_empty() => None,
+        Ok(availability) => {
+            let count = availability.unobserved.len();
+            let names = availability
+                .unobserved
+                .iter()
+                .map(|agent| {
+                    let short = agent.pubkey.get(..8).unwrap_or(agent.pubkey.as_str());
+                    if agent.name.trim().is_empty() {
+                        format!("{short}…")
+                    } else {
+                        format!("{} ({short}…)", agent.name.trim())
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let reasons = {
+                let mut reasons = availability
+                    .unobserved
+                    .iter()
+                    .map(|agent| agent.reason.as_str())
+                    .collect::<Vec<_>>();
+                reasons.sort_unstable();
+                reasons.dedup();
+                reasons.join("; ")
+            };
+            let noun = if count == 1 { "agent" } else { "agents" };
+            Some(TeamReadinessFact {
+                category: "team".into(),
+                code: CODE.into(),
+                scope: TeamReadinessScope::Wire,
+                state: TeamReadinessFactState::Unknown,
+                summary: format!(
+                    "{count} local {noun} could not be observed from the relay ({reasons}): \
+                     {names}; not counted as available."
+                ),
+                remedy: None,
+            })
+        }
+    }
 }
 
 #[cfg(test)]

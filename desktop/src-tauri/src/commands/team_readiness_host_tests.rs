@@ -133,3 +133,52 @@ fn an_unreachable_agent_host_blocks_the_launch_and_carries_its_own_reason() {
         .any(|fact| fact.code == "PROVIDER_HOST_UNREACHABLE"
             && fact.state == TeamReadinessFactState::Blocked));
 }
+
+/// One agent the relay refuses to certify is that agent's row, not the
+/// roster's failure: a **wire** Unknown that names it. Only a failed
+/// observation of the whole roster is the **local** Unknown that the
+/// launch treats as required (ledger 402, readiness path).
+#[test]
+fn an_unobservable_agent_is_named_on_the_wire_not_blocked_locally() {
+    use crate::commands::agents::headless_management::UnobservedHostAgent;
+
+    let whole = host_agent_availability_fact(&Err("keychain locked".into()))
+        .expect("a failed observation is a fact");
+    assert_eq!(whole.scope, TeamReadinessScope::Local);
+    assert_eq!(whole.state, TeamReadinessFactState::Unknown);
+    assert!(whole.summary.contains("keychain locked"));
+
+    assert_eq!(
+        host_agent_availability_fact(&Ok(HostAgentAvailability::default())),
+        None,
+        "a fully observed roster says nothing"
+    );
+
+    let reason = "actor channel inventory unavailable; zero work cannot be certified";
+    let partial = host_agent_availability_fact(&Ok(HostAgentAvailability {
+        active: HashSet::from(["aa".repeat(32)]),
+        unobserved: vec![
+            UnobservedHostAgent {
+                pubkey: "5e8d".repeat(16),
+                name: "Scout".into(),
+                reason: reason.into(),
+            },
+            UnobservedHostAgent {
+                pubkey: "1c47".repeat(16),
+                name: "".into(),
+                reason: reason.into(),
+            },
+        ],
+    }))
+    .expect("unobserved agents are a fact");
+    assert_eq!(partial.scope, TeamReadinessScope::Wire);
+    assert_eq!(partial.state, TeamReadinessFactState::Unknown);
+    assert_eq!(partial.code, "HOST_AGENT_AVAILABILITY_UNOBSERVED");
+    assert_eq!(
+        partial.summary,
+        format!(
+            "2 local agents could not be observed from the relay ({reason}): \
+             Scout (5e8d5e8d…), 1c471c47…; not counted as available."
+        )
+    );
+}
