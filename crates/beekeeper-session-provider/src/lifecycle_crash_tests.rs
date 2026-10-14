@@ -426,8 +426,13 @@ async fn actual_startup_refusal_retains_cause_and_accepted_uncertainty_does_not_
         "original code: {}",
         error.message
     );
+    // The adapter does not exist. Where a sandbox backend exists (macOS) the
+    // wrapper spawns and the absence surfaces at initialize; on a platform
+    // with no backend the Legacy plan execs the absent path and the absence
+    // surfaces at spawn. Either is the same fact, stated where it was found.
     assert!(
-        error.message.contains("could not initialize the agent"),
+        error.message.contains("could not initialize the agent")
+            || error.message.contains("could not spawn the agent"),
         "original cause: {}",
         error.message
     );

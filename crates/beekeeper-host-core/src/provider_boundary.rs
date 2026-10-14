@@ -113,11 +113,10 @@ pub fn invoke_provider_at(
         cmd.current_dir(home);
     }
     configure_no_window(&mut cmd);
-    let mut child = cmd
-        .stdin(std::process::Stdio::piped())
+    cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+    let mut child = spawn_retrying_text_busy(&mut cmd, SPAWN_TEXT_BUSY_WINDOW)
         .map_err(|e| format!("failed to spawn {}: {e}", binary.display()))?;
 
     // Write request and close stdin immediately so the provider sees EOF.
@@ -980,6 +979,37 @@ fn diagnostic_prefix(value: &str, cap: usize) -> &str {
         end -= 1;
     }
     &value[..end]
+}
+
+/// How long a spawn keeps retrying `ExecutableFileBusy` before the error
+/// stands.
+const SPAWN_TEXT_BUSY_WINDOW: Duration = Duration::from_secs(1);
+
+/// Spawn `command`, retrying only on [`std::io::ErrorKind::ExecutableFileBusy`]
+/// for up to `window`, ~10 ms between attempts.
+///
+/// On Linux a freshly staged provider binary can be refused with `ETXTBSY`
+/// even though this thread has already closed its write handle: a sibling
+/// thread's `fork` copies every open descriptor, including the staged file's
+/// write fd, and the copy lives until that child's `execve`. The window is
+/// microseconds to milliseconds long, so a short bounded retry is the honest
+/// remedy; any other error kind is returned at once.
+fn spawn_retrying_text_busy(
+    command: &mut std::process::Command,
+    window: Duration,
+) -> std::io::Result<std::process::Child> {
+    let deadline = std::time::Instant::now() + window;
+    loop {
+        match command.spawn() {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            other => return other,
+        }
+    }
 }
 
 fn configure_no_window(command: &mut std::process::Command) {

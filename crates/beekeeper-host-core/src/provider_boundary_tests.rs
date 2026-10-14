@@ -568,3 +568,63 @@ fn explicit_scoped_key_encodings_are_redacted_from_provider_diagnostics() {
         assert!(shown.contains("[REDACTED]"));
     }
 }
+
+/// A spawn is retried only while the executable is busy, and only within the
+/// window. The busy condition itself is Linux-specific and a race, so this
+/// pins the two cheap halves: an error of another kind returns at once, and
+/// a spawnable command spawns on the first attempt.
+#[cfg(unix)]
+#[test]
+fn spawn_retry_covers_only_executable_file_busy() {
+    let started = std::time::Instant::now();
+    let err = spawn_retrying_text_busy(
+        &mut std::process::Command::new("/nonexistent/provider-binary"),
+        Duration::from_secs(1),
+    )
+    .expect_err("an absent binary cannot spawn");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "NotFound must not be retried"
+    );
+
+    let mut child = spawn_retrying_text_busy(
+        &mut std::process::Command::new("true"),
+        Duration::from_secs(1),
+    )
+    .expect("a present binary spawns");
+    assert!(child.wait().expect("wait").success());
+}
+
+/// The ETXTBSY race proper: a sibling thread forks a long-lived child while
+/// the staged file's write fd is open, then the writer closes and spawns.
+/// Linux only, because only its `fork` inherits the write fd into a child that
+/// outlives the writer's close (and only there does `execve` report `ETXTBSY`).
+#[cfg(target_os = "linux")]
+#[test]
+fn spawn_retry_outlasts_a_sibling_child_holding_the_write_fd() {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let staged = dir.path().join("staged-provider");
+    let mut file = std::fs::File::create(&staged).expect("create");
+    file.write_all(b"#!/bin/sh\nexit 0\n").expect("write");
+    file.set_permissions(std::fs::Permissions::from_mode(0o755))
+        .expect("chmod");
+    // std opens `File` descriptors CLOEXEC, so the race's inherited fd is
+    // modelled by handing the write handle to the child as its stdin, which
+    // the exec'd `sleep` then holds open for writing until it exits.
+    let holder = std::process::Command::new("sleep")
+        .arg("0.3")
+        .stdin(file.try_clone().expect("clone fd"))
+        .spawn()
+        .expect("holder child");
+    drop(file);
+    let mut child = spawn_retrying_text_busy(
+        &mut std::process::Command::new(&staged),
+        Duration::from_secs(2),
+    )
+    .expect("the spawn is retried until the holder's fd closes");
+    assert!(child.wait().expect("wait").success());
+    let _ = holder.wait_with_output();
+}

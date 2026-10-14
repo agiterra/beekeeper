@@ -349,14 +349,28 @@ async fn failed_startup_proof_cannot_replace_changed_cursor_binding_or_newer_wit
             record.generation_command_id = prior.generation_command_id.clone()
         })
         .unwrap();
+    // Only a platform with an execution backend binds a scope; a Legacy plan
+    // stores none (`execution_scope.rs` `prepare`, `session_create.rs`). A
+    // differing binding is built either way so the comparison is exercised.
+    assert_eq!(prior.execution_binding.is_some(), cfg!(target_os = "macos"));
+    let mut changed =
+        prior
+            .execution_binding
+            .clone()
+            .unwrap_or(crate::execution_scope::ExecutionBinding {
+                scope_digest: String::new(),
+                project_ref: None,
+                actor: None,
+                tree: None,
+                agents: None,
+                branch: None,
+                agents_writable: false,
+            });
+    changed.scope_digest = "changed-scope".into();
     provider
         .state
         .update_session(&prior.session_id, |record| {
-            record
-                .execution_binding
-                .as_mut()
-                .expect("fixture execution binding")
-                .scope_digest = "changed-scope".into();
+            record.execution_binding = Some(changed.clone());
         })
         .unwrap();
     assert!(!provider.record_failed_startup(&prior, &proof).unwrap());
@@ -395,8 +409,13 @@ async fn failed_startup_proof_cannot_replace_changed_cursor_binding_or_newer_wit
     assert!(!provider.record_failed_startup(&prior, &proof).unwrap());
 }
 
+/// The pre-spawn working-directory refusal exists only where an execution
+/// backend exists: off macOS `prepare` returns `ExecutionPlan::Legacy` before
+/// any scope validation (`execution_scope.rs:645`), by design, so a renamed
+/// cwd is only observed at spawn there and never as `Unplanned`.
+#[cfg(target_os = "macos")]
 #[tokio::test]
-async fn refused_before_spawn_records_proven_absence_but_cancelled_restore_does_not() {
+async fn refused_before_spawn_records_proven_absence() {
     let root = tempfile::tempdir().unwrap();
     let (mut provider, prior) = fixture(root.path()).await;
     let job = provider.prepare_restore(&prior.session_id).unwrap();
@@ -407,6 +426,12 @@ async fn refused_before_spawn_records_proven_absence_but_cancelled_restore_does_
     std::fs::rename(saved, &prior.cwd).unwrap();
     provider.finish_restore(run).await.unwrap().unwrap_err();
     assert!(provider.recovered_group_absent(&prior.target(&provider.config.instance_id)));
+}
+
+#[tokio::test]
+async fn cancelled_restore_does_not_record_absence() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut provider, prior) = fixture(root.path()).await;
     let spawned = root.path().join("work/cancelled-group");
     provider.config.runtimes[0].agent_command = fake_agent(
         root.path(),
